@@ -274,16 +274,19 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 /// The `provider-thread.rollback` effect.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RollbackRequest {
     pub(crate) thread_id: String,
     pub(crate) command_id: String,
     pub(crate) provider_thread_id: String,
     pub(crate) checkpoint_id: String,
     pub(crate) scope_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) restore_files: Option<bool>,
     /// The provider's answer a previous process stored before it stopped: the rollback goes on
     /// from the file restore and sends no provider rollback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) resume_snapshot: Option<Value>,
 }
 

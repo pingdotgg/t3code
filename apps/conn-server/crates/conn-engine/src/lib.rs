@@ -25,6 +25,7 @@ mod calls;
 mod checkpoint;
 mod clock;
 mod commands;
+mod effect_worker;
 mod engine;
 mod feedback;
 mod guard;
@@ -48,6 +49,7 @@ mod fork;
 mod fresh;
 mod html_cleanup;
 mod link_requests;
+mod outbox;
 mod output;
 mod projects;
 mod pull_requests;
@@ -278,7 +280,8 @@ pub struct ProvisionedWorktree {
     pub branch: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ThreadClose {
     Archived,
     Deleted,

@@ -368,14 +368,19 @@ impl Inner {
         command_id: Option<String>,
         f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
     ) -> ProjectResult<T> {
+        self.ensure_effect_worker();
         let result = self
             .db(move |store| {
                 let mut tx = store.tx().map_err(ProjectFailure::from)?;
                 match f(&mut tx) {
                     Ok((value, effects)) => {
                         let receipt = command_id.as_deref().map(|id| (id, "project"));
+                        if let Err(e) = tx.enqueue(command_id.as_deref(), &effects) {
+                            tx.rollback();
+                            return Err(ProjectFailure::from(e));
+                        }
                         let seq = tx.commit(receipt).map_err(ProjectFailure::from)?;
-                        Ok((value, effects, seq))
+                        Ok((value, seq))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -384,11 +389,8 @@ impl Inner {
                 }
             })
             .await;
-        let (value, effects, seq) = result?;
+        let (value, seq) = result?;
         self.notify.send_replace(seq);
-        for effect in effects {
-            self.spawn_effect(effect);
-        }
         Ok(value)
     }
 

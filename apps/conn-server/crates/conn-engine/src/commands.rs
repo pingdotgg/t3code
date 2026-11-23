@@ -2,109 +2,76 @@
 //! effects to run after the commit. To support a new command, add one function and one line
 //! in [`handler`].
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::shell::{ACTIVE_RUN_STATUSES, LIVE_RUN_STATUSES};
 use crate::store::{Draft, StoreResult, Tx};
 
-/// Work that touches a provider. Runs after the command's events are committed.
-#[derive(Debug)]
+/// Work that touches a provider. Runs after the command's events are committed. Stored as an
+/// outbox row (`outbox.rs`); the tag is the row's `effect_type`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub(crate) enum Effect {
     /// Rolls a thread back to a checkpoint (`provider-thread.rollback`).
+    #[serde(rename = "provider-thread.rollback")]
     Rollback(crate::rollback::RollbackRequest),
     /// Captures a run's checkpoint and finishes it (`checkpoint.capture`).
-    CaptureCheckpoint {
-        thread_id: String,
-        run_id: String,
-    },
-    StartTurn {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "checkpoint.capture")]
+    CaptureCheckpoint { thread_id: String, run_id: String },
+    #[serde(rename = "provider-turn.start")]
+    StartTurn { thread_id: String, run_id: String },
     /// Adds a message to a running turn. Falls back to the queue when the provider declines.
+    #[serde(rename = "provider-turn.steer")]
     Steer {
         thread_id: String,
         run_id: String,
         message_id: String,
     },
-    Interrupt {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "provider-turn.interrupt")]
+    Interrupt { thread_id: String, run_id: String },
     /// Stop ended the run before the provider accepted its turn: the start still in flight is
     /// abandoned (T3 cancels `provider-turn.start`). Runs at once, outside the lane.
-    AbandonStart {
-        thread_id: String,
-        run_id: String,
-    },
+    #[serde(rename = "provider-turn.abandon-start")]
+    AbandonStart { thread_id: String, run_id: String },
     /// Stop on a thread whose latest run settled while its background work still runs: the
     /// provider gets `interruptTurn` with `requestRuntimeRestart` for that settled turn.
-    StopBackgroundWork {
-        thread_id: String,
-        run_id: String,
-    },
-    Respond {
-        thread_id: String,
-        request: Value,
-    },
+    #[serde(rename = "provider-turn.stop-background-work")]
+    StopBackgroundWork { thread_id: String, run_id: String },
+    #[serde(rename = "runtime-request.respond")]
+    Respond { thread_id: String, request: Value },
     /// Ends the provider session; a workspace move does this too. Its MCP credential is
     /// revoked when the process ends, and kept for the thread's next session while a shared
     /// process (Codex's `app-server`) still runs, as T3 does.
-    CloseSession {
-        thread_id: String,
-    },
+    #[serde(rename = "provider-session.detach")]
+    CloseSession { thread_id: String },
     /// Sends a model selection to the thread's running provider turn
     /// (`provider-session.apply-model-selection`). The provider applies what it can live; the
     /// rest waits for the next turn.
-    ApplyModelSelection {
-        thread_id: String,
-        selection: Value,
-    },
+    #[serde(rename = "provider-session.apply-model-selection")]
+    ApplyModelSelection { thread_id: String, selection: Value },
+    #[serde(rename = "attachment.cleanup")]
     CleanupHtmlAttachments {
         thread_id: String,
         ids: Vec<(String, String)>,
     },
     /// Tells the host a remote task of `thread_id` now owes its thread there a stop, so its
     /// follower runs again (T3's `RemoteDelegation.start` stream of `subagent.updated`).
-    RemoteTaskChanged {
-        thread_id: String,
-        task_id: String,
-    },
+    #[serde(rename = "delegated-task.remote-changed")]
+    RemoteTaskChanged { thread_id: String, task_id: String },
     /// Tells the host a thread was archived, deleted or settled (its terminals close).
+    #[serde(rename = "thread.closed")]
     ThreadClosed {
         thread_id: String,
         reason: crate::ThreadClose,
     },
     /// Asks the title generator; answers with `thread.title.regeneration.complete`.
+    #[serde(rename = "thread-title.generate")]
     GenerateTitle {
         thread_id: String,
         request_id: String,
         regenerate: bool,
     },
-}
-
-impl Effect {
-    /// The thread whose effect lane this effect waits in; `None` runs at once (title
-    /// generation, which T3 keeps out of a thread's lane).
-    pub(crate) fn lane(&self) -> Option<&str> {
-        match self {
-            Self::Rollback(request) => Some(&request.thread_id),
-            Self::CaptureCheckpoint { thread_id, .. }
-            | Self::StartTurn { thread_id, .. }
-            | Self::Steer { thread_id, .. }
-            | Self::Interrupt { thread_id, .. }
-            | Self::StopBackgroundWork { thread_id, .. }
-            | Self::Respond { thread_id, .. }
-            | Self::CloseSession { thread_id }
-            | Self::ApplyModelSelection { thread_id, .. }
-            | Self::CleanupHtmlAttachments { thread_id, .. }
-            | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
-            Self::GenerateTitle { .. }
-            | Self::AbandonStart { .. }
-            | Self::RemoteTaskChanged { .. } => None,
-        }
-    }
 }
 
 pub(crate) enum CommandError {

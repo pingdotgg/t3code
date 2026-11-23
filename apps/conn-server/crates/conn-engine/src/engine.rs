@@ -14,7 +14,7 @@ use conn_contract::{
 };
 use conn_provider::Provider;
 use serde_json::{Value, json};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
@@ -180,13 +180,13 @@ pub(crate) struct Inner {
     pub(crate) clock: Arc<dyn crate::Clock>,
     /// [`EngineConfig::idle_session`].
     pub(crate) idle_session: Option<Duration>,
-    /// One lane per thread with effects not yet done: the newest effect's number and the
-    /// signal it gives when it ends. A thread's effects run one at a time, in the order they
-    /// were made, as T3's effect outbox claims them (`EffectOutbox.ts`: none while one of the
-    /// thread runs or an older one waits). The entry goes when its last effect ends.
-    pub(crate) effect_lanes: Mutex<HashMap<String, (u64, oneshot::Receiver<()>)>>,
-    /// Numbers the effects, so a lane's last effect knows it is still the last.
-    pub(crate) effect_seq: std::sync::atomic::AtomicU64,
+    /// Raised when outbox rows may be claimable (`outbox.rs`); the effect worker waits on it.
+    pub(crate) effects_wake: Arc<tokio::sync::Notify>,
+    /// The effect worker started ([`Inner::ensure_effect_worker`]).
+    pub(crate) effect_worker: std::sync::atomic::AtomicBool,
+    /// Test hook: pauses one command inside its transaction, before it commits.
+    #[cfg(test)]
+    pub(crate) commit_pause: Mutex<Option<CommitPause>>,
     thread_gates: crate::thread_locks::ThreadLocks,
 }
 
@@ -197,57 +197,13 @@ struct DelegatedWorktree {
     worktree: crate::ProvisionedWorktree,
 }
 
-/// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
-/// failed), it gives its place up only after the effect before it ended, so the lane keeps its
-/// order.
-pub(crate) struct ReservedEffect {
-    inner: Arc<Inner>,
-    effect: Option<Effect>,
-    lane: Option<String>,
-    seq: u64,
-    previous: Option<oneshot::Receiver<()>>,
-    done: Option<oneshot::Sender<()>>,
-}
-
-impl ReservedEffect {
-    /// Runs the effect once every earlier effect of its thread ended.
-    pub(crate) fn start(mut self) {
-        let effect = self.effect.take();
-        self.spawn(effect);
-    }
-
-    fn spawn(&mut self, effect: Option<Effect>) {
-        let (inner, lane, seq) = (self.inner.clone(), self.lane.take(), self.seq);
-        let (previous, done) = (self.previous.take(), self.done.take());
-        let task = async move {
-            if let Some(previous) = previous {
-                // Ends when the earlier effect ends, or its task is gone.
-                let _ = previous.await;
-            }
-            if let Some(effect) = effect {
-                inner.clone().run_effect(effect).await;
-            }
-            drop(done);
-            if let Some(thread_id) = lane {
-                let mut lanes = crate::lock(&inner.effect_lanes);
-                if lanes.get(&thread_id).is_some_and(|(last, _)| *last == seq) {
-                    lanes.remove(&thread_id);
-                }
-            }
-        };
-        // No runtime (a store opened outside one): nothing can run, and nothing waits.
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            runtime.spawn(task);
-        }
-    }
-}
-
-impl Drop for ReservedEffect {
-    fn drop(&mut self) {
-        if self.done.is_some() {
-            self.spawn(None);
-        }
-    }
+/// Test hook: the command with this id stops inside its transaction, before the commit. It
+/// sends on `paused`, then waits on `release`.
+#[cfg(test)]
+pub(crate) struct CommitPause {
+    pub(crate) command_id: String,
+    pub(crate) paused: std::sync::mpsc::Sender<()>,
+    pub(crate) release: std::sync::mpsc::Receiver<()>,
 }
 
 /// Stable project id for a folder, so a fresh database gives clients the same ids.
@@ -278,6 +234,10 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
+        // What the previous process left unsettled is cancelled; the restart below decides
+        // again from the stored runs and rollbacks.
+        store.cancel_unsettled_effects()?;
+        let effects_wake = store.effects_wake.clone();
         let (unfinished, pending_rollbacks) = if config.recover_runs {
             (store.unfinished_runs()?, store.pending_rollbacks()?)
         } else {
@@ -303,6 +263,7 @@ impl SqliteEngine {
         {
             effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
         }
+        tx.enqueue(None, &effects)?;
         tx.commit(None)?;
         let high = store.high_water();
         let engine = Self {
@@ -330,15 +291,15 @@ impl SqliteEngine {
                 output_tap: config.command_output_tap.clone(),
                 clock: config.clock.clone(),
                 idle_session: config.idle_session,
-                effect_lanes: Mutex::new(HashMap::new()),
-                effect_seq: std::sync::atomic::AtomicU64::new(0),
+                effects_wake,
+                effect_worker: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(test)]
+                commit_pause: Mutex::new(None),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
         if tokio::runtime::Handle::try_current().is_ok() {
-            effects
-                .into_iter()
-                .for_each(|e| engine.inner.spawn_effect(e));
+            engine.inner.ensure_effect_worker();
             if let Some(idle) = config.idle_session {
                 let inner = Arc::downgrade(&engine.inner);
                 tokio::spawn(async move {
@@ -351,8 +312,6 @@ impl SqliteEngine {
                     }
                 });
             }
-        } else if !effects.is_empty() {
-            eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
         Ok(engine)
     }
@@ -388,6 +347,37 @@ impl SqliteEngine {
             })
             .await
             .expect("force waiting");
+    }
+
+    /// Holds `thread_id`'s effect lane with a running row, as an effect that has not ended.
+    /// Returns the row for [`Self::test_release_lane`].
+    #[cfg(test)]
+    pub(crate) async fn test_hold_lane(&self, thread_id: &str) -> i64 {
+        let tid = thread_id.to_owned();
+        self.inner
+            .db(move |store| {
+                store
+                    .raw()
+                    .execute(
+                        "INSERT INTO effect_outbox (thread_id, lane, effect_type, payload, status,
+                           created_at, updated_at)
+                         VALUES (?1, 'thread', 'test.hold', '{}', 'running', '', '')",
+                        [&tid],
+                    )
+                    .expect("hold lane");
+                store.raw().last_insert_rowid()
+            })
+            .await
+    }
+
+    /// Ends a hold from [`Self::test_hold_lane`]: the thread's next effect may run.
+    #[cfg(test)]
+    pub(crate) async fn test_release_lane(&self, id: i64) {
+        self.inner
+            .db(move |store| store.settle_effect(id, crate::outbox::Settled::Succeeded, None))
+            .await
+            .expect("release lane");
+        self.inner.effects_wake.notify_one();
     }
 
     /// Every stored event of a thread as `(type, payload)`, oldest first.
@@ -907,6 +897,8 @@ impl Inner {
             ));
         };
         let host = self.host.clone();
+        self.ensure_effect_worker();
+        #[cfg(test)]
         let inner = self.clone();
         let outcome = self
             .db(move |store| {
@@ -917,7 +909,7 @@ impl Inner {
                             "The command was already accepted.".into(),
                         ));
                     }
-                    return Ok((vec![], seq, true));
+                    return Ok((seq, true));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
                 if let Some(guard) = &guard
@@ -939,6 +931,14 @@ impl Inner {
                 }
                 match handler(&mut tx, command) {
                     Ok(effects) => {
+                        // The effects commit with the command (T3's `EventSink`), so a caller
+                        // that goes away now cannot lose them.
+                        #[cfg(test)]
+                        inner.test_commit_pause(&command_id);
+                        if let Err(e) = tx.enqueue(Some(&command_id), &effects) {
+                            tx.rollback();
+                            return Err(CommandError::Store(e));
+                        }
                         let seq = match &commit_gate {
                             None => tx
                                 .commit(Some((&command_id, &command_type)))
@@ -973,13 +973,7 @@ impl Inner {
                                 }
                             }
                         };
-                        // Lane slots are taken under the store lock, so a thread's effects
-                        // run in the order their commands committed.
-                        let reserved = effects
-                            .into_iter()
-                            .map(|effect| inner.reserve_effect(effect))
-                            .collect::<Vec<_>>();
-                        Ok((reserved, seq, false))
+                        Ok((seq, false))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -988,51 +982,33 @@ impl Inner {
                 }
             })
             .await;
-        let (effects, seq, replayed) = outcome.map_err(|e| match e {
+        let (seq, replayed) = outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
             CommandError::Store(message) => DispatchError::Internal(message),
         })?;
         if !replayed {
             self.notify.send_replace(seq);
         }
-        for effect in effects {
-            effect.start();
-        }
         Ok((seq, replayed))
     }
 
-    /// Runs an effect after every earlier effect of its thread. Title generation has its own
-    /// lane in T3 and runs at once here.
-    pub(crate) fn spawn_effect(self: &Arc<Self>, effect: Effect) {
-        self.reserve_effect(effect).start();
-    }
-
-    /// Takes the effect's place at the end of its thread's lane now; it runs once
-    /// [`ReservedEffect::start`] is called and every earlier effect of the thread ended. Call it
-    /// inside the store closure that commits the effect's cause, so lane order is commit order.
-    pub(crate) fn reserve_effect(self: &Arc<Self>, effect: Effect) -> ReservedEffect {
-        let lane = effect.lane().map(str::to_owned);
-        let seq = self
-            .effect_seq
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let (done, ended) = oneshot::channel::<()>();
-        // The lane's tail changes now, before any later command's effect is made.
-        let previous = lane.as_ref().and_then(|thread_id| {
-            crate::lock(&self.effect_lanes)
-                .insert(thread_id.clone(), (seq, ended))
-                .map(|(_, previous)| previous)
-        });
-        ReservedEffect {
-            inner: self.clone(),
-            effect: Some(effect),
-            lane,
-            seq,
-            previous,
-            done: Some(done),
+    #[cfg(test)]
+    fn test_commit_pause(&self, command_id: &str) {
+        let pause = {
+            let mut slot = crate::lock(&self.commit_pause);
+            if slot.as_ref().is_some_and(|p| p.command_id == command_id) {
+                slot.take()
+            } else {
+                None
+            }
+        };
+        if let Some(pause) = pause {
+            let _ = pause.paused.send(());
+            let _ = pause.release.recv();
         }
     }
 
-    async fn run_effect(self: Arc<Self>, effect: Effect) {
+    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
             Effect::Rollback(request) => self.rollback(request).await,

@@ -335,12 +335,11 @@ impl Inner {
                 complete_waiting(tx, &tid, &rid)?;
                 let mut effects = crate::families::on_run_end(tx, &tid, &rid)?;
                 effects.extend(commands::start_next_queued(tx, &tid, None)?);
-                Ok(effects)
+                tx.enqueue(None, &effects)
             })
             .await;
-        match effects {
-            Ok(effects) => effects.into_iter().for_each(|e| self.spawn_effect(e)),
-            Err(e) => eprintln!("conn-engine: could not record a checkpoint: {e}"),
+        if let Err(e) = effects {
+            eprintln!("conn-engine: could not record a checkpoint: {e}");
         }
         if let Some(observer) = &self.observer {
             self.observe_end(observer.clone(), thread_id, run_id).await;

@@ -688,6 +688,112 @@ async fn launch_thread_creates_and_starts_in_one_call() {
     );
 }
 
+/// Pauses the command `command_id` inside its transaction, runs `call` until it gets there,
+/// aborts the call (a closed socket aborts its handler), then lets the commit go on.
+async fn abort_inside_commit<T: Send + 'static>(
+    engine: &SqliteEngine,
+    command_id: &str,
+    call: impl std::future::Future<Output = T> + Send + 'static,
+) {
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    *crate::lock(&engine.inner().commit_pause) = Some(crate::engine::CommitPause {
+        command_id: command_id.into(),
+        paused: paused_tx,
+        release: release_rx,
+    });
+    let call = tokio::spawn(call);
+    tokio::task::spawn_blocking(move || paused_rx.recv())
+        .await
+        .unwrap()
+        .expect("the commit paused");
+    call.abort();
+    assert!(call.await.is_err_and(|e| e.is_cancelled()));
+    release_tx.send(()).unwrap();
+}
+
+/// A closed socket aborts a launch while its first message commits. The commit goes through,
+/// and so does the provider start it holds: exactly one session opens and the run completes.
+#[tokio::test(flavor = "current_thread")]
+async fn an_aborted_launch_still_starts_its_committed_run() {
+    let db = TempDb::new("launch-aborted");
+    let (engine, provider) = open(&db);
+    let engine = Arc::new(engine);
+    let input = json!({
+        "commandId": "A", "threadId": "t1", "projectId": project_id(), "title": "Launched",
+        "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-4-5"},
+        "runtimeMode": "full-access", "interactionMode": "default",
+        "workspaceStrategy": {"type": "root"},
+        "initialMessage": {"messageId": "m-a", "text": "hi", "attachments": []},
+    });
+    let launcher = engine.clone();
+    abort_inside_commit(&engine, "A:initial-message", async move {
+        launcher.launch_thread(input).await
+    })
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}
+
+/// The same for a command that is not a launch: an aborted archive still closes the thread
+/// on the host, once.
+#[tokio::test(flavor = "current_thread")]
+async fn an_aborted_archive_still_closes_the_thread() {
+    let db = TempDb::new("archive-aborted");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.host = Some(host.clone());
+    let engine = Arc::new(SqliteEngine::open(config).unwrap());
+    dispatch(&engine, create("t1", "c1")).await;
+    let archiver = engine.clone();
+    abort_inside_commit(&engine, "a1", async move {
+        archiver
+            .dispatch(
+                from_json(json!({"type": "thread.archive", "commandId": "a1", "threadId": "t1"}))
+                    .unwrap(),
+            )
+            .await
+    })
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while host.closed.lock().unwrap().is_empty() {
+            host.closed_event.notified().await;
+        }
+    })
+    .await
+    .expect("the host hears of the archive");
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        *host.closed.lock().unwrap(),
+        [("t1".to_owned(), crate::ThreadClose::Archived)]
+    );
+}
+
+/// A row a previous process left running does not hold its thread after a restart: the start
+/// cancels it, and the next command's effects run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_row_left_running_does_not_hold_its_thread_after_a_restart() {
+    let db = TempDb::new("outbox-restart");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        engine.test_hold_lane("t1").await;
+    }
+    let (engine, _) = open(&db);
+    dispatch(&engine, message("t1", "c2", "after")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+}
+
 /// `ThreadLaunchService.launch` for a scheduled run: the first message carries the task id
 /// (the client's timeline marks it) and the launch's own actor.
 #[tokio::test(flavor = "current_thread")]
@@ -4343,33 +4449,46 @@ async fn a_late_start_failure_after_force_stop_does_not_hold_the_queue() {
     }
 }
 
-/// A thread's effects run in the order their lane slots were taken, not the order they were
-/// started (review finding 2.1: dispatch takes the slot inside the store closure, so lane order
-/// is commit order). A slot given up without running (its commit failed) keeps that order.
+/// A thread's effects run in the order their writes committed (T3's outbox claims by row
+/// order). A write that rolled back leaves no row and holds nothing.
 #[tokio::test(flavor = "current_thread")]
-async fn lane_order_is_reservation_order() {
-    let db = TempDb::new("lane-reserve");
+async fn lane_order_is_commit_order() {
+    let db = TempDb::new("lane-commit");
     let host = Arc::new(RecordingHost::default());
     let mut config = EngineConfig::new(db.path());
     config.host = Some(host.clone());
     let engine = SqliteEngine::open(config).unwrap();
-    let inner = engine.inner();
     let close = |reason| crate::commands::Effect::ThreadClosed {
         thread_id: "t1".into(),
         reason,
     };
-    let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
-    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
-    let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
-    drop(given_up);
-    last.start();
+    let hold = engine.test_hold_lane("t1").await;
+    let inner = engine.inner().clone();
+    let effects = [
+        (close(crate::ThreadClose::Archived), true),
+        (close(crate::ThreadClose::Settled), false),
+        (close(crate::ThreadClose::Deleted), true),
+    ];
+    for (effect, commits) in effects {
+        inner
+            .db(move |store| {
+                let mut tx = store.tx().unwrap();
+                tx.enqueue(None, &[effect]).unwrap();
+                if commits {
+                    tx.commit(None).unwrap();
+                } else {
+                    tx.rollback();
+                }
+            })
+            .await;
+    }
     tokio::time::sleep(Duration::from_millis(20)).await;
     assert!(
         host.closed.lock().unwrap().is_empty(),
-        "waits for the first"
+        "waits for the running row"
     );
-    first.start();
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    engine.test_release_lane(hold).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
     assert_eq!(
         *host.closed.lock().unwrap(),
         [
@@ -4532,11 +4651,7 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
     dispatch(&engine, create("t1", "c1")).await;
     dispatch(&engine, message("t1", "c2", "hello")).await;
     run_to_end(&engine, "t1", "run:t1:1").await;
-    let inner = engine.inner();
-    let blocker = inner.reserve_effect(crate::commands::Effect::ThreadClosed {
-        thread_id: "t1".into(),
-        reason: crate::ThreadClose::Settled,
-    });
+    let blocker = engine.test_hold_lane("t1").await;
     dispatch(&engine, message("t1", "c3", "hello again")).await;
     dispatch(&engine, stop("t1", "c4")).await;
     let p = projection(&engine, "t1").await;
@@ -4545,7 +4660,7 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
         item_of(&p, "turn-item:run:t1:2:interrupt-result")["message"],
         "Run interrupted before provider start"
     );
-    blocker.start();
+    engine.test_release_lane(blocker).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     let calls = crate::lock(&provider.calls).clone();
     assert!(!calls.iter().any(|c| c == "start run:t1:2"), "{calls:?}");

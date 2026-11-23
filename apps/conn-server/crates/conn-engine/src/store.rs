@@ -264,6 +264,8 @@ pub(crate) struct Store {
     starts: StartLedger,
     /// Set when attention events are on (`attention.rs`); raised after a commit that wrote one.
     pub(crate) attention: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// Raised after a commit that wrote outbox rows (`outbox.rs`): the effect worker wakes.
+    pub(crate) effects_wake: std::sync::Arc<tokio::sync::Notify>,
 }
 
 /// The turn starts a Stop must know about, kept beside the store so a command decides under
@@ -297,6 +299,7 @@ impl Store {
         .map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
         conn.execute_batch(crate::attention::SCHEMA).map_err(err)?;
+        conn.execute_batch(crate::outbox::SCHEMA).map_err(err)?;
         migrate(&conn)?;
         let high: i64 = conn
             .query_row(
@@ -323,6 +326,7 @@ impl Store {
             generates_titles: false,
             starts: StartLedger::default(),
             attention: None,
+            effects_wake: std::sync::Arc::default(),
         })
     }
 
@@ -370,6 +374,8 @@ impl Store {
         Ok(Tx {
             attention: self.attention.clone(),
             attention_written: false,
+            effects_wake: self.effects_wake.clone(),
+            effects_written: false,
             now_ms,
             generates_titles,
             starts: &mut self.starts,
@@ -1039,10 +1045,22 @@ pub(crate) struct Tx<'a> {
     /// See [`Store::attention`].
     attention: Option<std::sync::Arc<tokio::sync::Notify>>,
     attention_written: bool,
+    effects_wake: std::sync::Arc<tokio::sync::Notify>,
+    effects_written: bool,
     now_ms: u64,
 }
 
 impl Tx<'_> {
+    /// The open transaction, for a module that keeps its own tables (`outbox.rs`).
+    pub(crate) fn sql(&self) -> &Connection {
+        &self.tx
+    }
+
+    /// Outbox rows were written: the commit wakes the effect worker.
+    pub(crate) fn mark_effects_written(&mut self) {
+        self.effects_written = true;
+    }
+
     fn starts(&self) -> &StartLedger {
         self.starts_changed.as_ref().unwrap_or(self.starts)
     }
@@ -1759,6 +1777,9 @@ impl Tx<'_> {
             && let Some(attention) = &self.attention
         {
             attention.notify_one();
+        }
+        if self.effects_written {
+            self.effects_wake.notify_one();
         }
         if let Some(starts) = self.starts_changed.take() {
             *self.starts = starts;
