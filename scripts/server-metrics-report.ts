@@ -62,6 +62,20 @@ export const Measured = Schema.Struct({
       }),
     }),
   ),
+  /** 50 short turns back to back on one thread. */
+  pipeline: Schema.optional(
+    Schema.Struct({
+      /** Send to the agent's API request. */
+      toRequestMs: Spread,
+      /** The reply's last byte to the CLI seeing a finished run: turn end and checkpoint. */
+      turnEndMs: Spread,
+      /** Wall time per turn, the CLI's own start included. */
+      msPerTurn: Schema.Number,
+      loopDelayP99Ms: Schema.Number,
+      loopDelayMaxMs: Schema.Number,
+      gcPauseMs: Schema.Number,
+    }),
+  ),
   /** A server on a copy of the developer's real database, its projects backed by clones. */
   busy: Schema.optional(
     Schema.Struct({
@@ -72,6 +86,16 @@ export const Measured = Schema.Struct({
       rest: Window,
       shellMs: Spread,
       shellKB: Schema.Number,
+      /** The seeded thread with the most messages, opened through its bounded HTTP snapshot. */
+      largeThread: Schema.optional(
+        Schema.Struct({
+          messages: Schema.Number,
+          openMs: Spread,
+          KB: Schema.Number,
+          /** Heap after GC once it was opened, less before. */
+          heapMB: Schema.Number,
+        }),
+      ),
       /** Back-to-back turns in a clone, each ending in a checkpoint. */
       git: Window,
     }),
@@ -247,6 +271,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       metric === "busy.projects" ||
       metric === "busy.ballastMB" ||
       metric === "clients.storm.clients" ||
+      metric === "busy.largeThread.messages" ||
       metric.startsWith("scaling.points")
     ) {
       continue;
