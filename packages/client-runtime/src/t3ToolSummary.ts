@@ -1583,6 +1583,227 @@ export function summarizeT3ToolCalls(
       }
       break;
     }
+    case "read-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read {count} pull request} other {Read {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read {count} pull request} other {Tried to read {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "list-repo-prs": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Listed pull requests {count} time} other {Listed pull requests {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to list pull requests {count} time} other {Tried to list pull requests {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "create-pr": {
+      // An open PR for the branch is returned rather than duplicated.
+      const existing = selected.filter((call) => call.output?.created === false).length;
+      const opened = selected.length - existing;
+      label = !done
+        ? resolve(
+            msg(
+              "{count, plural, one {Tried to open {count} pull request} other {Tried to open {count} pull requests}}",
+              { count: selected.length },
+            ),
+          )
+        : opened === 0
+          ? resolve(
+              msg(
+                "{count, plural, one {Found {count} open pull request} other {Found {count} open pull requests}}",
+                { count: existing },
+              ),
+            )
+          : existing === 0
+            ? resolve(
+                msg(
+                  "{count, plural, one {Opened {count} pull request} other {Opened {count} pull requests}}",
+                  { count: opened },
+                ),
+              )
+            : resolve(
+                msg(
+                  "{opened, plural, one {Opened {opened} pull request, found {existing} open} other {Opened {opened} pull requests, found {existing} open}}",
+                  { opened, existing },
+                ),
+              );
+      break;
+    }
+    case "update-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Updated {count} pull request} other {Updated {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to update {count} pull request} other {Tried to update {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "respond-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Responded on pull requests {count} time} other {Responded on pull requests {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to respond on pull requests {count} time} other {Tried to respond on pull requests {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "merge-pr": {
+      // Auto-merge and merge queues leave the PR open until it lands.
+      const queued = selected.filter((call) =>
+        call.output?.state === undefined
+          ? call.input?.auto === true
+          : call.output.state !== "merged",
+      ).length;
+      const merged = selected.length - queued;
+      label = !done
+        ? resolve(
+            msg(
+              "{count, plural, one {Tried to merge {count} pull request} other {Tried to merge {count} pull requests}}",
+              { count: selected.length },
+            ),
+          )
+        : merged === 0
+          ? resolve(
+              msg(
+                "{count, plural, one {Queued {count} pull request to merge} other {Queued {count} pull requests to merge}}",
+                { count: queued },
+              ),
+            )
+          : queued === 0
+            ? resolve(
+                msg(
+                  "{count, plural, one {Merged {count} pull request} other {Merged {count} pull requests}}",
+                  { count: merged },
+                ),
+              )
+            : resolve(
+                msg(
+                  "{merged, plural, one {Merged {merged} pull request, queued {queued}} other {Merged {merged} pull requests, queued {queued}}}",
+                  { merged, queued },
+                ),
+              );
+      break;
+    }
+    case "ci-logs": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read CI logs {count} time} other {Read CI logs {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read CI logs {count} time} other {Tried to read CI logs {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "ci-rerun": {
+      // A host can refuse a check it cannot re-run, such as one outside its CI.
+      const outcomes = selected.flatMap((call) =>
+        Array.isArray(call.output?.checks)
+          ? call.output.checks.map((check) => asRecord(check)?.rerun === true)
+          : [],
+      );
+      const rerun = outcomes.filter(Boolean).length;
+      const refused = outcomes.length - rerun;
+      failedCount += refused;
+      if (!done) {
+        label = resolve(
+          msg(
+            "{count, plural, one {Tried to re-run CI {count} time} other {Tried to re-run CI {count} times}}",
+            { count: selected.length },
+          ),
+        );
+      } else if (outcomes.length === 0) {
+        // An empty list means no check had failed, so nothing was asked of the host.
+        label = selected.some((call) => Array.isArray(call.output?.checks))
+          ? resolve(msg("Found no failed checks to re-run"))
+          : resolve(
+              msg("{count, plural, one {Re-ran CI {count} time} other {Re-ran CI {count} times}}", {
+                count: selected.length,
+              }),
+            );
+      } else if (rerun === 0) {
+        label = resolve(
+          msg(
+            "{count, plural, one {Could not re-run {count} check} other {Could not re-run {count} checks}}",
+            { count: refused },
+          ),
+        );
+      } else if (refused === 0) {
+        label = resolve(
+          msg("{count, plural, one {Re-ran {count} check} other {Re-ran {count} checks}}", {
+            count: rerun,
+          }),
+        );
+      } else {
+        label = resolve(
+          msg(
+            "{rerun, plural, one {Re-ran {rerun} check, {refused} refused} other {Re-ran {rerun} checks, {refused} refused}}",
+            { rerun, refused },
+          ),
+        );
+      }
+      break;
+    }
+    case "review-pr": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Reviewed {count} pull request} other {Reviewed {count} pull requests}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to review {count} pull request} other {Tried to review {count} pull requests}}",
+              { count },
+            ),
+          );
+      break;
+    }
   }
   return { label, failedCount };
 }
