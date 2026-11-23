@@ -176,6 +176,42 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
   );
 }
 
+export const ANTIGRAVITY_SIGN_IN_UNVERIFIED_MESSAGE =
+  "Antigravity could not verify your Google sign-in because Google did not answer. Check your connection and try again.";
+
+const CLI_LOG_NAME = /^acp-server-\d{8}_\d{6}-\d+\.log$/;
+const MAX_CLI_LOG_BYTES = 4 * 1024 * 1024;
+
+/**
+ * The 1.5 CLI answers `authenticate` identically for no sign-in, a token Google rejected and a
+ * refresh that never reached Google. Only the log of the newest process says which.
+ */
+export const antigravityTokenRefreshUnreachable = Effect.fn("antigravityTokenRefreshUnreachable")(
+  function* (profileDirectory: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const logDirectory = path.join(profileDirectory, "antigravity-acp", "log");
+    // Names start with the process start time, so the newest is the process that just failed.
+    const newest = (yield* fs.readDirectory(logDirectory))
+      .filter((name) => CLI_LOG_NAME.test(name))
+      .toSorted()
+      .at(-1);
+    if (newest === undefined) return false;
+    const logPath = path.join(logDirectory, newest);
+    if (Number((yield* fs.stat(logPath)).size) > MAX_CLI_LOG_BYTES) return false;
+    const verdict = (yield* fs.readFileString(logPath))
+      .split("\n")
+      .findLast(
+        (line) =>
+          line.includes("keyringAuth: timed out after") ||
+          line.includes("keyringAuth: saved token invalid: "),
+      );
+    // Google's own refusals come from Go's oauth2 package; transport failures do not.
+    return verdict !== undefined && !verdict.includes("keyringAuth: saved token invalid: oauth2:");
+  },
+  Effect.orElseSucceed(() => false),
+);
+
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
   /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
