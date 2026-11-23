@@ -1035,7 +1035,7 @@ it.layer(
   });
 
   describe("ProviderRegistry.layer", () => {
-    it("marks folder catalogs pending when a machine refresh changes the machine models", () => {
+    it("marks folder catalogs pending when a machine refresh changes its models or commands", () => {
       const machineModel = {
         slug: "opencode/big-pickle",
         name: "Big Pickle",
@@ -3298,126 +3298,6 @@ it.layer(
           const rescanned = yield* workspaceOf;
           assert.deepStrictEqual(rescanned?.models, nextWorkspaceModels);
           assert.strictEqual(rescanned?.modelsPending, undefined);
-        }).pipe(Effect.provide(runtimeServices));
-      }),
-    );
-
-    it.effect("rescans a cached workspace within TTL after machine slashCommands updates", () =>
-      Effect.gen(function* () {
-        const driver = ProviderDriverKind.make("grok");
-        const instanceId = ProviderInstanceId.make("grok");
-        const initialCommands = [
-          { name: "compact", description: "Compact context" },
-        ] satisfies ServerProvider["slashCommands"];
-        const discoveredCommands = [
-          { name: "compact", description: "Compact context" },
-          { name: "review", description: "Review changes" },
-        ] satisfies ServerProvider["slashCommands"];
-        const provider = {
-          instanceId,
-          driver,
-          status: "ready",
-          enabled: true,
-          installed: true,
-          auth: { status: "authenticated" },
-          checkedAt: "2026-06-10T00:00:00.000Z",
-          version: "1.0.0",
-          models: [],
-          slashCommands: initialCommands,
-          skills: [],
-        } satisfies ServerProvider;
-        const machineProvider = yield* Ref.make<ServerProvider>(provider);
-        const scanCalls = yield* Ref.make(0);
-        const instances = [
-          {
-            instanceId,
-            driverKind: driver,
-            continuationIdentity: { driverKind: driver, continuationKey: "grok:instance:grok" },
-            displayName: undefined,
-            enabled: true,
-            snapshot: {
-              resolveMaintenance: () =>
-                Effect.succeed(
-                  makeManualOnlyProviderMaintenanceCapabilities({
-                    provider: driver,
-                    packageName: null,
-                  }),
-                ),
-              getSnapshot: Ref.get(machineProvider),
-              refresh: Ref.get(machineProvider),
-              streamChanges: Stream.empty,
-              applyUsageLimits: () => Effect.void,
-            },
-            // Mirrors Grok/Codex/Cursor/fx drivers, which copy machineSnapshot.slashCommands.
-            snapshotForCwd: () =>
-              Ref.update(scanCalls, (count) => count + 1).pipe(
-                Effect.andThen(Ref.get(machineProvider)),
-                Effect.map((current) => ({ ...current, slashCommandsPending: false })),
-              ),
-            orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
-            textGeneration: {} as ProviderInstance["textGeneration"],
-          },
-        ] satisfies ReadonlyArray<ProviderInstance>;
-        const instanceRegistryLayer = Layer.succeed(
-          ProviderInstanceRegistry.ProviderInstanceRegistry,
-          {
-            getInstance: (requestedId) =>
-              Effect.succeed(instances.find((instance) => instance.instanceId === requestedId)),
-            listInstances: Effect.succeed(instances),
-            listUnavailable: Effect.succeed([]),
-            streamChanges: Stream.empty,
-            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
-          },
-        );
-        const scope = yield* Scope.make();
-        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
-        const runtimeServices = yield* Layer.build(
-          ProviderRegistry.layer.pipe(
-            Layer.provide(layerUnusedMutator),
-            Layer.provideMerge(instanceRegistryLayer),
-            Layer.provideMerge(
-              ServerConfig.layerTest(process.cwd(), {
-                prefix: "t3-provider-registry-slash-commands-",
-              }),
-            ),
-            Layer.provideMerge(NodeServices.layer),
-          ),
-        ).pipe(Scope.provide(scope));
-
-        yield* Effect.gen(function* () {
-          const registry = yield* ProviderRegistry.ProviderRegistry;
-          const workspaceOf = Effect.map(
-            registry.getProviders,
-            (providers) => providers[0]?.workspaceSnapshots?.[0],
-          );
-
-          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
-          assert.strictEqual(yield* Ref.get(scanCalls), 1);
-          assert.deepStrictEqual((yield* workspaceOf)?.slashCommands, initialCommands);
-          assert.strictEqual((yield* workspaceOf)?.slashCommandsPending, undefined);
-
-          // Within TTL, a repeated refresh reuses the cached workspace snapshot.
-          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
-          assert.strictEqual(yield* Ref.get(scanCalls), 1);
-
-          // Once machine slashCommands updates, the cached workspace snapshot becomes pending.
-          yield* Ref.set(machineProvider, {
-            ...provider,
-            slashCommands: discoveredCommands,
-          });
-          yield* registry.refreshInstance(instanceId);
-          assert.strictEqual((yield* workspaceOf)?.slashCommandsPending, true);
-
-          // A normal refresh within TTL rescans and publishes the updated workspace slashCommands.
-          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
-          assert.strictEqual(yield* Ref.get(scanCalls), 2);
-          const rescanned = yield* workspaceOf;
-          assert.deepStrictEqual(rescanned?.slashCommands, discoveredCommands);
-          assert.strictEqual(rescanned?.slashCommandsPending, undefined);
-
-          // Subsequent calls within TTL reuse the freshly scanned snapshot.
-          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
-          assert.strictEqual(yield* Ref.get(scanCalls), 2);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );

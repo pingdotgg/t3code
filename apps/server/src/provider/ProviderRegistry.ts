@@ -356,7 +356,7 @@ export const mergeProviderSnapshot = (
       : nextProvider.slashCommands;
   const modelsChanged = !Equal.equals(models, previousProvider.models);
   const slashCommandsChanged = !Equal.equals(slashCommands, previousProvider.slashCommands);
-  // Folder catalogs were compared with the old machine catalog, so every folder rescans.
+  // Folder catalogs were built on the old machine catalog, so every folder rescans what changed.
   const previousWorkspaceSnapshots =
     !modelsChanged && !slashCommandsChanged
       ? previousProvider.workspaceSnapshots
