@@ -348,7 +348,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           alwaysSetModel: true,
           // Copilot expands only a leading `/name`, while the `$` picker inserts `$name` from
           // `copilot skill list --json`. Ask that catalog again so non-skill `$` text and built-in
-          // command collisions are left alone.
+          // command collisions are left alone. Untraced: runs per-turn inside startTurn's span and
+          // delegates to discoverCopilotSkills (which owns its own span) only on a leading mention.
           rewriteUserText: Effect.fnUntraced(
             function* (text: string, turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
               const mention = leadingCopilotSkillMention(text);

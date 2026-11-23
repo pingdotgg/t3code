@@ -167,6 +167,7 @@ function isSkillFrontmatterNonUserInvocable(contents: string): boolean {
   return match?.[1] !== undefined && USER_INVOCABLE_FALSE_PATTERN.test(match[1]);
 }
 
+// Untraced helper: runs within discoverCopilotSkills's span to annotate frontmatter per skill.
 const annotateCopilotSkillInvocability = Effect.fnUntraced(function* (
   skills: ReadonlyArray<ServerProviderSkill>,
 ) {

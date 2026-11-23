@@ -1501,4 +1501,48 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         ]);
       }),
   );
+
+  it.effect(
+    "skips skill discovery in snapshotForCwd when Copilot is not installed or awaiting its first check",
+    () =>
+      Effect.gen(function* () {
+        const resolvedCwds: Array<string> = [];
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: "GitHub Copilot",
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "github-copilot-cli" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "unprepared",
+              agentId: "github-copilot-cli",
+              version: "1.0.105",
+              distribution: "binary",
+            }),
+            resolve: (_settings, cwd) => {
+              resolvedCwds.push(cwd);
+              return Effect.fail(
+                new AcpRegistrySupport.AcpRegistryError({
+                  reason: "runner_unavailable",
+                  detail: "unprepared",
+                }),
+              );
+            },
+          }),
+        );
+
+        const beforeFirstCheck = yield* instance.snapshotForCwd!("/workspaces/greendale");
+        expect(resolvedCwds).not.toContain("/workspaces/greendale");
+        expect(beforeFirstCheck.installed).toBe(false);
+        expect(beforeFirstCheck.slashCommandsPending).toBe(true);
+
+        yield* instance.snapshot.refresh;
+        const afterUnpreparedCheck = yield* instance.snapshotForCwd!("/workspaces/greendale");
+        expect(resolvedCwds).not.toContain("/workspaces/greendale");
+        expect(afterUnpreparedCheck.installed).toBe(false);
+        expect(afterUnpreparedCheck.slashCommandsPending).toBeUndefined();
+      }),
+  );
 });

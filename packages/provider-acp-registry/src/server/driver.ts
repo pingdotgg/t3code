@@ -698,10 +698,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Refreshes rebuild the snapshot from the probe, so per-model options
     // learned from earlier sessions are kept here.
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const discoveredCopilotSkills = yield* Ref.make<
-      Option.Option<ReadonlyArray<ServerProviderSkill>>
-    >(Option.none());
-    const clearDiscoveredCopilotSkills = Ref.set(discoveredCopilotSkills, Option.none());
+    const discoveredCopilotSkills = yield* Ref.make<{
+      readonly generation: number;
+      readonly skills: Option.Option<ReadonlyArray<ServerProviderSkill>>;
+    }>({ generation: 0, skills: Option.none() });
+    const clearDiscoveredCopilotSkills = Ref.update(discoveredCopilotSkills, (current) => ({
+      generation: current.generation + 1,
+      skills: Option.none(),
+    }));
+    const commitDiscoveredCopilotSkills = (
+      generation: number,
+      skills: ReadonlyArray<ServerProviderSkill>,
+    ) =>
+      Ref.update(discoveredCopilotSkills, (current) =>
+        current.generation === generation ? { ...current, skills: Option.some(skills) } : current,
+      );
     const discoverCopilotSkillsFor = (cwd: string) =>
       discoverCopilotSkills({
         settings: effectiveConfig,
@@ -760,7 +771,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
           : input;
       const cachedSkills = isCopilot
-        ? yield* Ref.get(discoveredCopilotSkills)
+        ? (yield* Ref.get(discoveredCopilotSkills)).skills
         : Option.none<ReadonlyArray<ServerProviderSkill>>();
       if (Option.isNone(runtimeCoordinator)) {
         return isCopilot ? applyAvailableCommands(provider, Option.none(), cachedSkills) : provider;
@@ -808,11 +819,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (!isCopilot || !enriched.installed) {
         return enriched;
       }
+      const { generation } = yield* Ref.get(discoveredCopilotSkills);
       const skills = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(Effect.option);
       if (Option.isNone(skills)) {
         return enriched;
       }
-      yield* Ref.set(discoveredCopilotSkills, skills);
+      yield* commitDiscoveredCopilotSkills(generation, skills.value);
       return applyCopilotDiscoveredSkills(enriched, skills.value);
     });
     const enrichmentCache = yield* Ref.make<AcpRegistryEnrichmentCache>({
@@ -911,6 +923,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
           instanceId,
+          // Untraced per-event watcher callback; lazy skill discovery creates its own span.
           Effect.fnUntraced(function* ({ slashCommands, skills }) {
             if (!isCopilot) {
               return yield* liveSnapshotSemaphore.withPermit(
@@ -925,18 +938,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ),
               );
             }
-            if (Option.isNone(yield* Ref.get(discoveredCopilotSkills))) {
+            const cachedState = yield* Ref.get(discoveredCopilotSkills);
+            if (Option.isNone(cachedState.skills)) {
               const discovered = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(
                 Effect.option,
               );
               if (Option.isSome(discovered)) {
-                yield* Ref.set(discoveredCopilotSkills, discovered);
+                yield* commitDiscoveredCopilotSkills(cachedState.generation, discovered.value);
               }
             }
             yield* liveSnapshotSemaphore.withPermit(
               Effect.gen(function* () {
                 const current = yield* getSnapshot;
-                const cachedSkills = yield* Ref.get(discoveredCopilotSkills);
+                const cachedSkills = (yield* Ref.get(discoveredCopilotSkills)).skills;
                 const effectiveSkills = Option.getOrElse(cachedSkills, () => current.skills);
                 yield* publishSnapshot({
                   ...current,
@@ -1065,27 +1079,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ),
     };
 
-    const snapshotForCwd = (workspaceCwd: string) =>
-      !effectiveConfig.enabled
-        ? snapshot.getSnapshot
-        : Effect.all([
-            snapshot.getSnapshot,
-            discoverCopilotSkillsFor(workspaceCwd).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderDriverError({
-                    driver: DRIVER_KIND,
-                    instanceId,
-                    detail: `Failed to discover Copilot skills for '${workspaceCwd}'`,
-                    cause,
-                  }),
-              ),
-            ),
-          ]).pipe(
-            Effect.map(([machineSnapshot, skills]) =>
-              applyCopilotDiscoveredSkills(machineSnapshot, skills),
-            ),
-          );
+    const snapshotForCwd = Effect.fn("AcpRegistryDriver.snapshotForCwd")(function* (
+      workspaceCwd: string,
+    ) {
+      const initial = yield* snapshot.getSnapshot;
+      if (!effectiveConfig.enabled || !initial.installed) {
+        const awaitingFirstCheck =
+          effectiveConfig.enabled &&
+          (yield* snapshot.isAwaitingFirstCheck ?? Effect.succeed(false));
+        return awaitingFirstCheck ? { ...initial, slashCommandsPending: true } : initial;
+      }
+      const skills = yield* discoverCopilotSkillsFor(workspaceCwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: `Failed to discover Copilot skills for '${workspaceCwd}'`,
+              cause,
+            }),
+        ),
+      );
+      const latest = yield* snapshot.getSnapshot;
+      return applyCopilotDiscoveredSkills(latest, skills);
+    });
 
     return {
       instanceId,
