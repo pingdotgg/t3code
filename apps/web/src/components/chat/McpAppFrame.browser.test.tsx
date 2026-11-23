@@ -9,6 +9,12 @@ import { act, fakeTimers, render } from "../../../test/render";
 // the second one is left to finish on the host's timeout.
 const APP_HTML = `<script>
 let answered = false;
+addEventListener("click", () => {
+  parent.postMessage({
+    jsonrpc: "2.0", id: 10, method: "ui/open-link",
+    params: { url: "https://app.t3.codes/threads/environment/thread%3Aprovider%252F1" }
+  }, "*");
+});
 addEventListener("message", (event) => {
   const message = event.data;
   if (message === "close") {
@@ -43,6 +49,33 @@ const nextInitializedFrom = () =>
   });
 
 describe("McpAppFrame", () => {
+  it("opens a clicked same-environment thread in the current router", async () => {
+    const initialized = nextInitializedFrom();
+    await using screen = await render(
+      <McpAppFrame
+        environmentId={EnvironmentId.make("environment")}
+        threadId={ThreadId.make("thread")}
+        conversationThreadId={ThreadId.make("thread")}
+        itemId={TurnItemId.make("item")}
+        revision="1"
+        app={{
+          attachmentId: "attachment",
+          server: "Demo",
+          tool: "show",
+          resourceUri: "ui://demo/app",
+        }}
+        onSendMessage={undefined}
+      />,
+    );
+    await initialized;
+    using external = vi.spyOn(window, "open").mockReturnValue(null);
+    await userEvent.click(screen.getByTitle("Demo app"));
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/environment/thread%3Aprovider%252F1"),
+    );
+    expect(external).not.toHaveBeenCalled();
+  });
+
   it("keeps a reopened app when the old document's second teardown finishes late", async () => {
     const firstInitialized = nextInitializedFrom();
     await using screen = await render(

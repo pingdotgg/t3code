@@ -85,6 +85,15 @@ export function parseThreadLinkHref(href: string): ThreadLink | null {
   return environmentId === null || threadId === null ? null : { environmentId, threadId };
 }
 
+export function localHostedThreadRef(
+  href: string,
+  environmentId: EnvironmentId,
+): ScopedThreadRef | null {
+  if (!href.startsWith(HOSTED_PREFIX)) return null;
+  const link = parseHostedThreadLink(href);
+  return link?.environmentId === environmentId ? { environmentId, threadId: link.threadId } : null;
+}
+
 function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   try {
     const decoded = decodeURIComponent(threadId);

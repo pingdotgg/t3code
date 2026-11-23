@@ -8,6 +8,7 @@ import {
   formatThreadLink,
   guessThreadLinkRef,
   hostedThreadLink,
+  localHostedThreadRef,
   parseThreadLinkHref,
   threadLinkCandidates,
   threadLinkRefs,
@@ -67,6 +68,21 @@ describe("thread link destinations", () => {
 });
 
 describe("thread links", () => {
+  it("recognizes only hosted links into the current environment for in-app navigation", () => {
+    const target = ref("local", "thread:provider:lm-run%2Fsession%23t%3A1.3");
+    const url = hostedThreadLink(target);
+    expect(localHostedThreadRef(url, local)).toEqual(target);
+    for (const other of [
+      hostedThreadLink(ref("remote")),
+      url.replace("app.t3.codes", "app.t3.codes.example.org"),
+      url + "?redirect=1",
+      "https://app.t3.codes/threads/local/%ZZ",
+      "t3-thread://v2/local/chat-1",
+    ]) {
+      expect(localHostedThreadRef(other, local)).toBeNull();
+    }
+  });
+
   it("takes the ids verbatim, percent escapes included", () => {
     expect(parseThreadLinkHref("t3-thread://v1/mcp:1234")).toEqual(v1("mcp:1234"));
     expect(parseThreadLinkHref("t3-thread://v1/thread:delegated-task:mcp%3A1")).toEqual(

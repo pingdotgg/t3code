@@ -20,6 +20,7 @@ import {
   mcpAppReferencesEqual,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
+import { localHostedThreadRef } from "@t3tools/shared/threadLinks";
 import * as Predicate from "effect/Predicate";
 import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
@@ -47,6 +48,7 @@ import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -140,6 +142,7 @@ export function ThreadMcpApp(props: {
   }
   const fullscreen = props.displayMode === "fullscreen";
   const navigation = useNavigation();
+  const openThreadLink = useOpenLinkedThread();
   const insets = useSafeAreaInsets();
   const [closed, setClosed] = useState(false);
   const [presentedFullscreen, setPresentedFullscreen] = useState(false);
@@ -220,6 +223,7 @@ export function ThreadMcpApp(props: {
     conversation?.hasPendingApprovals === true || conversation?.hasPendingUserInput === true;
   const live = {
     awaitingUser,
+    openThreadLink,
     theme,
     props,
     asset,
@@ -361,8 +365,10 @@ export function ThreadMcpApp(props: {
         return result.value;
       },
       openLink: async (url) => {
-        // WebViews cannot prove user activation; confirm links to prevent timer-driven navigation out of T3.
+        const localThread = localHostedThreadRef(url, latest.current.props.environmentId);
+        // Confirm links leaving T3, or any link without a tap, to prevent timer-driven navigation.
         if (
+          (!localThread || !userActive.current) &&
           !(await confirm(
             m(msg("Open a link from {server}?", { server: app.server })),
             url,
@@ -370,6 +376,17 @@ export function ThreadMcpApp(props: {
           ))
         ) {
           throw new McpAppHostRefusal({ message: "Declined by the user." });
+        }
+        if (localThread) {
+          if (
+            currentHost.current !== documentHost ||
+            !latest.current.navigation.isFocused() ||
+            latest.current.awaitingUser
+          ) {
+            throw new McpAppHostRefusal({ message: "Thread navigation is unavailable here." });
+          }
+          latest.current.openThreadLink(localThread);
+          return;
         }
         if (!(await tryOpenExternalUrl(url, "mcp-app"))) {
           throw new McpAppHostRefusal({ message: "The link could not be opened." });
