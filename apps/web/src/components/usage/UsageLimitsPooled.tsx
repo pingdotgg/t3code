@@ -723,18 +723,21 @@ export function UsageLimitsPooled({
           {source.quotaAccounts?.map((account) => (
             <div key={account.id} className="space-y-1">
               <h3 className="text-sm font-medium">{account.label}</h3>
-              {account.windows.map((window) => (
-                <div
-                  key={window.id}
-                  className="flex justify-between gap-3 text-sm text-muted-foreground"
-                >
-                  <span>{window.label}</span>
-                  <span>
-                    {gt("{remaining}% left", { remaining: remainingPercent(window) })}
-                    {window.resetsAt ? ` · ${formatResetsIn(window, now, m) ?? ""}` : ""}
-                  </span>
-                </div>
-              ))}
+              {account.windows.map((window) => {
+                const reset = formatResetsIn(window, now, m);
+                return (
+                  <div
+                    key={window.id}
+                    className="flex justify-between gap-3 text-sm text-muted-foreground"
+                  >
+                    <span>{window.label}</span>
+                    <span>
+                      {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+                      {reset ? ` · ${reset}` : ""}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </section>
