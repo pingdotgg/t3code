@@ -227,7 +227,9 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         kind !== null && sideThreadComposer(kind) === "composer"
           ? {
               area: "panel",
-              selector: `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+              selectors: [
+                `[data-side-chat-pane="${CSS.escape(surface.threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+              ],
             }
           : { area: "panel" },
       );

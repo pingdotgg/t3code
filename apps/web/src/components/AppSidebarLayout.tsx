@@ -10,7 +10,11 @@ import {
 } from "react";
 import { useLocation, useRouter, type AnyRouter } from "@tanstack/react-router";
 
-import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
+import {
+  moveWorkspaceFocus,
+  requestWorkspaceFocus,
+  workspaceAreaProps,
+} from "../lib/workspaceFocus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import {
@@ -319,7 +323,7 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { toggleSidebar } = useSidebar();
+  const { toggleSidebar, setOpen, setOpenMobile, isMobile } = useSidebar();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   const isSidebarVisible = useSidebarVisibility();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
@@ -328,10 +332,23 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
     context: { usagePageOpen },
   });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles the sidebar on its shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown listener that toggles or focuses the sidebar on its shortcuts
   useEffect(() => {
     // A hidden sidebar would still save the toggle, so the shortcut does nothing without one.
     if (!showSidebar) return;
+    const focusThreads = () => {
+      if (isMobile) setOpenMobile(true);
+      else setOpen(true);
+      requestWorkspaceFocus({
+        area: "sidebar",
+        selectors: [
+          '[data-sidebar-row][aria-current="page"]',
+          "[data-sidebar-row]",
+          // A search hides the rows, even with no matches; its combobox owns arrow-key navigation.
+          'input[role="combobox"][aria-label="Search threads"]:not(:placeholder-shown)',
+        ],
+      });
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       if (
@@ -349,32 +366,48 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
         // the toggle stays available everywhere else.
         return;
       }
-      if (
-        !isSidebarToggleShortcut(event, keybindings, {
-          context: {
-            terminalFocus: isTerminalFocused(),
-            previewFocus: isPreviewFocused(),
-            ...readRoutePanelsOpen(router),
-            usagePageOpen,
-          },
-        })
-      )
-        return;
+      const options = {
+        context: {
+          terminalFocus: isTerminalFocused(),
+          previewFocus: isPreviewFocused(),
+          ...readRoutePanelsOpen(router),
+          usagePageOpen,
+        },
+      };
+      const toggle = isSidebarToggleShortcut(event, keybindings, options);
+      const command = toggle
+        ? "sidebar.toggle"
+        : resolveShortcutCommand(event, keybindings, options);
+      if (!toggle && command !== "sidebar.focusThreads") return;
+      if (command === "sidebar.focusThreads" && isCommandPaletteOpen()) return;
 
       event.preventDefault();
       event.stopPropagation();
-      toggleSidebar();
+      if (command === "sidebar.toggle") toggleSidebar();
+      else if (!event.repeat) focusThreads();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction((action) => {
       if (action === "sidebar.toggle") toggleSidebar();
     });
+    // Menu action so the command palette and forwarded preview keys reach it too.
+    const unregisterFocusThreads = registerMenuAction("sidebar.focusThreads", focusThreads);
     return () => {
       window.removeEventListener("keydown", onKeyDown, true);
       unsubscribe?.();
+      unregisterFocusThreads();
     };
-  }, [keybindings, router, showSidebar, toggleSidebar, usagePageOpen]);
+  }, [
+    isMobile,
+    keybindings,
+    router,
+    setOpen,
+    setOpenMobile,
+    showSidebar,
+    toggleSidebar,
+    usagePageOpen,
+  ]);
 
   // The control lives as long as the shell, so it carries the shell's commands. Created
   // once so re-renders never re-register them.
