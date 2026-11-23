@@ -436,7 +436,7 @@ describe("environment theme", () => {
       Effect.gen(function* () {
         const resumeProbes = yield* Deferred.make<void>();
         let linkedEntry: string | undefined;
-        let sampled = false;
+        let holdProbes = false;
         yield* withEnvironmentThemes(
           { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
           Effect.gen(function* () {
@@ -470,6 +470,7 @@ describe("environment theme", () => {
               ["Shared Light"],
             );
 
+            holdProbes = true;
             yield* fs.rename(active, previous);
             yield* fs.writeFileString(
               path.join(previous, "shared", "themes", "nightfall.json"),
@@ -485,13 +486,11 @@ describe("environment theme", () => {
               FileSystem.FileSystem.of({
                 ...fs,
                 stat: (entry) =>
-                  Effect.suspend(() => {
-                    if (entry !== linkedEntry) return fs.stat(entry);
-                    if (sampled)
-                      return Deferred.await(resumeProbes).pipe(Effect.andThen(fs.stat(entry)));
-                    sampled = true;
-                    return fs.stat(entry);
-                  }),
+                  Effect.suspend(() =>
+                    entry === linkedEntry && holdProbes
+                      ? Deferred.await(resumeProbes).pipe(Effect.andThen(fs.stat(entry)))
+                      : fs.stat(entry),
+                  ),
               }),
           },
         );

@@ -129,9 +129,10 @@ export const watchDirectoryPath = (
           ),
           Effect.orElseSucceed(() => null),
         );
+        // The identity of the tree the current watches were acquired on.
+        let previous: string | null | undefined;
         return watchDirectoryReplacements(
           (ready) => {
-            let previous: string | null | undefined;
             let retryDelay = 1;
             let nextRetry = 0;
             return Stream.tick("1 second").pipe(
@@ -164,7 +165,14 @@ export const watchDirectoryPath = (
             );
           },
           Stream.unwrap(
-            resolveLinkedPath(entry, link.value).pipe(
+            // Probe before resolving so a tree swapped in between reads as a replacement.
+            identity.pipe(
+              Effect.tap((acquired) =>
+                Effect.sync(() => {
+                  previous = acquired;
+                }),
+              ),
+              Effect.andThen(resolveLinkedPath(entry, link.value)),
               Effect.map((target) => {
                 if (target === entry || target === NodePath.dirname(target)) return watchContents;
                 return watchDirectoryReplacements(
