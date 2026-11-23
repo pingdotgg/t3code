@@ -128,6 +128,7 @@ overrides:
   react-native-pdf-jsi: 6.1.0
   react-native-webview: 14.0.1
   react-native-svg: 15.16.1
+  gt-react-native: 11.4.18
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
   expo-modules-core: 58.0.30
