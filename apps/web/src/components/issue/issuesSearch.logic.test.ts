@@ -60,25 +60,88 @@ describe("issueListTargets", () => {
 });
 
 describe("issueFilterProjects", () => {
-  it("keeps every project, scratch ones too, as its own choice", () => {
-    const environmentId = EnvironmentId.make("env");
-    const project = (id: string, isScratch = false) =>
+  it("lists one repository once across environments and checkouts, scratch stays separate", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (
+      id: string,
+      environmentId: EnvironmentId,
+      isScratch = false,
+      title = "t3code",
+      canonicalKey = "github.com/pingdotgg/t3code",
+    ) =>
+      ({
+        id: ProjectId.make(id),
+        environmentId,
+        title,
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: { canonicalKey },
+        isScratch,
+      }) as unknown as EnvironmentProject;
+    const choices = issueFilterProjects(
+      [
+        project("main", laptop),
+        project("worktree", laptop),
+        project("main", vps),
+        project("other", laptop, false, "other", "github.com/acme/other"),
+        project("scratch", laptop, true),
+      ],
+      new Map([
+        [laptop, "laptop"],
+        [vps, "vps"],
+      ]),
+    );
+    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
+      ["other", "other"],
+      ["main", "t3code · laptop · /work/main"],
+      ["scratch", "t3code · laptop · /work/scratch"],
+    ]);
+    const repository = choices.find((choice) => choice.id === ProjectId.make("main"));
+    expect(repository?.memberProjectKeys).toEqual([
+      JSON.stringify([laptop, ProjectId.make("main")]),
+      JSON.stringify([laptop, ProjectId.make("worktree")]),
+      JSON.stringify([vps, ProjectId.make("main")]),
+    ]);
+    const scratch = choices.find((choice) => choice.id === ProjectId.make("scratch"));
+    expect(scratch?.memberProjectKeys).toEqual([
+      JSON.stringify([laptop, ProjectId.make("scratch")]),
+    ]);
+  });
+
+  it("hiding a grouped repository hides it on every environment", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (id: string, environmentId: EnvironmentId) =>
       ({
         id: ProjectId.make(id),
         environmentId,
         title: "t3code",
         workspaceRoot: `/work/${id}`,
-        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
-        isScratch,
+        repositoryIdentity: {
+          canonicalKey: id === "other" ? "github.com/acme/other" : "github.com/pingdotgg/t3code",
+        },
       }) as unknown as EnvironmentProject;
-    const choices = issueFilterProjects(
-      [project("main"), project("worktree"), project("scratch", true)],
-      new Map([[environmentId, "laptop"]]),
+    const projects = [
+      project("main", laptop),
+      project("worktree", laptop),
+      project("other", laptop),
+      project("main", vps),
+    ];
+    const repository = issueFilterProjects(projects, new Map([[laptop, "laptop"]])).find(
+      (choice) => choice.id === ProjectId.make("main"),
     );
-    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["main", "t3code · laptop · /work/main"],
-      ["scratch", "t3code · laptop · /work/scratch"],
-      ["worktree", "t3code · laptop · /work/worktree"],
+    const hidden = repository?.memberProjectKeys.map(
+      (key) => JSON.parse(key) as readonly [EnvironmentId, ProjectId],
+    );
+    const input = { state: "open" } as const;
+    expect(issueListTargets([laptop, vps], projects, hidden, input)).toEqual([
+      {
+        environmentId: laptop,
+        input: {
+          state: "open",
+          excludeProjectIds: [ProjectId.make("main"), ProjectId.make("worktree")],
+        },
+      },
     ]);
   });
 });

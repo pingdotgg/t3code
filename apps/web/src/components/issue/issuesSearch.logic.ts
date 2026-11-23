@@ -2,6 +2,7 @@ import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import {
   ISSUE_LIST_MAX_EXCLUDED_PROJECTS,
+  repositoryGroupingKeyOf,
   type EnvironmentId,
   type IssueListInput,
   type ProjectId,
@@ -53,22 +54,61 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
+/** The same key as `pullRequestProjectKey`. */
+const projectKey = (project: { readonly id: ProjectId; readonly environmentId: EnvironmentId }) =>
+  JSON.stringify([project.environmentId, project.id]);
+
+/** One filter entry: a repository across environments, or a single project without one. */
+export interface IssueFilterProject extends EnvironmentProject {
+  /** `pullRequestProjectKey` of every member: hiding the entry hides them all. */
+  readonly memberProjectKeys: ReadonlyArray<string>;
+}
+
 /**
- * One choice per project: projects on one repository can read different Linear teams. Scratch
- * projects stay, since Settings can bind one to a Linear team.
+ * One choice per repository across environments: hiding it hides the repository everywhere.
+ * Projects on one repository can read different Linear teams, so those hide together.
+ * Scratch projects stay as their own choice, since Settings can bind one to a Linear team.
  */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-) =>
-  pullRequestFilterProjects(
-    projects.map((project) => ({ ...project, repositoryIdentity: null })),
+): ReadonlyArray<IssueFilterProject> => {
+  const groups = new Map<string, Array<EnvironmentProject>>();
+  for (const project of projects) {
+    const repositoryKey =
+      project.isScratch === true
+        ? undefined
+        : project.repositoryIdentity
+          ? repositoryGroupingKeyOf(project.repositoryIdentity)
+          : undefined;
+    const key = repositoryKey
+      ? JSON.stringify(["repository", repositoryKey])
+      : JSON.stringify(["project", project.environmentId, project.id]);
+    const members = groups.get(key);
+    if (members) members.push(project);
+    else groups.set(key, [project]);
+  }
+  const representatives: Array<EnvironmentProject> = [];
+  const memberKeys = new Map<string, ReadonlyArray<string>>();
+  for (const members of groups.values()) {
+    const representative = members[0];
+    if (!representative) continue;
+    representatives.push(representative);
+    memberKeys.set(
+      projectKey(representative),
+      members.map((member) => projectKey(member)),
+    );
+  }
+  return pullRequestFilterProjects(
+    // Grouping is done above: keep the repository out so the shared filter does not
+    // regroup the representatives by environment and repository.
+    representatives.map((project) => ({ ...project, repositoryIdentity: null })),
     environmentLabels,
-  );
-
-/** The same key as `pullRequestProjectKey`. */
-const projectKey = (project: { readonly id: ProjectId; readonly environmentId: EnvironmentId }) =>
-  JSON.stringify([project.environmentId, project.id]);
+  ).map((choice) => ({
+    ...choice,
+    memberProjectKeys: memberKeys.get(projectKey(choice)) ?? [projectKey(choice)],
+  }));
+};
 
 export const issueProjectKeys = (pairs: IssuesSearch["hideProjects"]): ReadonlySet<string> =>
   new Set((pairs ?? []).map((pair) => JSON.stringify(pair)));

@@ -26,7 +26,9 @@ import {
 } from "~/components/ui/menu";
 import { useIssueFilterCandidates } from "~/state/issues";
 
-import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
+import { ProjectFavicon } from "../ProjectFavicon";
+
+import type { IssueFilterProject } from "./issuesSearch.logic";
 
 import {
   PullRequestFilterRadioSubmenu,
@@ -52,7 +54,7 @@ export function IssueFiltersMenu(props: {
   onLabels: (labels: ReadonlyArray<string>) => void;
   assignee: string | undefined;
   onAssignee: (assignee: string | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<IssueFilterProject>;
   hiddenProjects: ReadonlySet<string>;
   onHiddenProjects: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
 }) {
@@ -154,7 +156,7 @@ export function IssueFiltersMenu(props: {
 }
 
 function ProjectChoices(props: {
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<IssueFilterProject>;
   hidden: ReadonlySet<string>;
   onChange: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
 }) {
@@ -180,7 +182,7 @@ function ProjectChoices(props: {
         checked={allShown}
         onCheckedChange={(shown) =>
           props.onChange(
-            shown ? [] : pairsOf(props.projects.map((project) => pullRequestProjectKey(project))),
+            shown ? [] : pairsOf(props.projects.flatMap((project) => project.memberProjectKeys)),
           )
         }
       >
@@ -192,15 +194,18 @@ function ProjectChoices(props: {
       <MenuSeparator />
       {visible.length === 0 ? <MenuItem disabled>{gt("No matching projects.")}</MenuItem> : null}
       {visible.map((project) => {
-        const key = pullRequestProjectKey(project);
+        // One entry hides every member: a repository across environments and checkouts.
+        const memberKeys = project.memberProjectKeys;
         return (
           <MenuCheckboxItem
-            key={key}
-            checked={!props.hidden.has(key)}
+            key={pullRequestProjectKey(project)}
+            checked={memberKeys.some((key) => !props.hidden.has(key))}
             onCheckedChange={(shown) => {
               const next = new Set(props.hidden);
-              if (shown) next.delete(key);
-              else next.add(key);
+              for (const key of memberKeys) {
+                if (shown) next.delete(key);
+                else next.add(key);
+              }
               props.onChange(pairsOf(next));
             }}
           >
