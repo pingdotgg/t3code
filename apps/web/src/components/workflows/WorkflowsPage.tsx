@@ -149,7 +149,7 @@ export function WorkflowsPage() {
           >
             <WorkspaceBreadcrumb
               ariaLabel={gt("Workflows breadcrumb")}
-              className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+              className="flex-auto overflow-clip [overflow-clip-margin:2px]"
             >
               <WorkspaceBreadcrumbItem current={!editing} className="shrink">
                 {editing ? (
@@ -231,7 +231,7 @@ export function WorkflowsPage() {
                       environmentId}
                   </SelectValue>
                 </SelectTrigger>
-                <SelectPopup>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
                   {connected.map((environment) => (
                     <SelectItem key={environment.environmentId} value={environment.environmentId}>
                       {environment.label}
