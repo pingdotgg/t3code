@@ -50,9 +50,12 @@ pub(crate) enum Effect {
     /// rest waits for the next turn.
     #[serde(rename = "provider-session.apply-model-selection")]
     ApplyModelSelection { thread_id: String, selection: Value },
+    /// Its outbox row outlives a server update, so each field a later build adds takes
+    /// `#[serde(default)]`: a row stored before the field existed still decodes.
     #[serde(rename = "attachment.cleanup")]
     CleanupHtmlAttachments {
         thread_id: String,
+        #[serde(default)]
         ids: Vec<(String, String)>,
     },
     /// Tells the host a remote task of `thread_id` now owes its thread there a stop, so its

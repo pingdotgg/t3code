@@ -135,6 +135,18 @@ fn every_effect_round_trips_under_its_effect_type() {
     }
 }
 
+/// A cleanup row stored with fewer fields than this build knows still decodes (audit 6.7 adds
+/// one).
+#[test]
+fn a_cleanup_row_without_its_newer_fields_decodes() {
+    let effect: Effect =
+        serde_json::from_value(json!({"type": "attachment.cleanup", "threadId": "t"})).unwrap();
+    assert!(matches!(
+        effect,
+        Effect::CleanupHtmlAttachments { ids, .. } if ids.is_empty()
+    ));
+}
+
 /// `enqueue` writes rows only in the command's transaction: a rolled back write leaves none,
 /// and a commit wakes the worker.
 #[tokio::test(flavor = "current_thread")]
