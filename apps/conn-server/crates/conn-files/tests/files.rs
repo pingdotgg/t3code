@@ -348,6 +348,14 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
     symlink(&f.outside, f.project.join("out")).unwrap();
     symlink(f.project.join("src"), f.project.join("src-link")).unwrap();
     symlink(&f.project, f.project.join("src/up")).unwrap();
+    // File links: inside (listed, as in T3), ignored by name, and out of the root.
+    symlink(f.project.join("src/main.rs"), f.project.join("alias.rs")).unwrap();
+    symlink(
+        f.project.join("src/main.rs"),
+        f.project.join("debug-link.log"),
+    )
+    .unwrap();
+    symlink(f.outside.join("secret.txt"), f.project.join("secret.txt")).unwrap();
 
     let listed = entries::list_directory(&f.project, "", &f.files.internal).unwrap();
     let mut names: Vec<(String, ProjectEntryKind, Option<bool>)> = listed
@@ -360,7 +368,9 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
         names,
         vec![
             (".gitignore".into(), ProjectEntryKind::File, None),
+            ("alias.rs".into(), ProjectEntryKind::File, None),
             ("build".into(), ProjectEntryKind::Directory, Some(true)),
+            ("debug-link.log".into(), ProjectEntryKind::File, Some(true)),
             ("debug.log".into(), ProjectEntryKind::File, Some(true)),
             ("src".into(), ProjectEntryKind::Directory, None),
             ("src-link".into(), ProjectEntryKind::Directory, None),
@@ -379,7 +389,52 @@ fn lists_folders_with_links_inside_and_ignored_marks() {
 
     let all = entries::list_all(&f.project, &f.files.internal);
     let paths: Vec<&str> = all.entries.iter().map(|e| e.path.as_str()).collect();
-    assert_eq!(paths, [".gitignore", "src", "src/main.rs"]);
+    assert_eq!(
+        paths,
+        [".gitignore", "alias.rs", "src", "src/main.rs"],
+        "a file link counts, a folder link is not walked into"
+    );
+    let search = |query: &str| {
+        let input = ProjectSearchEntriesInput {
+            cwd: String::new(),
+            query: query.into(),
+            limit: 20,
+            kind: None,
+            image_only: None,
+        };
+        search::search_entries(&f.project, &input, &f.files.internal)
+            .entries
+            .into_iter()
+            .map(|e| (e.path, e.kind))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        search("alias.rs"),
+        [("alias.rs".to_owned(), ProjectEntryKind::File)]
+    );
+    assert!(
+        search("secret").is_empty(),
+        "a link out of the root is not offered"
+    );
+    assert!(
+        search("debug-link").is_empty(),
+        "ignore rules apply to links"
+    );
+    // Content search reads each file once, by its own name.
+    let grep = search::search_contents(
+        &f.project,
+        &ProjectSearchContentsInput {
+            cwd: String::new(),
+            query: "fn main".into(),
+            limit: 10,
+            case_sensitive: true,
+            whole_word: false,
+            use_regex: false,
+        },
+        &f.files.internal,
+    );
+    let hits: Vec<&str> = grep.matches.iter().map(|m| m.path.as_str()).collect();
+    assert_eq!(hits, ["src/main.rs"]);
     let ignored = entries::list_ignored(&f.project, &f.files.internal, None);
     let ignored: Vec<&str> = ignored.files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(ignored, ["debug.log"], "build/ is a wholly ignored folder");
@@ -493,6 +548,21 @@ fn searches_names_and_contents_without_ignored_files() {
     let broken = grep("(main", false, false, true);
     assert!(broken.regex_fallback_error.is_some());
     assert!(broken.matches.is_empty());
+
+    // A file over 4 MiB is searched, not skipped: T3 finds its first and its last line.
+    d.write(
+        "large.txt",
+        format!("earlyNeedle\n{}lateNeedle\n", "filler\n".repeat(610_000)),
+    );
+    for (needle, line) in [("earlyNeedle", 1), ("lateNeedle", 610_002)] {
+        let found = grep(needle, true, false, false);
+        let lines: Vec<i64> = found.matches.iter().map(|m| m.line_number).collect();
+        assert_eq!((lines, found.truncated), (vec![line], false), "{needle}");
+    }
+    // One line longer than the search holds: what it could not read makes the result partial.
+    d.write("one-line.txt", "x".repeat(5 * 1024 * 1024));
+    let long = grep("earlyNeedle", true, false, false);
+    assert_eq!((long.matches.len(), long.truncated), (1, true));
 }
 
 #[test]
