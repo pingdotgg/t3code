@@ -269,7 +269,8 @@ export function WorkflowRunFeed({
     : wholeSeconds(nowMs - Date.parse(run.startedAt));
   const steps = detail.data?.steps;
   const references = detail.data?.references ?? [];
-  const openThreadId = shownTab !== null && "thread" in shownTab ? shownTab.thread : null;
+  // An open transcript is one thread in one environment; `env` is absent for the run's own.
+  const openThread = shownTab !== null && "thread" in shownTab ? shownTab : null;
   const chip = (reference: WorkflowRunReference, small = false) => (
     <WorkflowReferenceChip
       key={`${reference.kind}:${reference.key}`}
@@ -337,7 +338,12 @@ export function WorkflowRunFeed({
       beat={beat}
       child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
       nowMs={nowMs}
-      open={beat.thread !== null && beat.thread.threadId === openThreadId}
+      open={
+        beat.thread !== null &&
+        openThread !== null &&
+        beat.thread.threadId === openThread.thread &&
+        (beat.thread.environmentId ?? undefined) === openThread.env
+      }
       onSelect={onSelect}
       onOpenThread={onOpenThread}
     />
