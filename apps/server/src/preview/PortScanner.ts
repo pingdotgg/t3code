@@ -4,6 +4,8 @@ import {
   PreviewStopLocalServerError,
   ThreadId,
   type DiscoveredLocalServer,
+  type PreviewProbeDiscoveredServerTlsInput,
+  type PreviewProbeDiscoveredServerTlsResult,
   type PreviewStopLocalServerInput,
 } from "@t3tools/contracts";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -69,15 +71,10 @@ export class PortDiscovery extends Context.Service<
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
-    /**
-     * Whether the loopback listener on `port` speaks TLS. Probed on demand when a user
-     * opens a discovered server, never during a scan: scanning lists owned listeners as
-     * plain HTTP without sending them a request.
-     */
-    readonly probeTls: (input: {
-      readonly host: string;
-      readonly port: number;
-    }) => Effect.Effect<boolean>;
+    /** Probed when a user opens a discovered server, never during a scan. */
+    readonly probeTls: (
+      input: PreviewProbeDiscoveredServerTlsInput,
+    ) => Effect.Effect<PreviewProbeDiscoveredServerTlsResult>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -1293,7 +1290,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
-  const probeTls: PortDiscovery["Service"]["probeTls"] = (input) => probeTlsListener(input);
+  const probeTls: PortDiscovery["Service"]["probeTls"] = (input) =>
+    probeTlsListener(input).pipe(Effect.map((tls) => ({ tls })));
 
   return PortDiscovery.of({
     scan: scanOnce,

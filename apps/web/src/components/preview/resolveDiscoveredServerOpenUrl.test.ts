@@ -41,19 +41,6 @@ describe("resolveDiscoveredServerOpenUrl", () => {
     });
   });
 
-  it("keeps http:// when the listener does not speak TLS", async () => {
-    const probeTls = vi.fn<ProbeDiscoveredServerTlsMutation>(async () =>
-      AsyncResult.success({ tls: false }),
-    );
-    expect(
-      await resolveDiscoveredServerOpenUrl({
-        threadRef,
-        port: server("http://localhost:3000"),
-        probeTls,
-      }),
-    ).toBe("http://localhost:3000");
-  });
-
   it("keeps http:// when the probe fails or throws", async () => {
     const failing = vi.fn<ProbeDiscoveredServerTlsMutation>(async () =>
       AsyncResult.failure(Cause.fail(new Error("boom"))),

@@ -103,34 +103,33 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     );
   };
 
-  const open = async (server: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
+  const open = async (listed: DiscoveredLocalServer, event: MouseEvent<HTMLElement>) => {
     if (event.button > 1) return;
-    // Discovered listeners are listed as plain HTTP; an HTTPS-only dev server opens at
-    // http:// and fails, so resolve the scheme first. Both click paths use the result.
-    const effectiveUrl = await resolveDiscoveredServerOpenUrl({
-      threadRef,
-      port: server,
-      probeTls: probeDiscoveredServerTls,
-    });
-    const effectiveServer = effectiveUrl === server.url ? server : { ...server, url: effectiveUrl };
     // Like links: modified and middle clicks go to the system browser.
-    if (event.metaKey || event.ctrlKey || event.button === 1) {
-      event.preventDefault();
+    const external = event.metaKey || event.ctrlKey || event.button === 1;
+    if (external) event.preventDefault();
+    // Discovered listeners are listed as plain HTTP; an HTTPS-only dev server would fail there.
+    const server = {
+      ...listed,
+      url: await resolveDiscoveredServerOpenUrl({
+        threadRef,
+        port: listed,
+        probeTls: probeDiscoveredServerTls,
+      }),
+    };
+    if (external) {
       // This machine's browser reaches another environment's loopback only through a forward.
       // Starting a forward runs the probe; only a confirmed local environment opens directly.
       const forwarding = forwardable && locality !== "local";
       const url = forwarding
-        ? await forwardPort(props.environmentId, effectiveServer.port).then(
-            (forward) => forwardedUrl(forward, effectiveServer.url),
+        ? await forwardPort(props.environmentId, server.port).then(
+            (forward) => forwardedUrl(forward, server.url),
             (error: unknown) => {
-              reportFailure(
-                gt("Could not forward port {port}", { port: effectiveServer.port }),
-                error,
-              );
+              reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
               return null;
             },
           )
-        : resolveExternalServerUrl(props.environmentId, effectiveServer.url);
+        : resolveExternalServerUrl(props.environmentId, server.url);
       if (url === null) return;
       // Without a forward, a remote environment's localhost would open this machine's instead.
       if (
@@ -144,7 +143,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           new Error(
             gt(
               "localhost:{port} runs on another machine, and port forwarding isn't available for it right now.",
-              { port: effectiveServer.port },
+              { port: server.port },
             ),
           ),
         );
@@ -155,11 +154,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
         .catch((error: unknown) => reportFailure(gt("Unable to open in browser"), error));
       return;
     }
-    const result = await openDiscoveredPort({
-      threadRef,
-      port: effectiveServer,
-      openPreview,
-    });
+    const result = await openDiscoveredPort({ threadRef, port: server, openPreview });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       reportFailure(gt("Unable to open preview"), squashAtomCommandFailure(result));
     }

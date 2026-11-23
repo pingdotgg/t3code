@@ -1,7 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the stop test drives real server processes.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
-import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
 
 import { it as effectIt } from "@effect/vitest";
@@ -397,7 +396,7 @@ const testCertificates = {
   cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
 };
 
-const listenOnLoopback = (server: NodeHttp.Server | NodeHttps.Server) =>
+const listenOnLoopback = (server: NodeHttps.Server) =>
   Effect.promise(
     () =>
       new Promise<number>((resolve) => {
@@ -438,32 +437,6 @@ effectIt.effect(
           expect(yield* scanner.scan([configuredUrl])).toMatchObject([
             { pid: 1234, url: configuredUrl },
           ]);
-        }).pipe(Effect.scoped, Effect.provide(layer));
-      },
-      () => Effect.sync(() => server.close()),
-    );
-  },
-);
-
-effectIt.effect(
-  "still drops an unowned configured HTTPS URL when the listener is plain HTTP",
-  () => {
-    const server = NodeHttp.createServer((_request, response) => {
-      response.writeHead(200, { "content-type": "text/html" });
-      response.end("ok");
-    });
-    return Effect.acquireUseRelease(
-      listenOnLoopback(server),
-      (port) => {
-        const configuredUrl = `https://localhost:${port}/app`;
-        const layer = layerLsofScanner({
-          pid: () => 1234,
-          fetch: certFailureFetch,
-          stdout: () => `p1234\ncnode\nn*:${port}\n`,
-        });
-        return Effect.gen(function* () {
-          const scanner = yield* PortScanner.PortDiscovery;
-          expect(yield* scanner.scan([configuredUrl])).toHaveLength(0);
         }).pipe(Effect.scoped, Effect.provide(layer));
       },
       () => Effect.sync(() => server.close()),

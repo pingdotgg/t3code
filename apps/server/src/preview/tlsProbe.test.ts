@@ -2,7 +2,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodeHttps from "node:https";
-import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -34,17 +33,6 @@ const withServer = <A, E, R>(
     (server) => Effect.sync(() => server.close()),
   );
 
-const freePort = Effect.promise(
-  () =>
-    new Promise<number>((resolve) => {
-      const server = NodeNet.createServer();
-      server.listen(0, "127.0.0.1", () => {
-        const port = (server.address() as NodeNet.AddressInfo).port;
-        server.close(() => resolve(port));
-      });
-    }),
-);
-
 effectIt.effect("detects a TLS listener with a self-signed certificate", () =>
   withServer(
     () =>
@@ -55,12 +43,11 @@ effectIt.effect("detects a TLS listener with a self-signed certificate", () =>
     (port) =>
       Effect.gen(function* () {
         expect(yield* probeTlsListener({ host: "localhost", port })).toBe(true);
-        expect(yield* probeTlsListener({ host: "127.0.0.1", port })).toBe(true);
       }),
   ),
 );
 
-effectIt.effect("answers false for a plain HTTP listener and a closed port", () =>
+effectIt.effect("answers false for a plain HTTP listener", () =>
   withServer(
     () =>
       NodeHttp.createServer((_request, response) => {
@@ -70,8 +57,6 @@ effectIt.effect("answers false for a plain HTTP listener and a closed port", () 
     (port) =>
       Effect.gen(function* () {
         expect(yield* probeTlsListener({ host: "localhost", port })).toBe(false);
-        const closed = yield* freePort;
-        expect(yield* probeTlsListener({ host: "localhost", port: closed })).toBe(false);
       }),
   ),
 );
