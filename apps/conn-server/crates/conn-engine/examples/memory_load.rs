@@ -253,6 +253,43 @@ async fn main() {
         snapshot.to_string().len()
     );
     drop(snapshot);
+    // A view opened on the long thread: the first item of a full snapshot against a bounded
+    // one (`acceptBoundedSnapshot`), with the live heap's peak while each is built.
+    for (label, bounded) in [("full", false), ("bounded", true)] {
+        let before = heap_kib();
+        let peak = Arc::new(std::sync::atomic::AtomicUsize::new(before));
+        let sampler = {
+            let peak = peak.clone();
+            tokio::spawn(async move {
+                loop {
+                    peak.fetch_max(heap_kib(), std::sync::atomic::Ordering::Relaxed);
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+        };
+        let mut view = engine
+            .subscribe_thread(
+                from_json(json!({"threadId": "t0", "acceptDedupedBodies": true,
+                    "acceptBoundedSnapshot": bounded}))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let first = to_json(
+            &timeout(Duration::from_secs(30), view.recv())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap(),
+        );
+        sampler.abort();
+        println!(
+            "{label}_snapshot_bytes={} {label}_peak_heap_delta_kib={}",
+            first.to_string().len(),
+            peak.load(std::sync::atomic::Ordering::Relaxed)
+                .saturating_sub(before)
+        );
+    }
     if checkpoints {
         println!("git_kib_after={}", git_kib(&root));
     }

@@ -5859,3 +5859,120 @@ async fn attention_is_off_by_default() {
             .is_empty()
     );
 }
+
+/// T3's bounded thread snapshot (`buildBoundedThreadStreamSnapshot`), with the flags the GPUI
+/// client sends: the newest 10 user turns and a cursor; `/history` reads the 6 before them.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bounded_snapshot_holds_ten_turns_and_pages_back() {
+    let db = TempDb::new("bounded");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    for i in 0..16 {
+        dispatch(
+            &engine,
+            message("t1", &format!("send-{i}"), &format!("turn {i}")),
+        )
+        .await;
+        until_run_ends(&mut stream).await;
+    }
+    let users = |rows: &Value| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["item"]["type"] == "user_message")
+            .map(|row| {
+                row["item"]["messageId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut bounded = engine
+        .subscribe_thread(
+            from_json(json!({"threadId": "t1", "acceptBoundedSnapshot": true,
+                "acceptCompactTurnItems": true, "acceptDedupedBodies": true}))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let view = next(&mut bounded).await;
+    let window = users(&view["projection"]["visibleTurnItems"]);
+    assert_eq!(window.len(), 10);
+    assert_eq!(view["hasMoreHistory"], true);
+    // Turns appended while the view is open do not move the cursor: the page still ends
+    // right before the window, so window, page and new turns cover every turn once.
+    for i in 16..19 {
+        dispatch(
+            &engine,
+            message("t1", &format!("send-{i}"), &format!("turn {i}")),
+        )
+        .await;
+        until_run_ends(&mut stream).await;
+    }
+    let cursor = view["historyCursor"].as_str().unwrap().to_owned();
+    let page = engine
+        .thread_history_page("t1".into(), cursor, None, false)
+        .await
+        .unwrap();
+    let crate::ThreadHistory::Page(page) = page else {
+        panic!("{page:?}")
+    };
+    let older = users(&page["items"]);
+    assert_eq!(older.len(), 6);
+    assert_eq!(page["hasMoreHistory"], false);
+    let newest = users(&projection(&engine, "t1").await["visibleTurnItems"]);
+    let mut seen: Vec<&String> = older.iter().chain(&window).collect();
+    seen.extend(newest.iter().skip(16));
+    assert_eq!(
+        seen,
+        newest.iter().collect::<Vec<_>>(),
+        "no gap, no duplicate"
+    );
+    assert_eq!(
+        engine
+            .thread_history_page("t1".into(), "bad".into(), None, false)
+            .await
+            .unwrap(),
+        crate::ThreadHistory::InvalidCursor
+    );
+}
+
+/// T3's byte budget (`THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes`): on a thread larger than
+/// 1 MiB, the bounded snapshot stays within it and fewer than 10 turns fit.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bounded_snapshot_stays_within_its_byte_budget() {
+    let db = TempDb::new("bounded-bytes");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    let text = "x".repeat(40_000);
+    for i in 0..30 {
+        dispatch(&engine, message("t1", &format!("send-{i}"), &text)).await;
+        until_run_ends(&mut stream).await;
+    }
+    let full = projection(&engine, "t1").await.to_string().len();
+    assert!(full > 2_000_000, "{full}");
+    let mut bounded = engine
+        .subscribe_thread(
+            // The flags the GPUI client sends (`conn-client/src/driver.rs`).
+            from_json(json!({"threadId": "t1", "acceptBoundedSnapshot": true,
+                "acceptCompactTurnItems": true, "acceptDedupedBodies": true}))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let view = next(&mut bounded).await;
+    let sent = view.to_string().len();
+    assert!(sent <= 1_048_576, "{sent}");
+    assert_eq!(view["hasMoreHistory"], true);
+}

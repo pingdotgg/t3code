@@ -164,7 +164,10 @@ pub(crate) async fn subscribe_thread(
     let after = input["afterSequence"].as_u64();
     let marker = input["requestCompletionMarker"] == true;
     let dedupe = input["acceptDedupedBodies"] == true;
-    let omit_local = input["acceptCompactTurnItems"] == true;
+    // T3's `shouldUseBoundedThreadSnapshot`: the newest window and a cursor for older pages.
+    let bounded = input["acceptBoundedSnapshot"] == true;
+    // A bounded snapshot keeps its window's turn items whole; it is small already.
+    let omit_local = input["acceptCompactTurnItems"] == true && !bounded;
     let mut wake = inner.notify.subscribe();
     let id = thread_id.clone();
     let first = inner
@@ -180,6 +183,13 @@ pub(crate) async fn subscribe_thread(
                     let items = events.into_iter().map(event_item).collect();
                     return Ok(Some((items, high)));
                 }
+            }
+            if bounded && let Some(window) = store.bounded_thread(&id, high)? {
+                let mut item = snapshot_item(window.projection, high, dedupe, false);
+                item["historyCursor"] = json!(window.history_cursor);
+                item["hasMoreHistory"] = json!(window.has_more_history);
+                item["latestLocalTurnOrdinal"] = json!(window.latest_local_turn_ordinal);
+                return Ok(Some((vec![item], high)));
             }
             let (projection, omitted) = store
                 .thread_projection_with(&id, omit_local)?

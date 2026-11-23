@@ -827,9 +827,8 @@ Conn stops the app-server on close, so its handoff revokes; T3 keeps its shared 
   keeps its cached empty view: the client resumes it from its last sequence, and no event
   follows.
 - **Known differences:** the shell's `visibleItemCount` stays the thread's own item count
-  (T3 adds the inherited rows and the marker); clients only test it for zero. No bounded
-  snapshots or `/history` paging yet (listed below), so the fork's rows load whole, as every
-  thread view here does.
+  (T3 adds the inherited rows and the marker); clients only test it for zero. A bounded
+  snapshot (2026-11-23) cuts the fork's rows like any other thread's.
 
 ## Thread transcript route (2026-11-19)
 

@@ -606,6 +606,153 @@ impl Store {
         Ok(Some((Value::Object(projection), omitted)))
     }
 
+    /// The control projection of a live thread (no `messages`, `turnItems` or
+    /// `visibleTurnItems`) and its timeline index: each visible row's selection fields and
+    /// size, read one body at a time (`history::IndexRows`). `None` for an unknown or deleted
+    /// thread.
+    fn timeline_index(&self, thread_id: &str) -> StoreResult<Option<(Value, Vec<Value>)>> {
+        let Some((thread, activity_at)) = self.live_thread(thread_id)? else {
+            return Ok(None);
+        };
+        let mut projection = serde_json::Map::new();
+        projection.insert("thread".into(), thread.clone());
+        for kind in COLLECTIONS {
+            if kind != "turnItems" && kind != "messages" {
+                projection.insert(
+                    kind.into(),
+                    Value::Array(entities(&self.conn, thread_id, kind)?),
+                );
+            }
+        }
+        self.add_subagent_provider_threads(&mut projection)?;
+        projection.insert("updatedAt".into(), Value::String(activity_at));
+        let mut index = crate::history::IndexRows::default();
+        self.inherited_rows(&thread, &mut index)?;
+        let rows = |kind: &str| {
+            projection
+                .get(kind)
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice)
+        };
+        let rule = self.visibility(thread_id, rows("runs"), rows("attempts"))?;
+        self.transcript_rows(thread_id, "local", &mut index, |item| rule.shows(item))?;
+        Ok(Some((Value::Object(projection), index.0)))
+    }
+
+    /// Index rows with their stored items in place (T3's `materializeHistoryRows`).
+    fn materialize_rows(&self, rows: Vec<Value>) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems' AND id = ?2",
+            )
+            .map_err(err)?;
+        rows.into_iter()
+            .map(|mut row| {
+                if row["visibility"] != "synthetic" {
+                    let source = row["sourceThreadId"].as_str().unwrap_or_default();
+                    let id = row["sourceItemId"].as_str().unwrap_or_default();
+                    let body: String = stmt
+                        .query_row(params![source, id], |r| r.get(0))
+                        .map_err(err)?;
+                    row["item"] = parse(body)?;
+                }
+                Ok(row)
+            })
+            .collect()
+    }
+
+    /// `buildBoundedThreadProjection` on indexed reads: the newest window of the thread and
+    /// what it needs, with only the window's bodies, the open requests and the kept messages
+    /// read. `None` for an unknown or deleted thread.
+    pub(crate) fn bounded_thread(
+        &self,
+        thread_id: &str,
+        sequence: u64,
+    ) -> StoreResult<Option<crate::history::Bounded>> {
+        use crate::history;
+        let Some((control, index)) = self.timeline_index(thread_id)? else {
+            return Ok(None);
+        };
+        let pending = history::pending_request_ids(&control);
+        let dependencies: Vec<Value> = self
+            .query_json(
+                "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+                 AND json_extract(body, '$.type') IN
+                   ('run_interrupt_request', 'user_input_request', 'approval_request')
+                 ORDER BY ordinal, id",
+                [thread_id],
+            )?
+            .into_iter()
+            .filter(|item| history::is_retained_dependency(item, &pending))
+            .collect();
+        let window = history::select_window(&control, &index, &dependencies, sequence);
+        drop(index);
+        let rows = self.materialize_rows(window.rows)?;
+        let turn_items = history::window_turn_items(&control["thread"]["id"], &rows, dependencies);
+        let (message_ids, run_ids) = history::message_scope(&control, &turn_items);
+        let mut messages = self.query_json(
+            "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'messages' AND (
+               id IN (SELECT value FROM json_each(?2))
+               OR json_extract(body, '$.runId') IN (SELECT value FROM json_each(?3))
+               OR json_extract(body, '$.delegatedCompletion') IS NOT NULL
+               OR json_extract(body, '$.workflowScript') = 1)
+             ORDER BY first_seq",
+            params![
+                thread_id,
+                Value::from(message_ids).to_string(),
+                Value::from(run_ids).to_string()
+            ],
+        )?;
+        sort_messages_by_turn_items(&mut messages, &turn_items);
+        let latest_local_turn_ordinal = self
+            .conn
+            .query_row(
+                "SELECT MAX(ordinal) FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'",
+                [thread_id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(err)?
+            .and_then(|n| u64::try_from(n).ok());
+        Ok(Some(history::Bounded {
+            projection: history::finish(control, rows, turn_items, messages),
+            history_cursor: window.next_cursor,
+            has_more_history: window.has_more_history,
+            latest_local_turn_ordinal,
+        }))
+    }
+
+    /// `getThreadHistoryPage` on indexed reads: only the page's bodies are read. `None` for an
+    /// unknown or deleted thread.
+    pub(crate) fn history_page(
+        &self,
+        thread_id: &str,
+        sequence: u64,
+        cursor: &crate::history::Cursor,
+        through_entry_id: Option<&str>,
+        conversation_only: bool,
+    ) -> StoreResult<Option<Value>> {
+        use crate::history;
+        let Some((control, index)) = self.timeline_index(thread_id)? else {
+            return Ok(None);
+        };
+        let mut page = history::page_rows(
+            &index,
+            sequence,
+            cursor,
+            through_entry_id,
+            conversation_only,
+        );
+        drop(index);
+        page.rows = self.materialize_rows(std::mem::take(&mut page.rows))?;
+        let subagents = control["subagents"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
+        Ok(Some(history::page_body(
+            thread_id, sequence, page, subagents,
+        )))
+    }
+
     /// `GET /api/orchestration/threads/:threadId/transcript`, encoded: the thread's visible
     /// turn items read one at a time in timeline order, written straight into the JSON body.
     /// It stops at the first row that would make the file the client builds (the header line

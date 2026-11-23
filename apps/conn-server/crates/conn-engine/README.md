@@ -243,11 +243,12 @@ A thread snapshot is built in memory whole: about 13 heap bytes per byte of its 
 peak, so a 4.6 MB thread (1,000 turns) peaks near 60 MiB, and the macOS allocator keeps those
 pages in RSS afterwards. Clients that opt in to compact snapshots get each turn item once.
 
-Next step: bounded thread snapshots (`acceptBoundedSnapshot`). The engine would send the newest
-window of rows with a `historyCursor`, and serve older pages through
-`GET /api/orchestration/threads/:id/history` (`OrchestrationV2ThreadHistoryPage`), as
-`threadHistoryPaging.ts` does (75 items or 10 user turns per page). That needs the route in the
-server crate and an `Engine` method for a page.
+Bounded thread snapshots (`acceptBoundedSnapshot`, `history.rs`): the engine sends the newest
+window of rows (10 user turns, or 75 rows without a user turn, within T3's byte budget) with a
+`historyCursor`, and serves older pages through `GET /api/orchestration/threads/:id/history`
+(`OrchestrationV2ThreadHistoryPage`), as `threadHistoryPaging.ts` does. The store reads a light row
+index first (selection fields and sizes, one body at a time) and loads only the chosen bodies.
+Work folding (`deferWork`, `view=work`) is not served.
 
 ## Checks
 
