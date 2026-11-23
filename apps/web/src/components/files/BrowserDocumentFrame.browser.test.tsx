@@ -1,5 +1,6 @@
 import {
   FILE_PREVIEW_SCROLL_SCRIPT,
+  HTML_RENDER_ELEMENT_FULLSCREEN_SCRIPT,
   injectHtmlRenderBootstrap,
   readFilePreviewScroll,
 } from "@t3tools/shared/htmlRender";
@@ -64,7 +65,7 @@ describe("HtmlRenderDocument", () => {
 
   it("marks the frame while an element of the page is fullscreen, not the page itself", async () => {
     const html = injectHtmlRenderBootstrap(
-      `<!doctype html><html><body><div id="viewer"><button onclick="document.getElementById('viewer').requestFullscreen()">Viewer</button><button onclick="document.documentElement.requestFullscreen()">Page</button></div></body></html>`,
+      `<!doctype html><html><body><script>${HTML_RENDER_ELEMENT_FULLSCREEN_SCRIPT}</script><div id="viewer"><button onclick="document.getElementById('viewer').requestFullscreen()">Viewer</button><button onclick="document.documentElement.requestFullscreen()">Page</button></div></body></html>`,
     );
     const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
@@ -77,15 +78,13 @@ describe("HtmlRenderDocument", () => {
     const frame = screen.getByTitle("Fullscreen");
     const pageButtons = page.frameLocator(frame);
 
-    // The page reports at load, which is what tells the desktop app it can keep the page in the window.
-    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "false");
     await pageButtons.getByText("Viewer").click();
-    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "true");
+    await expect.element(frame).toHaveAttribute("data-element-fullscreen");
     expect(document.fullscreenElement).toBe(frame.element());
 
     // The page replaces the viewer as the frame's fullscreen element; the host document sees no change.
     await pageButtons.getByText("Page").click();
-    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "false");
+    await expect.element(frame).not.toHaveAttribute("data-element-fullscreen");
     expect(document.fullscreenElement).toBe(frame.element());
   });
 });
