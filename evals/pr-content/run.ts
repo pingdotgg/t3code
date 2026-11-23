@@ -8,8 +8,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as CodexTextGeneration from "../../apps/server/src/textGeneration/CodexTextGeneration.ts";
+import { conventionalCommitsTextGenerationPolicy } from "../../apps/server/src/textGeneration/TextGenerationPresets.ts";
 import * as ServerConfig from "../../apps/server/src/config.ts";
-import { gradePrContent } from "./grade.ts";
+import { gradePrContent, hasConventionalCommitPrefix } from "./grade.ts";
 
 const { values } = NodeUtil.parseArgs({
   options: {
@@ -43,6 +44,9 @@ const fixtures = [
     source: "Reported PR title replaced by a babysitting failure, November 2026",
     launchArgs: undefined,
     titlePrefix: undefined,
+    policy: undefined,
+    commitSummary: "abc123 Retire legacy models",
+    conventionalTitle: undefined,
     threadContext:
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.\nuser: in a few minutes pr will be up then $babysit-pr",
   },
@@ -51,6 +55,9 @@ const fixtures = [
     source: "Control for the babysitting regression",
     launchArgs: undefined,
     titlePrefix: undefined,
+    policy: undefined,
+    commitSummary: "abc123 Retire legacy models",
+    conventionalTitle: undefined,
     threadContext:
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
   },
@@ -60,8 +67,33 @@ const fixtures = [
     launchArgs:
       "--config 'developer_instructions=\"Repository PR title policy: every generated PR title MUST start with the exact prefix TEAM:. Preserve this prefix in the returned title JSON field.\"'",
     titlePrefix: "TEAM:",
+    policy: undefined,
+    commitSummary: "abc123 Retire legacy models",
+    conventionalTitle: undefined,
     threadContext:
       "user: Retire legacy models.\nassistant: Added retirement dates and successors. Tests passed.",
+  },
+  {
+    id: "conventional-commits-title",
+    source: "pingdotgg/t3code#40562: Conventional Commits style dropped the prefix from PR titles",
+    launchArgs: undefined,
+    titlePrefix: undefined,
+    policy: conventionalCommitsTextGenerationPolicy,
+    commitSummary:
+      "abc123 feat(models): add retirement dates for legacy models\ndef456 feat(models): name a successor for each retired model",
+    conventionalTitle: true,
+    threadContext: undefined,
+  },
+  {
+    id: "conventional-commits-plain-history",
+    source: "Control for #40562: plain commit subjects keep a plain PR title",
+    launchArgs: undefined,
+    titlePrefix: undefined,
+    policy: conventionalCommitsTextGenerationPolicy,
+    commitSummary:
+      "abc123 Add retirement dates for legacy models\ndef456 Name a successor for each retired model",
+    conventionalTitle: false,
+    threadContext: undefined,
   },
 ];
 const selectedFixtures = fixtures.filter(
@@ -96,11 +128,12 @@ await Effect.runPromise(
           modelSelection: { instanceId: ProviderInstanceId.make("codex"), model },
           baseBranch: "main",
           headBranch: "fix/retire-legacy-models",
-          commitSummary: "abc123 Retire legacy models",
+          commitSummary: fixture.commitSummary,
           diffSummary: "src/models.ts | 2 ++",
           diffPatch:
             'diff --git a/src/models.ts b/src/models.ts\n--- a/src/models.ts\n+++ b/src/models.ts\n@@ -1 +1,3 @@\n export const legacyModel = {\n+  retirementDate: "2026-10-23",\n+  successor: "replacement-model",\n };',
           threadContext: fixture.threadContext,
+          policy: fixture.policy,
         });
         results.push({
           id: fixture.id,
@@ -108,7 +141,10 @@ await Effect.runPromise(
           ...generated,
           passed:
             gradePrContent(generated) &&
-            (fixture.titlePrefix === undefined || generated.title.startsWith(fixture.titlePrefix)),
+            (fixture.titlePrefix === undefined ||
+              generated.title.startsWith(fixture.titlePrefix)) &&
+            (fixture.conventionalTitle === undefined ||
+              hasConventionalCommitPrefix(generated.title) === fixture.conventionalTitle),
         });
       }
     }

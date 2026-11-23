@@ -227,13 +227,17 @@ const isNullableMarker = (member: unknown): boolean =>
   Predicate.isObject(member) && member.nullable === true && Object.keys(member).length === 1
 
 /** Converts legacy `nullable: true` markers, including standalone `allOf` members, to null unions. */
-const rewriteNullable = (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
+const rewriteNullable = (
+  js: JsonSchema.JsonSchema,
+  acceptsNull: (schema: JsonSchema.JsonSchema) => boolean
+): JsonSchema.JsonSchema => {
   const allOf = Array.isArray(js.allOf) ? js.allOf : undefined
   if (js.nullable !== true && !allOf?.some(isNullableMarker)) return js
   const { nullable: _, ...rest } = js
   const members = allOf?.filter((member) => !isNullableMarker(member))
   const { allOf: _allOf, ...base } = rest
   const schema = members === undefined ? rest : members.length === 0 ? base : { ...base, allOf: members }
+  if (acceptsNull(schema)) return schema
   const annotations = pick(schema, isAnnotation)
   return { ...annotations, anyOf: [pick(schema, (key) => !isAnnotation(key)), { type: "null" }] }
 }
@@ -401,8 +405,33 @@ const mergeParts = (left: Part, right: Part): Part | undefined => {
 const makeNormalizer = (resolve: (key: string) => JsonSchema.JsonSchema | undefined) => {
   const resolving = new Set<string>()
 
+  // Prove nullability through type constraints, references, allOf and anyOf.
+  // Other constraints (notably enum and oneOf) can exclude null despite a nullable type.
+  const acceptsNull = (js: JsonSchema.JsonSchema, seen = new Set<string>()): boolean => {
+    if (Predicate.isString(js.$ref)) {
+      if (!Object.keys(js).every((key) => key === "$ref" || isAnnotation(key))) return false
+      const key = definitionKey(js.$ref)
+      if (key === undefined || seen.has(key)) return false
+      const definition = resolve(key)
+      if (definition === undefined) return false
+      seen.add(key)
+      const out = acceptsNull(definition, seen)
+      seen.delete(key)
+      return out
+    }
+    if (
+      !Object.keys(js).every((key) => objectKeys.has(key) || key === "allOf" || key === "anyOf" || isAnnotation(key))
+    ) {
+      return false
+    }
+    return (js.type === undefined || js.type === "null" || isStringArray(js.type) && js.type.includes("null")) &&
+      (!Array.isArray(js.allOf) ||
+        js.allOf.every((member) => Predicate.isObject(member) && acceptsNull(member, seen))) &&
+      (!Array.isArray(js.anyOf) || js.anyOf.some((member) => Predicate.isObject(member) && acceptsNull(member, seen)))
+  }
+
   const prepare = (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema =>
-    rewriteNot(rewriteConditional(rewriteNullable(js)))
+    rewriteNot(rewriteConditional(rewriteNullable(js, acceptsNull)))
 
   const dereference = (member: unknown): JsonSchema.JsonSchema | undefined => {
     if (!Predicate.isObject(member)) return undefined
@@ -443,8 +472,11 @@ const makeNormalizer = (resolve: (key: string) => JsonSchema.JsonSchema | undefi
       ...(Array.isArray(js.oneOf) ? [{ oneOf: js.oneOf }] : [])
     ]
     const hasOwn = js.properties !== undefined || js.required !== undefined
-    // Preserve references when no intersection is needed.
-    if ((hasOwn ? 1 : 0) + members.length < 2) return js
+    const constraints = members.filter((member) =>
+      !Predicate.isObject(member) || !Object.keys(member).every(isAnnotation)
+    )
+    // Annotation-only members do not require expanding references; the importer attaches their metadata.
+    if ((hasOwn ? 1 : 0) + constraints.length < 2) return js
     const { allOf: _allOf, anyOf: _anyOf, oneOf: _oneOf, ...rest } = js
     if (!isPlainObject(rest)) return js
     const own = pick(rest, (key) => objectKeys.has(key))
@@ -493,24 +525,6 @@ const makeResolver = (spec: Schema.Json) => {
       cache.set(key, Predicate.isObject(definition) ? convert(definition).schema : undefined)
     }
     return cache.get(key)
-  }
-}
-
-/** Keep free-form objects open and close compositions only after normalization. */
-const shouldClose = (js: JsonSchema.JsonSchema): boolean =>
-  js.type === "object" &&
-  Predicate.isObject(js.properties) && Object.keys(js.properties).length > 0 &&
-  js.additionalProperties === undefined &&
-  js.allOf === undefined && js.anyOf === undefined && js.oneOf === undefined
-
-/** Closes an object, declaring any required keys it leaves undeclared so they stay valid. */
-const closeObject = (js: JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
-  const properties = js.properties as { readonly [x: string]: unknown }
-  const undeclared = isStringArray(js.required) ? js.required.filter((key) => !Object.hasOwn(properties, key)) : []
-  return {
-    ...js,
-    properties: { ...properties, ...Object.fromEntries(undeclared.map((key) => [key, {}])) },
-    additionalProperties: false
   }
 }
 
@@ -619,7 +633,7 @@ export const layer: Layer.Layer<
     }
 
     const excludeAnnotations = provider.config.excludeAnnotationsList
-    const disableAdditionalProperties = provider.config.shouldDisableAdditionalProperties
+    const closeObjects = provider.config.shouldCloseObjects
 
     const exclude = excludeAnnotations ? new Set(excludeAnnotations) : undefined
     const normalize = makeNormalizer(makeResolver(patchedSpec))
@@ -628,7 +642,7 @@ export const layer: Layer.Layer<
       if (exclude) {
         for (const key of exclude) delete out[key]
       }
-      return disableAdditionalProperties && shouldClose(out) ? closeObject(out) : out
+      return out
     }
 
     const warnings: Array<OpenApiGenerator.OpenApiGeneratorWarning> = []
@@ -637,6 +651,7 @@ export const layer: Layer.Layer<
         name: provider.config.clientName,
         format: provider.config.isTypeOnly ? "httpclient-type-only" : "httpclient",
         includeSchemas: provider.config.includeSchemas,
+        closeObjects,
         onEnter,
         onWarning: (warning) => {
           warnings.push(warning)

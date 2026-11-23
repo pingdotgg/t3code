@@ -1,12 +1,17 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../../contextMenuSource";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { T, useGT } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 interface CrumbsPullRequest {
   readonly url: string;
@@ -23,6 +28,7 @@ const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest
     url: detail.url,
     openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
     position: { x: event.clientX, y: event.clientY },
+    source: contextMenuSourceOf(event),
   });
 };
 
@@ -30,6 +36,7 @@ const ROW_CLASS_NAME =
   "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
 
 function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
@@ -40,28 +47,34 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
             {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
             className="-ml-1.5"
-            aria-label="Back to this thread's pull requests"
+            aria-label={gt("Back to this thread's pull requests")}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to pull requests</TooltipPopup>
+      <TooltipPopup side="top">
+        <T>Back to pull requests</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }
 
 function NumberLink({
   detail,
+  threadRef,
   toneClassName,
   openOnHostText,
   focusable,
 }: {
   detail: CrumbsPullRequest;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
   focusable: boolean;
 }) {
+  const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   return (
     <Tooltip>
       <TooltipTrigger
@@ -69,16 +82,24 @@ function NumberLink({
           <button
             type="button"
             {...(focusable ? {} : { tabIndex: -1 })}
-            onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+            onClick={(event) => void openLink(detail.url, { event }).catch(console.error)}
             onAuxClick={(event) => {
-              if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
+              if (event.button === 1) void openLink(detail.url, { event }).catch(console.error);
             }}
             onContextMenu={(event) => openNumberContextMenu(event, detail)}
             className={cn(
               "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
               toneClassName,
             )}
-            aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+            aria-label={gt(
+              "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+              {
+                term: changeRequestTermKind(
+                  sourceControlClients.get(detail.provider).changeRequest,
+                ),
+                number: detail.number,
+              },
+            )}
           >
             #{detail.number}
             <ExternalLinkIcon aria-hidden className="size-2.5" />
@@ -96,6 +117,7 @@ function NumberLink({
  */
 export function PullRequestDetailCrumbs({
   detail,
+  threadRef,
   toneClassName,
   condensed,
   repositoryUrl,
@@ -103,18 +125,22 @@ export function PullRequestDetailCrumbs({
   onBack,
 }: {
   detail: CrumbsPullRequest | null;
+  threadRef: ScopedThreadRef | null;
   toneClassName: string | null;
   condensed: boolean;
   repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
 }) {
+  const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   const ready = detail !== null && toneClassName !== null;
   return (
     <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
       <div
         aria-hidden={condensed}
         inert={condensed}
+        data-workspace-scroll-swap
         className={cn(
           ROW_CLASS_NAME,
           condensed
@@ -131,7 +157,13 @@ export function PullRequestDetailCrumbs({
                   repositoryUrl ? (
                     <button
                       type="button"
-                      onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+                      onClick={(event) =>
+                        void openLink(repositoryUrl, { event }).catch(console.error)
+                      }
+                      onAuxClick={(event) => {
+                        if (event.button === 1)
+                          void openLink(repositoryUrl, { event }).catch(console.error);
+                      }}
                       className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
                     >
                       {detail.repository}
@@ -144,11 +176,14 @@ export function PullRequestDetailCrumbs({
                 }
               />
               <TooltipPopup side="top">
-                {repositoryUrl ? `Open ${detail.repository} repository` : detail.repository}
+                {repositoryUrl
+                  ? gt("Open {repository} repository", { repository: detail.repository })
+                  : detail.repository}
               </TooltipPopup>
             </Tooltip>
             <NumberLink
               detail={detail}
+              threadRef={threadRef}
               toneClassName={toneClassName}
               openOnHostText={openOnHostText}
               focusable
@@ -159,6 +194,7 @@ export function PullRequestDetailCrumbs({
       <div
         aria-hidden={!condensed}
         inert={!condensed}
+        data-workspace-scroll-swap
         className={cn(
           ROW_CLASS_NAME,
           condensed
@@ -171,6 +207,7 @@ export function PullRequestDetailCrumbs({
             {onBack ? <BackButton onBack={onBack} focusable={condensed} /> : null}
             <NumberLink
               detail={detail}
+              threadRef={threadRef}
               toneClassName={toneClassName}
               openOnHostText={openOnHostText}
               focusable={condensed}
