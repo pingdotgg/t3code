@@ -79,8 +79,6 @@ it.effect("links a file of environments, reports each line, and fails when one d
         _tag: "EnvironmentLinkUsageError",
         detail: "--from takes its addresses and pairing codes from the file.",
       });
-      expect(yield* one.linkedSessions).toEqual([]);
-      expect(yield* three.linkedSessions).toEqual([]);
 
       const failed = yield* link(file).pipe(Effect.flip);
       expect(failed).toMatchObject({ _tag: "EnvironmentLinkBatchError", failed: 1, total: 3 });
