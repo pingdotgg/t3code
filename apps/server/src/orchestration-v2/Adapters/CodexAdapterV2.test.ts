@@ -12809,6 +12809,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           { operation: "delete", path: "/w/e.ts" },
           { operation: "add", path: "/w/a.ts" },
         ]);
+        assert.equal(
+          fileChanges[0]?.diffStr,
+          [
+            'diff --git "a//w/c.ts" "b//w/d.ts"',
+            '--- "a//w/c.ts"',
+            '+++ "b//w/d.ts"',
+            "@@",
+            'diff --git "a//w/e.ts" "b//w/e.ts"',
+            '--- "a//w/e.ts"',
+            "+++ /dev/null",
+            "@@ -1,1 +0,0 @@",
+            "-gone",
+            "\\ No newline at end of file",
+            'diff --git "a//w/a.ts" "b//w/a.ts"',
+            "--- /dev/null",
+            '+++ "b//w/a.ts"',
+            "@@ -0,0 +1,1 @@",
+            "+export {};",
+            "\\ No newline at end of file",
+            "",
+          ].join("\n"),
+        );
       }).pipe(
         Effect.scoped,
         Effect.provide(
