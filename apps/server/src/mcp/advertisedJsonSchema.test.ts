@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
+import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 
 it("drops JSON noise, merges tagged unions, and keeps null where it is required", () => {
@@ -58,4 +59,10 @@ it("advertises only string enum values, which Gemini requires", () => {
   collect(advertisedJsonSchema(ThemeToolkit.tools.t3_theme_set));
 
   expect(enumValues.filter((value) => typeof value !== "string")).toEqual([]);
+});
+
+it("keeps a merged union branch's description, such as schedule_task's webhook prompt templates", () => {
+  const advertised = JSON.stringify(advertisedJsonSchema(OrchestratorToolkit.tools.schedule_task));
+
+  expect(advertised).toContain("{{body.path}}");
 });
