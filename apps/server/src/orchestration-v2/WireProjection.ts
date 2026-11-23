@@ -20,6 +20,7 @@ import {
   commandIndicatesFailure,
   compactDynamicToolOutput,
   omitToolOutputImageData,
+  readToolOutputImage,
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 
@@ -188,7 +189,8 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
     case "dynamic_tool": {
-      const { output: rawOutput, ...projected } = item;
+      const { output: _output, ...projected } = item;
+      const rawOutput = clientDynamicToolOutput(item);
       const output = compactDynamicToolOutput(rawOutput);
       return {
         ...projected,
@@ -200,6 +202,19 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
     default:
       return item;
   }
+}
+
+// The stored copy of a viewed image is served through its path, so clients get only that preview.
+function clientDynamicToolOutput(
+  item: Extract<OrchestrationV2TurnItem, { readonly type: "dynamic_tool" }>,
+): unknown {
+  const output = item.output;
+  return item.viewedImagePath !== undefined &&
+    Array.isArray(output) &&
+    output.length > 0 &&
+    output.every((block) => readToolOutputImage(block) !== null)
+    ? undefined
+    : output;
 }
 
 function hasDynamicValue(value: unknown): boolean {
@@ -260,12 +275,15 @@ export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): Orchest
         input: truncateDetail(item.input, MAX_ON_DEMAND_BYTES) ?? "",
         output: truncateDetail(item.output, MAX_ON_DEMAND_BYTES),
       };
-    case "dynamic_tool":
+    case "dynamic_tool": {
+      const { output: _output, ...projected } = item;
+      const output = clientDynamicToolOutput(item);
       return {
-        ...item,
+        ...projected,
         input: boundDynamicValue(item.input),
-        output: boundToolOutput(item.output),
+        ...(output === undefined ? {} : { output: boundToolOutput(output) }),
       };
+    }
     case "subagent":
       return {
         ...item,
