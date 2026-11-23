@@ -113,6 +113,18 @@ describe("patch links", () => {
   });
 });
 
+it("parses an issue link into the project's binding scope", () => {
+  const issue = "854b7c3ee77fc372d04dacb03cbb76f6249bb20c";
+  expect(
+    definition.parseIssueUrl?.(
+      new URL(`https://radicle.network/nodes/seed.radicle.dev/rad:${RID}/issues/${issue}`),
+    ),
+  ).toEqual({ host: "radicle", scope: `rad:${RID.toLowerCase()}`, key: issue });
+  expect(
+    definition.parseIssueUrl?.(new URL(`https://radicle.network/nodes/n/rad:${RID}/issues`)),
+  ).toBeNull();
+});
+
 it("reads the patch a checkout command names", () => {
   expect(definition.checkoutCommandArgument("rad patch checkout 57045d7f5e")).toBe(
     String(patchNumberFromId(PATCH)),

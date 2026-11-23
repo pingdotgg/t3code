@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -14,6 +15,8 @@ export const PATCH = "57045d7f5e43f0bc09a18504970d2993b0c16edc";
 export const REVISION_2 = "aaaa000000000000000000000000000000000002";
 export const COMMENT = "126a5fd3dcd8919735fac801f4da3ca773eab291";
 export const REPLY = "5ac7692fd7910331bc68fff4341631d116056a01";
+export const ISSUE = "854b7c3ee77fc372d04dacb03cbb76f6249bb20c";
+export const ISSUE_COMMENT = "9999000000000000000000000000000000000001";
 
 const edit = (author: string, timestamp: number, body: string) => ({
   author,
@@ -21,6 +24,35 @@ const edit = (author: string, timestamp: number, body: string) => ({
   body,
   embeds: [],
 });
+
+/** An issue as `rad cob show` printed it on Radicle 1.10.3, with a comment added. */
+function issueCob() {
+  return {
+    assignees: [`did:key:${VIEWER}`],
+    title: "Sandbox: sample issue",
+    state: { status: "open" },
+    labels: ["test"],
+    thread: {
+      comments: {
+        [ISSUE]: {
+          author: AUTHOR,
+          reactions: [],
+          resolved: false,
+          body: "An open issue.",
+          edits: [edit(AUTHOR, 1_000, "An open issue.")],
+        },
+        [ISSUE_COMMENT]: {
+          author: VIEWER,
+          reactions: [],
+          resolved: false,
+          body: "A comment",
+          edits: [edit(VIEWER, 2_000, "A comment")],
+        },
+      },
+      timeline: [ISSUE, ISSUE_COMMENT],
+    },
+  };
+}
 
 /** A patch as `rad cob show` printed it on Radicle 1.10.3, with a second revision added. */
 function patchCob(options?: { readonly status?: string }) {
@@ -106,6 +138,10 @@ export function radicleLayer(options: {
   readonly status?: string;
   readonly answer?: (input: Run) => string | undefined;
   readonly git?: TestSourceControlHost.TestSourceControlHostOptions["git"];
+  /** The node's alias, or null for a node that has none. */
+  readonly viewerAlias?: string | null;
+  /** Repository IDs the node's storage holds. */
+  readonly storage?: ReadonlyArray<string>;
 }) {
   const out = (stdout: string, exitCode = 0) =>
     Effect.succeed(
@@ -124,7 +160,10 @@ export function radicleLayer(options: {
         if (input.command === "rad") {
           if (args === ".") return yield* out(`rad:${RID}\n`);
           if (args === "self --did") return yield* out(`did:key:${VIEWER}\n`);
-          if (args === "self --alias") return yield* out("viewer@bridge\n");
+          if (args === "self --alias")
+            return yield* out(
+              `${options.viewerAlias === undefined ? "viewer@bridge" : (options.viewerAlias ?? "")}\n`,
+            );
           if (args === "self --home") return yield* out("/home/test/.radicle\n");
           if (args.endsWith("--payload"))
             return yield* out(
@@ -139,6 +178,11 @@ export function radicleLayer(options: {
                 .join("\n"),
             );
           if (input.args[0] === "patch") return yield* out("");
+          if (args.startsWith("cob") && args.includes("xyz.radicle.issue"))
+            return yield* out(
+              args.startsWith("cob list") ? `${ISSUE}\n` : `${encodeJson(issueCob())}\n`,
+            );
+          if (input.args[0] === "issue") return yield* out(`Issue ${ISSUE}\n`);
           if (args.startsWith("cob list")) return yield* out(`${PATCH}\n`);
           if (args.startsWith("cob show"))
             return yield* out(`${encodeJson(patchCob({ status: options.status ?? "open" }))}\n`);
@@ -157,5 +201,8 @@ export function radicleLayer(options: {
       }),
     },
   });
-  return RadicleCli.layer.pipe(Layer.provideMerge(host));
+  const storage = FileSystem.layerNoop({
+    readDirectory: () => Effect.succeed([...(options.storage ?? [RID])]),
+  });
+  return RadicleCli.layer.pipe(Layer.provide(storage), Layer.provideMerge(host));
 }

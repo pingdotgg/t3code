@@ -191,6 +191,9 @@ closed, and merged. Merging pushes a merge to the default branch, which only a d
 repository can do. A patch's number in T3 Code is the first 10 characters of its ID read as a
 number. Line comments and reactions are not available yet.
 
+Radicle issues can be listed, filed, edited, labelled, assigned, commented on, solved, closed, and
+reopened. An issue is named by its ID, or the first seven characters of it.
+
 ## Start, clone, or publish a project
 
 To start from nothing, choose **New project** in the command palette (`Cmd/Ctrl+K`), or

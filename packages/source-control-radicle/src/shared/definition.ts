@@ -23,6 +23,10 @@ const EXPLORER_PATCH_PATH = new RegExp(
   `^((?:/[^/]+)*/nodes/[^/]+/rad:(${RID_BODY}))/patches/([0-9a-f]{10,40})/?$`,
   "u",
 );
+const EXPLORER_ISSUE_PATH = new RegExp(
+  `^(?:/[^/]+)*/nodes/[^/]+/rad:(${RID_BODY})/issues/([0-9a-f]{7,40})/?$`,
+  "u",
+);
 const CHECKOUT_COMMAND = /^rad\s+patch\s+(?:checkout|co)\s+(\S+)/u;
 
 /**
@@ -58,6 +62,10 @@ export function patchUrl(input: {
   readonly webUrl?: string | undefined;
 }): string {
   return `${input.webUrl ?? `${RADICLE_EXPLORER}/rad:${input.rid}`}/patches/${input.patch}`;
+}
+
+export function issueUrl(input: { readonly rid: string; readonly issue: string }): string {
+  return `${RADICLE_EXPLORER}/rad:${input.rid}/issues/${input.issue}`;
 }
 
 const ridOfIdentity = (identity: ChangeRequestProjectIdentity) =>
@@ -112,6 +120,13 @@ export const definition = defineSourceControl({
       number: patchNumberFromId(match[3]),
       repositoryUrl: `${url.origin}${match[1]}`,
     };
+  },
+  // Lower case, like the project bindings links are matched against; the tracker restores the case.
+  parseIssueUrl: (url) => {
+    const match = EXPLORER_ISSUE_PATH.exec(url.pathname);
+    return match?.[1] && match[2]
+      ? { host: RADICLE_HOST, scope: `rad:${match[1].toLowerCase()}`, key: match[2] }
+      : null;
   },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set(["merge", "ready", "draft", "close", "reopen"] as const),
