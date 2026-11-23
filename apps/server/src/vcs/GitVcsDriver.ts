@@ -992,7 +992,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       cwd,
       args: ["rev-parse", "--git-common-dir"],
     });
-    const gitCommonDir = result.stdout.trim();
+    const gitCommonDir = result.stdout.replace(/\n$/, "");
     if (path.isAbsolute(gitCommonDir)) return gitCommonDir;
     const physicalCwd = yield* fileSystem.realPath(cwd).pipe(Effect.orElseSucceed(() => cwd));
     return path.resolve(physicalCwd, gitCommonDir);
@@ -1025,9 +1025,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     const [gitCommonDir = "", indexPath = "", topLevel = "", prefix = "", head = ""] = lines;
     if (headChecked && lines.length === (headExists ? 6 : 5) && lines.at(-1) === "") {
       return {
-        gitCommonDir: gitCommonDir.trim(),
-        indexPath: indexPath.trim(),
-        topLevel: topLevel.trim(),
+        gitCommonDir,
+        indexPath,
+        topLevel,
         prefix,
         headExists,
         head: headExists ? head : undefined,
