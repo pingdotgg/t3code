@@ -161,10 +161,11 @@ function placeAboveWebview(
   clipPath: string,
   width: number,
   height: number,
+  hidden: boolean,
 ) {
   const last = aboveWebviewWritten.get(layer);
   const transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
-  const inert = !placement.interactive;
+  const inert = !placement.interactive || hidden;
   if (last?.width !== width) layer.style.width = `${width}px`;
   if (last?.height !== height) layer.style.height = `${height}px`;
   if (last?.transform !== transform) layer.style.transform = transform;
@@ -182,6 +183,7 @@ export function BrowserSurfaceSlot(props: {
   readonly className?: string;
   readonly fitSourceContent?: boolean;
   readonly aboveWebview?: ReactNode;
+  readonly aboveWebviewLabel?: string;
 }) {
   const {
     tabId,
@@ -192,6 +194,7 @@ export function BrowserSurfaceSlot(props: {
     className,
     fitSourceContent = false,
     aboveWebview,
+    aboveWebviewLabel,
   } = props;
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<((phase: BrowserSurfaceSlotPhase) => boolean) | null>(null);
@@ -206,6 +209,7 @@ export function BrowserSurfaceSlot(props: {
     let presented = "";
     let placed: BrowserSurfacePlacement | null = null;
     let placedAboveClip = "";
+    let placedHidden = false;
     // The webview keeps the slot's own size and follows it on screen with a
     // transform, so a pane sliding or zooming never resizes the page.
     const update = (
@@ -213,10 +217,11 @@ export function BrowserSurfaceSlot(props: {
       scheduleWrite?: (write: () => void) => void,
     ) => {
       const rect = element.getBoundingClientRect();
+      const hidden = element.offsetWidth === 0 || element.offsetHeight === 0;
       const width = Math.max(1, element.offsetWidth);
       const height = Math.max(1, element.offsetHeight);
       const presentation = presentationRef.current;
-      const shown = presentation.visible && element.offsetWidth > 0 && element.offsetHeight > 0;
+      const shown = presentation.visible && !hidden;
       if (phase !== "frame") ancestors = clipAncestorsOf(element);
       const key = `${width}:${height}:${shown}:${presentation.cornerRadius}:${presentation.zIndex}`;
       const presentationChanged = key !== presented;
@@ -260,16 +265,16 @@ export function BrowserSurfaceSlot(props: {
         Math.abs(placed.scale - next.scale) > 0.0001 ||
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
-      const aboveClipChanged = placedAboveClip !== clips.above;
+      const aboveChanged = placedAboveClip !== clips.above || placedHidden !== hidden;
       const shouldPlaceWebview = ownsSurface && (moved || phase !== "frame");
       const shouldPlaceAbove =
         aboveWebviewRef.current !== null &&
-        (moved || aboveClipChanged || presentationChanged || phase !== "frame");
+        (moved || aboveChanged || presentationChanged || phase !== "frame");
       if (shouldPlaceWebview || shouldPlaceAbove) {
         const apply = () => {
           if (shouldPlaceWebview) lease.place(next);
           if (shouldPlaceAbove && aboveWebviewRef.current) {
-            placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height);
+            placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height, hidden);
           }
         };
         if (scheduleWrite) scheduleWrite(apply);
@@ -277,7 +282,8 @@ export function BrowserSurfaceSlot(props: {
       }
       placed = next;
       placedAboveClip = clips.above;
-      return moved || aboveClipChanged;
+      placedHidden = hidden;
+      return moved || aboveChanged;
     };
     updateRef.current = update;
     update("start");
@@ -326,6 +332,8 @@ export function BrowserSurfaceSlot(props: {
         : createPortal(
             <div
               ref={attachAboveWebview}
+              role={aboveWebviewLabel ? "region" : undefined}
+              aria-label={aboveWebviewLabel}
               onPointerDownCapture={(event) => {
                 // Portaled controls claim pane focus through their slot, as guest presses do.
                 const replay = new PointerEvent("pointerdown", {

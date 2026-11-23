@@ -213,6 +213,18 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
   });
   otherLease.release();
 
+  // Portaled controls keep a labelled region and become inert when an ancestor hides the slot.
+  const portalLayer = handle.parentElement!.parentElement!;
+  const playerHost = isolatedPane.querySelector("[data-preview-mini-player]")!.parentElement!;
+  expect(portalLayer.getAttribute("role")).toBe("region");
+  expect(portalLayer.getAttribute("aria-label")).toBe("Floating browser preview");
+  playerHost.style.display = "none";
+  await act(() => window.dispatchEvent(new Event("resize")));
+  await vi.waitFor(() => expect(portalLayer.inert).toBe(true));
+  playerHost.style.display = "";
+  await act(() => window.dispatchEvent(new Event("resize")));
+  await vi.waitFor(() => expect(portalLayer.inert).toBe(false));
+
   // Touch: tapping the handle toggles the pill closed, and pressing a pill button keeps it open.
   using _capture = vi
     .spyOn(HTMLElement.prototype, "setPointerCapture")

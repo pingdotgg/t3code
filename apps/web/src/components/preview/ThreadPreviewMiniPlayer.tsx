@@ -322,6 +322,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               layoutVersion={`${frame.x}:${frame.y}`}
               className="absolute inset-0"
               aboveWebview={chrome}
+              aboveWebviewLabel={gt("Floating browser preview")}
             />
             {loadFailed ? (
               <div className="pointer-events-auto absolute inset-0 z-[48] overflow-hidden rounded-[inherit]">
