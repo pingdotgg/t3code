@@ -4,12 +4,15 @@ import type { ManagedPolicyLimits } from "@t3tools/contracts";
 import { EDITORS, REMOTE_CAPABLE_EDITOR_IDS } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makePathDirectoryListings, PathDirectoryListings } from "@t3tools/shared/shell";
 import { ManagedPolicyFileError } from "@t3tools/shared/managedPolicyFile";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 import type * as Electron from "electron";
 
@@ -26,6 +29,7 @@ import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfig
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts";
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
@@ -235,6 +239,7 @@ describe("installRelayTelemetryEnabled", () => {
   const relayTelemetryEnabled = (
     env: NodeJS.ProcessEnv,
     policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+    loginShellEnv: NodeJS.ProcessEnv = {},
   ) =>
     Effect.gen(function* () {
       const listeners = new Map<string, DesktopIpc.DesktopIpcSyncListener>();
@@ -244,21 +249,47 @@ describe("installRelayTelemetryEnabled", () => {
         removeAllListeners: (channel) => void listeners.delete(channel),
         on: (channel, listener) => void listeners.set(channel, listener),
       };
+      let discoveryFinished = false;
+      const ask = () => {
+        const event = { returnValue: undefined as unknown };
+        listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
+        return event.returnValue;
+      };
       yield* installRelayTelemetryEnabled().pipe(
         Effect.provideService(HostProcess.Environment, env),
+        Effect.provideService(DesktopShellEnvironment.DesktopShellEnvironment, {
+          installIntoProcess: Effect.succeed(true),
+          awaitDiscovery: Effect.succeed(true),
+          awaitUserShellDiscovery: Effect.succeed(true),
+          discoveryFinished: Effect.sync(() => discoveryFinished),
+          updates: Stream.empty,
+        }),
         Effect.provide(
           Layer.mergeAll(DesktopIpc.layerTest(ipcMain), DesktopManagedPolicy.layerTest(policy)),
         ),
       );
-      const event = { returnValue: undefined as unknown };
-      listeners.get(IpcChannels.GET_RELAY_TELEMETRY_ENABLED_CHANNEL)?.(event as never);
-      return event.returnValue;
+      const beforeDiscovery = ask();
+      // The login shell's values land in the process env after startup has installed handlers.
+      Object.assign(env, loginShellEnv);
+      discoveryFinished = true;
+      return { beforeDiscovery, afterDiscovery: ask() };
     }).pipe(Effect.scoped);
 
   it.effect("reads the desktop host opt-out before returning the renderer policy", () =>
     Effect.gen(function* () {
-      assert.isFalse(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }));
-      assert.isTrue(yield* relayTelemetryEnabled({}));
+      assert.deepEqual(yield* relayTelemetryEnabled({ T3CODE_TELEMETRY_ENABLED: "false" }), {
+        beforeDiscovery: false,
+        afterDiscovery: false,
+      });
+      // Undecided until the login shell is read, so the renderer asks again instead of opting out.
+      assert.deepEqual(yield* relayTelemetryEnabled({}), {
+        beforeDiscovery: null,
+        afterDiscovery: true,
+      });
+      assert.deepEqual(
+        yield* relayTelemetryEnabled({}, undefined, { T3CODE_TELEMETRY_ENABLED: "false" }),
+        { beforeDiscovery: null, afterDiscovery: false },
+      );
     }),
   );
 
@@ -269,14 +300,14 @@ describe("installRelayTelemetryEnabled", () => {
         organization: "Example Corp",
         limits,
       });
-      assert.isFalse(yield* relayTelemetryEnabled({}, policy({ telemetry: false })));
-      assert.isTrue(yield* relayTelemetryEnabled({}, policy({ webhookTasks: false })));
+      const after = function* (...args: Parameters<typeof relayTelemetryEnabled>) {
+        return (yield* relayTelemetryEnabled(...args)).afterDiscovery;
+      };
+      assert.isFalse(yield* after({}, policy({ telemetry: false })));
+      assert.isTrue(yield* after({}, policy({ webhookTasks: false })));
       // A policy that cannot be read fails closed.
       assert.isFalse(
-        yield* relayTelemetryEnabled(
-          {},
-          new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" }),
-        ),
+        yield* after({}, new ManagedPolicyFileError({ path: "/test", reason: "bad JSON" })),
       );
     }),
   );
@@ -521,6 +552,7 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 );
 
 describe("probeRemoteEditors PATH scan", () => {
+  const FIXTURE_MTIME = 1_767_225_600;
   const platform = HostProcess.Platform.defaultValue();
   const launcherName = (command: string) => (platform === "win32" ? `${command}.cmd` : command);
 
@@ -541,6 +573,9 @@ describe("probeRemoteEditors PATH scan", () => {
       yield* fs.writeFileString(file, "#!/bin/sh\n");
       if (platform !== "win32") yield* fs.chmod(file, 0o755);
     }
+    // A listing of a directory changed moments ago is not kept, so age them past that window.
+    for (const dir of dirs) yield* fs.utimes(dir, FIXTURE_MTIME, FIXTURE_MTIME);
+    yield* TestClock.setTime((FIXTURE_MTIME + 60) * 1000);
     return {
       root,
       env: {
@@ -552,19 +587,15 @@ describe("probeRemoteEditors PATH scan", () => {
     };
   });
 
-  const countingFileSystem = (counter: { stat: number; reads: Map<string, number> }) =>
+  const countingFileSystem = (reads: Map<string, number>) =>
     Layer.effect(
       FileSystem.FileSystem,
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         return FileSystem.FileSystem.of({
           ...fs,
-          stat: (target) => {
-            counter.stat += 1;
-            return fs.stat(target);
-          },
           readDirectory: (target, options) => {
-            counter.reads.set(target, (counter.reads.get(target) ?? 0) + 1);
+            reads.set(target, (reads.get(target) ?? 0) + 1);
             return fs.readDirectory(target, options);
           },
         });
@@ -583,44 +614,38 @@ describe("probeRemoteEditors PATH scan", () => {
       return available;
     });
 
-  it.effect("reads each PATH directory once instead of stat-ing every candidate per editor", () =>
+  it.effect("finds the editors a serial scan finds, listing each PATH directory at most once", () =>
     Effect.gen(function* () {
       const { env: baseEnv } = yield* makeFakePath();
       const delimiter = platform === "win32" ? ";" : ":";
-      const uncachedCounter = { stat: 0, reads: new Map<string, number>() };
-      const cachedCounter = { stat: 0, reads: new Map<string, number>() };
-      const uncachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
-      const cachedEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
-      const uncached = yield* serialReference(uncachedEnv).pipe(
-        Effect.provide(countingFileSystem(uncachedCounter)),
+      const reads = new Map<string, number>();
+      // Distinct PATH values keep one scan from answering the other out of the resolution cache.
+      const serialEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x1` };
+      const probeEnv = { ...baseEnv, PATH: `${baseEnv.PATH}${delimiter}${baseEnv.HOME}x2` };
+      const serial = yield* serialReference(serialEnv).pipe(
+        Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
       );
-      const cached = yield* probeRemoteEditors
+      const probed = yield* probeRemoteEditors
         .handler(undefined)
         .pipe(
-          Effect.provideService(HostProcess.Environment, cachedEnv),
+          Effect.provideService(HostProcess.Environment, probeEnv),
           Effect.provideService(HostProcess.Platform, platform),
-          Effect.provide(countingFileSystem(cachedCounter)),
+          Effect.provide(countingFileSystem(reads)),
+          Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
         );
       // The host can add editors from app folders the fixture can't redirect (e.g. /Applications).
       const fixtureEditors = ["cursor", "vscode", "zed", "webstorm"];
       assert.deepStrictEqual(
-        uncached.filter((id) => fixtureEditors.includes(id)),
+        serial.filter((id) => fixtureEditors.includes(id)),
         fixtureEditors,
       );
-      assert.deepStrictEqual(cached, uncached);
-      assert.isAbove(uncachedCounter.stat, 0);
-      // On every platform the probe lists each PATH directory at most once. Only PATH entries count:
-      // resolveEditorCommand also reads app folders such as /Applications on macOS.
-      const pathReads = cachedEnv.PATH.split(delimiter)
+      assert.deepStrictEqual(probed, serial);
+      // Only PATH entries count: resolveEditorCommand also reads app folders such as /Applications
+      // on macOS. PATH directories are listed on Windows only, once even for concurrent probes.
+      const pathReads = probeEnv.PATH.split(delimiter)
         .filter((entry) => entry.length > 0)
-        .map((entry) => cachedCounter.reads.get(entry) ?? 0);
-      assert.isAbove(Math.max(...pathReads), 0);
-      assert.isAtMost(Math.max(...pathReads), 1);
-      // Without the listings, Windows stats every PATH entry x PATHEXT candidate for each editor;
-      // elsewhere there is no PATHEXT, so the stat count is about the same either way.
-      if (platform === "win32") {
-        assert.isBelow(cachedCounter.stat, uncachedCounter.stat / 2);
-      }
+        .map((entry) => reads.get(entry) ?? 0);
+      assert.strictEqual(Math.max(...pathReads), platform === "win32" ? 1 : 0);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

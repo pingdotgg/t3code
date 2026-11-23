@@ -13,6 +13,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -24,7 +25,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeUtil from "node:util";
 
 import * as ModelManifest from "./ModelManifest.ts";
-import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderInstallationGate from "./ProviderInstallationGate.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 import { makeProviderMaintenanceCommandCoordinator } from "./providerMaintenanceCommandCoordinator.ts";
@@ -324,6 +324,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+  const serviceScope = yield* Effect.scope;
   const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
   const runMaintenanceCommand = (
     update: ProviderMaintenanceCommandAction,
@@ -515,13 +516,11 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   latestVersions,
                 ),
               ));
-            const advisory =
-              resolveProviderCompatibility(manifest.compatibility, provider, candidateVersion) ??
-              resolveProviderCompatibility(
-                ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-                provider,
-                candidateVersion,
-              );
+            const advisory = ModelManifest.providerCompatibility(
+              manifest,
+              provider,
+              candidateVersion,
+            );
             const command =
               targetVersion !== undefined
                 ? makeTargetedProviderUpdateAction(fresh, targetVersion)
@@ -688,7 +687,8 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
       },
     );
 
-    return yield* commandCoordinator
+    // Installers cannot be safely killed mid-install, so the update outlives a disconnecting caller.
+    const updateFiber = yield* commandCoordinator
       .withCommandLock({
         targetKey,
         lockKey: update.lockKey,
@@ -696,10 +696,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         run: runProviderUpdate(),
       })
       .pipe(
-        // A dropped request interrupts the update; a "running" state would spin until restart.
+        // Server shutdown interrupts the update; a "running" state would spin until restart.
         Effect.onInterrupt(() =>
           Effect.gen(function* () {
-            // A finished state stays, even if the request drops while it is being written.
+            // A finished state stays, even if shutdown lands while it is being written.
             if (yield* Ref.get(settled)) return;
             yield* setUpdateState(
               makeUpdateState({
@@ -711,15 +711,18 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             );
           }).pipe(Effect.ignore),
         ),
-        Effect.mapError((error) =>
-          isServerProviderUpdateError(error)
-            ? new ServerProviderUpdateError({
-                provider,
-                reason: error.reason,
-              })
-            : error,
-        ),
+        Effect.forkIn(serviceScope),
       );
+    return yield* Fiber.join(updateFiber).pipe(
+      Effect.mapError((error) =>
+        isServerProviderUpdateError(error)
+          ? new ServerProviderUpdateError({
+              provider,
+              reason: error.reason,
+            })
+          : error,
+      ),
+    );
   });
 
   return ProviderMaintenanceRunner.of({

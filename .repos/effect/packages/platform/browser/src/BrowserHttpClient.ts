@@ -148,6 +148,13 @@ const makeXmlHttpRequest = HttpClient.make(
           })
         )
       }
+      if (signal.aborted) {
+        return Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({ request, cause: signal.reason })
+          })
+        )
+      }
       const xhr = Context.getOrElse(
         fiber.context,
         XMLHttpRequest,
