@@ -78,6 +78,8 @@ import {
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
+/** Sequential turns in the pipeline scenario. */
+const PIPELINE_TURNS = 50;
 /** Clients that drop and reconnect at once in the clients scenario. */
 const STORM_CLIENTS = 20;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
@@ -120,6 +122,8 @@ interface ApiRequest {
   readonly agent: boolean;
   readonly stream: boolean;
   readonly marker: string | undefined;
+  /** When the reply's last event was produced; streamed replies only. */
+  endedAt?: number;
 }
 
 const MessagesRequest = Schema.Struct({
@@ -147,13 +151,15 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
       Effect.orElseSucceed((): typeof MessagesRequest.Type => ({})),
     );
     const streamed = body.stream === true;
-    requests.push({
+    const entry: ApiRequest = {
       at: yield* nowMs,
       stream: streamed,
       // Title and branch-name jobs carry only their structured-output tool; the agent carries many.
       agent: streamed && (body.tools?.length ?? 0) > 1,
-      marker: /bench-run-(\d+)/.exec(raw)?.[0],
-    });
+      // A follow-up carries the thread's earlier prompts too, so the newest marker is the turn's.
+      marker: [...raw.matchAll(/bench-run-\d+/g)].at(-1)?.[0],
+    };
+    requests.push(entry);
     const model = body.model ?? MODEL;
     const id = `msg_bench_${requests.length}`;
     if (!streamed) {
@@ -207,7 +213,15 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
             delta: { stop_reason: "end_turn", stop_sequence: null },
             usage: { output_tokens: words },
           }),
-          event("message_stop", {}),
+        ),
+      ),
+      // Stamped as the last event is produced, so it is set before any client can see the end.
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.map(nowMs, (now) => {
+            entry.endedAt = now;
+            return event("message_stop", {});
+          }),
         ),
       ),
       Stream.encodeText,
@@ -642,7 +656,14 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
     }
     const [runs] = yield* sql<{ n: number }>`
       SELECT COUNT(*) AS n FROM orchestration_v2_projection_runs`;
-    return { roots, runs: Number(runs?.n ?? 0) };
+    const [largest] = yield* sql<{ thread_id: string; messages: number }>`
+      SELECT thread_id, COUNT(*) AS messages FROM orchestration_v2_projection_messages
+      GROUP BY thread_id ORDER BY messages DESC LIMIT 1`;
+    return {
+      roots,
+      runs: Number(runs?.n ?? 0),
+      largest: largest && { threadId: largest.thread_id, messages: Number(largest.messages) },
+    };
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: database })));
 });
 
@@ -720,6 +741,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       ? undefined
       : yield* seedBaseDir(options.seed, baseDir, directory, environment.checkout);
   const roots = seeded?.roots ?? [];
+  const largest = seeded?.largest;
   yield* fs.writeFileString(
     path.join(baseDir, "userdata/settings.json"),
     encodeJson({ textGenerationModelSelection: { instanceId: "claudeAgent", model: MODEL } }),
@@ -912,6 +934,8 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
         });
       }
     }),
+    /** The seeded thread with the most messages. */
+    largest,
     measure,
     profile: devtools.profile,
     snapshot: devtools.snapshot,
@@ -1024,6 +1048,40 @@ const loadShell = Effect.fn("serverMetrics.loadShell")(function* (server: Server
     bytes = body.byteLength;
   }
   return { ms: spread(elapsed), KB: Math.round(bytes / 1_000) };
+});
+
+/** The bounded HTTP snapshot a client loads to open a thread, timed to its last byte. */
+const loadThread = Effect.fn("serverMetrics.loadThread")(function* (
+  server: Server,
+  threadId: string,
+  times: number,
+) {
+  const http = yield* HttpClient.HttpClient;
+  const token = yield* server.issueToken;
+  const request = HttpClientRequest.get(
+    `${server.origin}/api/orchestration/threads/${encodeURIComponent(threadId)}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1&deferWork=1`,
+  ).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeader(ORCHESTRATION_PROTOCOL_HEADER, ORCHESTRATION_PROTOCOL_VERSION_TEXT),
+  );
+  const before = yield* server.heapAfterGc;
+  const elapsed: number[] = [];
+  let bytes = 0;
+  for (let index = 0; index < times; index++) {
+    const started = yield* nowMs;
+    const response = yield* http.execute(request);
+    const body = yield* response.arrayBuffer;
+    if (response.status !== 200) {
+      return yield* new MetricsError({ message: `thread snapshot answered ${response.status}` });
+    }
+    elapsed.push((yield* nowMs) - started);
+    bytes = body.byteLength;
+  }
+  return {
+    ms: spread(elapsed),
+    KB: Math.round(bytes / 1_000),
+    heapMB: round(((yield* server.heapAfterGc) - before) / 1e6),
+  };
 });
 
 /** Short turns back to back in a clone, each ending in a checkpoint of the whole tree. */
@@ -1197,6 +1255,53 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   };
 });
 
+/**
+ * Short turns back to back on one thread: how long a send takes to reach the API, how long the
+ * end of the reply takes to become a finished run the CLI sees (turn end and checkpoint), the time
+ * per turn, and the event-loop delay across all of them.
+ */
+const pipelineTurns = Effect.fn("serverMetrics.pipelineTurns")(function* (
+  environment: Environment,
+  server: Server,
+  turns: number,
+) {
+  const [threadId] = yield* openThreads(server, 0, 1);
+  if (threadId === undefined) return yield* new MetricsError({ message: "no pipeline thread" });
+  const toRequest: number[] = [];
+  const turnEnd: number[] = [];
+  yield* server.loopStart;
+  const first = yield* nowMs;
+  for (let turn = 0; turn < turns; turn++) {
+    const marker = `bench-run-${20_000 + turn}`;
+    const started = yield* nowMs;
+    const sent = yield* server.threadSend(threadId, `Short reply. ${marker}`);
+    const done = yield* nowMs;
+    if (sent.exitCode !== 0) {
+      return yield* new MetricsError({
+        message: `pipeline turn ${turn} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
+      });
+    }
+    const request = environment.requests.find(
+      (entry) => entry.agent && entry.marker === marker && entry.at >= started,
+    );
+    if (request?.endedAt === undefined) {
+      return yield* new MetricsError({ message: `the agent request for ${marker} never ended` });
+    }
+    toRequest.push(request.at - started);
+    turnEnd.push(done - request.endedAt);
+  }
+  const elapsed = (yield* nowMs) - first;
+  const loop = yield* server.loopRead;
+  return {
+    toRequestMs: spread(toRequest),
+    turnEndMs: spread(turnEnd),
+    msPerTurn: Math.round(elapsed / turns),
+    loopDelayP99Ms: round(loop.p99),
+    loopDelayMaxMs: round(loop.max),
+    gcPauseMs: round(loop.gcMs),
+  };
+});
+
 const SCENARIOS = [
   "startup",
   "rest",
@@ -1204,6 +1309,7 @@ const SCENARIOS = [
   "quiet",
   "streaming",
   "clients",
+  "pipeline",
   "busy",
 ] as const;
 /** Scenarios that read the developer's real database, so they run only when named. */
@@ -1381,6 +1487,13 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       }),
     );
   }
+  if (wanted("pipeline")) {
+    yield* withServer("pipeline", (server) =>
+      Effect.gen(function* () {
+        measured.pipeline = yield* pipelineTurns(environment, server, PIPELINE_TURNS);
+      }),
+    );
+  }
   if (wanted("streaming")) {
     yield* withServer("streaming", (server) =>
       Effect.gen(function* () {
@@ -1427,6 +1540,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const rest = yield* server.measure(30);
           yield* server.assertIdle(server.startedAt);
           const shell = yield* loadShell(server, 5);
+          const largest = server.largest;
+          const thread = largest && (yield* loadThread(server, largest.threadId, 5));
           const traffic = yield* gitTraffic(server);
           // The traffic only ends by failing, which then fails the window instead of thinning it.
           const git = yield* Effect.raceFirst(
@@ -1445,6 +1560,16 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             rest,
             shellMs: shell.ms,
             shellKB: shell.KB,
+            ...(largest && thread
+              ? {
+                  largeThread: {
+                    messages: largest.messages,
+                    openMs: thread.ms,
+                    KB: thread.KB,
+                    heapMB: thread.heapMB,
+                  },
+                }
+              : {}),
             git,
           };
         }),
