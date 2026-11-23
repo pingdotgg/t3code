@@ -870,6 +870,30 @@ describe("server browser action timeout", () => {
 
     expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
   });
+
+  it("gives the select's option read and selection one shared timeout", async () => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const page = {
+      locator: () => ({
+        // Reading the options takes 7 of the 9 seconds.
+        evaluate: async (_probe: unknown, _arg: unknown, options: StepOptions) => {
+          steps.push(`evaluate ${options.timeout}`);
+          now += 7_000;
+          return [{ value: "a", label: "A" }];
+        },
+        selectOption: async (values: Array<string>, options: StepOptions) => {
+          steps.push(`selectOption ${options.timeout}`);
+          return values;
+        },
+      }),
+    } as unknown as Page;
+
+    await ServerBrowserPage.select(page, { selector: "#s", values: ["a"], timeoutMs: 9_000 });
+
+    expect(steps).toEqual(["evaluate 9000", "selectOption 2000"]);
+  });
 });
 
 describe("server browser click", () => {
@@ -964,6 +988,55 @@ describe("server browser evaluate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("server browser press", () => {
+  it.each([
+    // The late modifier is released, and "A" is never pressed.
+    { stalled: "down Control", sent: ["down Control", "up Control"] },
+    // A release that stalls does not keep the modifier held.
+    { stalled: "up A", sent: ["down Control", "down A", "up A", "up Control"] },
+  ])("a chord whose `$stalled` outlasts its timeout sends $sent", async ({ stalled, sent }) => {
+    vi.useFakeTimers();
+    try {
+      const steps: Array<string> = [];
+      const step = (name: string) => {
+        steps.push(name);
+        return name === stalled ? new Promise<void>(() => {}) : Promise.resolve();
+      };
+      const page = {
+        keyboard: {
+          down: (key: string) => step(`down ${key}`),
+          up: (key: string) => step(`up ${key}`),
+        },
+      } as unknown as Page;
+      const pressed = ServerBrowserPage.press(page, { key: "A", modifiers: ["Control"] }, 300).then(
+        () => "pressed",
+        (error: unknown) => error,
+      );
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(await pressed).toMatchObject({ tag: "PreviewAutomationTimeoutError" });
+      expect(steps).toEqual(sent);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails when a key could not be released", async () => {
+    const page = {
+      keyboard: {
+        down: async () => {},
+        up: async (key: string) => {
+          if (key === "A") throw new Error("Target closed");
+        },
+      },
+    } as unknown as Page;
+
+    await expect(
+      ServerBrowserPage.press(page, { key: "A", modifiers: ["Control"] }),
+    ).rejects.toThrow("Target closed");
   });
 });
 

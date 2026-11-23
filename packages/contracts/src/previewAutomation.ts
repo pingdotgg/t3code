@@ -213,7 +213,7 @@ export const PreviewAutomationNavigateInput = Schema.Struct({
   }),
   target: Schema.optional(BrowserNavigationTarget),
   readiness: Schema.optional(Schema.Literals(["load", "domContentLoaded", "none"])).annotate({
-    description: "Default 'load'. 'none': return at once.",
+    description: "Default domContentLoaded. none: no wait",
   }),
   timeoutMs: OptionalTimeoutMs,
 }).check(
