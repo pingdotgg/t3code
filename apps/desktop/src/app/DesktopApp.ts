@@ -423,7 +423,7 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
-  // Before an install can submit ShipIt. A running job stays loaded.
+  // Before an install can be submitted. A ShipIt that is still exiting is rechecked once.
   yield* releaseIdleShipItJob({
     platform: environment.platform,
     bundleId: environment.appUserModelId,

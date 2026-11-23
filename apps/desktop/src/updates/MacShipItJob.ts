@@ -11,6 +11,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 const { logInfo, logWarning } = makeComponentLogger("desktop-shipit");
 
 const LAUNCHCTL = "/bin/launchctl";
+const SHIPIT_EXIT_GRACE = "2 seconds";
 
 const BUNDLE_ID = /^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,198}[A-Za-z0-9])?$/u;
 const TOP_LEVEL_FIELD = /^\t([^\t=]+?) = (.*)$/u;
@@ -83,6 +84,12 @@ function shouldRemoveIdleShipItJob(snapshot: ShipItJobSnapshot): boolean {
   );
 }
 
+function shipItProcessIsAlive(snapshot: ShipItJobSnapshot): boolean {
+  return (
+    snapshot.pid !== undefined || snapshot.state === "running" || snapshot.state === "xpcproxy"
+  );
+}
+
 const runLaunchctl = Effect.fn("desktop.shipIt.launchctl")(function* (args: ReadonlyArray<string>) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   return yield* Effect.scoped(
@@ -112,6 +119,25 @@ const runLaunchctl = Effect.fn("desktop.shipIt.launchctl")(function* (args: Read
   );
 });
 
+const inspectShipItJob = Effect.fn("desktop.shipIt.inspect")(function* (service: string) {
+  const inspected = yield* runLaunchctl(["print", service]);
+  if (Option.isNone(inspected)) return { _tag: "unread" } as const;
+  if (inspected.value.exitCode !== 0) return { _tag: "absent" } as const;
+  return {
+    _tag: "present" as const,
+    snapshot: readShipItJobSnapshot(inspected.value.stdout),
+  };
+});
+
+const watchShipItExit = Effect.fn("desktop.shipIt.watchExit")(function* (service: string) {
+  const first = yield* inspectShipItJob(service);
+  if (first._tag !== "present" || !shipItProcessIsAlive(first.snapshot)) return first;
+  // Relaunch ShipIt stays in waitpid until NSWorkspace returns, which can be
+  // after whenReady. Still alive after the grace means it is waiting for us to quit.
+  yield* Effect.sleep(SHIPIT_EXIT_GRACE);
+  return yield* inspectShipItJob(service);
+});
+
 /** Drops Squirrel's leftover ShipIt launchd job so macOS does not keep the app "running in background" after quit. */
 export const releaseIdleShipItJob = Effect.fn("desktop.shipIt.releaseIdle")(function* (
   input: IdleShipItJobInput,
@@ -122,14 +148,14 @@ export const releaseIdleShipItJob = Effect.fn("desktop.shipIt.releaseIdle")(func
   if (label === undefined || uid === undefined) return;
 
   const service = `gui/${uid}/${label}`;
-  const inspected = yield* runLaunchctl(["print", service]);
-  if (Option.isNone(inspected)) {
+  const inspection = yield* watchShipItExit(service);
+  if (inspection._tag === "unread") {
     yield* logWarning("could not inspect the ShipIt launchd job", { label });
     return;
   }
-  if (inspected.value.exitCode !== 0) return;
+  if (inspection._tag === "absent") return;
 
-  const snapshot = readShipItJobSnapshot(inspected.value.stdout);
+  const snapshot = inspection.snapshot;
   if (!shouldRemoveIdleShipItJob(snapshot)) {
     if (snapshot.state === undefined) {
       yield* logWarning("could not read the ShipIt launchd job state; left it loaded", { label });

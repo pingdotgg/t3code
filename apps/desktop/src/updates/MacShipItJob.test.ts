@@ -1,11 +1,13 @@
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as PlatformError from "effect/PlatformError";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as TestClock from "effect/testing/TestClock";
 
 import { releaseIdleShipItJob } from "./MacShipItJob.ts";
 
@@ -148,34 +150,6 @@ it.effect(
           steps: [
             {
               stdout: shipItPrint({
-                state: "running",
-                pid: 64038,
-                activeCount: 1,
-                lastExitCode: 0,
-                runs: 1,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
-                state: "not running",
-                pid: 64038,
-                activeCount: 0,
-                lastExitCode: 0,
-                runs: 1,
-              }),
-            },
-          ],
-          expected: [PRINT],
-        },
-        {
-          steps: [
-            {
-              stdout: shipItPrint({
                 state: "spawn scheduled",
                 activeCount: 1,
                 runs: 0,
@@ -219,4 +193,79 @@ it.effect(
         yield* run(scenario);
       }
     }),
+);
+
+it.effect("drops a ShipIt job that finishes exiting after the app is ready", () =>
+  Effect.gen(function* () {
+    const running = shipItPrint({
+      state: "running",
+      pid: 64038,
+      activeCount: 1,
+      lastExitCode: 0,
+      runs: 1,
+    });
+    const cases = [
+      {
+        steps: [{ stdout: running }, { stdout: idlePrint }, { exitCode: 0 }],
+        expected: [PRINT, PRINT, REMOVE],
+      },
+      {
+        steps: [{ stdout: running }, { stdout: running }],
+        expected: [PRINT, PRINT],
+      },
+      {
+        steps: [
+          { stdout: running },
+          {
+            stdout: shipItPrint({
+              state: "not running",
+              activeCount: 0,
+              lastExitCode: 1,
+              runs: 1,
+            }),
+          },
+        ],
+        expected: [PRINT, PRINT],
+      },
+      {
+        steps: [{ stdout: running }, { exitCode: 113, stdout: "Could not find service" }],
+        expected: [PRINT, PRINT],
+      },
+      {
+        steps: [{ stdout: running }, { fail: true }],
+        expected: [PRINT, PRINT],
+      },
+      {
+        steps: [
+          {
+            stdout: shipItPrint({
+              state: "not running",
+              pid: 64038,
+              activeCount: 0,
+              lastExitCode: 0,
+              runs: 1,
+            }),
+          },
+          { stdout: idlePrint },
+          { exitCode: 0 },
+        ],
+        expected: [PRINT, PRINT, REMOVE],
+      },
+      {
+        steps: [
+          { stdout: shipItPrint({ state: "xpcproxy", activeCount: 1, runs: 1 }) },
+          { stdout: idlePrint },
+          { exitCode: 0 },
+        ],
+        expected: [PRINT, PRINT, REMOVE],
+      },
+    ];
+
+    for (const scenario of cases) {
+      const fiber = yield* run(scenario).pipe(Effect.forkChild);
+      // Matches SHIPIT_EXIT_GRACE. A shorter adjust leaves the fiber asleep.
+      yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(fiber);
+    }
+  }),
 );
