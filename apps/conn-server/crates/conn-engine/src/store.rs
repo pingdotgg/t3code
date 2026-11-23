@@ -217,6 +217,8 @@ fn streams_only(event_type: &str, payload: &Value) -> bool {
 }
 
 pub(crate) type StoreResult<T> = Result<T, String>;
+/// A committed command or run event: `(sequence, thread id, event)`.
+pub(crate) type CommandEvent = (u64, String, Value);
 
 /// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
 pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
@@ -870,23 +872,25 @@ impl Store {
     }
 
     /// Committed `command_execution` item updates and run updates of every thread after
-    /// `after`, at most `limit`, as `(sequence, thread id, event)`.
+    /// `after`, at most `limit`, as `(sequence, thread id, event)`, and the sequence the read
+    /// covered: the high water for a short page, so rows that match nothing are read once.
     pub(crate) fn command_events_after(
         &self,
         after: u64,
         limit: usize,
-    ) -> StoreResult<Vec<(u64, String, Value)>> {
+    ) -> StoreResult<(Vec<CommandEvent>, u64)> {
+        let high = self.high_water();
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT seq, thread_id, event FROM events WHERE seq > ?1
+                "SELECT seq, thread_id, event FROM events WHERE seq > ?1 AND seq <= ?3
                  AND (type = 'run.updated' OR (type = 'turn-item.updated'
                    AND json_extract(event, '$.payload.type') = 'command_execution'))
                  ORDER BY seq LIMIT ?2",
             )
             .map_err(err)?;
         let rows = stmt
-            .query_map(params![after as i64, limit as i64], |row| {
+            .query_map(params![after as i64, limit as i64, high as i64], |row| {
                 Ok((
                     row.get::<_, i64>(0)? as u64,
                     row.get::<_, String>(1)?,
@@ -899,7 +903,11 @@ impl Store {
                 Ok((seq, thread_id, parse(text)?))
             })
             .collect::<StoreResult<Vec<_>>>()?;
-        Ok(rows)
+        let through = match rows.last() {
+            Some((seq, _, _)) if rows.len() == limit => *seq,
+            _ => high.max(after),
+        };
+        Ok((rows, through))
     }
 
     /// One page of the whole event log after `after`, oldest first, as

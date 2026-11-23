@@ -6594,6 +6594,25 @@ async fn the_command_feed_carries_command_items_and_run_updates() {
     );
 }
 
+/// The command feed's page says how far it scanned: past rows that matched nothing, so a
+/// commit with no command does not make the next wake read them again.
+#[tokio::test(flavor = "current_thread")]
+async fn the_command_feed_moves_past_rows_that_match_nothing() {
+    let db = TempDb::new("command-feed-cursor");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let (rows, through, high) = engine
+        .inner()
+        .db(|s| {
+            let (rows, through) = s.command_events_after(0, 64)?;
+            Ok::<_, String>((rows.len(), through, s.high_water()))
+        })
+        .await
+        .unwrap();
+    assert_eq!(rows, 0, "thread.created is no command");
+    assert_eq!(through, high);
+}
+
 /// Pass-4 gate finding 1: a monitor wake queued on model A starts on model B after the user
 /// picks B on the same instance (T3's `startNextQueuedRun` copies the whole selection).
 #[tokio::test(flavor = "current_thread")]

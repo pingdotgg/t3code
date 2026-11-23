@@ -258,19 +258,19 @@ pub(crate) async fn subscribe_command_events(
             }
             loop {
                 let after = cursor;
-                let Ok(events) = inner
+                let Ok((events, through)) = inner
                     .db(move |store| store.command_events_after(after, LIVE_READ_BATCH))
                     .await
                 else {
                     return;
                 };
                 let full = events.len() == LIVE_READ_BATCH;
-                for (seq, thread_id, event) in events {
-                    cursor = seq;
+                for (_, thread_id, event) in events {
                     if tx.send((thread_id, event)).await.is_err() {
                         return;
                     }
                 }
+                cursor = through;
                 if !full {
                     break;
                 }
