@@ -459,6 +459,7 @@ const readBackward = Effect.fn("cli.thread.readBackward")(function* (
   view: "messages" | "activity",
   nextLimit: () => number,
   done: (page: ReadonlyArray<OrchestratorMcpThreadTimelineItem>) => boolean,
+  maxCharsPerItem = READ_ITEM_MAX_CHARS,
 ) {
   const read = (beforePosition: number) =>
     tools.call(
@@ -467,7 +468,7 @@ const readBackward = Effect.fn("cli.thread.readBackward")(function* (
         threadId,
         view,
         limit: nextLimit(),
-        maxCharsPerItem: READ_ITEM_MAX_CHARS,
+        maxCharsPerItem,
         runLimit: 1,
         beforePosition,
       },
@@ -613,12 +614,15 @@ const runResultText = Effect.fn("cli.thread.runResultText")(function* (
   const view = type === "assistant_message" ? "messages" : "activity";
   const matches = (candidate: OrchestratorMcpThreadTimelineItem) =>
     candidate.runId === runId && candidate.type === type;
+  // The server returns only what fits its response budget, so a search that reads full text
+  // gets one long item per page; readFullText fetches the found item's text instead.
   const read = yield* readBackward(
     tools,
     threadId,
     view,
     () => READ_PAGE_LIMIT,
     (page) => page.some(matches),
+    1,
   );
   const pages = read?.pages ?? [(yield* readTimeline(tools, threadId, view)).items];
   const item = pages.map((page) => page.findLast(matches)).find((match) => match !== undefined);
@@ -699,6 +703,7 @@ const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
           isSent(item) ||
           (item.type === "user_message" && item.runId != null && notLater.has(item.runId)),
       ),
+    1,
   );
   const pages = read?.pages ?? [(yield* readTimeline(tools, threadId, "messages")).items];
   return { later, sent: pages.some((page) => page.some(isSent)) };

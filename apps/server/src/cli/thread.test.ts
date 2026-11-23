@@ -765,23 +765,38 @@ it.effect("show gives the latest run's last error only when that run did not com
       items: [
         { itemId: "item-0", runId: RunId.make("run-0"), type: "error", text: "earlier run" },
         { itemId: "item-1", runId, type: "error", text: "first try" },
-        { itemId: "item-2", runId, type: "error", text: "Usage limit reached" },
+        {
+          itemId: "item-2",
+          runId,
+          type: "error",
+          text: "U",
+          textTruncated: true,
+          nextTextOffset: 1,
+        },
       ],
       nextPosition: null,
       hasMore: false,
       earlierPosition: null,
     };
-    const { tools, calls } = scriptedTools({ t3_thread_read: [page] });
+    const rest = {
+      thread: {},
+      items: [{ itemId: "item-2", runId, type: "error", text: "sage limit reached" }],
+      nextPosition: null,
+      hasMore: false,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page, rest] });
 
     assert.strictEqual(
       yield* latestRunError(tools, { threadId, status: "failed", latestRunId: runId }),
       "Usage limit reached",
     );
-    assert.deepInclude(calls[0]?.args, { view: "activity" });
+    // Searching with full text would fit one long item per read under the server's budget.
+    assert.deepInclude(calls[0]?.args, { view: "activity", maxCharsPerItem: 1 });
+    assert.deepInclude(calls[1]?.args, { itemId: "item-2", textOffset: 1 });
     for (const status of ["completed", "running", "queued", "idle"] as const) {
       assert.isNull(yield* latestRunError(tools, { threadId, status, latestRunId: runId }), status);
     }
-    assert.lengthOf(calls, 1);
+    assert.lengthOf(calls, 2);
   }),
 );
 
