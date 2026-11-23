@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeSea from "node:sea";
 import type { SpeechStreamText } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createSpeechAudio } from "./audio.ts";
 
 // Inline the small child entry so the packaged CLI does not need a separate worker artifact.
@@ -258,14 +259,15 @@ function speechWorkerArgs(mode: "discover" | "model", moduleUrl?: string) {
   ];
 }
 
-/**
- * Linux launchers on hybrid-GPU laptops (switcheroo-control) start apps with
- * VK_LOADER_DRIVERS_SELECT set to the default GPU, which hides every other GPU
- * from Vulkan. Speech workers choose their device through the Hardware setting.
- */
+// Linux desktop launchers can restrict Vulkan to the default GPU's driver.
+// Speech workers pick their device through the Hardware setting instead.
 function speechWorkerEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  const { VK_LOADER_DRIVERS_SELECT: _launcherGpu, ...env } = process.env;
-  return { ...env, ELECTRON_RUN_AS_NODE: "1", ...extra };
+  const env: NodeJS.ProcessEnv = { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...extra };
+  // With VK_LOADER_DRIVERS_DISABLE set, SELECT is what re-enables drivers.
+  if (HostProcess.Platform.defaultValue() === "linux" && !env.VK_LOADER_DRIVERS_DISABLE) {
+    delete env.VK_LOADER_DRIVERS_SELECT;
+  }
+  return env;
 }
 
 export async function listNativeSpeechGpuDevices(moduleUrl?: string) {
