@@ -1718,9 +1718,13 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
         "the silent command is no longer left as live activity on a settled run",
       );
-      assert.isTrue(yield* session.hasPendingBackgroundWork!, "idle release must keep agy alive");
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "idle release must keep agy alive");
+      assert.isFalse(
+        yield* session.hasPendingBackgroundWork!,
+        "a pin the user cannot stop must not block provider switches",
+      );
       yield* runtimeDies;
-      assert.isFalse(yield* session.hasPendingBackgroundWork!, "a dead runtime cannot wake");
+      assert.isFalse(yield* session.keepsIdleSessionAlive!, "a dead runtime cannot wake");
     }).pipe(Effect.provide(layerSession)),
   );
 
@@ -1745,10 +1749,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* TestClock.adjust("31 minutes");
       yield* throughTerminal;
       yield* TestClock.adjust("31 minutes");
-      assert.isTrue(
-        yield* session.hasPendingBackgroundWork!,
-        "both commands outlive the idle window",
-      );
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "both commands outlive the idle window");
       assert.lengthOf(offers, 0, "elapsed time alone cannot start a continuation");
 
       // The first wake has no task id. It must run without dropping either command's pin.
@@ -1767,10 +1768,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* send(usage);
       yield* TestClock.adjust("3 seconds");
       assert.include(JSON.stringify(yield* throughTerminal), "The fetch finished.");
-      assert.isTrue(
-        yield* session.hasPendingBackgroundWork!,
-        "the second command is still running",
-      );
+      assert.isTrue(yield* session.keepsIdleSessionAlive!, "the second command is still running");
 
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1787,7 +1785,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* send(usage);
       yield* TestClock.adjust("3 seconds");
       assert.include(JSON.stringify(yield* throughTerminal), "The tests failed.");
-      assert.isFalse(yield* session.hasPendingBackgroundWork!, "all command pins have cleared");
+      assert.isFalse(yield* session.keepsIdleSessionAlive!, "all command pins have cleared");
       assert.lengthOf(offers, 2);
     }).pipe(Effect.provide(layerSession)),
   );

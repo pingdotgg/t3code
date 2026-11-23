@@ -10348,7 +10348,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;
                   if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
-                  if (expiredHoldCommandIds.size > 0) return true;
                   const active = yield* Ref.get(activeTurn);
                   if (
                     active !== null &&
@@ -10365,6 +10364,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   return false;
                 }),
+                keepsIdleSessionAlive: Effect.sync(() => expiredHoldCommandIds.size > 0),
               }
             : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
