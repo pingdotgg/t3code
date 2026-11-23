@@ -359,17 +359,23 @@ impl McpService {
     /// A worktree launch's setup script, as T3's launch preparation runs it
     /// (`ThreadLaunchService.prepareInBackground` → `runForThread` with `observeCompletion`):
     /// the project's `runOnWorktreeCreate` script in terminal `setup-<id>`, followed to its
-    /// end, its output lines handed to `on_line`. `None` when the project has no such script.
+    /// end, its output lines handed to `on_line`. `None` when the project has no such script,
+    /// or when `link_origin` is fenced (`skipped-for-link`): the script is the user's own
+    /// code, and a link below full access grants only Conn's tools.
     pub async fn start_launch_setup(
         &self,
         thread: &str,
         project_id: &str,
+        link_origin: Option<&Value>,
         path: &str,
         on_line: Box<dyn FnMut(String) + Send>,
     ) -> Result<Option<LaunchSetup>, String> {
         let Some(config) = &self.config.worktrees else {
             return Ok(None);
         };
+        if link_origin.is_some_and(peers::link_origin_is_fenced) {
+            return Ok(None);
+        }
         let shell = self
             .config
             .engine

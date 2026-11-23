@@ -64,11 +64,13 @@ impl Host {
     fn setup_runner(
         &self,
         project_id: Option<String>,
+        link_origin: Option<Value>,
     ) -> Option<Arc<dyn conn_vcs::setup::SetupRunner>> {
         Some(Arc::new(TerminalSetup {
             mcp: self.mcp.get()?.clone(),
             setups: self.vcs.setups.clone(),
             project_id: project_id?,
+            link_origin,
         }))
     }
 }
@@ -79,6 +81,8 @@ struct TerminalSetup {
     mcp: Arc<McpService>,
     setups: conn_vcs::WorktreeSetups,
     project_id: String,
+    /// The thread's `linkOrigin`: a fenced one runs no script.
+    link_origin: Option<Value>,
 }
 
 impl conn_vcs::setup::SetupRunner for TerminalSetup {
@@ -96,7 +100,13 @@ impl conn_vcs::setup::SetupRunner for TerminalSetup {
             let path = worktree.to_string_lossy();
             let started = self
                 .mcp
-                .start_launch_setup(thread, &self.project_id, &path, on_line)
+                .start_launch_setup(
+                    thread,
+                    &self.project_id,
+                    self.link_origin.as_ref(),
+                    &path,
+                    on_line,
+                )
                 .await?;
             Ok(started.map(|s| conn_vcs::setup::StartedSetup {
                 name: s.name,
@@ -250,7 +260,7 @@ impl EngineHost for Host {
                     base_ref: request.base_ref,
                     branch: request.branch,
                     start_from_origin: request.start_from_origin,
-                    setup: self.setup_runner(request.project_id),
+                    setup: self.setup_runner(request.project_id, request.link_origin),
                     worktrees_dir: self.worktrees_dir(),
                 },
             )
@@ -261,6 +271,16 @@ impl EngineHost for Host {
                 branch: made.branch,
             })
         })
+    }
+
+    fn launch_committed(&self, thread_id: &str) {
+        let setups = &self.vcs.setups;
+        if setups
+            .get(thread_id)
+            .is_some_and(|s| s.phase == ProjectClonePhase::Running)
+        {
+            setups.agent_started(thread_id);
+        }
     }
 
     fn discard_worktree(
@@ -701,19 +721,22 @@ mod tests {
         })
         .unwrap();
         host.mcp.set(service.clone()).unwrap();
-        let launch = |thread: &str| {
+        // No first message: no turn starts, so the launch itself ends the agent stage.
+        let launch = |thread: &str, link_origin: Option<Value>| {
             let engine = engine.clone();
             let root = root.clone();
             let thread = thread.to_owned();
             async move {
-                let launched = engine
-                    .launch_thread(json!({"commandId":format!("launch:{thread}"),"threadId":thread,
-                        "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
-                        "title":"Setup","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
-                        "runtimeMode":"auto","interactionMode":"default",
-                        "workspaceStrategy":{"type":"worktree","baseRef":"main","startFromOrigin":false},
-                        "createdBy":"user","creationSource":"web"}))
-                    .await;
+                let mut input = json!({"commandId":format!("launch:{thread}"),"threadId":thread,
+                    "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
+                    "title":"Setup","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+                    "runtimeMode":"auto","interactionMode":"default",
+                    "workspaceStrategy":{"type":"worktree","baseRef":"main","startFromOrigin":false},
+                    "createdBy":"user","creationSource":"web"});
+                if let Some(origin) = link_origin {
+                    input["linkOrigin"] = origin;
+                }
+                let launched = engine.launch_thread(input).await;
                 let Ok(launched) = launched else {
                     panic!(
                         "the launch fails: {:?}",
@@ -754,10 +777,15 @@ mod tests {
                 None,
             )
             .unwrap();
-        let worktree = launch("thread:blocking").await;
+        let worktree = launch("thread:blocking", None).await;
         assert!(
             exists(worktree.join("setup-ran.txt")).await,
             "a blocking setup script finished before the launch answered"
+        );
+        assert_eq!(
+            host.vcs.setups.get("thread:blocking").unwrap().phase,
+            Phase::Done,
+            "a launch with no first message ends its setup when it commits"
         );
         let (terminal, script_stage) = stage("thread:blocking");
         assert_eq!(terminal.as_deref(), Some("setup-install"));
@@ -785,12 +813,20 @@ mod tests {
             )
             .unwrap();
         let mut watch = host.vcs.setups.subscribe("thread:async");
-        let worktree = launch("thread:async").await;
+        let worktree = launch("thread:async", None).await;
         assert_eq!(stage("thread:async").1.status, St::Running);
         assert!(!exists(worktree.join("async-ran.txt")).await);
-        host.vcs.setups.agent_started("thread:async");
+        let snapshot = host.vcs.setups.get("thread:async").unwrap();
+        assert!(
+            snapshot
+                .stages
+                .iter()
+                .any(|s| s.id == Id::Agent && s.status == St::Done),
+            "{:?}",
+            snapshot.stages
+        );
         assert_eq!(
-            host.vcs.setups.get("thread:async").unwrap().phase,
+            snapshot.phase,
             Phase::Running,
             "the setup waits for its async script"
         );
@@ -819,6 +855,36 @@ mod tests {
             Some("exited with 0")
         );
         assert!(exists(worktree.join("async-ran.txt")).await);
+
+        // `linkOriginIsFenced`: a thread a link below full access starts runs no script, and
+        // an origin stamped before access was recorded counts as fenced.
+        environment
+            .settings
+            .update(script("printf ran > fenced-ran.txt", true), None)
+            .unwrap();
+        for (thread, origin) in [
+            (
+                "thread:linked",
+                json!({"sessionId":"s1","label":"Peer","access":"auto"}),
+            ),
+            (
+                "thread:linked-old",
+                json!({"sessionId":"s2","label":"Old peer"}),
+            ),
+        ] {
+            let worktree = launch(thread, Some(origin)).await;
+            assert!(!exists(worktree.join("fenced-ran.txt")).await, "{thread}");
+            let (terminal, script_stage) = stage(thread);
+            assert_eq!(
+                (terminal, script_stage.status),
+                (None, St::Skipped),
+                "{thread}"
+            );
+            assert!(
+                terminals.read(thread, "setup-install", None).is_none(),
+                "{thread} opened no setup terminal"
+            );
+        }
 
         terminals.shutdown().await;
         engine.shutdown().await;

@@ -214,6 +214,10 @@ pub trait EngineHost: Send + Sync {
         )))
     }
 
+    /// A worktree launch with no first message committed its thread. No turn starts, so its
+    /// setup's agent stage ends now (T3 marks it done once the launch is prepared).
+    fn launch_committed(&self, _thread_id: &str) {}
+
     /// A worktree made for a command that the engine then refused (`refused` holds why) or
     /// that an earlier attempt had already accepted (`None`): remove it and its branch.
     fn discard_worktree(
@@ -268,6 +272,9 @@ pub struct WorktreeRequest {
     pub thread_id: String,
     /// The project, for its settings overrides (`worktreeSubmodules`).
     pub project_id: Option<String>,
+    /// The link that starts the thread (`linkOrigin`); a delegate's is its parent's. A link
+    /// below full access runs no setup script (`linkOriginIsFenced`).
+    pub link_origin: Option<Value>,
     pub project_root: String,
     pub base_ref: String,
     pub branch: Option<String>,

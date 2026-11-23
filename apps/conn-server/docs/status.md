@@ -25,10 +25,14 @@ refused and no child is made; T3 makes the child and fails its run in preparatio
 `setup-<id>`, as T3's launch preparation does. A script with `async: false` holds the launch
 (and the delegate) until it exits; a non-zero exit fails it and removes the worktree. Any
 other script is async, as in T3 (`script.async !== false`): the launch answers at once, and
-the setup ends when both the agent and the script are done. The setup card's tail gets the
-script's output lines. Proof: `conn-vcs` provision tests and `conn-server`
+the setup ends when both the agent and the script are done; a launch with no first message
+ends its agent stage when it commits. The setup card's tail gets the script's output lines.
+A thread a link below full access starts, and a delegate of such a thread, runs no script
+(`linkOriginIsFenced`). Proof: `conn-vcs` provision tests and `conn-server`
 `a_worktree_launch_runs_the_setup_script_through_the_host` (it failed with the old
-`setup_script: None`). One difference by design: a failed blocking script refuses the launch
+`setup_script: None`). Left: shutdown does not yet cancel a delegate held in its setup
+script, and a concurrent retry of one delegate prepares a second checkout; both wait for
+#262's launch registry (ignored tests in `conn-mcp` `tests/delegate_worktree.rs`). One difference by design: a failed blocking script refuses the launch
 and leaves no thread; T3 keeps the thread with a failed run.
 
 **Known difference, stop in progress (2026-11-18):** with the provider's reply to

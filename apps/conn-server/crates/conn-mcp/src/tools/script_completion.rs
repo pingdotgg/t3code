@@ -226,9 +226,33 @@ fn strip_terminal_control(text: &str) -> String {
     out
 }
 
+/// Appends `data` to the partial line in `buffer` and returns the complete lines. Bare CR
+/// redraws progress in place, so it ends a line too, instead of growing one.
+fn take_lines(buffer: &mut String, data: &str) -> Vec<String> {
+    buffer.push_str(data);
+    let mut lines: Vec<String> = buffer
+        .split("\r\n")
+        .flat_map(|part| part.split(['\r', '\n']))
+        .map(str::to_owned)
+        .collect();
+    *buffer = lines.pop().unwrap_or_default();
+    if buffer.len() > PARTIAL_LINE_MAX_LENGTH {
+        let mut cut = buffer.len() - PARTIAL_LINE_MAX_LENGTH;
+        while !buffer.is_char_boundary(cut) {
+            cut += 1;
+        }
+        buffer.drain(..cut);
+    }
+    lines
+}
+
 /// `observeTerminalCompletion`: reads the terminal's output until the sentinel and returns
 /// its exit code, then waits briefly for the prompt to be drawn again (closing earlier mistakes
 /// the redraw for activity). `None` when the terminal exited or closed first.
+///
+/// A subscriber that falls behind loses its queued output and gets a snapshot instead
+/// (`Subscription::next`). The snapshot's status tells whether the shell exited, and its
+/// scrollback still holds a sentinel the queue dropped.
 pub(crate) async fn completion(
     stream: &mut conn_terminal::Subscription,
     sentinel: &str,
@@ -237,22 +261,19 @@ pub(crate) async fn completion(
     let mut buffer = String::new();
     let code = loop {
         match stream.next().await {
-            Event::Output(output) => {
-                buffer.push_str(&output.data);
-                // Bare CR redraws progress in place; split redraws instead of growing one line.
-                let mut lines: Vec<String> = buffer
-                    .split("\r\n")
-                    .flat_map(|part| part.split(['\r', '\n']))
-                    .map(str::to_owned)
-                    .collect();
-                buffer = lines.pop().unwrap_or_default();
-                if buffer.len() > PARTIAL_LINE_MAX_LENGTH {
-                    let mut cut = buffer.len() - PARTIAL_LINE_MAX_LENGTH;
-                    while !buffer.is_char_boundary(cut) {
-                        cut += 1;
-                    }
-                    buffer.drain(..cut);
+            Event::Snapshot(resync) => {
+                if resync.snapshot.status == conn_contract::TerminalSessionStatus::Exited {
+                    return None;
                 }
+                // The scrollback repeats lines already handed on, so none go to `lines_out`.
+                buffer.clear();
+                let lines = take_lines(&mut buffer, &resync.snapshot.history);
+                if let Some(code) = lines.iter().find_map(|line| exit_code(line, sentinel)) {
+                    break code;
+                }
+            }
+            Event::Output(output) => {
+                let lines = take_lines(&mut buffer, &output.data);
                 let mut found = None;
                 for line in &lines {
                     if let Some(code) = exit_code(line, sentinel) {
@@ -393,6 +414,56 @@ mod tests {
         } else {
             assert!(syntax.is_some_and(|code| code != 0), "{syntax:?}");
         }
+    }
+
+    /// A noisy script overflows the subscriber's queue, and the queue drops its sentinel: the
+    /// resync's snapshot still reports the exit code.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_sentinel_the_overflowing_queue_dropped_is_read_from_the_resync() {
+        let manager = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            max_queued_bytes: 16 * 1024,
+            ..Default::default()
+        });
+        let input = conn_contract::from_json(serde_json::json!({
+            "threadId": "t", "terminalId": "setup-flood",
+            "cwd": std::env::temp_dir(), "cols": 80, "rows": 24,
+            "env": {"PS1": "$ ", "HISTFILE": "/dev/null"},
+        }))
+        .unwrap();
+        let mut stream = manager.open_observed(input).unwrap();
+        let sentinel = sentinel("flood");
+        let flood = "i=0; while [ $i -lt 2000 ]; do echo line-$i-0123456789012345678901234567890123456789012345678901234567890123456789; i=$((i+1)); done";
+        let command = wrap(
+            &format!("{flood}; exit 7"),
+            CompletionShell::Posix,
+            &sentinel,
+        );
+        let write = conn_contract::from_json(serde_json::json!({
+            "threadId": "t", "terminalId": "setup-flood", "data": format!(" {command}\r"),
+        }))
+        .unwrap();
+        manager.write(write, None).await.unwrap();
+        // Nobody reads while the script runs, so the queue overflows and drops its end.
+        let reported = format!("{sentinel}7");
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            while !manager
+                .read("t", "setup-flood", None)
+                .is_some_and(|s| s.history.contains(&reported))
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the script printed its sentinel");
+        let code = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            completion(&mut stream, &sentinel, None),
+        )
+        .await
+        .expect("completion reads the sentinel from the resync");
+        assert_eq!(code, Some(7));
+        manager.shutdown().await;
     }
 
     #[test]

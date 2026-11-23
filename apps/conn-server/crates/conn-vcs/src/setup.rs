@@ -567,16 +567,23 @@ async fn provision_stages(
         None => setups.stage_status(thread, StageId::SetupScript, StageStatus::Skipped, None),
         Some(runner) => {
             setups.stage_status(thread, StageId::SetupScript, StageStatus::Running, None);
-            let run = tokio::select! {
-                run = runner.start(thread, &worktree.path) => run,
+            // A terminal being opened is not dropped half-made: the start runs to its end, so
+            // its id is known and the cancel below discards it (`provision`).
+            let run = runner.start(thread, &worktree.path).await;
+            if let Ok(Some(script)) = &run {
+                *started = Some(script.terminal_id.clone());
+            }
+            // `cancel` stores its permit, so one sent during the start is seen here.
+            tokio::select! {
+                biased;
                 () = cancel.notified() => return Err(ProvisionError::Cancelled),
-            };
+                () = std::future::ready(()) => {}
+            }
             match run.map_err(ProvisionError::SetupScript)? {
                 None => {
                     setups.stage_status(thread, StageId::SetupScript, StageStatus::Skipped, None)
                 }
                 Some(script) => {
-                    *started = Some(script.terminal_id.clone());
                     setups.update(thread, |s| {
                         s.setup_script = Some(WorktreeSetupSnapshotSetupScript {
                             name: script.name.clone(),

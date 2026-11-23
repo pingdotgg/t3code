@@ -636,27 +636,19 @@ impl Inner {
             .as_str()
             .unwrap_or_default()
             .to_owned();
+        let parent_run_id = command["parentRunId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let id = command_id.clone();
-        let (seen, root) = self
+        let (seen, found) = self
             .db(
-                move |store| -> Result<(bool, Option<(String, String)>), String> {
+                move |store| -> Result<(bool, Option<ChildCheckout>), String> {
                     let seen = store.receipt(&id)?.is_some();
                     let tx = store.tx()?;
-                    let root = match tx.thread(&parent_id) {
-                        Ok(Some(parent)) => parent["projectId"]
-                            .as_str()
-                            .map(|project| tx.project(project).map(|p| (project.to_owned(), p)))
-                            .transpose()
-                            .map(|found| {
-                                let (project_id, project) = found?;
-                                let root = project?["workspaceRoot"].as_str()?.to_owned();
-                                Some((project_id, root))
-                            }),
-                        Ok(None) => Ok(None),
-                        Err(e) => Err(e),
-                    };
+                    let found = child_checkout(&tx, &parent_id, &parent_run_id);
                     tx.rollback();
-                    Ok((seen, root?))
+                    Ok((seen, found?))
                 },
             )
             .await
@@ -664,8 +656,18 @@ impl Inner {
         if seen {
             return Ok((command, None));
         }
-        // No parent or project: the handler refuses the command.
-        let Some((project_id, root)) = root else {
+        // The handler's refusals that need no write are checked first, so a command it would
+        // refuse runs no setup script: no parent, project or running parent run, or no task.
+        // It checks them again when it commits.
+        let task_given = command["task"]
+            .as_str()
+            .is_some_and(|t| !t.trim().is_empty());
+        let Some(ChildCheckout {
+            project_id,
+            root,
+            link_origin,
+        }) = found.filter(|_| task_given)
+        else {
             return Ok((command, None));
         };
         let Some(host) = &self.host else {
@@ -679,6 +681,7 @@ impl Inner {
             .provision_worktree(crate::WorktreeRequest {
                 thread_id: thread_id.clone(),
                 project_id: Some(project_id),
+                link_origin,
                 project_root: root.clone(),
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1131,6 +1134,8 @@ impl Inner {
         host.provision_worktree(crate::WorktreeRequest {
             thread_id: thread_id.to_owned(),
             project_id: Some(input["projectId"].as_str().unwrap_or_default().to_owned()),
+            // The origin `thread.create` stamps on the thread (`launch`).
+            link_origin: input.get("linkOrigin").filter(|o| o.is_object()).cloned(),
             project_root: root,
             base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
             branch: strategy["branch"].as_str().map(str::to_owned),
@@ -1146,6 +1151,7 @@ impl Inner {
             .as_str()
             .map_or_else(|| format!("thread:{command_id}"), str::to_owned);
         let strategy = &input["workspaceStrategy"];
+        let mut provisioned = false;
         let (branch, worktree_path) = match strategy["type"].as_str() {
             // `launchBranch`: a project-folder launch that names no branch records the
             // folder's checkout, as the composer does.
@@ -1170,6 +1176,7 @@ impl Inner {
                     (Value::Null, Value::Null)
                 } else {
                     let made = self.provision_worktree(&thread_id, &input).await?;
+                    provisioned = true;
                     (json!(made.branch), json!(made.path))
                 }
             }
@@ -1225,8 +1232,13 @@ impl Inner {
             let (_, replayed) = self.dispatch_value(create).await.map_err(to_err)?;
             resumed = replayed;
         }
+        let first_message = input.get("initialMessage").filter(|m| m.is_object());
+        // With a first message, the agent stage ends when its turn starts.
+        if let (true, false, None, Some(host)) = (provisioned, resumed, first_message, &self.host) {
+            host.launch_committed(&thread_id);
+        }
         let mut sequence = None;
-        if let Some(message) = input.get("initialMessage").filter(|m| m.is_object()) {
+        if let Some(message) = first_message {
             let message_command = format!("{command_id}:initial-message");
             let mut command = json!({
                 "type": "message.dispatch",
@@ -1269,6 +1281,42 @@ impl Inner {
         }
         Ok(result)
     }
+}
+
+/// What a `worktree` delegate's child checkout is made from.
+struct ChildCheckout {
+    project_id: String,
+    root: String,
+    /// The parent's `linkOrigin`, which the child thread inherits.
+    link_origin: Option<Value>,
+}
+
+/// The parent's project and origin, when the parent and its run are there and running.
+fn child_checkout(
+    tx: &Tx<'_>,
+    parent_id: &str,
+    parent_run_id: &str,
+) -> Result<Option<ChildCheckout>, String> {
+    let Some(parent) = tx.thread(parent_id)? else {
+        return Ok(None);
+    };
+    if !tx
+        .entity(parent_id, "runs", parent_run_id)?
+        .is_some_and(|run| commands::is_active(&run))
+    {
+        return Ok(None);
+    }
+    let Some(project_id) = parent["projectId"].as_str() else {
+        return Ok(None);
+    };
+    let root = tx
+        .project(project_id)?
+        .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned));
+    Ok(root.map(|root| ChildCheckout {
+        project_id: project_id.to_owned(),
+        root,
+        link_origin: parent.get("linkOrigin").filter(|o| o.is_object()).cloned(),
+    }))
 }
 
 /// A contract error the engine builds. When the contract no longer accepts its shape, the
@@ -1720,7 +1768,7 @@ impl Engine for SqliteEngine {
 /// The project and provider instance a command would start work on (T3's
 /// `assertDispatchTargetEnabled`), or `None` when it starts none or names no known thread.
 fn dispatch_target(
-    tx: &crate::store::Tx<'_>,
+    tx: &Tx<'_>,
     command: &Value,
 ) -> crate::store::StoreResult<Option<(Option<String>, String)>> {
     let text = |v: &Value| v.as_str().map(str::to_owned);

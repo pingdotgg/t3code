@@ -565,6 +565,8 @@ struct FakeRunner {
     answers: std::sync::Mutex<std::collections::VecDeque<ScriptAnswer>>,
     started: std::sync::Mutex<Vec<(String, PathBuf)>>,
     discarded: std::sync::Mutex<Vec<String>>,
+    /// When set, a start waits here before it answers, as a terminal still being opened.
+    opening: std::sync::Mutex<Option<std::sync::Arc<tokio::sync::Notify>>>,
 }
 
 impl FakeRunner {
@@ -581,6 +583,13 @@ impl FakeRunner {
     fn no_script(&self) {
         self.answers.lock().unwrap().push_back(None);
     }
+
+    /// Holds the next start until the returned gate is notified.
+    fn hold_opening(&self) -> std::sync::Arc<tokio::sync::Notify> {
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        *self.opening.lock().unwrap() = Some(gate.clone());
+        gate
+    }
 }
 
 impl conn_vcs::setup::SetupRunner for FakeRunner {
@@ -595,6 +604,10 @@ impl conn_vcs::setup::SetupRunner for FakeRunner {
                 .lock()
                 .unwrap()
                 .push((thread.to_owned(), worktree.to_owned()));
+            let opening = self.opening.lock().unwrap().take();
+            if let Some(gate) = opening {
+                gate.notified().await;
+            }
             let answer = self.answers.lock().unwrap().pop_front().flatten();
             Ok(
                 answer.map(|(background, rx)| conn_vcs::setup::StartedSetup {
@@ -844,6 +857,45 @@ async fn cancelling_a_blocking_setup_closes_its_terminal() {
         "{result:?}"
     );
     assert_eq!(*runner.discarded.lock().unwrap(), ["cancel:setup-s1"]);
+}
+
+/// A cancel that arrives while the script's terminal is still being opened waits for the
+/// open, then closes that terminal: no shell is left behind.
+#[tokio::test]
+async fn cancelling_while_the_setup_terminal_opens_closes_it() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
+
+    let fx = Fixture::new("provision-cancel-opening");
+    let setups = WorktreeSetups::new();
+    let runner = Arc::new(FakeRunner::default());
+    let _exit = runner.script(false);
+    let opening = runner.hold_opening();
+    let request = ProvisionRequest {
+        thread_id: "opening".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        setup: Some(runner.clone()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let launch = {
+        let setups = setups.clone();
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    assert!(setups.cancel("opening"));
+    opening.notify_one();
+    let result = launch.await.unwrap();
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(*runner.discarded.lock().unwrap(), ["opening:setup-s1"]);
+    assert_eq!(git(&fx.work, &["branch", "--list", "t3/*"]).trim(), "");
 }
 
 #[tokio::test]
