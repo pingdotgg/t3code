@@ -325,7 +325,7 @@ import { waitForThreadShell } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipClipboardPath, fileChipMenu, resolveFileChipTarget } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
-import { useOpenLinkedThread } from "./useOpenLinkedThread";
+import { useOpenedThreadRef, useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useOpenThreadLink } from "./useOpenThreadLink";
 import {
   MarkdownImageAvailableWidthContext,
@@ -1317,6 +1317,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
     props.markdown,
     props.environmentId,
     useLinkedEnvironments(hasThreadLinks(props.markdown) ? props.environmentId : null),
+    useOpenedThreadRef(),
   );
   const [quoteSelection, setQuoteSelection] = useState<{
     markdown: string;
@@ -2827,6 +2828,7 @@ function UserMessageContent(props: UserMessageContentProps) {
     props.text,
     props.environmentId,
     useLinkedEnvironments(hasThreadLinks(props.text) ? props.environmentId : null),
+    useOpenedThreadRef(),
   );
   const threadIcons = useThreadChipIcons(props.environmentId, liveText, props.context?.records);
   const text = replaceComposerContextReferences(liveText, (ref) => {

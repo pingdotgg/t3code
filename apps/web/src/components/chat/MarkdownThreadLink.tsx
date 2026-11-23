@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useGT, useMessages } from "gt-react";
+import { use } from "react";
 import { MessagesSquareIcon } from "lucide-react";
 import {
   formatHostedThreadLink,
@@ -23,6 +24,7 @@ import { ContextChip, ContextChipLabel } from "../ContextChip";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { BackgroundThreadContext } from "./backgroundThread";
 
 /** `label` is the link's written text; an autolink has none. */
 export function MarkdownThreadLink(props: {
@@ -37,6 +39,8 @@ export function MarkdownThreadLink(props: {
   const navigate = useNavigate();
   const trigger = useSideThreadTrigger();
   const panelRef = props.threadRef ?? null;
+  // A side tab or a kept-mounted thread is not the open route, so its links still navigate.
+  const openRef = use(BackgroundThreadContext) ? null : panelRef;
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
@@ -138,7 +142,7 @@ export function MarkdownThreadLink(props: {
       record={{ ...ref, title }}
       projectId={resolved?.metadata.projectId ?? null}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
-      current={ref.environmentId === panelRef?.environmentId && ref.threadId === panelRef.threadId}
+      current={ref.environmentId === openRef?.environmentId && ref.threadId === openRef.threadId}
     />
   );
 }

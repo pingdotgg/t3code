@@ -1,4 +1,9 @@
-import type { ComposerContextRecord, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  ComposerContextRecord,
+  EnvironmentId,
+  ScopedThreadRef,
+  ThreadId,
+} from "@t3tools/contracts";
 import {
   composerChipSizeSuffix,
   contextChipIcon,
@@ -16,7 +21,12 @@ import {
   formatComposerContextHref,
   parseComposerContextHref,
 } from "@t3tools/shared/composerContextReferences";
-import { hasThreadLinks, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  hasThreadLinks,
+  parseThreadLinkHref,
+  replaceThreadLinks,
+  threadLinkCandidates,
+} from "@t3tools/shared/threadLinks";
 import { EXTENSIONLESS_FILE_NAMES } from "@t3tools/shared/markdownLinks";
 
 export function enrichedContextLinkPresentation(
@@ -47,6 +57,24 @@ export function enrichedThreadLinkPresentation(
     ...(presentation.accent ? { accent: presentation.accent } : {}),
     icon: contextChipIcon(presentation, ""),
   };
+}
+
+/** Writes each link to `current` as its `label`, since opening it would stay on the same screen. */
+export function unlinkThreadLinks(
+  markdown: string,
+  messageEnvironmentId: EnvironmentId,
+  current: ScopedThreadRef | null,
+  label: (ref: ScopedThreadRef, written: string | undefined) => string,
+): string {
+  if (current === null) return markdown;
+  return replaceThreadLinks(markdown, (link, written) => {
+    const ref = threadLinkCandidates(link, messageEnvironmentId).find(
+      (candidate) =>
+        candidate.environmentId === current.environmentId &&
+        candidate.threadId === current.threadId,
+    );
+    return ref && label(ref, written);
+  });
 }
 
 export interface ThreadChipTarget {

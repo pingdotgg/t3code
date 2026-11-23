@@ -10,6 +10,7 @@ import {
   enrichedThreadLinkPresentation,
   ENRICHED_INLINE_FILE_LINK_REGEX,
   threadChipTargets,
+  unlinkThreadLinks,
 } from "./enrichedLinkPresentation";
 
 describe("Enriched link presentation", () => {
@@ -167,5 +168,16 @@ describe("Enriched link presentation", () => {
         link: true,
       },
     ]);
+  });
+
+  it("writes a link to the thread on screen as plain text and keeps links to others", () => {
+    const environmentId = "env" as EnvironmentId;
+    const current = { environmentId, threadId: "here" as ThreadId };
+    const markdown =
+      "See [this thread](t3-thread://v2/env/here), [that one](t3-thread://v2/env/there) and <t3-thread://v1/here>.";
+    expect(
+      unlinkThreadLinks(markdown, environmentId, current, (_ref, label) => label ?? "Plan"),
+    ).toBe("See this thread, [that one](t3-thread://v2/env/there) and Plan.");
+    expect(unlinkThreadLinks(markdown, environmentId, null, () => "Plan")).toBe(markdown);
   });
 });

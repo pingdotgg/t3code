@@ -9,6 +9,7 @@ import { act, render } from "../../../test/render";
 import { isMacPlatform } from "../../lib/utils";
 import { linkedThreadSurface } from "../../linkedThreadSurface";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import { BackgroundThreadContext } from "./backgroundThread";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
 const HERE = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("here"));
@@ -286,4 +287,28 @@ it("names the thread it is written in without a link that goes nowhere", async (
   );
   await expect.element(screen.getByText("Plan the release")).toBeVisible();
   await expect.element(screen.getByRole("link")).not.toBeInTheDocument();
+});
+
+it("still opens the thread it is written in from a side tab, which is not the open page", async () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  registry.set(
+    reply,
+    AsyncResult.success({ here: { title: "Plan the release", projectId: null } }),
+  );
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <BackgroundThreadContext value>
+        <MarkdownThreadLink
+          environmentId={HERE.environmentId}
+          threadRef={HERE}
+          link={{ environmentId: HERE.environmentId, threadId: HERE.threadId }}
+          label={null}
+        />
+      </BackgroundThreadContext>
+    </RegistryContext>,
+  );
+  await expect
+    .element(screen.getByRole("link", { name: "Thread, Plan the release" }))
+    .toHaveAttribute("href", "/environment/here");
 });

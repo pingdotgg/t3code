@@ -30,7 +30,7 @@ import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, useGT, useMessages } from "gt-react-native";
 
-import { threadChipTargets } from "../lib/enrichedLinkPresentation";
+import { threadChipTargets, unlinkThreadLinks } from "../lib/enrichedLinkPresentation";
 import { resolveProjectChipIcon } from "../lib/projectIcon";
 import { projectGlyphImageAtom, projectGlyphKey } from "../native/ProjectChipIconImages";
 import { projectFaviconUrlAtom } from "./assets";
@@ -242,11 +242,15 @@ export function useSideChats(ref: ScopedThreadRef) {
 
 const NO_LINKED_ENVIRONMENTS: ReadonlyMap<EnvironmentId, string> = new Map();
 
-/** `linked` names the machines `environmentId` links to, whose threads open read-only. */
+/**
+ * `linked` names the machines `environmentId` links to, whose threads open read-only. A link to
+ * `current`, the thread already on screen, would go nowhere, so it becomes plain text.
+ */
 export function useLiveThreadLinkLabels(
   markdown: string,
   environmentId: EnvironmentId,
   linked = NO_LINKED_ENVIRONMENTS,
+  current: ScopedThreadRef | null = null,
 ): string {
   const resolve = useMessages();
   const gt = useGT();
@@ -255,8 +259,16 @@ export function useLiveThreadLinkLabels(
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
+  const unlinked = unlinkThreadLinks(markdown, environmentId, current, (ref, label) => {
+    const title = titles.get(threadKey(ref));
+    return (
+      (typeof title === "string" ? title.trim() : "") ||
+      label?.trim() ||
+      resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
+    );
+  });
   return relabelThreadLinks(
-    markdown,
+    unlinked,
     environmentId,
     (ref, label) => {
       const title = titles.get(threadKey(ref));

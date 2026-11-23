@@ -1,6 +1,7 @@
 import { StackActions, useNavigation, useRoute, type Route } from "@react-navigation/native";
 import { use } from "react";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 
 import { linkedThreadStep } from "../../lib/android-workspace-navigation";
 import { linkedThreadRouteParams } from "./linkedThreadRoute";
@@ -9,6 +10,16 @@ import {
   type ThreadInspectorTarget,
   useOpenThreadInspector,
 } from "./thread-inspector-navigation";
+
+/** The thread this screen shows, which a thread link opened from it would only stay on. */
+export function useOpenedThreadRef(): ScopedThreadRef | null {
+  const route = useRoute<Route<string, { environmentId?: string; threadId?: string }>>();
+  // In the inspector a thread link opens beside the thread, so it still goes somewhere.
+  const inInspector = use(ThreadInspectorNavigationContext) !== null;
+  const { environmentId, threadId } = route.params ?? {};
+  if (inInspector || route.name !== "Thread" || !environmentId || !threadId) return null;
+  return scopeThreadRef(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+}
 
 export function useOpenLinkedThread() {
   const navigation = useNavigation();
