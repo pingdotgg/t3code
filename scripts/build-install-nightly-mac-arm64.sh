@@ -134,8 +134,11 @@ acquire_install_lock() {
       owner=$(cat "$install_lock_dir/pid" 2>/dev/null || true)
     fi
     if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-      say "Removing stale install lock $install_lock_dir"
-      rm -rf "$install_lock_dir" 2>/dev/null || true
+      stale_lock="$install_lock_dir.stale.$$"
+      if mv "$install_lock_dir" "$stale_lock" 2>/dev/null; then
+        say "Removing stale install lock $install_lock_dir"
+        rm -rf "$stale_lock"
+      fi
       continue
     fi
     if [ "$waited" -ge 300 ]; then
