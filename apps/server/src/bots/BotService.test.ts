@@ -413,4 +413,52 @@ describe("BotService", () => {
       }).pipe(Effect.provide(harness.layer));
     },
   );
+
+  it.effect(
+    "syncs providerInstanceId from modelSelection and rejects cross-bot routine updates",
+    () => {
+      const harness = makeTestHarness();
+      return Effect.gen(function* () {
+        const bots = yield* BotService.BotService;
+        const first = yield* bots.create({
+          name: "Alpha Bot",
+          modelSelection: {
+            instanceId: decodeProviderInstanceId("pi"),
+            model: "google-vertex/gemini-4-neon",
+          },
+        });
+        expect(first.providerInstanceId).toBe(decodeProviderInstanceId("pi"));
+
+        const updated = yield* bots.update({
+          botId: first.id,
+          modelSelection: {
+            instanceId: decodeProviderInstanceId("claudeAgent"),
+            model: "claude-sonnet-5-5",
+          },
+        });
+        expect(updated.providerInstanceId).toBe(decodeProviderInstanceId("claudeAgent"));
+
+        const second = yield* bots.create({ name: "Beta Bot" });
+        const routine = yield* bots.upsertRoutine({
+          botId: first.id,
+          title: "Alpha sweep",
+          prompt: "Check alpha.",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "09:00" },
+        });
+
+        const wrongBot = yield* bots
+          .upsertRoutine({
+            routineId: routine.id,
+            botId: second.id,
+            title: "Hijack",
+            prompt: "Should fail.",
+            enabled: true,
+            schedule: { type: "fixed_time", timeOfDay: "10:00" },
+          })
+          .pipe(Effect.result);
+        expect(Result.isFailure(wrongBot)).toBe(true);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
 });

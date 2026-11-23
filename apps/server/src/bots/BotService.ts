@@ -367,7 +367,10 @@ const make = Effect.gen(function* () {
       projectId,
       avatar: input.avatar ?? null,
       avatarColor: input.avatarColor ?? "sky",
-      providerInstanceId: input.providerInstanceId ?? null,
+      providerInstanceId:
+        input.providerInstanceId !== undefined
+          ? input.providerInstanceId
+          : (input.modelSelection?.instanceId ?? null),
       modelSelection: input.modelSelection ?? null,
       runtimeMode: input.runtimeMode ?? "auto-accept-edits",
       paused: false,
@@ -414,7 +417,10 @@ const make = Effect.gen(function* () {
       projectId,
       avatar: input.avatar ?? null,
       avatarColor: input.avatarColor ?? "violet",
-      providerInstanceId: input.providerInstanceId ?? null,
+      providerInstanceId:
+        input.providerInstanceId !== undefined
+          ? input.providerInstanceId
+          : (input.modelSelection?.instanceId ?? null),
       modelSelection: input.modelSelection ?? null,
       runtimeMode: input.runtimeMode ?? "auto-accept-edits",
       paused: false,
@@ -442,9 +448,11 @@ const make = Effect.gen(function* () {
       avatar: input.avatar === undefined ? existing.avatar : input.avatar,
       avatarColor: input.avatarColor ?? existing.avatarColor,
       providerInstanceId:
-        input.providerInstanceId === undefined
-          ? existing.providerInstanceId
-          : input.providerInstanceId,
+        input.providerInstanceId !== undefined
+          ? input.providerInstanceId
+          : input.modelSelection !== undefined && input.modelSelection !== null
+            ? input.modelSelection.instanceId
+            : existing.providerInstanceId,
       modelSelection:
         input.modelSelection === undefined ? existing.modelSelection : input.modelSelection,
       runtimeMode: input.runtimeMode ?? existing.runtimeMode,
@@ -709,6 +717,11 @@ const make = Effect.gen(function* () {
     const bot = yield* requireBot(input.botId);
     const existing =
       input.routineId === undefined ? Option.none() : yield* repo.getRoutine(input.routineId);
+    if (Option.isSome(existing) && existing.value.botId !== bot.id) {
+      return yield* new BotOperationError({
+        message: `Routine "${input.routineId}" does not belong to bot "${bot.id}".`,
+      });
+    }
     const timestamp = yield* nowIso();
     const nextRunAt = yield* computeNextRunIso(input.schedule, input.enabled && !bot.paused);
     const precheckCommand =

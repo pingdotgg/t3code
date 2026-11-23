@@ -1385,7 +1385,7 @@ export const layerPullRequestsToolkit = toolkitRegistration(
 
 const layerIssuesToolkit = toolkitRegistration(IssuesToolkit, IssuesHandlers.layer);
 
-const layerBotsToolkit = toolkitRegistration(BotsToolkit, BotsHandlers.layer);
+export const layerBotsToolkit = toolkitRegistration(BotsToolkit, BotsHandlers.layer);
 
 const layerDeviceStandardToolkitRegistration = toolkitRegistration(
   DeviceStandardToolkit,
