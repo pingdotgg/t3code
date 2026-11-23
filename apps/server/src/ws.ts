@@ -63,6 +63,7 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   CLIENT_CAPABILITIES_QUERY_PARAM,
+  HTTP_USAGE_LIMIT_SOURCES_CAPABILITY,
   SETTINGS_SECRET_REFERENCES_CAPABILITY,
   ORCHESTRATION_PROTOCOL_VERSION,
   OrchestrationV2DispatchCommandError,
@@ -814,7 +815,10 @@ function hasCompatibleOrchestrationProtocol(url: URL): boolean {
 
 function readSettingsClient(url: URL) {
   const capabilities = url.searchParams.get(CLIENT_CAPABILITIES_QUERY_PARAM)?.split(",") ?? [];
-  return { secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY) };
+  return {
+    secretReferences: capabilities.includes(SETTINGS_SECRET_REFERENCES_CAPABILITY),
+    httpUsageLimitSources: capabilities.includes(HTTP_USAGE_LIMIT_SOURCES_CAPABILITY),
+  };
 }
 
 function shouldUseBoundedThreadSnapshot(input: {
@@ -1447,7 +1451,7 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
-  settingsClient: { readonly secretReferences: boolean },
+  settingsClient: ServerSettings.SettingsClient,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {

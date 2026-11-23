@@ -141,9 +141,14 @@ const normalizeServerSettings = (
     ),
   );
 
+export interface SettingsClient {
+  readonly secretReferences: boolean;
+  readonly httpUsageLimitSources?: boolean;
+}
+
 export function redactServerSettingsForClient(
   settings: ServerSettings,
-  client: { readonly secretReferences: boolean },
+  client: SettingsClient,
 ): ServerSettings {
   const redacted = mapSettingsSecrets(settings, (secret) =>
     secret.sensitive
@@ -156,7 +161,18 @@ export function redactServerSettingsForClient(
     : mapSettingsSecretValues(redacted, (value) =>
         isSecretReference(value) ? SECRET_REDACTED : value,
       );
-  return { ...shaped, secretProviders: withoutUnknownSecretProviderConfigs(shaped) };
+  return {
+    ...shaped,
+    secretProviders: withoutUnknownSecretProviderConfigs(shaped),
+    // Older clients decode only "cliproxy" sources and reject the whole settings payload otherwise.
+    usageLimitSources: client.httpUsageLimitSources
+      ? shaped.usageLimitSources
+      : Object.fromEntries(
+          Object.entries(shaped.usageLimitSources).filter(
+            ([, source]) => source.kind === "cliproxy",
+          ),
+        ),
+  };
 }
 
 /** A client shown a reference as a saved secret sends that marker back; it keeps the reference. */
