@@ -91,6 +91,18 @@ describe("compareMetrics", () => {
     expect(result.table).toContain("| quiet.loopDelayP99Ms | – | 1.5 | n/a | | |");
   });
 
+  it("does not compare wakeups counted with and without the delay sampler", () => {
+    const sampled = quietRuns({ ...base, wakeupsPerSec: 160 });
+    const withSamples: ServerMetrics = {
+      meta,
+      runs: sampled.runs.map((run) => ({ quiet: { ...run.quiet, loopSamples: 2_900 } })),
+    };
+    const result = compareMetrics(quietRuns(base), withSamples);
+    expect(result.regressed).toEqual([]);
+    expect(result.table).toContain("| quiet.wakeupsPerSec | 7 | 160 | not comparable | | |");
+    expect(compareMetrics(withSamples, withSamples).compared).toBe(10);
+  });
+
   it("counts how many metrics both sides share", () => {
     const startupOnly: ServerMetrics = { meta, runs: [{ startup: { readyMs: 9_000 } }] };
     expect(compareMetrics(startupOnly, quietRuns(base)).compared).toBe(0);

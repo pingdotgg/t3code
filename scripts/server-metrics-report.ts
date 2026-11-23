@@ -224,6 +224,13 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       lines.push(`| ${metric} | ${x ? median(x) : "–"} | ${y ? median(y) : "–"} | n/a | | |`);
       continue;
     }
+    // Wakeups include the delay sampler's only when `loopSamples` sits beside them, so a file
+    // from before the sampler and one from after measured different things.
+    const window = metric.endsWith("wakeupsPerSec") ? metric.slice(0, -"wakeupsPerSec".length) : "";
+    if (window && a.has(`${window}loopSamples`) !== b.has(`${window}loopSamples`)) {
+      lines.push(`| ${metric} | ${median(x)} | ${median(y)} | not comparable | | |`);
+      continue;
+    }
     compared++;
     const mx = median(x);
     const my = median(y);
