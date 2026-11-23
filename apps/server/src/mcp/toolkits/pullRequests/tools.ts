@@ -68,9 +68,11 @@ export const PullRequestTargetInput = Schema.Struct({
   ),
   url: Schema.optional(TrimmedNonEmptyString),
   repository: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description: "With `number`, when no `url`. Without the host, e.g. `owner/repo`.",
-    }),
+    TrimmedNonEmptyString.pipe(
+      Schema.annotateEncoded({
+        description: "With `number`, when no `url`. Without the host, e.g. `owner/repo`.",
+      }),
+    ),
   ),
   number: Schema.optional(
     PositiveInt.annotate({
@@ -501,9 +503,11 @@ export const ThreadPullRequestInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   number: Schema.optional(PositiveInt.annotate({ description: "Default: the branch's PR." })),
   repository: Schema.optional(
-    TrimmedNonEmptyString.annotate({
-      description: "Default: this thread's repository. Without the host, e.g. `owner/repo`.",
-    }),
+    TrimmedNonEmptyString.pipe(
+      Schema.annotateEncoded({
+        description: "Default: this thread's repository. Without the host, e.g. `owner/repo`.",
+      }),
+    ),
   ),
 });
 export type ThreadPullRequestInput = typeof ThreadPullRequestInput.Type;
