@@ -7,7 +7,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import { runMigrateDevDb } from "./migrate-dev-db.ts";
+import { dropResumableFamilies, runMigrateDevDb } from "./migrate-dev-db.ts";
 
 const withDatabase = <A, E, R>(
   databasePath: string,
@@ -247,6 +247,35 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         transfers: 0,
         links: 0,
       });
+    }),
+  );
+
+  it.effect("drops resumable families from a seed in place, the pending steer included", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-resumable-" });
+      const database = yield* createFixtureSource(dir);
+
+      assert.equal(yield* dropResumableFamilies(database), 4);
+      const threads = yield* withDatabase(
+        database,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ thread_id: string }>`
+            SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
+        }),
+      );
+      assert.deepStrictEqual(
+        threads.map((row) => row.thread_id),
+        [
+          "archived-thread",
+          "deleted-project-thread",
+          "fork-thread",
+          "settled-thread",
+          "stopped-thread",
+        ],
+      );
+      assert.equal(yield* dropResumableFamilies(database), 0);
     }),
   );
 

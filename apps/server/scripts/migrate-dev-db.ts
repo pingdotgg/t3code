@@ -329,19 +329,17 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
   yield* sql`DETACH DATABASE src`;
 });
 
-const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+/**
+ * Threads a server started on this database would resume by itself: every startup recovery kind,
+ * plus latest-run failures and recovery choices, which usage-limit recovery can resume.
+ */
+export const resumableThreadIds = Effect.fn("resumableDevDbThreadIds")(function* () {
   const sql = yield* SqlClient.SqlClient;
-
-  // Usage-limit recovery also depends on settings; exclude latest-run failures and recovery choices.
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const recoveryThreadIds = yield* Effect.forEach(RECOVERY_KINDS, (kind) =>
+  const recovery = yield* Effect.forEach(RECOVERY_KINDS, (kind) =>
     projections.getRecoveryThreadIds(kind),
   );
-  yield* sql`CREATE TEMP TABLE live_threads (thread_id TEXT PRIMARY KEY)`;
-  for (const threadId of new Set(recoveryThreadIds.flat())) {
-    yield* sql`INSERT INTO live_threads (thread_id) VALUES (${threadId})`;
-  }
-  yield* sql`INSERT OR IGNORE INTO live_threads (thread_id)
+  const failedOrRecovering = yield* sql<{ thread_id: string }>`
     SELECT r.thread_id FROM orchestration_v2_projection_runs r
     WHERE r.status = 'failed' AND r.ordinal = (
       SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
@@ -349,6 +347,74 @@ const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigra
     UNION
     SELECT thread_id FROM orchestration_v2_projection_threads
     WHERE json_extract(payload_json, '$.limitRecovery') IS NOT NULL`;
+  return [
+    ...new Set<string>([...recovery.flat(), ...failedOrRecovering.map((row) => row.thread_id)]),
+  ];
+});
+
+export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDevDbResumableWorkError>()(
+  "MigrateDevDbResumableWorkError",
+  { databasePath: Schema.String, threads: Schema.Number },
+) {
+  override get message() {
+    return `${this.databasePath} still holds ${this.threads} threads a server would resume.`;
+  }
+}
+
+/**
+ * Drops, in place, every thread family a server started on `databasePath` would resume, and fails
+ * if any remain. A database seeded by an older checkout can miss a recovery kind added since.
+ */
+export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(function* (
+  databasePath: string,
+) {
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const resumable = yield* resumableThreadIds();
+    if (resumable.length > 0) {
+      yield* sql`CREATE TEMP TABLE resumable_families (thread_id TEXT PRIMARY KEY)`;
+      yield* sql`INSERT OR IGNORE INTO resumable_families
+        SELECT family.thread_id FROM orchestration_v2_projection_threads family
+        WHERE COALESCE(json_extract(family.payload_json, '$.lineage.rootThreadId'), family.thread_id) IN (
+          SELECT COALESCE(json_extract(payload_json, '$.lineage.rootThreadId'), thread_id)
+          FROM orchestration_v2_projection_threads WHERE thread_id IN ${sql.in(resumable)})`;
+      yield* sql.withTransaction(
+        Effect.gen(function* () {
+          for (const { name } of yield* sql<{ name: string }>`
+            SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
+            WHERE m.type = 'table' AND c.name = 'thread_id'`) {
+            yield* sql`DELETE FROM ${sql(name)}
+              WHERE thread_id IN (SELECT thread_id FROM resumable_families)`;
+          }
+          yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
+            WHERE source_thread_id IN (SELECT thread_id FROM resumable_families)
+               OR target_thread_id IN (SELECT thread_id FROM resumable_families)`;
+          yield* sql`DELETE FROM orchestration_events WHERE aggregate_kind = 'thread'
+            AND stream_id IN (SELECT thread_id FROM resumable_families)`;
+        }),
+      );
+    }
+    const left = yield* resumableThreadIds();
+    if (left.length > 0) {
+      return yield* new MigrateDevDbResumableWorkError({ databasePath, threads: left.length });
+    }
+    return resumable.length;
+  }).pipe(
+    Effect.provide(
+      ProjectionStore.layer.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
+      ),
+    ),
+  );
+});
+
+const pruneSnapshot = Effect.fn("pruneDevDbSnapshot")(function* (input: RunMigrateDevDbInput) {
+  const sql = yield* SqlClient.SqlClient;
+
+  yield* sql`CREATE TEMP TABLE live_threads (thread_id TEXT PRIMARY KEY)`;
+  for (const threadId of yield* resumableThreadIds()) {
+    yield* sql`INSERT INTO live_threads (thread_id) VALUES (${threadId})`;
+  }
 
   // Clone or drop whole thread families to preserve fork and subagent lineage reads.
   yield* sql`CREATE TEMP TABLE thread_families AS
@@ -648,9 +714,24 @@ export const migrateDevDbCommand = Command.make(
       Flag.optional,
       Flag.withDescription("Source database. Defaults to ~/.t3/userdata/statev2.sqlite."),
     ),
+    dropResumable: Flag.String("drop-resumable").pipe(
+      Flag.optional,
+      Flag.withDescription(
+        "Only drop, in place, the thread families a server started on this database would resume, and fail if any remain. Copies only; never the live database.",
+      ),
+    ),
   },
-  ({ projects, threadsPerProject, baseDir, source }) =>
+  ({ projects, threadsPerProject, baseDir, source, dropResumable }) =>
     Effect.gen(function* () {
+      if (Option.isSome(dropResumable)) {
+        const path = yield* Path.Path;
+        const target = path.resolve(dropResumable.value);
+        const live = path.resolve(path.join(NodeOS.homedir(), ".t3", "userdata", "statev2.sqlite"));
+        if (target === live) return yield* new MigrateDevDbSharedHomeError();
+        const dropped = yield* dropResumableFamilies(target);
+        yield* Console.log(`Dropped ${dropped} resumable threads.`);
+        return;
+      }
       const result = yield* runMigrateDevDb({
         projects,
         threadsPerProject,

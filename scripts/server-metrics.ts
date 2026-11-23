@@ -511,6 +511,22 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
   const reposDir = path.join(directory, "repos");
   const gone = path.join(directory, "gone");
   yield* fs.copyFile(path.join(seed, "userdata/statev2.sqlite"), database);
+  // A seed made by an older checkout can still hold work startup would resume, so this checkout's
+  // migrate-dev-db drops it from the copy and fails if any remains.
+  const dropped = yield* run(
+    yield* HostProcess.ExecutablePath,
+    [
+      path.join(import.meta.dirname, "../apps/server/scripts/migrate-dev-db.ts"),
+      "--drop-resumable",
+      database,
+    ],
+    { allowExit: [0, 1] },
+  );
+  if (dropped.exitCode !== 0) {
+    return yield* new MetricsError({
+      message: `refusing to start on the seed: ${dropped.stderr.trim() || dropped.stdout.trim()}`,
+    });
+  }
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projects = yield* sql<{ project_id: string; deleted: number; workspace_root: string }>`
@@ -580,17 +596,17 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
         yield* sql`DELETE FROM ${sql(table)}`;
       }
     }
-    const left: string[] = [];
+    const named: string[] = [];
     for (const { table, column } of columns) {
       for (const prefix of real) {
         const [found] = yield* sql<{ n: number }>`
           SELECT COUNT(*) AS n FROM ${sql(table)} WHERE ${mentionsReal(column, prefix)}`;
-        if (Number(found?.n ?? 0) > 0) left.push(`${table}.${column}`);
+        if (Number(found?.n ?? 0) > 0) named.push(`${table}.${column}`);
       }
     }
-    if (left.length > 0) {
+    if (named.length > 0) {
       return yield* new MetricsError({
-        message: `the seed still names real paths in ${[...new Set(left)].join(", ")}`,
+        message: `the seed still names real paths in ${[...new Set(named)].join(", ")}`,
       });
     }
     const [runs] = yield* sql<{ n: number }>`
