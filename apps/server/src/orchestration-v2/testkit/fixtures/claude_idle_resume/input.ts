@@ -7,7 +7,7 @@ export function claudeIdleResumeInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: CLAUDE_IDLE_RESUME_PROMPT_1 },
-      { type: "advance_clock", duration: "31 minutes" },
+      { type: "advance_clock", duration: "31 minutes", releasesProviderSession: true },
       { type: "message", text: CLAUDE_IDLE_RESUME_PROMPT_2 },
     ],
   };

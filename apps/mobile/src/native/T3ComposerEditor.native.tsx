@@ -1,7 +1,9 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
 import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import { TextInputWrapper } from "expo-paste-input";
@@ -91,6 +93,8 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly autoFocus: boolean;
   readonly autoCorrect: boolean;
   readonly spellCheck: boolean;
+  readonly enterBehavior: string;
+  readonly submitEnabled: boolean;
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
@@ -108,6 +112,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerContentSizeChange?: (
     event: NativeSyntheticEvent<{ readonly width: number; readonly height: number }>,
   ) => void;
+  readonly onComposerSubmit?: (event: NativeSyntheticEvent<{ alternate: boolean }>) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -138,6 +143,7 @@ export function ComposerEditor({
   onFocus,
   onBlur,
   onContentSizeChange,
+  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -151,11 +157,12 @@ export function ComposerEditor({
   // an abandoned render from leaking a trailing token into the next one.
   const [confirmedTokens, setConfirmedTokens] = useState(() => ({
     value: props.value,
-    tokens: collectComposerInlineTokens(props.value),
+    tokens: collectComposerInlineTokens(props.value, { findMath: markdownMathRanges }),
   }));
   let tokens = confirmedTokens.tokens;
   if (confirmedTokens.value !== props.value) {
     tokens = collectComposerInlineTokens(props.value, {
+      findMath: markdownMathRanges,
       preserveTrailingFrom: confirmedTokens.tokens,
     });
     setConfirmedTokens({ value: props.value, tokens });
@@ -196,7 +203,8 @@ export function ComposerEditor({
         );
         return {
           // Android taps only known token types; a model chip opens like a skill chip.
-          type: token.type === "model" ? "skill" : token.type,
+          type:
+            token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
           source: token.source,
           start: token.start,
           end: token.end,
@@ -212,7 +220,9 @@ export function ComposerEditor({
                 ? model.label
                 : token.type === "context"
                   ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                  : basename(token.value),
+                  : token.type === "citation"
+                    ? token.value
+                    : basename(token.value).normalize("NFC"),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
           iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
           tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
@@ -339,6 +349,8 @@ export function ComposerEditor({
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
         spellCheck={props.spellCheck ?? true}
+        enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
+        submitEnabled={onSubmit !== undefined}
         textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
@@ -406,6 +418,11 @@ export function ComposerEditor({
           onContentSizeChange === undefined
             ? undefined
             : (event) => onContentSizeChange(event.nativeEvent)
+        }
+        onComposerSubmit={
+          onSubmit === undefined
+            ? undefined
+            : (event) => onSubmit(event.nativeEvent.alternate === true)
         }
       />
     </TextInputWrapper>

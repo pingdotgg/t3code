@@ -242,6 +242,11 @@ describe("HtmlRender", () => {
       const reused = yield* htmlRender.publish({ threadId, ...page });
       yield* mcpSessions.set({ ...session, browserToolsAvailable: true });
       expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(reused);
+      const first = yield* htmlRender.publish({ threadId, ...page });
+      const second = yield* htmlRender.publish({ threadId, ...page });
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(first);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(second);
+      expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toBe(undefined);
 
       yield* htmlRender.publish({ threadId, ...page });
       yield* mcpSessions.set({
@@ -453,6 +458,7 @@ process.on("SIGTERM", () => {});
 const quit = () => { fs.writeFileSync(${JSON.stringify(exitRecord)}, "asked to close"); process.exit(0); };
 const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
 const results = {
+  "Target.createBrowserContext": { browserContextId: "context" },
   "Target.createTarget": { targetId: "page" },
   "Target.attachToTarget": { sessionId: "session" },
   "Runtime.evaluate": { result: { value: 100 } },
@@ -514,6 +520,33 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
           );
           expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserSandboxError);
           expect(error.message).toContain(`browser setup --base-dir ${baseDir}`);
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+
+      it.live("reports a root server's sandbox refusal as a root error", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const directory = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-fake-browser-",
+          });
+          const executable = path.join(directory, "chrome-headless-shell");
+          const refusal =
+            "[1123/040735.447156:ERROR:content/browser/zygote_host/zygote_host_impl_linux.cc:103] Running as root without --no-sandbox is not supported. See https://crbug.com/638180.\n";
+          yield* fileSystem.writeFileString(
+            executable,
+            `#!${process.execPath}\nprocess.stderr.write(${JSON.stringify(refusal)});\nprocess.exit(1);\n`,
+            { mode: 0o755 },
+          );
+
+          const error = yield* HtmlRender.HtmlRender.use((htmlRender) =>
+            htmlRender.preview({ html: "<p>hello</p>" }),
+          ).pipe(
+            Effect.flip,
+            Effect.provide(layerHtmlRender(executable)),
+            Effect.provideService(HostProcess.UserId, 0),
+          );
+          expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserRootError);
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
     },
@@ -621,6 +654,6 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
       }).pipe(Effect.provide(layerHtmlRender(executable)));
       expect(requests).toEqual([]);
       expect(datagrams).toEqual([]);
-    }).pipe(Effect.scoped),
+    }),
   );
 });

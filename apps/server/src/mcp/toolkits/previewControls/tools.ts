@@ -1,4 +1,5 @@
 import {
+  clampedPositiveInt,
   NonNegativeInt,
   OrchestratorMcpFailure,
   PreviewAutomationError,
@@ -6,7 +7,7 @@ import {
   PreviewTabId,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
@@ -28,7 +29,7 @@ const PreviewListTool = Tool.make("t3_preview_list", {
     "List this thread's preview tabs. Only `runtime:'server'` entries can be automated here. Others are in the user's local desktop app. Never pass a non-server `tabId` to a `preview_*` tool. Tell the user that tab is on their local desktop and this environment cannot reach it.",
   parameters: Schema.Struct({
     cursor: Schema.optional(NonNegativeInt),
-    limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+    limit: Schema.optional(clampedPositiveInt(50)),
   }),
   success: Schema.Struct({
     ...PreviewListResult.fields,
@@ -36,12 +37,15 @@ const PreviewListTool = Tool.make("t3_preview_list", {
   }),
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 const PreviewCloseTool = Tool.make("t3_preview_close", {
   ...shared,
   description:
     "Close one preview tab this thread owns. Use it on a tab you opened for your own check when you finish.",
   parameters: Schema.Struct({ tabId: PreviewTabId }),
   success: Schema.Struct({}),
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 export const PreviewControlsToolkit = Toolkit.make(PreviewListTool, PreviewCloseTool);

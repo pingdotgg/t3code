@@ -153,6 +153,20 @@ export function ProviderIcon(props: ProviderIconProps) {
   );
 }
 
+/** Local ACP agents share one fallback glyph, so a badge alone cannot tell instances apart. */
+export function providerInstanceNameLabel(props: {
+  readonly provider: string | null | undefined;
+  readonly iconUrl?: string | null | undefined;
+  readonly displayName: string;
+  readonly showBadge: boolean;
+}): string | null {
+  return props.showBadge &&
+    props.provider === "acpRegistry" &&
+    resolveOfficialAcpRegistryIconUrl(props.iconUrl) === null
+    ? props.displayName
+    : null;
+}
+
 export function ProviderInstanceIcon(props: {
   readonly iconUrl?: string | null;
   readonly provider: string | null | undefined;
@@ -183,7 +197,8 @@ export function ProviderInstanceIcon(props: {
               borderRadius: 999,
               borderWidth: 1,
               ...(props.surfaceColor ? { borderColor: props.surfaceColor } : {}),
-              backgroundColor: accentColor,
+              // An undefined inline key still overrides the className color when styles merge.
+              ...(accentColor ? { backgroundColor: accentColor } : {}),
               alignItems: "center",
               justifyContent: "center",
             }}
@@ -194,7 +209,7 @@ export function ProviderInstanceIcon(props: {
                 fontSize: 7,
                 fontWeight: "600",
                 lineHeight: 9,
-                color: accentColor ? providerAccentForegroundColor(accentColor) : undefined,
+                ...(accentColor ? { color: providerAccentForegroundColor(accentColor) } : {}),
               }}
             >
               {providerInstanceInitials(props.displayName)}

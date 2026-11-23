@@ -1,6 +1,6 @@
 import { AppActivityIndicator } from "./AppActivityIndicator";
-import { Column, Row, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
-import { weight } from "@expo/ui/jetpack-compose/modifiers";
+import { Column, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
+import { useGT } from "gt-react-native";
 import { use, useState, type ReactNode } from "react";
 import { View } from "react-native";
 
@@ -23,6 +23,7 @@ export interface AndroidHeaderAction {
   readonly selected?: boolean;
   readonly subtitle?: string;
   readonly destructive?: boolean;
+  readonly iconScale?: number;
   readonly overflowOnly?: boolean;
 }
 
@@ -32,6 +33,7 @@ export function AndroidHeaderIconButton(props: {
   readonly onPress?: () => void;
   readonly disabled?: boolean;
   readonly selected?: boolean;
+  readonly iconScale?: number;
 }) {
   return <IconButton {...props} tintColorClassName="accent-header-foreground" />;
 }
@@ -46,9 +48,8 @@ export function AndroidScreenHeader(props: {
   readonly onBack?: () => void;
   readonly embedded?: boolean;
   readonly hideBottomBorder?: boolean;
-  /** One row with the subtitle after the title, for screens short on height. */
-  readonly compact?: boolean;
 }) {
+  const gt = useGT();
   const { colors } = useControlTheme();
   const titleTypography = useScaledTextRole("title");
   const subtitleTypography = useScaledTextRole("label");
@@ -77,13 +78,12 @@ export function AndroidScreenHeader(props: {
         />
       ) : null}
       <NativeAppBar
-        singleLine={props.compact}
         navigationIcon={
           props.onBack || props.leading ? (
             <View collapsable={false} className="flex-row items-center">
               {props.onBack ? (
                 <IconButton
-                  accessibilityLabel="Navigate up"
+                  accessibilityLabel={gt("Navigate up")}
                   icon="arrow.left"
                   tintColorClassName="accent-header-foreground"
                   onPress={props.onBack}
@@ -108,26 +108,6 @@ export function AndroidScreenHeader(props: {
             >
               {props.title}
             </NativeText>
-          ) : props.compact ? (
-            <Row verticalAlignment="center" horizontalArrangement={{ spacedBy: 8 }}>
-              <NativeText
-                color={colors["--color-header-foreground"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={titleTypography}
-              >
-                {props.title}
-              </NativeText>
-              <NativeText
-                color={colors["--color-foreground-muted"]}
-                maxLines={1}
-                overflow="ellipsis"
-                style={subtitleTypography}
-                modifiers={[weight(1)]}
-              >
-                {props.subtitle}
-              </NativeText>
-            </Row>
           ) : (
             <Column>
               <NativeText
@@ -170,6 +150,7 @@ export function AndroidScreenHeader(props: {
                     disabled={action.disabled}
                     selected={action.selected}
                     icon={action.icon}
+                    iconScale={action.iconScale}
                     onPress={action.onPress}
                   />
                 ),
@@ -192,7 +173,7 @@ export function AndroidScreenHeader(props: {
                 >
                   {(open) => (
                     <IconButton
-                      accessibilityLabel="More actions"
+                      accessibilityLabel={gt("More actions")}
                       icon="ellipsis"
                       tintColorClassName="accent-header-foreground"
                       onPress={open}

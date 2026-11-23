@@ -42,6 +42,7 @@ import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/snapshot";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeMuseAdapterV2, type MuseAdapterV2Options } from "./adapter.ts";
 
@@ -208,7 +209,7 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
+    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests" | "onUsageLimits"
   > = {},
 ) {
   let hostCount = 0;
@@ -387,7 +388,8 @@ vi.mock("node:fs/promises", { spy: true });
 describe("MuseAdapterV2", () => {
   it.effect("connects the thread's MCP credential on native start and resume", () =>
     Effect.gen(function* () {
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+      const sessions = yield* McpProviderSessions.McpProviderSessions;
+      const config = {
         environmentId: EnvironmentId.make("test-environment"),
         threadId: THREAD_ID,
         providerSessionId: "test-session",
@@ -395,11 +397,12 @@ describe("MuseAdapterV2", () => {
         endpoint: "http://127.0.0.1:43210/mcp",
         authorizationHeader: "Bearer thread-scoped-test-token",
         browserToolsAvailable: true,
-      });
+      };
       for (const nativeId of [undefined, "saved-native-session"]) {
+        yield* sessions.set(config);
         const fake = yield* makeFakeMuse();
         fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
-        yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        const harness = yield* makeHarness(fake, INSTANCE_ID, nativeId);
         const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
         assert.deepStrictEqual(call.params.config, {
           mcpServers: {
@@ -411,6 +414,13 @@ describe("MuseAdapterV2", () => {
             },
           },
         });
+        yield* sessions.clear(THREAD_ID);
+        yield* harness.runtime.startTurn({
+          ...(yield* turnInput(harness.providerThread, 1, harness.policy)),
+          agentFeedback: "auto",
+        });
+        const turn = yield* fake.takeCall("turn/start");
+        assert.match(JSON.stringify(turn.params.input), /t3_feedback/);
       }
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
@@ -546,6 +556,7 @@ describe("MuseAdapterV2", () => {
       const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         ...runtimePolicy,
         cwd: "C:\\work\\repo",
+        workspace: { folders: [], extraRoots: ["C:\\work\\api"] },
       });
       const harness = yield* makeHarness(
         fake,
@@ -564,7 +575,10 @@ describe("MuseAdapterV2", () => {
       yield* startConversation(harness, fake);
       const turnStart = fake.calls.find((call) => call.method === "turn/start");
       // Muse 1.4.3 accepts only verbatim canonical roots.
-      assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, [
+        "\\\\?\\C:\\work\\repo",
+        "\\\\?\\C:\\work\\api",
+      ]);
       // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
       assert.strictEqual(hostCwd, "C:\\work\\repo");
     }).pipe(
@@ -607,7 +621,16 @@ describe("MuseAdapterV2", () => {
   it.effect("stops at a Meta usage limit until every exhausted window resets", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const reports: Array<ProviderUsageLimitsReport> = [];
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
+      );
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
         window: { ...SUBSCRIPTION_USAGE.window, usedPercent: 103 },
@@ -624,6 +647,10 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.threadDisposition, "reusable");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
+      assert.deepStrictEqual(
+        reports.map((report) => [report.authLabel, report.windows[0]?.usedPercent]),
+        [["tier-1", 100]],
+      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -685,7 +712,16 @@ describe("MuseAdapterV2", () => {
   it.effect("skips an unreadable usage report without ending the session", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
+      const reports: Array<ProviderUsageLimitsReport> = [];
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { onUsageLimits: (report) => Effect.sync(() => void reports.push(report)) },
+      );
       yield* fake.emitHostWide("usage/changed", { window: "not usage" });
       yield* fake.emitHostWide("usage/changed", {
         ...SUBSCRIPTION_USAGE,
@@ -700,6 +736,7 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.isUndefined(terminal.failure?.resetAt);
+      assert.deepStrictEqual(reports, []);
       assert.strictEqual(fake.closeCount(), 0);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

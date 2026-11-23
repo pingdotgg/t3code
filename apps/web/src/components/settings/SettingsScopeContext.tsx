@@ -2,12 +2,18 @@ import { type EnvironmentId, T3_PROJECT_FILE_NAME, type T3ProjectFile } from "@t
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { useMessages } from "gt-react";
 import { createContext, type ReactNode, useContext } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
-import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
+import {
+  applyPendingScopedWrites,
+  pendingScopedWritesAtom,
+  resolveScopedSettingsTargets,
+  selectScopedSettingsEnvironments,
+} from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
 
@@ -59,22 +65,28 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
   const groups = useSettingsProjectGroups();
   const { environments: availableEnvironments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const m = useMessages();
   const search = singleEnvironment
     ? selectSingleEnvironmentScope(
         rawSearch,
-        resolveSettingsScope(rawSearch, groups, availableEnvironments),
+        resolveSettingsScope(rawSearch, groups, availableEnvironments, m),
         availableEnvironments,
         primaryEnvironmentId,
       )
     : rawSearch;
-  const scope = resolveSettingsScope(search, groups, availableEnvironments);
+  const scope = resolveSettingsScope(search, groups, availableEnvironments, m);
   const projectFiles = useMemberProjectFiles(scope);
+  const pendingWrites = useAtomValue(pendingScopedWritesAtom);
   const selected = selectScopedSettingsEnvironments(
     scope,
     availableEnvironments,
     primaryEnvironmentId,
   );
-  const targets = resolveScopedSettingsTargets(scope, selected.connectedEnvironments, projectFiles);
+  const targets = resolveScopedSettingsTargets(
+    scope,
+    applyPendingScopedWrites(selected.connectedEnvironments, pendingWrites),
+    projectFiles,
+  );
   const target =
     targets.find((candidate) => candidate.environmentId === selected.environment?.environmentId) ??
     targets[0] ??
@@ -85,6 +97,7 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
 const SettingsScopeContext = createContext<
   | (ReturnType<typeof useResolvedSettingsScope> & {
       singleEnvironment: boolean;
+      deviceOnly: boolean;
       search: SettingsScopeSearch;
       selectScope: (next: SettingsScopeSearch) => void;
     })
@@ -96,14 +109,17 @@ export function SettingsScopeProvider({
   onChange,
   children,
   singleEnvironment = false,
+  deviceOnly = false,
 }: {
   singleEnvironment?: boolean;
+  /** The page hides the scope picker, so its client settings save for this device. */
+  deviceOnly?: boolean;
   search: SettingsScopeSearch;
   onChange: (next: SettingsScopeSearch) => void;
   children: ReactNode;
 }) {
   const resolved = useResolvedSettingsScope(search, singleEnvironment);
-  const value = { ...resolved, singleEnvironment, selectScope: onChange };
+  const value = { ...resolved, singleEnvironment, deviceOnly, selectScope: onChange };
   return <SettingsScopeContext value={value}>{children}</SettingsScopeContext>;
 }
 
