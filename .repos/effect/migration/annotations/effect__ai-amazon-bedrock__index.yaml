@@ -1,3 +1,3 @@
 "@effect/ai-amazon-bedrock/index":
-  replacement: "none"
-  note: "The @effect/ai-amazon-bedrock provider package was removed from v4 with no direct replacement. Use @aws-sdk/client-bedrock-runtime directly or build a custom v4 provider integration."
+  replacement: "@effect/ai-amazon-bedrock"
+  note: "Import AmazonBedrockClient, AmazonBedrockConfig, AmazonBedrockLanguageModel and AmazonBedrockSchema from the package root or their package subpaths. AmazonBedrockTool and EventStreamEncoding are no longer public modules."

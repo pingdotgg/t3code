@@ -37,12 +37,38 @@ There are two ways to build one:
    - Agent turns: pass `claude: [turns]` to `prepareHome` and the real Claude provider runs
      `scripts/fake-claude.mjs` as its CLI, so the video shows Claude's logo, models, thinking
      and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
-     `wait`, and `tool` (+ `input`), which calls that T3 MCP tool for real, e.g.
-     `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
-     `<var:name>` is filled from the JSON file at `T3_DEV_REPLAY_VARS`, for ids that change
-     every run. `fake-claude.log` in the home records the protocol, for debugging.
-   - The free replay agent (`apps/server/scripts/dev-replay-agent.ts`) still works without
-     `claude`, but it shows as an ACP provider.
+     `wait`, `edit` (+ `old`, `new`) and `write` (+ `content`), which change the file for real
+     so diffs and checkpoints show them, and `tool` (+ `input`), which calls that T3 MCP tool
+     for real, e.g. `delegate_task`; with `server` and `output` it plays another MCP server's
+     tool instead. `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids
+     that change every run. `bash` with `run: true` executes the command in the session's cwd
+     (to push a branch or open a pull request with a forge CLI); `as: "name"` keeps its output,
+     or the `pick` regex match in it, as `<var:name>` for the turn's later steps. A workflow
+     `agent` step with `returns` finishes on `submit: { ... }`, which hands it that value
+     through `t3_submit_output`. `fake-claude.log` in the home records the protocol, for debugging.
+   - Titles, commit messages and branch names come from `claude -p --json-schema`: answer them
+     with `{ match, json }` turns, where `match` is tested against the schema plus the prompt
+     (`'"title"'`, `'"subject"[\\s\\S]*products\\.ts'`). Unanswered ones fail in the app.
+   - An MCP server that needs a sign-in: pass `claude: { turns, servers: [{ name, authUrl }] }`.
+     The fake answers Claude's `mcp_status`, `mcp_authenticate` and `mcp_oauth_callback_url`,
+     and remembers the sign-in across processes like the real CLI.
+   - `createProject(env, title, files, { repos: ["api", "web"] })` makes a plain folder of
+     several repositories. Staged repos commit as a fictional author. Keep staging homes
+     outside this checkout (e.g. `<out>/home`): a project folder inside it shows this
+     checkout's branch.
+   - Data a real flow can't produce cheaply goes into the app's own stores, never into pixels.
+     `insertPeerLinks` writes link rows into a stopped server; `serveDescriptors` makes fake
+     machines answer the reachability probe. The client's saved environments and routes live
+     in IndexedDB (`t3code:connection-runtime` / `catalog` / `document`): write the document
+     from the page after its first load, then reload. Route kinds come from hostnames
+     (`*.localhost` is LAN, `*.ts.net` Tailscale); Chrome's
+     `--host-resolver-rules=MAP *.tail-demo.ts.net 127.0.0.1` makes fake tailnet names work.
+   - Gestures: hold the mouse down, move in steps, and `saveBeat` mid-drag to freeze the
+     app's own drag line and highlight; animate between those beats with `Kit.reveal`.
+   - A capped, scrolling modal freezes at different scroll offsets per beat. Freeze at a
+     viewport tall enough that nothing scrolls, and size `.app` to match.
+   - Without `claude`, turns go to the dev replay agent (`apps/server/scripts/dev-replay-agent.ts`),
+     which shows as an ACP provider.
 4. **Create the story:** `scripts/new.sh ~/launch-videos/<slug>`, then copy the beats in, or
    pass that directory as the staging's `<out>`. Add one `<iframe data-beat>` per beat and
    write `setup()` and `placeCursor()` (see Anatomy).
@@ -71,6 +97,11 @@ harness's task stop; it ends its servers' process groups.
   only on tailnet names. `serve.mjs` links to this machine's tailnet DNS name.
 - **Leaks.** Grep the beats for the real hostname, username and tailnet name before
   rendering. `snapshot.mjs` drops hidden inputs' values (they hold local paths).
+- **Timeline rows** (`[data-timeline-row-id]`) are placed by a transform; `rise`/`pop` on one
+  replaces it and the row vanishes. Animate an element inside the row.
+- **The app's own animations** (a running tool's shine) are frozen into the beat and seeked
+  with the story, which can leave text invisible. Cancel them in `setup()`:
+  `iframe.contentDocument.getAnimations().forEach((a) => a.cancel())`.
 - **Timing.** A replayed turn streams in real time (each frame delay caps at 2 s). Make a
   recording long enough for the drive to catch the state you need, and freeze beats on a
   timer when the UI summarises (a running command shows only "Running pnpm").
@@ -130,10 +161,14 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   1440×720 and `.app` scales them 1.0556× into the 1520×760 window, so beat point (x, y) is
   canvas (40 + 1.0556·x, 26 + 1.0556·y).
 - **Targets** are `"<beat> >> <css>"` (or `"* >> <css>"` for every beat). Prefer the app's
-  `data-*` and `aria-label` attributes; `find.mjs` prints them.
+  `data-*` and `aria-label` attributes; `find.mjs` prints them. A trailing `:text(words)`
+  keeps the matches containing those words, e.g. `[role=menuitem]:text(From MacBook)`.
+- **Beat size.** Each beat records the viewport it was frozen at (`kit-viewport` meta).
+  Size `.app` and its iframes to match and scale them to the 1520×760 window
+  (1440×720 → 1.0556, 1600×800 → .95).
 - **`setup()`**: `Kit.beats([[name, at, fade?], ...])` gives each beat one visibility window.
   Then the motion, all at absolute times:
-  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn` animate elements inside
+  `Kit.pop / rise / slide / stagger / type / press / punch / fadeIn / draw` animate elements inside
   a beat; `Kit.glow(target, at)` draws a ring on the story layer, so app overflow can't
   clip it; `Kit.anim` takes raw keyframes; `Kit.text` makes a static edit (say so at
   handback).
@@ -143,7 +178,8 @@ seeks every animation (in the story and inside each beat) to each frame's time.
   finished. Camera steps centre `on` at screen height `y` (default 420, clear of the captions)
   at scale `s`; repeat a step to hold. Cursor clicks draw a ripple.
 - **Captions** `.cap`: a numbered chip, a bold lead phrase and a muted rest. Short enough to
-  read in two seconds.
+  read in two seconds. Play them with `Kit.captions([[selector, from, to], ...])`, which
+  throws if two overlap; two captions crossfading read as garbled text.
 - **Pacing**: `Kit.timeline([[realSeconds, animFrom, animTo], ...])` maps video time to
   animation time; `animFrom == animTo` holds a frame. It also sets the video length.
 - **Outro** `.outro`: logo, a two-line headline, "Available now in **T3 Code** `<version>`",

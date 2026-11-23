@@ -1427,7 +1427,7 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(["local", "mixed", "exit"] as const)(
+it.effect.each(["local", "mixed", "exit", "non-UTF-8 refs", "pruned ref"] as const)(
   "checkpoint authorship uses local evidence or full fallback ($0)",
   (mode) =>
     Effect.gen(function* () {
@@ -1441,7 +1441,7 @@ it.effect.each(["local", "mixed", "exit"] as const)(
       const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/from");
       const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/to");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
-      if (mode === "mixed") {
+      if (mode !== "local" && mode !== "exit") {
         yield* fs.writeFileString(path.join(cwd, "imported.txt"), "upstream\n");
         yield* git(["add", "."]);
         const tree = (yield* git(["write-tree"])).stdout.trim();
@@ -1476,10 +1476,30 @@ it.effect.each(["local", "mixed", "exit"] as const)(
       const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) => {
+            if (mode === "non-UTF-8 refs" && input.args.includes("for-each-ref")) {
+              return liveProcess
+                .run(input)
+                .pipe(Effect.map((result) => ({ ...result, stdoutInvalidUtf8: true })));
+            }
+            // Pruned between listing the refs and walking their reflogs.
+            if (mode === "pruned ref" && input.args.includes("for-each-ref")) {
+              return liveProcess.run(input).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  stdout: `refs/remotes/origin/pruned\n${result.stdout}`,
+                })),
+              );
+            }
             if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
-            const scope = input.args.includes("--all") ? "--all" : "HEAD";
+            const scope = input.args.includes("--all")
+              ? `worktree HEADs${input.args.includes("--branches") ? " and --branches" : ""}`
+              : input.args.includes("--remotes")
+                ? "--remotes"
+                : input.args.includes("--stdin")
+                  ? "refs"
+                  : "HEAD";
             reflogScopes.push(scope);
-            if (scope === "--all" || mode !== "exit") return liveProcess.run(input);
+            if (scope !== "HEAD" || mode !== "exit") return liveProcess.run(input);
             return Effect.fail(
               new VcsProcessExitError({
                 operation: input.operation,
@@ -1500,8 +1520,113 @@ it.effect.each(["local", "mixed", "exit"] as const)(
         }),
         new Set(["local.txt"]),
       );
-      assert.deepEqual(reflogScopes, mode === "local" ? ["HEAD"] : ["HEAD", "--all"]);
+      assert.deepEqual(
+        reflogScopes,
+        {
+          local: ["HEAD"],
+          mixed: ["HEAD", "refs", "worktree HEADs"],
+          // Without an import no remote-tracking ref holds the turn's commits, so none is read.
+          exit: ["HEAD"],
+          "non-UTF-8 refs": ["HEAD", "--remotes", "worktree HEADs and --branches"],
+          "pruned ref": ["HEAD", "refs", "worktree HEADs"],
+        }[mode],
+      );
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint authorship reads only reflogs of refs holding the turn's commits", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-imports-" });
+    const upstream = path.join(root, "upstream");
+    const primary = path.join(root, "primary");
+    const cwd = path.join(root, "turn");
+    const git = (repo: string, args: ReadonlyArray<string>, stdin?: string) =>
+      driver.execute({
+        operation: "checkpoint-test",
+        cwd: repo,
+        args: ["-c", "user.name=Test", "-c", "user.email=test@test.com", ...args],
+        ...(stdin === undefined ? {} : { stdin }),
+      });
+    const commitFile = (repo: string, file: string) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(path.join(repo, file), `${file}\n`);
+        yield* git(repo, ["add", "."]);
+        yield* git(repo, ["commit", "-m", file]);
+      });
+    yield* fs.makeDirectory(upstream);
+    yield* git(upstream, ["init"]);
+    yield* commitFile(upstream, "base.txt");
+    yield* git(root, ["clone", upstream, primary]);
+    yield* git(primary, ["worktree", "add", cwd, "-b", "turn"]);
+    const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/imports/from");
+    const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/imports/to");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+
+    // Refs updated during the turn that hold none of its commits.
+    const base = (yield* git(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    const unrelated = Array.from({ length: 200 }, (_, index) => [
+      `create refs/remotes/origin/unrelated-${index} ${base}`,
+      `create refs/heads/unrelated-${index} ${base}`,
+      `create refs/t3/checkpoints/unrelated-${index} ${base}`,
+    ]).flat();
+    yield* git(
+      cwd,
+      ["update-ref", "--create-reflog", "-m", "fetch origin: storing head", "--stdin"],
+      `${unrelated.join("\n")}\n`,
+    );
+
+    // Fetched and fast-forwarded: imported.
+    yield* git(upstream, ["checkout", "-b", "release"]);
+    yield* commitFile(upstream, "fetched.txt");
+    // Made in another worktree that then moved on, pushed, and fetched back: local.
+    yield* git(primary, ["checkout", "--detach"]);
+    yield* commitFile(primary, "own.txt");
+    yield* git(primary, ["push", "origin", "HEAD:refs/heads/pushed"]);
+    yield* git(primary, ["checkout", "-"]);
+    yield* git(upstream, ["merge", "pushed", "--no-edit"]);
+    yield* git(upstream, ["checkout", "-b", "feature"]);
+    yield* commitFile(upstream, "picked.txt");
+    yield* git(cwd, ["fetch", "origin"]);
+    yield* git(cwd, ["merge", "--ff-only", "origin/release"]);
+    // Cherry-picked from a fetched branch: a new local commit.
+    yield* git(cwd, ["cherry-pick", "origin/feature"]);
+    yield* commitFile(cwd, "local.txt");
+    // Pushing imported commits elsewhere must not make them look local.
+    yield* git(cwd, ["push", "origin", "HEAD:refs/heads/mirror"]);
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: toCheckpointRef,
+      previousCheckpointRef: fromCheckpointRef,
+    });
+
+    const reflogWalks: Array<{ args: ReadonlyArray<string>; refs: ReadonlyArray<string> }> = [];
+    const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("--walk-reflogs")) {
+            reflogWalks.push({ args: input.args, refs: (input.stdin ?? "").split("\n") });
+          }
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    assert.deepEqual(
+      yield* queryDriver.checkpoints.listAuthoredPaths({ cwd, fromCheckpointRef, toCheckpointRef }),
+      new Set(["own.txt", "picked.txt", "local.txt"]),
+    );
+    assert.isNotEmpty(reflogWalks);
+    for (const { args, refs } of reflogWalks) {
+      // Refs come only from the explicit list; --all is limited to worktree HEADs.
+      const selectors = args.filter((arg) => /^--(?:all|branches|remotes|glob|tags)\b/.test(arg));
+      assert.deepEqual(selectors, args.includes("--all") ? ["--all"] : []);
+      if (args.includes("--all")) assert.include(args, "--exclude=refs/*");
+      for (const ref of refs) assert.notInclude(ref, "unrelated");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint authorship works with git that rejects --diff-merges=remerge", () =>
@@ -1613,6 +1738,66 @@ it.effect("a branch switch landing after the snapshot belongs to the next checkp
     assert.deepEqual(yield* changedSince(first, second), { patch: "", authored: null });
     assert.deepEqual(yield* changedSince(second, third), { patch: "", authored: null });
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.each([{ snapshot: "before the switch" }, { snapshot: "after the switch" }])(
+  "a turn that switched branches from a clean folder starts on the branch it landed on (snapshot $snapshot)",
+  ({ snapshot }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-clean-switch-",
+      });
+      const git = (args: ReadonlyArray<string>, at = 1_700_000_000) =>
+        driver.execute({
+          operation: "checkpoint-test",
+          cwd,
+          args,
+          env: { ...process.env, GIT_COMMITTER_DATE: `@${at} +0000` },
+        });
+      yield* git(["init"]);
+      yield* git(["config", "user.name", "Test"]);
+      yield* git(["config", "user.email", "test@test.com"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "f.txt"), "base\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "base"]);
+      yield* git(["branch", "b"]);
+      yield* git(["checkout", "-b", "a"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "a.txt"), "a\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "a"]);
+      const head = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+      const [first, second] = ["1", "2"].map((turn) =>
+        CheckpointRef.make(`refs/t3/checkpoints/clean-switch/${turn}`),
+      ) as [CheckpointRef, CheckpointRef];
+      const refs = { cwd, fromCheckpointRef: first, toCheckpointRef: second };
+
+      if (snapshot === "before the switch") {
+        yield* driver.checkpoints.captureHeadCheckpoint({ cwd, checkpointRef: first, head });
+      }
+      yield* git(["checkout", "b"], 1_700_002_000);
+      if (snapshot === "after the switch") {
+        yield* driver.checkpoints.captureHeadCheckpoint({
+          cwd,
+          checkpointRef: first,
+          head,
+          seenAt: 1_700_001_000,
+        });
+      }
+      yield* fileSystem.writeFileString(path.join(cwd, "b.txt"), "b\n");
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd,
+        checkpointRef: second,
+        previousCheckpointRef: first,
+      });
+
+      const patch = yield* driver.checkpoints.diffCheckpoints({ ...refs, ignoreWhitespace: false });
+      assert.notInclude(patch, "a.txt");
+      assert.include(patch, "b/b.txt");
+      assert.isNull(yield* driver.checkpoints.listAuthoredPaths(refs));
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint capture preserves racy edits made after resetting the index", () =>
