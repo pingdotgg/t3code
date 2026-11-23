@@ -301,13 +301,17 @@ describe("preview guest input", () => {
         ["CROSS", "session-cross"],
         ["NESTED", "session-nested"],
       ]),
+      unanswered?: string,
     ) => {
       const input: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const lookups: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const sendCommand = vi.fn(
         async (method: string, params: Record<string, unknown>, sessionId?: string) => {
           const document = documents[sessionId ?? "page"]!;
-          if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: document.scroll };
+          if (method === "Page.getLayoutMetrics") {
+            if (unanswered !== undefined && sessionId === unanswered) return new Promise(() => {});
+            return { cssLayoutViewport: document.scroll };
+          }
           if (method === "DOM.getNodeForLocation") {
             lookups.push({ sessionId, x: params["x"], y: params["y"] });
             // Chromium hit-tests in document coordinates.
@@ -372,6 +376,20 @@ describe("preview guest input", () => {
       await guest.click(750, 50);
       await guest.click(5, 95);
       expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(9).fill(undefined));
+    });
+
+    it("gives the page an event whose frame never answers, without holding later input", async () => {
+      vi.useFakeTimers();
+      try {
+        const guest = makeFramedGuest(undefined, "session-cross");
+        const stalled = guest.click(75, 116);
+        await vi.advanceTimersByTimeAsync(3_000);
+        await stalled;
+        await guest.click(650, 50);
+        expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(6).fill(undefined));
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("leaves wheels, pages without cross-site frames, and shown guests to Chromium", async () => {

@@ -1,5 +1,8 @@
 // CDP input follows shared window focus; send directly to unfocused guests to avoid typing into the app.
 
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
 const FOCUS_ROUTED_INPUT = new Set([
   "Input.insertText",
   "Input.dispatchKeyEvent",
@@ -147,6 +150,7 @@ export type PointerRoute = (
 ) => Promise<{ readonly params: Record<string, unknown>; readonly sessionId: string } | null>;
 
 const MAX_FRAME_DEPTH = 8;
+const ROUTE_DEADLINE = "1 second";
 
 /**
  * Chromium picks a pointer event's frame by hit-testing what the window composites, so on a
@@ -156,58 +160,73 @@ const MAX_FRAME_DEPTH = 8;
 export const routeMouseToFrame =
   (debuggee: Electron.Debugger, frameSessions: ReadonlyMap<string, string>): PointerRoute =>
   async (params) => {
-    let { x, y } = params;
-    if (typeof x !== "number" || typeof y !== "number") return null;
     // A wheel over a frame that cannot scroll would no longer reach the page behind it.
     if (params["type"] === "mouseWheel" || frameSessions.size === 0) return null;
-    let sessionId: string | undefined;
-    for (let depth = 0; depth < MAX_FRAME_DEPTH; depth++) {
-      try {
-        const { cssLayoutViewport: scroll } = (await debuggee.sendCommand(
-          "Page.getLayoutMetrics",
-          {},
-          sessionId,
-        )) as { readonly cssLayoutViewport: { readonly pageX: number; readonly pageY: number } };
-        // The lookup takes whole document pixels; the event and box model use the viewport.
-        const { backendNodeId } = (await debuggee.sendCommand(
-          "DOM.getNodeForLocation",
-          {
-            x: Math.round(x + scroll.pageX),
-            y: Math.round(y + scroll.pageY),
-            includeUserAgentShadowDOM: true,
-          },
-          sessionId,
-        )) as { readonly backendNodeId: number };
-        const { node } = (await debuggee.sendCommand(
-          "DOM.describeNode",
-          { backendNodeId },
-          sessionId,
-        )) as { readonly node: { readonly frameId?: string } };
-        // A cross-site frame's target id is its frame id; a same-site frame has no session,
-        // and a document's own root element names the frame it is already in.
-        const frameSession =
-          node.frameId === undefined ? undefined : frameSessions.get(node.frameId);
-        if (frameSession === undefined || frameSession === sessionId) break;
-        const { model } = (await debuggee.sendCommand(
-          "DOM.getBoxModel",
-          { backendNodeId },
-          sessionId,
-        )) as { readonly model: { readonly content: ReadonlyArray<number> } };
-        const xs = model.content.filter((_, index) => index % 2 === 0);
-        const ys = model.content.filter((_, index) => index % 2 === 1);
-        const left = Math.min(...xs);
-        const top = Math.min(...ys);
-        // The frame owner's border and padding belong to the page.
-        if (x < left || x >= Math.max(...xs) || y < top || y >= Math.max(...ys)) break;
-        x -= left;
-        y -= top;
-        sessionId = frameSession;
-      } catch {
-        break;
-      }
-    }
-    return sessionId === undefined ? null : { params: { ...params, x, y }, sessionId };
+    // Chromium never answers a lookup on a frame that detaches mid-navigation; the page takes it.
+    const routed = await Effect.runPromise(
+      Effect.promise(() => locateFrame(debuggee, frameSessions, params)).pipe(
+        Effect.timeoutOption(ROUTE_DEADLINE),
+        Effect.map(Option.getOrNull),
+      ),
+    );
+    if (routed && ![...frameSessions.values()].includes(routed.sessionId)) return null;
+    return routed;
   };
+
+const locateFrame = async (
+  debuggee: Electron.Debugger,
+  frameSessions: ReadonlyMap<string, string>,
+  params: Record<string, unknown>,
+) => {
+  let { x, y } = params;
+  if (typeof x !== "number" || typeof y !== "number") return null;
+  let sessionId: string | undefined;
+  for (let depth = 0; depth < MAX_FRAME_DEPTH; depth++) {
+    try {
+      const { cssLayoutViewport: scroll } = (await debuggee.sendCommand(
+        "Page.getLayoutMetrics",
+        {},
+        sessionId,
+      )) as { readonly cssLayoutViewport: { readonly pageX: number; readonly pageY: number } };
+      // The lookup takes whole document pixels; the event and box model use the viewport.
+      const { backendNodeId } = (await debuggee.sendCommand(
+        "DOM.getNodeForLocation",
+        {
+          x: Math.round(x + scroll.pageX),
+          y: Math.round(y + scroll.pageY),
+          includeUserAgentShadowDOM: true,
+        },
+        sessionId,
+      )) as { readonly backendNodeId: number };
+      const { node } = (await debuggee.sendCommand(
+        "DOM.describeNode",
+        { backendNodeId },
+        sessionId,
+      )) as { readonly node: { readonly frameId?: string } };
+      // A cross-site frame's target id is its frame id; a same-site frame has no session,
+      // and a document's own root element names the frame it is already in.
+      const frameSession = node.frameId === undefined ? undefined : frameSessions.get(node.frameId);
+      if (frameSession === undefined || frameSession === sessionId) break;
+      const { model } = (await debuggee.sendCommand(
+        "DOM.getBoxModel",
+        { backendNodeId },
+        sessionId,
+      )) as { readonly model: { readonly content: ReadonlyArray<number> } };
+      const xs = model.content.filter((_, index) => index % 2 === 0);
+      const ys = model.content.filter((_, index) => index % 2 === 1);
+      const left = Math.min(...xs);
+      const top = Math.min(...ys);
+      // The frame owner's border and padding belong to the page.
+      if (x < left || x >= Math.max(...xs) || y < top || y >= Math.max(...ys)) break;
+      x -= left;
+      y -= top;
+      sessionId = frameSession;
+    } catch {
+      break;
+    }
+  }
+  return sessionId === undefined ? null : { params: { ...params, x, y }, sessionId };
+};
 
 const pointerCommands = new WeakMap<Electron.WebContents, Promise<unknown>>();
 
