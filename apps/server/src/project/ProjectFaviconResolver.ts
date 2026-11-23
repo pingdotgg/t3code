@@ -79,8 +79,9 @@ const ICON_SOURCE_FILES = [
 const HTML_LINK_RE = /<link\b[^<>]*>/gi;
 // `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
 const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
-const HTML_ICON_REL_RE = new RegExp(String.raw`\brel=${ICON_REL_VALUE}`, "i");
-const HTML_ICON_HREF_RE = /\bhref=["']([^"'?]+)/i;
+// HTML attribute syntax: a name, then an optional double-quoted, single-quoted, or unquoted value.
+const HTML_ATTRIBUTE_RE =
+  /([^\t\n\f\r "'<>/=]+)(?:[\t\n\f\r ]*=[\t\n\f\r ]*(?:"([^"]*)"|'([^']*)'|([^\t\n\f\r >]+)))?/g;
 const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
@@ -123,9 +124,28 @@ export class ProjectFaviconResolver extends Context.Service<
 
 function extractIconHref(source: string): string | null {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
-    if (!HTML_ICON_REL_RE.test(tag)) continue;
-    const hrefMatch = tag.match(HTML_ICON_HREF_RE);
-    if (hrefMatch?.[1]) return hrefMatch[1];
+    const attributes = new Map<string, { value: string; quoted: boolean }>();
+    for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag
+      .slice("<link".length)
+      .matchAll(HTML_ATTRIBUTE_RE)) {
+      const key = name!.toLowerCase();
+      if (attributes.has(key)) continue;
+      const quotedValue = doubleQuoted ?? singleQuoted;
+      attributes.set(key, {
+        value: quotedValue ?? unquoted ?? "",
+        quoted: quotedValue !== undefined,
+      });
+    }
+    const rel = attributes
+      .get("rel")
+      ?.value.toLowerCase()
+      .split(/[\t\n\f\r ]+/);
+    if (!rel?.includes("icon")) continue;
+    const href = attributes.get("href");
+    // An unquoted `{...}` is a JSX expression, not a path.
+    if (!href || (!href.quoted && href.value.startsWith("{"))) continue;
+    const path = href.value.split("?")[0];
+    if (path) return path;
   }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;

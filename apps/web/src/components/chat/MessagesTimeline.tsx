@@ -1,5 +1,6 @@
 import { T, useGT, useMessages, Var } from "gt-react";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -242,6 +243,7 @@ interface MessagesTimelineProps {
   activeTurnStartedAt?: string | null;
   /** Replaces "Thinking" while the active run's provider has not started a turn. */
   providerStartingLabel?: string | null;
+  providerStarting?: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   worktreeSetup?: WorktreeSetupSnapshot | null;
   onCancelWorktreeSetup?: () => void;
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
@@ -366,6 +368,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   runlessWorkActive = false,
   activeTurnStartedAt = null,
   providerStartingLabel = null,
+  providerStarting = null,
   worktreeSetup = null,
   footer = null,
   onCancelWorktreeSetup,
@@ -1193,6 +1196,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     awaitingUser: awaitingUser !== null,
     isPreparingWorktree,
     providerStartingLabel,
+    providerStarting,
     latestRunId: latestRun?.runId ?? null,
     liveAnswerPreview:
       isWorking && toolCallVisibility === "zen" ? liveAnswerPreview(timelineEntries) : null,
