@@ -1210,11 +1210,12 @@ export const make = Effect.gen(function* () {
         return [null, nextWatchers] as const;
       }
       nextWatchers.delete(cwd);
+      // In this step, so a watch that registers next for cwd cannot lose its generation.
+      if (branchConfirmedUnder.get(cwd) === existing.fiber) branchConfirmedUnder.delete(cwd);
+      headGenerations.delete(cwd);
       return [existing.fiber, nextWatchers] as const;
     });
     if (watcherToInterrupt) {
-      if (branchConfirmedUnder.get(cwd) === watcherToInterrupt) branchConfirmedUnder.delete(cwd);
-      headGenerations.delete(cwd);
       yield* Fiber.interrupt(watcherToInterrupt).pipe(Effect.ignore);
     }
   });
