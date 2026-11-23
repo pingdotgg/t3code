@@ -414,6 +414,42 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
+  it.effect("keeps full interval checks for a usage probe that has not opted into recovery", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const checkCalls = yield* Ref.make(0);
+        const usageChecks = yield* Ref.make(0);
+        const usageFailed: ServerProvider = {
+          ...refreshedSnapshot,
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated" },
+          usageLimits: {
+            checkedAt: refreshedSnapshot.checkedAt,
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          },
+        };
+        const provider = yield* makeManagedServerProvider<TestSettings>({
+          resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+          getSettings: Effect.succeed({ enabled: true }),
+          streamSettings: Stream.empty,
+          haveSettingsChanged: () => false,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
+          checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(Effect.as(usageFailed)),
+          checkUsageLimits: Ref.update(usageChecks, (count) => count + 1).pipe(
+            Effect.as(usageFailed.usageLimits),
+          ),
+          refreshInterval: "1 second",
+        });
+        yield* provider.streamChanges.pipe(Stream.take(1), Stream.runDrain);
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(yield* Ref.get(checkCalls), 2);
+        assert.strictEqual(yield* Ref.get(usageChecks), 0);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
+  );
+
   it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
     Effect.scoped(
       Effect.gen(function* () {

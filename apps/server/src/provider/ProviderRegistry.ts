@@ -1374,10 +1374,12 @@ export const layer = Layer.effect(
       if (!(yield* isCurrentInstance(instance))) return;
       if (Exit.isFailure(result)) {
         if (Cause.hasInterruptsOnly(result.cause)) return yield* Effect.interrupt;
-        yield* Effect.logWarning("provider usage limits refresh failed", {
-          instanceId: instance.instanceId,
-          cause: Cause.pretty(result.cause),
-        });
+        yield* Effect.logWarning("provider usage limits refresh failed", result.cause).pipe(
+          Effect.annotateLogs({
+            instanceId: instance.instanceId,
+            failure: Cause.hasDies(result.cause) ? "defect" : "error",
+          }),
+        );
         return;
       }
       yield* correlateSnapshotWithSource(providerSource, result.value).pipe(

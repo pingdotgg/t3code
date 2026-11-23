@@ -81,6 +81,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly initialSnapshot: (settings: Settings) => Effect.Effect<ServerProvider>;
   readonly checkProvider: Effect.Effect<ServerProvider, ServerSettingsError>;
   readonly checkUsageLimits?: Effect.Effect<UsageLimitsProbeResult>;
+  /** While usage reads probeFailed, the interval reruns only `checkUsageLimits`, not the full check. */
+  readonly recoverUsageOnInterval?: boolean;
   readonly invalidateUsageCache?: Effect.Effect<void>;
   readonly enrichSnapshot?: (input: {
     readonly settings: Settings;
@@ -430,7 +432,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
 
   const needsUsageRecovery = (snapshot: ServerProvider) =>
-    input.checkUsageLimits !== undefined &&
+    input.recoverUsageOnInterval === true &&
     snapshot.installed &&
     snapshot.status === "ready" &&
     snapshot.auth.status === "authenticated" &&
