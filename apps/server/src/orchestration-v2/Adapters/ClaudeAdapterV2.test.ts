@@ -9724,6 +9724,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("an interrupted turn whose prompt started stops resuming at the rolled-back head", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+        freshQueueOnReopen: true,
+      });
+      const now = yield* DateTime.now;
+      const pinnedThread = {
+        ...harness.providerThread,
+        nativeConversationHeadRef: {
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeId: "00000000-0000-4000-8000-000000025510",
+          strength: "weak" as const,
+        },
+      };
+      const interruptedInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: pinnedThread,
+        now,
+        attemptId: RunAttemptId.make("attempt-claude-started-interrupt-after-rollback"),
+        text: "Explain the build.",
+        attachments: [],
+        providerTurnOrdinal: 2,
+        nativeThreadHasTurns: true,
+      });
+      yield* harness.runtime.startTurn(interruptedInput);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "command_lifecycle",
+          command_uuid: harness.promptUuid(0),
+          state: "started",
+          uuid: "00000000-0000-4000-8000-000000025521",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.runtime.interruptTurn({
+        providerThread: pinnedThread,
+        providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+          nativeTurnId: `turn:${interruptedInput.attemptId}`,
+        }),
+      });
+      assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+      const afterInterrupt = harness.events.findLast(
+        (event) => event.type === "provider_thread.updated",
+      )?.providerThread;
+      assert.isDefined(afterInterrupt);
+      assert.isNull(afterInterrupt.nativeConversationHeadRef);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("an interrupted turn with no assistant output keeps the rolled-back head", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarnessWithOptions({
