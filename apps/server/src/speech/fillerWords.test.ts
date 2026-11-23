@@ -14,12 +14,14 @@ describe("removeSpeechFillerWords", () => {
     expect(removeSpeechFillerWords(input, "pt-BR")).toBe(expected);
   });
 
-  it.each(["a regra é, ele me responde.", "Isso é, é muito bom.", "A casa é linda."])(
-    "keeps the Portuguese verb é: %s",
-    (input) => {
-      expect(removeSpeechFillerWords(input, "pt")).toBe(input);
-    },
-  );
+  it.each([
+    "a regra é, ele me responde.",
+    "Isso é, é muito bom.",
+    "A casa é linda.",
+    "A regra\né, em certos casos, importante.",
+  ])("keeps the Portuguese verb é: %s", (input) => {
+    expect(removeSpeechFillerWords(input, "pt")).toBe(input);
+  });
 
   it("keeps Portuguese hesitations for other languages", () => {
     expect(removeSpeechFillerWords("É, acrescente", "en")).toBe("É, acrescente");
