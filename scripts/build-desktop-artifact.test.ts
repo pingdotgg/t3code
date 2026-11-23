@@ -566,15 +566,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           undefined,
           undefined,
         );
-        const { sign, identity, hardenedRuntime } = config.mac as Record<string, unknown>;
+        const { sign, identity, hardenedRuntime, notarize } = config.mac as Record<string, unknown>;
         if (signed) {
           assert.isString(sign);
           assert.isUndefined(identity);
           assert.isUndefined(hardenedRuntime);
+          assert.isUndefined(notarize);
         } else {
           assert.isUndefined(sign);
           assert.equal(identity, "-");
           assert.equal(hardenedRuntime, false);
+          assert.equal(notarize, false);
         }
       }
     }),

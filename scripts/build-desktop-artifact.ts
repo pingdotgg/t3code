@@ -2924,6 +2924,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
             // hardened runtime stays off because its library validation rejects the pre-signed Electron Framework.
             identity: "-",
             hardenedRuntime: false,
+            notarize: false,
           }),
       ...(macPasskeySigning
         ? {
