@@ -1558,6 +1558,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               () => Effect.void,
             ),
           );
+        // git-lfs's clean filter copies content here while hashing and strands it when killed.
+        const lfsTmp = path.join(gitCommonDir, "lfs", "tmp");
+        const readLfsTmp = fileSystem.readDirectory(lfsTmp).pipe(Effect.orElseSucceed(() => []));
+        const lfsTmpBefore = new Set(yield* readLfsTmp);
+        const removeStrandedLfsTmp = Effect.gen(function* () {
+          const stranded = (yield* readLfsTmp).filter((name) => !lfsTmpBefore.has(name));
+          yield* Effect.forEach(
+            stranded,
+            (name) =>
+              fileSystem
+                .remove(path.join(lfsTmp, name), { recursive: true, force: true })
+                .pipe(Effect.ignore),
+            { discard: true },
+          );
+        });
         const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -1614,6 +1629,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
+          Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeStrandedLfsTmp)),
         );
 
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
