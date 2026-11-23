@@ -90,6 +90,12 @@ describe("parseMarkdownFileLink", () => {
     "docs/My File (draft).md",
     "@scope/package.json",
     "$postId.tsx",
+    // regression: #41223 filename punctuation survives the composer round trip
+    "C#/Program.cs",
+    "docs/R&D/notes.md",
+    "docs/Bob's notes.md",
+    "docs/100%.md",
+    "icon@2x.png",
   ])("reads back the composer's link to %s", (path) => {
     const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
     expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
