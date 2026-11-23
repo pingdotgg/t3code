@@ -126,6 +126,7 @@ import {
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
   buildPullRequestContext,
+  buildPullRequestReferenceContext,
   buildResolveConflictsPrompt,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
@@ -1211,7 +1212,7 @@ export function PullRequestDetailPanel({
     }
     writeHandoffToComposer(opened.draftId, {
       prompt: "",
-      reviewComments: [buildPullRequestContext(detail)],
+      reviewComments: [buildPullRequestReferenceContext(detail)],
     });
   };
 
