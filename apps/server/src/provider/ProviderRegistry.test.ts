@@ -1099,6 +1099,89 @@ it.layer(
       );
     });
 
+    it("marks folder slash commands pending when a machine refresh changes machine slashCommands", () => {
+      const machineModel = {
+        slug: "opencode/big-pickle",
+        name: "Big Pickle",
+        isCustom: false,
+        capabilities: null,
+      } satisfies ServerProvider["models"][number];
+      const addedModel = { ...machineModel, slug: "opencode/new", name: "New" };
+      const initialCommands = [
+        { name: "plan", description: "Plan work" },
+      ] satisfies ServerProvider["slashCommands"];
+      const updatedCommands = [
+        { name: "plan", description: "Plan work" },
+        { name: "review", description: "Review diff" },
+      ] satisfies ServerProvider["slashCommands"];
+      const provider = {
+        instanceId: ProviderInstanceId.make("opencode"),
+        driver: ProviderDriverKind.make("opencode"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-03-25T00:00:00.000Z",
+        version: "2.0.0",
+        models: [machineModel],
+        slashCommands: initialCommands,
+        skills: [],
+      } satisfies ServerProvider;
+      const withWorkspace = ProviderRegistry.upsertProviderWorkspaceSnapshot(provider, "/project", {
+        ...provider,
+        slashCommands: initialCommands,
+        slashCommandsPending: false,
+      });
+
+      const unchanged = ProviderRegistry.mergeProviderSnapshot(withWorkspace, {
+        ...provider,
+        slashCommands: [{ name: "plan", description: "Plan work" }],
+      });
+      assert.strictEqual(unchanged.workspaceSnapshots?.[0]?.slashCommandsPending, undefined);
+      assert.strictEqual(unchanged.workspaceSnapshots?.[0]?.modelsPending, undefined);
+
+      const retainedOpenCode = ProviderRegistry.mergeProviderSnapshot(withWorkspace, {
+        ...provider,
+        status: "warning",
+        slashCommands: [],
+      });
+      assert.deepStrictEqual(retainedOpenCode.slashCommands, initialCommands);
+      assert.strictEqual(retainedOpenCode.workspaceSnapshots?.[0]?.slashCommandsPending, undefined);
+      assert.strictEqual(retainedOpenCode.workspaceSnapshots?.[0]?.modelsPending, undefined);
+
+      const commandsChanged = ProviderRegistry.mergeProviderSnapshot(withWorkspace, {
+        ...provider,
+        slashCommands: updatedCommands,
+      });
+      assert.deepStrictEqual(commandsChanged.slashCommands, updatedCommands);
+      assert.deepStrictEqual(
+        commandsChanged.workspaceSnapshots?.map(
+          ({ cwd, slashCommands, slashCommandsPending, modelsPending }) => ({
+            cwd,
+            slashCommands,
+            slashCommandsPending,
+            modelsPending,
+          }),
+        ),
+        [
+          {
+            cwd: "/project",
+            slashCommands: initialCommands,
+            slashCommandsPending: true,
+            modelsPending: undefined,
+          },
+        ],
+      );
+
+      const bothChanged = ProviderRegistry.mergeProviderSnapshot(withWorkspace, {
+        ...provider,
+        models: [machineModel, addedModel],
+        slashCommands: updatedCommands,
+      });
+      assert.strictEqual(bothChanged.workspaceSnapshots?.[0]?.modelsPending, true);
+      assert.strictEqual(bothChanged.workspaceSnapshots?.[0]?.slashCommandsPending, true);
+    });
+
     it("stores workspace skills, commands and options without changing machine metadata", () => {
       const provider = {
         instanceId: ProviderInstanceId.make("codex"),
@@ -3234,6 +3317,128 @@ it.layer(
           const rescanned = yield* workspaceOf;
           assert.deepStrictEqual(rescanned?.models, nextWorkspaceModels);
           assert.strictEqual(rescanned?.modelsPending, undefined);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
+    it.effect("rescans a cached workspace within TTL after machine slashCommands updates", () =>
+      Effect.gen(function* () {
+        const driver = ProviderDriverKind.make("acpRegistry");
+        const instanceId = ProviderInstanceId.make("acpRegistry-copilot");
+        const provider = {
+          instanceId,
+          driver,
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-06-10T00:00:00.000Z",
+          version: "1.0.0",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        const discoveredCommands = [
+          { name: "plan", description: "Plan work" },
+        ] satisfies ServerProvider["slashCommands"];
+        const machineProvider = yield* Ref.make<ServerProvider>(provider);
+        const scanResult = yield* Ref.make<ProviderWorkspaceSnapshot>({
+          ...provider,
+          slashCommandsPending: false,
+        });
+        const scanCalls = yield* Ref.make(0);
+        const instance: ProviderInstance = {
+          instanceId,
+          driverKind: driver,
+          continuationIdentity: {
+            driverKind: driver,
+            continuationKey: "acpRegistry:instance:copilot",
+          },
+          displayName: undefined,
+          enabled: true,
+          snapshot: {
+            resolveMaintenance: () =>
+              Effect.succeed(
+                makeManualOnlyProviderMaintenanceCapabilities({
+                  provider: driver,
+                  packageName: null,
+                }),
+              ),
+            getSnapshot: Ref.get(machineProvider),
+            refresh: Ref.get(machineProvider),
+            streamChanges: Stream.empty,
+            applyUsageLimits: () => Effect.void,
+          },
+          snapshotForCwd: () =>
+            Ref.update(scanCalls, (count) => count + 1).pipe(Effect.andThen(Ref.get(scanResult))),
+          orchestrationAdapter: {} as ProviderInstance["orchestrationAdapter"],
+          textGeneration: {} as ProviderInstance["textGeneration"],
+        };
+        const layerInstanceRegistry = Layer.succeed(
+          ProviderInstanceRegistry.ProviderInstanceRegistry,
+          {
+            getInstance: (requestedId) =>
+              Effect.succeed(requestedId === instanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+          },
+        );
+        const scope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+        const runtimeServices = yield* Layer.build(
+          ProviderRegistry.layer.pipe(
+            Layer.provide(layerUnusedMutator),
+            Layer.provideMerge(layerInstanceRegistry),
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), {
+                prefix: "t3-provider-registry-pending-workspace-slash-commands-",
+              }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ).pipe(Scope.provide(scope));
+
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          const workspaceOf = Effect.map(
+            registry.getProviders,
+            (providers) => providers[0]?.workspaceSnapshots?.[0],
+          );
+
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          assert.strictEqual(yield* Ref.get(scanCalls), 1);
+          assert.deepStrictEqual((yield* workspaceOf)?.slashCommands, []);
+          assert.strictEqual((yield* workspaceOf)?.slashCommandsPending, undefined);
+
+          // Within TTL and unchanged machine commands, the cached workspace snapshot is reused.
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          assert.strictEqual(yield* Ref.get(scanCalls), 1);
+
+          // Once machine slashCommands changes, the cached workspace snapshot becomes pending.
+          yield* Ref.set(machineProvider, {
+            ...provider,
+            slashCommands: discoveredCommands,
+          });
+          yield* registry.refreshInstance(instanceId);
+          assert.strictEqual((yield* workspaceOf)?.slashCommandsPending, true);
+
+          // A normal refresh within TTL rescans and publishes the updated workspace slashCommands.
+          yield* Ref.set(scanResult, {
+            ...provider,
+            slashCommands: discoveredCommands,
+            slashCommandsPending: false,
+          });
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          assert.strictEqual(yield* Ref.get(scanCalls), 2);
+          const rescanned = yield* workspaceOf;
+          assert.deepStrictEqual(rescanned?.slashCommands, discoveredCommands);
+          assert.strictEqual(rescanned?.slashCommandsPending, undefined);
+
+          // Subsequent calls within TTL reuse the freshly scanned snapshot.
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/project" });
+          assert.strictEqual(yield* Ref.get(scanCalls), 2);
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
