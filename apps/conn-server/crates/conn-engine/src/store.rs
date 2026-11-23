@@ -220,8 +220,6 @@ pub(crate) type StoreResult<T> = Result<T, String>;
 
 /// Shell changes kept for resuming streams. An older cursor gets a fresh snapshot instead.
 pub(crate) const SHELL_CHANGES_KEEP: i64 = 1024;
-/// Command receipts kept for retries. Clients retry within seconds, not thousands of commands.
-pub(crate) const RECEIPTS_KEEP: i64 = 4096;
 /// Retention runs when the sequence crosses a multiple of this, not on every commit.
 const PRUNE_EVERY: u64 = 256;
 
@@ -257,6 +255,8 @@ pub(crate) struct Store {
     imported_through: u64,
     /// Every transaction's `now` (`EngineConfig::clock`).
     clock: std::sync::Arc<dyn crate::clock::Clock>,
+    /// `EngineConfig::zone`.
+    pub(crate) zone: jiff::tz::TimeZone,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
     /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
@@ -320,6 +320,7 @@ impl Store {
             imported_through: imported_through.max(0) as u64,
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
+            zone: jiff::tz::TimeZone::UTC,
             generates_titles: false,
             starts: StartLedger::default(),
             attention: None,
@@ -368,6 +369,7 @@ impl Store {
         let generates_titles = self.generates_titles;
         let now_ms = self.clock.now_millis();
         Ok(Tx {
+            zone: self.zone.clone(),
             attention: self.attention.clone(),
             attention_written: false,
             now_ms,
@@ -383,15 +385,45 @@ impl Store {
         })
     }
 
+    /// The sequence a handled command answered with, accepted or refused.
     pub(crate) fn receipt(&self, command_id: &str) -> StoreResult<Option<u64>> {
+        Ok(self.outcome(command_id)?.map(|receipt| receipt.sequence))
+    }
+
+    /// What a handled command's receipt recorded (`CommandReceiptStore.ts`).
+    pub(crate) fn outcome(&self, command_id: &str) -> StoreResult<Option<Receipt>> {
         self.conn
             .query_row(
-                "SELECT sequence FROM receipts WHERE command_id = ?1",
+                "SELECT sequence, thread_id, error FROM receipts WHERE command_id = ?1",
                 [command_id],
-                |row| row.get::<_, i64>(0),
+                |row| {
+                    Ok(Receipt {
+                        sequence: row.get::<_, i64>(0)? as u64,
+                        thread_id: row.get(1)?,
+                        refusal: row.get(2)?,
+                    })
+                },
             )
             .optional()
-            .map(|seq| seq.map(|s| s as u64))
+            .map_err(err)
+    }
+
+    /// Records a refused command, as T3's `commitRejectedCommand`, so a retry gets the same
+    /// answer. A receipt already there stays.
+    pub(crate) fn record_refusal(&self, key: &ReceiptKey<'_>, refusal: &str) -> StoreResult<()> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO receipts (command_id, command_type, sequence, thread_id, error)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    key.command_id,
+                    key.command_type,
+                    self.high_water() as i64,
+                    key.thread_id,
+                    refusal
+                ],
+            )
+            .map(|_| ())
             .map_err(err)
     }
 
@@ -1055,6 +1087,7 @@ pub(crate) struct Tx<'a> {
     attention: Option<std::sync::Arc<tokio::sync::Notify>>,
     attention_written: bool,
     now_ms: u64,
+    zone: jiff::tz::TimeZone,
 }
 
 impl Tx<'_> {
@@ -1138,6 +1171,11 @@ impl Tx<'_> {
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
     }
 
+    /// Milliseconds since the epoch of a command's time string, as T3's `DateTime.make`.
+    pub(crate) fn date_input_millis(&self, text: &str) -> Option<i64> {
+        crate::time::date_input_millis(text, &self.zone)
+    }
+
     pub(crate) fn now(&self) -> &str {
         &self.now
     }
@@ -1158,11 +1196,29 @@ impl Tx<'_> {
             run_id,
             node_id,
             command_id,
-            provider_instance_id,
+            provider_instance,
         } = draft;
+        let provider_instance_id = match provider_instance {
+            Instance::Given(id) => Some(id),
+            Instance::Absent => None,
+            // A run's own event carries it; any other reads the stored run.
+            Instance::FromRun => match &run_id {
+                Some(_)
+                    if event_type.starts_with("run.")
+                        && payload["providerInstanceId"].is_string() =>
+                {
+                    payload["providerInstanceId"].as_str().map(str::to_owned)
+                }
+                Some(run) => self
+                    .entity(&thread_id, "runs", run)?
+                    .and_then(|r| r["providerInstanceId"].as_str().map(str::to_owned)),
+                None => None,
+            },
+        };
         let collection = collection_of(event_type);
         let mut inserted = false;
-        let mut keeps_activity = false;
+        let payload_sets_updated_at =
+            conn_contract::PAYLOAD_UPDATED_AT_EVENTS.contains(&event_type);
         if let Some(kind) = collection {
             let id = payload["id"].as_str().unwrap_or_default().to_owned();
             let existing: Option<(i64, Option<i64>)> = self
@@ -1215,17 +1271,11 @@ impl Tx<'_> {
         } else if event_type.starts_with("thread.") {
             let project_id = payload["projectId"].as_str().unwrap_or_default().to_owned();
             let deleted = event_type == "thread.deleted";
-            // A host sync (link snapshot, branch pull request, watch read) keeps the thread's
-            // `updatedAt`, as T3's deciders do; the sidebar must not move the thread.
-            // An issue link that was already there changes nothing either, nor does an unsettle
-            // of a thread already active (T3 writes the payload's `updatedAt`).
-            keeps_activity = matches!(
-                event_type,
-                "thread.pull-request-synced" | "thread.issue-synced" | "thread.unsettled"
-            ) && payload["updatedAt"].is_string()
-                && self
-                    .thread(&thread_id)?
-                    .is_some_and(|old| old["updatedAt"] == payload["updatedAt"]);
+            // T3's `ProjectionStore.ts`: a thread event writes its payload's `updatedAt`.
+            let updated_at = match payload["updatedAt"].as_str() {
+                Some(at) if payload_sets_updated_at => at.to_owned(),
+                _ => self.now.clone(),
+            };
             if deleted {
                 self.tx
                     .execute(
@@ -1237,9 +1287,8 @@ impl Tx<'_> {
             self.tx
                 .execute(
                     "INSERT INTO threads (id, project_id, deleted, activity_at, thread) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3,
-                       activity_at = CASE WHEN ?6 THEN activity_at ELSE ?4 END, thread = ?5",
-                    params![thread_id, project_id, deleted, self.now, payload.to_string(), keeps_activity],
+                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3, activity_at = ?4, thread = ?5",
+                    params![thread_id, project_id, deleted, updated_at, payload.to_string()],
                 )
                 .map_err(err)?;
         } else if event_type == "provider-session.detached" {
@@ -1276,10 +1325,13 @@ impl Tx<'_> {
                 params![seq as i64, thread_id, command_id, event_type, streaming, event.to_string()],
             )
             .map_err(err)?;
-        if collection.is_some() || (event_type.starts_with("thread.") && !keeps_activity) {
+        // Every other event moves the thread's `updatedAt` to its time, in the row and in the
+        // stored thread, as T3's `writeThreadTouches`.
+        if !payload_sets_updated_at {
             self.tx
                 .execute(
-                    "UPDATE threads SET activity_at = ?2 WHERE id = ?1",
+                    "UPDATE threads SET activity_at = ?2, thread = json_set(thread, '$.updatedAt', ?2)
+                     WHERE id = ?1",
                     params![thread_id, self.now],
                 )
                 .map_err(err)?;
@@ -1691,7 +1743,7 @@ impl Tx<'_> {
 
     /// Recomputes touched shell rows, records the receipt, and commits. Returns the sequence
     /// a client waits for: the last change of this write, or the high water if it wrote none.
-    pub(crate) fn commit(mut self, receipt: Option<(&str, &str)>) -> StoreResult<u64> {
+    pub(crate) fn commit(mut self, receipt: Option<&ReceiptKey<'_>>) -> StoreResult<u64> {
         for (thread_id, seq) in std::mem::take(&mut self.touched) {
             let previous: Option<(Option<String>, bool)> = self
                 .tx
@@ -1762,11 +1814,12 @@ impl Tx<'_> {
                 .map_err(err)?;
         }
         let high = self.next_seq - 1;
-        if let Some((command_id, command_type)) = receipt {
+        if let Some(key) = receipt {
             self.tx
                 .execute(
-                    "INSERT OR REPLACE INTO receipts (command_id, command_type, sequence) VALUES (?1, ?2, ?3)",
-                    params![command_id, command_type, high as i64],
+                    "INSERT OR REPLACE INTO receipts (command_id, command_type, sequence, thread_id)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![key.command_id, key.command_type, high as i64, key.thread_id],
                 )
                 .map_err(err)?;
         }
@@ -1947,6 +2000,23 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
+    if version < 5 {
+        // 5: a receipt names its thread and records a refusal (T3's `CommandReceiptV2`).
+        for column in ["thread_id", "error"] {
+            let present: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM pragma_table_info('receipts') WHERE name = ?1)",
+                    [column],
+                    |row| row.get(0),
+                )
+                .map_err(err)?;
+            if !present {
+                conn.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
+                    .map_err(err)?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+    }
     Ok(())
 }
 
@@ -1995,13 +2065,27 @@ fn prune(conn: &Connection) -> StoreResult<()> {
         [],
     )
     .map_err(err)?;
-    conn.execute(
-        "DELETE FROM receipts WHERE sequence < (
-           SELECT sequence FROM receipts ORDER BY sequence DESC LIMIT 1 OFFSET ?1)",
-        [RECEIPTS_KEEP],
-    )
-    .map_err(err)?;
     Ok(())
+}
+
+/// The command a receipt is for. `thread_id` is the thread it was handled for: a receipt
+/// answers a retry only for that thread (`OrchestratorCommandIdConflictError`).
+pub(crate) struct ReceiptKey<'a> {
+    pub command_id: &'a str,
+    pub command_type: &'a str,
+    /// `None` for a project command.
+    pub thread_id: Option<&'a str>,
+}
+
+/// A command's recorded outcome. Receipts are kept for good, as T3 keeps them: a retry long
+/// after, or after an undo, must not run the command again.
+#[derive(Debug)]
+pub(crate) struct Receipt {
+    pub sequence: u64,
+    /// `None` on a receipt from before receipts named their thread.
+    pub thread_id: Option<String>,
+    /// The refusal, for a refused command.
+    pub refusal: Option<String>,
 }
 
 /// One event before it gets its sequence, id and time.
@@ -2013,7 +2097,20 @@ pub(crate) struct Draft {
     pub run_id: Option<String>,
     pub node_id: Option<String>,
     pub command_id: Option<String>,
-    pub provider_instance_id: Option<String>,
+    pub provider_instance: Instance,
+}
+
+/// The envelope's top-level `providerInstanceId`. T3 sets it on most events: on a run's events
+/// the run's instance, which is the default here. Some flows name another instance, and some
+/// leave it out (a runtime request answered by message, a closed link request, the remote
+/// delegation rows); those drafts say so.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Instance {
+    /// The instance of the draft's run, if it names one.
+    #[default]
+    FromRun,
+    Given(String),
+    Absent,
 }
 
 impl Draft {
@@ -2025,13 +2122,34 @@ impl Draft {
             run_id: None,
             node_id: None,
             command_id: None,
-            provider_instance_id: None,
+            provider_instance: Instance::FromRun,
         }
     }
 
-    /// The envelope's top-level `providerInstanceId`; T3 sets it from the updated thread.
+    /// The envelope names this instance, as T3 does for this flow; `None` leaves it out.
     pub(crate) fn provider_instance(mut self, id: Option<&str>) -> Self {
-        self.provider_instance_id = id.map(str::to_owned);
+        self.provider_instance = id.map_or(Instance::Absent, |id| Instance::Given(id.to_owned()));
+        self
+    }
+
+    /// The envelope names the instance a row carries (a thread, run, session, provider thread
+    /// or subagent row).
+    pub(crate) fn instance_of(self, row: &Value) -> Self {
+        let id = row["providerInstanceId"].as_str().map(str::to_owned);
+        self.provider_instance(id.as_deref())
+    }
+
+    /// The envelope names the instance of the row this event carries.
+    pub(crate) fn payload_instance(self) -> Self {
+        let id = self.payload["providerInstanceId"]
+            .as_str()
+            .map(str::to_owned);
+        self.provider_instance(id.as_deref())
+    }
+
+    /// The envelope leaves the instance out, as T3 does for this flow.
+    pub(crate) fn without_instance(mut self) -> Self {
+        self.provider_instance = Instance::Absent;
         self
     }
 
@@ -2173,6 +2291,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// T3's `ProjectionStore.ts`: a thread event's payload sets the thread's `updatedAt`; every
+    /// other event sets it to the event's `occurredAt`, in the row and in the stored thread.
+    #[test]
+    fn each_event_type_sets_the_thread_updated_at_as_t3() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-engine-{}-updated-at", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("engine.sqlite")).unwrap();
+        let (old, decided) = ("2000-01-01T00:00:00.000Z", "2001-02-03T04:05:06.007Z");
+        let thread = |id: &str, updated_at: &str| json!({"id": id, "projectId": "p", "title": "T", "updatedAt": updated_at});
+        for (n, event_type) in conn_contract::DOMAIN_EVENT_TYPES.into_iter().enumerate() {
+            let id = format!("t{n}");
+            let mut tx = store.tx().unwrap();
+            tx.append(Draft::new(&id, "thread.created", thread(&id, old)))
+                .unwrap();
+            tx.commit(None).unwrap();
+            let mut tx = store.tx().unwrap();
+            let now = tx.now().to_owned();
+            let from_payload = conn_contract::PAYLOAD_UPDATED_AT_EVENTS.contains(&event_type);
+            let payload = if event_type.starts_with("thread.") {
+                thread(&id, decided)
+            } else {
+                json!({"id": format!("e{n}"), "threadId": id, "text": "", "status": "done"})
+            };
+            tx.append(Draft::new(&id, event_type, payload)).unwrap();
+            tx.commit(None).unwrap();
+            let (activity_at, stored): (String, String) = store
+                .conn
+                .query_row(
+                    "SELECT activity_at, thread FROM threads WHERE id = ?1",
+                    [&id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            let expected = if from_payload { decided } else { now.as_str() };
+            assert_eq!(activity_at, expected, "{event_type}: the row");
+            assert_eq!(
+                parse(stored).unwrap()["updatedAt"],
+                expected,
+                "{event_type}: the stored thread"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A commit that fails gives back the sequences its write took, as a rollback does, so the
     /// next write does not leave a gap.
     #[test]
@@ -2196,7 +2360,12 @@ mod tests {
         tx.append(Draft::new("t1", "thread.activity-updated", json!({})))
             .unwrap();
         assert!(
-            tx.commit(Some(("c1", "test"))).is_err(),
+            tx.commit(Some(&ReceiptKey {
+                command_id: "c1",
+                command_type: "test",
+                thread_id: Some("t1"),
+            }))
+            .is_err(),
             "the trigger fails it"
         );
         assert_eq!(
@@ -2214,7 +2383,12 @@ mod tests {
             .append(Draft::new("t1", "thread.activity-updated", json!({})))
             .unwrap();
         assert_eq!(seq, before + 1, "the next write continues without a gap");
-        assert_eq!(tx.commit(Some(("c2", "test"))).unwrap(), before + 1);
+        let key = ReceiptKey {
+            command_id: "c2",
+            command_type: "test",
+            thread_id: Some("t1"),
+        };
+        assert_eq!(tx.commit(Some(&key)).unwrap(), before + 1);
         assert_eq!(store.high_water(), before + 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -2305,7 +2479,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let index: i64 = store
             .conn
             .query_row(
@@ -2423,7 +2597,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let shell = store.shell_snapshot().unwrap();
         let threads = shell["threads"].as_array().unwrap();
         let parent = threads.iter().find(|t| t["id"] == "parent").unwrap();

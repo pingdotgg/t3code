@@ -13,15 +13,39 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
-**Undo of a settle (2026-11-23):** `thread.unsettle` reads `restoreUnsettledAt`, as T3's
-`Orchestrator.ts`: a time restores the Active anchor the settle cleared, `null` restores no
-anchor, and a time that does not parse refuses the command. Times parse as T3's
-`DateTime.make`: no zone means UTC. An archived thread refuses the command first. A thread
-already active keeps its anchor and `updatedAt`, but a fresh command still records
-`thread.unsettled`. The event envelope carries `providerInstanceId`. Wire times outside years
-0000 to 9999 get `toISOString`'s signed six-digit year. Proof:
-`thread_lifecycle_commands_reach_the_shell_row` in `conn-engine`, the `conn-support` time
-tests, and `client-check.mjs` (a year-10000 anchor decodes with T3's shell schema).
+**Undo of a settle and thread times (2026-11-23):** `thread.unsettle` reads
+`restoreUnsettledAt`, as T3's `Orchestrator.ts`: a time restores the Active anchor the settle
+cleared, `null` restores no anchor, a time that does not parse refuses the command, and a
+thread already active keeps its anchor and `updatedAt` but still records `thread.unsettled`.
+- Command times (`restoreUnsettledAt`, `snoozedUntil`, `visitedAt`) parse as T3's
+  `DateTime.make`: `conn-support/src/js_date.rs` ports V8's `Date.parse`, legacy forms
+  included, after Effect's zone rule; a time without a zone is local, in the server's zone
+  (`EngineConfig::zone`). Wire times outside years 0000 to 9999 get `toISOString`'s signed
+  six-digit year.
+- An archived thread refuses settle, auto-settle, unsettle, snooze, unsnooze, auto-settle set,
+  pin, unpin and both reorders before any other check, with T3's message.
+- The thread's `updatedAt` follows T3's `ProjectionStore.ts`: a thread event writes its
+  payload's, every other event its own time, in the row and the stored thread
+  (`PAYLOAD_UPDATED_AT_EVENTS`, generated). Pin and settle keep `updatedAt` where T3's deciders
+  do.
+- The event envelope names `providerInstanceId` where T3's does: a run's events the run's, a
+  provider event the session's, a thread event the thread's; none for a request answered by
+  message, closed link requests and remote delegation rows (`store::Instance`).
+
+- Command receipts are kept for good and record refusals, as T3's `CommandReceiptV2`: a retry
+  gets the recorded refusal again (`Command … was previously rejected: …`), a receipt answers
+  only for its own thread, and an old retry after an undo changes nothing. Refusals made
+  before the decision (access, a disabled provider) stay open, as T3's mode-limit refusals.
+
+Proof: `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
+`a_retried_command_returns_its_receipt` (T3's own tests, ported),
+`an_old_retry_after_an_undo_leaves_the_thread_as_it_is` (4,400 writes later),
+`date_input_matches_t3s` (T3's own answers for 1683 strings in five zones,
+`tools/gen-date-cases.mjs --check`), `each_event_type_sets_the_thread_updated_at_as_t3`,
+`thread_commands_move_updated_at_as_t3`, `an_archived_thread_refuses_lifecycle_commands_first`,
+`a_turns_events_name_the_provider_instance` and `thread_lifecycle_commands_reach_the_shell_row`
+in `conn-engine`; `client-check.mjs` (a year-10000 anchor decodes with T3's shell schema);
+`thread-cli-diff.mjs` compares every event type's `providerInstanceId` with the T3 server's.
 
 **Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left

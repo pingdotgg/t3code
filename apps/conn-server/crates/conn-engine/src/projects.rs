@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::commands::{self, CommandError, Effect, is_live};
 use crate::engine::{Inner, project_id};
-use crate::store::{Tx, new_project};
+use crate::store::{ReceiptKey, Tx, new_project};
 
 /// Title of the project that holds threads without a project (`ManagedProjectFolders.ts`).
 const SCRATCH_TITLE: &str = "No project";
@@ -373,8 +373,12 @@ impl Inner {
                 let mut tx = store.tx().map_err(ProjectFailure::from)?;
                 match f(&mut tx) {
                     Ok((value, effects)) => {
-                        let receipt = command_id.as_deref().map(|id| (id, "project"));
-                        let seq = tx.commit(receipt).map_err(ProjectFailure::from)?;
+                        let receipt = command_id.as_deref().map(|id| ReceiptKey {
+                            command_id: id,
+                            command_type: "project",
+                            thread_id: None,
+                        });
+                        let seq = tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
                         Ok((value, effects, seq))
                     }
                     Err(e) => {
@@ -547,7 +551,10 @@ impl Inner {
                     t["projectId"] = json!(id);
                     t["worktreePath"] = Value::Null;
                     t["updatedAt"] = json!(now);
-                    tx.append(crate::store::Draft::new(&tid, "thread.metadata-updated", t))?;
+                    tx.append(
+                        crate::store::Draft::new(&tid, "thread.metadata-updated", t)
+                            .payload_instance(),
+                    )?;
                 }
                 Ok((id, vec![]))
             })

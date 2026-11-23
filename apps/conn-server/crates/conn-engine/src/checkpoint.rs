@@ -482,7 +482,9 @@ fn commit_capture(
     let root = ctx.root["id"].as_str().map(str::to_owned);
     let mut checkpoint = Value::Null;
     for row in rows {
-        let draft = Draft::new(thread_id, "checkpoint.captured", row.clone()).node(root.as_deref());
+        let draft = Draft::new(thread_id, "checkpoint.captured", row.clone())
+            .node(root.as_deref())
+            .instance_of(&run);
         let draft = if row["runId"].is_null() {
             draft
         } else {

@@ -246,8 +246,13 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
     thread["rollbackRequestId"] = json!(command_id);
     thread["rollbackFailure"] = Value::Null;
     thread["updatedAt"] = json!(now);
+    let selection = thread["modelSelection"]["instanceId"]
+        .as_str()
+        .map(str::to_owned);
     tx.append(
-        Draft::new(&thread_id, "thread.metadata-updated", thread).command(Some(&command_id)),
+        Draft::new(&thread_id, "thread.metadata-updated", thread)
+            .command(Some(&command_id))
+            .payload_instance(),
     )?;
     tx.append(
         Draft::new(
@@ -255,7 +260,8 @@ pub(crate) fn checkpoint_rollback(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "checkpoint.rollback-requested",
             json!({"scopeId": scope_id, "checkpointId": checkpoint_id, "requestedAt": now}),
         )
-        .command(Some(&command_id)),
+        .command(Some(&command_id))
+        .provider_instance(selection.as_deref()),
     )?;
     let request = RollbackRequest {
         thread_id,
@@ -372,6 +378,7 @@ fn write_rollback_failure(
     thread["updatedAt"] = json!(now);
     tx.append(
         Draft::new(tid, "thread.metadata-updated", thread)
+            .payload_instance()
             .command(Some(&format!("{request_id}:rollback-failed"))),
     )?;
     Ok(())
@@ -791,17 +798,22 @@ fn commit_rollback(
         };
         provider_thread["updatedAt"] = json!(now);
     }
-    tx.append(Draft::new(
-        thread_id,
-        "provider-thread.updated",
-        provider_thread,
-    ))?;
+    let instance = provider_thread["providerInstanceId"]
+        .as_str()
+        .map(str::to_owned);
+    tx.append(
+        Draft::new(thread_id, "provider-thread.updated", provider_thread).payload_instance(),
+    )?;
     for checkpoint in &context.stale {
         let mut stale = checkpoint.clone();
         stale["status"] = json!("stale");
         let draft =
             Draft::new(thread_id, "checkpoint.captured", stale).node(checkpoint["nodeId"].as_str());
-        tx.append(draft.run(checkpoint["runId"].as_str()))?;
+        tx.append(
+            draft
+                .run(checkpoint["runId"].as_str())
+                .provider_instance(instance.as_deref()),
+        )?;
     }
     for run in &context.runs {
         let run_id = run["id"].as_str();

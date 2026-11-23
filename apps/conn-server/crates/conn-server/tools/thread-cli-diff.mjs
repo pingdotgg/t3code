@@ -24,11 +24,16 @@
 //
 // Differences in KNOWN are printed with their reason and do not fail the check. Any other
 // difference exits 1. Every server gets its own temp home, HOME and a free port.
+//
+// At the end both event logs are read: each event's top-level `providerInstanceId`, keyed by
+// event type (and a turn item's type), must be the same set on both servers. A key only one
+// server writes is listed, not failed.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeURL from "node:url";
 
 import { monorepo } from "../../../tools/monorepo.mjs";
@@ -507,6 +512,80 @@ function compare(t3, conn) {
 }
 
 // ---------------------------------------------------------------------------------------
+// The events' `providerInstanceId`
+
+function findFiles(dir, name) {
+  const found = [];
+  for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
+    const path = NodePath.join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...findFiles(path, name));
+    else if (entry.name === name) found.push(path);
+  }
+  return found;
+}
+
+/** `key -> Set` of the instances (or "(none)") the side's stored events name. */
+function eventInstances(side) {
+  const t3 = side.name === "t3";
+  const [file] = findFiles(side.dir, t3 ? "statev2.sqlite" : "engine.sqlite");
+  if (file === undefined) throw new Error(`${side.name}: no event store under ${side.dir}`);
+  const db = new NodeSqlite.DatabaseSync(file, { readOnly: true });
+  const rows = t3
+    ? db
+        .prepare(
+          "SELECT event_type AS type, payload_json AS payload, metadata_json AS meta FROM orchestration_events WHERE aggregate_kind = 'thread'",
+        )
+        .all()
+        .map((row) => ({ type: row.type, payload: JSON.parse(row.payload), instance: JSON.parse(row.meta ?? "{}").providerInstanceId }))
+    : db
+        .prepare("SELECT event FROM events")
+        .all()
+        .map((row) => JSON.parse(row.event))
+        .map((event) => ({ type: event.type, payload: event.payload, instance: event.providerInstanceId }));
+  db.close();
+  const byKey = new Map();
+  for (const row of rows) {
+    const key = row.type === "turn-item.updated" ? `${row.type}:${row.payload?.type}` : row.type;
+    if (!byKey.has(key)) byKey.set(key, new Set());
+    byKey.get(key).add(row.instance ?? "(none)");
+  }
+  return byKey;
+}
+
+// Instances one server writes for a key and the other does not, with the reason.
+const KNOWN_INSTANCES = [
+  {
+    key: "runtime-request.updated",
+    conn: "(none)",
+    reason:
+      "T3's ingestor cancels a pending question when its provider turn ends (dismissNativeUserInputs, the session's instance); Conn has no such step, so the session release expires it, and T3's release names no instance",
+  },
+];
+
+function compareInstances(t3, conn) {
+  const a = eventInstances(t3);
+  const b = eventInstances(conn);
+  let failures = 0;
+  for (const key of [...new Set([...a.keys(), ...b.keys()])].sort()) {
+    const x = a.get(key);
+    const y = b.get(key);
+    if (x === undefined || y === undefined) {
+      console.log(`  only ${x === undefined ? "Conn" : "T3"} writes ${key}`);
+      continue;
+    }
+    const excused = KNOWN_INSTANCES.filter((k) => k.key === key && y.has(k.conn) && !x.has(k.conn));
+    const ys = new Set([...y].filter((v) => !excused.some((k) => k.conn === v)));
+    for (const k of excused) console.log(`  known Conn also writes ${k.conn} for ${key}: ${k.reason}`);
+    const same = x.size === ys.size && [...x].every((v) => ys.has(v));
+    if (same) {
+      console.log(`ok   providerInstanceId of ${key}: ${[...x].join(", ")}`);
+    } else {
+      failures++;
+      console.log(`FAIL providerInstanceId of ${key}: T3 ${[...x].join(", ")} | Conn ${[...y].join(", ")}`);
+    }
+  }
+  return failures;
+}
 
 const sides = [makeSide("t3"), makeSide("conn")];
 let exitCode = 0;
@@ -524,6 +603,9 @@ try {
     `\n${sides[0].steps.length} steps, ${failures} differ, ${known} known difference(s)`,
   );
   if (failures > 0) exitCode = 1;
+  const instanceFailures = compareInstances(sides[0], sides[1]);
+  console.log(`${instanceFailures} event type(s) differ in providerInstanceId`);
+  if (instanceFailures > 0) exitCode = 1;
 } finally {
   await Promise.all(sides.map((side) => side.stop().catch(() => {})));
   if (keep) console.log(`kept ${root}`);

@@ -25,7 +25,7 @@ use tokio::{
 use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
-use crate::store::Draft;
+use crate::store::{Draft, Instance};
 use crate::streaming::AssistantStreaming;
 
 /// A thread whose provider session is open.
@@ -538,11 +538,10 @@ impl Inner {
             // `providerSession`), before any of its events.
             let tid = thread_id.to_owned();
             self.write(move |tx| {
-                tx.append(Draft::new(
-                    &tid,
-                    "provider-session.updated",
-                    provider_session,
-                ))
+                tx.append(
+                    Draft::new(&tid, "provider-session.updated", provider_session)
+                        .payload_instance(),
+                )
             })
             .await?;
             tokio::spawn(
@@ -874,7 +873,9 @@ impl Inner {
                 if provider_thread_json["id"].is_string() {
                     let mut running = provider_thread_json.clone();
                     running["updatedAt"] = json!(now);
-                    tx.append(Draft::new(&tid, "provider-thread.updated", running))?;
+                    tx.append(
+                        Draft::new(&tid, "provider-thread.updated", running).instance_of(&run),
+                    )?;
                 }
                 if let Some(transfer) = &fork_transfer {
                     tx.append(
@@ -883,6 +884,7 @@ impl Inner {
                             "context-transfer.updated",
                             crate::fork::consumed(transfer, &provider_thread_json, &run, &now),
                         )
+                        .instance_of(&run)
                         .run(Some(&rid)),
                     )?;
                 }
@@ -890,7 +892,9 @@ impl Inner {
                     && thread["activeProviderThreadId"] != pt_id
                 {
                     thread["activeProviderThreadId"] = pt_id.clone();
-                    tx.append(Draft::new(&tid, "thread.metadata-updated", thread))?;
+                    tx.append(
+                        Draft::new(&tid, "thread.metadata-updated", thread).payload_instance(),
+                    )?;
                 }
                 tx.append(draft(
                     "run-attempt.created",
@@ -1304,6 +1308,14 @@ impl Inner {
             let active = live.active();
             let run_id = active.as_ref().map(|a| a.run_id.clone());
             let mut translated = translate(&thread_id, active.as_ref(), event);
+            // T3's `ProviderEventIngestor` names the session's instance on every event it
+            // stores.
+            if let Translated::Event(draft)
+            | Translated::ProviderTurn(_, draft)
+            | Translated::Subagent(draft, _) = &mut translated
+            {
+                draft.provider_instance = Instance::Given(live.instance.clone());
+            }
             // A session belongs to one instance, so its provider threads do too. The engine sets
             // it, as `Orchestrator.ts` builds provider threads from the run's instance.
             if let Translated::Event(draft) = &mut translated
@@ -1396,11 +1408,12 @@ impl Inner {
                     }
                 }
                 Translated::CreateThread(thread) => {
-                    self.create_provider_thread(thread).await;
+                    self.create_provider_thread(thread, &live.instance).await;
                 }
                 Translated::Subagent(draft, subagent) => {
                     self.commit(vec![draft]).await;
-                    self.sync_subagent_thread_model(subagent).await;
+                    self.sync_subagent_thread_model(subagent, &live.instance)
+                        .await;
                 }
                 Translated::Steer { message_id, status } => {
                     self.steer_updated(&thread_id, message_id, status).await;
@@ -1457,14 +1470,18 @@ impl Inner {
 
     /// `app_thread.created`: the child thread a subagent's rows are written to. Created once;
     /// a provider that announces it again changes nothing.
-    async fn create_provider_thread(&self, thread: Value) {
+    async fn create_provider_thread(&self, thread: Value, instance: &str) {
+        let instance = instance.to_owned();
         let Some(id) = thread["id"].as_str().map(str::to_owned) else {
             return;
         };
         let result = self
             .write(move |tx| {
                 if tx.thread(&id)?.is_none() {
-                    tx.append(Draft::new(&id, "thread.created", thread))?;
+                    tx.append(
+                        Draft::new(&id, "thread.created", thread)
+                            .provider_instance(Some(&instance)),
+                    )?;
                 }
                 Ok(())
             })
@@ -1476,7 +1493,8 @@ impl Inner {
 
     /// `syncSubagentThreadModel` (`ProviderEventIngestor`): a provider reveals a native
     /// subagent's model late, and its child thread takes it.
-    async fn sync_subagent_thread_model(&self, subagent: Value) {
+    async fn sync_subagent_thread_model(&self, subagent: Value, instance: &str) {
+        let instance = instance.to_owned();
         if subagent["origin"] != "provider_native" {
             return;
         }
@@ -1509,7 +1527,10 @@ impl Inner {
                 }
                 thread["modelSelection"] = reported;
                 thread["updatedAt"] = json!(tx.now());
-                tx.append(Draft::new(&child, "thread.model-selection-updated", thread))?;
+                tx.append(
+                    Draft::new(&child, "thread.model-selection-updated", thread)
+                        .provider_instance(Some(&instance)),
+                )?;
                 Ok(())
             })
             .await;
@@ -2213,7 +2234,9 @@ impl Inner {
                     }
                     session["updatedAt"] = json!(now);
                     session["lastError"] = Value::Null;
-                    tx.append(Draft::new(&tid, "provider-session.updated", session))?;
+                    tx.append(
+                        Draft::new(&tid, "provider-session.updated", session).payload_instance(),
+                    )?;
                 }
                 for mut request in tx.entities(&tid, "runtimeRequests")? {
                     let live = request["responseCapability"]["type"] == "live"
@@ -2243,7 +2266,9 @@ impl Inner {
                         .is_some_and(|tasks| !tasks.is_empty());
                     if thread["providerSessionId"] == sid.as_str() && held {
                         thread["pendingBackgroundTasks"] = json!([]);
-                        tx.append(Draft::new(&tid, "provider-thread.updated", thread))?;
+                        tx.append(
+                            Draft::new(&tid, "provider-thread.updated", thread).payload_instance(),
+                        )?;
                     }
                 }
                 Ok(())

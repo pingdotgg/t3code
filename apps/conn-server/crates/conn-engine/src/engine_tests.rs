@@ -259,6 +259,99 @@ async fn a_retried_command_returns_its_receipt() {
         "OrchestrationV2DispatchCommandError"
     );
     assert_eq!(to_json(&error)["commandId"], "c9");
+    let refused = to_json(&error)["detail"].as_str().unwrap().to_owned();
+
+    // T3's `Orchestrator.control-reads.test.ts` ("a duplicate create is rejected"): the
+    // refusal is recorded, so a retry answers it again and changes nothing.
+    let events = engine.inner().db(|s| s.event_count("t1")).await;
+    let retried = rejection(&engine, create("t1", "c9")).await;
+    assert!(
+        retried.contains(&format!("Command c9 was previously rejected: {refused}")),
+        "{retried}"
+    );
+    assert_eq!(engine.inner().db(|s| s.event_count("t1")).await, events);
+
+    // A receipt proves the command only for its own thread (`OrchestratorCommandIdConflictError`).
+    let conflict = rejection(&engine, create("t2", "c1")).await;
+    assert!(
+        conflict.contains(
+            "Command c1 was already handled for thread t1 and cannot be replayed for t2."
+        ),
+        "{conflict}"
+    );
+}
+
+async fn rejection(engine: &SqliteEngine, command: Value) -> String {
+    match engine.dispatch(from_json(command).unwrap()).await {
+        Err(EngineError::Rejected(e)) => to_json(&e)["detail"].as_str().unwrap_or("").to_owned(),
+        Ok(_) => panic!("expected a refusal"),
+        Err(EngineError::Internal(e)) => panic!("internal: {e}"),
+    }
+}
+
+/// T3's `runtimeLayer.test.ts`, "persists rejected command receipts across retries".
+#[tokio::test(flavor = "current_thread")]
+async fn persists_rejected_command_receipts_across_retries() {
+    let db = TempDb::new("rejected-receipt");
+    let (engine, _) = open(&db);
+    let archive = json!({"type": "thread.archive", "commandId": "missing-archive",
+        "threadId": "missing-thread"});
+    let first = rejection(&engine, archive.clone()).await;
+    assert!(
+        first.contains("Thread missing-thread does not exist."),
+        "{first}"
+    );
+    dispatch(&engine, create("missing-thread", "c1")).await;
+    let retry = rejection(&engine, archive).await;
+    assert!(
+        retry.contains("Command missing-archive was previously rejected: "),
+        "{retry}"
+    );
+    assert!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["archivedAt"].is_null(),
+        "the retry archives nothing"
+    );
+}
+
+/// An old retry, after an undo and after more receipts than a short-lived cache would keep,
+/// is answered from its receipt and changes nothing: T3 keeps every receipt.
+#[tokio::test(flavor = "current_thread")]
+async fn an_old_retry_after_an_undo_leaves_the_thread_as_it_is() {
+    let db = TempDb::new("old-retry");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, create("t2", "c2")).await;
+    let settle = json!({"type": "thread.settle", "commandId": "settle-1", "threadId": "t1"});
+    dispatch(&engine, settle.clone()).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.unsettle", "commandId": "undo-1", "threadId": "t1",
+            "reason": "user", "restoreUnsettledAt": null}),
+    )
+    .await;
+    for n in 0..4_400 {
+        dispatch(
+            &engine,
+            json!({"type": "thread.tag.set", "commandId": format!("w{n}"), "threadId": "t2",
+                "tag": "busy", "tagged": n % 2 == 0}),
+        )
+        .await;
+    }
+    let row = |shell: &Value| {
+        shell["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["id"] == "t1")
+            .cloned()
+            .unwrap()
+    };
+    let before = row(&engine.shell_snapshot().await.unwrap());
+    let events = engine.inner().db(|s| s.event_count("t1")).await;
+    dispatch(&engine, settle).await;
+    assert_eq!(row(&engine.shell_snapshot().await.unwrap()), before);
+    assert_eq!(before["settledOverride"], "active");
+    assert_eq!(engine.inner().db(|s| s.event_count("t1")).await, events);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -362,6 +455,20 @@ async fn interrupt_and_permission_answers_reach_the_provider() {
         .unwrap();
     assert_eq!(answer.1["text"], "approval: accept");
     assert_eq!(events.last().unwrap().1["status"], "completed");
+    // A request answered through its live session names that session's instance, as T3's
+    // `dispatchRuntimeRequestRespond`.
+    assert_eq!(request["responseCapability"]["type"], "live");
+    let log = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    let resolved = log
+        .iter()
+        .map(|(_, e)| e)
+        .find(|e| e["type"] == "runtime-request.updated" && e["payload"]["status"] == "resolved")
+        .expect("the answer is stored");
+    assert_eq!(resolved["providerInstanceId"], "claudeAgent", "{resolved}");
 
     // Answering again is refused: the request is no longer pending.
     let again = engine
@@ -1747,6 +1854,198 @@ async fn a_push_reopens_watched_checks_and_an_old_read_cannot_close_them() {
     assert_eq!(after["headSha"], "old", "the rest of the read lands");
 }
 
+/// Every event of a turn names the provider instance in its envelope, as T3's: the thread's,
+/// the run's and the provider session's are all the thread's instance here.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turns_events_name_the_provider_instance() {
+    let db = TempDb::new("envelope-instance");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hello")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let events = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    let missing: Vec<String> = events
+        .iter()
+        .filter(|(_, e)| e["providerInstanceId"] != "claudeAgent")
+        .map(|(_, e)| format!("{} {}", e["type"], e["payload"]["type"]))
+        .collect();
+    assert!(missing.is_empty(), "{missing:#?}");
+    assert!(events.len() > 5, "the turn wrote its events");
+}
+
+/// Which thread commands move the thread's `updatedAt` (the sidebar order), as T3's deciders
+/// in `dispatchThreadMutation`: a command that changes nothing keeps it, and so do a tag, a
+/// visit and an Active reorder.
+#[tokio::test(flavor = "current_thread")]
+async fn thread_commands_move_updated_at_as_t3() {
+    let db = TempDb::new("updated-at");
+    let clock = Arc::new(crate::clock::ManualClock::at(1_800_000_000_000));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.clock = clock.clone();
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let later = "2100-01-01T00:00:00.000Z";
+    let issue = json!({"tracker": "github", "host": "github.com", "scope": "o/r", "key": "7",
+        "projectId": project_id(), "url": "https://github.com/o/r/issues/7", "displayKey": "#7",
+        "title": "Bug", "source": "manual"});
+    let pull = json!({"host": "github.com", "repository": "o/r", "number": 7,
+        "url": "https://github.com/o/r/pull/7", "source": "manual"});
+    let steps = [
+        (
+            "thread.tag.set",
+            json!({"tag": "bug", "tagged": true}),
+            false,
+        ),
+        ("thread.active.reorder", json!({"orderKey": "a"}), false),
+        ("thread.pin", json!({"orderKey": "a0"}), true),
+        ("thread.pin", json!({"orderKey": "a0"}), false),
+        ("thread.pin.reorder", json!({"orderKey": "a0"}), false),
+        ("thread.pin.reorder", json!({"orderKey": "b0"}), true),
+        ("thread.unpin", json!({}), true),
+        ("thread.unpin", json!({}), false),
+        ("thread.auto-settle.set", json!({"enabled": false}), true),
+        ("thread.auto-settle.set", json!({"enabled": false}), false),
+        ("thread.snooze", json!({"snoozedUntil": later}), true),
+        ("thread.pin", json!({"orderKey": "a0"}), true),
+        ("thread.unpin", json!({}), true),
+        ("thread.snooze", json!({"snoozedUntil": later}), true),
+        ("thread.unsnooze", json!({"reason": "user"}), true),
+        ("thread.unsnooze", json!({"reason": "user"}), false),
+        ("thread.settle", json!({}), true),
+        ("thread.settle", json!({}), false),
+        ("thread.snooze", json!({"snoozedUntil": later}), true),
+        ("thread.settle", json!({}), true),
+        ("thread.unsettle", json!({"reason": "user"}), true),
+        ("thread.unsettle", json!({"reason": "user"}), false),
+        (
+            "thread.visit",
+            json!({"visitedAt": "2027-01-01T00:00:00.000Z"}),
+            false,
+        ),
+        (
+            "thread.runtime-mode.set",
+            json!({"runtimeMode": "approval-required"}),
+            true,
+        ),
+        (
+            "thread.interaction-mode.set",
+            json!({"interactionMode": "plan"}),
+            true,
+        ),
+        ("thread.metadata.update", json!({"title": "Renamed"}), true),
+        ("thread.issue.link", issue.clone(), true),
+        ("thread.issue.unlink", issue, true),
+        ("thread.pull-request.link", pull.clone(), true),
+        ("thread.pull-request.unlink", pull, true),
+        ("thread.archive", json!({}), true),
+        ("thread.unarchive", json!({}), true),
+    ];
+    for (n, (ty, extra, moves)) in steps.into_iter().enumerate() {
+        let before = engine.shell_snapshot().await.unwrap()["threads"][0]["updatedAt"].clone();
+        clock.advance(Duration::from_secs(1));
+        let mut command = json!({"type": ty, "commandId": format!("u{n}"), "threadId": "t1"});
+        command
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        dispatch(&engine, command).await;
+        let after = engine.shell_snapshot().await.unwrap()["threads"][0]["updatedAt"].clone();
+        assert_eq!(
+            after != before,
+            moves,
+            "step {n}: {ty} {extra}: {before} -> {after}"
+        );
+    }
+
+    // A visit time is read as T3's `DateTime.make` reads it, and stored in the wire form.
+    let visit = |id: &str, at: &str| json!({"type": "thread.visit", "commandId": id, "threadId": "t1", "visitedAt": at});
+    dispatch(&engine, visit("v1", "Jan 2 2028 10:00 GMT+1")).await;
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["lastVisitedAt"],
+        "2028-01-02T09:00:00.000Z"
+    );
+    let refused = engine
+        .dispatch(from_json(visit("v2", "not a time")).unwrap())
+        .await;
+    let Err(EngineError::Rejected(e)) = refused else {
+        panic!("a visit time that does not parse is refused");
+    };
+    assert!(
+        to_json(&e)
+            .to_string()
+            .contains("Thread t1 visit time not a time is not a valid timestamp."),
+        "{}",
+        to_json(&e)
+    );
+}
+
+/// T3's `dispatchThreadMutation` refuses these commands on an archived thread, and checks
+/// that before anything else it reads: a run id, a snooze time, a pin.
+#[tokio::test(flavor = "current_thread")]
+async fn an_archived_thread_refuses_lifecycle_commands_first() {
+    let db = TempDb::new("archived-guard");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "c2", "threadId": "t1"}),
+    )
+    .await;
+    let before = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    let later = "2100-01-01T00:00:00.000Z";
+    for (n, (ty, extra)) in [
+        ("thread.settle", json!({})),
+        ("thread.settle", json!({"expectedLatestRunId": "run:other"})),
+        ("thread.auto-settle", json!({"snapshotAt": later})),
+        ("thread.unsettle", json!({"reason": "user"})),
+        ("thread.snooze", json!({"snoozedUntil": later})),
+        ("thread.snooze", json!({"snoozedUntil": "not a time"})),
+        ("thread.unsnooze", json!({"reason": "user"})),
+        ("thread.auto-settle.set", json!({"enabled": false})),
+        ("thread.pin", json!({"orderKey": "a0"})),
+        ("thread.unpin", json!({})),
+        ("thread.pin.reorder", json!({"orderKey": "b0"})),
+        ("thread.active.reorder", json!({"orderKey": "b0"})),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut command = json!({"type": ty, "commandId": format!("g{n}"), "threadId": "t1"});
+        command
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let result = engine.dispatch(from_json(command).unwrap()).await;
+        let Err(EngineError::Rejected(e)) = result else {
+            panic!("{ty} {extra} on an archived thread is refused");
+        };
+        let text = to_json(&e).to_string();
+        assert!(
+            text.contains("Thread t1 is archived."),
+            "{ty} {extra}: {text}"
+        );
+    }
+    let after = engine
+        .inner()
+        .db(|store| store.thread_events_after("t1", 0, 100_000))
+        .await
+        .unwrap();
+    assert_eq!(after, before);
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn thread_lifecycle_commands_reach_the_shell_row() {
     let db = TempDb::new("lifecycle");
@@ -1855,6 +2154,11 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     dispatch(&engine, restore(78, json!("2020-01-02T03:04:05"))).await;
     let r = row(&engine.shell_snapshot().await.unwrap());
     assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.000Z");
+    // And `Date.parse`'s older forms.
+    dispatch(&engine, cmd(87, "thread.settle", json!({}))).await;
+    dispatch(&engine, restore(88, json!("Thu, 02 Jan 2020 03:04:05 GMT"))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.000Z");
     // A year past 9999 is written as `toISOString` writes it.
     dispatch(&engine, cmd(79, "thread.settle", json!({}))).await;
     dispatch(&engine, restore(80, json!("9999-12-31T23:30:00-01:00"))).await;
@@ -1913,11 +2217,7 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
 
     dispatch(
         &engine,
-        cmd(
-            8,
-            "thread.snooze",
-            json!({"snoozedUntil": "2030-01-01T00:00:00.000Z"}),
-        ),
+        cmd(8, "thread.snooze", json!({"snoozedUntil": "Jan 1 2030"})),
     )
     .await;
     assert_eq!(
@@ -3870,7 +4170,7 @@ async fn snooze_follows_the_upstream_rules() {
 
     let past = refused(&engine, snooze("s1", "t1", "2020-01-01T00:00:00.000Z")).await;
     assert!(past.contains("not in the future"), "{past}");
-    let bad = refused(&engine, snooze("s2", "t1", "2030-02-31T00:00:00.000Z")).await;
+    let bad = refused(&engine, snooze("s2", "t1", "not a time")).await;
     assert!(bad.contains("not in the future"), "{bad}");
     dispatch(&engine, snooze("s3", "t1", "2030-01-01T02:00:00+02:00")).await;
     let r = shell_row(&engine.shell_snapshot().await.unwrap(), "t1");
@@ -4963,8 +5263,10 @@ async fn secret_cards_keep_their_position_and_final_status_and_cancel_on_restart
         let p = projection(&engine, "t1").await;
         let run = &p["runs"][0];
         let command = json!({"commandId":"secret-pending","threadId":"t1","runId":run["id"],"nodeId":run["rootNodeId"],"turnItemId":"secret-card","label":"API key","reason":"Test","secretStatus":"pending"});
+        // A refused command's id stays refused (its receipt), so the wrong try has its own.
         let mut wrong = command.clone();
         wrong["nodeId"] = json!("wrong");
+        wrong["commandId"] = json!("secret-wrong");
         assert!(engine.record_secret_request(wrong).await.is_err());
         engine.record_secret_request(command.clone()).await.unwrap();
         let p = projection(&engine, "t1").await;

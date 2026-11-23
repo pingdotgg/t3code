@@ -20,6 +20,9 @@ serde_json.workspace = true
 tokio = { workspace = true, features = ["sync", "rt", "time", "macros"] }
 # Bundled SQLite with JSON1 (built in since 3.38). No statement cache, no extra features.
 rusqlite.workspace = true
+# The server's zone for a command time without one, as T3's `DateTime.make` reads it
+# (`src/time.rs`); already in the server binary through conn-features.
+jiff.workspace = true
 
 [features]
 # A scripted provider for the client check (`examples/export_turn.rs`).

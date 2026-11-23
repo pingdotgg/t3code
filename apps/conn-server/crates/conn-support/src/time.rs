@@ -110,25 +110,6 @@ pub fn millis_from_iso(text: &str) -> Option<i64> {
     minutes.checked_mul(60_000)?.checked_add(s * 1000 + ms)
 }
 
-/// Milliseconds since the epoch of a time as T3's `DateTime.make` reads a string: a date-time
-/// without a zone is UTC (Effect appends `Z`), and the time must be in JavaScript's `Date`
-/// range. `None` where T3 finds no valid time.
-pub fn millis_from_date_input(text: &str) -> Option<i64> {
-    const JS_MAX: i64 = 8_640_000_000_000_000;
-    let has_zone = text.ends_with(['Z', 'z'])
-        || text
-            .len()
-            .checked_sub(6)
-            .and_then(|i| text.get(i..))
-            .is_some_and(|tail| tail.starts_with(['+', '-']) && tail.get(3..4) == Some(":"));
-    let millis = if has_zone {
-        millis_from_iso(text)
-    } else {
-        millis_from_iso(&format!("{text}Z"))
-    }?;
-    (-JS_MAX..=JS_MAX).contains(&millis).then_some(millis)
-}
-
 fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
         2 if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) => 29,
@@ -190,10 +171,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Mark, iso_from_millis, iso_from_ms, millis_from_date_input, millis_from_iso, now_iso,
-        now_ms,
-    };
+    use super::{Mark, iso_from_millis, iso_from_ms, millis_from_iso, now_iso, now_ms};
     use std::time::Duration;
 
     /// A jump of the wall clock with the monotonic clock still (a frozen container), a
@@ -257,35 +235,6 @@ mod tests {
             Some(1_794_559_781_000)
         );
         assert_eq!(millis_from_iso("yesterday"), None);
-    }
-
-    /// T3's `DateTime.make`: a zone-less date-time is UTC, and only `Date`'s range is valid.
-    #[test]
-    fn reads_a_date_input_as_t3_does() {
-        let utc = Some(1_577_934_245_000);
-        assert_eq!(millis_from_date_input("2020-01-02T03:04:05"), utc);
-        assert_eq!(millis_from_date_input("2020-01-02T03:04:05Z"), utc);
-        assert_eq!(millis_from_date_input("2020-01-02T05:04:05+02:00"), utc);
-        assert_eq!(
-            millis_from_date_input("2020-01-02T03:04:05.006"),
-            Some(1_577_934_245_006)
-        );
-        assert_eq!(
-            millis_from_date_input("9999-12-31T23:30:00-01:00"),
-            Some(253_402_302_600_000)
-        );
-        assert_eq!(
-            millis_from_date_input("+275760-09-13T00:00:00.000Z"),
-            Some(8_640_000_000_000_000)
-        );
-        for bad in [
-            "+275760-09-13T00:00:00.001Z",
-            "not a time",
-            "2020-01-02T03:04:05ZZ",
-            "",
-        ] {
-            assert_eq!(millis_from_date_input(bad), None, "{bad}");
-        }
     }
 
     #[test]

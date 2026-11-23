@@ -182,9 +182,13 @@ check("thread: user message and assistant reply", () => {
 const socket = followThread(exported.socketItems);
 check("thread: events rebuild the same projection as a snapshot", () => {
   assert.equal(socket.status, "live");
+  // `updatedAt` is the time of the last event. A snapshot's thread has it too: T3's
+  // `writeThreadTouches` writes it into the stored thread. The client's reducer moves the
+  // thread's only on thread events, so the two may differ, as they do with T3's server.
   const strip = (projection) => {
-    const { updatedAt: _ignored, ...rest } = encodeProjection(projection);
-    return rest;
+    const { updatedAt: _ignored, thread, ...rest } = encodeProjection(projection);
+    const { updatedAt: _thread, ...threadRest } = thread;
+    return { ...rest, thread: threadRest };
   };
   assert.deepEqual(strip(live.projection), strip(socket.projection));
 });
@@ -222,9 +226,13 @@ check("thread: a compact snapshot restores to the full projection", () => {
   assert.equal(raw.turnItemsOmitLocalVisible, true);
   assert.deepEqual(raw.projection.turnItems, []);
   assert.ok(raw.projection.visibleTurnItems.every((row) => row.item.textOmitted === true));
+  // `updatedAt` is the time of the last event. A snapshot's thread has it too: T3's
+  // `writeThreadTouches` writes it into the stored thread. The client's reducer moves the
+  // thread's only on thread events, so the two may differ, as they do with T3's server.
   const strip = (projection) => {
-    const { updatedAt: _ignored, ...rest } = encodeProjection(projection);
-    return rest;
+    const { updatedAt: _ignored, thread, ...rest } = encodeProjection(projection);
+    const { updatedAt: _thread, ...threadRest } = thread;
+    return { ...rest, thread: threadRest };
   };
   assert.deepEqual(strip(compact.projection), strip(socket.projection));
 });

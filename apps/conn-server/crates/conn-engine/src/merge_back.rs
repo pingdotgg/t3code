@@ -220,11 +220,15 @@ pub(crate) fn thread_merge_back(tx: &mut Tx<'_>, command: Value) -> Outcome {
         old["error"] = json!(format!("Superseded by merge-back transfer {transfer_id}."));
         old["updatedAt"] = json!(now);
         tx.append(
-            Draft::new(&target_id, "context-transfer.updated", old).command(Some(&command_id)),
+            Draft::new(&target_id, "context-transfer.updated", old)
+                .command(Some(&command_id))
+                .instance_of(&run),
         )?;
     }
     tx.append(
-        Draft::new(&target_id, "context-transfer.created", transfer).command(Some(&command_id)),
+        Draft::new(&target_id, "context-transfer.created", transfer)
+            .command(Some(&command_id))
+            .instance_of(&run),
     )?;
     Ok(vec![])
 }

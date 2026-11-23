@@ -209,6 +209,7 @@ dependencies = [
  "conn-source-control",
  "conn-support",
  "conn-vcs",
+ "jiff",
  "rusqlite",
  "serde",
  "serde_json",

@@ -18,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
-use crate::store::{Store, StoreResult, Tx};
+use crate::store::{Receipt, ReceiptKey, Store, StoreResult, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
 /// A folder the engine offers as a project at start. Clients add more at runtime.
@@ -66,6 +66,9 @@ pub struct EngineConfig {
     /// Every stored timestamp and the idle release read it. Default: the system clock. A
     /// replay sets a [`crate::ManualClock`], as T3's tests run on Effect's `TestClock`.
     pub clock: Arc<dyn crate::Clock>,
+    /// The zone a command time without one is read in, as V8 reads the host's zone once at
+    /// start. Default: the system's.
+    pub zone: jiff::tz::TimeZone,
     /// Recover the runs and rollbacks a previous process left active (`restart.rs`), as the
     /// T3 server does at start. Default on. Off for an inert rehearsal copy
     /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
@@ -132,6 +135,7 @@ impl EngineConfig {
             runtime_policy_override: None,
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
+            zone: jiff::tz::TimeZone::system(),
             recover_runs: true,
             attention: false,
         }
@@ -273,6 +277,7 @@ impl SqliteEngine {
         });
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
+        store.zone = config.zone.clone();
         store.generates_titles = config.title_generator.is_some();
         let attention = config
             .attention
@@ -908,16 +913,16 @@ impl Inner {
         };
         let host = self.host.clone();
         let inner = self.clone();
+        let receipt_thread = receipt_thread_id(&command);
         let outcome = self
             .db(move |store| {
-                if let Some(seq) = store.receipt(&command_id).map_err(CommandError::Store)? {
-                    if guard.is_some() {
-                        // A guarded caller never gets a second accept for one command.
-                        return Err(CommandError::Rejected(
-                            "The command was already accepted.".into(),
-                        ));
-                    }
-                    return Ok((vec![], seq, true));
+                let key = ReceiptKey {
+                    command_id: &command_id,
+                    command_type: &command_type,
+                    thread_id: receipt_thread.as_deref(),
+                };
+                if let Some(receipt) = store.outcome(&command_id).map_err(CommandError::Store)? {
+                    return replay(&key, receipt, guard.is_some()).map(|seq| (vec![], seq, true));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
                 if let Some(guard) = &guard
@@ -940,17 +945,14 @@ impl Inner {
                 match handler(&mut tx, command) {
                     Ok(effects) => {
                         let seq = match &commit_gate {
-                            None => tx
-                                .commit(Some((&command_id, &command_type)))
-                                .map_err(CommandError::Store)?,
+                            None => tx.commit(Some(&key)).map_err(CommandError::Store)?,
                             Some(commit_gate) => {
                                 // The access decision and the commit are one step.
                                 let mut pending = Some(tx);
                                 let mut committed = None;
                                 let decision = commit_gate.commit_if_open(&mut || {
                                     if let Some(tx) = pending.take() {
-                                        committed =
-                                            Some(tx.commit(Some((&command_id, &command_type))));
+                                        committed = Some(tx.commit(Some(&key)));
                                     }
                                 });
                                 if let Some(tx) = pending.take() {
@@ -983,6 +985,14 @@ impl Inner {
                     }
                     Err(e) => {
                         tx.rollback();
+                        // T3 records the refusal, so a retry gets it again instead of a second
+                        // try. Refusals made before the decision (access, a disabled provider)
+                        // stay open, as T3's mode-limit refusals do.
+                        if let CommandError::Rejected(refusal) = &e {
+                            store
+                                .record_refusal(&key, refusal)
+                                .map_err(CommandError::Store)?;
+                        }
                         Err(e)
                     }
                 }
@@ -1292,6 +1302,40 @@ const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
 
 /// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
 /// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+/// The thread a command's receipt is kept for: T3's `commandThreadId`.
+fn receipt_thread_id(command: &Value) -> Option<String> {
+    ["threadId", "parentThreadId", "sourceThreadId"]
+        .iter()
+        .find_map(|field| command[*field].as_str())
+        .map(str::to_owned)
+}
+
+/// A retried command's answer from its receipt (`replayCommandReceipt`): the refusal again,
+/// a conflict when the id was handled for another thread, else the sequence it answered.
+fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, CommandError> {
+    if let Some(refusal) = receipt.refusal {
+        return Err(CommandError::Rejected(format!(
+            "Command {} was previously rejected: {refusal}",
+            key.command_id
+        )));
+    }
+    if let (Some(handled), Some(thread)) = (&receipt.thread_id, key.thread_id)
+        && handled != thread
+    {
+        return Err(CommandError::Rejected(format!(
+            "Command {} was already handled for thread {handled} and cannot be replayed for {thread}.",
+            key.command_id
+        )));
+    }
+    if guarded {
+        // A guarded caller never gets a second accept for one command.
+        return Err(CommandError::Rejected(
+            "The command was already accepted.".into(),
+        ));
+    }
+    Ok(receipt.sequence)
+}
+
 fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
     let reason = reason.trim();
     let user_facing = (!reason.is_empty()
