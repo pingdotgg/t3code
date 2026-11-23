@@ -210,6 +210,7 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
     send,
     notify,
     responses,
+    takeNextEvent: Queue.take(events),
     takeEvent,
     takeRequest,
   };
@@ -479,9 +480,11 @@ describe("Vibe adapter against an in-memory app-server", () => {
               }
               return undefined;
             });
-            const generation = yield* makeVibeTextGeneration(decodeSettings({}), {}).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            );
+            const legacySettings = { enabled: true, trustWorkspace: true };
+            const generation = yield* makeVibeTextGeneration(
+              decodeSettings(legacySettings),
+              {},
+            ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
             const request = {
               cwd: process.cwd(),
               message: "Fix the layout",
@@ -500,7 +503,12 @@ describe("Vibe adapter against an in-memory app-server", () => {
               );
             }
             expect(yield* takeRequest("session/start")).toMatchObject({
-              agentConfig: { agent: "ask", autoApprove: false, disabledTools: ["*"] },
+              agentConfig: {
+                agent: "ask",
+                autoApprove: false,
+                disabledTools: ["*"],
+                trustWorkspace: false,
+              },
               reasoningEffort: "high",
             });
             expect(yield* takeRequest("session/delete")).toEqual({ sessionId: "native-session" });
@@ -748,6 +756,65 @@ describe("Vibe adapter against an in-memory app-server", () => {
           sessionId: "native-session",
           expectedTurnId: "native-turn",
         });
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
+  it.effect("cancels a turn's pending approval when Vibe interrupts the turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const vibe = yield* openFakeVibe();
+        const turn = { id: "interrupted-turn" };
+        yield* vibe.notify("turn/started", { turn });
+        yield* vibe.takeEvent("provider_turn.updated");
+        yield* vibe.send({
+          jsonrpc: "2.0",
+          id: 100,
+          method: "callback/call",
+          params: {
+            sessionId: "native-session",
+            callback: {
+              callbackId: "approval",
+              turnId: turn.id,
+              detail: { kind: "approval" },
+            },
+          },
+        });
+        const { runtimeRequest } = yield* vibe.takeEvent("runtime_request.updated");
+        yield* vibe.notify("turn/interrupted", { turn });
+        yield* vibe.takeEvent("provider_turn.updated");
+        expect(yield* vibe.takeNextEvent).toMatchObject({
+          type: "runtime_request.updated",
+          runtimeRequest: { id: runtimeRequest.id, status: "cancelled" },
+        });
+        yield* vibe.takeEvent("turn.terminal");
+        const error = yield* Effect.flip(
+          vibe.runtime.respondToRuntimeRequest({
+            requestId: runtimeRequest.id,
+            decision: "accept",
+          }),
+        );
+        expect(error).toMatchObject({ detail: "The Vibe runtime request is no longer pending." });
+      }).pipe(Effect.provide(layerTest)),
+    ),
+  );
+
+  it.effect("fails a snapshot when Vibe returns a cyclic history cursor", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let requests = 0;
+        const vibe = yield* openFakeVibe((method) => {
+          if (method !== "session/history/list") return undefined;
+          requests++;
+          return {
+            result: { items: [], nextCursor: ["first", "second", "first"][requests - 1] ?? null },
+          };
+        });
+        const error = yield* Effect.flip(
+          vibe.runtime.readThreadSnapshot({ providerThread: vibe.providerThread }),
+        );
+        expect(error._tag).toBe("ProviderAdapterProtocolError");
+        expect(requests).toBe(3);
       }).pipe(Effect.provide(layerTest)),
     ),
   );
@@ -1110,7 +1177,10 @@ describe("Vibe adapter against an in-memory app-server", () => {
         ).toBe("ProviderAdapterProtocolError");
         yield* runtime.startTurn(input(4));
         expect(resumedAgents).toHaveLength(7);
-        expect(resumedAgents.at(-1)).toMatchObject({ agent: "accept-edits" });
+        expect(resumedAgents.at(-1)).toMatchObject({
+          agent: "accept-edits",
+          trustWorkspace: false,
+        });
         const last = (yield* takeEvent("provider_turn.updated")).providerTurn;
         historyFailure = "snapshot-terminal";
         expect(

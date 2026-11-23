@@ -609,6 +609,22 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           driver: VIBE_PROVIDER,
           providerTurn: completedTurn,
         });
+        for (const [requestId, { runtimeRequest }] of state.callbackByRequest) {
+          if (runtimeRequest.providerTurnId !== providerTurnId) continue;
+          state.callbackByRequest.delete(requestId);
+          // The ingestor cancels questions and their timeline cards together.
+          if (runtimeRequest.kind === "user_input") continue;
+          yield* emit({
+            type: "runtime_request.updated",
+            driver: VIBE_PROVIDER,
+            threadId: input.threadId,
+            runtimeRequest: {
+              ...runtimeRequest,
+              status: "cancelled",
+              resolvedAt: yield* DateTime.now,
+            },
+          });
+        }
         state.activeTurn = undefined;
         yield* updateThread({ status: "idle" });
         const failure = terminalStatus === "failed" ? vibeTurnFailure(turn?.["error"]) : undefined;
@@ -959,11 +975,17 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
       ) => Effect.Effect<VibePage<A>, VibeAppServerError.VibeAppServerError>,
     ) {
       const pages: Array<ReadonlyArray<A>> = [];
+      const seen = new Set<string>();
       let cursor: string | null = null;
       do {
         const page: VibePage<A> = yield* Effect.mapError(readPage(cursor), protocolError);
         pages.push(page.items);
         cursor = page.nextCursor ?? null;
+        if (cursor !== null) {
+          if (seen.has(cursor))
+            return yield* protocolError("Vibe history pagination repeated a cursor.");
+          seen.add(cursor);
+        }
       } while (cursor !== null);
       return pages.reverse().flat();
     });
@@ -1060,7 +1082,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         mcpServers: planMode ? [] : vibeMcpServers(mcpSession),
         cwd: threadCwd,
         headless: true,
-        trustWorkspace: options.settings.trustWorkspace,
+        trustWorkspace: false,
         ...agent,
       };
       const attached = connection;
@@ -1467,6 +1489,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           }),
           protocolError,
         );
+        if (state.callbackByRequest.get(responseInput.requestId) !== pending) return;
         state.callbackByRequest.delete(responseInput.requestId);
         const resolvedAt = yield* DateTime.now;
         if (pending.turnItem) {

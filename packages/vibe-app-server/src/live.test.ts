@@ -43,7 +43,7 @@ describe("vibe-app-server live smoke (skips when the binary is absent)", () => {
 
         const started = yield* client.sessionStart({
           kind: "ephemeral",
-          agentConfig: { cwd: process.cwd(), headless: true, trustWorkspace: true },
+          agentConfig: { cwd: process.cwd(), headless: true, trustWorkspace: false },
         });
         const sessionId = started.state.session.id;
         expect(sessionId.length).toBeGreaterThan(0);

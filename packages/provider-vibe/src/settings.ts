@@ -20,15 +20,6 @@ export const VibeSettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "vibe-app-server", clearWhenEmpty: "omit" },
       }),
     ),
-    trustWorkspace: Schema.Boolean.pipe(
-      Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({
-        title: "Trust workspaces",
-        description:
-          "Automatically trust projects opened in T3 Code so Vibe can load repository instructions such as AGENTS.md. Trust is persisted by Vibe for each workspace.",
-        providerSettingsForm: { control: "switch" },
-      }),
-    ),
     localModelEnabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({
@@ -68,13 +59,7 @@ export const VibeSettings = makeProviderSettingsSchema(
     ),
   },
   {
-    order: [
-      "binaryPath",
-      "trustWorkspace",
-      "localModelEnabled",
-      "localModelBaseUrl",
-      "localModelId",
-    ],
+    order: ["binaryPath", "localModelEnabled", "localModelBaseUrl", "localModelId"],
   },
 );
 export type VibeSettings = typeof VibeSettings.Type;

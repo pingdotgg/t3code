@@ -70,7 +70,7 @@ export const makeVibeTextGeneration = Effect.fn("makeVibeTextGeneration")(functi
                 agent: "ask",
                 autoApprove: false,
                 disabledTools: ["*"],
-                trustWorkspace: settings.trustWorkspace,
+                trustWorkspace: false,
               },
               model: resolveVibeModelId(modelSelection.model),
               ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
