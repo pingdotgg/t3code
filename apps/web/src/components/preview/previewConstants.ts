@@ -6,6 +6,8 @@ export const PREVIEW_ERROR_CODE_MESSAGES: Readonly<Record<string, string>> = Obj
   ERR_NAME_NOT_RESOLVED: msg("DNS address could not be found"),
   ERR_NAME_RESOLUTION_FAILED: msg("DNS address could not be found"),
   ERR_CONNECTION_REFUSED: msg("Connection refused"),
+  // Another environment's localhost tab, when its tunnel or the port on that machine is unreachable.
+  ERR_SOCKS_CONNECTION_FAILED: msg("Could not reach this port on the environment"),
   ERR_CONNECTION_RESET: msg("Connection was reset"),
   ERR_CONNECTION_CLOSED: msg("Connection was closed"),
   ERR_CONNECTION_TIMED_OUT: msg("Connection timed out"),

@@ -729,10 +729,12 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       .join("\n");
     assert.notInclude(runPlan, "orchestration_v2_projection_runs_thread_ordinal_idx");
     assert.match(runPlan, /SEARCH orchestration_v2_projection_runs USING INDEX \w*status\w*/);
-    // The newest runs by ordinal, whatever their status, plus older runs the statuses match.
+    // The newest runs by ordinal, whatever their status, or the run that ended last, plus older runs
+    // the statuses match.
     for (const [filter, expected] of [
       [{ latestRunLimit: 2 }, [4, 5]],
       [{ latestRunLimit: 2, runStatuses: ["rolled_back"] as const }, [1, 4, 5]],
+      [{ includeLatestExecutedRun: true, runStatuses: ["rolled_back"] as const }, [1, 4]],
     ] as const) {
       const traced = traceSqlStatements();
       const recent = yield* store
@@ -857,7 +859,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
 
 // One thread holds every way a run can still matter after a compaction. A run is requested at
 // its ordinal in minutes and ends 30 seconds later, unless the table says otherwise.
-it.effect("a compacted thread reads every run, and run records only for its recent runs", () =>
+it.effect("a compacted thread reads every run, but records and prompts only for recent ones", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("compacted");
@@ -903,9 +905,10 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           driver,
         },
       });
-    for (const [ordinal, status, endedAt] of [
+    for (const [ordinal, status, endedAt, fresh] of [
       [2, "queued", null],
-      [3, "completed"],
+      // A fresh-context run starts its own conversation, so its prompt is read for the schedule check.
+      [3, "completed", undefined, true],
       // A held queue ran this old run after the compactions.
       [4, "completed", at(11.5)],
       [5, "completed"],
@@ -949,6 +952,7 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           completedAt: ended,
           checkpointId: null,
           contextHandoffId: null,
+          ...(fresh === true ? { freshContext: true } : {}),
         },
       });
       yield* store.apply({
@@ -1084,19 +1088,44 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           })),
         );
     const all = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    // Every run and every turn item is read, so a model switch is still measured from the last
-    // prompt. Run 1, the helper's, holds only a command item.
-    const expected = (recent: ReadonlyArray<number>) => ({
+    // Every run is read. Turn items are the failed errors of every run, and the prompts of the
+    // recent runs, of the fresh-context run 3 and of the run a model switch is measured from.
+    // Run 1, the helper's, holds only a command item.
+    const expected = (
+      recent: ReadonlyArray<number>,
+      prompts: ReadonlyArray<number> = [...recent, 3],
+    ) => ({
       runs: 15,
       attempts: recent,
       nodes: recent,
       providerTurns: recent,
       messages: recent,
-      turnItems: [1, ...all],
+      turnItems: [...new Set([5, ...prompts])].toSorted((a, b) => a - b),
     });
 
-    // Nothing is compacted yet, so the whole history is current.
-    assert.deepEqual(yield* read(), expected(all));
+    // Run 5 failed, and nothing is compacted yet, so the whole history is current.
+    yield* store.apply({
+      id: EventId.make("event:compacted:error-5"),
+      type: "turn-item.updated",
+      threadId,
+      runId: runId(5),
+      nodeId: rootNodeId(5),
+      driver,
+      occurredAt: at(5),
+      payload: {
+        ...item(5, 52, "failed"),
+        id: TurnItemId.make("item:compacted:error-5"),
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt: "2099-01-01T00:00:00.000Z",
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    assert.deepEqual(yield* read(), { ...expected(all), turnItems: [1, ...all] });
 
     // The window starts at the compaction's run. Queued run 2 and held run 4 are older but had
     // not ended by then.
@@ -1119,6 +1148,20 @@ it.effect("a compacted thread reads every run, and run records only for its rece
       yield* read([runId(3)], messageId(6)),
       expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
     );
+
+    // Only an unfiltered read with runs narrows its prompts; any other read keeps its filter.
+    const itemRuns = (fields: ReadonlyArray<"runs" | "turnItems">, filter: object) =>
+      store
+        .getThreadRecords(threadId, fields, {
+          sinceLastCompaction: { keepRunIds: [], keepMessageId: messageId(0) },
+          ...filter,
+        })
+        .pipe(Effect.map((records) => ordinals(records.turnItems.map((row) => row.runId))));
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [runId(5)] }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [] }), []);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunId: runId(5) }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { runIds: [runId(15)] }), [1, ...all]);
+    assert.deepEqual(yield* itemRuns(["turnItems"], {}), [1, ...all]);
 
     // A command also skips the node and the provider thread of each settled task. Tasks ended on
     // both sides of the compaction; one ran in the provider thread the thread's own runs use.
@@ -1266,11 +1309,12 @@ it.effect("a compacted thread reads every run, and run records only for its rece
     assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
     assert.lengthOf(unsettled.rootNodes, all.length);
     assert.lengthOf(unsettled.runs, 15);
-    // Together: every run, every turn item and the provider thread the runs use stay, and the
-    // windowed records are read for the recent and named runs, less each settled task's node.
+    // Together: every run and the provider thread the runs use stay, and the windowed records are
+    // read for the recent and named runs, less each settled task's node.
     const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
     assert.deepEqual(both, {
       ...unsettled,
+      turnItems: windowed.turnItems,
       attempts: recentRuns,
       rootNodes: recentRuns,
       taskNodes: ["recent-pending"],
@@ -1287,6 +1331,47 @@ it.effect("a compacted thread reads every run, and run records only for its rece
       ),
       both,
     );
+
+    // A prompt that clients do not show cannot anchor a model switch. With the recent ones, and
+    // run 4's, folded into async answers, the switch is measured from run 10, so its prompt is
+    // read, with run 9's from the same batch.
+    const storedRuns = (yield* store.getThreadRecords(threadId, ["runs"])).runs;
+    for (const ordinal of [4, 11, 12, 14, 15]) {
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-run-${ordinal}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...storedRuns.find((run) => run.id === runId(ordinal))!,
+          userMessageId: MessageId.make(`async-answer:${ordinal}`),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: rootNodeId(ordinal),
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          ...item(ordinal, ordinal * 10, "completed"),
+          id: TurnItemId.make(`item:compacted:prompt-${ordinal}`),
+          type: "user_message",
+          messageId: MessageId.make(`async-answer:${ordinal}`),
+          inputIntent: "turn_start",
+          text: `Answer ${ordinal}`,
+          attachments: [],
+        },
+      });
+    }
+    assert.deepEqual(
+      (yield* read()).turnItems,
+      expected([2, 4, 11, 12, 13, 14, 15], [2, 3, 4, 9, 10, 11, 12, 13, 14, 15]).turnItems,
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1300,6 +1385,7 @@ it.effect("record reads filter notification sources without dropping matching me
       ["monitor", "user", "monitor"],
       ["system", "user", "system"],
       ["assistant-monitor", "assistant", "monitor"],
+      ["wake", "user", "wake"],
     ] as const) {
       yield* store.apply({
         id: EventId.make(`notification-filter:${id}`),
@@ -1321,13 +1407,21 @@ it.effect("record reads filter notification sources without dropping matching me
           updatedAt: now,
           ...(kind === null
             ? {}
-            : {
-                notification: {
-                  source: { kind },
-                  outcome: "updated",
-                  summary: "Background notification",
-                },
-              }),
+            : kind === "wake"
+              ? {
+                  delegatedCompletion: {
+                    parentRunId: RunId.make("run:wake-parent"),
+                    generation: 1,
+                    taskIds: [],
+                  },
+                }
+              : {
+                  notification: {
+                    source: { kind },
+                    outcome: "updated",
+                    summary: "Background notification",
+                  },
+                }),
         },
       });
     }
@@ -1339,11 +1433,19 @@ it.effect("record reads filter notification sources without dropping matching me
       matching.messages.map((message) => [message.id, message.text]),
       [["monitor", "Complete body for monitor"]],
     );
+    const delegatedTaskMessages = yield* store.getThreadRecords(threadId, ["messages"], {
+      messageRoles: ["user"],
+      delegatedTaskMessagesOnly: true,
+    });
+    assert.deepEqual(
+      delegatedTaskMessages.messages.map((message) => message.id),
+      ["monitor", "wake"],
+    );
     const { statements, tracer } = traceSqlStatements();
     const userMessages = yield* store
       .getThreadRecords(threadId, ["messages"], { messageRoles: ["user"] })
       .pipe(Effect.withTracer(tracer));
-    assert.lengthOf(userMessages.messages, 3);
+    assert.lengthOf(userMessages.messages, 4);
     const ordinalLookup = statements.find((statement) => statement.includes("MIN(ordinal)"));
     // User-only reads must seek the message-ordinal index instead of scanning every turn item.
     yield* assertReadsThroughMessageOrdinalIndex(ordinalLookup, ["thread_id=?", "<expr>=?"]);
@@ -1357,7 +1459,7 @@ it.effect("record reads filter notification sources without dropping matching me
       .pipe(Effect.withTracer(withItems.tracer));
     assert.deepEqual(ordered.messages, userMessages.messages);
     assert.isFalse(withItems.statements.some((statement) => statement.includes("MIN(ordinal)")));
-    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 4);
+    assert.lengthOf((yield* store.getThreadRecords(threadId, ["messages"])).messages, 5);
     assert.lengthOf(
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: true,
@@ -1368,7 +1470,56 @@ it.effect("record reads filter notification sources without dropping matching me
       (yield* store.getThreadRecords(threadId, ["messages"], {
         monitorNotificationsOnly: false,
       })).messages,
-      4,
+      5,
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads a delegated child's recent, unfinished and task runs without its history", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("delegated-child-runs");
+    const first = (yield* store.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const at = (minutes: number) => DateTime.add(first.requestedAt, { minutes: minutes + 60 });
+    const id = (ordinal: number) => RunId.make(`run:delegated-child-runs:${ordinal}`);
+    const unstartedCancel = { status: "cancelled", startedAt: null } as const;
+    for (const [ordinal, patch] of [
+      [3, { status: "running", completedAt: null }],
+      // Unstarted cancelled runs are outside the window's index: one ends after the floor.
+      [4, { ...unstartedCancel, completedAt: at(20) }],
+      [5, { ...unstartedCancel, completedAt: at(1) }],
+      ...[2, 6, 7, 8, 9, 10, 11, 12].map((ordinal) => [ordinal, {}] as const),
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:delegated-child-runs:${ordinal}`),
+        type: "run.created",
+        threadId,
+        runId: id(ordinal),
+        occurredAt: first.requestedAt,
+        payload: {
+          ...first,
+          id: id(ordinal),
+          ordinal,
+          status: "completed",
+          startedAt: at(ordinal),
+          completedAt: at(ordinal),
+          delegatedTaskId: NodeId.make(`node:delegated-child-runs:task:${ordinal}`),
+          ...patch,
+        },
+      });
+    }
+    const taskIds = [NodeId.make("node:delegated-child-runs:task:2")];
+    const bounded = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 3 });
+    assert.equal(bounded.runsFloor?.id, id(11));
+    assert.deepEqual(
+      bounded.runs.map((run) => run.id),
+      [2, 3, 4, 11, 12].map(id),
+    );
+    const whole = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 100 });
+    assert.isUndefined(whole.runsFloor);
+    assert.deepEqual(
+      whole.runs.map((run) => run.id),
+      (yield* store.getThreadRecords(threadId, ["runs"])).runs.map((run) => run.id),
     );
   }).pipe(Effect.provide(layerTest)),
 );
@@ -2369,6 +2520,18 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
     subagents.length,
   );
   // Both reads stay inside their indexes: no scan of the thread's nodes or provider threads.
+  // A dispatcher's statistics: the mostly NULL owner and session indexes match every row.
+  yield* sql`ANALYZE orchestration_v2_projection_provider_threads`;
+  yield* sql`DELETE FROM sqlite_stat1 WHERE tbl = 'orchestration_v2_projection_provider_threads'`;
+  for (const [index, stat] of [
+    ["sqlite_autoindex_orchestration_v2_projection_provider_threads_1", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_thread_idx", "5531 1"],
+    ["orchestration_v2_projection_provider_threads_owner_idx", "5531 5531"],
+    ["orchestration_v2_projection_provider_threads_session_idx", "5531 2766"],
+  ] as const) {
+    yield* sql`INSERT INTO sqlite_stat1 VALUES ('orchestration_v2_projection_provider_threads', ${index}, ${stat})`;
+  }
+  yield* sql`ANALYZE sqlite_schema`;
   for (const [table, seeks] of [
     [
       "nodes",
@@ -2377,11 +2540,16 @@ const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
         "SEARCH settled USING COVERING INDEX",
         "SEARCH settled_node USING COVERING INDEX",
         "subagents_settled_idx (thread_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
       ],
     ],
     [
       "provider_threads",
-      ["MULTI-INDEX OR", "provider_threads_session_idx (provider_session_id=?)"],
+      [
+        "SEARCH orchestration_v2_projection_provider_threads USING INTEGER PRIMARY KEY",
+        "provider_threads_session_idx (provider_session_id=?)",
+        "SEARCH run USING COVERING INDEX orchestration_v2_projection_runs_run_status_idx",
+      ],
     ],
   ] as const) {
     const query = commandTrace.statements.find((statement) =>
@@ -3046,6 +3214,14 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
     yield* createThread({ name: "other", worktreePath: "/repo" });
     yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
+    yield* createThread({
+      name: "aliased-child",
+      parent: "other",
+      root: "other",
+      worktreePath: `${worktreePath}/`,
+    });
+    yield* createThread({ name: "cased", worktreePath: worktreePath.toUpperCase() });
+    yield* createThread({ name: "windows", worktreePath: "C:\\Répo\\WT" });
 
     const family = (threadId: ThreadId) =>
       store
@@ -3057,26 +3233,39 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.sameMembers([...(yield* family(id("grandchild")))], tree);
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
-    // Includes another root's idle child on the same path, which a shell may leave out.
+    // Includes another root's idle child on the same path, which a shell may leave out, under any
+    // spelling of that path. POSIX paths keep their case.
     const { statements, tracer } = traceSqlStatements();
     const onWorktree = yield* store
       .getShellSnapshot({ location: "active", worktreePath })
       .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
-      [id("root"), id("child"), id("other-child")],
+      [id("root"), id("child"), id("other-child"), id("aliased-child")],
     );
-    // A path names a few threads; scanning every thread parses every payload.
+    const onWindowsWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath: "c:/Répo/wt/" })
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(
+      onWindowsWorktree.threads.map((thread) => thread.id),
+      [id("windows")],
+    );
+    // A path, ASCII or not, names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;
-    const threadQuery = statements.find((statement) =>
+    const threadQueries = statements.filter((statement) =>
       statement.includes("AS latest_run_stop_requested"),
     );
-    assert.isDefined(threadQuery);
-    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${threadQuery}`,
-      [],
-    )).map((row) => row.detail);
-    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
+    assert.lengthOf(threadQueries, 2);
+    for (const threadQuery of threadQueries) {
+      const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+        [],
+      )).map((row) => row.detail);
+      assert.isFalse(
+        threadPlan.some((detail) => detail.startsWith("SCAN t ")),
+        threadPlan.join("\n"),
+      );
+    }
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -4092,6 +4281,52 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         },
       });
 
+      // A tracked repository's scope names the run that first changed it, here one outside the
+      // window, while its newest checkpoint belongs to a run inside it.
+      const repositoryScope = {
+        id: CheckpointScopeId.make("scope:bounded-sql-history:repository"),
+        threadId,
+        runId: RunId.make("run:bounded-sql-history:1"),
+        nodeId: NodeId.make("node:bounded-sql-history:1"),
+        parentScopeId: scopeId,
+        providerThreadId: null,
+        kind: "manual" as const,
+        ordinalWithinParent: 1,
+        advancesAppRunCount: false,
+        cwd: "/repo/worktree/api",
+        label: "api",
+        repositoryPath: "/repo/worktree/api",
+        createdAt: now,
+      };
+      const repositoryCheckpointId = CheckpointId.make("checkpoint:bounded-sql-history:repository");
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: repositoryScope,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:repository-checkpoint"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: repositoryCheckpointId,
+          threadId,
+          scopeId: repositoryScope.id,
+          runId: RunId.make("run:bounded-sql-history:1000"),
+          nodeId: NodeId.make("node:bounded-sql-history:1000"),
+          parentCheckpointId: null,
+          ordinalWithinScope: 1_000,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make("refs/t3/bounded-sql-history/repository/1000"),
+          status: "ready",
+          files: [{ path: "src/main.ts", kind: "modified", additions: 1, deletions: 0 }],
+          capturedAt: now,
+        },
+      });
+
       const snapshots = yield* Effect.all(
         Array.from({ length: 4 }, () =>
           projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 }),
@@ -4110,11 +4345,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
         assert.deepEqual(
           snapshot.projection.checkpointScopes.map((scope) => scope.id),
-          [scopeId],
+          [scopeId, repositoryScope.id],
         );
+        assert.deepEqual(snapshot.projection.checkpointScopes[1], repositoryScope);
         assert.deepEqual(
           snapshot.projection.checkpoints.map((checkpoint) => checkpoint.id),
-          [baselineId],
+          [repositoryCheckpointId, baselineId],
         );
       }
       const humanWindow = () =>
@@ -4316,6 +4552,71 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           payload_json = json_set(payload_json,
             '$.runId', 'run:bounded-sql-history:' || ordinal, '$.type', 'command_execution')
         WHERE thread_id = ${threadId} AND ordinal IN (500, 580)
+      `;
+
+      // A settled subagent of an old run is outside the window; its page carries its record.
+      const subagentId = NodeId.make("node:bounded-sql-history:subagent");
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'subagent', payload_json = json_set(payload_json,
+          '$.type', 'subagent', '$.subagentId', ${subagentId}, '$.origin', 'provider_native',
+          '$.driver', ${driver}, '$.providerInstanceId', ${providerInstanceId},
+          '$.childThreadId', json('null'), '$.prompt', 'Look', '$.result', 'Done')
+        WHERE thread_id = ${threadId} AND ordinal = 580
+      `;
+      yield* projectionStore.apply({
+        id: EventId.make("event:bounded-sql-history:subagent"),
+        type: "subagent.updated",
+        threadId,
+        nodeId: subagentId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: subagentId,
+          threadId,
+          runId: RunId.make("run:bounded-sql-history:580"),
+          parentNodeId: NodeId.make("node:bounded-sql-history:580"),
+          origin: "provider_native",
+          createdBy: "agent",
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Look",
+          title: "Old child",
+          model: "claude-haiku-4-5-20251001",
+          status: "completed",
+          result: "Done",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+        },
+      });
+      assert.deepEqual(
+        (yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 76 })).projection
+          .subagents,
+        [],
+      );
+      const subagentPage = yield* historyPage(
+        threadId,
+        encodeThreadHistoryCursor({
+          snapshotSequence: 0,
+          sourceThreadId: threadId,
+          sourceItemId: TurnItemId.make("turn-item:bounded-sql-history:590"),
+          position: 589,
+        }),
+      );
+      assert.deepEqual(
+        subagentPage.subagents?.map((agent) => [agent.id, agent.model]),
+        [[subagentId, "claude-haiku-4-5-20251001"]],
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_subagents WHERE subagent_id = ${subagentId}`;
+      yield* sql`
+        UPDATE orchestration_v2_projection_turn_items
+        SET type = 'command_execution', payload_json = json_set(payload_json, '$.type', 'command_execution')
+        WHERE thread_id = ${threadId} AND ordinal = 580
       `;
 
       // Older pages and timeline pages read the rows near the page, not the whole history. A
@@ -5377,6 +5678,23 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ),
         );
       }
+
+      // Recovery cancels a run that had started; its delivered queued message stays.
+      const setCancelledStartedAt = (startedAt: string | null) => sql`
+        UPDATE orchestration_v2_projection_runs
+        SET payload_json = json_set(payload_json, '$.startedAt', ${startedAt})
+        WHERE run_id = ${cancelledRunId}
+      `;
+      yield* setCancelledStartedAt(nowIso);
+      const startedCancelledSnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: sqlPageLimit,
+      });
+      assert.isTrue(
+        startedCancelledSnapshot.projection.visibleTurnItems.some((row) =>
+          String(row.sourceItemId).includes(":cancelled:"),
+        ),
+      );
+      yield* setCancelledStartedAt(null);
 
       // A steer moves the cancelled queued message outside the window.
       const steeredItemId = "turn-item:bounded-sql-history:steered-output";
@@ -6962,6 +7280,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           if (/^SEARCH (r|run) /.test(detail)) {
             assert.include(detail, "COVERING INDEX", detail);
           }
+          // A thread's item count reads one count row per hidden run, not one per run it had.
+          if (detail.startsWith("SEARCH counts ")) {
+            assert.include(detail, "run_key=?", detail);
+          }
           if (detail.includes("orchestration_v2_projection_turn_items")) {
             // Only held input is read from the sparse index; transcript history stays unread.
             assert.include(
@@ -6971,6 +7293,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           }
         }
       }
+
+      // Without the hint the planner walks every settled command, tool, and subagent item.
+      const pendingQuery = statements.find((statement) =>
+        statement.includes("AS owning_provider_instance_id"),
+      );
+      assert.isDefined(pendingQuery);
+      const pendingPlan = yield* planOf(pendingQuery);
+      assert.include(
+        pendingPlan.find((detail) => detail.startsWith("SEARCH i ")) ?? "",
+        "orchestration_v2_projection_turn_items_shell_pending_idx",
+        pendingPlan.join("\n"),
+      );
     }),
   );
 
@@ -7182,6 +7516,194 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         );
       }
     }),
+  );
+
+  it.effect(
+    "a turn start reads a long thread's deferred commands, routable tasks and fork by index",
+    () =>
+      Effect.gen(function* () {
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = yield* addRolledBackRecoveryCandidate("turn-start-commands");
+        const runId = RunId.make("run:turn-start-commands:rolled-back");
+        const created = yield* DateTime.now;
+        const nowIso = DateTime.formatIso(created);
+        const message = (id: string, role: "user" | "assistant", text: string, minutes: number) =>
+          projectionStore.apply({
+            id: EventId.make(`event:${id}`),
+            type: "message.updated",
+            threadId,
+            occurredAt: created,
+            payload: {
+              id: MessageId.make(id),
+              threadId,
+              runId: null,
+              nodeId: null,
+              role,
+              text,
+              attachments: [],
+              streaming: false,
+              createdBy: "user",
+              creationSource: "web",
+              createdAt: DateTime.add(created, { minutes }),
+              updatedAt: DateTime.add(created, { minutes }),
+            },
+          });
+        yield* message("message:turn-start-commands:rolled-back", "user", "Own prompt", 5);
+        yield* message("message:turn-start-commands:compact", "user", "\u00a0 /Compact\n", 1);
+        yield* message("message:turn-start-commands:goal", "user", "/goal ship it", 2);
+        yield* message("message:turn-start-commands:plain", "user", "Plain prompt", 3);
+        yield* message("message:turn-start-commands:later", "user", "/compact later", 4);
+        yield* message("message:turn-start-commands:assistant", "assistant", "/compact", 6);
+
+        const otherThreadId = ThreadId.make("thread:other");
+        const transfer = (id: string, type: "fork" | "merge_back") =>
+          projectionStore.apply({
+            id: EventId.make(`event:${id}`),
+            type: "context-transfer.created",
+            threadId,
+            occurredAt: created,
+            payload: {
+              id: ContextTransferId.make(id),
+              type,
+              sourceThreadId: otherThreadId,
+              targetThreadId: threadId,
+              sourcePoint: { threadId: otherThreadId },
+              basePoint: null,
+              sourceProviderInstanceId: providerInstanceId,
+              targetProviderInstanceId: providerInstanceId,
+              targetRunId: null,
+              status: "pending",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: created,
+              updatedAt: created,
+              consumedAt: null,
+            },
+          });
+        yield* transfer("transfer:turn-start-commands:fork", "fork");
+        yield* transfer("transfer:turn-start-commands:referenced", "merge_back");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:handoff"),
+          type: "context-handoff.updated",
+          threadId,
+          occurredAt: created,
+          payload: {
+            id: ContextHandoffId.make("handoff:turn-start-commands"),
+            transferId: ContextTransferId.make("transfer:turn-start-commands:referenced"),
+            threadId,
+            targetRunId: runId,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("provider-thread:turn-start-commands"),
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "Summary",
+            createdByProviderInstanceId: providerInstanceId,
+            createdAt: created,
+            updatedAt: created,
+          },
+        });
+        const nativeId = NodeId.make("subagent:turn-start-commands:native");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:native"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: nativeId,
+          driver,
+          providerInstanceId,
+          occurredAt: created,
+          payload: {
+            id: nativeId,
+            threadId,
+            runId,
+            parentNodeId: NodeId.make("node:turn-start-commands:rolled-back"),
+            status: "completed",
+            startedAt: created,
+            completedAt: created,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: null,
+            prompt: "Do the work",
+            title: "native",
+            model: null,
+            completionDelivery: { state: "delivered", observedByRunId: null },
+            result: null,
+            updatedAt: created,
+          },
+        });
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_subagents (
+          subagent_id, thread_id, run_id, parent_node_id, provider, origin, status, updated_at,
+          payload_json
+        ) VALUES
+          ('subagent:turn-start-commands:delegated', ${threadId}, NULL, 'node', 'codex',
+           'app_owned', 'completed', ${nowIso}, '{}'),
+          ('subagent:turn-start-commands:running', ${threadId}, NULL, 'node', 'codex',
+           'provider_native', 'running', ${nowIso}, '{}')
+      `;
+        yield* sql`
+        INSERT INTO orchestration_v2_projection_context_transfers (
+          context_transfer_id, source_thread_id, target_thread_id, type, status, updated_at,
+          payload_json
+        ) VALUES
+          ('transfer:turn-start-commands:result', 'thread:other', ${threadId},
+           'subagent_result', 'consumed', ${nowIso}, '{}'),
+          ('transfer:turn-start-commands:other-fork', ${threadId}, 'thread:other',
+           'fork', 'pending', ${nowIso}, '{}')
+      `;
+
+        const { statements, tracer } = traceSqlStatements();
+        const context = yield* projectionStore
+          .getTurnStartContext(threadId, runId)
+          .pipe(Effect.withTracer(tracer));
+        assert.deepEqual(
+          context.messages.map((item) => item.id),
+          [
+            "message:turn-start-commands:compact",
+            "message:turn-start-commands:goal",
+            "message:turn-start-commands:later",
+            "message:turn-start-commands:rolled-back",
+          ],
+        );
+        assert.deepEqual(
+          context.subagents.map((task) => task.id),
+          [nativeId],
+        );
+        assert.deepEqual(
+          context.contextTransfers.map((item) => item.id),
+          ["transfer:turn-start-commands:fork", "transfer:turn-start-commands:referenced"],
+        );
+
+        const planOf = Effect.fn("planOf")(function* (table: string) {
+          const statement = statements.find((query) =>
+            query.includes(`FROM orchestration_v2_projection_${table}`),
+          )!;
+          const params = Array.from({ length: statement.split("?").length - 1 }, () => threadId);
+          return (yield* sql.unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN ${statement}`,
+            params,
+          )).map((row) => row.detail);
+        });
+        for (const [table, index] of [
+          ["messages", "orchestration_v2_projection_messages_deferred_command_idx"],
+          ["subagents", "orchestration_v2_projection_subagents_routable_idx"],
+          ["context_transfers", "orchestration_v2_projection_context_transfers_fork_idx"],
+        ] as const) {
+          const plan = yield* planOf(table);
+          assert.isTrue(
+            plan.some((detail) => detail.includes(index)),
+            `${table}\n${plan.join("\n")}`,
+          );
+        }
+      }),
   );
 
   it.effect(
@@ -7625,6 +8147,19 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         payload: task,
       });
 
+      const output = { value: { verdict: "merge" }, submittedAt: "2026-11-11T00:00:00.000Z" };
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-delegated-completion:output"),
+        type: "run.output-submitted",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        providerInstanceId,
+        occurredAt: now,
+        payload: { runId, output },
+      });
+
+      // Lifecycle writers hold the run as it was when the turn started.
       const { delegatedCompletion: _delegatedCompletion, ...staleRun } = run;
       const { completionDelivery: _completionDelivery, ...staleTask } = task;
       yield* projectionStore.apply({
@@ -7635,7 +8170,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: later,
-        payload: { ...staleRun, status: "interrupted", completedAt: later },
+        payload: {
+          ...staleRun,
+          // An earlier submission, read before the latest one landed.
+          output: { value: { verdict: "fix-first" }, submittedAt: "2026-11-10T00:00:00.000Z" },
+          status: "interrupted",
+          completedAt: later,
+        },
       });
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:stale-task"),
@@ -7656,6 +8197,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
 
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.deepEqual(projection.runs[0]?.delegatedCompletion, run.delegatedCompletion);
+      assert.deepEqual(projection.runs[0]?.output, output);
       assert.deepEqual(projection.subagents[0]?.completionDelivery, task.completionDelivery);
       assert.deepEqual(
         (yield* projectionStore.getThreadRecords(threadId, ["subagents"], {
@@ -8586,6 +9128,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
       );
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('limit-shell:malformed-error', ${threadId}, ${original.id}, ${original.rootNodeId},
+          99, 'error', 'failed', '2999-01-01T00:00:00.000Z', '{broken')`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'limit-shell:malformed-error'`;
       const recoveryOptions = { now, autoResume: false, snooze: false };
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
@@ -9194,6 +9746,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
           `EXPLAIN QUERY PLAN ${statement}`,
         )).map((row) => row.detail);
+        if (marker === "AS failure_payload_json") {
+          assert.include(
+            plan.join("\n"),
+            "orchestration_v2_projection_turn_items_usage_limit_idx",
+            marker,
+          );
+        }
         const bindingLookup = plan.findIndex((detail) => detail.startsWith("SEARCH binding "));
         const sessionLookup = plan.findIndex((detail) => detail.startsWith("SEARCH session "));
         assert.isAtLeast(bindingLookup, 0, marker);
