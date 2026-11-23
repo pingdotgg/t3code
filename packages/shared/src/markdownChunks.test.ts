@@ -91,21 +91,21 @@ describe("splitMarkdown", () => {
       "",
       "</td></tr></table>",
       "",
+      '<ol start="10">',
+      "",
+      "<li>one</li>",
+      "",
+      "<li>two</li>",
+      "",
+      "</ol>",
+      "",
       "```html",
       "<details>",
       "```",
       "",
       "after",
     ].join("\n");
-    expect(starts(text)).toEqual([
-      "<!--",
-      "<pre>",
-      "<div>",
-      "<details>",
-      "<table><tr><td>",
-      "```html",
-      "after",
-    ]);
+    expect(starts(text)).toEqual(["<!--", "<details>", "<table><tr><td>", "```html", "after"]);
     const multiline = [
       "<details",
       '  class="faq"><!-- </details> -->',

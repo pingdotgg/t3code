@@ -31,8 +31,9 @@ const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
 const HTML_COMMENT = /<!--.*?-->/g;
 // A wrapper whose end tag never comes must not hold the rest of a large file in one piece.
 const WRAPPED_MAX_CHARS = 32 * 1024;
-// After a blank line, an HTML block can start a piece as a paragraph can.
-const HTML_OPEN = /^<[A-Za-z]/;
+// After a blank line, a <details> or <table> can start a piece as a paragraph can. Other tags
+// may be children of a raw HTML container, such as <li> in <ol>, so they never start one.
+const WRAPPER_OPEN = /^<(?:details|table)(?=[\s/>]|$)/i;
 
 function openedWrappers(line: string): number {
   let opened = 0;
@@ -124,7 +125,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         openWrappers === 0 &&
         (ATX_HEADING.test(line) ||
           (afterBlankLine &&
-            (BLOCK_START.test(line) || HTML_OPEN.test(line)) &&
+            (BLOCK_START.test(line) || WRAPPER_OPEN.test(line)) &&
             !ORDERED_ITEM.test(line)));
       if (cut) flush();
       closes = blockCloser(line);
