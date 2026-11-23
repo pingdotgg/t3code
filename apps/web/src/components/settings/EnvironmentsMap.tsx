@@ -75,12 +75,13 @@ import { StatusDot } from "../ui/status-dot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button, ContentButton } from "../ui/button";
-import { Group, GroupSeparator } from "../ui/group";
+import { FloatingToolbar } from "../ui/floating-toolbar";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Meter } from "../ui/meter";
 import { PanelFrame } from "../ui/panel-frame";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildFleetGraph,
@@ -1056,35 +1057,35 @@ function FleetCanvas({
           <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
           <div className="flex shrink-0 items-center gap-2">
             <FleetAttention graph={graph} />
-            <Group>
+            <FloatingToolbar density="compact">
               <Button
                 size="icon-xs"
-                variant="secondary"
+                variant="ghost"
                 aria-label={gt("Zoom out")}
                 onClick={() => zoom(0.8)}
               >
                 <MinusIcon />
               </Button>
-              <GroupSeparator />
+              <Separator orientation="vertical" className="h-3.5" />
               <Button
                 size="icon-xs"
-                variant="secondary"
+                variant="ghost"
                 aria-label={gt("Zoom in")}
                 onClick={() => zoom(1.25)}
               >
                 <PlusIcon />
               </Button>
-              <GroupSeparator />
+              <Separator orientation="vertical" className="h-3.5" />
               <Button
                 size="icon-xs"
-                variant="secondary"
+                variant="ghost"
                 aria-label={gt("Fit the map to view")}
                 disabled={held === null}
                 onClick={fit}
               >
                 <MaximizeIcon />
               </Button>
-            </Group>
+            </FloatingToolbar>
           </div>
         </div>
       </div>

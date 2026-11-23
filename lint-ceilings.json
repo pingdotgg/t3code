@@ -115,6 +115,12 @@
       "emptyMediaVariants.variant.default",
       "emptyMediaVariants.variant.icon"
     ],
+    "apps/web/src/components/ui/floating-toolbar.tsx": [
+      "floatingToolbarVariants.density.compact",
+      "floatingToolbarVariants.density.default",
+      "floatingToolbarVariants.orientation.horizontal",
+      "floatingToolbarVariants.orientation.vertical"
+    ],
     "apps/web/src/components/ui/group.tsx": [
       "groupVariants.orientation.horizontal",
       "groupVariants.orientation.vertical",
@@ -341,7 +347,7 @@
     "apps/web/src/components/device/DeviceLoadingView.tsx": 4,
     "apps/web/src/components/device/DevicePanel.tsx": 1,
     "apps/web/src/components/device/DevicePhoneViewport.tsx": 1,
-    "apps/web/src/components/device/DeviceStreamView.tsx": 6,
+    "apps/web/src/components/device/DeviceStreamView.tsx": 5,
     "apps/web/src/components/device/DeviceToolVersions.tsx": 1,
     "apps/web/src/components/device/DeviceToolsPanel.tsx": 1,
     "apps/web/src/components/device/DeviceWorkspace.tsx": 1,

@@ -17,7 +17,9 @@ import {
   GlobeIcon,
   HammerIcon,
   ListTodoIcon,
+  MaximizeIcon,
   MicIcon,
+  MinusIcon,
   PaletteIcon,
   PaperclipIcon,
   PinIcon,
@@ -103,6 +105,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { FloatingToolbar } from "../ui/floating-toolbar";
 import { Group, GroupSeparator } from "../ui/group";
 import { Input } from "../ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupUnit } from "../ui/input-group";
@@ -1114,6 +1117,33 @@ function GroupsSection() {
           <GroupSeparator />
           <Button variant="secondary">Create</Button>
         </Group>
+      </Specimen>
+      <Specimen label="Floating toolbar" source="<FloatingToolbar density orientation>">
+        <Cell caption="compact (zoom controls)">
+          <FloatingToolbar density="compact">
+            <Button size="icon-xs" variant="ghost" aria-label="Zoom out">
+              <MinusIcon />
+            </Button>
+            <Separator orientation="vertical" className="h-3.5" />
+            <Button size="icon-xs" variant="ghost" aria-label="Zoom in">
+              <PlusIcon />
+            </Button>
+            <Separator orientation="vertical" className="h-3.5" />
+            <Button size="icon-xs" variant="ghost" aria-label="Fit to view">
+              <MaximizeIcon />
+            </Button>
+          </FloatingToolbar>
+        </Cell>
+        <Cell caption="default (canvas mode switch)">
+          <FloatingToolbar>
+            <Button variant="secondary" size="xs" aria-pressed>
+              3D
+            </Button>
+            <Button variant="ghost" size="xs" aria-pressed={false}>
+              Flat
+            </Button>
+          </FloatingToolbar>
+        </Cell>
       </Specimen>
       <Specimen label="Collapsible section header" source="<CollapsibleSectionHeader tone>" stack>
         <div className="w-72">
