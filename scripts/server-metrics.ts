@@ -28,6 +28,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
@@ -1719,6 +1720,8 @@ const watchMachine = Effect.gen(function* () {
   let competing: Option.Option<number> = Option.some(0);
   let previous = yield* competingCpuSeconds;
   if (Option.isNone(previous)) competing = Option.none();
+  // The periodic and final reads would otherwise interleave across the await below.
+  const reading = yield* Semaphore.make(1);
   const read = Effect.gen(function* () {
     loads.push(...Option.toArray(yield* load1));
     if (Option.isNone(previous) || Option.isNone(competing)) return;
@@ -1729,7 +1732,7 @@ const watchMachine = Effect.gen(function* () {
     }
     competing = Option.some(competing.value + competingBetween(previous.value, next.value));
     previous = next;
-  });
+  }).pipe(reading.withPermits(1));
   yield* read;
   // Reading through the run, not only at its ends, keeps a busy process that exits mid-run.
   yield* read.pipe(
