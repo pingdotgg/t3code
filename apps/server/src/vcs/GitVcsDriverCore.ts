@@ -2533,7 +2533,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         )),
       );
       tokens.push(configHash);
-      return tokens.join("\0");
+      // Hashed: the joined tokens reach ~1 MB in repos with thousands of loose refs, and cache keys
+      // with a stale stamp are never looked up again, so they linger until capacity evicts them.
+      return Hex.encode(
+        yield* digest.digest(Digest.sha256, new TextEncoder().encode(tokens.join("\0"))),
+      );
     },
   );
   const baseBranchCache = yield* Cache.makeWith(

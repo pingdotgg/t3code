@@ -1905,6 +1905,18 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     yield* withServer("soak", (server) =>
       Effect.gen(function* () {
         const threads = yield* openThreads(server, 0, 10);
+        // A busy repository under a web client: thousands of loose remote-tracking refs, more
+        // arriving every turn as fetches and agent branches add them, so caches keyed by ref
+        // state churn the way they do on a real checkout.
+        const head = (yield* run("git", ["rev-parse", "HEAD"], { cwd: server.project })).stdout;
+        const remotes = path.join(server.project, ".git", "refs", "remotes", "origin");
+        yield* fs.makeDirectory(remotes, { recursive: true });
+        yield* Effect.forEach(
+          Array.from({ length: 3_000 }, (_, index) => index),
+          (index) => fs.writeFileString(path.join(remotes, `bench-${index}`), head),
+          { concurrency: 64, discard: true },
+        );
+        const client = yield* attachClient(server, yield* server.issueToken, threads);
         yield* Effect.sleep(Duration.seconds(60));
         // The snapshot inflates RSS once, so the slopes start after it.
         const before = yield* server.snapshot;
@@ -1924,6 +1936,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const threadId = threads[turn % threads.length];
           if (threadId === undefined)
             return yield* new MetricsError({ message: "no soak threads" });
+          yield* fs.writeFileString(path.join(remotes, `soak-${turn}`), head);
           const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
           if (sent.exitCode !== 0) {
             return yield* new MetricsError({
@@ -1933,6 +1946,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           yield* Effect.sleep(Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))));
         }
         yield* takeSample;
+        yield* client.healthy;
         const perHour = (pick: (window: Window) => number) =>
           round(slope(samples.map(({ hours, window }) => [hours, pick(window)])));
         measured.soak = {
@@ -2215,7 +2229,7 @@ const runFlags = {
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
-      "Minutes of soak: 10 threads, a short turn every 30 s; heap and RSS slopes per hour and the constructors that grew. Runs alone unless --only names more.",
+      "Minutes of soak: 10 threads under one web client, a short turn every 30 s in a project with 3,000 loose remote refs that gains one per turn; heap and RSS slopes per hour and the constructors that grew. Runs alone unless --only names more.",
     ),
     Flag.withDefault(0),
   ),
