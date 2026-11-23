@@ -1050,7 +1050,7 @@ function FleetCanvas({
           )}
         </div>
         {/* In the surface's corners, below the canvas: nothing on the map can end up under them. */}
-        <div className="flex items-center justify-between gap-3 px-2 py-1">
+        <div className="flex items-center justify-between gap-3 px-2 pt-1 pb-2">
           <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
           <div className="flex shrink-0 items-center gap-2">
             <FleetAttention graph={graph} />
