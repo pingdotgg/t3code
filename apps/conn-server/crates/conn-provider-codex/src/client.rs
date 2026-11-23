@@ -79,11 +79,8 @@ pub enum SessionMsg {
 pub enum ChildRead {
     /// Codex answered: a turn it reports ended ends here with that status.
     Turns(Value),
-    /// Codex does not know the thread, so nothing runs there.
+    /// Codex does not know the thread (`isCodexThreadNotFoundError`), so nothing runs there.
     Missing,
-    /// The last check, after `turn/interrupt`: what the answer (if any) reports ended ends with
-    /// that status, and what is still open ends interrupted.
-    Final(Option<Value>),
 }
 
 /// How [`AppServer::claim_route`] found a native thread's route.

@@ -260,10 +260,9 @@ pub struct Mapper<E: Env> {
     /// most [`SETTLED_TURNS_KEPT`].
     settled: VecDeque<Settled>,
     /// Interrupted root turns' terminals that wait for their running descendants
-    /// (`deferredRootTerminals`), oldest first: (native root thread, native turn, terminal).
-    /// One per root thread: Codex runs one root turn on a thread at a time, so a thread's next
-    /// root turn started only after the earlier one ended there.
-    deferred_terminals: VecDeque<(String, String, Value)>,
+    /// (`deferredRootTerminals`), by native root turn, oldest first. Each entry has a running
+    /// child turn, so the mapper's bounded turns bound it; the process's exit empties it.
+    deferred_terminals: VecDeque<(String, Value)>,
 }
 
 /// A completed turn kept for its running commands, and the commands whose end already asked
@@ -828,7 +827,7 @@ impl<E: Env> Mapper<E> {
         for child in announced {
             out.extend(self.end_idle_child(&child, status));
         }
-        for (_, _, terminal) in std::mem::take(&mut self.deferred_terminals) {
+        for (_, terminal) in std::mem::take(&mut self.deferred_terminals) {
             push_event(&mut out, terminal);
         }
         out
@@ -1842,20 +1841,8 @@ impl<E: Env> Mapper<E> {
                 terminal["childTurnsContinue"] = json!(true);
                 push_event(out, terminal);
             } else if descendants && terminal_status != "completed" {
-                // An earlier deferred terminal of this thread goes first, keeping the order.
-                if let Some(at) = self
-                    .deferred_terminals
-                    .iter()
-                    .position(|(thread, _, _)| *thread == turn.native_thread_id)
-                    && let Some((_, _, earlier)) = self.deferred_terminals.remove(at)
-                {
-                    push_event(out, earlier);
-                }
-                self.deferred_terminals.push_back((
-                    turn.native_thread_id.clone(),
-                    native.to_owned(),
-                    terminal,
-                ));
+                self.deferred_terminals
+                    .push_back((native.to_owned(), terminal));
             } else {
                 push_event(out, terminal);
             }
@@ -1878,11 +1865,11 @@ impl<E: Env> Mapper<E> {
     /// `flushReadyRootTerminals`: deferred root terminals whose descendants all ended.
     fn flush_ready_terminals(&mut self, out: &mut Vec<Out>) {
         let mut waiting = VecDeque::with_capacity(self.deferred_terminals.len());
-        for (thread, native, terminal) in std::mem::take(&mut self.deferred_terminals) {
+        for (native, terminal) in std::mem::take(&mut self.deferred_terminals) {
             if self.lineage(&native).is_empty() {
                 push_event(out, terminal);
             } else {
-                waiting.push_back((thread, native, terminal));
+                waiting.push_back((native, terminal));
             }
         }
         self.deferred_terminals = waiting;

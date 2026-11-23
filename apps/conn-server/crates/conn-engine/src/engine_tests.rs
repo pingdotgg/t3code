@@ -1249,13 +1249,137 @@ async fn a_confirmed_stop_ends_an_open_item_under_a_settled_child_turn() {
     );
 }
 
+/// T3 picks a child thread's open nodes and items by run, not by kind: any node or item with
+/// no run or with the root run ends, and a streaming item stops streaming.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_every_open_child_node_and_item_of_the_run() {
+    let db = TempDb::new("orphans-stop-owned-rows");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    engine
+        .inner()
+        .write(|tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            tx.append(Draft::new(
+                "child",
+                "node.updated",
+                json!({"id": "node:child-tool", "threadId": "child", "runId": null,
+                    "kind": "tool", "status": "running", "startedAt": now, "completedAt": null}),
+            ))?;
+            tx.append(Draft::new(
+                "child",
+                "turn-item.updated",
+                json!({"id": "item:child-text", "threadId": "child", "runId": "run:t1:1",
+                    "nodeId": null, "status": "running", "type": "assistant_message",
+                    "text": "partial", "streaming": true, "startedAt": now,
+                    "completedAt": null, "updatedAt": now}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:child-tool").await,
+        "interrupted"
+    );
+    let item = engine
+        .inner()
+        .write(|tx| tx.entity("child", "turnItems", "item:child-text"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(item["status"], "interrupted");
+    assert_eq!(item["streaming"], false);
+}
+
+/// A run's chain of nested native subagents is followed to its end, however long.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_follows_a_long_chain_of_nested_subagents() {
+    const DEPTH: usize = 300;
+    let db = TempDb::new("orphans-stop-chain");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let mut thread = hanging_run_with_subagents(&engine).await;
+    for n in 0..DEPTH {
+        dispatch(
+            &engine,
+            create(&format!("chain{n}"), &format!("c-chain{n}")),
+        )
+        .await;
+    }
+    engine
+        .inner()
+        .write(|tx| {
+            use crate::store::Draft;
+            let now = tx.now().to_owned();
+            // `child` (the run's own subagent thread) leads to chain0, chain0 to chain1, ...
+            for n in 0..DEPTH {
+                let owner = if n == 0 {
+                    "child".to_owned()
+                } else {
+                    format!("chain{}", n - 1)
+                };
+                tx.append(Draft::new(
+                    &owner,
+                    "subagent.updated",
+                    json!({"id": format!("node:chain{n}"), "threadId": owner, "runId": null,
+                        "parentNodeId": null, "origin": "provider_native", "createdBy": "agent",
+                        "driver": "claudeAgent", "providerInstanceId": "claudeAgent",
+                        "providerThreadId": null, "childThreadId": format!("chain{n}"),
+                        "prompt": "p", "title": "chain", "model": null, "status": "running",
+                        "result": null, "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+            }
+            let last = format!("chain{}", DEPTH - 1);
+            tx.append(Draft::new(
+                &last,
+                "node.updated",
+                json!({"id": "node:deepest-root", "threadId": last, "runId": null,
+                    "kind": "root_turn", "status": "running", "startedAt": now,
+                    "completedAt": null}),
+            ))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    stop_t1(&engine, &mut thread).await;
+    assert_eq!(
+        row_status(
+            &engine,
+            &format!("chain{}", DEPTH - 1),
+            "nodes",
+            "node:deepest-root"
+        )
+        .await,
+        "interrupted"
+    );
+}
+
 /// The provider confirmed a Stop and its terminal waits in the channel while the pump is held
 /// by a slow write past the close's wait. The close still leaves the run to the events
 /// received before it: the run ends interrupted, not failed.
 #[tokio::test(flavor = "current_thread")]
 async fn a_close_behind_a_slow_write_keeps_a_confirmed_stop() {
-    let db = TempDb::new("close-slow-write");
-    let (engine, provider) = open_with(&db, FakeProvider::new("claudeAgent"));
+    let ended = close_behind_a_slow_write(FakeProvider::new("claudeAgent"), true).await;
+    assert_eq!(ended, "interrupted");
+}
+
+/// No Stop: the provider's close itself ends the turn as interrupted while the pump is held by
+/// a slow write. That end comes after the close's mark, so the run is detached: it fails as a
+/// session that ended during the turn.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_does_not_count_its_own_interrupt_as_a_stop() {
+    let provider = FakeProvider::new("claudeAgent").with_close_interrupting();
+    let ended = close_behind_a_slow_write(provider, false).await;
+    assert_eq!(ended, "failed");
+}
+
+/// Holds the store, sends an assistant message (and with `confirmed`, a confirmed Stop) on the
+/// running turn, closes the session, then lets the store go. The run's end status.
+async fn close_behind_a_slow_write(provider: FakeProvider, confirmed: bool) -> String {
+    let db = TempDb::new(&format!("close-slow-write-{confirmed}"));
+    let (engine, provider) = open_with(&db, provider);
     dispatch(&engine, create("t1", "c1")).await;
     let mut thread = engine
         .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
@@ -1287,15 +1411,20 @@ async fn a_close_behind_a_slow_write_keeps_a_confirmed_stop() {
         .and_then(tokio::sync::mpsc::WeakSender::upgrade)
         .expect("the session's events");
     let now = "2026-01-01T00:00:00.000Z";
-    for event in [
+    let mut sent = vec![
         json!({"type": "message.updated", "message": {"createdBy": "agent",
-            "creationSource": "provider", "id": "message:slow", "threadId": "t1",
-            "runId": "run:t1:1", "nodeId": null, "role": "assistant", "text": "x",
-            "attachments": [], "streaming": false, "createdAt": now, "updatedAt": now}}),
-        json!({"type": "turn.terminal", "providerThreadId": provider_thread,
+        "creationSource": "provider", "id": "message:slow", "threadId": "t1",
+        "runId": "run:t1:1", "nodeId": null, "role": "assistant", "text": "x",
+        "attachments": [], "streaming": false, "createdAt": now, "updatedAt": now}}),
+    ];
+    if confirmed {
+        sent.push(
+            json!({"type": "turn.terminal", "providerThreadId": provider_thread,
             "providerTurnId": "turn:run:t1:1", "runOrdinal": 1, "status": "interrupted",
             "failure": null, "threadDisposition": "reusable"}),
-    ] {
+        );
+    }
+    for event in sent {
         events.send(from_json(event).unwrap()).await.unwrap();
     }
     drop(events);
@@ -1312,7 +1441,10 @@ async fn a_close_behind_a_slow_write_keeps_a_confirmed_stop() {
     blocker.await.unwrap().unwrap();
     closing.await.unwrap();
     let ended = until_run_ends(&mut thread).await;
-    assert_eq!(ended.last().unwrap().1["status"], "interrupted");
+    ended.last().unwrap().1["status"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 /// A clean stop leaves them open for the next start, which cancels them.
@@ -4430,7 +4562,7 @@ async fn search(engine: &SqliteEngine, query: &str) -> Vec<String> {
 }
 
 /// `serializeAssistantCitation`: a quote of `thread:quoted`'s answer, as the client writes it.
-fn citation(text: &str, comment: &str, prefix: &str, suffix: &str) -> String {
+pub(crate) fn citation(text: &str, comment: &str, prefix: &str, suffix: &str) -> String {
     // `URLSearchParams` encoding: spaces as `+`, unreserved bytes as they are.
     let form = |value: &str| {
         value
@@ -4456,77 +4588,99 @@ fn citation(text: &str, comment: &str, prefix: &str, suffix: &str) -> String {
 
 /// Ports T3's "matches the readable text of quotes and their comments" and "finds accented,
 /// CJK, and apostrophe words of a quote through the index" (`ThreadSearch.test.ts`): search
-/// reads a citation as its text and comment, never its hidden link. A store indexed before
-/// (the raw link) is read again on upgrade.
+/// reads a citation as its text and comment, never its hidden link.
 #[tokio::test(flavor = "current_thread")]
 async fn search_reads_a_citation_as_its_text_and_comment() {
     let db = TempDb::new("search-citation");
-    {
-        let (engine, _) = open(&db);
-        let quote = citation(
-            "A lighthouse guides ships safely through the darkness.",
-            "what are you talking about",
-            "beacon01",
-            "harbor",
-        );
-        let accented = citation(
-            "The kittiwake's résumé mentions 灯台の光 twice.",
-            "naïve question в логах",
-            "",
-            "",
-        );
-        // Written as T3's test applies them, without a turn: the fake provider would echo
-        // the provider's expansion, whose JSON carries the hidden context.
-        for (thread, text) in [
-            ("t1", format!("{quote} quiet silver lantern")),
-            ("t2", accented),
-        ] {
-            dispatch(&engine, create(thread, &format!("{thread}:c1"))).await;
-            let (thread, text) = (thread.to_owned(), text.clone());
-            engine
-                .inner()
-                .write(move |tx| {
-                    let now = tx.now().to_owned();
-                    tx.append(crate::store::Draft::new(
-                        &thread,
-                        "message.updated",
-                        json!({"createdBy": "user", "creationSource": "web",
-                            "id": format!("message:{thread}"), "threadId": thread, "runId": null,
-                            "nodeId": null, "role": "user", "text": text, "attachments": [],
-                            "streaming": false, "createdAt": now, "updatedAt": now}),
-                    ))?;
-                    Ok(())
-                })
-                .await
-                .unwrap();
-        }
-        assert_citation_search(&engine).await;
-    }
-    // An index written before: the raw link, no readable text, schema step 4.
-    {
-        let conn = rusqlite::Connection::open(db.path()).unwrap();
-        conn.execute_batch(
-            "UPDATE message_keys SET search_text = NULL;
-             DELETE FROM message_search;
-             INSERT INTO message_search (rowid, text)
-               SELECT k.id, json_extract(e.body, '$.text') FROM message_keys k
-               JOIN entities e
-                 ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id;
-             PRAGMA user_version = 4;",
-        )
-        .unwrap();
-        let old: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM message_search WHERE message_search MATCH '\"beacon01\"'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(old, 1, "the old index holds the hidden context");
-    }
-    // Reopened, the store reads it again.
     let (engine, _) = open(&db);
+    write_citations(&engine).await;
     assert_citation_search(&engine).await;
+}
+
+/// A store from before readable search (schema step 4, or #260's step 5 with its receipts):
+/// no `search_text` column and the raw link in the index. The upgrade (step 6) reads it again.
+#[tokio::test(flavor = "current_thread")]
+async fn an_older_search_index_is_read_again_on_upgrade() {
+    for from in [4, 5] {
+        let db = TempDb::new(&format!("search-upgrade-{from}"));
+        {
+            let (engine, _) = open(&db);
+            write_citations(&engine).await;
+        }
+        {
+            let conn = rusqlite::Connection::open(db.path()).unwrap();
+            conn.execute_batch(&format!(
+                "ALTER TABLE message_keys DROP COLUMN search_text;
+                 DELETE FROM message_search;
+                 INSERT INTO message_search (rowid, text)
+                   SELECT k.id, json_extract(e.body, '$.text') FROM message_keys k
+                   JOIN entities e
+                     ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id;
+                 PRAGMA user_version = {from};"
+            ))
+            .unwrap();
+            let old: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM message_search WHERE message_search MATCH '\"beacon01\"'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                old, 1,
+                "from {from}: the old index holds the hidden context"
+            );
+        }
+        let (engine, _) = open(&db);
+        assert_citation_search(&engine).await;
+        drop(engine);
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 6, "from {from}");
+    }
+}
+
+/// `t1`: a quote with hidden context and a comment, then plain words; `t2`: a quote with
+/// accented, CJK and Cyrillic words. Written as T3's tests apply them, without a turn: the
+/// fake provider would echo the provider's expansion, whose JSON carries the hidden context.
+async fn write_citations(engine: &SqliteEngine) {
+    let quote = citation(
+        "A lighthouse guides ships safely through the darkness.",
+        "what are you talking about",
+        "beacon01",
+        "harbor",
+    );
+    let accented = citation(
+        "The kittiwake's résumé mentions 灯台の光 twice.",
+        "naïve question в логах",
+        "",
+        "",
+    );
+    for (thread, text) in [
+        ("t1", format!("{quote} quiet silver lantern")),
+        ("t2", accented),
+    ] {
+        dispatch(engine, create(thread, &format!("{thread}:c1"))).await;
+        let thread = thread.to_owned();
+        engine
+            .inner()
+            .write(move |tx| {
+                let now = tx.now().to_owned();
+                tx.append(crate::store::Draft::new(
+                    &thread,
+                    "message.updated",
+                    json!({"createdBy": "user", "creationSource": "web",
+                        "id": format!("message:{thread}"), "threadId": thread, "runId": null,
+                        "nodeId": null, "role": "user", "text": text, "attachments": [],
+                        "streaming": false, "createdAt": now, "updatedAt": now}),
+                ))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
 }
 
 async fn assert_citation_search(engine: &SqliteEngine) {

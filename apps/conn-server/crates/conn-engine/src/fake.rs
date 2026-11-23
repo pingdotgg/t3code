@@ -76,6 +76,8 @@ pub struct FakeProvider {
     /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
     background_wait: bool,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     /// What a session's `close` answers; see [`Self::with_shared_runtime`].
     pub closes_as: Arc<Mutex<Closed>>,
     /// The event sender of the last session closed on a shared process, which may still
@@ -126,6 +128,7 @@ impl FakeProvider {
             steering: true,
             background_wait: true,
             close_delay: std::time::Duration::ZERO,
+            close_interrupts: false,
             closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
             after_close: Arc::default(),
             last_events: Arc::default(),
@@ -162,6 +165,12 @@ impl FakeProvider {
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
     pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
         self.close_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions end their running turn as interrupted when they close.
+    pub fn with_close_interrupting(mut self) -> Self {
+        self.close_interrupts = true;
         self
     }
 
@@ -245,6 +254,8 @@ struct FakeSession {
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+    /// A close ends the running turn as interrupted, as a provider's close can.
+    close_interrupts: bool,
     closes_as: Arc<Mutex<Closed>>,
     after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
 }
@@ -359,6 +370,7 @@ impl Provider for FakeProvider {
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
                     close_delay: self.close_delay,
+                    close_interrupts: self.close_interrupts,
                     closes_as: self.closes_as.clone(),
                     after_close: self.after_close.clone(),
                 }),
@@ -1139,10 +1151,18 @@ impl Session for FakeSession {
         let delay = self.close_delay;
         let closed = *crate::lock(&self.closes_as);
         let events = crate::lock(&self.events).take();
+        let ending = self
+            .close_interrupts
+            .then(|| crate::lock(&self.turn).take())
+            .flatten()
+            .zip(events.clone());
         if closed == Closed::RuntimeShared {
             *crate::lock(&self.after_close) = events;
         }
         Box::pin(async move {
+            if let Some((turn, events)) = ending {
+                emit(&events, [terminal(&turn, TurnStatus::Interrupted, None)]).await;
+            }
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }

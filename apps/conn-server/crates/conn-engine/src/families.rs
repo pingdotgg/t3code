@@ -765,7 +765,7 @@ pub(crate) fn end_run_native_subagents(
     status: &str,
 ) -> StoreResult<()> {
     let now = tx.now().to_owned();
-    let mut owned = vec![thread_id.to_owned()];
+    let mut owned = std::collections::HashSet::from([thread_id.to_owned()]);
     let mut pending: Vec<(String, Value)> = tx
         .entities_where(thread_id, "subagents", "runId", run_id)?
         .into_iter()
@@ -791,12 +791,12 @@ pub(crate) fn end_run_native_subagents(
         let Some(child) = row["childThreadId"].as_str().map(str::to_owned) else {
             continue;
         };
-        if owned.contains(&child) || owned.len() > MAX_OWNED_THREADS || tx.thread(&child)?.is_none()
-        {
+        // A thread seen before is not followed again, so a cycle in the links ends here.
+        if owned.contains(&child) || tx.thread(&child)?.is_none() {
             continue;
         }
-        owned.push(child.clone());
-        settle_runless_work(tx, &child, status, &now)?;
+        owned.insert(child.clone());
+        settle_runless_work(tx, &child, Some(run_id), status, &now)?;
         pending.extend(
             tx.entities_where(&child, "subagents", "origin", "provider_native")?
                 .into_iter()
@@ -806,9 +806,6 @@ pub(crate) fn end_run_native_subagents(
     }
     Ok(())
 }
-
-/// Bounds the threads one run's cascade follows; far above any real subagent tree.
-const MAX_OWNED_THREADS: usize = 256;
 
 /// Ends one provider-native subagent: its record, node and item together, then its child's
 /// runless root turns.
@@ -846,7 +843,7 @@ fn end_subagent_work(
     if let Some(child) = row["childThreadId"].as_str().filter(|c| *c != thread_id)
         && tx.thread(child)?.is_some()
     {
-        settle_runless_work(tx, child, status, now)?;
+        settle_runless_work(tx, child, None, status, now)?;
     }
     Ok(())
 }
@@ -886,17 +883,19 @@ fn settle_subagent_rows(
     Ok(())
 }
 
-/// A native subagent's thread has no runs to end its work: its runless root turns, items and
-/// provider turns end here, each open row on its own (a settled root turn can still have an
-/// open item).
+/// The open work of a subagent thread the ending run owns, each row on its own: nodes and
+/// items with no run or with that run (`run`), as T3's cascade picks them, and provider turns
+/// of no run attempt. A settled item that streams stops streaming.
 fn settle_runless_work(
     tx: &mut Tx<'_>,
     thread_id: &str,
+    run: Option<&str>,
     status: &str,
     now: &str,
 ) -> StoreResult<()> {
+    let owned = |row: &Value| row["runId"].is_null() || run.is_some_and(|r| row["runId"] == r);
     for mut node in open_rows(tx, thread_id, "nodes")? {
-        if node["kind"] != "root_turn" || !node["runId"].is_null() {
+        if !owned(&node) {
             continue;
         }
         let node_id = node["id"].as_str().unwrap_or_default().to_owned();
@@ -905,17 +904,14 @@ fn settle_runless_work(
         tx.append(Draft::new(thread_id, "node.updated", node).node(Some(&node_id)))?;
     }
     for mut item in open_rows(tx, thread_id, "turnItems")? {
-        if !item["runId"].is_null() {
+        if !owned(&item) {
             continue;
         }
         let node_id = item["nodeId"].as_str().map(str::to_owned);
         item["status"] = json!(status);
         item["completedAt"] = json!(now);
         item["updatedAt"] = json!(now);
-        if matches!(
-            item["type"].as_str(),
-            Some("reasoning" | "assistant_message")
-        ) {
+        if item.get("streaming").is_some() {
             item["streaming"] = json!(false);
         }
         tx.append(Draft::new(thread_id, "turn-item.updated", item).node(node_id.as_deref()))?;

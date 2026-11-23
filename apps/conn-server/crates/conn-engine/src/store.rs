@@ -1945,9 +1945,10 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
-    if version < 5 {
-        // 5: the index holds messages as they read (T3's migration 81): a citation as its
-        // text and comment, not its hidden link. The stored messages stay as they are.
+    if version < 6 {
+        // 6: the index holds messages as they read (T3's migration 81): a citation as its
+        // text and comment, not its hidden link. The stored messages stay as they are. Step 5
+        // is the receipts' (#260); a store at 4 or 5 comes here.
         let has_column = conn
             .prepare("SELECT 1 FROM pragma_table_info('message_keys') WHERE name = 'search_text'")
             .and_then(|mut stmt| stmt.exists([]))
@@ -1956,26 +1957,8 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
             conn.execute_batch("ALTER TABLE message_keys ADD COLUMN search_text TEXT")
                 .map_err(err)?;
         }
-        let rows: Vec<(String, String, String)> = {
-            let mut stmt = conn
-                .prepare(
-                    "SELECT k.thread_id, k.message_id, COALESCE(json_extract(e.body, '$.text'), '')
-                     FROM message_keys k
-                     JOIN entities e
-                       ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id",
-                )
-                .map_err(err)?;
-            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                .map_err(err)?
-                .collect::<rusqlite::Result<_>>()
-                .map_err(err)?
-        };
-        for (thread_id, message_id, text) in rows {
-            if readable_search_text(&text).is_some() {
-                index_message(conn, &thread_id, &message_id, &text)?;
-            }
-        }
-        conn.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        refresh_readable_search(conn)?;
+        conn.execute_batch("PRAGMA user_version = 6").map_err(err)?;
     }
     Ok(())
 }
@@ -2029,11 +2012,9 @@ fn index_message(
     message_id: &str,
     text: &str,
 ) -> StoreResult<()> {
-    let readable = readable_search_text(text);
     conn.execute(
-        "INSERT INTO message_keys (thread_id, message_id, search_text) VALUES (?1, ?2, ?3)
-         ON CONFLICT (thread_id, message_id) DO UPDATE SET search_text = excluded.search_text",
-        params![thread_id, message_id, readable],
+        "INSERT OR IGNORE INTO message_keys (thread_id, message_id) VALUES (?1, ?2)",
+        params![thread_id, message_id],
     )
     .map_err(err)?;
     let id: i64 = conn
@@ -2043,6 +2024,19 @@ fn index_message(
             |row| row.get(0),
         )
         .map_err(err)?;
+    write_search_entry(conn, id, text)
+}
+
+/// The search entry of the keyed message `id`: its readable text (`search_text`, NULL when it
+/// is the stored text) and the index row. Every writer goes through here: a message write, the
+/// upgrade, and the T3 import.
+fn write_search_entry(conn: &Connection, id: i64, text: &str) -> StoreResult<()> {
+    let readable = readable_search_text(text);
+    conn.execute(
+        "UPDATE message_keys SET search_text = ?2 WHERE id = ?1",
+        params![id, readable],
+    )
+    .map_err(err)?;
     conn.execute("DELETE FROM message_search WHERE rowid = ?1", [id])
         .map_err(err)?;
     conn.execute(
@@ -2051,6 +2045,44 @@ fn index_message(
     )
     .map_err(err)?;
     Ok(())
+}
+
+/// Messages read per batch when the index is brought up to readable text.
+const SEARCH_REFRESH_BATCH: i64 = 500;
+
+/// Rewrites the search entries whose readable text differs from their stored text, a batch
+/// at a time by `message_keys.id`, so a long history never sits in memory (T3's migration 81).
+/// The rows keep their ids and order. Run by the upgrade and after a T3 import.
+pub(crate) fn refresh_readable_search(conn: &Connection) -> StoreResult<()> {
+    let mut after = 0_i64;
+    loop {
+        let batch: Vec<(i64, String)> = {
+            let mut stmt = conn
+                .prepare_cached(
+                    "SELECT k.id, COALESCE(json_extract(e.body, '$.text'), '')
+                     FROM message_keys k
+                     JOIN entities e
+                       ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id
+                     WHERE k.id > ?1 ORDER BY k.id LIMIT ?2",
+                )
+                .map_err(err)?;
+            stmt.query_map(params![after, SEARCH_REFRESH_BATCH], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(err)?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(err)?
+        };
+        let Some(&(last, _)) = batch.last() else {
+            return Ok(());
+        };
+        for (id, text) in &batch {
+            if readable_search_text(text).is_some() {
+                write_search_entry(conn, *id, text)?;
+            }
+        }
+        after = last;
+    }
 }
 
 /// Bounds the tables that only serve resumes and retries. Events and projections stay: they
@@ -2371,7 +2403,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let index: i64 = store
             .conn
             .query_row(
@@ -2489,7 +2521,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         let shell = store.shell_snapshot().unwrap();
         let threads = shell["threads"].as_array().unwrap();
         let parent = threads.iter().find(|t| t["id"] == "parent").unwrap();

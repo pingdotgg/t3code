@@ -443,3 +443,47 @@ async fn the_shell_at_the_boundary_is_a_snapshot() {
     drop(engine);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// An import indexes messages as they read, as an ordinary write does (T3's
+/// `readableSearchText`): a citation's text and comment are found, its hidden context is not.
+#[test]
+fn an_import_indexes_citations_as_they_read() {
+    let dir = temp_dir("citation-search");
+    let source = t3_state(&dir);
+    {
+        let conn = Connection::open(&source).unwrap();
+        let text = crate::engine_tests::citation(
+            "The kittiwake's résumé mentions 灯台の光 twice.",
+            "naïve question",
+            "beacon01",
+            "harbor",
+        );
+        let message = json!({"id": "m3", "threadId": "t3", "runId": null, "role": "user",
+            "text": text, "streaming": false, "createdAt": "2026-01-01T00:00:09.000Z",
+            "updatedAt": "2026-01-01T00:00:09.000Z"});
+        conn.execute(
+            "INSERT INTO orchestration_v2_projection_messages (message_id, thread_id, run_id,
+               role, streaming, created_at, updated_at, payload_json)
+             VALUES ('m3', 't3', NULL, 'user', 0, '2026-01-01T00:00:09.000Z',
+               '2026-01-01T00:00:09.000Z', ?1)",
+            [message.to_string()],
+        )
+        .unwrap();
+    }
+    import_t3_state(&dir).unwrap().unwrap();
+    let store = Store::open(&dir.join(ENGINE_FILE)).unwrap();
+    let threads = |query: &str| -> Vec<String> {
+        store.search_threads(&json!({"query": query})).unwrap()["matches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["threadId"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    for query in ["résumé", "naïve", "灯台の光"] {
+        assert_eq!(threads(query), ["t3"], "{query}");
+    }
+    for hidden in ["beacon01", "harbor"] {
+        assert_eq!(threads(hidden), Vec::<String>::new(), "{hidden}");
+    }
+}

@@ -623,10 +623,11 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
 
 /// After a close on a shared app-server, the closed session's subagents may go silent. Every
 /// `interval`, each open one is checked with Codex (`thread/read` with turns, as T3's
-/// `readThreadSnapshot`). A failed read is tried again at the next check, unless Codex says the
-/// thread does not exist. At the last of [`MAX_CHILD_CHECKS`] checks, each open child turn
-/// gets `turn/interrupt` and is read once more. Every answer goes through the session's inbox,
-/// so the driver applies and delivers it in order with Codex's own frames.
+/// `readThreadSnapshot`): a turn Codex reports ended ends here, and a thread Codex does not
+/// know (`thread not found:`) ends interrupted. Any other failed read is tried again. At the
+/// last of [`MAX_CHILD_CHECKS`] checks, each open child turn gets `turn/interrupt` and is read
+/// once more; a turn still running keeps its route, and its own end settles it. Every answer
+/// goes through the session's inbox, so the driver applies it in order with Codex's frames.
 async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
     for check in 1..=MAX_CHILD_CHECKS {
         tokio::time::sleep(interval).await;
@@ -673,10 +674,12 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
                 )
                 .await;
             let read = match answer {
-                Err(CallError::Rpc(e)) if e.message.contains("not found") => ChildRead::Missing,
-                Ok(answer) if last => ChildRead::Final(Some(answer)),
+                Err(CallError::Rpc(e))
+                    if e.code == -32600 && e.message.starts_with("thread not found:") =>
+                {
+                    ChildRead::Missing
+                }
                 Ok(answer) => ChildRead::Turns(answer),
-                Err(_) if last => ChildRead::Final(None),
                 // Tried again at the next check; the process's exit ends them if it stopped.
                 Err(_) => continue,
             };
@@ -706,8 +709,8 @@ fn apply_child_read(mapper: &mut Mapper<SystemEnv>, thread: &str, read: &ChildRe
         .map(|(_, turn)| turn)
         .collect();
     let answer = match read {
-        ChildRead::Turns(answer) | ChildRead::Final(Some(answer)) => Some(answer),
-        ChildRead::Missing | ChildRead::Final(None) => None,
+        ChildRead::Turns(answer) => Some(answer),
+        ChildRead::Missing => None,
     };
     let turns = answer.and_then(|a| a["thread"]["turns"].as_array());
     let mut outs = Vec::new();
@@ -729,7 +732,7 @@ fn apply_child_read(mapper: &mut Mapper<SystemEnv>, thread: &str, read: &ChildRe
     {
         outs.extend(mapper.end_idle_child(thread, status));
     }
-    if matches!(read, ChildRead::Missing | ChildRead::Final(_)) {
+    if matches!(read, ChildRead::Missing) {
         for turn in &open {
             outs.extend(mapper.end_interrupted(turn));
         }
@@ -785,6 +788,35 @@ async fn watch_abandoned_start(
                 interrupt(server, native, turn, "a turn Stop abandoned").await;
             }
         }
+    }
+}
+
+/// A Stop that timed out while its root still ran: once the root ends, the rest of its lineage
+/// settles. Ends with the session.
+async fn settle_when_root_ends(
+    inner: std::sync::Weak<Inner>,
+    root: String,
+    targets: Vec<(String, String, Vec<String>)>,
+) {
+    loop {
+        let Some(strong) = inner.upgrade() else {
+            return;
+        };
+        let progressed = strong.progressed.notified();
+        tokio::pin!(progressed);
+        progressed.as_mut().enable();
+        let (closed, running) = {
+            let state = strong.lock();
+            (state.closed, state.mapper.is_active(&root))
+        };
+        if closed {
+            return;
+        }
+        if !running {
+            settle_lineage(&strong, &root, &targets).await;
+            return;
+        }
+        progressed.await;
     }
 }
 
@@ -1361,6 +1393,14 @@ impl Session for CodexSession {
             let root_ended = !inner.lock().mapper.is_active(&native_turn);
             if confirmed || root_ended {
                 settle_lineage(inner, &native_turn, &targets).await;
+            } else if !inner.lock().closed {
+                // The Stop stays pending: when Codex ends the root later, the rest of its
+                // lineage settles then (T3 forks the same wait on the roots' completion).
+                tokio::spawn(settle_when_root_ends(
+                    Arc::downgrade(inner),
+                    native_turn.clone(),
+                    targets.clone(),
+                ));
             }
             // Codex may still be working: the turn stays open and marked interrupting, and
             // whatever ends it later (Codex's `turn/completed`, a close, Force stop) settles it
@@ -1653,6 +1693,39 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*'th1'*) mcp_loaded=1; emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th1\"}}}" ;;
     *'"method":"mcpServer/resource/read"'*) emit "{\"id\":$id,\"result\":{\"contents\":[{\"uri\":\"ui://stub\",\"text\":\"<h1>Stub</h1>\",\"mimeType\":\"text/html;profile=mcp-app\"}]}}" ;;
     *'"method":"config/read"'*) emit "{\"id\":$id,\"result\":{\"config\":{}}}" ;;
+    *'"method":"turn/start"'*'stop late root'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu8\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu8","item":{"type":"subAgentActivity","id":"a8","kind":"started","agentThreadId":"ch8","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch8","turn":{"id":"ct8","status":"inProgress","startedAt":1}}}' ;;
+    *'"method":"turn/interrupt"'*'"tu8"'*)
+      emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"turn/interrupt"'*'"ct8"'*)
+      emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"test/finishRoot8"'*)
+      emit "{\"id\":$id,\"result\":{}}"
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu8","status":"interrupted","completedAt":5}}}' ;;
+    *'"method":"turn/start"'*'odd error child'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a9","kind":"started","agentThreadId":"ch9","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch9","turn":{"id":"ct9","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":5}}}' ;;
+    *'"method":"thread/read"'*'"includeTurns":true'*'ch9'*)
+      emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"rollout for thread ch9 not found\"}}"
+      if [ "${int9:-0}" = 1 ]; then sleep 0.3; emit '{"method":"turn/completed","params":{"threadId":"ch9","turn":{"id":"ct9","status":"completed","completedAt":5}}}'; fi ;;
+    *'"method":"turn/interrupt"'*'"ct9"'*)
+      int9=1
+      emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"turn/start"'*'busy child'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"ab","kind":"started","agentThreadId":"chb","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"chb","turn":{"id":"ctb","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":5}}}' ;;
+    *'"method":"thread/read"'*'"includeTurns":true'*'chb'*)
+      emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"chb\",\"model\":\"gpt-6-luna\",\"turns\":[{\"id\":\"ctb\",\"status\":\"inProgress\"}]}}}"
+      if [ "${intb:-0}" = 1 ]; then sleep 0.3; emit '{"method":"turn/completed","params":{"threadId":"chb","turn":{"id":"ctb","status":"completed","completedAt":5}}}'; fi ;;
+    *'"method":"turn/interrupt"'*'"ctb"'*)
+      intb=1
+      emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"turn/start"'*'stop quiet child'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu6\",\"startedAt\":null}}}"
       emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu6","item":{"type":"subAgentActivity","id":"a4","kind":"started","agentThreadId":"ch4","agentPath":"/root/helper"}}}'
@@ -2299,6 +2372,101 @@ done
         })
         .await
         .expect("finished within 30 s");
+    }
+
+    /// A Stop whose root Codex ends only after the deadline stays pending: the root's own end
+    /// settles the rest of its lineage then (T3 forks this wait on the roots' completion).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_late_root_end_settles_a_timed_out_stop() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider_with(CodexConfig {
+                stop_confirm_timeout: Duration::from_millis(300),
+                ..CodexConfig::default()
+            });
+            let Pair {
+                session,
+                mut events,
+                other,
+                seen,
+                thread,
+            } = shared_pair_until(&provider, "stop late root", |e| {
+                e["type"] == "provider_turn.updated"
+                    && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "ct8"
+            })
+            .await;
+            let root_turn = seen
+                .iter()
+                .find(|e| {
+                    e["type"] == "provider_turn.updated"
+                        && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "tu8"
+                })
+                .and_then(|e| e["providerTurn"]["id"].as_str())
+                .expect("the root's provider turn")
+                .to_owned();
+            let stopped = session
+                .interrupt_turn(InterruptInput {
+                    provider_thread: thread,
+                    provider_turn_id: root_turn.as_str().into(),
+                })
+                .await;
+            assert_eq!(
+                stopped,
+                Err(ProviderError::InterruptTimeout { timeout_ms: 300 })
+            );
+            provider
+                .server
+                .request("test/finishRoot8", json!({}))
+                .await
+                .unwrap();
+            let ended = until(&mut events, "turn.terminal").await;
+            assert_eq!(ended.last().unwrap()["status"], "interrupted");
+            assert_child_ended(&ended, "ct8", "interrupted");
+            session.close().await;
+            other.close().await;
+        })
+        .await
+        .expect("finished within 30 s");
+    }
+
+    /// Only T3's missing thread (`-32600`, `thread not found:`) ends a silent child; another
+    /// error that says "not found" is tried again, and the child's own end settles it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn only_codexs_missing_thread_error_ends_a_silent_child() {
+        silent_child_keeps_running("odd error child", "ct9").await;
+    }
+
+    /// The last check finds the child still running after `turn/interrupt`: it keeps its
+    /// route, and its own end settles it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_child_still_running_at_the_last_check_settles_with_its_own_end() {
+        silent_child_keeps_running("busy child", "ctb").await;
+    }
+
+    async fn silent_child_keeps_running(text: &str, child_turn: &str) {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let provider = provider_with(CodexConfig {
+                child_check_interval: Duration::from_millis(50),
+                ..CodexConfig::default()
+            });
+            let Pair {
+                session,
+                mut events,
+                other,
+                ..
+            } = shared_pair(&provider, text).await;
+            assert_eq!(session.close().await, Closed::RuntimeShared);
+            let rest = rest(&mut events).await;
+            assert_child_ended(&rest, child_turn, "completed");
+            assert!(
+                !rest.iter().any(|e| e["type"] == "provider_turn.updated"
+                    && e["providerTurn"]["nativeTurnRef"]["nativeId"] == child_turn
+                    && e["providerTurn"]["status"] == "interrupted"),
+                "{rest:?}"
+            );
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        })
+        .await
+        .expect("finished within 60 s");
     }
 
     /// Two silent children are checked one after the other. The first one's end that the

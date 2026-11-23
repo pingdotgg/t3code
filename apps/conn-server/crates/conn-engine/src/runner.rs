@@ -46,6 +46,14 @@ pub(crate) struct LiveThread {
     /// A close's request to detach the active run once the pump stored the events received so
     /// far; answered when the pump marked them ([`Inner::close_session`]).
     detach: Mutex<Option<oneshot::Sender<()>>>,
+    /// The position a close marked while the pump was busy: the run detaches once the pump has
+    /// taken that many events.
+    detach_mark: Mutex<Option<u64>>,
+    /// The session's events. The pump holds the lock only while it reads them, so a close can
+    /// count what was sent before it.
+    events: tokio::sync::Mutex<mpsc::Receiver<ProviderEvent>>,
+    /// How many events the pump has read from [`Self::events`].
+    received: std::sync::atomic::AtomicU64,
     /// Since when background work has kept this idle session open.
     held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
@@ -552,6 +560,9 @@ impl Inner {
                 stored_waiters: Mutex::new(Vec::new()),
                 stored_wanted: tokio::sync::Notify::new(),
                 detach: Mutex::new(None),
+                detach_mark: Mutex::new(None),
+                events: tokio::sync::Mutex::new(opened.events),
+                received: std::sync::atomic::AtomicU64::new(0),
                 held_since: Mutex::new(None),
                 provider_session_id: provider_session["id"]
                     .as_str()
@@ -573,10 +584,7 @@ impl Inner {
                 ))
             })
             .await?;
-            tokio::spawn(
-                self.clone()
-                    .pump(thread_id.to_owned(), live.clone(), opened.events),
-            );
+            tokio::spawn(self.clone().pump(thread_id.to_owned(), live.clone()));
             Ok(Some(live))
         }
     }
@@ -1191,12 +1199,8 @@ impl Inner {
     }
 
     /// Reads one session's events until it closes. Ends a run the session leaves open.
-    async fn pump(
-        self: Arc<Self>,
-        thread_id: String,
-        live: Arc<LiveThread>,
-        mut events: mpsc::Receiver<ProviderEvent>,
-    ) {
+    async fn pump(self: Arc<Self>, thread_id: String, live: Arc<LiveThread>) {
+        use std::sync::atomic::Ordering::SeqCst;
         let mut streaming = AssistantStreaming::new(lock(&live.state).streaming_mode);
         // Held turn items whose position is taken (T3's `reservedHeldTurnItemIds`).
         let mut reserved: Vec<(String, String)> = Vec::new();
@@ -1226,9 +1230,8 @@ impl Inner {
             for (_, waiter) in marks.extract_if(.., |(mark, _)| *mark <= taken) {
                 let _ = waiter.send(());
             }
-            if let Some(ack) = lock(&live.detach).take() {
-                detach_at = Some(taken + (ahead.len() + events.len()) as u64);
-                let _ = ack.send(());
+            if let Some(mark) = lock(&live.detach_mark).take() {
+                detach_at = Some(mark);
             }
             if detach_at.is_some_and(|mark| mark <= taken) {
                 detach_at = None;
@@ -1236,41 +1239,68 @@ impl Inner {
                     self.end_detached_run(&thread_id, &live).await;
                 }
             }
-            let event = match (ahead.pop_front(), wake) {
-                (Some(event), _) => Some(event),
-                (None, _) if closing => events.try_recv().ok(),
-                (None, Some((at, when))) => tokio::select! {
-                    event = events.recv() => event,
-                    () = live.closed.notified() => {
-                        closing = true;
-                        continue;
+            // The receiver is held only while reading: nothing is stored under it.
+            let next = {
+                let mut events = live.events.lock().await;
+                let marked = lock(&live.detach).take().map(|ack| {
+                    detach_at = Some(live.received.load(SeqCst) + events.len() as u64);
+                    let _ = ack.send(());
+                });
+                let pull = |event: Option<ProviderEvent>| {
+                    if event.is_some() {
+                        live.received.fetch_add(1, SeqCst);
                     }
-                    () = live.stored_wanted.notified() => {
-                        let waiting = (ahead.len() + events.len()) as u64;
-                        let new = std::mem::take(&mut *lock(&live.stored_waiters));
-                        marks.extend(new.into_iter().map(|w| (taken + waiting, w)));
-                        continue;
+                    Next::Event(event)
+                };
+                match (ahead.pop_front(), wake) {
+                    // The mark may already be reached: decide it without the receiver.
+                    (event, _) if marked.is_some() => {
+                        if let Some(event) = event {
+                            ahead.push_front(event);
+                        }
+                        Next::Marked
                     }
-                    () = sleep_until(when) => {
-                        // The timer slept until `at`; the clock may read a little earlier.
-                        let now = self.clock.now_millis().max(at);
-                        self.commit(streaming.take_idle_flushes(now)).await;
-                        continue;
+                    (Some(event), _) => Next::Event(Some(event)),
+                    (None, _) if closing => pull(events.try_recv().ok()),
+                    (None, wake) => {
+                        let timer = async {
+                            match wake {
+                                Some((at, when)) => {
+                                    sleep_until(when).await;
+                                    at
+                                }
+                                None => std::future::pending().await,
+                            }
+                        };
+                        tokio::select! {
+                            event = events.recv() => pull(event),
+                            () = live.closed.notified() => Next::Closed,
+                            () = live.stored_wanted.notified() => {
+                                Next::Stored((ahead.len() + events.len()) as u64)
+                            }
+                            at = timer => Next::Flush(at),
+                        }
                     }
-                },
-                (None, None) => tokio::select! {
-                    event = events.recv() => event,
-                    () = live.closed.notified() => {
-                        closing = true;
-                        continue;
-                    }
-                    () = live.stored_wanted.notified() => {
-                        let waiting = (ahead.len() + events.len()) as u64;
-                        let new = std::mem::take(&mut *lock(&live.stored_waiters));
-                        marks.extend(new.into_iter().map(|w| (taken + waiting, w)));
-                        continue;
-                    }
-                },
+                }
+            };
+            let event = match next {
+                Next::Event(event) => event,
+                Next::Marked => continue,
+                Next::Closed => {
+                    closing = true;
+                    continue;
+                }
+                Next::Stored(waiting) => {
+                    let new = std::mem::take(&mut *lock(&live.stored_waiters));
+                    marks.extend(new.into_iter().map(|w| (taken + waiting, w)));
+                    continue;
+                }
+                Next::Flush(at) => {
+                    // The timer slept until `at`; the clock may read a little earlier.
+                    let now = self.clock.now_millis().max(at);
+                    self.commit(streaming.take_idle_flushes(now)).await;
+                    continue;
+                }
             };
             let Some(event) = event else { break };
             let event = self.capture_app_event(&live, event).await;
@@ -1279,10 +1309,14 @@ impl Inner {
             // from their event stream, and `ProviderContinuationService` dispatches it at once:
             // ahead of the events the adapter sent before it that are not stored yet. Those
             // are the ones already in the channel.
-            while ahead.len() < LOOKAHEAD
-                && let Ok(next) = events.try_recv()
             {
-                ahead.push_back(next);
+                let mut events = live.events.lock().await;
+                while ahead.len() < LOOKAHEAD
+                    && let Ok(next) = events.try_recv()
+                {
+                    live.received.fetch_add(1, SeqCst);
+                    ahead.push_back(next);
+                }
             }
             if !self.shutting_down() {
                 let mut kept = std::collections::VecDeque::with_capacity(ahead.len());
@@ -2225,10 +2259,21 @@ impl Inner {
             // they are stored: a Stop the provider already confirmed keeps its status, and a
             // root turn the close itself ends (Codex on a shared `app-server`) does not end it
             // as if the provider stopped it. The run then fails only if still active.
-            let (ack, marked) = oneshot::channel();
-            *lock(&live.detach) = Some(ack);
-            live.stored_wanted.notify_one();
-            let _ = tokio::time::timeout(CLOSE_MARK_LIMIT, marked).await;
+            // A busy pump does not hold the receiver: what was sent so far is counted here,
+            // before the provider's close can add its own events. An idle pump reads the
+            // request at once and marks the same position.
+            let busy = live.events.try_lock().ok().map(|events| {
+                live.received.load(std::sync::atomic::Ordering::SeqCst) + events.len() as u64
+            });
+            match busy {
+                Some(mark) => *lock(&live.detach_mark) = Some(mark),
+                None => {
+                    let (ack, marked) = oneshot::channel();
+                    *lock(&live.detach) = Some(ack);
+                    live.stored_wanted.notify_one();
+                    let _ = tokio::time::timeout(CLOSE_MARK_LIMIT, marked).await;
+                }
+            }
             let closed = live.session.close().await;
             let instance = self
                 .providers
@@ -2370,6 +2415,24 @@ impl Inner {
             eprintln!("conn-engine: could not clear released background tasks: {e}");
         }
     }
+}
+
+/// What the pump's wait ended with.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one short-lived value per pump step; boxing would allocate for every event"
+)]
+enum Next {
+    /// An event, or `None` once the session's events ended.
+    Event(Option<ProviderEvent>),
+    /// The session closed and its process ended: what was received is still stored.
+    Closed,
+    /// A waiter wants the events already sent stored; this many are waiting.
+    Stored(u64),
+    /// A held snapshot came due at this time.
+    Flush(u64),
+    /// A close's position was marked.
+    Marked,
 }
 
 fn session_ended() -> Value {
