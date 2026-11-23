@@ -22,7 +22,7 @@ use conn_provider::{
     AwaitBackgroundTasksInput, BoxFuture, Closed, EnsureThreadInput, ForkThreadInput,
     InterruptInput, McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput,
     RollbackTarget, RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session,
-    SteerInput, StopTaskInput, ThreadSnapshot, TurnInput,
+    SteerInput, StopTaskInput, ThreadSnapshot, TurnInput, TurnStatus,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
@@ -117,6 +117,69 @@ struct State {
     logged_skips: HashSet<String>,
     /// Live output tails per Bash call (`taskOutputTails`); the mapper caps them per turn.
     tails: HashMap<String, crate::tail::Tail>,
+    /// MCP app notes in Claude's history, and those the running turn offered.
+    app_context: AppContextState,
+}
+
+/// MCP app notes by native thread (T3's `deliveredAppContext` and `appContextOffered`).
+/// A turn's offer enters the history only when the turn completes; compaction, a
+/// conversation reset and a rollback drop the history's notes. Both maps hold only the
+/// thread's bounded app context entries.
+#[derive(Default)]
+struct AppContextState {
+    delivered: Option<(String, HashMap<String, String>)>,
+    offered: Option<(String, HashMap<String, String>)>,
+}
+
+impl AppContextState {
+    /// The entries the native thread has not yet seen with their current text.
+    fn unseen<'a>(
+        &self,
+        native: &str,
+        entries: &'a [conn_provider::AppContextEntry],
+    ) -> Vec<&'a conn_provider::AppContextEntry> {
+        let seen = self
+            .delivered
+            .as_ref()
+            .filter(|(id, _)| id == native)
+            .map(|(_, seen)| seen);
+        entries
+            .iter()
+            .filter(|e| seen.and_then(|seen| seen.get(&e.key)) != Some(&e.text))
+            .collect()
+    }
+
+    fn turn_ended(&mut self, completed: bool) {
+        if let Some(offered) = self.offered.take()
+            && completed
+        {
+            self.delivered = Some(offered);
+        }
+    }
+
+    fn reset(&mut self) {
+        self.delivered = None;
+        self.offered = None;
+    }
+}
+
+/// Prepends MCP app notes to the prompt as quoted app data (`withClaudeAppContext`). A slash
+/// command runs only as a plain-text prompt, so its notes wait for the next turn. Returns
+/// whether it added any.
+fn with_app_context(content: Value, entries: &[&conn_provider::AppContextEntry]) -> (Value, bool) {
+    if entries.is_empty() || content.as_str().is_some_and(|text| text.starts_with('/')) {
+        return (content, false);
+    }
+    let mut blocks: Vec<Value> = entries
+        .iter()
+        .map(|e| json!({"type": "text", "text": format!("<external_{0}>{1}</external_{0}>", e.key, e.text)}))
+        .collect();
+    match content {
+        Value::String(text) => blocks.push(json!({"type": "text", "text": text})),
+        Value::Array(parts) => blocks.extend(parts),
+        other => blocks.push(other),
+    }
+    (Value::Array(blocks), true)
 }
 
 struct WorkflowStopGuard {
@@ -201,6 +264,7 @@ impl ClaudeSession {
                 abandoned_run: None,
                 logged_skips: HashSet::new(),
                 tails: HashMap::new(),
+                app_context: AppContextState::default(),
             }),
             turn_control: tokio::sync::Mutex::new(()),
             abandon: tokio::sync::Notify::new(),
@@ -496,6 +560,12 @@ async fn drive(
                 if value["type"] == "system" && value["subtype"] == "init" {
                     note_init(&mut inner.lock(), generation, &value);
                 }
+                // The conversation lost the turns that carried app notes.
+                if value["type"] == "conversation_reset"
+                    || (value["type"] == "system" && value["subtype"] == "compact_boundary")
+                {
+                    inner.lock().app_context.reset();
+                }
                 Inbound::from_value(value)
             }
             Some(QueryEvent::Request { id, kind, args }) => match callback_request(&kind, &args) {
@@ -537,7 +607,16 @@ async fn drive(
                 continue;
             }
             touch(&mut state, Some(generation));
-            state.mapper.handle(message)
+            let outs = state.mapper.handle(message);
+            if let Some(status) = outs.iter().find_map(|out| match out {
+                Out::Event(ProviderEvent::TurnTerminal(terminal)) => Some(terminal.status),
+                _ => None,
+            }) {
+                state
+                    .app_context
+                    .turn_ended(status == TurnStatus::Completed);
+            }
+            outs
         };
         inner.deliver(Some(&query), outs).await;
     }
@@ -1317,7 +1396,7 @@ impl ClaudeSession {
         };
         self.inner.lock().turn_prompt_effort = effort.clone();
         let inner = &self.inner;
-        let (outs, query, uuid) = {
+        let (outs, query, uuid, content) = {
             let mut state = inner.lock();
             let query = state
                 .live
@@ -1338,7 +1417,22 @@ impl ClaudeSession {
             };
             let uuid = SystemEnv.uuid();
             state.mapper.set_prompt_uuid(&uuid);
-            (outs, query, uuid)
+            let native = state
+                .live
+                .as_ref()
+                .map(|l| l.native_thread_id.clone())
+                .unwrap_or_default();
+            let unseen = state.app_context.unseen(&native, &input.app_context);
+            let (content, offered) = with_app_context(content, &unseen);
+            state.app_context.offered = offered.then(|| {
+                let offer = input
+                    .app_context
+                    .iter()
+                    .map(|e| (e.key.clone(), e.text.clone()))
+                    .collect();
+                (native, offer)
+            });
+            (outs, query, uuid, content)
         };
         inner.deliver(Some(&query), outs).await;
         let offered = query
@@ -2084,6 +2178,8 @@ impl Session for ClaudeSession {
     ) -> BoxFuture<'_, ProviderResult<ThreadSnapshot>> {
         Box::pin(async move {
             self.require_idle("roll back")?;
+            // The rewound history may no longer hold the turns that carried app notes.
+            self.inner.lock().app_context.reset();
             let thread = to_json(&input.provider_thread);
             let native = native_thread_id(&input.provider_thread).ok_or_else(|| {
                 failed_err("rollback_thread", "provider thread has no native Claude id")
