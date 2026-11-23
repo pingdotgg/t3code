@@ -190,6 +190,9 @@ const writeCompressedTranscript = Effect.fn("AgentSessionScanner.test.writeCompr
   },
 );
 
+const messageText = (message: AgentSessionScanner.AgentSessionThreadMessage | undefined) =>
+  message?.role === "tool" ? undefined : message?.text;
+
 const claudeSessionLine = (cwd: string) =>
   `${JSON.stringify({ type: "user", cwd, sessionId: "s1" })}\n${JSON.stringify({ type: "assistant" })}\n`;
 
@@ -1537,7 +1540,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(
           threads.map((thread) => ({
             id: thread.providerSessionId,
-            messages: thread.messages.map((message) => message.text),
+            messages: thread.messages.map(messageText),
           })),
         ).toEqual([
           {
@@ -1702,7 +1705,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           "claude-recent",
           "pi-v1",
         ]);
-        expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
+        expect(threads.map((thread) => thread.messages.map(messageText))).toEqual([
           ["Plan the change", "Active answer"],
           ["Review this code", "Looks good"],
           ["Fix the project", "Done"],
@@ -2010,7 +2013,7 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           threads.map((thread) => ({
             id: thread.providerSessionId,
             title: thread.title,
-            messages: thread.messages.map((message) => message.text),
+            messages: thread.messages.map(messageText),
           })),
         ).toEqual([
           {
@@ -2381,6 +2384,164 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         });
 
         expect(threads.map((thread) => thread.providerSessionId)).toEqual([sessionId]);
+      }),
+    );
+
+    it.effect("imports the newest Claude screenshots that fit the history budget", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-screenshots-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-screenshots-codex-");
+        const workspace = yield* makeTempDir("t3code-screenshots-workspace-");
+        const transcript = (sessionId: string, screenshots: number) =>
+          [
+            {
+              type: "user",
+              cwd: workspace,
+              message: { role: "user", content: "Check the render" },
+            },
+            ...Array.from({ length: screenshots }, (_, index) => [
+              {
+                type: "assistant",
+                message: {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "tool_use",
+                      id: `toolu_${index}`,
+                      name: "Read",
+                      input: { file_path: `/shots/${index}.png` },
+                    },
+                  ],
+                },
+              },
+              {
+                type: "user",
+                message: {
+                  role: "user",
+                  content: [
+                    {
+                      type: "tool_result",
+                      tool_use_id: `toolu_${index}`,
+                      content: [
+                        {
+                          type: "image",
+                          source: {
+                            type: "base64",
+                            media_type: "image/png",
+                            data: "A".repeat(4 * 1024 * 1024),
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                },
+              },
+            ]).flat(),
+            { type: "assistant", message: { role: "assistant", content: "Looks right" } },
+          ]
+            .map((record) =>
+              encodeTranscriptRecord({
+                sessionId,
+                timestamp: "2026-08-24T10:00:00.000Z",
+                ...record,
+              }),
+            )
+            .join("\n");
+        // Selected strings take two bytes per character: three screenshots fit the budget.
+        for (const [sessionId, screenshots] of [
+          ["few-shots", 2],
+          ["many-shots", 5],
+        ] as const) {
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-shots", `${sessionId}.jsonl`),
+            contents: transcript(sessionId, screenshots),
+            mtimeMs: nowMs - 60 * 60 * 1000,
+          });
+        }
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        const shots = Object.fromEntries(
+          threads.map((thread) => [
+            thread.providerSessionId,
+            thread.messages.map((message) =>
+              message.role === "tool"
+                ? (message.input as { readonly file_path: string }).file_path
+                : message.role,
+            ),
+          ]),
+        );
+        expect(shots).toEqual({
+          "few-shots": ["user", "/shots/0.png", "/shots/1.png", "assistant"],
+          "many-shots": ["user", "/shots/2.png", "/shots/3.png", "/shots/4.png", "assistant"],
+        });
+      }),
+    );
+
+    it.effect("keeps a long Claude session's latest messages however many screenshots it has", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-window-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-window-codex-");
+        const workspace = yield* makeTempDir("t3code-window-workspace-");
+        const image = {
+          type: "image",
+          source: { type: "base64", media_type: "image/png", data: "iVBO" },
+        };
+        const records = [
+          { type: "user", cwd: workspace, message: { role: "user", content: "Start" } },
+          ...Array.from({ length: 250 }, (_, index) => [
+            {
+              type: "assistant",
+              message: {
+                role: "assistant",
+                content: [{ type: "tool_use", id: `toolu_${index}`, name: "Read", input: {} }],
+              },
+            },
+            {
+              type: "user",
+              message: {
+                role: "user",
+                content: [{ type: "tool_result", tool_use_id: `toolu_${index}`, content: [image] }],
+              },
+            },
+            { type: "assistant", message: { role: "assistant", content: `Message ${index}` } },
+          ]).flat(),
+        ];
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-window", "long-session.jsonl"),
+          contents: records
+            .map((record) =>
+              encodeTranscriptRecord({
+                sessionId: "long-session",
+                timestamp: "2026-08-24T10:00:00.000Z",
+                ...record,
+              }),
+            )
+            .join("\n"),
+          mtimeMs: nowMs - 60 * 60 * 1000,
+        });
+
+        const [thread] = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+        });
+
+        const texts = thread?.messages.flatMap((message) => messageText(message) ?? []);
+        expect(texts).toHaveLength(200);
+        expect(texts?.slice(0, 2)).toEqual(["Start", "Message 51"]);
+        expect(thread?.messages.filter((message) => message.role === "tool")).toHaveLength(199);
+        expect(thread?.omittedMessageCount).toBe(51);
       }),
     );
 
@@ -3277,7 +3438,7 @@ describe("parseAgentSessionTranscript", () => {
         lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
       });
       if (overflow) expect(thread).toBeNull();
-      else expect(thread?.messages.map((message) => message.text)).toEqual(["First prompt"]);
+      else expect(thread?.messages.map(messageText)).toEqual(["First prompt"]);
     },
   );
 
@@ -3318,8 +3479,8 @@ describe("parseAgentSessionTranscript", () => {
 
       expect(thread?.omittedMessageCount).toBe(Math.max(0, count - 200));
       expect(thread?.messages).toHaveLength(Math.min(200, count));
-      expect(thread?.messages[0]?.text).toBe("Message 0");
-      expect(thread?.messages.at(-1)?.text).toBe(`Message ${count - 1}`);
+      expect(messageText(thread?.messages[0])).toBe("Message 0");
+      expect(messageText(thread?.messages.at(-1))).toBe(`Message ${count - 1}`);
     },
   );
 
@@ -3402,6 +3563,60 @@ describe("parseAgentSessionTranscript", () => {
         { role: "assistant", text: "The provider request failed" },
       ],
     });
+  });
+
+  it("keeps Claude tool results that returned images, with the call that made them", () => {
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "iVBO" },
+    };
+    const record = (fields: Record<string, unknown>) =>
+      JSON.stringify({ sessionId: "claude-session", ...fields });
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        record({ type: "user", message: { role: "user", content: "Render the page" } }),
+        record({
+          type: "assistant",
+          message: {
+            role: "assistant",
+            content: [
+              { type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/a.png" } },
+              { type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "ls" } },
+            ],
+          },
+        }),
+        record({
+          type: "user",
+          message: {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "toolu_read", content: [image] },
+              { type: "tool_result", tool_use_id: "toolu_bash", content: "a.png" },
+            ],
+          },
+        }),
+        // A subagent's screenshot belongs to its own conversation.
+        record({
+          type: "user",
+          isSidechain: true,
+          message: {
+            role: "user",
+            content: [{ type: "tool_result", tool_use_id: "toolu_side", content: [image] }],
+          },
+        }),
+        record({ type: "assistant", message: { role: "assistant", content: "It renders" } }),
+      ].join("\n"),
+      source: "claudeAgent",
+      providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages).toMatchObject([
+      { role: "user", text: "Render the page" },
+      { role: "tool", toolName: "Read", input: { file_path: "/a.png" }, images: [image] },
+      { role: "assistant", text: "It renders" },
+    ]);
   });
 
   it.each([
@@ -3585,12 +3800,12 @@ describe("parseAgentSessionTranscript", () => {
       createdAt: canonicalTimestamp,
     });
     expect(
-      thread?.messages.filter((message) => message.text.trim() === canonicalPrompt.trim()),
+      thread?.messages.filter((message) => messageText(message)?.trim() === canonicalPrompt.trim()),
     ).toHaveLength(1);
-    expect(thread?.messages.some((message) => message.text === "Keep this later prompt")).toBe(
-      true,
-    );
-    expect(thread?.messages.at(-1)?.text).toBe("Keep this latest response");
+    expect(
+      thread?.messages.some((message) => messageText(message) === "Keep this later prompt"),
+    ).toBe(true);
+    expect(messageText(thread?.messages.at(-1))).toBe("Keep this latest response");
   });
 
   it("keeps mixed-format response users when turn IDs repeat after an assistant", () => {
@@ -3643,7 +3858,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.messages.map((message) => message.text)).toEqual([
+    expect(thread?.messages.map(messageText)).toEqual([
       "Keep this older prompt",
       "Keep this newer prompt",
       "Ask again when needed",
@@ -3680,7 +3895,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
     });
 
-    expect(thread?.messages.map((message) => message.text)).toEqual([
+    expect(thread?.messages.map(messageText)).toEqual([
       "Keep this legacy prompt",
       "Keep this prompt with a blank turn ID",
     ]);
@@ -3795,7 +4010,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe("Do something here so it looks like a real project.");
-    expect(thread?.messages.map((message) => message.text)).toEqual([
+    expect(thread?.messages.map(messageText)).toEqual([
       "Do something here so it looks like a real project.",
       "Created the project.",
     ]);
@@ -3835,7 +4050,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe("Initialize Git and add a README.");
-    expect(thread?.messages.map((message) => message.text)).toEqual([
+    expect(thread?.messages.map(messageText)).toEqual([
       context,
       "Initialize Git and add a README.",
     ]);
@@ -3864,7 +4079,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(thread?.title).toBe("Fix the import titles");
-    expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
+    expect(thread?.messages.map(messageText)).toEqual([prompt]);
   });
 
   it("titles a Claude session after the prompt inside a wake envelope", () => {
@@ -3995,9 +4210,7 @@ describe("parseAgentSessionTranscript", () => {
     });
 
     expect(
-      thread === null
-        ? null
-        : { title: thread.title, texts: thread.messages.map((message) => message.text) },
+      thread === null ? null : { title: thread.title, texts: thread.messages.map(messageText) },
     ).toEqual(expected);
   });
 });

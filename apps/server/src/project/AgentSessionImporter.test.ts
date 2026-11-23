@@ -387,6 +387,204 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
+it.effect("imports image tool results as tool items beside the messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const source = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "6a1f0c2e-3b4d-4e5f-8a6b-7c8d9e0f1a2b",
+      "claudeAgent",
+    );
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "iVBO" },
+    };
+    source.thread.messages = [
+      { role: "user", text: "Render it", createdAt: timestamp },
+      {
+        role: "tool",
+        toolName: "Read",
+        input: { file_path: "/tmp/render.png" },
+        images: [image],
+        createdAt: timestamp,
+      },
+      {
+        role: "tool",
+        toolName: "mcp__browser__screenshot",
+        input: {},
+        images: [image],
+        createdAt: timestamp,
+      },
+      { role: "assistant", text: "Rendered", createdAt: timestamp },
+    ] as typeof source.thread.messages;
+    const importer = yield* makeImporter([source]);
+
+    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    const records = yield* projections.getThreadRecords(importId(source), [
+      "messages",
+      "turnItems",
+    ]);
+    expect(records.messages.map((message) => message.text)).toEqual(["Render it", "Rendered"]);
+    expect(records.turnItems).toMatchObject([
+      { type: "user_message" },
+      {
+        type: "dynamic_tool",
+        toolName: "Read",
+        viewedImagePath: "/tmp/render.png",
+        input: { file_path: "/tmp/render.png" },
+        output: [image],
+      },
+      { type: "dynamic_tool", toolName: "mcp__browser__screenshot", output: [image] },
+      { type: "assistant_message" },
+    ]);
+    expect(records.turnItems[2]).not.toHaveProperty("viewedImagePath");
+
+    // The thread holds exactly the transcript's messages, so a repeat import certifies it.
+    expect(yield* (yield* makeImporter([source])).run).toEqual({
+      importedCount: 0,
+      skippedCount: 0,
+    });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("refreshes a thread imported before tool rows, in transcript order", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const textOnly = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "8c3f2e4a-5d6f-4a71-8c9d-0e1f2a3b4c5d",
+      "claudeAgent",
+    );
+    textOnly.thread.messages = [
+      { role: "user", text: "Render it", createdAt: timestamp },
+      { role: "assistant", text: "Rendered", createdAt: timestamp },
+    ];
+    expect(yield* (yield* makeImporter([textOnly])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+
+    const withImages = candidate(
+      CLAUDE_MODEL_SELECTION,
+      textOnly.source.providerSessionId,
+      "claudeAgent",
+    );
+    withImages.source.size = 200;
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "iVBO" },
+    };
+    withImages.thread.messages = [
+      { role: "user", text: "Render it", createdAt: timestamp },
+      {
+        role: "tool",
+        toolName: "Read",
+        input: { file_path: "/tmp/render.png" },
+        images: [image],
+        createdAt: timestamp,
+      },
+      { role: "assistant", text: "Rendered", createdAt: timestamp },
+      { role: "user", text: "Thanks", createdAt: timestamp },
+    ] as typeof withImages.thread.messages;
+    expect(yield* (yield* makeImporter([withImages])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+
+    const records = yield* projections.getThreadRecords(importId(textOnly), [
+      "messages",
+      "turnItems",
+    ]);
+    expect(records.messages.map((message) => message.text)).toEqual([
+      "Render it",
+      "Rendered",
+      "Thanks",
+    ]);
+    const items = records.turnItems.toSorted((left, right) => left.ordinal - right.ordinal);
+    expect(items).toMatchObject([
+      { type: "user_message", text: "Render it" },
+      { type: "dynamic_tool", output: [image] },
+      { type: "assistant_message", text: "Rendered" },
+      { type: "user_message", text: "Thanks" },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("refreshes a long thread whose import window moved past its old messages", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const before = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8",
+      "claudeAgent",
+    );
+    before.thread.messages = [
+      { role: "user", text: "Start", createdAt: timestamp },
+      { role: "assistant", text: "Old reply", createdAt: timestamp },
+    ];
+    yield* (yield* makeImporter([before])).run;
+
+    const after = candidate(CLAUDE_MODEL_SELECTION, before.source.providerSessionId, "claudeAgent");
+    after.source.size = 200;
+    after.thread.omittedMessageCount = 1;
+    after.thread.messages = [
+      { role: "user", text: "Start", createdAt: timestamp },
+      { role: "user", text: "Next", createdAt: timestamp },
+      { role: "assistant", text: "New reply", createdAt: timestamp },
+    ];
+    expect(yield* (yield* makeImporter([after])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    const records = yield* projections.getThreadRecords(importId(before), ["turnItems"]);
+    expect(
+      records.turnItems
+        .toSorted((left, right) => left.ordinal - right.ordinal)
+        .map((item) => ("text" in item ? item.text : item.type)),
+    ).toEqual(["system_notice", "Start", "Next", "New reply"]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("imports only the newest images that fit one live event batch", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const source = candidate(
+      CLAUDE_MODEL_SELECTION,
+      "7b2e1d3f-4c5e-4f60-9b7c-8d9e0f1a2b3c",
+      "claudeAgent",
+    );
+    const image = {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "A".repeat(3 * 1024 * 1024) },
+    };
+    const read = (file_path: string) => ({
+      role: "tool",
+      toolName: "Read",
+      input: { file_path },
+      images: [image],
+      createdAt: timestamp,
+    });
+    source.thread.messages = [
+      { role: "user", text: "Render twice", createdAt: timestamp },
+      read("/tmp/first.png"),
+      read("/tmp/second.png"),
+      { role: "assistant", text: "Rendered", createdAt: timestamp },
+    ] as typeof source.thread.messages;
+
+    expect(yield* (yield* makeImporter([source])).run).toEqual({
+      importedCount: 1,
+      skippedCount: 0,
+    });
+    const { turnItems } = yield* projections.getThreadRecords(importId(source), ["turnItems"]);
+    expect(turnItems).toMatchObject([
+      { type: "user_message" },
+      { type: "dynamic_tool", viewedImagePath: "/tmp/first.png", output: [] },
+      { type: "dynamic_tool", viewedImagePath: "/tmp/second.png", output: [image] },
+      { type: "assistant_message" },
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
 it.effect("tolerates a missing transcript owner but propagates failed ownership reads", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -562,17 +760,17 @@ it.effect("does not certify new native history after a partial import retry", ()
       { role: "user", text: "Continue outside T3", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
-    // The thread holds only the original messages, so the continued transcript stays unrecorded.
+    // Fork: the thread was never continued in T3 Code, so it takes the continued transcript.
     expect(yield* (yield* makeImporter([continued])).run).toEqual({
-      importedCount: 0,
-      skippedCount: 1,
+      importedCount: 1,
+      skippedCount: 0,
     });
-    expect(yield* runtimes.list()).toEqual([]);
+    expect(yield* runtimes.list()).toHaveLength(1);
     expect(
       (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
         (message) => message.text,
       ),
-    ).toEqual(["Fix it", "Fixed"]);
+    ).toEqual(["Fix it", "Fixed", "Continue outside T3", "Native continuation"]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
@@ -960,7 +1158,7 @@ it.effect("imports under a policy ceiling in the project's default, kept under t
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("repeated imports reach linked-worktree sessions behind the scan budget", () =>
+it.effect("one import reaches every linked-worktree session", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -981,7 +1179,7 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
     yield* fs.makeDirectory(sessions, { recursive: true });
     const nowMs = DateTime.toEpochMillis(now);
     yield* TestClock.setTime(nowMs);
-    // One more session than the 100-transcript scan budget, all run in the linked worktree.
+    // More sessions than upstream's 100-transcript budget, all run in the linked worktree.
     for (let index = 0; index < 101; index++) {
       const file = path.join(sessions, `rollout-${String(index).padStart(3, "0")}.jsonl`);
       const records = [
@@ -1041,8 +1239,8 @@ it.effect("repeated imports reach linked-worktree sessions behind the scan budge
       scanner: Context.get(scannerContext, AgentSessionScanner.AgentSessionScanner),
     });
 
-    expect(yield* importer.run).toEqual({ importedCount: 100, skippedCount: 1 });
-    expect(yield* importer.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    expect(yield* importer.run).toEqual({ importedCount: 101, skippedCount: 0 });
+    expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
     const oldest = yield* ProjectionStore.ProjectionStoreV2.pipe(
       Effect.flatMap((projections) =>
         projections.getThread(ThreadId.make("import:codex:session-100")),
