@@ -944,6 +944,40 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("reads an Azure DevOps PR by number at its organization and project", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const harness = yield* makeHarness({
+        project: makeProject({
+          canonicalKey: "dev.azure.com/contoso/project/_git/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "https://contoso@dev.azure.com/contoso/project/_git/repo",
+          },
+          provider: SourceControlProviderKind.make("azure-devops"),
+          displayName: "contoso/project/_git/repo",
+          owner: "contoso",
+          name: "repo",
+        }),
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.succeed(activity),
+        },
+      });
+      const result = yield* harness.call("pull_request_read", { number: 123 });
+      expect(result).toMatchObject({
+        host: "dev.azure.com",
+        repository: "contoso/project/_git/repo",
+        number: 123,
+        url: "https://dev.azure.com/contoso/project/_git/repo/pullrequest/123",
+      });
+      expect(asked).toMatchObject([
+        { host: "dev.azure.com", repository: "contoso/project/_git/repo", number: 123 },
+      ]);
+    }),
+  );
+
   it.effect("pages a long conversation and the PR list through the cursors they return", () =>
     Effect.gen(function* () {
       const comment = (body: string) =>
