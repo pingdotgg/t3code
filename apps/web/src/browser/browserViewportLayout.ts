@@ -71,6 +71,30 @@ export function resolveFittedBrowserViewport(
   return { _tag: "freeform", width: 1280, height: 800 };
 }
 
+export function resolveHiddenBrowserViewportSize(input: {
+  readonly setting: PreviewViewportSetting;
+  readonly zoomFactor: number;
+  readonly content: {
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+  } | null;
+  readonly lastRect: { readonly width: number; readonly height: number } | null;
+  readonly windowSize: { readonly width: number; readonly height: number };
+}): { readonly width: number; readonly height: number } {
+  const { content, lastRect, setting, windowSize, zoomFactor } = input;
+  if (setting._tag !== "fill") {
+    // Chromium paints a guest only near the window, so a capture of a larger one loses its far edge.
+    return {
+      width: Math.min(windowSize.width, setting.width * zoomFactor),
+      height: Math.min(windowSize.height, setting.height * zoomFactor),
+    };
+  }
+  if (content)
+    return { width: content.width / content.scale, height: content.height / content.scale };
+  return { width: lastRect?.width ?? 1280, height: lastRect?.height ?? 800 };
+}
+
 export function resolveBrowserDeviceViewportArea(container: {
   readonly width: number;
   readonly height: number;

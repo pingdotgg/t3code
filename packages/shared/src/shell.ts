@@ -75,13 +75,13 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-) => string | undefined;
+) => string | undefined | Promise<string | undefined>;
 
-function resolveSpawnExecutableWithNode(
+async function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): string | undefined {
+): Promise<string | undefined> {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const candidates = resolveCommandCandidates(
@@ -90,20 +90,24 @@ function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
-  const isExecutable = (candidate: string) => {
+  const isExecutable = async (candidate: string) => {
     try {
-      if (!NodeFS.statSync(candidate).isFile()) return false;
+      if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
       if (platform === "win32") {
         return windowsPathExtensions.includes(path.extname(candidate).toUpperCase());
       }
-      return canExecuteFile(candidate);
+      await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+      return true;
     } catch {
       return false;
     }
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    for (const candidate of candidates) {
+      if (await isExecutable(candidate)) return candidate;
+    }
+    return undefined;
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
@@ -111,12 +115,12 @@ function resolveSpawnExecutableWithNode(
     if (normalizedPathEntry.length === 0) continue;
     const names =
       platform === "win32"
-        ? listPathDirectorySync(normalizedPathEntry, path.isAbsolute)
+        ? await listResolverPathDirectory(normalizedPathEntry, path.isAbsolute)
         : undefined;
     for (const candidate of candidates) {
       if (isAbsentFromListing(names, candidate)) continue;
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (await isExecutable(candidatePath)) return candidatePath;
     }
   }
   return undefined;
@@ -661,42 +665,42 @@ export const PathDirectoryListings = Context.Reference(
   { defaultValue: () => Effect.runSync(makePathDirectoryListings) },
 );
 
-const syncPathDirectoryListings = new Map<
+const resolverPathDirectoryListings = new Map<
   string,
   { readonly modified: number; readonly names: ReadonlySet<string> }
 >();
 
-// The synchronous resolver's counterpart of `PathDirectoryListings`, under the same rules.
-function listPathDirectorySync(
+// The spawn resolver's counterpart of `PathDirectoryListings`, under the same rules.
+async function listResolverPathDirectory(
   directory: string,
   isAbsolute: (path: string) => boolean,
-): ReadonlySet<string> | undefined {
+): Promise<ReadonlySet<string> | undefined> {
   let modified: number;
   try {
-    const stats = NodeFS.statSync(directory);
+    const stats = await NodeFS.promises.stat(directory);
     if (!stats.isDirectory()) return undefined;
     modified = stats.mtimeMs;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? NO_DIRECTORY_NAMES : undefined;
   }
-  const cached = syncPathDirectoryListings.get(directory);
+  const cached = resolverPathDirectoryListings.get(directory);
   if (cached?.modified === modified) return cached.names;
-  syncPathDirectoryListings.delete(directory);
+  resolverPathDirectoryListings.delete(directory);
   // This resolver runs outside Effect, so it has no Clock to read.
   // @effect-diagnostics-next-line globalDate:off
   const listedAtMs = Date.now();
   let names: ReadonlySet<string>;
   try {
-    names = new Set(NodeFS.readdirSync(directory).map((entry) => entry.toLowerCase()));
+    names = new Set((await NodeFS.promises.readdir(directory)).map((entry) => entry.toLowerCase()));
   } catch {
     return undefined;
   }
   if (isReusableListing(directory, modified, listedAtMs, isAbsolute)) {
-    if (syncPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
-      const oldest = syncPathDirectoryListings.keys().next().value;
-      if (oldest !== undefined) syncPathDirectoryListings.delete(oldest);
+    if (resolverPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
+      const oldest = resolverPathDirectoryListings.keys().next().value;
+      if (oldest !== undefined) resolverPathDirectoryListings.delete(oldest);
     }
-    syncPathDirectoryListings.set(directory, { modified, names });
+    resolverPathDirectoryListings.set(directory, { modified, names });
   }
   return names;
 }
@@ -1002,18 +1006,21 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (
-    cached !== undefined &&
-    cached.expiresAtNanos > nowNanos &&
-    (cached.resolvedPath === null ||
-      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
-  ) {
-    return cached.resolvedPath ?? "git";
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    const cachedPath = cached.resolvedPath;
+    if (
+      cachedPath === null ||
+      (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
+        undefined
+    ) {
+      return cachedPath ?? "git";
+    }
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
+  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
-    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+    located !== undefined &&
+    (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
       ? located
       : null;
   cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
@@ -1093,10 +1100,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       shell: false,
     };
   }
-  // The scan is synchronous and runs before every child process, so it shares
-  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
-  // and so do misses: a failed spawn is how providers report "not installed",
-  // and that has to clear the moment the binary appears.
+  // Cache successful PATH lookups. Explicit paths and misses stay uncached so
+  // newly installed executables are discoverable immediately.
   const explicitPath = command.includes("/") || command.includes("\\");
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
@@ -1114,7 +1119,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
+    const found = yield* Effect.promise(async () => resolveExecutable(command, platform, env));
     resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);
