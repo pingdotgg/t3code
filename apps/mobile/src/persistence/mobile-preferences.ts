@@ -173,6 +173,7 @@ export interface Preferences {
   readonly toolCallVisibility?: ToolCallVisibility;
   readonly workingShelfEnabled?: boolean;
   readonly threadListProjectFoldersEnabled?: boolean;
+  readonly threadListPullRequestBadgesEnabled?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
   readonly modelFavorites?: ReadonlyArray<{
@@ -266,6 +267,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     toolCallVisibility?: ToolCallVisibility;
     workingShelfEnabled?: boolean;
     threadListProjectFoldersEnabled?: boolean;
+    threadListPullRequestBadgesEnabled?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
     modelFavorites?: Preferences["modelFavorites"];
@@ -409,6 +411,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListProjectFoldersEnabled === "boolean") {
     preferences.threadListProjectFoldersEnabled = parsed.threadListProjectFoldersEnabled;
+  }
+  if (typeof parsed.threadListPullRequestBadgesEnabled === "boolean") {
+    preferences.threadListPullRequestBadgesEnabled = parsed.threadListPullRequestBadgesEnabled;
   }
   if (typeof parsed.useLastProjectForNewThreads === "boolean") {
     preferences.useLastProjectForNewThreads = parsed.useLastProjectForNewThreads;

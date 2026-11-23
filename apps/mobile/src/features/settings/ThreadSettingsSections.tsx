@@ -19,7 +19,11 @@ import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useEnvironments } from "../../state/environments";
-import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import {
+  mobilePreferencesAtom,
+  saveMobilePreferences,
+  threadListPullRequestBadgesEnabledAtom,
+} from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
@@ -216,6 +220,7 @@ export function WorkingSectionSettings() {
   const gt = useGT();
   const savePreferences = useAtomCommand(saveMobilePreferences);
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const showPullRequestBadges = useAtomValue(threadListPullRequestBadgesEnabledAtom);
   const loaded = AsyncResult.isSuccess(preferences);
   const projectFoldersEnabled =
     loaded && preferences.value.threadListProjectFoldersEnabled === true;
@@ -234,6 +239,15 @@ export function WorkingSectionSettings() {
           disabled={!loaded}
           onValueChange={(value) => {
             void savePreferences({ threadListProjectFoldersEnabled: value });
+          }}
+        />
+        <SettingsSwitchRow
+          icon="arrow.triangle.branch"
+          label={gt("Show pull request badges")}
+          value={showPullRequestBadges}
+          disabled={!loaded}
+          onValueChange={(value) => {
+            void savePreferences({ threadListPullRequestBadgesEnabled: value });
           }}
         />
         <SettingsSwitchRow

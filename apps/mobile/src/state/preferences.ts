@@ -123,3 +123,11 @@ const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRun
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const saveMobilePreferences = mobilePreferencesState.savePreferences;
+
+export const threadListPullRequestBadgesEnabledAtom = mobilePreferencesAtom.pipe(
+  Atom.map(
+    (preferences) =>
+      !AsyncResult.isSuccess(preferences) ||
+      preferences.value.threadListPullRequestBadgesEnabled !== false,
+  ),
+);
