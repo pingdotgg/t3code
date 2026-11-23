@@ -1095,7 +1095,9 @@ async function hasLaunchableInterpreter(candidate: string): Promise<boolean> {
     return true;
   }
   if (!header.startsWith("#!")) return true;
-  const interpreter = /^#![ \t]*([^ \t\r\n]+)/.exec(header)?.[1];
+  // macOS XNU's exec_shell_imgact only splits on space, tab, or newline (not CR), so a CRLF
+  // shebang like `#!/bin/sh\r\n` looks up `/bin/sh\r` (ENOENT) and must defer to native spawn.
+  const interpreter = header.match(/^#![ \t]*([^ \t\n]+)/)?.[1];
   if (interpreter === undefined || !interpreter.startsWith("/")) return false;
   try {
     if (!(await NodeFS.promises.stat(interpreter)).isFile()) return false;
@@ -1170,7 +1172,7 @@ const resolveMacosGit = Effect.fnUntraced(function* (
 
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
-  const pathValue = resolvePathEnvironmentVariable(env);
+  const pathValue = env.PATH ?? POSIX_DEFAULT_PATH;
   const nowNanos = yield* Clock.currentTimeNanos;
   // Read after the clock, so the lookup below starts in the directory the key names.
   const cwd = pathSearchCwd(pathValue, "darwin");

@@ -1628,6 +1628,39 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         expect(host.xcrunCalls).toBe(2);
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
+
+    it.effect("does not reuse an unset-PATH Xcode git cache entry for an explicit empty PATH", () =>
+      Effect.gen(function* () {
+        const files = new Set(["/usr/bin/git", XCODE_GIT]);
+        let xcrunCalls = 0;
+        const resolveExecutable = (
+          command: string,
+          _platform: NodeJS.Platform,
+          lookupEnv: NodeJS.ProcessEnv,
+        ) => {
+          if (command !== "git") return files.has(command) ? command : undefined;
+          return lookupEnv.PATH === "" ? undefined : "/usr/bin/git";
+        };
+        const locateXcodeGit = () => {
+          xcrunCalls += 1;
+          return XCODE_GIT;
+        };
+        const resolveWithEnv = (env: NodeJS.ProcessEnv) =>
+          resolveSpawnCommand("git", ["status"], { env }).pipe(
+            Effect.map((resolved) => resolved.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+            Effect.provideService(SpawnExecutableResolution, resolveExecutable),
+            Effect.provideService(XcodeGitLocation, locateXcodeGit),
+          );
+
+        expect(yield* resolveWithEnv({})).toBe(XCODE_GIT);
+        expect(yield* resolveWithEnv({})).toBe(XCODE_GIT);
+        expect(xcrunCalls).toBe(1);
+
+        expect(yield* resolveWithEnv({ PATH: "" })).toBe("git");
+        expect(xcrunCalls).toBe(1);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
   });
 
   describe("macOS bare commands", () => {
@@ -1717,6 +1750,21 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
             Effect.provideService(HostProcess.Platform, "darwin"),
           );
           expect(deferredOnStale).toBe("mytool");
+
+          // macOS treats CR as part of the interpreter path (not whitespace/EOL), so `#!/bin/sh\r\n`
+          // fails posix_spawn with ENOENT and native PATH lookup continues to validTool.
+          const crlfEntry = path.join(root, "crlf");
+          yield* fs.makeDirectory(crlfEntry);
+          const crlfTool = path.join(crlfEntry, "mytool");
+          yield* fs.writeFileString(crlfTool, "#!/bin/sh\r\nexit 0\n");
+          yield* fs.chmod(crlfTool, 0o755);
+          const deferredOnCrlf = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${crlfEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(deferredOnCrlf).toBe("mytool");
 
           // Symlink loop (ELOOP) stops the scan and defers to native spawn instead of skipping to validTool.
           const loopA = path.join(loopEntry, "loop-a");
