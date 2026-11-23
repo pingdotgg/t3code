@@ -1011,7 +1011,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
       if (!scrollLeftByWheel(viewport, event, delta)) return;
       event.preventDefault();
-      update();
     };
 
     const content = viewport.firstElementChild;
