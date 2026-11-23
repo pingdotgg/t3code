@@ -281,6 +281,69 @@ async fn a_retried_command_returns_its_receipt() {
     );
 }
 
+/// Audit 1.6 and 1.7, T3's receipts (`Orchestrator.ts` `replayCommandReceipt` and
+/// `commitRejectedCommand`, `ProjectionMaintenance.ts`): after the store reopens, a refused id
+/// is refused again though its precondition now holds, and an accepted archive replays as its
+/// receipt after an undo and more than 4,096 later writes. A new id runs normally.
+#[tokio::test(flavor = "current_thread")]
+async fn a_command_id_keeps_its_outcome_across_a_reopen() {
+    let db = TempDb::new("receipt-outcomes");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let refused = |engine: SqliteEngine, command: Value| async move {
+        match engine.dispatch(from_json(command).unwrap()).await {
+            Err(EngineError::Rejected(error)) => (engine, to_json(&error).to_string()),
+            Ok(_) => panic!("expected a refusal, the command was accepted"),
+            Err(_) => panic!("expected a refusal, the store failed"),
+        }
+    };
+    let stale = json!({"type": "thread.metadata.update", "commandId": "stale", "threadId": "t1",
+        "expectedBranch": "topic", "branch": "old-destination"});
+    let (engine, error) = refused(engine, stale.clone()).await;
+    assert!(error.contains("changed before"), "{error}");
+    let archive = json!({"type": "thread.archive", "commandId": "archive", "threadId": "t1"});
+    let archived = dispatch(&engine, archive.clone()).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.unarchive", "commandId": "undo", "threadId": "t1"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "move", "threadId": "t1",
+            "branch": "topic"}),
+    )
+    .await;
+    dispatch(&engine, create("other", "create-other")).await;
+    for i in 0..4_400 {
+        dispatch(
+            &engine,
+            json!({"type": "thread.metadata.update", "commandId": format!("rename-{i}"),
+                "threadId": "other", "title": format!("Title {i}")}),
+        )
+        .await;
+    }
+    drop(engine);
+
+    let (engine, _) = open(&db);
+    let (engine, error) = refused(engine, stale.clone()).await;
+    assert!(
+        error.contains("Command stale was previously rejected"),
+        "{error}"
+    );
+    assert_eq!(dispatch(&engine, archive).await, archived);
+    let thread = projection(&engine, "t1").await["thread"].clone();
+    assert!(thread["archivedAt"].is_null());
+    assert_eq!(thread["branch"], "topic");
+    let mut fresh = stale;
+    fresh["commandId"] = json!("stale-again");
+    dispatch(&engine, fresh).await;
+    assert_eq!(
+        projection(&engine, "t1").await["thread"]["branch"],
+        "old-destination"
+    );
+}
+
 async fn rejection(engine: &SqliteEngine, command: Value) -> String {
     match engine.dispatch(from_json(command).unwrap()).await {
         Err(EngineError::Rejected(e)) => to_json(&e)["detail"].as_str().unwrap_or("").to_owned(),
