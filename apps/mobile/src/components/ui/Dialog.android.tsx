@@ -53,13 +53,20 @@ function setPresented(next: PresentedDialog | null) {
 function submitRequest(dialog: DialogRequest) {
   const replaced = presented;
   setPresented({ ...dialog, id: ++nextPresentationId });
-  // A replaced alert closed without an answer, which its owner hears as a dismissal.
-  if (replaced?.kind === "alert") replaced.request.options?.onDismiss?.();
+  // A replaced dialog closed without an answer, which its owner hears as a dismissal.
+  if (replaced) closeUnanswered(replaced);
+}
+
+function closeUnanswered(dialog: DialogRequest) {
+  if (dialog.kind === "alert") dialog.request.options?.onDismiss?.();
+  else dialog.request.onCancel?.();
 }
 
 /** Closes the dialog only if it is still the one the action came from. */
 function dismiss(id: number) {
-  if (presented?.id === id) setPresented(null);
+  if (presented?.id !== id) return false;
+  setPresented(null);
+  return true;
 }
 
 function subscribe(listener: () => void) {
@@ -97,15 +104,12 @@ export function Host() {
   const presented = useSyncExternalStore(subscribe, getPresented, getPresented);
 
   const handleCancel = () => {
-    if (!presented) return;
-    dismiss(presented.id);
-    if (presented.kind === "alert") presented.request.options?.onDismiss?.();
-    else presented.request.onCancel?.();
+    if (!presented || !dismiss(presented.id)) return;
+    closeUnanswered(presented);
   };
 
   const handleConfirm = (nativeInputValue?: string) => {
-    if (!presented) return;
-    dismiss(presented.id);
+    if (!presented || !dismiss(presented.id)) return;
     if (presented.kind === "confirm") {
       presented.request.onConfirm();
     } else if (presented.kind === "text-input") {

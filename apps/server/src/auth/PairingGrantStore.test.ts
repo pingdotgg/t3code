@@ -1,4 +1,4 @@
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthAdministrativeClientScopes, AuthStandardClientScopes } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -63,7 +63,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PairingGrantStor
       );
       yield* secrets.create("shared-desktop-bootstrap", secret);
       expect((yield* store.consume(credential)).method).toBe("desktop-bootstrap");
-      expect((yield* store.consume(credential)).scopes).toEqual(AuthStandardClientScopes);
+      expect((yield* store.consume(credential)).scopes).toEqual(AuthAdministrativeClientScopes);
     }).pipe(Effect.provide(layerPairingGrantStore())),
   );
   it.effect("accepts lowercase one-time tokens exactly once", () =>

@@ -2,6 +2,37 @@ import { EnvironmentId, ThreadId, type DiscoveredLocalServer } from "@t3tools/co
 import { expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
+const shell = vi.hoisted(() => ({ openExternal: vi.fn(async (_url: string) => undefined) }));
+
+vi.mock("~/env", () => ({ isElectron: true }));
+vi.mock(import("../../state/portForwards"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  canForwardPorts: () => true,
+  useForwardLocality: () => "remote" as const,
+  usePortForwards: () => [],
+  forwardPort: (async (environmentId: string, remotePort: number) => ({
+    environmentId,
+    remotePort,
+    localPort: 45000,
+  })) as never,
+}));
+vi.mock(import("../../state/session"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironmentScope: () => true,
+}));
+vi.mock(import("../../state/environments"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useEnvironment: (() => ({
+    connection: { phase: "connected" },
+    entry: { target: { _tag: "BearerConnectionTarget", connectionId: "saved:remote" } },
+    serverConfig: null,
+  })) as never,
+}));
+vi.mock(import("../../localApi"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readLocalApi: (() => ({ shell })) as never,
+}));
+
 vi.mock(import("../../portDiscoveryState"), async (importOriginal) => ({
   ...(await importOriginal()),
   useThreadDiscoveredPorts: () =>
@@ -48,4 +79,13 @@ it("pages servers four at a time, collapses back, and resets on thread switch", 
   await expectRows(4);
   await screen.rerender(panel("a"));
   await expectRows(4);
+});
+
+it("opens a remote server in the system browser through the forward a modified click starts", async () => {
+  shell.openExternal.mockClear();
+  await using _screen = await render(panel("a"));
+  await page.getByText("localhost:3000", { exact: true }).click({ modifiers: ["ControlOrMeta"] });
+  await vi.waitFor(() =>
+    expect(shell.openExternal).toHaveBeenCalledWith("http://localhost:45000/"),
+  );
 });

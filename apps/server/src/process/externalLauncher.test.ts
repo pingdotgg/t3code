@@ -65,6 +65,7 @@ const layerTest = (input: {
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
+  readonly existingPaths?: ReadonlyArray<string>;
 }) => {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -92,6 +93,17 @@ const layerTest = (input: {
           NodeServices.layer,
           layerSpawner,
           input.path ? Layer.succeed(Path.Path, input.path) : Layer.empty,
+          // Reveal fixtures name paths that do not exist on the test host.
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+              ...fileSystem,
+              exists: (path: string) =>
+                input.existingPaths?.includes(path)
+                  ? Effect.succeed(true)
+                  : fileSystem.exists(path),
+            })),
+          ).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),
@@ -146,6 +158,42 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
         ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
       ],
     );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect.skipIf(windowsHost)("reports a Finder reveal that open -R rejects", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    const open = path.join(binDir, "open");
+    yield* fileSystem.writeFileString(open, "#!/bin/sh\n");
+    yield* fileSystem.chmod(open, 0o755);
+    const target = path.join(binDir, "linked-file.txt");
+    yield* fileSystem.writeFileString(target, "");
+
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher
+        .launchEditor({ editor: "file-manager", cwd: target, reveal: true })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "darwin",
+          env: { PATH: binDir },
+          spawnResult: (command) => {
+            assert.deepEqual(command.args, ["-R", target]);
+            return { exitCode: 1 };
+          },
+        }),
+      ),
+    );
+
+    assert.ok(Exit.isFailure(exit));
+    const error = Cause.squash(exit.cause);
+    assert.instanceOf(error, ExternalLauncher.ExternalLauncherEditorSpawnError);
+    assert.include(String(error), target);
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
@@ -571,6 +619,7 @@ for (const [replacement, verb, handler, target, expected] of [
             layerTest({
               platform: "win32",
               env: { PATH: "C:\\Windows", PATHEXT: ".EXE" },
+              existingPaths: [target],
               onSpawn: (command) => {
                 spawned = command;
               },
@@ -605,16 +654,13 @@ it.effect.skipIf(windowsHost)(
         yield* fileSystem.chmod(filePath, 0o755);
       }
 
+      const target = "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4";
       let spawned: ChildProcess.StandardCommand | undefined;
       const result = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         const kind = yield* launcher.resolveFileManagerRevealKind();
         const editors = yield* launcher.resolveAvailableEditors();
-        yield* launcher.launchEditor({
-          editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4",
-          reveal: true,
-        });
+        yield* launcher.launchEditor({ editor: "file-manager", cwd: target, reveal: true });
         return { kind, editors };
       }).pipe(
         Effect.provide(
@@ -625,6 +671,7 @@ it.effect.skipIf(windowsHost)(
               WSL_DISTRO_NAME: "Ubuntu-24.04",
               WSL_INTEROP: "/run/WSL/1_interop",
             },
+            existingPaths: [target],
             onSpawn: (command) => {
               spawned = command;
             },
@@ -687,6 +734,7 @@ it.effect.each([
         layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          existingPaths: ["C:/Users/t3/my project/a,b.ts"],
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.command.endsWith("reg.exe") ? registry : undefined),
         }),
@@ -715,6 +763,38 @@ it.effect.each([
         );
       }
     }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Explorer answers /select of a missing path by opening its default folder, not the parent.
+it.effect("does not ask Explorer to select a file that does not exist", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+    const missing = path.join(binDir, "CLAUDE.md");
+    const verbatim: Array<readonly [string, ReadonlyArray<string>]> = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher
+        .launchEditor({ editor: "file-manager", cwd: missing, reveal: true })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provideService(WindowsVerbatimSpawn, (command, args) =>
+        Effect.sync(() => verbatim.push([command, args])),
+      ),
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          spawnResult: (command) =>
+            command.command.endsWith("reg.exe") ? { stdout: STOCK_FOLDER_VERB } : undefined,
+        }),
+      ),
+    );
+
+    assert.deepEqual(verbatim, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -747,6 +827,7 @@ for (const wsl of [false, true]) {
                   ? { WSL_DISTRO_NAME: "Ubuntu-24.04", WSL_INTEROP: "/run/WSL/1_interop" }
                   : {}),
               },
+              existingPaths: [target],
               onSpawn: (command) => spawnedCommands.push(command),
               spawnResult: (command) =>
                 command.command === "xdg-mime"

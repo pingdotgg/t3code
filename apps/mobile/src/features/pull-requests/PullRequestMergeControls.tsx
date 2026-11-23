@@ -1,6 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
-import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
@@ -14,7 +14,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { SplitButton } from "../../components/ui/SplitButton";
 import { useEnvironmentServerConfig } from "../../state/entities";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -50,7 +50,7 @@ export function PullRequestMergeControls(props: {
   const stateAction = usePullRequestAction(props.params, pr);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const serverSettings = useEnvironmentServerConfig(target.environmentId)?.settings;
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const runAction = useAtomCommand(composerPullRequests.runAction, { reportFailure: false });
   const refreshDetail = useAtomRefresh(composerPullRequests.detail(target));
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(target));
@@ -336,7 +336,7 @@ export function PullRequestMergeControls(props: {
           const selected = methods.find((method) => method === id);
           if (selected) {
             setSelectedMethod(selected);
-            savePreferences({ pullRequestMergeMethod: selected });
+            void savePreferences({ pullRequestMergeMethod: selected });
           } else if (id === autoAction && canAutoMerge) confirm(autoAction);
         }}
       />

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { buildNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "../review/reviewModel";
-import { filterPullRequestTestFiles } from "./pullRequestFileFilters";
+import { filterPullRequestTestFiles, shownPatchIndices } from "./pullRequestFileFilters";
 
 function patch(path: string) {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`;
@@ -69,5 +69,14 @@ describe("mobile PR test file filter", () => {
     expect(filterPullRequestTestFiles(raw, true)).toBe(raw);
     const empty = { kind: "empty" as const };
     expect(filterPullRequestTestFiles(empty, true)).toBe(empty);
+  });
+
+  it("loads patches for the files the review will show, skipping hidden tests", () => {
+    const files = ["a.test.ts", "b.test.ts", "c.test.ts", "d.ts", "e.test.ts", "f.ts", "g.ts"].map(
+      (path) => ({ path }),
+    );
+    expect(shownPatchIndices(files, true, null)).toEqual([3, 5, 6]);
+    expect(shownPatchIndices(files, true, 5)).toEqual([5, 6]);
+    expect(shownPatchIndices(files, false, null)).toEqual([0, 1, 2]);
   });
 });
