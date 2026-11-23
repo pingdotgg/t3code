@@ -1224,6 +1224,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           turn: ActivePiTurn,
           item: PiStreamItemState,
           streaming: boolean,
+          finalAnswer = false,
         ) {
           item.published = true;
           const emittedAt = yield* DateTime.now;
@@ -1250,6 +1251,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 title: null,
                 completedAt: streaming ? null : emittedAt,
                 type: "assistant_message",
+                ...(finalAnswer ? { phase: "final_answer" as const } : {}),
                 messageId,
                 text: item.text,
                 streaming,
@@ -1335,21 +1337,34 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         return item;
       });
 
-      const completeStreamItem = (turn: ActivePiTurn, item: PiStreamItemState, text?: string) =>
+      const publishStreamItem = (
+        turn: ActivePiTurn,
+        item: PiStreamItemState,
+        streaming: boolean,
+        finalAnswer = false,
+      ) =>
+        // A block that was shown and then started again empty still replaces what it showed.
+        item.text.length === 0 && !item.published
+          ? Effect.void
+          : emitStreamItem(turn, item, streaming, finalAnswer);
+
+      const completeStreamItem = (
+        turn: ActivePiTurn,
+        item: PiStreamItemState,
+        text?: string,
+        finalAnswer = false,
+      ) =>
         Effect.suspend(() => {
           if (item.completed) return Effect.void;
           item.completed = true;
           if (text !== undefined && text.length > 0) item.text = text;
-          // A block that was shown and then started again empty still replaces what it showed.
-          return item.text.length === 0 && !item.published
-            ? Effect.void
-            : emitStreamItem(turn, item, false);
+          return publishStreamItem(turn, item, false, finalAnswer);
         });
 
-      const completeOpenStreamItems = (turn: ActivePiTurn) =>
+      const completeOpenStreamItems = (turn: ActivePiTurn, finalAnswer = false) =>
         Effect.forEach(
           Array.from(turn.streamItems.values()).filter((item) => !item.completed),
-          (item) => completeStreamItem(turn, item),
+          (item) => completeStreamItem(turn, item, undefined, finalAnswer),
           { discard: true },
         );
 
@@ -2367,12 +2382,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               yield* scheduleStreamFlush(turn, item);
               return;
             }
-            if (deltaType === "text_end" || deltaType === "thinking_end") {
-              const item = yield* streamItemFor(
-                turn,
-                deltaType === "text_end" ? "assistant_message" : "reasoning",
-                contentIndex,
-              );
+            if (deltaType === "text_end") {
+              // Whether this text ended Pi's reply is known at message_end, so it completes there.
+              const item = yield* streamItemFor(turn, "assistant_message", contentIndex);
+              if (item.completed) return;
+              const content = recordString(delta, "content");
+              if (content !== undefined && content.length > 0) item.text = content;
+              yield* publishStreamItem(turn, item, true);
+              return;
+            }
+            if (deltaType === "thinking_end") {
+              const item = yield* streamItemFor(turn, "reasoning", contentIndex);
               yield* completeStreamItem(
                 turn,
                 item,
@@ -2386,7 +2406,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null) return;
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
-            yield* completeOpenStreamItems(turn);
+            // A reply Pi ended by itself stays an answer when a steer carries the run on.
+            yield* completeOpenStreamItems(turn, recordString(message, "stopReason") === "stop");
             const reportedProvider = recordString(message, "provider");
             const reportedModelId = recordString(message, "model");
             if (reportedProvider && reportedModelId) {
