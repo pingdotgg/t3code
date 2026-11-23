@@ -6,6 +6,7 @@
 import {
   CommandId,
   IssueAutomationError,
+  type IssueAutomationAction,
   type IssueAutomationCatalog,
   type IssueAutomationCatalogInput,
   type IssueAutomationOverview,
@@ -23,6 +24,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -41,6 +43,16 @@ import {
   ISSUE_AUTOMATION_STALE,
 } from "./issueAutomation.ts";
 
+/** A change to one container's rule; it creates the rule when there is none. */
+export interface IssueAutomationEdit {
+  readonly tracker: IssueTrackerKind;
+  readonly containerId: string;
+  /** Status name or id to action; null clears it. Statuses it does not name keep their action. */
+  readonly statuses?: Readonly<Record<string, IssueAutomationAction | null>> | undefined;
+  readonly enabled?: boolean | undefined;
+  readonly remove?: boolean | undefined;
+}
+
 export class IssueThreadAutomationService extends Context.Service<
   IssueThreadAutomationService,
   {
@@ -51,6 +63,14 @@ export class IssueThreadAutomationService extends Context.Service<
     readonly save: (
       input: IssueAutomationSaveInput,
     ) => Effect.Effect<IssueAutomationOverview, IssueAutomationError>;
+    /** Applies the change to the rule as stored when it runs, so overlapping edits all land. */
+    readonly edit: (input: IssueAutomationEdit) => Effect.Effect<
+      {
+        readonly overview: IssueAutomationOverview;
+        readonly catalog: Result.Result<IssueAutomationCatalog, IssueAutomationError>;
+      },
+      IssueAutomationError
+    >;
     /** Reads every linked issue's status once and organizes the threads whose issues moved. */
     readonly sweep: Effect.Effect<void, IssueAutomationError>;
     /** Rises each time a sweep sees the issue's status change; 0 until it does. */
@@ -78,6 +98,35 @@ const observationKey = (rule: IssueAutomationRule, link: ThreadIssueLink) =>
   `${rule.id}\0${link.key.toUpperCase()}`;
 const refreshKey = (tracker: string, key: string) => `${tracker}\0${key.toUpperCase()}`;
 const sameWorkspace = (left: string, right: string) => left.toLowerCase() === right.toLowerCase();
+const sameMappings = (
+  left: IssueAutomationRule["mappings"],
+  right: IssueAutomationRule["mappings"],
+) =>
+  Object.keys(left).length === Object.keys(right).length &&
+  Object.entries(left).every(([id, action]) => right[id] === action);
+
+/** Applies statuses named by name or id; a mapped id the tracker no longer lists can be cleared. */
+const applyStatuses = Effect.fn("IssueThreadAutomationService.applyStatuses")(function* (
+  current: IssueAutomationRule["mappings"],
+  requested: Readonly<Record<string, IssueAutomationAction | null>>,
+  states: IssueAutomationCatalog["states"],
+) {
+  const next = new Map(Object.entries(current));
+  for (const [key, action] of Object.entries(requested)) {
+    const id =
+      next.has(key) || states.some((state) => state.id === key)
+        ? key
+        : states.find((state) => state.name.toLowerCase() === key.toLowerCase())?.id;
+    if (id === undefined)
+      return yield* new IssueAutomationError({
+        operation: "save",
+        detail: `No status is named ${key}. Statuses: ${states.map((state) => state.name).join(", ")}.`,
+      });
+    if (action === null) next.delete(id);
+    else next.set(id, action);
+  }
+  return Object.fromEntries(next);
+});
 
 const make = Effect.gen(function* () {
   const registry = yield* IssueTrackerRegistry.IssueTrackerRegistry;
@@ -211,6 +260,83 @@ const make = Effect.gen(function* () {
           return yield* overview;
         }),
       );
+    },
+    Effect.mapError(wrap("save")),
+  );
+
+  const edit = Effect.fn("IssueThreadAutomationService.edit")(
+    function* (input: IssueAutomationEdit) {
+      const { tracker, containerId } = input;
+      const read = yield* catalog({ tracker, containerId }).pipe(Effect.result);
+      yield* saveLock.withPermit(
+        Effect.gen(function* () {
+          const stored = (yield* settings.getSettings).issueThreadAutomationRules;
+          const existing = stored.find(
+            (rule) => rule.tracker === tracker && rule.containerId === containerId,
+          );
+          if (input.remove === true) {
+            if (existing === undefined) return;
+            return yield* settings.updateSettings({
+              issueThreadAutomationRules: stored.filter((rule) => rule !== existing),
+            });
+          }
+          const reached =
+            read._tag === "Success" &&
+            (existing === undefined || sameWorkspace(read.success.workspace, existing.workspace))
+              ? read.success
+              : undefined;
+          const unreachable =
+            read._tag === "Failure"
+              ? read.failure
+              : new IssueAutomationError({
+                  operation: "save",
+                  detail: "The connected account is in another workspace.",
+                });
+          const base: IssueAutomationRule | undefined =
+            existing ??
+            (reached === undefined
+              ? undefined
+              : {
+                  id: yield* random.uuidV4().pipe(Effect.orDie),
+                  enabled: true,
+                  tracker,
+                  workspace: reached.workspace,
+                  containerId,
+                  containerName:
+                    reached.containers.find((container) => container.id === containerId)?.name ??
+                    containerId,
+                  mappings: {},
+                });
+          if (base === undefined || (reached === undefined && input.statuses !== undefined))
+            return yield* unreachable;
+          const rule = {
+            ...base,
+            enabled: input.enabled ?? base.enabled,
+            mappings: yield* applyStatuses(
+              base.mappings,
+              input.statuses ?? {},
+              reached?.states ?? [],
+            ),
+          };
+          // Every save starts a new baseline, so an unchanged rule is not saved again.
+          if (
+            base === existing &&
+            rule.enabled === existing.enabled &&
+            sameMappings(rule.mappings, existing.mappings)
+          )
+            return;
+          // Like save, a rule the connection cannot reach can only be switched off.
+          if (reached === undefined && rule.enabled) return yield* unreachable;
+          const saved = { ...rule, generation: yield* newCommandId };
+          yield* settings.updateSettings({
+            issueThreadAutomationRules:
+              existing === undefined
+                ? [...stored, saved]
+                : stored.map((candidate) => (candidate === existing ? saved : candidate)),
+          });
+        }),
+      );
+      return { overview: yield* overview, catalog: read };
     },
     Effect.mapError(wrap("save")),
   );
@@ -426,6 +552,7 @@ const make = Effect.gen(function* () {
     overview,
     catalog,
     save,
+    edit,
     sweep,
     subscribeStatusRefreshes: ({ tracker, key }) =>
       SubscriptionRef.changes(refreshes).pipe(

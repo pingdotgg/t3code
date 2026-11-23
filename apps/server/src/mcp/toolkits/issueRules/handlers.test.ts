@@ -13,6 +13,7 @@ import {
   type StandaloneIssueTrackerApi,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
@@ -49,7 +50,10 @@ function setup(
     readonly runtimeMode?: RuntimeMode;
   } = {},
 ) {
-  const tracker = { connected: true };
+  const tracker: { connected: boolean; beforeStates: Effect.Effect<void> } = {
+    connected: true,
+    beforeStates: Effect.void,
+  };
   const linear: StandaloneIssueTrackerApi = {
     kind: LINEAR,
     capabilities: {
@@ -97,11 +101,13 @@ function setup(
               }),
             ),
       listStates: () =>
-        Effect.succeed([
-          { id: "state-progress", name: "In Progress" },
-          { id: "state-review", name: "In Review" },
-          { id: "state-done", name: "Done" },
-        ]),
+        tracker.beforeStates.pipe(
+          Effect.as([
+            { id: "state-progress", name: "In Progress" },
+            { id: "state-review", name: "In Review" },
+            { id: "state-done", name: "Done" },
+          ]),
+        ),
       readStatuses: () => Effect.die("unused"),
     },
   };
@@ -260,6 +266,42 @@ describe("issue rule toolkit handlers", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.effect("keeps both of two overlapping edits to one rule", () => {
+    const { tracker, layer, tools, storedRules } = setup({ rules: [engineering] });
+    return Effect.gen(function* () {
+      const call = yield* tools;
+      // Tracker reads finish in pairs, so the two edits keep pace until they write.
+      const pairs: Array<Latch.Latch> = [];
+      let reads = 0;
+      tracker.beforeStates = Effect.gen(function* () {
+        const pair = Math.floor(reads++ / 2);
+        const latch = (pairs[pair] ??= yield* Latch.make());
+        if (reads % 2 === 0) yield* latch.open;
+        yield* latch.await;
+      });
+      yield* Effect.all(
+        [
+          call("set_issue_status_rule", {
+            tracker: LINEAR,
+            containerId: "team-eng",
+            statuses: { "In Review": "snooze" },
+          }),
+          call("set_issue_status_rule", {
+            tracker: LINEAR,
+            containerId: "team-eng",
+            statuses: { "In Progress": "wake" },
+          }),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect((yield* storedRules)[0]?.mappings).toEqual({
+        "state-done": "settle",
+        "state-review": "snooze",
+        "state-progress": "wake",
+      });
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "switches off a rule the tracker cannot reach, but does not change its statuses",
