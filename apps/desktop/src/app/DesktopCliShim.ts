@@ -125,11 +125,12 @@ export const renderCliShim = (input: {
     "stop=",
     `trap 'if [ -n "$cli" ]; then kill -TERM "$cli" 2>/dev/null; else stop=TERM; fi' TERM`,
     `trap 'if [ -n "$cli" ]; then kill -HUP "$cli" 2>/dev/null; else stop=HUP; fi' HUP`,
+    // A no-op, not '': the CLI would inherit an ignored SIGINT.
+    "trap ':' INT",
     `${run("$mount")} <&9 9<&- &`,
     "cli=$!",
     "exec 9<&-",
     '[ -z "$stop" ] || kill -"$stop" "$cli" 2>/dev/null',
-    "trap '' INT",
     "status=0",
     'wait "$cli" || status=$?',
     // A trapped signal interrupts wait; wait again for the CLI's own exit status.
