@@ -617,6 +617,32 @@ describe("PreviewManager", () => {
     webviewSend.mockClear();
   });
 
+  effectIt.effect("preserves recording artifacts saved in the same millisecond", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const stored = new Map<string, Uint8Array>();
+        const save = (path: string, bytes: Uint8Array) => {
+          stored.set(path, Uint8Array.from(bytes));
+          return undefined;
+        };
+        writeFile.mockImplementationOnce(save).mockImplementationOnce(save);
+        const firstBytes = new Uint8Array([1, 2, 3]);
+        const secondBytes = new Uint8Array([4, 5, 6]);
+        const [first, second] = yield* Effect.all(
+          [
+            manager.saveRecording("tab_first", "video/webm", firstBytes),
+            manager.saveRecording("tab_second", "video/webm", secondBytes),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(first.path).not.toBe(second.path);
+        expect(stored.get(first.path)).toEqual(firstBytes);
+        expect(stored.get(second.path)).toEqual(secondBytes);
+      }),
+    ),
+  );
+
   effectIt.effect.each([false, true])(
     "preserves simultaneous same-name downloads with an existing destination: %s",
     (existing) =>
@@ -658,6 +684,7 @@ describe("PreviewManager", () => {
                 attach: () => {},
                 detach: () => {},
                 setShown: () => {},
+                setCaptureDrawn: () => {},
                 loadFailed: () => {},
                 humanStartedDownload: () => true,
                 agentLedPage: () => false,
@@ -1653,6 +1680,30 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "does not open picture-in-picture against a destroyed webview's WebContents",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const guest = makeAttachingGuest(49);
+          fromId.mockImplementation((id) =>
+            id === 49 && !guest.wc.isDestroyed() ? guest.wc : null,
+          );
+          yield* manager.prepareWebview(guest.wc);
+          yield* manager.createTab("tab_destroyed_guest");
+          yield* manager.registerWebview("tab_destroyed_guest", 49);
+
+          guest.destroy();
+          yield* Effect.yieldNow;
+
+          const pictureInPicture = yield* Effect.flip(
+            manager.openPictureInPicture("tab_destroyed_guest"),
+          ).pipe(Effect.orDie);
+          expect(pictureInPicture._tag).toBe("PreviewWebviewNotInitializedError");
+        }),
+      ),
+  );
+
   effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2388,10 +2439,18 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const host = yield* DesktopBrowserHost.DesktopBrowserHost;
         const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const windowThrottling = vi.fn<(enabled: boolean) => void>();
+        const mainWebContents = Object.assign(makeTestHostWebContents(), {
+          setBackgroundThrottling: windowThrottling,
+        });
         const contents = Object.assign(
-          makeTestPreviewWebContents(async () => {
-            throw new Error("unused");
-          }, 42),
+          makeTestPreviewWebContents(
+            async () => {
+              throw new Error("unused");
+            },
+            42,
+            mainWebContents,
+          ),
           {
             isDevToolsOpened: () => false,
             getUserAgent: () => "Electron",
@@ -2404,6 +2463,11 @@ describe("PreviewManager", () => {
         ) as unknown as typeof contents.debugger.sendCommand;
         fromId.mockReturnValue(contents);
         const manager = yield* PreviewManager.PreviewManager;
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: mainWebContents,
+        } as never);
         const capturing = yield* Queue.unbounded<boolean>();
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Queue.offer(capturing, state.capturing).pipe(Effect.asVoid),
@@ -2436,8 +2500,14 @@ describe("PreviewManager", () => {
           }),
         );
         expect(yield* Queue.take(capturing)).toBe(true);
+        // A locked or covered window paints a guest it had hidden only while unthrottled.
+        expect(windowThrottling.mock.calls).toEqual([[false]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+        yield* manager.setCaptureDrawn("tab_1", true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+        expect(windowThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }).pipe(Effect.provide(managerLayer())),
   );
 
@@ -2752,6 +2822,116 @@ describe("PreviewManager", () => {
         expect(grants).toEqual([{ video: { routingId: 42 } }]);
 
         yield* manager.stopRecording("tab_race_b");
+      }),
+    ),
+  );
+
+  effectIt.effect(
+    "publishes human ownership only on transitions while retaining every recording press",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          let humanInput: ((input: unknown) => void) | undefined;
+          const contents = makeTestPreviewWebContents(async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          }));
+          contents.ipc.on = (channel, callback) => {
+            if (channel === "preview:human-input")
+              humanInput = (input) => callback({} as Electron.IpcMainEvent, input);
+            return contents.ipc;
+          };
+          fromId.mockReturnValue(contents);
+          yield* manager.createTab("tab_human");
+          yield* manager.registerWebview("tab_human", 42);
+          yield* manager.startRecording("tab_human", {
+            showKeyPresses: true,
+            showMousePresses: true,
+          });
+          const controllers: string[] = [];
+          const feedback = yield* Queue.unbounded<void>();
+          webviewSend.mockImplementation((channel) => {
+            if (channel === "preview:recording-controller") Queue.offerUnsafe(feedback, undefined);
+          });
+          yield* manager.subscribeStateChanges((_tabId, state) =>
+            Effect.sync(() => {
+              controllers.push(state.controller);
+            }),
+          );
+          for (const press of [
+            { kind: "pointer", x: 10, y: 20, button: 0 },
+            { kind: "pointer", x: 30, y: 40, button: 0 },
+            { kind: "key", key: "a", code: "KeyA" },
+          ]) {
+            humanInput?.(press);
+            yield* Queue.take(feedback);
+          }
+          expect(controllers).toEqual(["human"]);
+          expect(
+            webviewSend.mock.calls.filter(
+              ([channel]) => channel === "preview:recording-controller",
+            ),
+          ).toEqual([
+            ["preview:recording-controller", "human", { x: 10, y: 20 }],
+            ["preview:recording-controller", "human", { x: 30, y: 40 }],
+            ["preview:recording-controller", "human", undefined],
+          ]);
+          yield* TestClock.adjust(750);
+          expect(controllers).toEqual(["human", "none"]);
+        }),
+      ),
+  );
+
+  effectIt.effect("keeps human ownership until the last input's idle deadline", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let humanInput: ((input: unknown) => void) | undefined;
+        const contents = makeTestPreviewWebContents(async () => ({
+          toJPEG: () => Buffer.from("frame"),
+          getSize: () => ({ width: 800, height: 600 }),
+        }));
+        contents.ipc.on = (channel, callback) => {
+          if (channel === "preview:human-input")
+            humanInput = (input) => callback({} as Electron.IpcMainEvent, input);
+          return contents.ipc;
+        };
+        fromId.mockReturnValue(contents);
+        yield* manager.createTab("tab_idle");
+        yield* manager.registerWebview("tab_idle", 42);
+        const controllers: string[] = [];
+        yield* manager.subscribeStateChanges((_tabId, state) =>
+          Effect.sync(() => {
+            controllers.push(state.controller);
+          }),
+        );
+        const press = () => humanInput?.({ kind: "key", key: "a", code: "KeyA" });
+        press();
+        yield* TestClock.adjust(500);
+        press();
+        yield* TestClock.adjust(749);
+        expect(controllers).toEqual(["human"]);
+        yield* TestClock.adjust(1);
+        expect(controllers).toEqual(["human", "none"]);
+
+        press();
+        yield* TestClock.adjust(500);
+        const staleInput = humanInput;
+        const replacement = makeTestPreviewWebContents(
+          async () => ({
+            toJPEG: () => Buffer.from("frame"),
+            getSize: () => ({ width: 800, height: 600 }),
+          }),
+          43,
+        );
+        replacement.ipc.on = contents.ipc.on;
+        contents.isDestroyed = () => true;
+        fromId.mockImplementation((id) => (id === 43 ? replacement : null));
+        yield* manager.registerWebview("tab_idle", 43);
+        expect(controllers.at(-1)).toBe("none");
+        const count = controllers.length;
+        staleInput?.({ kind: "key", key: "b", code: "KeyB" });
+        yield* TestClock.adjust(750);
+        expect(controllers).toHaveLength(count);
       }),
     ),
   );

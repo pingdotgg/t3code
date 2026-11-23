@@ -67,7 +67,7 @@ function parseSshConfigLine(line: string) {
 }
 
 function expandHomePath(input: string, homeDir: string): string {
-  return input.replace(/^~(?=$|\/|\\)/u, homeDir);
+  return input.replace(/^~(?=$|\/|\\)/u, () => homeDir);
 }
 
 const resolveSshConfigIncludePattern = Effect.fnUntraced(function* (
@@ -90,11 +90,19 @@ function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function globToRegExp(pattern: string): RegExp {
-  return new RegExp(
-    `^${escapeRegex(pattern).replace(/\\\*/gu, ".*").replace(/\\\?/gu, ".")}$`,
+const utf8 = new TextEncoder();
+
+function globBytes(value: string): string {
+  return Array.from(utf8.encode(value), (byte) => String.fromCharCode(byte)).join("");
+}
+
+// OpenSSH matches Include globs and Host patterns on UTF-8 bytes, so `?` consumes one byte.
+function globMatcher(pattern: string): (value: string) => boolean {
+  const regex = new RegExp(
+    `^${escapeRegex(globBytes(pattern)).replace(/\\\*/gu, "[^]*").replace(/\\\?/gu, ".")}$`,
     "u",
   );
+  return (value) => regex.test(globBytes(value));
 }
 
 function hasGlobWildcard(value: string): boolean {
@@ -119,7 +127,7 @@ const expandGlob = Effect.fnUntraced(function* (
   const directoryIsGlob = hasGlobWildcard(directoryPattern);
   const directories = directoryIsGlob ? yield* expandGlob(directoryPattern) : [directoryPattern];
 
-  const matcher = globToRegExp(basePattern);
+  const matches = globMatcher(basePattern);
   const matchedPaths: string[] = [];
   for (const directory of directories) {
     if (!(yield* fs.exists(directory))) continue;
@@ -130,7 +138,7 @@ const expandGlob = Effect.fnUntraced(function* (
       : yield* fs.readDirectory(directory);
     for (const entry of entries) {
       if (entry.startsWith(".") && !basePattern.startsWith(".")) continue;
-      if (!matcher.test(entry)) {
+      if (!matches(entry)) {
         continue;
       }
       const entryPath = path.join(directory, entry);
@@ -139,7 +147,12 @@ const expandGlob = Effect.fnUntraced(function* (
       }
     }
   }
-  return matchedPaths.toSorted();
+  // OpenSSH's glob sorts matches by UTF-8 bytes, not UTF-16 code units.
+  return matchedPaths.toSorted((left, right) => {
+    const leftBytes = globBytes(left);
+    const rightBytes = globBytes(right);
+    return leftBytes < rightBytes ? -1 : leftBytes > rightBytes ? 1 : 0;
+  });
 });
 
 type HostCondition = ReadonlyArray<string> | null;
@@ -158,7 +171,7 @@ function matchesHostPatterns(alias: string, patterns: ReadonlyArray<string>): bo
     const hostPattern = negated ? pattern.slice(1) : pattern;
     const matches =
       hostPattern === "*" ||
-      (hasSshPattern(hostPattern) ? globToRegExp(hostPattern).test(alias) : hostPattern === alias);
+      (hasSshPattern(hostPattern) ? globMatcher(hostPattern)(alias) : hostPattern === alias);
     if (!matches) continue;
     if (negated) return false;
     matched = true;
