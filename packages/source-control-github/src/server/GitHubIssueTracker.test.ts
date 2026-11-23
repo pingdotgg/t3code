@@ -226,6 +226,31 @@ const decodeBody = Schema.decodeUnknownSync(
 );
 
 describe("GitHubIssueTracker", () => {
+  it.effect("reads only the fields needed to link a GitHub issue and rejects missing issues", () =>
+    Effect.gen(function* () {
+      const requests: unknown[] = [];
+      const target = { cwd: "/w", host: "github.com", scope: "acme/web", key: "42" };
+      const url = "https://github.com/acme/web/issues/42";
+      const found = yield* tracker((input) => requests.push(input), {
+        issue: { number: 42, title: "Fixture issue", url },
+      });
+      expect(yield* found.getIssueLink(target)).toEqual({
+        displayKey: "#42",
+        title: "Fixture issue",
+        url,
+      });
+
+      const missing = yield* tracker((input) => requests.push(input), { issue: null });
+      expect(yield* Effect.flip(missing.getIssueLink(target))).toMatchObject({
+        reason: "not-found",
+      });
+      expect(requests).toEqual([
+        { owner: "acme", name: "web", number: 42 },
+        { owner: "acme", name: "web", number: 42 },
+      ]);
+    }),
+  );
+
   it.effect("writes an issue lifecycle without mutating pull requests or foreign comments", () =>
     Effect.gen(function* () {
       const writes: unknown[] = [];
@@ -631,6 +656,15 @@ Redact secrets before uploading.`);
         ["referenced", "acme/web#50"],
         ["closed", null],
       ]);
+      // A cross-reference keeps what a surface needs to open its source, not only a label.
+      expect(issue.events.find((event) => event.kind === "referenced")).toMatchObject({
+        reference: {
+          repository: "acme/web",
+          number: 50,
+          kind: "pull-request",
+          url: "https://github.com/acme/web/pull/50",
+        },
+      });
     }),
   );
 });
