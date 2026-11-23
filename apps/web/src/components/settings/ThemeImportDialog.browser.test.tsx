@@ -63,6 +63,50 @@ describe("ThemeImportDialog", () => {
       expect.objectContaining({ sortBy: "downloadCount" }),
     );
   });
+
+  it("clears the search on Escape before closing the dialog", async () => {
+    searchOpenVsxThemes.mockReset();
+    searchOpenVsxThemes.mockResolvedValue([]);
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <ThemeImportDialog
+        open
+        onOpenChange={onOpenChange}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
+    );
+    const search = page.getByRole("searchbox", { name: "Search Open VSX themes" });
+    await expect.element(search).toHaveAttribute("type", "text");
+    await userEvent.fill(search, "nord");
+    const pressEscape = (init: KeyboardEventInit) =>
+      search
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Escape", ...init }),
+        );
+
+    for (const composition of [
+      { isComposing: true, keyCode: 27 },
+      { isComposing: false, keyCode: 229 },
+    ]) {
+      // Safari ends the composition just before the Escape keydown.
+      await act(() => {
+        search.element().dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }));
+        pressEscape(composition);
+      });
+      await expect.element(search).toHaveValue("nord");
+    }
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(search).toHaveValue("");
+    pressEscape({ repeat: true });
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
 });
 
 const theme = (name: string, accent = "#3b82f6", css?: string) => ({
