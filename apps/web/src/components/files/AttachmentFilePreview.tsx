@@ -35,6 +35,7 @@ import { toastManager } from "~/components/ui/toast";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { isElectron } from "~/env";
 
 import { BinaryFilePreview } from "./BinaryFilePreview";
 import { PreviewImage } from "./PreviewImage";
@@ -259,6 +260,11 @@ export function AttachmentFilePreview(props: {
       if (!file) {
         const target = await prepareDownload();
         if (!target) throw new Error(gt("Reconnect to the environment and try again."));
+        // Browsers stream an attachment URL into their own download manager right away.
+        if (!isElectron && downloadResource?.disposition === "attachment") {
+          clickDownload(target, props.name);
+          return;
+        }
         const response = await fetch(target);
         if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
         file = await response.blob();
@@ -267,10 +273,7 @@ export function AttachmentFilePreview(props: {
       const downloadUrl = URL.createObjectURL(file);
       // Scheduled before the click so the URL is revoked even if the click throws.
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = props.name;
-      anchor.click();
+      clickDownload(downloadUrl, props.name);
     }).then((result) => {
       if (!AsyncResult.isSuccess(result)) {
         const cause = Cause.squash(result.cause);
@@ -521,4 +524,11 @@ export function AttachmentFilePreview(props: {
       {body}
     </div>
   );
+}
+
+function clickDownload(href: string, name: string) {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = name;
+  anchor.click();
 }

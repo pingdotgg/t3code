@@ -2293,3 +2293,25 @@ it.each([
     `Unsupported PDF ${directory} asset.`,
   );
 });
+
+it("hands a saved attachment's download URL to the browser instead of buffering it", async () => {
+  refresh.mockReset().mockResolvedValue("https://example.test/big.bin");
+  const fetchSpy = vi.fn(async () => new Response(new Uint8Array([0])));
+  using _fetch = stubGlobal("fetch", fetchSpy);
+  using click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="big.bin"
+      mimeType="application/octet-stream"
+      sizeBytes={60_000_000}
+      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "big" }}
+    />,
+  );
+  fetchSpy.mockClear();
+  await screen.getByRole("button", { name: "Save file" }).click();
+  await vi.waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+  const anchor = click.mock.contexts[0] as HTMLAnchorElement;
+  expect(anchor.href).toBe("https://example.test/big.bin");
+  expect(anchor.download).toBe("big.bin");
+  expect(fetchSpy).not.toHaveBeenCalled();
+});
