@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEffect, useRef, useState } from "react";
 import { Platform, View } from "react-native";
@@ -83,26 +84,30 @@ function PanelDocument({ environmentId, entry, html }: PanelProps) {
           }
           const request = extensionPanelRequest(value, channel);
           if (!request) return;
-          void extensionPanelResponse(request, {
-            command: (name, input) =>
-              invoke({
-                environmentId,
-                input: {
-                  id: entry.manifest.id,
-                  kind: "command",
-                  name,
-                  input,
-                  context: { surface: "mobile" },
-                },
-              }).then(extensionCommandValue),
-            settings: (patch) =>
-              settings({ environmentId, input: { id: entry.manifest.id, settings: patch } }).then(
-                (result) =>
-                  extensionCommandValue(result).find(
-                    (item) => item.manifest.id === entry.manifest.id,
-                  )?.settings,
-              ),
-          }).then((response) =>
+          void extensionPanelResponse(
+            request,
+            {
+              command: (name, input) =>
+                invoke({
+                  environmentId,
+                  input: {
+                    id: entry.manifest.id,
+                    kind: "command",
+                    name,
+                    input,
+                    context: { surface: "mobile" },
+                  },
+                }).then(extensionCommandValue),
+              settings: (patch) =>
+                settings({ environmentId, input: { id: entry.manifest.id, settings: patch } }).then(
+                  (result) =>
+                    extensionCommandValue(result).find(
+                      (item) => item.manifest.id === entry.manifest.id,
+                    )?.settings,
+                ),
+            },
+            m,
+          ).then((response) =>
             post({
               type: "t3-extension-response",
               channel,

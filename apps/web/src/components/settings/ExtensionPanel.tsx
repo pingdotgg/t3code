@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { useEnvironmentQuery } from "../../state/query";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import type { EnvironmentId, ExtensionInfo } from "@t3tools/contracts";
@@ -56,25 +57,29 @@ function PanelDocument({ environmentId, entry, html, title }: PanelProps) {
     if (event.source !== frame.current?.contentWindow) return;
     const request = extensionPanelRequest(event.data, channel);
     if (!request) return;
-    const response = await extensionPanelResponse(request, {
-      command: (name, input) =>
-        invoke({
-          environmentId,
-          input: {
-            id: entry.manifest.id,
-            kind: "command",
-            name,
-            input,
-            context: { surface: extensionClientSurface },
-          },
-        }).then(extensionCommandValue),
-      settings: (patch) =>
-        settings({ environmentId, input: { id: entry.manifest.id, settings: patch } }).then(
-          (result) =>
-            extensionCommandValue(result).find((item) => item.manifest.id === entry.manifest.id)
-              ?.settings,
-        ),
-    });
+    const response = await extensionPanelResponse(
+      request,
+      {
+        command: (name, input) =>
+          invoke({
+            environmentId,
+            input: {
+              id: entry.manifest.id,
+              kind: "command",
+              name,
+              input,
+              context: { surface: extensionClientSurface },
+            },
+          }).then(extensionCommandValue),
+        settings: (patch) =>
+          settings({ environmentId, input: { id: entry.manifest.id, settings: patch } }).then(
+            (result) =>
+              extensionCommandValue(result).find((item) => item.manifest.id === entry.manifest.id)
+                ?.settings,
+          ),
+      },
+      m,
+    );
     if (event.source === frame.current?.contentWindow)
       frame.current.contentWindow?.postMessage(
         { type: "t3-extension-response", channel, requestId: request.requestId, ...response },

@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { useEffect, useEffectEvent, useState } from "react";
 import type { EnvironmentId, ExtensionInfo } from "@t3tools/contracts";
 import {
@@ -38,7 +39,7 @@ export function useExtensionPanelContent(
       })
       .catch((error: unknown) => {
         if (active)
-          setState({ data: null, error: extensionFailureMessage(error), isPending: false });
+          setState({ data: null, error: extensionFailureMessage(error, m), isPending: false });
       });
     return () => {
       active = false;

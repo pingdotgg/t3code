@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { useGT } from "gt-react-native";
 import type { EnvironmentId, ExtensionInfo, ExtensionInvokeInput } from "@t3tools/contracts";
 import {
@@ -44,7 +45,7 @@ export function useExtensionCommandPrompt() {
             Dialog.alert(command.title, JSON.stringify(extensionCommandValue(result), null, 2));
           })
           .catch((error: unknown) =>
-            Dialog.alert(gt("Extension request failed"), extensionFailureMessage(error)),
+            Dialog.alert(gt("Extension request failed"), extensionFailureMessage(error, m)),
           );
       },
     });

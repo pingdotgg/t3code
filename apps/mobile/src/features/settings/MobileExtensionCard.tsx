@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -53,7 +54,7 @@ export function MobileExtensionCard({
       const result = await operation();
       if (result) extensionCommandValue(result);
     } catch (error) {
-      setError(extensionFailureMessage(error));
+      setError(extensionFailureMessage(error, m));
     }
     setBusy(false);
   };

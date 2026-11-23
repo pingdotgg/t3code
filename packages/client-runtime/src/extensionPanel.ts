@@ -1,3 +1,5 @@
+import type { MFunctionType } from "gt-i18n/types";
+import { extensionFailureMessage } from "./state/extensions.ts";
 import type { HtmlRenderTheme } from "@t3tools/shared/htmlRender";
 
 export interface ExtensionPanelContext {
@@ -79,6 +81,7 @@ export async function extensionPanelResponse(
     command: (name: string, input: unknown) => Promise<unknown>;
     settings: (patch: Record<string, unknown>) => Promise<unknown>;
   },
+  resolve: MFunctionType,
 ): Promise<{ result: unknown } | { error: string }> {
   try {
     return {
@@ -88,6 +91,6 @@ export async function extensionPanelResponse(
           : await host.command(request.command!, request.input),
     };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "Extension request failed." };
+    return { error: extensionFailureMessage(error, resolve) };
   }
 }

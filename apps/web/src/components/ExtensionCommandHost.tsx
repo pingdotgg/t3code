@@ -1,3 +1,4 @@
+import { m } from "../i18n/messages";
 import { T, useGT } from "gt-react";
 import {
   extensionCommandValue,
@@ -89,7 +90,7 @@ function CommandForm({ selection }: { selection: Selection }) {
           });
           setOutput(JSON.stringify(extensionCommandValue(result), null, 2));
         } catch (error) {
-          setOutput(extensionFailureMessage(error));
+          setOutput(extensionFailureMessage(error, m));
         }
         setBusy(false);
       }}

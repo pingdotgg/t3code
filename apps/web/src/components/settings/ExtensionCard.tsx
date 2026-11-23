@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "../ui/badge";
@@ -55,7 +56,7 @@ export function ExtensionCard({
       const result = await operation();
       if (result) extensionCommandValue(result);
     } catch (error) {
-      setError(extensionFailureMessage(error));
+      setError(extensionFailureMessage(error, m));
     }
     setBusy(false);
   };

@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react-native";
 import { useExtensionPanelContent } from "./useExtensionPanelContent";
 import { useState } from "react";
@@ -84,7 +85,7 @@ function Page({
               extensionCommandValue(result);
               setError(null);
             })
-            .catch((cause: unknown) => setError(extensionFailureMessage(cause)));
+            .catch((cause: unknown) => setError(extensionFailureMessage(cause, m)));
         }}
       />
       {(error || html.error) && <Text accessibilityRole="alert">{error ?? html.error}</Text>}

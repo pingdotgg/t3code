@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react";
 import {
   filterFilesystemBrowseEntries,
@@ -66,7 +67,7 @@ export function ExtensionInstallForm({
           setBrowsing(false);
           onInstalled();
         } catch (cause) {
-          setError(extensionFailureMessage(cause));
+          setError(extensionFailureMessage(cause, m));
         }
         setBusy(false);
       }}

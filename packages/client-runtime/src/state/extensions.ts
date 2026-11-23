@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { WS_METHODS } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -58,8 +60,11 @@ export function extensionCommandValue<A, E>(
   throw squashAtomCommandFailure(result);
 }
 
-export function extensionFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Extension request failed.";
+export function extensionFailureMessage(
+  error: unknown,
+  resolve: MFunctionType = mFallback,
+): string {
+  return error instanceof Error ? error.message : resolve(msg("Extension request failed"));
 }
 
 export function extensionSettingsPages(

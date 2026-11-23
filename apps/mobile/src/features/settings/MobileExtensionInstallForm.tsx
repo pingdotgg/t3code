@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -129,7 +130,7 @@ export function MobileExtensionInstallForm({
               setBrowsing(false);
               onInstalled();
             })
-            .catch((cause: unknown) => setError(extensionFailureMessage(cause)))
+            .catch((cause: unknown) => setError(extensionFailureMessage(cause, m)))
             .finally(() => setBusy(false));
         }}
       />

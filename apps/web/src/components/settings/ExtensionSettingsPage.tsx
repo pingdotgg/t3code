@@ -1,3 +1,4 @@
+import { m } from "../../i18n/messages";
 import { T, useGT } from "gt-react";
 import { useExtensionPanelContent } from "./useExtensionPanelContent";
 import { useState } from "react";
@@ -81,7 +82,7 @@ function Page({
                 extensionCommandValue(result);
                 setError(null);
               })
-              .catch((cause: unknown) => setError(extensionFailureMessage(cause)));
+              .catch((cause: unknown) => setError(extensionFailureMessage(cause, m)));
           }}
         />
         {(error || html.error) && <p role="alert">{error ?? html.error}</p>}
