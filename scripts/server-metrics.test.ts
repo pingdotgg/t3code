@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareMetrics, heapGrowth, slope, type ServerMetrics } from "./server-metrics-report.ts";
+import {
+  compareMetrics,
+  heapGrowth,
+  parsePsCpuTime,
+  slope,
+  type ServerMetrics,
+} from "./server-metrics-report.ts";
 
 type Quiet = { cpuPct: number; wakeupsPerSec: number | null; rssPeakMB: number };
 const meta = { commit: "abc", platform: "linux-x64", noAgentScope: true };
@@ -83,5 +89,19 @@ describe("slope", () => {
       [20, 195],
     ];
     expect(slope(points)).toBeCloseTo(1);
+  });
+});
+
+describe("parsePsCpuTime", () => {
+  it.each([
+    ["0:00.00", 0],
+    ["1:02.50", 62.5],
+    ["1:00:00.00", 3600],
+    ["2-01:00:00", 2 * 86_400 + 3600],
+    ["::", Number.NaN],
+    ["", Number.NaN],
+    ["1:2:3:4", Number.NaN],
+  ])("%s", (text, seconds) => {
+    expect(parsePsCpuTime(text)).toBe(seconds);
   });
 });

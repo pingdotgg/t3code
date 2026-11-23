@@ -65,6 +65,14 @@ export type ServerMetrics = typeof ServerMetrics.Type;
 
 export const round = (value: number, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
 
+/** `ps -o time=` CPU time, `[[dd-]hh:]mm:ss[.ss]`, in seconds; NaN for anything else. */
+export function parsePsCpuTime(text: string) {
+  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim());
+  if (match === null) return Number.NaN;
+  const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = match;
+  return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
 export function spread(values: ReadonlyArray<number>) {
   const sorted = values.toSorted((a, b) => a - b);
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];

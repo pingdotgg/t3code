@@ -44,6 +44,7 @@ import {
   ServerMetrics,
   slope,
   spread,
+  parsePsCpuTime,
   summarizeProfiles,
   type FirstWord,
   type Measured,
@@ -51,6 +52,7 @@ import {
   type Window,
 } from "./server-metrics-report.ts";
 
+const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
 
@@ -347,13 +349,7 @@ const sample = Effect.fn("serverMetrics.sample")(function* (pid: number) {
   const [rss = "", time = ""] = Option.getOrElse(line, () => "")
     .split(/\s+/)
     .filter(Boolean);
-  const cpuSeconds = time
-    ? time
-        .split(":")
-        .map(Number)
-        .reduce((total, part) => total * 60 + part, 0)
-    : Number.NaN;
-  return yield* checked(cpuSeconds, rss ? Number(rss) * 1024 : Number.NaN, "ps");
+  return yield* checked(parsePsCpuTime(time), rss ? Number(rss) * 1024 : Number.NaN, "ps");
 });
 
 /** Every process below `pid`. Windows needs none: taskkill /T stops the tree. */
@@ -931,6 +927,7 @@ const runFlags = {
     ),
   ),
   runs: Flag.Int("runs").pipe(
+    Flag.withSchema(PositiveInt),
     Flag.withDescription("firstWord runs in each variant."),
     Flag.withDefault(5),
   ),
@@ -1006,6 +1003,7 @@ const runCommand = Command.make(
       Flag.optional,
     ),
     repeat: Flag.Int("repeat").pipe(
+      Flag.withSchema(PositiveInt),
       Flag.withDescription("Runs to record in one file."),
       Flag.withDefault(1),
     ),
@@ -1048,6 +1046,7 @@ const abCommand = Command.make(
     checkoutA: Argument.String("checkout-a").pipe(Argument.withDescription("Baseline checkout.")),
     checkoutB: Argument.String("checkout-b").pipe(Argument.withDescription("Candidate checkout.")),
     rounds: Flag.Int("rounds").pipe(
+      Flag.withSchema(PositiveInt),
       Flag.withDescription("Rounds; each runs A and B once, alternating which goes first."),
       Flag.withDefault(3),
     ),
