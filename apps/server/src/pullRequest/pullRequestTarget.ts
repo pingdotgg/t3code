@@ -54,7 +54,7 @@ export class PullRequestRepositoryInvalidError extends Schema.TaggedError<PullRe
   {},
 ) {
   override get message(): string {
-    return "Pass repository as owner/repo, without the host. Or pass url, or leave out repository.";
+    return "Pass repository as owner/repo, without the host.";
   }
 }
 
