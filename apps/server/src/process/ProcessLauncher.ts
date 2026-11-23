@@ -352,3 +352,6 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
 
 /** Replaces the ChildProcessSpawner in context, which stays the fallback when the launcher cannot start. */
 export const layer = Layer.effect(ChildProcessSpawner.ChildProcessSpawner, make());
+
+/** The server's one spawner: memoized, so every build site shares a single launcher. */
+export const layerServer = layer.pipe(Layer.provide(NonBlockingSpawner.layer));

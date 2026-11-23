@@ -27,10 +27,7 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   // Before config resolution, which claims a port and creates directories.
   const { runServer } = yield* Effect.promise(() => import("../server.ts"));
   const logLevel = yield* GlobalFlag.LogLevel;
-  // Before the server grows, so the native spawner's fork is cheap and no launcher outlives this scope.
-  const selectAutomaticPort = yield* AutomaticPort.make.pipe(
-    Effect.provide(ProcessRunner.layerWithSpawner),
-  );
+  const selectAutomaticPort = yield* AutomaticPort.make.pipe(Effect.provide(ProcessRunner.layer));
   const config = yield* resolveServerConfig(flags, logLevel, { ...options, selectAutomaticPort });
   const run = Effect.raceFirst(
     runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config)),

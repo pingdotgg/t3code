@@ -25,6 +25,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
@@ -167,7 +168,17 @@ it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
       });
 
       assert.notStrictEqual(Number(result.stdout.trim()), process.pid);
-    }).pipe(Effect.provide(layerGitContract)),
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provideMerge(VcsProcess.layer),
+          // The server's spawner stack, as server.ts builds it.
+          Layer.provide(ProcessLauncher.layerServer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );
 
 interface UntrackedBlobChange {

@@ -21,7 +21,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
-import * as NonBlockingSpawner from "./process/NonBlockingSpawner.ts";
 import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import * as ProcessRunner from "./processRunner.ts";
 
@@ -83,7 +82,7 @@ const runWith =
         }),
       ),
       Effect.provide(
-        ProcessRunner.layerWithSpawner.pipe(
+        ProcessRunner.layer.pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         ),
       ),
@@ -299,6 +298,9 @@ describe("runProcess", () => {
   );
 });
 
+// The server's spawner stack, as server.ts builds it.
+const layerLaunched = ProcessRunner.layer.pipe(Layer.provide(ProcessLauncher.layerServer));
+
 describe("ProcessRunner.layer", () => {
   // Forking the server for every git call stalls its event loop in proportion to its RSS.
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -312,15 +314,7 @@ describe("ProcessRunner.layer", () => {
           Number(result.stdout.trim()),
           "the command's parent process is the server process itself",
         ).not.toBe(process.pid);
-      }).pipe(
-        Effect.provide(
-          // The server's own spawner is already wrapped, as in server.ts.
-          ProcessRunner.layer.pipe(
-            Layer.provide(NonBlockingSpawner.layer),
-            Layer.provide(NodeServices.layer),
-          ),
-        ),
-      ),
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   // Callers report a missing CLI from the NotFound reason.
@@ -336,7 +330,7 @@ describe("ProcessRunner.layer", () => {
         expect(error._tag).toBe("ProcessSpawnError");
         expect(error.cause).toBeInstanceOf(PlatformError.PlatformError);
         expect((error.cause as PlatformError.PlatformError).reason._tag).toBe("NotFound");
-      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -357,7 +351,7 @@ describe("ProcessRunner.layer", () => {
         yield* Fiber.interrupt(run);
 
         expect(() => process.kill(-pgid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -372,7 +366,7 @@ describe("ProcessRunner.layer", () => {
 
         expect(result.stdout.trim()).toBe(process.cwd());
         expect(error._tag).toBe("ProcessStdinError");
-      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -388,7 +382,7 @@ describe("ProcessRunner.layer", () => {
         expect((error.cause as PlatformError.PlatformError).reason._tag).toBe("BadArgument");
         expect(String(error.cause)).toContain("T3_TOKEN");
         expect(String(error.cause)).not.toContain("secret");
-      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)))),
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
   );
 
   // Descendants keep writing after the leader exits; losing the helper must not truncate that.
@@ -465,10 +459,7 @@ describe("ProcessRunner.layer", () => {
               NodeModule.syncBuiltinESMExports();
             }),
         );
-        const runner = Context.get(
-          yield* Layer.build(ProcessRunner.layer),
-          ProcessRunner.ProcessRunner,
-        );
+        const runner = Context.get(yield* Layer.build(layerLaunched), ProcessRunner.ProcessRunner);
         const run = yield* runner
           .run({
             command: "sh",
@@ -515,10 +506,7 @@ describe("ProcessRunner.layer", () => {
               NodeModule.syncBuiltinESMExports();
             }),
         );
-        const runner = Context.get(
-          yield* Layer.build(ProcessRunner.layer),
-          ProcessRunner.ProcessRunner,
-        );
+        const runner = Context.get(yield* Layer.build(layerLaunched), ProcessRunner.ProcessRunner);
 
         const error = yield* runner.run({ command: "echo", args: ["output"] }).pipe(Effect.flip);
 
@@ -544,7 +532,7 @@ describe("ProcessRunner.layer", () => {
         expect(replacement).not.toBe(process.pid);
       }).pipe(
         Effect.provide(
-          ProcessRunner.layerWithSpawner.pipe(
+          ProcessRunner.layer.pipe(
             Layer.provide(
               Layer.effect(
                 ChildProcessSpawner.ChildProcessSpawner,
@@ -589,7 +577,7 @@ describe("ProcessRunner.layer", () => {
         );
         const runner = Context.get(
           yield* Layer.build(
-            ProcessRunner.layerWithSpawner.pipe(
+            ProcessRunner.layer.pipe(
               Layer.provide(
                 Layer.effect(
                   ChildProcessSpawner.ChildProcessSpawner,

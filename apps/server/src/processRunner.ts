@@ -10,7 +10,6 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
-import * as ProcessLauncher from "./process/ProcessLauncher.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -407,7 +406,4 @@ export const make = Effect.fn("ProcessRunner.make")(function* () {
   });
 });
 
-/** Runs commands with the ChildProcessSpawner in context, which tests replace with fakes. */
-export const layerWithSpawner = Layer.effect(ProcessRunner, make());
-
-export const layer = layerWithSpawner.pipe(Layer.provide(ProcessLauncher.layer));
+export const layer = Layer.effect(ProcessRunner, make());

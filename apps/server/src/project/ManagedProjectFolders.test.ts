@@ -543,7 +543,7 @@ it.effect("says Git is not installed when a named project cannot start Git", () 
         );
       }),
     {
-      git: GitVcsDriver.layerWithSpawner.pipe(
+      git: GitVcsDriver.layer.pipe(
         Layer.provide(
           Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,

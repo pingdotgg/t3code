@@ -297,7 +297,7 @@ export const updateCommand = Command.make("update", {
         Effect.provide(
           Layer.mergeAll(
             CliService.layer(config),
-            ProcessRunner.layerWithSpawner,
+            ProcessRunner.layer,
             FetchHttpClient.layer,
             ManagedPolicy.layer,
           ),

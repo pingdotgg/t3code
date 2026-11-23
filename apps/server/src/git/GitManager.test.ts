@@ -720,7 +720,7 @@ function makeManager(input?: {
           ),
         ),
       )
-    : GitVcsDriver.layerWithSpawner;
+    : GitVcsDriver.layer;
   const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
