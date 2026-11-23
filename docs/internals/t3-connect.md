@@ -86,6 +86,10 @@ Managed tunnels expose only this server's own loopback HTTP origin. The link
 proof signs that origin from the server's listening address and ignores the
 caller's, so any client holding `relay:configure`, local or remote, can link
 without being able to point the tunnel at another service on the host. The
+relay refuses to relink an active environment id under a different key: an
+account bearer alone would otherwise take over that environment's tunnel and
+trusted key with an origin it signed itself. Unlinking first releases the
+tunnel. The
 relay resolves endpoints from its own managed allocations rather than a
 caller-supplied URL. Health and mint
 requests must not follow redirects. These restrictions keep endpoint discovery

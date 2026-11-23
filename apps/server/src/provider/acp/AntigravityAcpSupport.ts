@@ -23,6 +23,13 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  acpPermissionDisposition,
+  unknownRecord,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
+import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -153,18 +160,63 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return "auto";
     case "approval-required":
       return "default";
   }
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
+ * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
+ * policy, so permission changes apply on the next turn without a restart.
  */
-export function antigravityCliSessionMode(modeId: string): string {
+export function antigravitySessionMode(
+  modeId: string,
+  modeState: AcpSessionModeState | undefined,
+): string {
+  if (modeId === "auto") {
+    return modeState?.availableModes.some((mode) => mode.id === "auto") === true
+      ? "auto"
+      : "default";
+  }
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
+// Only calls that name T3's server: before agy 1.5.8 "Running <tool>" names no server, so another
+// MCP server's tool of the same name would pass.
+const ANTIGRAVITY_T3_MCP_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
+
+function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
+  const rawInput = unknownRecord(request.toolCall.rawInput);
+  if (rawInput?.ServerName !== undefined) {
+    return (
+      rawInput.ServerName === "t3-code" &&
+      typeof rawInput.ToolName === "string" &&
+      T3_MCP_TOOL_NAMES.has(rawInput.ToolName)
+    );
+  }
+  if (typeof rawInput?.CommandLine === "string") return false;
+  const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(request.toolCall.title?.trim() ?? "")?.groups?.tool;
+  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+}
+
+export function antigravityPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+) {
+  const disposition = acpPermissionDisposition(policy, request);
+  if (disposition === "deny") return "deny";
+  // T3 authorizes its own MCP server, so Auto and Auto-accept edits run it unasked, as Claude does.
+  if (
+    (policy.runtimeMode === "auto" || policy.runtimeMode === "auto-accept-edits") &&
+    (policy.approvalPolicy === undefined || policy.approvalPolicy === "never") &&
+    isAntigravityT3McpRequest(request)
+  ) {
+    return "allow";
+  }
+  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
+  return policy.runtimeMode === "auto" ? "ask" : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -174,6 +226,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
       return "full-access";
     case "auto_edit":
       return "auto-accept-edits";
+    case "auto":
+      return "auto";
     case "default":
       return "approval-required";
     default:
@@ -374,7 +428,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       "source" in attachment &&
       attachment.source?._tag === "pasted-text";
     // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
-    const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
+    const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
@@ -461,11 +515,17 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
     } else if (audio) {
       blocks.push({ type: "audio", data: Buffer.from(bytes).toString("base64"), mimeType });
     } else {
+      const encoding =
+        bytes[0] === 0xff && bytes[1] === 0xfe
+          ? "UTF-16LE"
+          : bytes[0] === 0xfe && bytes[1] === 0xff
+            ? "UTF-16BE"
+            : "UTF-8";
       const decoded = yield* Effect.try({
-        try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+        try: () => new TextDecoder(encoding, { fatal: true }).decode(bytes),
         catch: () =>
           EffectAcpErrors.AcpRequestError.invalidParams(
-            `Attachment '${attachment.name}' is not a UTF-8 text file.`,
+            `Attachment '${attachment.name}' is not a ${encoding} text file.`,
           ),
       });
       if (decoded.includes("\0")) {

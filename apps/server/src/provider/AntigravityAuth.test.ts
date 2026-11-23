@@ -358,6 +358,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
       yield* TestClock.adjust("270 seconds");
       const failed = yield* phase(harness.auth, "failed");
       assert.include(failed.message ?? "", "could not reach Google");
+
+      yield* harness.auth.onSignedInElsewhere;
+      const cleared = yield* phase(harness.auth, "idle");
+      assert.isNull(cleared.message);
     }),
   );
 

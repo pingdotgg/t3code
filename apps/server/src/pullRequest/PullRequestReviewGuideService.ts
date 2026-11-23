@@ -18,7 +18,6 @@ import {
   type PullRequestReviewGuideResult,
   type PullRequestReviewGuideRun,
   type PullRequestStack,
-  ProjectId,
   type RepositoryIdentity,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
@@ -35,7 +34,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
-import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
+import { ownPullRequestRepositories, pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
 import { normalizeReviewGuide, parseReviewGuideChange } from "./pullRequestReviewGuideNormalize.ts";
 
@@ -96,30 +95,18 @@ const make = Effect.gen(function* () {
 
   const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
     function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
-      const own =
-        identity == null
-          ? null
-          : pullRequestSyncKey(
-              {
-                projectId: ProjectId.make("own"),
-                number: key.number,
-                repository: sourceControlDefinitions.repositorySelector(identity) ?? "",
-              },
-              identity,
-            );
-      if (
-        identity == null ||
-        own === null ||
-        own.host !== key.host ||
-        own.repository !== key.repository
-      ) {
+      const own = ownPullRequestRepositories(identity).find(
+        (candidate) =>
+          candidate.key.host === key.host && candidate.key.repository === key.repository,
+      );
+      if (own === undefined) {
         return yield* new PullRequestOperationError({
           operation: "generateReviewGuide",
           detail:
             "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
         });
       }
-      return identity.locator;
+      return own.locator;
     },
   );
 

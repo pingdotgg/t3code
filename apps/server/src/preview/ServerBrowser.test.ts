@@ -235,7 +235,6 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       title: "test page",
       loading: false,
       visibleText: "delete",
-      interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
     locator: vi.fn((): unknown => {
@@ -2145,6 +2144,41 @@ it.effect("a request whose frame is not available yet is not a main navigation",
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("an app link's aborted request leaves the page it was clicked on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const navigation = (url: string, redirectedFrom: unknown = null) => ({
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        redirectedFrom: () => redirectedFrom,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      });
+      const loading = Effect.map(
+        broker.invoke<PreviewAutomationStatus>({ scope, tabId, operation: "status", input: {} }),
+        (status) => status.loading,
+      );
+      // Chromium hands the link to the OS, aborts the request and keeps the current page.
+      const direct = navigation("obsidian://open?vault=notes");
+      page.emit("request", direct);
+      page.emit("requestfailed", direct);
+      expect(yield* loading).toBe(false);
+
+      // A page that redirects to an app link ends its navigation there; the redirect itself finished.
+      const open = navigation("https://example.com/open");
+      page.emit("request", open);
+      expect(yield* loading).toBe(true);
+      const redirected = navigation("obsidian://open?vault=notes", open);
+      page.emit("request", redirected);
+      page.emit("requestfailed", redirected);
+      expect(yield* loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
@@ -3069,6 +3103,55 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
+      const unpainted = Promise.withResolvers<void>();
+      heldStill = () => unpainted.promise;
+      // Fill asks for no size, so a page that keeps its size without a resize is not undrawn.
+      const kept = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      let keptEvent = yield* PubSub.take(events);
+      while (keptEvent.type !== "resized" || keptEvent.tabId !== tabId) {
+        keptEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(kept)).viewport).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
+      const undrawn = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let undrawnEvent = yield* PubSub.take(events);
+      while (undrawnEvent.type !== "resized" || undrawnEvent.tabId !== tabId) {
+        undrawnEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      // The same size again still waits for a draw rather than reporting the old size.
+      const retried = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let retriedEvent = yield* PubSub.take(events);
+      while (retriedEvent.type !== "resized" || retriedEvent.tabId !== tabId) {
+        retriedEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(retried))).toBe(true);
+      heldStill = null;
+      unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
       // No page resize or load since that read, so status answers without reading again.
       let reads = 0;

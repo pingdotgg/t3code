@@ -140,6 +140,10 @@ select * from ${sql(options.tableName)} where ${withSoftDeleteFilter(sql`${sql(i
               .unprepared.pipe(
                 Effect.map(([, results]) => results as any)
               ),
+          mssql: () =>
+            sql`update ${sql(options.tableName)} set ${sql.update(request, [idColumn]).returning("*")} where ${
+              withSoftDeleteFilter(sql`${sql(idColumn)} = ${request[idColumn]}`)
+            }`,
           orElse: () =>
             sql`update ${sql(options.tableName)} set ${sql.update(request, [idColumn])} where ${
               withSoftDeleteFilter(sql`${sql(idColumn)} = ${request[idColumn]}`)

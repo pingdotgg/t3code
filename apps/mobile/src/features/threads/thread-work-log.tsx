@@ -1,3 +1,4 @@
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { Button } from "../../components/ui/Button";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import { ProposedPlanCard } from "./ProposedPlanCard";
@@ -9,6 +10,7 @@ import {
   WorkLogPressable,
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
+import { McpSignInSheet, type McpSignInTarget } from "./McpSignInSheet";
 import { ThreadCommandOutput, useCommandOutputStreaming } from "./thread-command-output";
 import {
   getQuestionAnswerPreview,
@@ -51,6 +53,8 @@ import {
   type ToolActivityIcon,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -211,6 +215,7 @@ function ShimmerWorkContent(props: {
   readonly environmentId?: EnvironmentId;
   readonly highlighted: boolean;
   readonly icon: WorkContentIcon;
+  readonly iconNode?: ReactNode;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly onTextLayout?: ComponentProps<typeof Text>["onTextLayout"];
@@ -222,7 +227,9 @@ function ShimmerWorkContent(props: {
     <View className="flex-row items-center gap-1.5">
       {props.showIcon ? (
         <View className="h-6 w-6 shrink-0 items-center justify-center">
-          {props.toolIcon && props.environmentId ? (
+          {props.iconNode !== undefined ? (
+            props.iconNode
+          ) : props.toolIcon && props.environmentId ? (
             <ToolActivityIconView
               environmentId={props.environmentId}
               icon={props.toolIcon}
@@ -261,6 +268,7 @@ export function ShimmeringWorkContent(props: {
   readonly compact?: boolean;
   readonly environmentId?: EnvironmentId;
   readonly icon: WorkContentIcon;
+  readonly iconNode?: ReactNode;
   readonly iconSubtleColor: ColorValue;
   readonly label: string;
   readonly showIcon: boolean;
@@ -312,6 +320,7 @@ export function ShimmeringWorkContent(props: {
         environmentId={props.environmentId}
         highlighted={false}
         icon={props.icon}
+        iconNode={props.iconNode}
         iconSubtleColor={props.iconSubtleColor}
         label={props.label}
         showIcon={props.showIcon}
@@ -363,6 +372,7 @@ export function ShimmeringWorkContent(props: {
                 environmentId={props.environmentId}
                 highlighted
                 icon={props.icon}
+                iconNode={props.iconNode}
                 iconSubtleColor={props.iconSubtleColor}
                 label={props.label}
                 showIcon={props.showIcon}
@@ -866,6 +876,9 @@ function HighlightedCodeText({
   );
 }
 
+// Rows that aren't sign-in notices read this, so every row reads an atom.
+const NOT_SIGNED_IN = Atom.make(false);
+
 const ThreadWorkLogRow = function ThreadWorkLogRow(
   props: Omit<
     ThreadWorkLogProps,
@@ -886,6 +899,20 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
   const gt = useGT();
   const messages = useMessages();
   const openLinkedThread = useOpenLinkedThread();
+  const canSignInToMcp = useAtomValue(
+    threadEnvironment.mcpSignInStart.permissionAtom(props.environmentId),
+  );
+  const [mcpSignInOpen, setMcpSignInOpen] = useState(false);
+  const signInNotice = row.projectedItem.item;
+  const mcpSignedIn = useAtomValue(
+    signInNotice.type === "system_notice" && signInNotice.mcpSignIn !== undefined
+      ? threadEnvironment.mcpSignedInAtom(props.environmentId, {
+          threadId: signInNotice.threadId,
+          server: signInNotice.mcpSignIn.server,
+          noticeAt: DateTime.toEpochMillis(signInNotice.updatedAt),
+        })
+      : NOT_SIGNED_IN,
+  );
   const streamsOutput =
     useCommandOutputStreaming(props.environmentId) &&
     row.projectedItem.item.type === "command_execution";
@@ -951,7 +978,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
             ) : null}
             <Text
               accessibilityLabel={timestamp.toLocaleString()}
-              className="shrink-0 text-xs text-foreground-subtle"
+              className="shrink-0 text-xs text-foreground-muted"
             >
               {timestamp.toLocaleString(undefined, {
                 month: "short",
@@ -982,7 +1009,22 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     row.projectedItem.item.type === "notification"
       ? notificationChildThreadId(row.projectedItem.item.source)
       : undefined;
-  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined;
+  const notice = row.projectedItem.item;
+  const mcpSignInTarget: McpSignInTarget | null =
+    canSignInToMcp &&
+    notice.type === "system_notice" &&
+    notice.mcpSignIn !== undefined &&
+    notice.providerThreadId !== null
+      ? {
+          threadId: notice.threadId,
+          providerThreadId: notice.providerThreadId,
+          server: notice.mcpSignIn.server,
+        }
+      : null;
+  // Signed in, the notice is an ordinary row again.
+  const opensMcpSignIn = mcpSignInTarget !== null && !mcpSignedIn;
+  // A sign-in notice opens its sheet instead; a nested button would be out of VoiceOver's reach.
+  const canExpand = row.canExpand && notifiedSubagentThreadId === undefined && !opensMcpSignIn;
   const reasoning = row.projectedItem.item.type === "reasoning" ? row.projectedItem.item : null;
   const fetchedItem = fetchedDetail.data?.item ?? null;
   const isRead = toolGroupAction(row.workEntry) === "read";
@@ -1057,21 +1099,29 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     >
       <WorkLogPressable
         accessibilityRole={
-          notifiedSubagentThreadId !== undefined ? "link" : canExpand ? "button" : undefined
+          notifiedSubagentThreadId !== undefined
+            ? "link"
+            : canExpand || opensMcpSignIn
+              ? "button"
+              : undefined
         }
         accessibilityLabel={
           failed
             ? gt("{preview}, tool call failed", { preview: accessiblePreview })
-            : accessiblePreview
+            : mcpSignInTarget !== null && mcpSignedIn
+              ? gt("{preview}, signed in", { preview: accessiblePreview })
+              : accessiblePreview
         }
         accessibilityHint={
           notifiedSubagentThreadId !== undefined
             ? gt("Opens this agent's thread. Long press to copy.")
-            : canExpand
-              ? expanded
-                ? gt("Double tap to hide full details. Long press to copy.")
-                : gt("Double tap to show full details. Long press to copy.")
-              : gt("Long press to copy.")
+            : opensMcpSignIn
+              ? gt("Opens the sign-in. Long press to copy.")
+              : canExpand
+                ? expanded
+                  ? gt("Double tap to hide full details. Long press to copy.")
+                  : gt("Double tap to show full details. Long press to copy.")
+                : gt("Long press to copy.")
         }
         accessibilityState={canExpand ? { expanded } : undefined}
         onPress={() => {
@@ -1080,6 +1130,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
               environmentId: String(props.environmentId),
               threadId: String(notifiedSubagentThreadId),
             });
+            return;
+          }
+          if (opensMcpSignIn) {
+            void Haptics.selectionAsync();
+            setMcpSignInOpen(true);
             return;
           }
           if (canExpand) {
@@ -1137,7 +1192,7 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
                     row.workEntry.questionAnswer &&
                     hasQuestionAnswer(row.workEntry.questionAnswer)
                       ? "text-foreground"
-                      : "text-foreground-subtle"
+                      : "text-foreground-muted"
                   }
                 >{`  ${answerPreview}`}</Text>
               ) : null}
@@ -1149,6 +1204,15 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           {props.copied ? (
             <Text className="pr-1 font-t3-medium text-3xs text-adaptive-emerald-600-400">
               <T>Copied</T>
+            </Text>
+          ) : mcpSignInTarget !== null ? (
+            <Text
+              className={cn(
+                "pr-1 font-t3-medium text-sm",
+                mcpSignedIn ? "text-adaptive-emerald-600-400" : "text-primary",
+              )}
+            >
+              {mcpSignedIn ? <T>Signed in</T> : <T>Sign in</T>}
             </Text>
           ) : null}
           {failed && toolIcon !== undefined ? (
@@ -1177,6 +1241,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           </View>
         </View>
       </WorkLogPressable>
+      {mcpSignInOpen && mcpSignInTarget !== null ? (
+        <McpSignInSheet
+          environmentId={props.environmentId}
+          target={mcpSignInTarget}
+          onClose={() => setMcpSignInOpen(false)}
+        />
+      ) : null}
 
       {expanded &&
       (reasoning ||
@@ -1451,9 +1522,12 @@ export function ThreadThinkingRow(props: {
   readonly label?: string;
   /** Replaces "Thinking" while the provider has not started a turn. */
   readonly providerStartingLabel?: string | undefined;
+  /** The starting provider, whose logo replaces the thinking icon. */
+  readonly providerStartingDriver?: string | undefined;
 }) {
   const gt = useGT();
   const label = props.providerStartingLabel ?? props.label ?? gt("Thinking");
+  const driver = props.providerStartingDriver;
   return (
     <View
       accessible
@@ -1463,6 +1537,13 @@ export function ThreadThinkingRow(props: {
     >
       <ShimmeringWorkContent
         icon="brain"
+        iconNode={
+          driver === undefined ? undefined : (
+            <View style={{ opacity: 0.7 }}>
+              <ProviderIcon provider={driver} size={14} />
+            </View>
+          )
+        }
         iconSubtleColor={props.iconSubtleColor}
         label={label}
         showIcon

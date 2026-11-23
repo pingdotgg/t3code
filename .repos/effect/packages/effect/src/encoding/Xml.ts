@@ -5,13 +5,14 @@
  * `decode` and `decodeString` turn UTF-8 bytes or text into events, and
  * `encode` and `encodeString` write events back as XML. `elements` collects
  * repeated elements, such as the items of a feed, into small trees, so that a
- * large document can be processed one record at a time.
+ * large document can be processed one record at a time. `toEvents` turns such
+ * a tree back into events for the encoders.
  *
  * The decoder checks that documents are well-formed. It never reads external
  * resources and never expands entities declared in a DOCTYPE, so external
  * entity (XXE) and entity expansion attacks do not apply. It does not validate
- * documents against a DTD or schema, and reports names as written, without
- * resolving namespaces.
+ * documents against a DTD or schema, and reports names as written, resolving
+ * namespaces only when asked to.
  *
  * @stability experimental
  * @since 4.0.6
@@ -23,6 +24,8 @@ import * as Data from "../Data.ts"
 import * as Effect from "../Effect.ts"
 import * as Predicate from "../Predicate.ts"
 import * as Pull from "../Pull.ts"
+import { isWellFormed } from "../String.ts"
+import type { Mutable } from "../Types.ts"
 
 const XmlErrorTypeId = "~effect/encoding/Xml/XmlError"
 
@@ -33,7 +36,8 @@ const XmlErrorTypeId = "~effect/encoding/Xml/XmlError"
  *
  * The `kind` field identifies the failure:
  *
- * - `Syntax`: the input is not well-formed XML or not valid UTF-8.
+ * - `Syntax`: the input is not well-formed XML or not valid UTF-8, or, with
+ *   `namespaces: "strict"`, not namespace-well-formed.
  * - `Unsupported`: the input uses a feature this module does not process, such
  *   as an entity declared in a DOCTYPE or a byte encoding other than UTF-8.
  * - `Limit`: the input exceeds `maxTokenSize`, `maxDepth` or `maxElementSize`.
@@ -126,6 +130,14 @@ export interface Doctype {
  * a decoded map gets `Object.prototype` back. A self-closing tag such as
  * `<br/>` is decoded as a `StartElement` followed by an `EndElement`.
  *
+ * With `positions: true`, `line` and `column` locate the tag's `<` as an
+ * `XmlError` would. Otherwise they are absent. The encoders ignore them.
+ *
+ * With `namespaces: "strict"`, `namespace` and `localName` give the element's
+ * resolved name. Otherwise they are absent. The encoders ignore them.
+ * Attributes stay keyed by their names as written, and `xmlns` declarations
+ * stay attributes.
+ *
  * @stability experimental
  * @category models
  * @since 4.0.6
@@ -134,10 +146,41 @@ export interface StartElement {
   readonly _tag: "StartElement"
   readonly name: string
   readonly attributes: Readonly<Record<string, string>>
+  /**
+   * One-based line of the tag's `<`, with `positions: true`.
+   *
+   * @since 4.1.3
+   */
+  readonly line?: number | undefined
+  /**
+   * One-based column of the tag's `<` in UTF-16 code units, with
+   * `positions: true`.
+   *
+   * @since 4.1.3
+   */
+  readonly column?: number | undefined
+  /**
+   * Namespace name of the element, or `""` for none, with
+   * `namespaces: "strict"`.
+   *
+   * @since 4.1.5
+   */
+  readonly namespace?: string | undefined
+  /**
+   * Local part of the element name, with `namespaces: "strict"`.
+   *
+   * @since 4.1.5
+   */
+  readonly localName?: string | undefined
 }
 
 /**
  * Event for an end tag.
+ *
+ * **Details**
+ *
+ * With `namespaces: "strict"`, `namespace` and `localName` repeat those of the
+ * start tag. Otherwise they are absent.
  *
  * @stability experimental
  * @category models
@@ -146,6 +189,19 @@ export interface StartElement {
 export interface EndElement {
   readonly _tag: "EndElement"
   readonly name: string
+  /**
+   * Namespace name of the element, or `""` for none, with
+   * `namespaces: "strict"`.
+   *
+   * @since 4.1.5
+   */
+  readonly namespace?: string | undefined
+  /**
+   * Local part of the element name, with `namespaces: "strict"`.
+   *
+   * @since 4.1.5
+   */
+  readonly localName?: string | undefined
 }
 
 /**
@@ -242,8 +298,19 @@ export interface Element {
  *   sections. Defaults to 10 MiB; `Infinity` disables the limit.
  * - `maxDepth`: the maximum number of nested elements. Defaults to 1024;
  *   `Infinity` disables the limit.
+ * - `positions`: adds the `line` and `column` of each start tag's `<` to its
+ *   `StartElement`, counted as for `XmlError`. Defaults to `false`, which
+ *   leaves the fields absent.
+ * - `namespaces`: `"strict"` checks the document against Namespaces in XML
+ *   1.0 and adds `namespace` and `localName` to `StartElement` and
+ *   `EndElement` events. Violations fail with a `Syntax` `XmlError` at the
+ *   start tag or processing instruction, except that an undeclared prefix
+ *   fails with `Unsupported` when the document has a DOCTYPE. Names in a
+ *   DOCTYPE are not checked. Defaults to `undefined`, which reports names as
+ *   written and leaves the fields absent.
  *
- * Memory per token and for open element names is bounded by `maxTokenSize`.
+ * Memory per token, for open element names, and for the namespace
+ * declarations of open elements is bounded by `maxTokenSize`.
  * Invalid options throw when the channel is created.
  *
  * @stability experimental
@@ -253,6 +320,19 @@ export interface Element {
 export interface DecodeOptions {
   readonly maxTokenSize?: number | undefined
   readonly maxDepth?: number | undefined
+  /**
+   * Adds `line` and `column` to `StartElement` events.
+   *
+   * @since 4.1.3
+   */
+  readonly positions?: boolean | undefined
+  /**
+   * Resolves element namespaces and rejects documents that are not
+   * namespace-well-formed.
+   *
+   * @since 4.1.5
+   */
+  readonly namespaces?: "strict" | undefined
 }
 
 /**
@@ -293,17 +373,21 @@ export interface ElementsOptions {
  * - A DOCTYPE is reported as a `Doctype` event, and its internal subset is
  *   skipped without checking its declarations. They are not applied, so
  *   default attribute values are not added, and parameter entities are not
- *   expanded.
+ *   expanded. With `namespaces: "strict"`, namespaces declared there are not
+ *   applied either, and an undeclared prefix fails with an `Unsupported`
+ *   `XmlError`.
  * - References to entities other than `&lt;`, `&gt;`, `&amp;`, `&apos;` and
  *   `&quot;` fail with an `Unsupported` `XmlError` when the document has a
  *   DOCTYPE, and with a `Syntax` `XmlError` otherwise. Character references
  *   such as `&#233;` are always decoded.
  * - Names are reported as written, including namespace prefixes, and `xmlns`
- *   declarations are ordinary attributes.
+ *   declarations are ordinary attributes. `namespaces: "strict"` adds the
+ *   resolved names.
  * - Tokens or aggregate open element names longer than `maxTokenSize`, and
- *   elements nested deeper than `maxDepth`, fail with a `Limit` `XmlError`. A
- *   long token can instead fail with an error found in its first
- *   `maxTokenSize + 1` characters.
+ *   elements nested deeper than `maxDepth`, fail with a `Limit` `XmlError`.
+ *   So do the aggregate namespace declarations of open elements, with
+ *   `namespaces: "strict"`. A long token can instead fail with an error found
+ *   in its first `maxTokenSize + 1` characters.
  * - Strings in events can share memory with their input chunk, so keeping a
  *   short string, such as an id from each record, can keep the whole chunk in
  *   memory. Copy strings that are kept long, for example with
@@ -358,6 +442,9 @@ export const decodeString = <IE = never, Done = unknown>(options?: DecodeOptions
  * - An initial UTF-16 byte order mark or an XML declaration naming an encoding
  *   other than UTF-8 or US-ASCII fails with an `Unsupported` `XmlError`.
  *   Decode such bytes with a `TextDecoder` for that encoding and use `decodeString`.
+ * - A declaration that the bytes contradict fails with a `Syntax` `XmlError`
+ *   instead. That covers UTF-16, UTF-32, UCS-2 and UCS-4 declarations, and
+ *   US-ASCII or ISO-8859-1 declarations after a UTF-8 byte order mark.
  *
  * @see {@link decodeString} for text input and the shared gotchas
  *
@@ -396,6 +483,8 @@ export const decode = <IE = never, Done = unknown>(options?: DecodeOptions): Cha
  * **Gotchas**
  *
  * - A path that does not start at the root element matches nothing.
+ * - Paths and `Element` names are names as written, including prefixes, even
+ *   with `namespaces: "strict"`, which only adds namespaces to events.
  * - Whitespace between child elements, such as indentation, is kept as string
  *   children.
  * - A collected element larger than `maxElementSize` fails with a `Limit`
@@ -430,6 +519,7 @@ export const decode = <IE = never, Done = unknown>(options?: DecodeOptions): Cha
  * ```
  *
  * @see {@link decode} for producing events from bytes
+ * @see {@link toEvents} for writing collected elements
  *
  * @stability experimental
  * @category decoding
@@ -545,6 +635,69 @@ export const encode = <IE = never, Done = unknown>(): Channel.Channel<
 > =>
   Channel.map(makeChannel<Event, string, IE, Done>(() => new Writer(true)), Arr.map((text) => textEncoder.encode(text)))
 
+/**
+ * Converts an element tree back into events.
+ *
+ * **Details**
+ *
+ * The events are the element's start tag, the events of its children in
+ * order, and its end tag. Each string child becomes one `Text` event, even an
+ * empty one. Names and characters are not checked; `encode` and
+ * `encodeString` check them.
+ *
+ * **Gotchas**
+ *
+ * A collected subtree does not carry `xmlns` declarations inherited from its
+ * ancestors. When writing it elsewhere, supply the same bindings on the subtree
+ * or in its new enclosing scope, including any inherited default namespace.
+ *
+ * **Example** (Writing an element)
+ *
+ * ```ts import.meta.vitest
+ * import { Effect, Stream } from "effect"
+ * import { Xml } from "effect/encoding"
+ *
+ * const note: Xml.Element = {
+ *   name: "note",
+ *   attributes: { id: "1" },
+ *   children: ["Hi ", { name: "b", attributes: {}, children: ["there"] }]
+ * }
+ *
+ * const xml = Stream.fromIterable(Xml.toEvents(note)).pipe(
+ *   Stream.pipeThroughChannel(Xml.encodeString()),
+ *   Stream.mkString
+ * )
+ * await Effect.runPromise(xml) // => '<note id="1">Hi <b>there</b></note>'
+ * ```
+ *
+ * @see {@link elements} for collecting elements into trees
+ * @see {@link encodeString} for writing the events
+ *
+ * @stability experimental
+ * @category encoding
+ * @since 4.1.5
+ */
+export const toEvents = (element: Element): Arr.NonEmptyReadonlyArray<Event> => {
+  const out: Arr.NonEmptyArray<Event> = [{ _tag: "StartElement", name: element.name, attributes: element.attributes }]
+  const stack = [{ element, index: 0 }]
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1]
+    if (frame.index === frame.element.children.length) {
+      out.push({ _tag: "EndElement", name: frame.element.name })
+      stack.pop()
+      continue
+    }
+    const child = frame.element.children[frame.index++]
+    if (typeof child === "string") {
+      out.push({ _tag: "Text", text: child })
+    } else {
+      out.push({ _tag: "StartElement", name: child.name, attributes: child.attributes })
+      stack.push({ element: child, index: 0 })
+    }
+  }
+  return out
+}
+
 const defaultMaxTokenSize = 10 * 1024 * 1024
 const defaultMaxDepth = 1024
 const defaultMaxElementSize = 16 * 1024 * 1024
@@ -618,7 +771,11 @@ const makeChannel = <In, Out, IE, Done>(
 const makeParser = (options: DecodeOptions | undefined, bytes: boolean): () => Parser => {
   const maxTokenSize = checkLimit("maxTokenSize", options?.maxTokenSize, defaultMaxTokenSize)
   const maxDepth = checkLimit("maxDepth", options?.maxDepth, defaultMaxDepth)
-  return () => new Parser(maxTokenSize, maxDepth, bytes)
+  const namespaces = options?.namespaces
+  if (namespaces !== undefined && namespaces !== "strict") {
+    throw new Error(`Xml: namespaces must be "strict", got ${JSON.stringify(namespaces)}`)
+  }
+  return () => new Parser(maxTokenSize, maxDepth, bytes, options?.positions === true, namespaces === "strict")
 }
 
 const textEncoder = new TextEncoder()
@@ -653,17 +810,11 @@ const invalidChar = /[\0-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF\uD800-\uDFFF]/u
 // oxlint-disable-next-line no-control-regex
 const invalidDecodedChar = /[\0-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]/
 
-// `isWellFormed` (ES2024) finds unpaired surrogates much faster than a `u`
-// regex, which is slow on non-ASCII text
-const isWellFormed: ((s: string) => boolean) | undefined =
-  typeof (String.prototype as { isWellFormed?: unknown }).isWellFormed === "function" ?
-    (s) => (s as unknown as { isWellFormed(): boolean }).isWellFormed() :
-    undefined
-
 // Returns the index of the first character outside the XML `Char` production,
-// or -1
+// or -1. `isWellFormed` finds unpaired surrogates much faster than the `u`
+// regex, which is slow on non-ASCII text.
 const searchInvalid = (s: string): number =>
-  isWellFormed !== undefined && s.search(invalidDecodedChar) === -1 && isWellFormed(s) ? -1 : s.search(invalidChar)
+  s.search(invalidDecodedChar) === -1 && isWellFormed(s) ? -1 : s.search(invalidChar)
 
 const isChar = (c: number): boolean =>
   c === TAB || c === LF || c === CR || (c >= 0x20 && c <= 0xD7FF) || (c >= 0xE000 && c <= 0xFFFD) ||
@@ -702,9 +853,7 @@ const scanName = (s: string, i: number, end: number): number => {
 }
 
 // Name characters exclude every invalid character but unpaired surrogates
-const isName = (s: string): boolean =>
-  s.length > 0 && scanName(s, 0, s.length) === s.length &&
-  (isWellFormed !== undefined ? isWellFormed(s) : !invalidChar.test(s))
+const isName = (s: string): boolean => s.length > 0 && scanName(s, 0, s.length) === s.length && isWellFormed(s)
 
 const skipSpace = (s: string, i: number, end: number): number => {
   while (i < end && isSpace(s.charCodeAt(i))) i++
@@ -731,10 +880,8 @@ const normalizeAttribute = (s: string): string => s.replace(attributeWhitespace,
 
 const isReservedTarget = (target: string): boolean => target.length === 3 && target.toLowerCase() === "xml"
 
-const isUtf8 = (encoding: string): boolean => {
-  const lower = encoding.toLowerCase()
-  return lower === "utf-8" || lower === "us-ascii"
-}
+// Encodings whose declaration could not have been read as ASCII bytes
+const wideEncodingPattern = /^(?:utf-(?:16|32)(?:be|le)?|(?:iso-10646-)?ucs-[24])$/
 
 const declarationPattern =
   /^[ \t\r\n]+version[ \t\r\n]*=[ \t\r\n]*(?:"(1\.[0-9]+)"|'(1\.[0-9]+)')(?:[ \t\r\n]+encoding[ \t\r\n]*=[ \t\r\n]*(?:"([A-Za-z][A-Za-z0-9._-]*)"|'([A-Za-z][A-Za-z0-9._-]*)'))?(?:[ \t\r\n]+standalone[ \t\r\n]*=[ \t\r\n]*(?:"(yes|no)"|'(yes|no)'))?[ \t\r\n]*$/
@@ -938,6 +1085,34 @@ Attributes.prototype = Object.freeze(Object.create(null))
 
 const emptyAttributes: Readonly<Record<string, string>> = Object.freeze(new Attributes())
 
+const xmlNamespace = "http://www.w3.org/XML/1998/namespace"
+const xmlnsNamespace = "http://www.w3.org/2000/xmlns/"
+
+// In V8, a slice of 13 or more characters keeps its whole input chunk alive,
+// so strings that the parser holds, such as the name of an open element and
+// the namespaces it declares, are copied
+const copyString = (s: string): string => s.length < 13 ? s : (" " + s).slice(1)
+
+// A namespace bound by a declaration. Bindings to the same namespace share
+// one, so that namespaces are compared by identity however long they are.
+interface Namespace {
+  readonly uri: string
+}
+
+// The xml prefix is always bound, and cannot be declared otherwise
+const xmlBinding: Namespace = { uri: xmlNamespace }
+
+interface Scope {
+  readonly namespace: string
+  readonly localName: string
+  // The length of the undo log before the element's declarations
+  readonly undo: number
+}
+
+// The size of released namespace declarations, beyond those of open elements,
+// at which the namespace maps are rebuilt
+const compactDeclarationSize = 4096
+
 // The number of element names whose attribute order is tracked, and the
 // number of attributes beyond which V8 would turn a fast-mode map into a
 // dictionary anyway
@@ -955,6 +1130,7 @@ class Parser {
   // Number of characters received, excluding a byte order mark
   received = 0
   private started = false
+  private bom = false
 
   // A token that continues in the next chunk
   private pending: Array<string> | undefined
@@ -968,6 +1144,11 @@ class Parser {
   private line = 1
   private lineStart = 0
   private counted = 0
+  // Indexes in `buf` of the next CR and LF from `counted`, or `buf.length`
+  // if there is none, so that counting to each start tag of a long line does
+  // not search to its end again. -1 until `count` has run on `buf`.
+  private nextCR = -1
+  private nextLF = -1
 
   private state = PROLOG
   private readonly stack: Array<string> = []
@@ -986,12 +1167,34 @@ class Parser {
   private readonly maxTokenSize: number
   private readonly maxDepth: number
   private readonly bytes: boolean
+  private readonly positions: boolean
+  private readonly namespaces: boolean
   private ascii = false
 
-  constructor(maxTokenSize: number, maxDepth: number, bytes: boolean) {
+  // With namespaces, the scope of each open element
+  private readonly scopes: Array<Scope> = []
+  // The binding of each prefix, and the shared namespace of each namespace
+  // name. In V8, deleting a key from a large map and adding it again makes
+  // later lookups of it walk the deleted entries, so entries are never
+  // deleted: a prefix that goes out of scope is set to `undefined`, and
+  // `compact` rebuilds both maps.
+  private bindings = new Map<string, Namespace | undefined>([["xml", xmlBinding]])
+  private namespacesByName = new Map<string, Namespace>()
+  // The prefix and previous binding of each change that open elements made,
+  // which end tags undo
+  private readonly undoPrefixes: Array<string> = []
+  private readonly undoBindings: Array<Namespace | undefined> = []
+  // The size of the declarations of open elements, and of those released
+  // since the maps were rebuilt
+  private openDeclarationSize = 0
+  private releasedDeclarationSize = 0
+
+  constructor(maxTokenSize: number, maxDepth: number, bytes: boolean, positions: boolean, namespaces: boolean) {
     this.maxTokenSize = maxTokenSize
     this.maxDepth = maxDepth
     this.bytes = bytes
+    this.positions = positions
+    this.namespaces = namespaces
   }
 
   // `force` parses a pending token without waiting for its end, so that an
@@ -1000,7 +1203,10 @@ class Parser {
     if (chunk.length === 0 && !force) return
     if (!this.started) {
       this.started = true
-      if (chunk.charCodeAt(0) === 0xFEFF) chunk = chunk.slice(1)
+      if (chunk.charCodeAt(0) === 0xFEFF) {
+        this.bom = true
+        chunk = chunk.slice(1)
+      }
     }
     if (this.bytes) {
       const nonAscii = chunk.search(/[\u0080-\uFFFF]/)
@@ -1036,36 +1242,41 @@ class Parser {
 
   error(kind: XmlError["kind"], message: string, at: number): XmlError {
     if (at > this.counted) {
-      if (this.pending !== undefined) this.count(this.pending.join(""), this.pendingStart, at - this.pendingStart)
-      else this.count(this.buf, this.base, at - this.base)
+      // The parser is not used after an error, so `buf` can be replaced
+      if (this.pending !== undefined) this.load(this.pending.join(""), this.pendingStart)
+      this.count(at - this.base)
     }
     const line = this.line
     const column = at - this.lineStart + 1
     return new XmlError({ kind, message: `${message} at line ${line}, column ${column}`, line, column })
   }
 
-  // Advances the line count from `counted` to `to`, an index of `s`, which
-  // starts at document offset `base`. Counting resumes only where parsing
-  // stopped, which is never between a CR and an LF.
-  private count(s: string, base: number, to: number): void {
+  // Advances the line count from `counted` to `to`, an index of `buf`.
+  // Counting resumes only where parsing stopped, which is never between a CR
+  // and an LF.
+  private count(to: number): void {
+    const s = this.buf
+    const base = this.base
     const i = this.counted - base
     if (i >= to) return
-    let cr = s.indexOf("\r", i)
-    let lf = s.indexOf("\n", i)
+    let cr = this.nextCR === -1 ? indexOrEnd(s, "\r", i) : this.nextCR
+    let lf = this.nextLF === -1 ? indexOrEnd(s, "\n", i) : this.nextLF
     while (true) {
-      if (cr !== -1 && cr < to && (lf === -1 || cr < lf)) {
+      if (cr < to && cr < lf) {
         this.line++
         this.lineStart = base + cr + 1
-        cr = s.indexOf("\r", cr + 1)
-      } else if (lf !== -1 && lf < to) {
+        cr = indexOrEnd(s, "\r", cr + 1)
+      } else if (lf < to) {
         // The LF of a CRLF does not start a new line
         if (!(lf > 0 && s.charCodeAt(lf - 1) === CR)) this.line++
         this.lineStart = base + lf + 1
-        lf = s.indexOf("\n", lf + 1)
+        lf = indexOrEnd(s, "\n", lf + 1)
       } else {
         break
       }
     }
+    this.nextCR = cr
+    this.nextLF = lf
     this.counted = base + to
   }
 
@@ -1106,6 +1317,7 @@ class Parser {
   private load(buf: string, base: number): void {
     this.buf = buf
     this.base = base
+    this.nextCR = this.nextLF = -1
   }
 
   // Fails an incomplete token over maxTokenSize, preferring an error in the
@@ -1164,7 +1376,7 @@ class Parser {
       }
       i = end
     }
-    this.count(s, this.base, i)
+    this.count(i)
     this.buf = ""
     if (i < n) {
       const rest = i === 0 ? s : s.slice(i)
@@ -1288,10 +1500,7 @@ class Parser {
     let j = scanName(s, i + 1, n)
     if (j === i + 1) throw this.syntax("invalid element name", i + 1)
     if (j >= n) return -1
-    // In V8, a slice of 13 or more characters keeps its whole input chunk
-    // alive, and the name of an open element is held until its end tag, so
-    // long names are copied
-    const name = j - i - 1 < 13 ? s.slice(i + 1, j) : (" " + s.slice(i + 1, j)).slice(1)
+    const name = copyString(s.slice(i + 1, j))
     let attributes: Record<string, string> | undefined
     let shape: Array<string> | null | undefined
     let index = 0
@@ -1349,7 +1558,7 @@ class Parser {
       }
       if (shape !== undefined && shape !== null && shape.length <= maxFastAttributes) {
         // Stored names are copied, as they outlive the chunk
-        if (index === shape.length) shape.push((" " + attribute).slice(1))
+        if (index === shape.length) shape.push(copyString(attribute))
         else if (shape[index] !== attribute) {
           this.shapes.set(name, null)
           shape = null
@@ -1367,10 +1576,28 @@ class Parser {
     if (!selfClosing && this.openNameSize + name.length > this.maxTokenSize) {
       throw this.error("Limit", `open element names exceed maxTokenSize of ${this.maxTokenSize}`, this.base + i)
     }
+    const scope = this.namespaces ? this.openScope(name, attributes ?? emptyAttributes, i, selfClosing) : undefined
     this.flushText()
-    this.out.push({ _tag: "StartElement", name, attributes: attributes ?? emptyAttributes })
+    let start: Mutable<StartElement>
+    if (this.positions) {
+      this.count(i)
+      start = {
+        _tag: "StartElement",
+        name,
+        attributes: attributes ?? emptyAttributes,
+        line: this.line,
+        column: this.base + i - this.lineStart + 1
+      }
+    } else {
+      start = { _tag: "StartElement", name, attributes: attributes ?? emptyAttributes }
+    }
+    if (scope !== undefined) {
+      start.namespace = scope.namespace
+      start.localName = scope.localName
+    }
+    this.out.push(start)
     if (selfClosing) {
-      this.out.push({ _tag: "EndElement", name })
+      this.out.push(this.endElement(name))
       if (this.stack.length === 0) this.state = EPILOG
     } else {
       this.stack.push(name)
@@ -1378,6 +1605,165 @@ class Parser {
       this.state = CONTENT
     }
     return j
+  }
+
+  // Applies the declarations of a start tag and resolves its names
+  private openScope(
+    name: string,
+    attributes: Readonly<Record<string, string>>,
+    i: number,
+    selfClosing: boolean
+  ): Scope {
+    const undo = this.undoPrefixes.length
+    let prefixed = 0
+    for (const attribute in attributes) {
+      const colon = this.qnameColon("attribute", attribute, i)
+      let prefix: string
+      if (attribute === "xmlns") {
+        prefix = ""
+      } else if (attribute.startsWith("xmlns:")) {
+        prefix = attribute.slice(6)
+      } else {
+        if (colon !== -1) prefixed++
+        continue
+      }
+      const uri = attributes[attribute]
+      if (prefix === "xml") {
+        if (uri !== xmlNamespace) throw this.syntax(`xmlns:xml can only bind ${xmlNamespace}`, i)
+        continue
+      }
+      if (prefix === "xmlns") throw this.syntax("xmlns:xmlns cannot be declared", i)
+      if (uri === xmlNamespace || uri === xmlnsNamespace) {
+        throw this.syntax(`${attribute} cannot bind the reserved namespace ${uri}`, i)
+      }
+      if (uri === "" && prefix !== "") throw this.syntax(`${attribute} cannot be empty`, i)
+      // Undeclared prefixes have no binding rather than an empty one
+      const current = this.bindings.get(prefix)
+      if ((current?.uri ?? "") === uri) continue
+      const key = copyString(prefix)
+      this.undoPrefixes.push(key)
+      this.undoBindings.push(current)
+      this.bindings.set(key, uri === "" ? undefined : this.intern(uri))
+      this.openDeclarationSize += prefix.length + uri.length
+    }
+    if (!selfClosing && this.openDeclarationSize > this.maxTokenSize) {
+      throw this.error(
+        "Limit",
+        `namespace declarations of open elements exceed maxTokenSize of ${this.maxTokenSize}`,
+        this.base + i
+      )
+    }
+    let namespace: string
+    let localName = name
+    const colon = this.qnameColon("element", name, i)
+    if (colon === -1) {
+      namespace = this.bindings.get("")?.uri ?? ""
+    } else {
+      const prefix = name.slice(0, colon)
+      if (prefix === "xmlns") throw this.syntax(`element name ${name} cannot use the xmlns prefix`, i)
+      const uri = this.bindings.get(prefix)?.uri
+      if (uri === undefined) throw this.undeclared(`namespace prefix ${prefix} of element ${name} is not declared`, i)
+      namespace = uri
+      localName = name.slice(colon + 1)
+    }
+    // Prefixed attributes are resolved once every declaration of the tag is
+    // applied. Unprefixed attributes have no namespace, and a duplicate takes
+    // two prefixed ones.
+    if (prefixed > 0) {
+      const seen = prefixed > 1 ? new Map<Namespace, Set<string>>() : undefined
+      for (const attribute in attributes) {
+        const colon = attribute.indexOf(":")
+        if (colon === -1 || attribute.startsWith("xmlns:")) continue
+        const prefix = attribute.slice(0, colon)
+        const binding = this.bindings.get(prefix)
+        if (binding === undefined) {
+          throw this.undeclared(`namespace prefix ${prefix} of attribute ${attribute} is not declared`, i)
+        }
+        if (seen === undefined) break
+        const local = attribute.slice(colon + 1)
+        let locals = seen.get(binding)
+        if (locals === undefined) seen.set(binding, locals = new Set())
+        else if (locals.has(local)) {
+          throw this.syntax(`attribute ${attribute} has the namespace and local name of another attribute`, i)
+        }
+        locals.add(local)
+      }
+    }
+    const scope: Scope = { namespace, localName, undo }
+    this.scopes.push(scope)
+    return scope
+  }
+
+  // Returns the index of the colon in a qualified name, or -1 when it has none
+  private qnameColon(kind: "element" | "attribute", name: string, i: number): number {
+    const colon = name.indexOf(":")
+    if (
+      colon !== -1 && (colon === 0 || colon === name.length - 1 || name.indexOf(":", colon + 1) !== -1 ||
+        !isNameStartCode(name.charCodeAt(colon + 1)))
+    ) {
+      throw this.syntax(`${kind} name ${name} is not a qualified name`, i)
+    }
+    return colon
+  }
+
+  private endElement(name: string): EndElement {
+    if (!this.namespaces) return { _tag: "EndElement", name }
+    const scope = this.scopes.pop()!
+    this.restore(scope.undo)
+    return { _tag: "EndElement", name, namespace: scope.namespace, localName: scope.localName }
+  }
+
+  // Returns the shared namespace for `uri`. Finding it costs the length of
+  // `uri`, which is part of the declaration being read.
+  private intern(uri: string): Namespace {
+    let namespace = this.namespacesByName.get(uri)
+    if (namespace === undefined) {
+      namespace = { uri: copyString(uri) }
+      this.namespacesByName.set(namespace.uri, namespace)
+    }
+    return namespace
+  }
+
+  // Undoes the binding changes made since `undo` was the length of the log
+  private restore(undo: number): void {
+    while (this.undoPrefixes.length > undo) {
+      const prefix = this.undoPrefixes.pop()!
+      // The binding in scope is the one this element made, which ends with it
+      const size = prefix.length + (this.bindings.get(prefix)?.uri.length ?? 0)
+      this.openDeclarationSize -= size
+      this.releasedDeclarationSize += size
+      this.bindings.set(prefix, this.undoBindings.pop())
+    }
+    if (this.releasedDeclarationSize > this.openDeclarationSize + compactDeclarationSize) this.compact()
+  }
+
+  // Rebuilds the maps from the bindings in use. Their entries come from
+  // declarations that are open or were released since the last rebuild, and
+  // the released ones outweigh the open ones, so rebuilds are linear in the
+  // input.
+  private compact(): void {
+    const bindings = new Map<string, Namespace | undefined>()
+    const namespacesByName = new Map<string, Namespace>()
+    for (const [prefix, namespace] of this.bindings) {
+      if (namespace === undefined) continue
+      bindings.set(prefix, namespace)
+      namespacesByName.set(namespace.uri, namespace)
+    }
+    // A shadowed binding comes back into scope when its element closes
+    for (const namespace of this.undoBindings) {
+      if (namespace !== undefined) namespacesByName.set(namespace.uri, namespace)
+    }
+    this.bindings = bindings
+    this.namespacesByName = namespacesByName
+    this.releasedDeclarationSize = 0
+  }
+
+  // A DTD can declare a prefix with a default attribute value, which is not
+  // applied, so an undeclared prefix is a `Syntax` error only without a DOCTYPE
+  private undeclared(message: string, i: number): XmlError {
+    return this.doctype ?
+      this.error("Unsupported", `${message} (namespaces declared in a DTD are not applied)`, this.base + i) :
+      this.syntax(message, i)
   }
 
   private attributeValue(s: string, i: number, j: number): string {
@@ -1424,7 +1810,7 @@ class Parser {
     this.flushText()
     this.stack.pop()
     this.openNameSize -= open.length
-    this.out.push({ _tag: "EndElement", name: open })
+    this.out.push(this.endElement(open))
     if (this.stack.length === 0) this.state = EPILOG
     return k + 1
   }
@@ -1455,6 +1841,9 @@ class Parser {
         i
       )
     }
+    if (this.namespaces && target.includes(":")) {
+      throw this.syntax(`processing instruction target ${target} contains a colon`, i)
+    }
     let data = ""
     if (t < end) {
       if (!isSpace(s.charCodeAt(t))) throw this.syntax("expected whitespace after the target", t)
@@ -1472,14 +1861,21 @@ class Parser {
     if (match === null) throw this.syntax("invalid XML declaration", i)
     const encoding = match[3] ?? match[4]
     const standalone = match[5] ?? match[6]
-    if (this.bytes && encoding !== undefined && !isUtf8(encoding)) {
-      throw this.error(
-        "Unsupported",
-        `encoding ${encoding} is not supported for byte input, decode the bytes to text first`,
-        this.base + i
-      )
+    if (this.bytes && encoding !== undefined) {
+      const lower = encoding.toLowerCase()
+      if (wideEncodingPattern.test(lower) || (this.bom && (lower === "us-ascii" || lower === "iso-8859-1"))) {
+        const evidence = this.bom ? "UTF-8 byte order mark" : "ASCII bytes of the declaration"
+        throw this.syntax(`encoding ${encoding} does not match the ${evidence}`, i)
+      }
+      if (lower !== "utf-8" && lower !== "us-ascii") {
+        throw this.error(
+          "Unsupported",
+          `encoding ${encoding} is not supported for byte input, decode the bytes to text first`,
+          this.base + i
+        )
+      }
+      this.ascii = lower === "us-ascii"
     }
-    this.ascii = this.bytes && encoding?.toLowerCase() === "us-ascii"
     const event: { -readonly [K in keyof Declaration]: Declaration[K] } = {
       _tag: "Declaration",
       version: match[1] ?? match[2]

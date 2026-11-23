@@ -459,9 +459,7 @@ it.effect("records only failed calls of tools that hand off no work", () => {
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
               record: (event, properties) =>
-                Deferred.succeed(recorded, { event, properties: properties ?? {} }).pipe(
-                  Effect.asVoid,
-                ),
+                Deferred.succeed(recorded, { event, properties: properties ?? {} }),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -585,7 +583,7 @@ it.effect("handoff analytics read only the caller's active run and its message",
           Layer.succeed(
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
-              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
+              record: () => Deferred.succeed(recorded, undefined).pipe(Effect.as(true)),
               flush: Effect.void,
               recordOwners: () => Effect.void,
             }),
@@ -1299,7 +1297,13 @@ it.effect(
       const result = yield* server
         .callTool({ name: "t3_background_wait", arguments: { taskIds: ["checks"] } })
         .pipe(
-          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpInvocationContext.McpInvocationContext, {
+            ...scope,
+            capabilities: new Set<McpInvocationContext.McpCapability>([
+              "orchestration",
+              "background-wait",
+            ]),
+          }),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(result.structuredContent).toEqual({ matched: ["checks"], unmatched: [] });

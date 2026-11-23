@@ -83,6 +83,11 @@ export class ConnectionOnboarding extends Context.Service<
     readonly updateBearer: (
       input: BearerConnectionUpdateInput,
     ) => Effect.Effect<void, ConnectionAttemptError | Persistence.ConnectionPersistenceError>;
+    /** Whether `host` answers this device as `environmentId`. Nothing is sent but the question. */
+    readonly reaches: (input: {
+      readonly host: string;
+      readonly environmentId: EnvironmentId;
+    }) => Effect.Effect<boolean>;
   }
 >()("@t3tools/client-runtime/connection/onboarding/ConnectionOnboarding") {}
 
@@ -213,6 +218,27 @@ const registerPairingConnection = Effect.fn(
     .pipe(Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }));
   return registration.target.environmentId;
 });
+
+const REACHABILITY_TIMEOUT_MS = 6_000;
+
+const reachesEnvironment = Effect.fn("clientRuntime.connection.onboarding.reachesEnvironment")(
+  function* (input: { readonly host: string; readonly environmentId: EnvironmentId }) {
+    const httpBaseUrl = yield* Effect.try({
+      try: () => normalizeHttpBaseUrl(input.host),
+      catch: () =>
+        new ConnectionBlockedError({
+          reason: "configuration",
+          ...translatableDetail(msg("The environment URL is invalid.")),
+        }),
+    });
+    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+      httpBaseUrl,
+      timeoutMs: REACHABILITY_TIMEOUT_MS,
+    });
+    return descriptor.environmentId === input.environmentId;
+  },
+  Effect.orElseSucceed(() => false),
+);
 
 const isBearerProfile = Schema.is(BearerConnectionProfile);
 
@@ -377,6 +403,12 @@ export const make = Effect.gen(function* () {
       },
       Effect.provideService(EnvironmentRegistry.EnvironmentRegistry, registry),
       Effect.provideService(ConnectionCredentialStore.ConnectionCredentialStore, credentials),
+    ),
+    reaches: Effect.fnUntraced(
+      function* (input) {
+        return yield* reachesEnvironment(input);
+      },
+      Effect.provideService(HttpClient.HttpClient, httpClient),
     ),
   });
 });

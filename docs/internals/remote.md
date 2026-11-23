@@ -103,12 +103,29 @@ Unlinking on the linking side only forgets the token.
   [`linkRequestTarget`](../../packages/client-runtime/src/linkRequest.ts) names
   a machine for it only when the client already reaches exactly one machine
   there. An address alone never moves an unexpired link to another address.
+- **The receiving side owns a link's expiry.** It renews the session when the
+  link is used and answers each call with `T3-Link-Expires-At`; the linking
+  side stores that and never extends a link on its own. A receiving side that
+  predates renewal sends no header, so the link keeps its original 30 days on
+  both sides.
 - **All callers on one side share the link's single session on the other**,
   so idempotency keys are hashed with the caller's namespace before they
   leave. Without that, two agents reusing a key would collide on the far side.
 - **A forwarded wait is split into calls of at most 50 s**, because the
   receiving `/mcp` sends nothing while a wait is open and T3 Connect's edge
   drops idle requests after about 100 s.
+
+**A client reads a linked thread as the thread's own stream.** A client connected
+only to the linking environment subscribes to `peerLinks.subscribeThread`;
+[`PeerThreadRelay`](../../apps/server/src/peer/PeerThreadRelay.ts) opens the
+receiving environment's
+[link thread routes](../../apps/server/src/peer/linkThreadHttp.ts) with the
+link's token and passes on the same stream items, history pages and item detail
+the owner's client gets. Clients reduce and draw it like any thread, read-only,
+so there is no second transcript format to keep in step. The relay holds one
+upstream per subscription and nothing once the client stops listening. The
+routes accept only a peer link's session, refuse browser origins as `/mcp` does,
+and serve any access level, since each already reads threads through `/mcp`.
 
 **Work a link paired below full access starts stays within that link.** The
 receiving environment knows a session is a peer link because the linking side

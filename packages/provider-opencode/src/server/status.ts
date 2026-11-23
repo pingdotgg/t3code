@@ -2,6 +2,7 @@ import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/sna
 import {
   ProviderDriverKind,
   type ModelCapabilities,
+  type ProviderOptionDescriptor,
   type ServerProviderModel,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -15,7 +16,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 import {
   brokenVersionDetail,
   noCompatibilityPolicy,
@@ -190,6 +191,10 @@ function titleCaseSlug(value: string): string {
   return segments.join(" ");
 }
 
+function reasoningVariantLabel(value: string): string {
+  return value === "xhigh" ? "Extra High" : titleCaseSlug(value);
+}
+
 function inferDefaultVariant(
   providerID: string,
   variants: ReadonlyArray<string>,
@@ -204,6 +209,32 @@ function inferDefaultVariant(
     return variants.includes("medium") ? "medium" : variants.includes("high") ? "high" : undefined;
   }
   return undefined;
+}
+
+/** Without an inferable default, a Default choice lets the user go back to sending no variant. */
+function openCodeVariantDescriptors(
+  providerID: string,
+  variants: ReadonlyArray<string>,
+): Array<ProviderOptionDescriptor> {
+  if (variants.length === 0) return [];
+  const inferred = inferDefaultVariant(providerID, variants);
+  const options = variants.map((id) => ({
+    id,
+    label: reasoningVariantLabel(id),
+    ...(id === inferred ? { isDefault: true } : {}),
+  }));
+  return [
+    {
+      id: "variant",
+      label: "Reasoning",
+      type: "select",
+      options:
+        inferred === undefined
+          ? [{ id: DEFAULT_VARIANT_CHOICE_ID, label: "Default" }, ...options]
+          : options,
+      currentValue: inferred ?? DEFAULT_VARIANT_CHOICE_ID,
+    },
+  ];
 }
 
 function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
@@ -243,12 +274,6 @@ function openCodeCapabilitiesForModel(input: {
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
   const variantValues = Object.keys(input.model.variants ?? {});
-  const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
-  const variantOptions = variantValues.map((value) =>
-    defaultVariant === value
-      ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
-      : { id: value, label: titleCaseSlug(value) },
-  );
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
@@ -260,17 +285,7 @@ function openCodeCapabilitiesForModel(input: {
   );
   return createModelCapabilities({
     optionDescriptors: [
-      ...(variantOptions.length > 0
-        ? [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select" as const,
-              options: variantOptions,
-              ...(defaultVariant ? { currentValue: defaultVariant } : {}),
-            },
-          ]
-        : []),
+      ...openCodeVariantDescriptors(input.providerID, variantValues),
       ...(agentOptions.length > 0
         ? [
             {
@@ -288,15 +303,32 @@ function openCodeCapabilitiesForModel(input: {
 
 interface OpenCodeRelease {
   readonly providerID: string;
+  readonly id: string;
   readonly family?: string | undefined;
   readonly released?: number | undefined;
   readonly deprecated?: boolean | undefined;
+  /** Base input and output price, which a model size keeps when it is renamed. */
+  readonly price?: string | undefined;
 }
 
+export const openCodePrice = (cost: { readonly input: number; readonly output: number }) =>
+  `${cost.input}/${cost.output}`;
+
 /**
- * OpenCode catalogs keep every release of a family, such as Claude Opus 4.5
- * through 5.5. Only the newest active release of each family within a
- * sub-provider stays current; older releases and deprecated models are legacy.
+ * `claude-opus-5` and `claude-opus-5-5` are one release line; `gemini-4-carbon` is another.
+ * A parameter count such as `8b` or `70b` names a size, so it stays in the line.
+ */
+const releaseLine = (id: string) =>
+  id
+    .toLowerCase()
+    .split(/[-_]/)
+    .map((token) => (/^\d+(\.\d+)?[bm]$/.test(token) ? token : token.replace(/[\d.]+/g, "")))
+    .join("");
+
+/**
+ * One OpenCode family can hold several model sizes, such as Gemini 4 Carbon and Hydrogen.
+ * A release is legacy when deprecated, or when its family in the same sub-provider has a
+ * newer active release whose id differs only in version or that is sold at the same price.
  */
 function markOpenCodeLegacy(
   entries: ReadonlyArray<{
@@ -306,17 +338,33 @@ function markOpenCodeLegacy(
 ): Array<ServerProviderModel> {
   const familyKey = ({ providerID, family }: OpenCodeRelease) =>
     family ? `${providerID}/${family}` : undefined;
-  const newest = new Map<string, number>();
+  const active = new Map<
+    string,
+    Array<{ readonly released: number; readonly line: string; readonly price: string | undefined }>
+  >();
   for (const { release } of entries) {
     const key = familyKey(release);
     if (key === undefined || release.released === undefined || release.deprecated) continue;
-    newest.set(key, Math.max(newest.get(key) ?? release.released, release.released));
+    const releases = active.get(key) ?? [];
+    releases.push({
+      released: release.released,
+      line: releaseLine(release.id),
+      price: release.price,
+    });
+    active.set(key, releases);
   }
   return entries.map(({ model, release }) => {
     const key = familyKey(release);
-    const latest = key === undefined ? undefined : newest.get(key);
+    const { released, price } = release;
+    const line = releaseLine(release.id);
     const superseded =
-      latest !== undefined && release.released !== undefined && release.released < latest;
+      key !== undefined &&
+      released !== undefined &&
+      (active.get(key) ?? []).some(
+        (other) =>
+          other.released > released &&
+          (other.line === line || (price !== undefined && other.price === price)),
+      );
     return release.deprecated || superseded ? { ...model, isLegacy: true } : model;
   });
 }
@@ -354,9 +402,11 @@ function flattenOpenCodeModels(
         },
         release: {
           providerID: provider.id,
+          id: model.id,
           family: model.family,
           released: Number.isNaN(released) ? undefined : released,
           deprecated: model.status === "deprecated",
+          price: model.cost ? openCodePrice(model.cost) : undefined,
         },
       });
     }
@@ -473,7 +523,6 @@ export const makePendingOpenCodeProvider = Effect.fn(
 });
 
 export interface OpenCode2Model extends OpenCodeRelease {
-  readonly id: string;
   readonly name: string;
   readonly providerName?: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
@@ -671,25 +720,11 @@ const OPENCODE_2_PRESENTATION = {
 } as const;
 
 function openCode2ModelCapabilities(model: OpenCode2Model): ModelCapabilities {
-  const variants = model.variants.map((variant) => variant.id);
-  const defaultVariant = inferDefaultVariant(model.providerID, variants);
   return createModelCapabilities({
-    optionDescriptors:
-      variants.length === 0
-        ? []
-        : [
-            {
-              id: "variant",
-              label: "Reasoning",
-              type: "select",
-              options: variants.map((id) => ({
-                id,
-                label: titleCaseSlug(id),
-                ...(id === defaultVariant ? { isDefault: true } : {}),
-              })),
-              ...(defaultVariant === undefined ? {} : { currentValue: defaultVariant }),
-            },
-          ],
+    optionDescriptors: openCodeVariantDescriptors(
+      model.providerID,
+      model.variants.map((variant) => variant.id),
+    ),
   });
 }
 
