@@ -89,13 +89,21 @@ describe("autoFailoverPlan", () => {
     expect(plan(shell({ ...picked("grok-4.7"), lineage: delegated }))).toBeNull();
   });
 
-  it("leaves other failures and stale runs alone", () => {
+  it("leaves other failures, stale runs and workflow steps alone", () => {
     expect(
       plan(shell({ lastErrorClass: "provider_error", lastErrorCode: "api_error_404" })),
     ).toBeNull();
     expect(plan(shell({ latestRunId: RunId.make("run:newer") }))).toBeNull();
     expect(plan(shell({ status: "idle" }))).toBeNull();
     expect(plan(shell({ settledOverride: "settled" }))).toBeNull();
+    // The workflow retries a step whose turn died.
+    const step = {
+      rootThreadId: ThreadId.make("t1"),
+      parentThreadId: null,
+      relationshipToParent: null,
+      workflowStep: true,
+    };
+    expect(plan(shell({ lineage: step }))).toBeNull();
   });
 });
 
