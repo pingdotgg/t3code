@@ -1,10 +1,12 @@
 /* oxlint-disable t3code/no-untranslated-copy -- Dev-only design catalog (loaded behind import.meta.env.DEV); its sample copy stays English. */
+import { SURFACE_STYLES, type SurfaceStyle } from "@t3tools/contracts";
 import {
   ArchiveIcon,
   ArrowRightLeftIcon,
   ArrowUpIcon,
   BellIcon,
   BotIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   CircleStopIcon,
   CopyIcon,
@@ -63,6 +65,17 @@ import {
   WorkLogList,
   WorkLogRow,
 } from "../chat/WorkLog";
+import {
+  SettingResetButton,
+  SettingsEmptyState,
+  SettingsLoadingRows,
+  SettingsNoMatches,
+  SettingsNote,
+  SettingsRow,
+  SettingsSearchField,
+  SettingsSection,
+  SettingsToolbar,
+} from "../settings/settingsLayout";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import {
   AlertDialog,
@@ -217,6 +230,7 @@ export function DesignSystemPage() {
           page.
         </Text>
         <FoundationsSection />
+        <SurfacesGridSection />
         <ButtonsSection />
         <ControlsSection />
         <InputsSection />
@@ -224,6 +238,7 @@ export function DesignSystemPage() {
         <StatusSection />
         <GroupsSection />
         <PanelsSection />
+        <SettingsCatalogSection />
         <OverlaysSection />
         <PaletteSection />
         <FeedbackSection />
@@ -465,6 +480,199 @@ function FoundationsSection() {
             <Logo aria-hidden className="size-6 text-foreground" />
           </Cell>
         ))}
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Surfaces grid */
+
+const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
+  "gradient-rim": "Standard",
+  flat: "Flat",
+  "soft-gradient": "Soft",
+  "aqua-gloss-full": "Gloss",
+  "aqua-blue": "Accent gloss",
+  "gradient-rim-everywhere": "Outline",
+};
+
+const ALL_SURFACE_UTILITIES = [
+  ["surface-raised", "h-8 w-full rounded-control border border-transparent surface-raised"],
+  [
+    "surface-raised-hover",
+    "h-8 w-full rounded-control border border-transparent surface-raised surface-raised-hover",
+  ],
+  [
+    "surface-danger-hover",
+    "h-8 w-full rounded-control border border-transparent surface-raised surface-danger-hover",
+  ],
+  ["surface-lit", "h-8 w-full rounded-control border border-transparent surface-lit"],
+  [
+    "surface-lit-hover",
+    "h-8 w-full rounded-control border border-transparent surface-lit surface-lit-hover",
+  ],
+  [
+    "surface-destructive",
+    "h-8 w-full rounded-control border border-transparent surface-destructive",
+  ],
+  [
+    "surface-destructive-hover",
+    "h-8 w-full rounded-control border border-transparent surface-destructive surface-destructive-hover",
+  ],
+  ["surface-dismiss", "h-8 w-full rounded-control border surface-dismiss"],
+  ["surface-pill", "h-7 w-full rounded-full border border-transparent surface-pill"],
+  [
+    "surface-neutral-pill",
+    "h-7 w-full rounded-full border border-transparent surface-neutral-pill",
+  ],
+  ["surface-well", "h-8 w-full rounded-control border border-transparent surface-well"],
+  [
+    "surface-ghost-field",
+    "h-8 w-full rounded-control border border-transparent surface-ghost-field",
+  ],
+  [
+    "surface-ghost-field-focus",
+    "h-8 w-full rounded-control border border-transparent surface-ghost-field-focus",
+  ],
+  ["surface-well-switch", "h-5.5 w-10 rounded-full border border-transparent surface-well-switch"],
+  [
+    "surface-focus",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-focus",
+  ],
+  [
+    "surface-invalid",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-invalid",
+  ],
+  [
+    "surface-invalid-focus",
+    "h-8 w-full rounded-control border border-transparent surface-well surface-invalid-focus",
+  ],
+  ["surface-tint", "h-8 w-full rounded-control surface-tint [--surface-tint:var(--info)]"],
+  [
+    "surface-tint-fill",
+    "h-8 w-full rounded-control surface-tint-fill [--surface-tint:var(--warning)]",
+  ],
+  ["surface-tint-rim", "h-8 w-full rounded-control surface-tint-rim [--surface-tint:var(--info)]"],
+  ["surface-popover", "h-8 w-full rounded-card surface-popover"],
+  ["surface-tooltip", "h-8 w-full rounded-control surface-tooltip"],
+  ["surface-palette", "h-8 w-full rounded-card surface-palette"],
+  ["surface-dialog", "h-8 w-full rounded-card surface-dialog"],
+  ["surface-card", "h-8 w-full rounded-card surface-card"],
+  ["surface-card-fill", "h-8 w-full rounded-card surface-card-fill"],
+  ["surface-card-settings", "h-8 w-full rounded-card surface-card-settings"],
+  ["surface-card-settings-rim", "h-8 w-full rounded-card surface-card-settings-rim"],
+  ["surface-panel", "h-8 w-full rounded-card surface-panel"],
+  ["surface-tray", "h-8 w-full rounded-card surface-tray"],
+  ["surface-composer-banner", "h-8 w-full rounded-card surface-composer-banner"],
+  ["surface-app-panel", "h-8 w-full rounded-card surface-app-panel"],
+  ["surface-outline", "h-8 w-full rounded-control border surface-outline"],
+  ["surface-badge", "h-6 w-full rounded-badge surface-badge"],
+  ["surface-floating", "h-8 w-full rounded-control border surface-floating"],
+  [
+    "surface-floating-hover",
+    "h-8 w-full rounded-control border surface-floating surface-floating-hover",
+  ],
+  ["surface-media-control", "size-7 rounded-full surface-media-control"],
+  ["surface-search-separator", "h-0 w-full border-b surface-search-separator"],
+  ["surface-divider-rule", "h-px w-full surface-divider-rule"],
+  ["surface-divider-rule-danger", "h-px w-full surface-divider-rule-danger"],
+  ["surface-command-input", "h-8 w-full rounded-control surface-command-input"],
+  ["surface-command-footer", "h-8 w-full rounded-control surface-command-footer"],
+  ["surface-composer", "h-8 w-full rounded-card surface-composer"],
+  ["surface-bubble", "h-8 w-full rounded-card surface-bubble"],
+  ["surface-bubble-quote", "h-8 w-full rounded-card surface-bubble-quote"],
+  ["surface-kbd", "h-6 w-12 rounded-kbd surface-kbd"],
+  ["surface-ghost-hover", "h-8 w-full rounded-control surface-ghost-hover"],
+  ["surface-selected", "h-8 w-full rounded-control surface-selected"],
+  ["surface-selected-soft", "h-8 w-full rounded-control surface-selected-soft"],
+  ["surface-pane-tab", "h-7 w-full rounded-control surface-pane-tab"],
+  ["surface-sidebar-row-hover", "h-7 w-full rounded-row surface-sidebar-row-hover"],
+  ["surface-sidebar-row-selected", "h-7 w-full rounded-row surface-sidebar-row-selected"],
+  ["surface-sidebar-row-active", "h-7 w-full rounded-row surface-sidebar-row-active"],
+  ["surface-timeline-divider", "h-px w-full surface-timeline-divider"],
+  ["surface-timeline-inspector", "h-8 w-full rounded-card surface-timeline-inspector"],
+  ["surface-gloss-on", "h-5.5 w-10 rounded-full surface-gloss-on"],
+  ["surface-gloss-thumb", "size-5 rounded-full surface-gloss-thumb"],
+  ["surface-gloss-off-thumb", "size-5 rounded-full surface-gloss-off-thumb"],
+  ["surface-grain", "h-8 w-full rounded-card surface-card surface-grain"],
+] as const;
+
+function SurfacesGridSection() {
+  return (
+    <Section
+      id="surfaces"
+      title="Surfaces"
+      layer="tokens"
+      description="Every surface-* utility rendered under all six surface styles via a local preview wrapper. Compare how rims, gradients, shadows and flat fills repaint each role."
+    >
+      <Specimen
+        label="Surface utilities across every surface style"
+        source="surface-* under data-surface-preview"
+      >
+        <div className="w-full overflow-x-auto rounded-card surface-card">
+          <table className="w-full min-w-[52rem] table-fixed border-collapse text-left">
+            <colgroup>
+              <col className="w-48" />
+              {SURFACE_STYLES.map((style) => (
+                <col key={style} />
+              ))}
+            </colgroup>
+            <thead>
+              <tr className="border-b border-divider">
+                <th className="px-3 py-2 font-mono text-caption text-dim-foreground">Utility</th>
+                {SURFACE_STYLES.map((style) => (
+                  <th key={style} className="px-2 py-2 text-center">
+                    <div className="truncate text-meta text-foreground">
+                      {SURFACE_STYLE_LABELS[style]}
+                    </div>
+                    <div className="truncate font-mono text-2xs text-dim-foreground">{style}</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-divider">
+              <tr>
+                <td className="px-3 py-2 font-mono text-caption text-muted-foreground">
+                  Buttons (reference)
+                </td>
+                {SURFACE_STYLES.map((style) => (
+                  <td key={style} className="px-2 py-2">
+                    <div
+                      data-surface-preview={style}
+                      data-surface-style={style}
+                      className="flex items-center justify-center gap-1.5"
+                    >
+                      <Button render={<span />} size="xs">
+                        Ok
+                      </Button>
+                      <Button render={<span />} size="xs" variant="secondary">
+                        Btn
+                      </Button>
+                    </div>
+                  </td>
+                ))}
+              </tr>
+              {ALL_SURFACE_UTILITIES.map(([name, swatchClass]) => (
+                <tr key={name}>
+                  <td className="px-3 py-1.5 font-mono text-caption text-muted-foreground">
+                    {name}
+                  </td>
+                  {SURFACE_STYLES.map((style) => (
+                    <td key={style} className="px-2 py-1.5">
+                      <div
+                        data-surface-preview={style}
+                        data-surface-style={style}
+                        className="flex min-h-9 items-center justify-center px-1"
+                      >
+                        <div className={swatchClass} />
+                      </div>
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </Specimen>
     </Section>
   );
@@ -1269,6 +1477,170 @@ function PanelsSection() {
               </p>
             </div>
           </CardSection>
+        </div>
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Settings */
+
+function SettingsCatalogSection() {
+  const [autoPull, setAutoPull] = useState(true);
+  const [mode, setMode] = useState("worktree");
+  const [search, setSearch] = useState("");
+  return (
+    <Section
+      id="settings"
+      title="Settings"
+      layer="meta"
+      description="SettingsSection, SettingsRow, SettingsNote, SettingsLoadingRows, SettingsEmptyState and SettingsNoMatches. Settings screens compose these rather than building cards by hand."
+    >
+      <Specimen
+        label="Grouped section with every control kind and notes"
+        source='<SettingsSection variant="grouped"> <SettingsRow> <SettingsNote>'
+        stack
+      >
+        <div className="w-full max-w-2xl">
+          <SettingsSection
+            title="Workspace defaults"
+            warning="Applies to newly created threads on this machine."
+            headerAction={
+              <Button size="xs" variant="secondary">
+                Reset all
+              </Button>
+            }
+          >
+            <SettingsNote>
+              SettingsNote sits flush with rows inside a grouped card for quiet section guidance.
+            </SettingsNote>
+            <SettingsRow
+              leading={<GlobeIcon />}
+              title="Auto-pull default branch"
+              description="Fetch and fast-forward before starting a new worktree."
+              resetAction={
+                <SettingResetButton ariaLabel="Reset auto-pull" onClick={() => setAutoPull(true)} />
+              }
+              control={
+                <Switch
+                  aria-label="Auto-pull default branch"
+                  checked={autoPull}
+                  onCheckedChange={setAutoPull}
+                />
+              }
+            />
+            <SettingsRow
+              title="Default reasoning effort"
+              description="Select control inside a settings row."
+              control={
+                <Select defaultValue="high" items={EFFORT_ITEMS}>
+                  <SelectTrigger size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    {EFFORT_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+            <SettingsRow
+              title="Checkout root"
+              description="Text input control inside a settings row."
+              control={<Input size="sm" defaultValue="~/Development/t3" className="w-44" />}
+            />
+            <SettingsRow
+              title="Retain logs"
+              description="NumberField control inside a settings row."
+              control={
+                <NumberField defaultValue={30} min={1} className="w-36">
+                  <NumberFieldGroup>
+                    <NumberFieldDecrement />
+                    <NumberFieldInput />
+                    <NumberFieldIncrement />
+                  </NumberFieldGroup>
+                </NumberField>
+              }
+            />
+            <SettingsRow
+              title="Thread environment"
+              description="Segmented ToggleGroup inside a settings row."
+              control={
+                <ToggleGroup value={[mode]} onValueChange={(next) => next[0] && setMode(next[0])}>
+                  <Toggle value="local">Local</Toggle>
+                  <Toggle value="worktree">Worktree</Toggle>
+                </ToggleGroup>
+              }
+            />
+            <SettingsRow
+              title="Authorized clients"
+              description="Action button control inside a settings row."
+              status={
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusDot tone="success" />1 authorized client
+                </span>
+              }
+              control={
+                <Button size="sm" variant="secondary">
+                  Manage
+                </Button>
+              }
+            />
+            <SettingsRow
+              title="Advanced diagnostics"
+              description="Navigation row with a trailing chevron."
+              trailing={<ChevronRightIcon aria-hidden className="size-4 text-muted-foreground" />}
+            />
+            <SettingsNote icon={<TriangleAlertIcon className="text-warning-foreground" />}>
+              SettingsNote with an icon leads a one-line warning or caveat.
+            </SettingsNote>
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen
+        label="Plain section and toolbar"
+        source='<SettingsSection variant="plain"> <SettingsToolbar> <SettingsSearchField>'
+        stack
+      >
+        <div className="w-full max-w-2xl">
+          <SettingsSection title="Filterable list" variant="plain">
+            <SettingsToolbar>
+              <SettingsSearchField
+                value={search}
+                onChange={setSearch}
+                placeholder="Search items…"
+              />
+              <Button size="sm" variant="secondary">
+                Add item
+              </Button>
+            </SettingsToolbar>
+            <SettingsNoMatches onClear={() => setSearch("")}>
+              No settings match “{search || "telemetry"}”.
+            </SettingsNoMatches>
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen label="Loading rows" source="<SettingsLoadingRows count>" stack>
+        <div className="w-full max-w-2xl">
+          <SettingsSection title="Connected machines">
+            <SettingsLoadingRows label="Loading connected machines" count={3} />
+          </SettingsSection>
+        </div>
+      </Specimen>
+      <Specimen label="Empty state" source="<SettingsEmptyState>" stack>
+        <div className="w-full max-w-2xl rounded-card surface-card p-4">
+          <SettingsEmptyState
+            icon={<GlobeIcon />}
+            title="No linked environments"
+            description="Link another machine so agents can run threads there."
+          >
+            <Button size="sm" variant="secondary">
+              Add environment
+            </Button>
+          </SettingsEmptyState>
         </div>
       </Specimen>
     </Section>

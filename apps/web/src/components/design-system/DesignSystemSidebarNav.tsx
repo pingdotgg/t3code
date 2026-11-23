@@ -16,6 +16,7 @@ import {
 /** The catalog's sections, by the `id` each `Section` renders with. */
 const CATALOG_SECTIONS = [
   { id: "foundations", label: "Foundations" },
+  { id: "surfaces", label: "Surfaces" },
   { id: "buttons", label: "Buttons" },
   { id: "controls", label: "Controls" },
   { id: "inputs", label: "Inputs" },
@@ -23,6 +24,7 @@ const CATALOG_SECTIONS = [
   { id: "status", label: "Status and loading" },
   { id: "groups", label: "Groups" },
   { id: "panels", label: "Panels" },
+  { id: "settings", label: "Settings" },
   { id: "overlays", label: "Menus and overlays" },
   { id: "palette", label: "Command palette" },
   { id: "feedback", label: "Feedback" },
