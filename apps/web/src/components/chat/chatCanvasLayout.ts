@@ -180,10 +180,7 @@ export function resolveChatCanvasLayout({
   );
   // A wider HTML preview stays centered on the chat column while that fits, and
   // clear of the details card and a mini player the chat column sits beside.
-  const laneEnd = Math.min(
-    detailsCard ? detailsCard.left - DETAILS_CARD_CLEARANCE : container.width - padding,
-    frame ? frame.x - GAP : Infinity,
-  );
+  const laneEnd = frame ? Math.min(laneRight, frame.x - GAP) : laneRight;
   const htmlPreviewWidth = overlapsChat ? 0 : Math.min(maxHtmlPreviewWidth, laneEnd - padding);
   const htmlPreview =
     htmlPreviewWidth > chat.width
