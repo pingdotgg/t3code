@@ -545,7 +545,7 @@ impl WorkspaceEditor {
             .map_or_else(|| "unknown".to_owned(), |c| c.environment_id.clone());
         let keys: Vec<String> = section.projects.iter().map(|p| p.key.clone()).collect();
         let all_selected = keys.iter().all(|k| self.selected.contains(k));
-        let toggle_keys = keys.clone();
+        let toggle_keys = keys;
         let mut header = div()
             .flex()
             .flex_row()
@@ -996,11 +996,6 @@ impl WorkspaceEditor {
     /// The sentence under the form.
     pub(crate) fn error_for_test(&self) -> Option<String> {
         self.error.clone()
-    }
-
-    /// The keys checked now.
-    pub(crate) fn selected_for_test(&self) -> Vec<String> {
-        self.selected.clone()
     }
 
     /// The projects the form lists, by key.

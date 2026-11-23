@@ -6947,7 +6947,6 @@ impl Render for ConnApp {
         if self.layout.sidebar_open {
             root = root
                 .child(render_workspace_rail(
-                    &self.shell,
                     &self.orbit.workspaces,
                     &self.workspace_images,
                     self.active_workspace.as_deref(),

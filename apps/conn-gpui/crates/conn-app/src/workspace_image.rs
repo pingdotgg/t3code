@@ -92,10 +92,11 @@ pub(crate) fn image_of_data_url(url: &str) -> Option<Arc<Image>> {
         (ImageFormat::Png, rest)
     } else if let Some(rest) = url.strip_prefix("data:image/jpeg;base64,") {
         (ImageFormat::Jpeg, rest)
-    } else if let Some(rest) = url.strip_prefix("data:image/webp;base64,") {
-        (ImageFormat::Webp, rest)
     } else {
-        return None;
+        (
+            ImageFormat::Webp,
+            url.strip_prefix("data:image/webp;base64,")?,
+        )
     };
     Some(Arc::new(Image::from_bytes(format, decode_base64(body)?)))
 }

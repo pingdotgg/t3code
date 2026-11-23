@@ -640,7 +640,7 @@ impl ConnApp {
                 }
             })
             .collect();
-        rows.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+        rows.sort_by_key(|a| a.label.to_lowercase());
         rows
     }
 
@@ -927,7 +927,7 @@ impl ConnApp {
             .chain(self.orbit.fleet.instances.iter())
             .cloned()
             .collect();
-        let mut pairing_held = held.clone();
+        let mut pairing_held = held;
         pairing_held.extend(self.linked.pairing.iter().cloned());
         let now = now_ms();
         let opt_in: HashSet<String> = self.linked.settings.instances.iter().cloned().collect();

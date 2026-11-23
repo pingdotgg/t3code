@@ -24,7 +24,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use conn_desktop::orbit::OrbitWorkspace;
-use conn_state::{RightPanelTab, ShellState};
+use conn_state::RightPanelTab;
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
@@ -266,7 +266,6 @@ pub(crate) fn render_rail_menu(
 /// Renders the vertical workspace rail matching real Conn (`WorkspaceRail.tsx`).
 #[must_use]
 pub(crate) fn render_workspace_rail(
-    _shell: &ShellState,
     workspaces: &[OrbitWorkspace],
     images: &WorkspaceImages,
     active_workspace: Option<&str>,

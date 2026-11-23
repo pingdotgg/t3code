@@ -57,18 +57,18 @@ pub struct WorkspaceColorStyle {
 #[must_use]
 pub fn workspace_color_style(name: &str) -> Option<WorkspaceColorStyle> {
     let (fill_rgb, dark_text) = match name {
-        "slate" => (0x64_74_8b, false),
-        "red" => (0xef_44_44, false),
-        "orange" => (0xf9_73_16, false),
-        "amber" => (0xf5_9e_0b, true),
-        "lime" => (0x84_cc_16, true),
-        "green" => (0x16_a3_4a, false),
-        "teal" => (0x0d_94_88, false),
-        "cyan" => (0x06_b6_d4, true),
-        "sky" => (0x0e_a5_e9, false),
-        "blue" => (0x25_63_eb, false),
-        "violet" => (0x7c_3a_ed, false),
-        "pink" => (0xec_48_99, false),
+        "slate" => (0x64748b, false),
+        "red" => (0xef4444, false),
+        "orange" => (0xf97316, false),
+        "amber" => (0xf59e0b, true),
+        "lime" => (0x84cc16, true),
+        "green" => (0x16a34a, false),
+        "teal" => (0x0d9488, false),
+        "cyan" => (0x06b6d4, true),
+        "sky" => (0x0ea5e9, false),
+        "blue" => (0x2563eb, false),
+        "violet" => (0x7c3aed, false),
+        "pink" => (0xec4899, false),
         _ => return None,
     };
     Some(WorkspaceColorStyle {

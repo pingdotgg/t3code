@@ -102,7 +102,7 @@ impl ConnApp {
             projects,
             preselected,
             tokens: self.tokens.clone(),
-            geometry: self.geometry.clone(),
+            geometry: self.geometry,
         };
         let editor = cx.new(|cx| WorkspaceEditor::new(init, window, cx));
         let sub = cx.subscribe_in(

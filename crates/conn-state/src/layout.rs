@@ -225,8 +225,7 @@ pub fn right_panel_max_width(viewport_w: f32, left_w: f32) -> f32 {
     let by_chat = (viewport_w - left_w).floor() - CHAT_BESIDE_PANEL_MIN_WIDTH;
     by_fraction
         .min(by_chat)
-        .max(RIGHT_PANEL_MIN_WIDTH)
-        .min(RIGHT_PANEL_MAX_WIDTH)
+        .clamp(RIGHT_PANEL_MIN_WIDTH, RIGHT_PANEL_MAX_WIDTH)
 }
 
 impl LayoutState {
@@ -321,10 +320,12 @@ mod width_tests {
 
     #[test]
     fn an_open_right_panel_does_not_stop_the_sidebar_growing() {
-        let mut layout = LayoutState::default();
-        layout.right_panel_open = true;
-        layout.right_panel_width = 600.0;
-        layout.sidebar_width = 233.0;
+        let mut layout = LayoutState {
+            right_panel_open: true,
+            right_panel_width: 600.0,
+            sidebar_width: 233.0,
+            ..LayoutState::default()
+        };
         layout.drag_sidebar_width(300.0, 1440.0, RAIL);
         assert_eq!(layout.sidebar_width, 300.0);
         layout.drag_sidebar_width(900.0, 1440.0, RAIL);
@@ -351,9 +352,11 @@ mod width_tests {
 
     #[test]
     fn dragging_the_right_panel_wider_never_snaps_it_narrower() {
-        let mut layout = LayoutState::default();
-        layout.sidebar_width = 233.0;
-        layout.right_panel_width = 600.0;
+        let mut layout = LayoutState {
+            sidebar_width: 233.0,
+            right_panel_width: 600.0,
+            ..LayoutState::default()
+        };
         layout.drag_right_panel_width(680.0, 1440.0, RAIL);
         assert_eq!(layout.right_panel_width, 680.0);
         layout.drag_right_panel_width(2000.0, 1440.0, RAIL);
@@ -364,8 +367,10 @@ mod width_tests {
 
     #[test]
     fn a_closed_sidebar_leaves_the_panel_the_whole_window() {
-        let mut layout = LayoutState::default();
-        layout.sidebar_open = false;
+        let mut layout = LayoutState {
+            sidebar_open: false,
+            ..LayoutState::default()
+        };
         layout.drag_right_panel_width(2000.0, 1440.0, RAIL);
         assert_eq!(layout.right_panel_width, 1008.0);
     }

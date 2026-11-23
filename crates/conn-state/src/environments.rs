@@ -979,7 +979,7 @@ mod tests {
 
         // The old, environment-blind grouping reads the two folders as one physical project, so
         // two machines with the same path but different repositories would merge.
-        let mut other_repo = merged.shell.projects.clone();
+        let mut other_repo = merged.shell.projects;
         other_repo.retain(|p| p.id != "p-vm-conn");
         let mut vm_other: ShellState = ShellState::default();
         vm_other.apply(snapshot(
