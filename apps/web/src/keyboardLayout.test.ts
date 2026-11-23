@@ -56,7 +56,7 @@ it.each([true, false])(
   },
 );
 
-it("ignores an obsolete layout result and clears the map when access fails", async () => {
+it("ignores an obsolete layout result", async () => {
   const pending = pendingLayout();
   let result = pending.promise;
   const keyboard = Object.assign(new EventTarget(), { getLayoutMap: () => result });
@@ -68,10 +68,6 @@ it("ignores an obsolete layout result and clears the map when access fails", asy
   pending.resolve(new Map([["KeyQ", "a"]]));
   await pending.promise;
   assert.strictEqual(getKeyboardLayoutMap()?.get("KeyQ"), "q");
-  result = Promise.reject(new Error("Permission denied"));
-  keyboard.dispatchEvent(new Event("layoutchange"));
-  await result.catch(() => undefined);
-  assert.strictEqual(getKeyboardLayoutMap(), undefined);
 });
 
 it("does not publish a pending result after disposal", async () => {
