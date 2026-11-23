@@ -2614,6 +2614,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (providerRetry === undefined) {
             return;
           }
+          // A later retry episode or the turn's failure must sort after progress made since.
+          releaseItemPosition(context, `terminal-failure:${context.providerTurnId}`);
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
@@ -3098,6 +3100,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             context.itemPositions.set(nativeItemId, position);
             return position;
           });
+
+        // Ordinals count reservations, so the released slot stays taken under a retired key.
+        const releaseItemPosition = (context: ActiveCodexTurnContext, nativeItemId: string) => {
+          const position = context.itemPositions.get(nativeItemId);
+          if (position === undefined) return;
+          context.itemPositions.delete(nativeItemId);
+          context.itemPositions.set(`${nativeItemId}:released:${position.ordinal}`, position);
+        };
 
         const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
           resolveItemPosition(context, nativeItemId).pipe(
