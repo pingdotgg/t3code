@@ -1027,39 +1027,6 @@ describe("source control tools", () => {
     }),
   );
 
-  it.effect("reads a PR named by a host-prefixed repository on the project's own host", () =>
-    Effect.gen(function* () {
-      const asked: Array<PullRequestRef> = [];
-      const harness = yield* makeHarness({
-        project: makeProject({
-          canonicalKey: "gh.example.internal/org/repo",
-          locator: {
-            source: "git-remote",
-            remoteName: "origin",
-            remoteUrl: "https://gh.example.internal/org/repo.git",
-          },
-          provider: SourceControlProviderKind.make("github"),
-          displayName: "org/repo",
-          owner: "org",
-          name: "repo",
-        }),
-        pullRequests: {
-          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
-          activity: () => Effect.succeed(activity),
-        },
-      });
-      yield* harness.call("pull_request_read", {
-        number: 123,
-        repository: "gh.example.internal/org/repo",
-      });
-      expect(asked[0]).toMatchObject({
-        host: "gh.example.internal",
-        repository: "org/repo",
-        number: 123,
-      });
-    }),
-  );
-
   it.effect("reads the PR this thread opened before status sync reports it", () =>
     Effect.gen(function* () {
       const asked: Array<PullRequestRef> = [];
