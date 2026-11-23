@@ -373,6 +373,7 @@ function resolveRuntimeState(input: {
   readonly port: number;
   readonly networkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces;
   readonly advertisedHostOverride: Option.Option<string>;
+  readonly fallbackToLocalOnly?: boolean;
 }): ResolvedRuntimeState {
   const advertisedHostOverride = Option.getOrUndefined(input.advertisedHostOverride);
   const requestedExposure = resolveDesktopServerExposure({
@@ -390,14 +391,15 @@ function resolveRuntimeState(input: {
           !address.internal && address.family === "IPv4" && isTailscaleIpv4Address(address.address),
       ),
     );
-  const exposure = unavailable
-    ? resolveDesktopServerExposure({
-        mode: "local-only",
-        port: input.port,
-        networkInterfaces: input.networkInterfaces,
-        ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
-      })
-    : requestedExposure;
+  const exposure =
+    unavailable && input.fallbackToLocalOnly !== false
+      ? resolveDesktopServerExposure({
+          mode: "local-only",
+          port: input.port,
+          networkInterfaces: input.networkInterfaces,
+          ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
+        })
+      : requestedExposure;
 
   return {
     state: runtimeStateFromResolvedExposure({
@@ -513,12 +515,15 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ port });
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
+      // Persisted network-accessible mode binds 0.0.0.0 even when boot finishes before
+      // Wi-Fi/DHCP assigns a LAN address; advertised endpoints pick up the address automatically.
       const resolved = resolveRuntimeState({
         requestedMode: withinPolicy(settings).serverExposureMode,
         settings: withinPolicy(settings),
         port,
         networkInterfaces: currentNetworkInterfaces,
         advertisedHostOverride: config.desktopLanHostOverride,
+        fallbackToLocalOnly: false,
       });
       yield* Ref.set(stateRef, resolved.state);
       return toContractState(resolved.state);
