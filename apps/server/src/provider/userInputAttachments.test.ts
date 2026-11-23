@@ -1157,6 +1157,28 @@ describe("question answer paths", () => {
           expected: ["Slide text"],
           absent: ["Notes:", "57"],
         },
+        ...[
+          { target: "deck/main.xml", prefix: "deck/" },
+          { target: "/main.xml", prefix: "" },
+        ].map(({ target, prefix }) => ({
+          ext: "pptx",
+          bounded: true,
+          parts: {
+            "_rels/.rels": `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+            [`${prefix}main.xml`]:
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            [`${prefix}_rels/main.xml.rels`]:
+              '<Relationships><Relationship Id="a" Target="slides/one.xml"/></Relationships>',
+            [`${prefix}slides/one.xml`]:
+              "<p:sld><a:p><a:r><a:t>Harbor launch</a:t></a:r></a:p></p:sld>",
+            [`${prefix}slides/_rels/one.xml.rels`]:
+              '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notes/n1.xml"/></Relationships>',
+            [`${prefix}notes/n1.xml`]:
+              "<p:notes><a:p><a:r><a:t>Check tide table</a:t></a:r></a:p></p:notes>",
+          },
+          expected: ["## Slide 1", "Harbor launch\nNotes:\nCheck tide table"],
+          absent: ["[Skipped document part"],
+        })),
         ...[false, true].map((missing) => ({
           ext: "pptx",
           bounded: true,
