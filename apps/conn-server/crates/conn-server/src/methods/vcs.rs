@@ -5,7 +5,10 @@
 //! [`VcsShared`] sits in `Deps` because the engine needs the same hub (refresh status when a
 //! turn ends) and the same setup tracker (launch into a worktree).
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use conn_contract::{
     OrchestrationV2GetThreadFamilyInput, OrchestrationV2ShellSnapshot, ReviewBranchCommitsInput,
@@ -18,7 +21,7 @@ use conn_contract::{
 };
 use conn_vcs::{
     VcsError, VcsHub, WorktreeSetups,
-    hub::{Remote, Sink},
+    hub::{Remote, RemotePolicy, RemotePolicySource, Sink},
     refs, review, worktree,
 };
 use serde::Serialize;
@@ -148,8 +151,67 @@ async fn known_workspace(snapshot: OrchestrationV2ShellSnapshot, real: PathBuf) 
     .unwrap_or(false)
 }
 
+/// The remote refresh settings for a folder, from this environment's settings and projects
+/// (`VcsAutomaticFetchInterval`, `VcsAutoPullPolicy`).
+struct SettingsPolicy {
+    environment: std::sync::Arc<crate::environment::Environment>,
+    engine: Option<std::sync::Arc<dyn conn_engine::Engine>>,
+}
+
+impl RemotePolicySource for SettingsPolicy {
+    fn policy<'a>(
+        &'a self,
+        cwd: &'a Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = RemotePolicy> + Send + 'a>> {
+        Box::pin(async move {
+            let settings = self.environment.settings.raw();
+            let fetch_interval = match settings
+                .get("automaticGitFetchInterval")
+                .and_then(Value::as_f64)
+            {
+                Some(ms) if ms.is_finite() && ms >= 0.0 => Duration::from_millis(ms as u64),
+                _ => RemotePolicy::default().fetch_interval,
+            };
+            // Only a registered project pulls, as `findActiveByWorkspaceRoot` decides.
+            let project = match &self.engine {
+                Some(engine) => engine.projects_snapshot().await.ok().and_then(|projects| {
+                    projects.into_iter().find(|p| {
+                        p["deletedAt"].is_null()
+                            && p["workspaceRoot"]
+                                .as_str()
+                                .is_some_and(|root| conn_vcs::hub::normalize(root) == cwd)
+                    })
+                }),
+                None => None,
+            };
+            let auto_pull = project.is_some_and(|project| {
+                let overridden = project["id"].as_str().and_then(|id| {
+                    settings
+                        .get("projectSettingsOverrides")?
+                        .get(id)?
+                        .get("defaultAutoPull")?
+                        .as_bool()
+                });
+                overridden
+                    .or_else(|| settings.get("defaultAutoPull")?.as_bool())
+                    .unwrap_or(false)
+            });
+            RemotePolicy {
+                fetch_interval,
+                auto_pull,
+            }
+        })
+    }
+}
+
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let shared = deps.vcs.clone();
+    if let Some(environment) = deps.environment.clone() {
+        shared.hub.set_policy(std::sync::Arc::new(SettingsPolicy {
+            environment,
+            engine: deps.engine.clone(),
+        }));
+    }
     let environment = deps.environment.clone();
     let worktrees_dir = move || {
         environment

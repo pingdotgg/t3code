@@ -18,7 +18,7 @@ use conn_contract::{
     VcsPullResultStatus, VcsSwitchRefInput,
 };
 use conn_vcs::{
-    commit, refs, review, status,
+    VcsHub, commit, hub, refs, review, status,
     worktree::{self, CreateWorktree, Removal},
 };
 use support::{Fixture, TempDir, commit_all, git, write};
@@ -976,4 +976,103 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
+}
+
+/// A fixed [`hub::RemotePolicy`] the test changes between refreshes.
+struct FixedPolicy(std::sync::Mutex<hub::RemotePolicy>);
+
+impl hub::RemotePolicySource for FixedPolicy {
+    fn policy<'a>(
+        &'a self,
+        _cwd: &'a std::path::Path,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = hub::RemotePolicy> + Send + 'a>> {
+        let policy = *self.0.lock().unwrap();
+        Box::pin(async move { policy })
+    }
+}
+
+/// T3 `VcsStatusBroadcaster.refreshStatus` with `VcsAutomaticFetchInterval` and
+/// `maybeAutoPull`: a zero interval fetches nothing; an automatic pull fast-forwards only a
+/// clean default branch that is behind and not ahead.
+#[tokio::test]
+async fn refresh_follows_the_fetch_interval_and_auto_pull() {
+    let fx = Fixture::new("auto-pull");
+    let other = fx.other_clone();
+    git(&other, &["config", "user.name", "test"]);
+    git(&other, &["config", "user.email", "test@example.com"]);
+    write(&other, "upstream.txt", "from upstream\n");
+    let upstream = commit_all(&other, "upstream");
+    git(&other, &["push", "-q", "origin", "main"]);
+    let before = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+    let tracking = || {
+        git(&fx.work, &["rev-parse", "refs/remotes/origin/main"])
+            .trim()
+            .to_owned()
+    };
+    let head = || git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    let policy = std::sync::Arc::new(FixedPolicy(std::sync::Mutex::new(hub::RemotePolicy {
+        fetch_interval: std::time::Duration::ZERO,
+        auto_pull: true,
+    })));
+    let vcs = VcsHub::new();
+    vcs.set_policy(policy.clone());
+    let cwd = fx.cwd();
+    let refresh = || vcs.refresh_status(&cwd, hub::Remote::Read);
+
+    // Fetching off: the tracking ref stays, so nothing justifies a pull.
+    refresh().await.unwrap();
+    assert_eq!(tracking(), before);
+    assert_eq!(head(), before);
+
+    // Fetching on, but the default branch has local changes: fetched, not pulled.
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_secs(30),
+        auto_pull: true,
+    };
+    write(&fx.work, "README.md", "# edited\n");
+    let dirty = refresh().await.unwrap();
+    assert_eq!(tracking(), upstream);
+    assert_eq!(head(), before);
+    assert_eq!(dirty.behind_count, 1);
+    let readme = || std::fs::read_to_string(fx.work.join("README.md")).unwrap();
+    assert_eq!(readme(), "# edited\n", "local changes survive");
+
+    // Diverged: ahead and behind, so no pull.
+    let local = commit_all(&fx.work, "local");
+    refresh().await.unwrap();
+    assert_eq!(head(), local);
+    assert_eq!(readme(), "# edited\n", "the local commit survives");
+
+    // Clean and only behind: fast-forwarded, and the result says so.
+    git(&fx.work, &["reset", "-q", "--hard", &before]);
+    let pulled = refresh().await.unwrap();
+    assert_eq!(head(), upstream);
+    assert_eq!((pulled.behind_count, pulled.ahead_count), (0, 0));
+    assert_eq!(
+        std::fs::read_to_string(fx.work.join("upstream.txt")).unwrap(),
+        "from upstream\n"
+    );
+
+    // Automatic pull off: a later upstream commit is fetched but not pulled.
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::from_secs(30),
+        auto_pull: false,
+    };
+    git(&fx.work, &["reset", "-q", "--hard", &before]);
+    refresh().await.unwrap();
+    assert_eq!(head(), before);
+
+    // Fetching off leaves a refresh alone, but an explicit pull still fetches and moves.
+    write(&other, "later.txt", "later\n");
+    let later = commit_all(&other, "later");
+    git(&other, &["push", "-q", "origin", "main"]);
+    *policy.0.lock().unwrap() = hub::RemotePolicy {
+        fetch_interval: std::time::Duration::ZERO,
+        auto_pull: true,
+    };
+    refresh().await.unwrap();
+    assert_eq!(tracking(), upstream);
+    refs::pull(&fx.work).await.unwrap();
+    assert_eq!((tracking(), head()), (later.clone(), later));
 }
