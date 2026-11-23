@@ -1129,12 +1129,14 @@ export const make = Effect.gen(function* () {
             if (grantedScopes.length === 0) {
               return yield* new ServerAuthScopeNotGrantedError({});
             }
-            // Only plain pairing links renew. T3 Connect, CLI, desktop and peer sessions keep
-            // their own lifetimes, so unlinking Connect or rotating a credential still cuts off.
+            // Only plain pairing links and the startup code renew. T3 Connect, CLI, desktop and
+            // peer sessions keep their own lifetimes, so unlinking Connect or rotating a
+            // credential still cuts off.
             const renewable =
               input?.proofKeyThumbprint !== undefined &&
               grant.method === "one-time-token" &&
-              grant.subject === PAIRING_LINK_SUBJECT;
+              (grant.subject === PAIRING_LINK_SUBJECT ||
+                grant.subject === INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT);
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
