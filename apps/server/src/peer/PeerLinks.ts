@@ -9,6 +9,7 @@ import {
   type PeerLink,
   type PeerLinkCreateInput,
   PeerLinkError,
+  type PeerLinkName,
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
@@ -79,7 +80,12 @@ export interface ResolvedPeerLink {
   /** The first address that answered as this peer. */
   readonly url: string;
   readonly token: string;
+  /** What the peer said it can do when it answered. */
+  readonly capabilities: ExecutionEnvironmentCapabilities;
 }
+
+/** What a link's session is called in the peer's Connections, before this environment's label. */
+export const LINK_CLIENT_NAME_PREFIX = "T3 Code · ";
 
 export const LINKED_ENVIRONMENTS_OFF =
   "Linked environments is off on this machine. Turn it on in Settings → Labs.";
@@ -104,12 +110,16 @@ export class PeerLinks extends Context.Service<
       input: PeerLinkCreateInput,
     ) => Effect.Effect<{ readonly link: PeerLink; readonly alreadyLinked: boolean }, PeerLinkError>;
     readonly list: Effect.Effect<ReadonlyArray<PeerLinkSummary>, PeerLinkError>;
+    /** The unexpired links' names, from what is stored, without asking any peer. */
+    readonly names: Effect.Effect<ReadonlyArray<PeerLinkName>, PeerLinkError>;
     /** The stored link, without asking the peer whether it answers. */
     readonly get: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
-    /** Forgets the link here. The peer still lists the session until it is revoked there. */
-    readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
+    /** Forgets the link here, then asks the peer to end the link's session. */
+    readonly unlink: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<{ readonly removed: boolean; readonly endedThere: boolean }, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
     readonly resolve: (
       environmentId: EnvironmentId,
@@ -547,7 +557,7 @@ const make = Effect.gen(function* () {
         message: `${peer.label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.`,
       });
     }
-    const issued = yield* signIn(primary, input, `T3 Code · ${self.label}`);
+    const issued = yield* signIn(primary, input, `${LINK_CLIENT_NAME_PREFIX}${self.label}`);
     const now = yield* DateTime.now;
     const linked: PeerLink = {
       environmentId: peer.environmentId,
@@ -637,6 +647,16 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const names: PeerLinks["Service"]["names"] = Effect.gen(function* () {
+    const links = yield* Effect.forEach(yield* readRows, toLink);
+    const now = yield* DateTime.now;
+    return links.flatMap((link) =>
+      DateTime.isGreaterThan(link.expiresAt, now)
+        ? [{ environmentId: link.environmentId, label: link.label }]
+        : [],
+    );
+  });
+
   const get: PeerLinks["Service"]["get"] = (environmentId) =>
     readRow(environmentId).pipe(
       Effect.flatMap(
@@ -647,16 +667,63 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Best effort: a peer that is gone or too old to revoke lets its session expire instead. */
+  const revokeAtPeer = Effect.fn("PeerLinks.revokeAtPeer")(
+    function* (environmentId: EnvironmentId, urlsJson: string, token: string) {
+      const urls = yield* decodeUrls(urlsJson);
+      // A race over no addresses never settles.
+      if (urls.length === 0) return false;
+      yield* Effect.raceAll(
+        urls.map((url) =>
+          // An address can change hands after linking; only the linked peer may see the token.
+          answersAs(url, environmentId).pipe(
+            Effect.flatMap(Effect.fromOption),
+            Effect.andThen(clientFor(url)),
+            Effect.flatMap((client) =>
+              client.mcpOAuth
+                .revoke({ payload: { token: Redacted.make(token) } })
+                .pipe(Effect.timeout(probeTimeout(url))),
+            ),
+          ),
+        ),
+      );
+      return true;
+    },
+    Effect.catchCause((cause) =>
+      Effect.logDebug("The unlinked peer did not revoke the link's session", { cause }).pipe(
+        Effect.as(false),
+      ),
+    ),
+  );
+
   const unlink: PeerLinks["Service"]["unlink"] = Effect.fn("PeerLinks.unlink")(
     function* (environmentId) {
-      const deleted = yield* sql<{ secret_name: string }>`
+      const deleted = yield* sql<{ secret_name: string; urls_json: string }>`
         DELETE FROM peer_environment_links WHERE environment_id = ${environmentId}
-        RETURNING secret_name
+        RETURNING secret_name, urls_json
       `.pipe(Effect.catch(failStorage));
+      let endedThere = false;
       for (const row of deleted) {
+        // Unreadable only skips the revocation; the secret is still removed below.
+        const token = yield* secrets
+          .get(row.secret_name)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not read the unlinked peer's token", { cause }).pipe(
+                Effect.as(Option.none()),
+              ),
+            ),
+          );
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
+        if (Option.isSome(token)) {
+          endedThere = yield* revokeAtPeer(
+            environmentId,
+            row.urls_json,
+            new TextDecoder().decode(token.value),
+          );
+        }
       }
-      return deleted.length > 0;
+      return { removed: deleted.length > 0, endedThere };
     },
   );
 
@@ -717,6 +784,7 @@ const make = Effect.gen(function* () {
         link: yield* withLabel(link, peer.label),
         url,
         token: new TextDecoder().decode(stored.value),
+        capabilities: peer.capabilities,
       };
     },
   );
@@ -750,6 +818,7 @@ const make = Effect.gen(function* () {
     link,
     linkUnlessLinked,
     list,
+    names,
     get,
     unlink,
     resolve,

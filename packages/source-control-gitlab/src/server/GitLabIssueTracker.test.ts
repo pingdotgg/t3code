@@ -59,6 +59,13 @@ function answer(path: string): string {
         created_at: "2026-07-03T00:00:00Z",
         system: true,
       },
+      {
+        id: 10,
+        body: "mentioned in merge request api!51",
+        author: { username: "theo" },
+        created_at: "2026-07-04T00:00:00Z",
+        system: true,
+      },
     ]);
   }
   if (path.startsWith("projects/acme%2Fweb/issues/42/resource_label_events")) {
@@ -206,7 +213,14 @@ describe("GitLabIssueTracker", () => {
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
         ["closed", null],
+        ["referenced", "merge request api!51"],
       ]);
+      expect(issue.events.at(-1)?.reference).toEqual({
+        repository: "acme/api",
+        number: 51,
+        kind: "pull-request",
+        url: "https://gitlab.com/acme/api/-/merge_requests/51",
+      });
       // A closing merge request is not repeated as a related one.
       expect(
         issue.linkedPullRequests.map((link) => [link.number, link.closesIssue, link.isDraft]),
@@ -214,6 +228,37 @@ describe("GitLabIssueTracker", () => {
         [50, true, false],
         [51, false, true],
       ]);
+    }),
+  );
+
+  it.effect("loads the detail without comment reactions where GitLab has no Note.awardEmoji", () =>
+    Effect.gen(function* () {
+      // GitLab before 16.1 has no `Note.awardEmoji`; glab exits 1 on any query naming it.
+      const api = yield* GitLabIssueTracker.make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabCli.GitLabCli)({
+            execute: (input) =>
+              input.args[1] === "graphql"
+                ? Effect.fail(
+                    new GitLabCli.GitLabCliCommandError({
+                      operation: "execute",
+                      command: "glab",
+                      cwd: input.cwd,
+                      cause: new Error("glab: Field 'awardEmoji' doesn't exist on type 'Note'"),
+                    }),
+                  )
+                : Effect.succeed(TestSourceControlHost.processOutput(answer(input.args[1]!))),
+          }),
+        ),
+      );
+      const target = { cwd: "/w", host: "gitlab.example.com", scope: "acme/web", key: "42" };
+      const issue = yield* api.getIssue(target);
+      expect(issue.comments.map((comment) => [comment.id, comment.reactions])).toEqual([["7", []]]);
+      expect(issue.reactions).toEqual([
+        { content: "eyes", count: 1, actors: ["theo"], viewerHasReacted: false },
+      ]);
+      const later = yield* api.getComments({ ...target, cursor: "2:after-100" });
+      expect(later.comments.map((comment) => comment.reactions)).toEqual([[]]);
     }),
   );
 

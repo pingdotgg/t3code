@@ -11,6 +11,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
   type VcsProcessExitFailureKind,
@@ -21,10 +22,13 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
+  type NormalizedGitLabMergeRequestRecord,
+  withSourceProjectPath,
 } from "./gitLabMergeRequests.ts";
-import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 // GitLab allows ~1M-character descriptions; glab's JSON escaping (`\u003c`) can grow one sixfold.
 const MERGE_REQUEST_LIST_MAX_BYTES = 8_000_000;
 const decodeJsonArray = Schema.decodeUnknownExit(
@@ -124,7 +128,7 @@ export class GitLabMergeRequestNotFoundError extends Schema.TaggedError<GitLabMe
 
 export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandError>()(
   "GitLabCliCommandError",
-  gitLabCliExecutionErrorContext,
+  { ...gitLabCliExecutionErrorContext, userFacingDetail: Schema.optional(Schema.String) },
 ) {
   get detail(): string {
     return "GitLab CLI command failed.";
@@ -342,6 +346,7 @@ export class GitLabCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
     }) => Effect.Effect<void, GitLabCliError>;
 
     readonly getDefaultBranch: (input: {
@@ -356,6 +361,11 @@ export class GitLabCli extends Context.Service<
   }
 >()("@t3tools/source-control-gitlab/server/GitLabCli") {}
 
+// The create-MR endpoint has no draft attribute; GitLab reads the draft marker from the title.
+// Same markers and case rule as glab's `EnsureTitlePrefix`.
+const draftTitle = (title: string) =>
+  /^\s*(?:\[draft\]|\(draft\)|draft:)/i.test(title) ? title : `Draft: ${title}`;
+
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
   web_url: TrimmedNonEmptyString,
@@ -369,6 +379,10 @@ const RawGitLabDefaultBranchSchema = Schema.Struct({
 
 const decodeGitLabMergeRequestProject = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number, path: TrimmedNonEmptyString })),
+);
+
+const decodeGitLabProjectPath = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ path_with_namespace: TrimmedNonEmptyString })),
 );
 
 const RawGitLabNamespaceSchema = Schema.Struct({
@@ -553,6 +567,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // glab's MR JSON names a fork's source project only by `source_project_id`.
+  const resolveSourceProjectPaths = Effect.fn("GitLabCli.resolveSourceProjectPaths")(function* (
+    cwd: string,
+    records: ReadonlyArray<NormalizedGitLabMergeRequestRecord>,
+    paths: Map<number, string | null>,
+  ) {
+    const ids = new Set<number>();
+    for (const record of records) {
+      const id = record.unresolvedSourceProjectId;
+      if (id !== undefined && !paths.has(id)) ids.add(id);
+    }
+    yield* Effect.forEach(
+      ids,
+      (id) =>
+        execute({ cwd, args: ["api", `projects/${id}`] }).pipe(
+          Effect.flatMap((result) => decodeGitLabProjectPath(result.stdout.trim())),
+          Effect.map((project) => project.path_with_namespace),
+          Effect.orElseSucceed(() => null),
+          Effect.map((path) => void paths.set(id, path)),
+        ),
+      { concurrency: 8, discard: true },
+    );
+    return records.map((record) =>
+      record.unresolvedSourceProjectId === undefined
+        ? record
+        : withSourceProjectPath(record, paths.get(record.unresolvedSourceProjectId) ?? null),
+    );
+  });
+
   return GitLabCli.of({
     execute,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
@@ -560,6 +603,7 @@ export const make = Effect.gen(function* () {
       let pageSize = limit;
       let page = 1;
       const items: GitLabMergeRequestSummary[] = [];
+      const sourceProjectPaths = input.source?.owner ? new Map<number, string | null>() : null;
       while (items.length < limit) {
         const result = yield* execute({
           cwd: input.cwd,
@@ -594,7 +638,11 @@ export const make = Effect.gen(function* () {
             cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
           });
         }
-        items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
+        // Only a fork head can match a fork's merge request, so other lookups skip the API calls.
+        const records = sourceProjectPaths
+          ? yield* resolveSourceProjectPaths(input.cwd, decoded.success, sourceProjectPaths)
+          : decoded.success;
+        items.push(...records.map(toSummaryWithOptionalUpdatedAt));
         // Count raw entries: the decoder drops invalid ones, which would end paging early.
         const entries = decodeJsonArray(raw);
         if (
@@ -629,7 +677,9 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return Effect.succeed(toSummaryWithOptionalUpdatedAt(decoded.success));
+              return resolveSourceProjectPaths(input.cwd, [decoded.success], new Map()).pipe(
+                Effect.map(([record]) => toSummaryWithOptionalUpdatedAt(record!)),
+              );
             }),
           ),
         ),
@@ -646,6 +696,19 @@ export const make = Effect.gen(function* () {
           `projects/${encodeURIComponent(projectPath)}`,
         ],
       }).pipe(
+        Effect.mapError((error) => {
+          if (
+            error._tag !== "GitLabCliCommandError" ||
+            !isVcsProcessExitError(error.cause) ||
+            error.cause.failureKind !== "not-found"
+          )
+            return error;
+          return new GitLabCliCommandError({
+            ...error,
+            cause: error.cause,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(input.repository),
+          });
+        }),
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
           decodeGitLabRepositoryCloneUrls(raw).pipe(
@@ -777,7 +840,7 @@ export const make = Effect.gen(function* () {
             ? []
             : ["--raw-field", `target_project_id=${targetProjectId}`]),
           "--raw-field",
-          `title=${input.title}`,
+          `title=${input.draft === true ? draftTitle(input.title) : input.title}`,
           "--field",
           "description=@-",
         ],
