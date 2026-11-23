@@ -1922,6 +1922,10 @@ impl ChatView {
     ///   optional attachment thumbnails/pills, and wrapped prompt text.
     /// - Quiet right-aligned action row below: timestamp, `↑ Send now`, pencil Edit button,
     ///   and `×` Remove button (or `"Editing in the composer"` + `Cancel` while being edited).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "renders one queued message from its fields, plus whether the toggle follows it"
+    )]
     fn render_queued_user_row(
         &self,
         id: &str,
