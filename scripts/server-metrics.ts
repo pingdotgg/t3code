@@ -1133,12 +1133,13 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       orElse: () => new MetricsError({ message: "an activity report got no answer" }),
     }),
   );
+  const firstSent = yield* nowMs;
   yield* report;
   // Renewals start every 25 s from the previous send, not its reply, so with the 15 s deadline
-  // each lands well inside the 45 s lease.
-  yield* report.pipe(
-    Effect.repeat(Schedule.fixed(Duration.seconds(25))),
-    Effect.delay(Duration.seconds(25)),
+  // each lands well inside the 45 s lease. The first one counts from the first send too.
+  yield* nowMs.pipe(
+    Effect.flatMap((now) => Effect.sleep(Duration.millis(Math.max(0, 25_000 - (now - firstSent))))),
+    Effect.andThen(report.pipe(Effect.repeat(Schedule.fixed(Duration.seconds(25))))),
     Effect.catchCause(() => Ref.update(lost, (first) => first ?? "an activity report failed")),
     Effect.forkScoped,
   );
