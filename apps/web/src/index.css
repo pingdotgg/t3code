@@ -7,14 +7,11 @@
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
-/* Secondary hovering pointers reveal sidebar actions on touch-primary devices. */
-@custom-variant any-hover {
-  @media (any-hover: hover) {
-    &:hover {
-      @slot;
-    }
-  }
-}
+/* Hover variants key off markers main.tsx keeps on <html>: the media query's answer, or a real
+   mouse that Chromium reports as non-hovering (VDI/VM absolute pointers). A single selector keeps
+   one rule per utility. Without main.tsx (e.g. browser tests importing this file) hover never matches. */
+@custom-variant hover (&:where([data-hover] *):hover);
+@custom-variant any-hover (&:where([data-any-hover] *):hover);
 
 /* On mobile, morph the expanded hero composer into the compact docked
    composer while it moves; the rest of the app remains visually stationary. */
