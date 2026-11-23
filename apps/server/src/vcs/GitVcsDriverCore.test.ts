@@ -1014,6 +1014,69 @@ it.effect("resolves a branch's base once while its refs and branch config are un
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("keeps a branch's base cached while only other refs' commits move", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawnedArgs: Array<ReadonlyArray<string>> = [];
+      const spawner = ChildProcessSpawner.make((command) => {
+        if (ChildProcess.isStandardCommand(command)) spawnedArgs.push(command.args.map(String));
+        return delegate.spawn(command);
+      });
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const { initialBranch } = yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["remote", "add", "origin", cwd]);
+      yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+      yield* git(cwd, ["update-ref", "refs/remotes/origin/develop", "HEAD"]);
+      yield* git(cwd, [
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        `refs/remotes/origin/${initialBranch}`,
+      ]);
+      const other = `${yield* makeTmpDir()}/other`;
+      yield* git(cwd, ["worktree", "add", "-b", "other", other]);
+      yield* git(cwd, ["checkout", "-b", "feature/x"]);
+      yield* git(cwd, ["pack-refs", "--all"]);
+      const lookups = () => {
+        const count = spawnedArgs.filter((args) =>
+          args.includes("branch.feature/x.t3-merge-base-ref"),
+        ).length;
+        spawnedArgs.length = 0;
+        return count;
+      };
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+
+      // Another worktree's commits and a fetch moving a packed base ref add or remove no name.
+      yield* git(other, ["commit", "--allow-empty", "-m", "other"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(spawnedArgs.length, 6);
+      assert.equal(lookups(), 0);
+      yield* git(other, ["commit", "--allow-empty", "-m", "other again"]);
+      yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "other"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 0);
+
+      yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+      yield* git(cwd, ["branch", "master"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+      // Deleting a packed ref rewrites packed-refs without touching a loose file.
+      yield* git(cwd, ["update-ref", "-d", "refs/remotes/origin/develop"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+      yield* git(cwd, ["config", "branch.feature/x.t3-merge-base", "other"]);
+      yield* driver.statusDetailsLocal(cwd);
+      assert.equal(lookups(), 1);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   { kind: "working-tree", request: { sourceKind: "working-tree" } },
   { kind: "commit", request: { sourceKind: "commit", commitSha: "HEAD" } },
