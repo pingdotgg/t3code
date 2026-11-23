@@ -13,11 +13,17 @@ export function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return parseRemoteNamesInGitOrder(stdout).toSorted((a, b) => b.length - a.length);
 }
 
+// Git rejects ASCII whitespace and control characters in ref names but allows Unicode
+// whitespace such as NBSP or U+3000, so only ASCII whitespace is trimmed here.
+export function trimAsciiWhitespace(value: string): string {
+  return value.replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+}
+
 export function parseRemoteRefWithRemoteNames(
   ref: string,
   remoteNames: ReadonlyArray<string>,
 ): { remoteRef: string; remoteName: string; branchName: string } | null {
-  const trimmedRef = ref.trim();
+  const trimmedRef = trimAsciiWhitespace(ref);
   if (trimmedRef.length === 0) {
     return null;
   }
@@ -27,7 +33,7 @@ export function parseRemoteRefWithRemoteNames(
     if (!trimmedRef.startsWith(remotePrefix)) {
       continue;
     }
-    const branchName = trimmedRef.slice(remotePrefix.length).trim();
+    const branchName = trimAsciiWhitespace(trimmedRef.slice(remotePrefix.length));
     if (branchName.length === 0) {
       return null;
     }
@@ -48,7 +54,7 @@ export function extractBranchNameFromRemoteRef(
     remoteNames?: ReadonlyArray<string>;
   },
 ): string {
-  const normalized = ref.trim();
+  const normalized = trimAsciiWhitespace(ref);
   if (normalized.length === 0) {
     return "";
   }
@@ -67,5 +73,5 @@ export function extractBranchNameFromRemoteRef(
   if (firstSlash === -1) {
     return normalized;
   }
-  return normalized.slice(firstSlash + 1).trim();
+  return trimAsciiWhitespace(normalized.slice(firstSlash + 1));
 }

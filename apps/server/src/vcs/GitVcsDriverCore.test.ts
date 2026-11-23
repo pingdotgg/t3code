@@ -760,6 +760,58 @@ it.effect("reads a branch whose name starts with a parenthesis as attached", () 
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reads a branch whose name ends in a non-breaking space with the space", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["switch", "-c", "topic\u00a0"]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const status = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+      assert.equal(status.branch, "topic\u00a0");
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("marks a default branch ending in a non-breaking space as default", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const source = yield* makeTmpDir();
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(source);
+      yield* git(source, ["branch", "topic\u00a0"]);
+      yield* git(source, ["branch", "topic"]);
+      yield* git(cwd, ["clone", source, "."]);
+      yield* git(cwd, ["remote", "set-head", "origin", "topic\u00a0"]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const refs = yield* driver.listRefs({ cwd });
+      const remote = refs.refs.find((ref) => ref.name === "origin/topic\u00a0");
+      const plain = refs.refs.find((ref) => ref.name === "origin/topic");
+      assert.isTrue(remote?.isDefault);
+      assert.isFalse(plain?.isDefault);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("reads a stored branch base ending in a non-breaking space with the space", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, [
+        "config",
+        "branch.feature/x.t3-merge-base",
+        "refs/remotes/origin/topic\u00a0",
+      ]);
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      assert.equal(
+        yield* driver.readBranchBase(cwd, "feature/x"),
+        "refs/remotes/origin/topic\u00a0",
+      );
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each(["an existing", "a new"] as const)(
   "follows a checkout of %s branch made outside the driver after refs were cached",
   (branch) =>
