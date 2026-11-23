@@ -1106,7 +1106,14 @@ export const layer = Layer.effect(
             undefined,
             trigger === "scheduled" ? active.nextRunAt : undefined,
           );
-          if (!claimed) return { task: active, threadId: null, dispatchFailed: false };
+          if (!claimed) {
+            yield* Effect.logInfo("Skipping schedule task run", {
+              taskId: active.id,
+              reason: "occurrence moved before dispatch",
+              occurrence: active.nextRunAt,
+            });
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
         } else
           yield* sql
             .withTransaction(
@@ -1358,13 +1365,14 @@ export const layer = Layer.effect(
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
         ),
       );
+      if (updated.length === 0) return;
       yield* Effect.logInfo("Skipping schedule task run", {
         taskId: task.id,
         reason,
         missedRunAt: task.nextRunAt,
         rescheduledTo: next,
       });
-      if (updated.length > 0) yield* notifyChanged;
+      yield* notifyChanged;
     });
 
     const runDueTasks = Effect.fn("ScheduledTaskService.runDueTasks")(function* () {
@@ -1509,7 +1517,13 @@ export const layer = Layer.effect(
       moveFixedTimeRunsToZone(zone).pipe(
         Effect.tap(() => Effect.sync(() => (appliedZone = DateTime.zoneToString(zone)))),
         Effect.catchCause((cause) =>
-          Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
+          Effect.sync(() => (appliedZone = undefined)).pipe(
+            Effect.andThen(
+              Effect.logWarning("Could not move scheduled tasks to the schedule time zone", {
+                cause,
+              }),
+            ),
+          ),
         ),
       );
     // Unreadable settings leave stored runs alone rather than moving them to this machine's zone.
