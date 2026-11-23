@@ -22,6 +22,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
@@ -31,8 +32,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
+import { LIVE_STREAM_MAX_SERIALIZED_BYTES } from "../orchestration-v2/LiveStreamBudget.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -105,17 +108,52 @@ function dateTime(value: string): DateTime.Utc {
   return DateTime.makeUnsafe(value);
 }
 
-type HistoryMessage = Omit<AgentSessionScanner.AgentSessionThreadMessage, "role"> & {
-  readonly role: AgentSessionScanner.AgentSessionThreadMessage["role"] | "reasoning";
-};
+type HistoryMessage =
+  | AgentSessionScanner.AgentSessionThreadMessage
+  | { readonly role: "reasoning"; readonly text: string; readonly createdAt: string };
+
+/** Same rule as a live Claude Read, whose row previews the image file it opened. */
+function viewedImagePath(message: { readonly toolName: string; readonly input: unknown }) {
+  if (message.toolName !== "Read" || typeof message.input !== "object" || message.input === null) {
+    return undefined;
+  }
+  const path = "file_path" in message.input ? message.input.file_path : undefined;
+  return typeof path === "string" &&
+    path.trim().length > 0 &&
+    path.length <= 4096 &&
+    !/[\r\n]/.test(path) &&
+    isWorkspaceImagePreviewPath(path)
+    ? path.trim()
+    : undefined;
+}
+
+// A thread imports in one commit, which a live subscriber must take whole.
+const IMPORTED_IMAGE_BYTES = LIVE_STREAM_MAX_SERIALIZED_BYTES / 2;
+
+/** Keeps the newest tool images that fit the budget; older calls keep their rows only. */
+function withImageBudget(messages: ReadonlyArray<HistoryMessage>) {
+  let remaining = IMPORTED_IMAGE_BYTES;
+  return messages
+    .toReversed()
+    .map((message) => {
+      if (message.role !== "tool") return message;
+      remaining -= JSON.stringify(message.images).length;
+      return remaining >= 0 ? message : { ...message, images: [] };
+    })
+    .toReversed();
+}
 
 function messageEvents(input: {
   readonly threadId: ThreadId;
-  readonly index: number;
+  readonly key: string;
+  readonly ordinal: number;
   readonly message: HistoryMessage;
+  readonly eventScope: string | undefined;
 }): ReadonlyArray<OrchestrationV2DomainEvent> {
-  const ordinal = input.index + 1;
-  const suffix = String(input.index).padStart(6, "0");
+  const ordinal = input.ordinal;
+  const suffix = input.key;
+  const eventId = (id: string) =>
+    EventId.make(input.eventScope === undefined ? id : `${id}:${input.eventScope}`);
   const messageId = MessageId.make(`${input.threadId}:${suffix}`);
   const turnItemId = TurnItemId.make(
     `${IMPORT_EVENT_PREFIX}:turn-item:${input.threadId}:${suffix}`,
@@ -138,12 +176,25 @@ function messageEvents(input: {
     updatedAt: at,
   };
   const turnItemEvent = (payload: OrchestrationV2TurnItem): OrchestrationV2DomainEvent => ({
-    id: EventId.make(turnItemId),
+    id: eventId(turnItemId),
     type: "turn-item.updated",
     threadId: input.threadId,
     occurredAt: at,
     payload,
   });
+  if (input.message.role === "tool") {
+    const imagePath = viewedImagePath(input.message);
+    return [
+      turnItemEvent({
+        ...common,
+        type: "dynamic_tool",
+        toolName: input.message.toolName,
+        ...(imagePath === undefined ? {} : { viewedImagePath: imagePath }),
+        input: input.message.input,
+        output: input.message.images,
+      }),
+    ];
+  }
   if (input.message.role === "reasoning") {
     return [
       turnItemEvent({ ...common, type: "reasoning", text: input.message.text, streaming: false }),
@@ -184,7 +235,7 @@ function messageEvents(input: {
         };
   return [
     {
-      id: EventId.make(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
+      id: eventId(`${IMPORT_EVENT_PREFIX}:message:${input.threadId}:${suffix}`),
       type: "message.updated",
       threadId: input.threadId,
       occurredAt: at,
@@ -194,11 +245,74 @@ function messageEvents(input: {
   ];
 }
 
+/**
+ * Messages keep the ids their index among messages gave them before tool rows existed, so a
+ * refresh overwrites every item an earlier import wrote; tool rows take their own ids.
+ */
+function historyItemEvents(input: {
+  readonly threadId: ThreadId;
+  readonly messages: ReadonlyArray<HistoryMessage>;
+  readonly eventScope?: string;
+}): ReadonlyArray<OrchestrationV2DomainEvent> {
+  let messageIndex = 0;
+  let toolIndex = 0;
+  return input.messages.flatMap((message, index) =>
+    messageEvents({
+      threadId: input.threadId,
+      key:
+        message.role === "tool"
+          ? `tool-${String(toolIndex++).padStart(6, "0")}`
+          : String(messageIndex++).padStart(6, "0"),
+      ordinal: index + 1,
+      message,
+      eventScope: input.eventScope,
+    }),
+  );
+}
+
+function truncationNoticeEvents(input: {
+  readonly threadId: ThreadId;
+  readonly omittedMessageCount: number;
+  readonly createdAt: DateTime.Utc;
+  readonly eventScope?: string;
+}): ReadonlyArray<OrchestrationV2DomainEvent> {
+  if (input.omittedMessageCount === 0) return [];
+  const id = `${IMPORT_EVENT_PREFIX}:history-truncated:${input.threadId}`;
+  const count = input.omittedMessageCount;
+  return [
+    {
+      id: EventId.make(input.eventScope === undefined ? id : `${id}:${input.eventScope}`),
+      type: "turn-item.updated",
+      threadId: input.threadId,
+      occurredAt: input.createdAt,
+      payload: {
+        id: TurnItemId.make(id),
+        threadId: input.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 0,
+        status: "completed",
+        title: null,
+        startedAt: input.createdAt,
+        completedAt: input.createdAt,
+        updatedAt: input.createdAt,
+        type: "system_notice",
+        message: `${count} earlier ${count === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
+      },
+    },
+  ];
+}
+
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const projects = yield* ProjectService.ProjectService;
   const eventSink = yield* EventSink.EventSinkV2;
+  const sql = yield* SqlClient.SqlClient;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -321,7 +435,7 @@ const make = Effect.gen(function* () {
             { onConflict: "ignore" },
           );
           const existing = yield* Effect.option(
-            orchestrator.getThreadRecords(threadId, ["messages"]),
+            orchestrator.getThreadRecords(threadId, ["messages", "runs", "turnItems"]),
           );
           if (Option.isSome(existing)) {
             if (existing.value.thread.projectId !== input.projectId) {
@@ -334,23 +448,62 @@ const make = Effect.gen(function* () {
             if (existing.value.thread.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
-            // A transcript can change after the import, so record it only when the
-            // thread already holds exactly its messages.
+            // Fork: a thread never continued in T3 Code takes the transcript's current history
+            // whenever it differs, as long as the new history has at least as many messages and
+            // tool rows: their ids come from their index, so every item the thread holds is
+            // rewritten and none is left behind. Resetting positions keeps transcript order.
             const stored = existing.value.messages;
-            if (
-              stored.length !== thread.messages.length ||
-              stored.some(
+            const imported = thread.messages.flatMap((message) =>
+              message.role === "tool" ? [] : [message],
+            );
+            const storedTools = existing.value.turnItems.filter(
+              (item) => item.type === "dynamic_tool",
+            ).length;
+            const importedTools = thread.messages.length - imported.length;
+            const sameMessages =
+              stored.length === imported.length &&
+              stored.every(
                 (message, index) =>
-                  message.role !== thread.messages[index]?.role ||
-                  message.text !== thread.messages[index]?.text,
-              )
-            ) {
+                  message.role === imported[index]?.role && message.text === imported[index]?.text,
+              );
+            const continued = existing.value.runs.length > 0;
+            if (continued && !sameMessages) return false;
+            const refresh = !continued && !(sameMessages && storedTools === importedTools);
+            if (refresh && (stored.length > imported.length || storedTools > importedTools)) {
               return false;
+            }
+            if (refresh) {
+              const eventScope = `refresh:${yield* idAllocator.allocate.event({ threadId })}`;
+              yield* threadCommands.withLock(
+                threadId,
+                Effect.gen(function* () {
+                  yield* sql`
+                    DELETE FROM orchestration_v2_turn_item_positions
+                    WHERE thread_id = ${threadId}
+                      AND turn_item_id LIKE ${`${IMPORT_EVENT_PREFIX}:%`}
+                  `;
+                  yield* eventSink.write({
+                    events: [
+                      ...truncationNoticeEvents({
+                        threadId,
+                        omittedMessageCount: thread.omittedMessageCount,
+                        createdAt: dateTime(thread.createdAt),
+                        eventScope,
+                      }),
+                      ...historyItemEvents({
+                        threadId,
+                        messages: withImageBudget(thread.messages),
+                        eventScope,
+                      }),
+                    ],
+                  });
+                }),
+              );
             }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);
-            return null;
+            return refresh ? true : null;
           }
 
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
@@ -431,37 +584,12 @@ const make = Effect.gen(function* () {
                 occurredAt: createdAt,
                 payload: appThread,
               },
-              ...(thread.omittedMessageCount > 0
-                ? [
-                    {
-                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
-                      type: "turn-item.updated" as const,
-                      threadId,
-                      occurredAt: createdAt,
-                      payload: {
-                        id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
-                        threadId,
-                        runId: null,
-                        nodeId: null,
-                        providerThreadId: null,
-                        providerTurnId: null,
-                        nativeItemRef: null,
-                        parentItemId: null,
-                        ordinal: 0,
-                        status: "completed" as const,
-                        title: null,
-                        startedAt: createdAt,
-                        completedAt: createdAt,
-                        updatedAt: createdAt,
-                        type: "system_notice" as const,
-                        message: `${thread.omittedMessageCount} earlier ${thread.omittedMessageCount === 1 ? "message was" : "messages were"} not imported. This thread keeps the first user message and the most recent history. The original session transcript is unchanged.`,
-                      },
-                    },
-                  ]
-                : []),
-              ...thread.messages.flatMap((message, index) =>
-                messageEvents({ threadId, index, message }),
-              ),
+              ...truncationNoticeEvents({
+                threadId,
+                omittedMessageCount: thread.omittedMessageCount,
+                createdAt,
+              }),
+              ...historyItemEvents({ threadId, messages: withImageBudget(thread.messages) }),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:provider-thread:${providerThreadId}`),
                 type: "provider-thread.updated",
@@ -528,9 +656,7 @@ const make = Effect.gen(function* () {
           if (current === null) return 0;
           yield* eventSink.write({
             events: [
-              ...messages.flatMap((message, index) =>
-                messageEvents({ threadId: input.threadId, index, message }),
-              ),
+              ...historyItemEvents({ threadId: input.threadId, messages }),
               {
                 id: EventId.make(`${IMPORT_EVENT_PREFIX}:thread:${input.threadId}:native-history`),
                 type: "thread.metadata-updated",

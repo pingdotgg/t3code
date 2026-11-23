@@ -33,6 +33,7 @@ import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import { toolOutputImageBlocks } from "@t3tools/shared/toolOutput";
 import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 import * as ServerConfig from "../config.ts";
@@ -52,6 +53,7 @@ import {
 } from "./AgentSessionJson.ts";
 
 const TRANSCRIPT_PREFIX_BYTES = 32 * 1024;
+const isTranscriptJsonLimitError = Schema.is(TranscriptJsonLimitError);
 
 class TranscriptParseError extends Schema.TaggedError<TranscriptParseError>()(
   "TranscriptParseError",
@@ -87,8 +89,11 @@ const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
-const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_IMPORT_TRANSCRIPTS = 100;
+// Fork: one run imports every transcript; only the per-file limit applies.
+const MAX_IMPORT_BYTES = Number.POSITIVE_INFINITY;
+const MAX_IMPORT_TRANSCRIPTS = Number.POSITIVE_INFINITY;
+// Fork: bump when imported history changes shape, so every imported thread is refreshed once.
+const IMPORT_FORMAT_VERSION = 2;
 const MAX_IMPORT_RECORDS = 100_000;
 
 /**
@@ -109,6 +114,22 @@ const MAX_BLOCKED_GIT_FILE_PATHS = 1024;
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
+  // Claude tool calls and results: only what pairs an image result with the call that made it.
+  id: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  tool_use_id: Schema.optional(Schema.String),
+  input: Schema.optional(Schema.Struct({ file_path: Schema.optional(Schema.Unknown) })),
+  content: Schema.optional(
+    Schema.Union([
+      Schema.String,
+      Schema.Array(
+        Schema.Struct({
+          type: Schema.optional(Schema.Unknown),
+          source: Schema.optional(Schema.Unknown),
+        }),
+      ),
+    ]),
+  ),
 });
 
 const TranscriptMessage = Schema.Struct({
@@ -169,6 +190,9 @@ const decodePiEntryLinks = Schema.decodeUnknownOption(
   }),
 );
 const selectTranscriptPath = createTranscriptJsonSelector(TranscriptRecord);
+const selectTranscriptPathWithoutImages = (path: ReadonlyArray<string | number | null>) =>
+  selectTranscriptPath(path) &&
+  !(path[0] === "message" && path[1] === "content" && path[3] === "content");
 // Only the fields extractCwd reads, so a cwd record carrying a large image stays small in memory.
 const selectCwdPath = createTranscriptJsonSelector(
   Schema.Struct({
@@ -212,11 +236,22 @@ interface AgentSessionTranscriptMetadata {
   readonly lastActiveAtMs: number;
 }
 
-export interface AgentSessionThreadMessage {
-  readonly role: "user" | "assistant";
-  readonly text: string;
-  readonly createdAt: string;
-}
+export type AgentSessionThreadMessage =
+  | {
+      readonly role: "user" | "assistant";
+      readonly text: string;
+      readonly createdAt: string;
+    }
+  | {
+      /** A tool result that returned images, such as a screenshot the agent opened. */
+      readonly role: "tool";
+      readonly toolName: string;
+      readonly input: unknown;
+      readonly images: ReadonlyArray<unknown>;
+      readonly createdAt: string;
+    };
+
+type ClaudeToolUses = Map<string, { readonly name: string; readonly input: unknown }>;
 
 export interface AgentSessionThread {
   readonly source: AgentSessionSource;
@@ -353,6 +388,28 @@ function codexTurnId(metadata: unknown): string | null {
 
 function isHiddenClaudeRecord(record: DecodedTranscriptRecord): boolean {
   return record.isSidechain === true || record.isMeta === true || record.isCompactSummary === true;
+}
+
+function recordClaudeToolUses(toolUses: ClaudeToolUses, record: DecodedTranscriptRecord) {
+  if (record.type !== "assistant" || isHiddenClaudeRecord(record)) return;
+  const content = record.message?.content;
+  if (typeof content === "string" || content === undefined) return;
+  for (const block of content) {
+    if (block.type === "tool_use" && block.id && block.name) {
+      toolUses.set(block.id, { name: block.name, input: block.input ?? {} });
+    }
+  }
+}
+
+/** The image blocks of each tool result in a Claude user record. */
+function claudeToolResultImages(record: DecodedTranscriptRecord) {
+  const content = record.message?.content;
+  if (record.type !== "user" || typeof content === "string" || content === undefined) return [];
+  return content.flatMap((block) => {
+    if (block.type !== "tool_result" || !block.tool_use_id) return [];
+    const images = toolOutputImageBlocks(block.content);
+    return images.length === 0 ? [] : [{ toolUseId: block.tool_use_id, images }];
+  });
 }
 
 // Claude repeats session fields on records that need not be retained.
@@ -516,7 +573,11 @@ export function parseAgentSessionTranscript(
     input.source === "claudeAgent"
       ? records.reduce(foldClaudeFields, emptyClaudeFields)
       : emptyClaudeFields;
-  const thread = parseAgentSessionRecords(input, records, claudeFields, 0);
+  const claudeToolUses: ClaudeToolUses = new Map();
+  if (input.source === "claudeAgent") {
+    for (const record of records) recordClaudeToolUses(claudeToolUses, record);
+  }
+  const thread = parseAgentSessionRecords(input, records, claudeFields, 0, claudeToolUses);
   return thread === "empty" ? null : thread;
 }
 
@@ -525,6 +586,7 @@ function parseAgentSessionRecords(
   records: ReadonlyArray<DecodedTranscriptRecord>,
   claudeFields: ClaudeFields,
   droppedMessageCount: number,
+  claudeToolUses: ReadonlyMap<string, { readonly name: string; readonly input: unknown }>,
 ): AgentSessionThread | "empty" | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
@@ -608,19 +670,19 @@ function parseAgentSessionRecords(
   let conversationMessageCount = 0;
   const retainMessage = (
     message: AgentSessionThreadMessage & { readonly codexResponseUser: boolean },
-    titleText = message.text,
+    titleText?: string,
   ) => {
     if (firstUserMessage === undefined && message.role === "user") {
       firstUserMessage = message;
     }
     if (derivedTitle === undefined && message.role === "user") {
-      derivedTitle = deriveTitle(input.source, titleText);
+      derivedTitle = deriveTitle(input.source, titleText ?? message.text);
       bareCommandTitle ??= deriveTitle(input.source, message.text);
     }
     hasAssistantMessage ||= message.role === "assistant";
-    conversationMessageCount += 1;
+    if (message.role !== "tool") conversationMessageCount += 1;
     messages.push(message);
-    if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
+    dropOldestBeyond(messages, MAX_IMPORTED_MESSAGES);
   };
 
   const hasMatchingCodexEventInTurn = (text: string) => {
@@ -657,6 +719,17 @@ function parseAgentSessionRecords(
     if (input.source === "claudeAgent") {
       if (isHiddenClaudeRecord(record)) continue;
       if (record.type !== "user" && record.type !== "assistant") continue;
+      for (const result of claudeToolResultImages(record)) {
+        const toolUse = claudeToolUses.get(result.toolUseId);
+        retainMessage({
+          role: "tool",
+          toolName: toolUse?.name ?? "Tool",
+          input: toolUse?.input ?? {},
+          images: result.images,
+          createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+          codexResponseUser: false,
+        });
+      }
       const { text, titleText } = claudeVisibleText(record);
       if (text.length === 0) continue;
       if (record.type === "assistant") {
@@ -695,7 +768,11 @@ function parseAgentSessionRecords(
       for (let index = messages.length - 1; index >= 0; index--) {
         const message = messages[index];
         if (message?.role === "assistant") break;
-        if (message?.codexResponseUser === true && message.text.trim() === text.trim()) {
+        if (
+          message?.role === "user" &&
+          message.codexResponseUser &&
+          message.text.trim() === text.trim()
+        ) {
           if (firstUserMessage === message) firstUserMessage = undefined;
           messages.splice(index, 1);
           conversationMessageCount -= 1;
@@ -755,7 +832,7 @@ function parseAgentSessionRecords(
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+    : [visibleFirstUserMessage, ...dropOldestBeyond(visibleMessages, MAX_IMPORTED_MESSAGES - 1)];
 
   return {
     source: input.source,
@@ -767,7 +844,10 @@ function parseAgentSessionRecords(
     createdAt: retainedMessages[0]?.createdAt ?? fallbackTimestamp,
     updatedAt: fallbackTimestamp,
     messages: retainedMessages,
-    omittedMessageCount: conversationMessageCount + droppedMessageCount - retainedMessages.length,
+    omittedMessageCount:
+      conversationMessageCount +
+      droppedMessageCount -
+      retainedMessages.filter((message) => message.role !== "tool").length,
   };
 }
 
@@ -787,7 +867,7 @@ function shouldRetainDecodedRecord(
       return false;
     }
     // Same rule as the parser, so Claude Code's own output never takes a history window slot.
-    return claudeVisibleText(record).text.length > 0;
+    return claudeVisibleText(record).text.length > 0 || claudeToolResultImages(record).length > 0;
   }
   if (extractDecodedCwd(record) !== null) return true;
   return (
@@ -802,20 +882,51 @@ function shouldRetainDecodedRecord(
 
 // The import shows only the first user message and the latest messages, so a
 // long Claude session holds just those and counts the rest as dropped.
+/** Drops the oldest entries until at most `limit` messages remain; tool images don't count. */
+function dropOldestBeyond<Message extends { readonly role: string }>(
+  messages: Array<Message>,
+  limit: number,
+): Array<Message> {
+  let count = messages.filter((message) => message.role !== "tool").length;
+  while (count > limit) {
+    if (messages.shift()?.role !== "tool") count -= 1;
+  }
+  return messages;
+}
+
 function createClaudeHistoryWindow() {
-  const recent: Array<{ readonly record: DecodedTranscriptRecord; readonly bytes: number }> = [];
+  const recent: Array<{
+    readonly record: DecodedTranscriptRecord;
+    readonly bytes: number;
+    readonly isMessage: boolean;
+  }> = [];
   let firstUser: DecodedTranscriptRecord | undefined;
+  let messageCount = 0;
   let droppedMessageCount = 0;
   return {
     // Takes a record shouldRetainDecodedRecord kept; returns the bytes it released.
+    // Only messages take window slots: tool images ride along with the messages around them.
     push: (record: DecodedTranscriptRecord, bytes: number): number => {
-      if (firstUser === undefined && record.type === "user") firstUser = record;
-      recent.push({ record, bytes });
-      if (recent.length <= MAX_IMPORTED_MESSAGES) return 0;
-      const evicted = recent.shift();
-      if (evicted === undefined || evicted.record === firstUser) return 0;
-      droppedMessageCount += 1;
-      return evicted.bytes;
+      const isMessage = claudeVisibleText(record).text.length > 0;
+      if (firstUser === undefined && record.type === "user" && isMessage) firstUser = record;
+      recent.push({ record, bytes, isMessage });
+      if (isMessage) messageCount += 1;
+      let released = 0;
+      while (messageCount > MAX_IMPORTED_MESSAGES) {
+        const evicted = recent.shift();
+        if (evicted === undefined) break;
+        if (evicted.isMessage) messageCount -= 1;
+        if (evicted.record === firstUser) continue;
+        if (evicted.isMessage) droppedMessageCount += 1;
+        released += evicted.bytes;
+      }
+      return released;
+    },
+    // Releases the oldest tool images so a session with many screenshots keeps its newest
+    // ones instead of being reread without any; returns 0 when none are left.
+    evictOldestTool: (): number => {
+      const index = recent.findIndex((entry) => !entry.isMessage);
+      return index === -1 ? 0 : recent.splice(index, 1)[0]!.bytes;
     },
     records: () => {
       const held = recent.map((entry) => entry.record);
@@ -1340,11 +1451,12 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.orElseSucceed(() => null));
   });
 
-  const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
+  const readTranscriptOnce = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
     expected: ReturnType<typeof transcriptIdentity>,
     source: AgentSessionSource,
-    prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
+    prefix: { readonly endByteOffset: number; readonly historyBytes: number } | undefined,
+    selectPath: typeof selectTranscriptPath,
   ) {
     const compressed = isCompressedTranscript(filePath);
     const readBytes =
@@ -1370,13 +1482,17 @@ export const make = Effect.gen(function* () {
             let bytesRead = 0;
             const reserve = (bytes: number) => {
               recordBytes += bytes;
-              if (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
+              while (historyBytes + recordBytes > MAX_IMPORT_HISTORY_BYTES) {
+                const released = claudeHistory.evictOldestTool();
+                historyBytes -= released;
+                if (released > 0) continue;
                 throw new TranscriptJsonLimitError({
                   message: "Transcript selected history exceeds the 32 MiB memory budget",
                 });
               }
             };
-            let reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
+            let reader = createTranscriptJsonReader(reserve, selectPath);
+            const claudeToolUses: ClaudeToolUses = new Map();
             let decoder = new TextDecoder();
             let recordStarted = false;
 
@@ -1391,6 +1507,7 @@ export const make = Effect.gen(function* () {
                 if (Option.isNone(cwd)) cwd = Option.fromNullOr(extractDecodedCwd(decoded.value));
                 if (source === "claudeAgent") {
                   claudeFields = foldClaudeFields(claudeFields, decoded.value);
+                  recordClaudeToolUses(claudeToolUses, decoded.value);
                 }
                 if (shouldRetainDecodedRecord(source, decoded.value)) {
                   if (source === "claudeAgent") {
@@ -1410,7 +1527,7 @@ export const make = Effect.gen(function* () {
                 }
               }
               recordBytes = 0;
-              reader = createTranscriptJsonReader(reserve, selectTranscriptPath);
+              reader = createTranscriptJsonReader(reserve, selectPath);
               decoder = new TextDecoder();
               recordStarted = false;
               return records.length <= MAX_IMPORT_RECORDS;
@@ -1460,20 +1577,38 @@ export const make = Effect.gen(function* () {
                   droppedMessageCount: claudeHistory.droppedMessageCount(),
                   cwd,
                   claudeFields,
+                  claudeToolUses,
                   historyBytes,
                 }
               : null;
           }),
         ),
       ),
-    ).pipe(
+    );
+  });
+
+  const readTranscript = (
+    filePath: string,
+    expected: ReturnType<typeof transcriptIdentity>,
+    source: AgentSessionSource,
+    prefix?: { readonly endByteOffset: number; readonly historyBytes: number },
+  ) =>
+    readTranscriptOnce(filePath, expected, source, prefix, selectTranscriptPath).pipe(
+      Effect.catchIf(
+        // Images can fill the selected-history budget; such a session still imports its text.
+        (cause) =>
+          source === "claudeAgent" &&
+          cause._tag === "TranscriptParseError" &&
+          isTranscriptJsonLimitError(cause.cause),
+        () =>
+          readTranscriptOnce(filePath, expected, source, prefix, selectTranscriptPathWithoutImages),
+      ),
       Effect.catch((cause) =>
         Effect.logWarning("Could not read imported transcript", { filePath, cause }).pipe(
           Effect.as(null),
         ),
       ),
     );
-  });
 
   const readCodexThreadNames = Effect.fn("AgentSessionScanner.readCodexThreadNames")(function* (
     homePath: string,
@@ -2272,7 +2407,9 @@ export const make = Effect.gen(function* () {
           const identity = transcriptIdentity(transcript.filePath, stats.value);
           const completedSource = completed?.find(
             (source) =>
-              source.provider === candidate.source && sameTranscriptIdentity(source, identity),
+              source.provider === candidate.source &&
+              source.importVersion === IMPORT_FORMAT_VERSION &&
+              sameTranscriptIdentity(source, identity),
           );
           if (completedSource !== undefined) {
             const sessionKey = `${completedSource.providerInstanceId}\0${completedSource.providerSessionId}`;
@@ -2334,6 +2471,7 @@ export const make = Effect.gen(function* () {
               : [...inheritedRecords, ...snapshot.records],
             snapshot.claudeFields,
             snapshot.droppedMessageCount,
+            snapshot.claudeToolUses,
           );
           if (parsedThread === "empty") {
             // null means an unreadable history base, which may hold the conversation.
@@ -2361,6 +2499,7 @@ export const make = Effect.gen(function* () {
             provider: parsedThread.source,
             providerInstanceId: parsedThread.providerInstanceId,
             providerSessionId: parsedThread.providerSessionId,
+            importVersion: IMPORT_FORMAT_VERSION,
           };
           const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
           if (importedSessions.has(sessionKey)) {
