@@ -78,12 +78,22 @@ export const layer: Layer.Layer<
         context;
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
+      // Stop records an interrupt request without changing the run's status, so a Stop that
+      // lands around finalization is invisible to the status check. An unpaired request is
+      // the same signal: the run was stopped, even though the provider terminal already
+      // persisted it as waiting.
+      const hasUnpairedInterruptRequest = (runId: RunId) =>
+        projections.hasUnpairedRunInterruptRequest(
+          input.threadId,
+          ids.derive.runSignalTurnItem({ runId, signal: "interrupt-request" }),
+          ids.derive.runSignalTurnItem({ runId, signal: "interrupt-result" }),
+        );
 
       // A checkpoint on a settled run proves this at-least-once effect already committed.
       if (
         run !== undefined &&
         run.checkpointId !== null &&
-        (run.status === "completed" || stopped)
+        (run.status === "completed" || stopped || (yield* hasUnpairedInterruptRequest(run.id)))
       ) {
         return;
       }
@@ -244,6 +254,7 @@ export const layer: Layer.Layer<
         }),
       );
       // Stop and deletion may commit while Git captures; reread under their lock before finalizing.
+      // An unpaired interrupt request is a Stop the persisted status does not show yet.
       yield* threadCommands.withLock(
         input.threadId,
         Effect.gen(function* () {
@@ -255,7 +266,9 @@ export const layer: Layer.Layer<
             return;
           }
           const stoppedNow =
-            currentRun.status === "interrupted" || currentRun.status === "cancelled";
+            currentRun.status === "interrupted" ||
+            currentRun.status === "cancelled" ||
+            (yield* hasUnpairedInterruptRequest(run.id));
           if (currentRun.status !== "waiting" && !stoppedNow) {
             return;
           }

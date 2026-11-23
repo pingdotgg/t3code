@@ -13187,10 +13187,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       run === undefined ||
       rootNode === undefined ||
       run.activeAttemptId !== attempt.id ||
-      run.status !== "running" ||
       attempt.status === "pending"
     )
       return;
+    // A run the provider already finished waits for its checkpoint; a Stop that landed
+    // around finalization still owns it until the interrupt result arrives.
+    if (run.status === "waiting") {
+      const stopPending = yield* projectionStore
+        .hasUnpairedRunInterruptRequest(
+          run.threadId,
+          idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-request" }),
+          idAllocator.derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+        )
+        .pipe(mapDispatchError(input.command));
+      if (!stopPending) return;
+    } else if (run.status !== "running") {
+      return;
+    }
     const emitEvent = emit(input.events, input.command);
     const base = {
       threadId: input.command.threadId,
@@ -13712,7 +13725,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       )
         return;
       const now = yield* DateTime.now;
-      if (stopped.providerTurn !== undefined && stoppedRun.status === "running") {
+      // A run the provider already finished may still be waiting for its checkpoint when
+      // the interrupt lands; settleInterruptedRun decides whether Stop owns it.
+      if (
+        stopped.providerTurn !== undefined &&
+        (stoppedRun.status === "running" || stoppedRun.status === "waiting")
+      ) {
         const output = yield* projectionStore
           .getThreadRecords(command.threadId, ["messages"], {
             messageRunIds: [stoppedRun.id],
