@@ -7323,6 +7323,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+      // Server deliveries settle quietly so their workers do not retry; a sender is told no.
+      if (command.creationSource === "server" || command.creationSource === "provider") {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is ${projection.thread.deletedAt !== null ? "deleted" : "archived"}.`,
+      });
+    }
+
     // The service checked idleness before this command; a run or a delegated result that landed
     // since makes the thread busy, and that turn refreshes the cache anyway.
     if (
