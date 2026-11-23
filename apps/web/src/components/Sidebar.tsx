@@ -933,7 +933,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } = useSidebarLookups();
   const delegatedUnderParent = useDelegatedUnderParent();
   const router = useRouter();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const { isMobile, setOpen, setOpenMobile, state: sidebarState } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -1019,6 +1019,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeTarget?.kind === "draft" ? store.getPromotedDraftRedirect(routeTarget.draftId) : null,
   );
   const environmentMachineById = useEnvironmentMachines();
+  const hasProjects = projectGroups.length > 0;
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
@@ -1026,6 +1027,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
   );
+  const [projectScopeMenuAnchor, setProjectScopeMenuAnchor] = useState<{
+    readonly x: number;
+    readonly y: number;
+  } | null>(null);
+  const lastPointerPositionRef = useRef<{ readonly x: number; readonly y: number } | null>(null);
   const projectScopeFilter = useComboboxFilter();
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
@@ -1198,6 +1204,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const scopedProjectGroups = revealWidensScope ? [] : chosenProjectGroups;
   const scopedProjectRefs = scopedProjectGroups.flatMap((project) => project.memberProjectRefs);
   const scopedProjectKeys = revealWidensScope ? null : chosenScopeProjectKeys;
+  const projectScopeTriggerLabel =
+    scopedProjectGroups.length > 0
+      ? gt("Projects: {projects}", {
+          projects: scopedProjectGroups.map((project) => project.displayName).join(", "),
+        })
+      : gt("Projects");
+  const projectFilterShortcutLabel = shortcutLabelForCommand(keybindings, "projectFilter.toggle");
+  const projectScopeMenuAnchorElement =
+    projectScopeMenuAnchor === null
+      ? undefined
+      : {
+          getBoundingClientRect: () =>
+            new DOMRect(projectScopeMenuAnchor.x, projectScopeMenuAnchor.y, 0, 0),
+        };
   const threadSearch = useThreadSearch(
     connectedEnvironmentIds,
     threadSearchQuery,
@@ -2959,6 +2979,33 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         platform: navigator.platform,
         context: threadShortcutContext(routeThreadRef),
       });
+      if (command === "projectFilter.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!hasProjects) {
+          if (projectScopeMenuState.open) {
+            dispatchProjectScopeMenu({ type: "open-changed", open: false });
+          }
+          return;
+        }
+        const nextOpen = !projectScopeMenuState.open;
+        if (nextOpen) {
+          setProjectScopeMenuAnchor(
+            lastPointerPositionRef.current === null ? null : { ...lastPointerPositionRef.current },
+          );
+        }
+        if (isMobile) {
+          setOpenMobile(true);
+        } else if (sidebarState === "collapsed") {
+          setOpen(true);
+        }
+        suppressNextScopeChangeRef.current = false;
+        dispatchProjectScopeMenu({
+          type: "open-changed",
+          open: nextOpen,
+        });
+        return;
+      }
       const navigateToRowKey = (targetRowKey: string | null) => {
         if (!targetRowKey) return false;
         const targetDraftId = draftIdByRowKey.get(targetRowKey);
@@ -2989,15 +3036,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    hasProjects,
     draftIdByRowKey,
     keybindings,
+    isMobile,
     navigateToDraft,
     navigateToThread,
     orderedRowKeys,
+    projectScopeMenuState.open,
     routeRowKey,
     routeThreadRef,
+    setOpen,
+    setOpenMobile,
+    sidebarState,
     threadByKey,
   ]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the filter unmounts without projects, so a stale open state must not reopen it later
+  useEffect(() => {
+    if (hasProjects || !projectScopeMenuState.open) return;
+    dispatchProjectScopeMenu({ type: "open-changed", open: false });
+  }, [hasProjects, projectScopeMenuState.open]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records pointer coordinates for shortcut-opened popovers
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      lastPointerPositionRef.current = { x: event.clientX, y: event.clientY };
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onPointerMove);
+  }, []);
 
   const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
   const draftJumpLabelById = showJumpHints
@@ -3059,7 +3127,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
-              hasProjects={projectGroups.length > 0}
+              hasProjects={hasProjects}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -3072,6 +3140,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     if (eventDetails.isCanceled) return;
                     if (open) suppressNextScopeChangeRef.current = false;
                     dispatchProjectScopeMenu({ type: "open-changed", open });
+                  }}
+                  onOpenChangeComplete={(open) => {
+                    if (!open && !projectScopeMenuState.open) setProjectScopeMenuAnchor(null);
                   }}
                   onItemHighlighted={(item) => {
                     highlightedProjectScopeKeyRef.current = item?.value ?? null;
@@ -3103,14 +3174,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
-                        label={
-                          scopedProjectGroups.length > 0
-                            ? gt("Projects: {projects}", {
-                                projects: scopedProjectGroups
-                                  .map((project) => project.displayName)
-                                  .join(", "),
-                              })
-                            : gt("Projects")
+                        label={projectScopeTriggerLabel}
+                        tooltip={
+                          projectFilterShortcutLabel
+                            ? `${projectScopeTriggerLabel} (${projectFilterShortcutLabel})`
+                            : projectScopeTriggerLabel
                         }
                       />
                     }
@@ -3140,6 +3208,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   </ComboboxTrigger>
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
                   <ComboboxPopup
+                    anchor={projectScopeMenuAnchorElement}
                     align="start"
                     collisionAvoidance={{ side: "flip", align: "shift" }}
                     className="w-[min(18rem,var(--available-width))] overflow-hidden"

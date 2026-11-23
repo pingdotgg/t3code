@@ -36,25 +36,22 @@ it.each(["edit", "dismiss", "newer import fails first"] as const)(
       />,
     );
 
-    const actions = screen.getByRole("button", { name: "Script actions" });
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
     const failure = AsyncResult.failure<void, unknown>(
       Cause.fail(new Error("Settings write failed")),
     );
 
-    await actions.click();
-    await page.getByRole("menuitem", { name: /Shared build/ }).click();
-    await actions.click();
+    await screen.getByRole("button", { name: "Import Shared build" }).click();
 
     switch (nextAction) {
       case "edit":
-        await page.getByRole("button", { name: "Edit Local check" }).click();
+        await screen.getByRole("button", { name: "Edit Local check" }).click();
         await act(async () => older.resolve(failure));
         expect(name.query()).toHaveProperty("value", "Local check");
         break;
       case "dismiss":
-        await page.getByRole("menuitem", { name: "Add project script" }).click();
+        await screen.getByRole("button", { name: "Add project script" }).click();
         await expect.element(dialog).toBeVisible();
         await userEvent.keyboard("{Escape}");
         await expect.element(dialog).not.toBeInTheDocument();
@@ -62,7 +59,7 @@ it.each(["edit", "dismiss", "newer import fails first"] as const)(
         expect(dialog.query() === null).toBe(true);
         break;
       case "newer import fails first":
-        await page.getByRole("menuitem", { name: /Shared lint/ }).click();
+        await screen.getByRole("button", { name: "Import Shared lint" }).click();
         await act(async () => newer.resolve(failure));
         await act(async () => older.resolve(failure));
         expect(name.query()).toHaveProperty("value", "Shared lint");
