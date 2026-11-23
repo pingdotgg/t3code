@@ -358,6 +358,24 @@ describe("ACP Registry probe", () => {
     });
   });
 
+  it("routes GitHub Copilot's bare-named skill commands to the provider skill menu", () => {
+    // Shape sent by `copilot --acp --stdio` (1.0.114) in available_commands_update.
+    expect(
+      normalizeAcpRegistryCommands([
+        {
+          name: "skills",
+          description: "Manage skills for enhanced capabilities",
+          input: { hint: "[list|info|reload|add|remove]" },
+        },
+        {
+          name: "hello-skill",
+          description: "Says hello from a project skill",
+          input: { hint: "instructions for the skill" },
+        },
+      ]).skills.map((skill) => skill.name),
+    ).toEqual(["hello-skill"]);
+  });
+
   it.effect("lists native sessions and logs out through generic ACP lifecycle methods", () => {
     const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
       search: () => Effect.die("unused search"),
