@@ -8,6 +8,7 @@ interface AndroidAgentNotifications {
   setThreadOnScreen?(path: string | null): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
+  addListener?(event: "onBackgroundIdle", listener: () => void): { remove(): void };
 }
 
 const native =
@@ -17,6 +18,12 @@ const native =
 
 export function supportsAndroidAgentNotifications(): boolean {
   return typeof native?.configure === "function" && typeof native?.clear === "function";
+}
+
+/** Fires once the app has stayed in the background for 30 seconds; JS timers stop there. */
+export function subscribeAndroidBackgroundIdle(listener: () => void): () => void {
+  const subscription = native?.addListener?.("onBackgroundIdle", listener);
+  return () => subscription?.remove();
 }
 
 function appScheme(): string {

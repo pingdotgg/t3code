@@ -23,7 +23,8 @@ import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import { subscribeAndroidBackgroundIdle } from "../features/agent-awareness/androidNotifications";
+import { type MobileApplicationWakeup, mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import * as EnvironmentOwnedDataCleanup from "./environment-owned-data-cleanup";
 import * as ConnectionStorage from "./storage";
 
@@ -115,12 +116,19 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
+      Stream.callback<MobileApplicationWakeup>((queue) =>
         Effect.acquireRelease(
           Effect.gen(function* () {
             const nowMs = yield* Clock.currentTimeMillis;
             let backgroundedAtMs = AppState.currentState === "background" ? nowMs : null;
-            return AppState.addEventListener("change", (state) => {
+            // Android never freezes a process whose sockets keep streaming; push notifications
+            // reach the app while it sleeps, so connections close until it is opened again.
+            const removeIdleListener = subscribeAndroidBackgroundIdle(() => {
+              if (AppState.currentState === "background") {
+                Queue.offerUnsafe(queue, "application-suspended");
+              }
+            });
+            const subscription = AppState.addEventListener("change", (state) => {
               if (state === "background") {
                 backgroundedAtMs = Date.now();
                 return;
@@ -133,6 +141,12 @@ const layerWakeups = Wakeups.layer({
                 backgroundedAtMs = null;
               }
             });
+            return {
+              remove: () => {
+                removeIdleListener();
+                subscription.remove();
+              },
+            };
           }),
           (subscription) => Effect.sync(() => subscription.remove()),
         ).pipe(Effect.asVoid),

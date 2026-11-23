@@ -7,6 +7,8 @@ export type MobileApplicationActiveWakeup = Extract<
   "application-active-probe" | "application-active-long"
 >;
 
+export type MobileApplicationWakeup = MobileApplicationActiveWakeup | "application-suspended";
+
 export function mobileApplicationActiveWakeup(
   backgroundedAtMs: number | null,
   activeAtMs: number,
