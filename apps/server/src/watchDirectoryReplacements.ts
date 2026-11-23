@@ -2,6 +2,7 @@
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { MAX_SYMLINK_HOPS } from "@t3tools/shared/symlink";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -81,10 +82,8 @@ const resolveWatchTarget = Effect.fn("watchDirectoryReplacements.resolveWatchTar
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  if (Option.isNone(yield* fs.readLink(entry).pipe(Effect.option))) return entry;
-
   let candidate = entry;
-  for (let hops = 0; hops <= 40; hops++) {
+  for (let hops = 0; hops <= MAX_SYMLINK_HOPS; hops++) {
     // Keep the raw prefix through native realpath so symlinks before `..` still take effect.
     const suffix: Array<string> = [];
     let prefix = candidate;
@@ -117,21 +116,11 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
     (ready) => watchDirectoryEntry(entry, ready),
     Stream.unwrap(
       Effect.gen(function* () {
-        const target = yield* resolveWatchTarget(entry);
-        if (target === entry) return watchChild;
-
-        const parent = NodePath.dirname(target);
-        const grandparent = NodePath.dirname(parent);
-        let watch = watchChild;
-        for (const current of [target, parent]) {
-          if (current === NodePath.dirname(current)) break;
-          watch = watchDirectoryReplacements((ready) => watchDirectoryEntry(current, ready), watch);
-        }
-        if (grandparent === NodePath.dirname(grandparent)) return watch;
-
-        // A watch above the grandparent could receive events from an entire home subtree on macOS.
         const fs = yield* FileSystem.FileSystem;
-        const identity = fs.stat(grandparent).pipe(
+        if (Option.isNone(yield* fs.readLink(entry).pipe(Effect.option))) return watchChild;
+
+        // An intermediate symlink can move resolution away from a still-intact canonical tree.
+        const identity = fs.stat(entry).pipe(
           Effect.map(
             (info) =>
               `${info.dev}:${info.ino.valueOrUndefined}:${info.birthtime.valueOrUndefined?.getTime()}`,
@@ -146,7 +135,22 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
               Stream.tap(() => Deferred.succeed(ready, undefined)),
               Stream.drop(1),
             ),
-          watch,
+          Stream.unwrap(
+            resolveWatchTarget(entry).pipe(
+              Effect.map((target) => {
+                if (target === entry) return watchChild;
+                let watch = watchChild;
+                for (const current of [target, NodePath.dirname(target)]) {
+                  if (current === NodePath.dirname(current)) break;
+                  watch = watchDirectoryReplacements(
+                    (ready) => watchDirectoryEntry(current, ready),
+                    watch,
+                  );
+                }
+                return watch;
+              }),
+            ),
+          ),
         );
       }),
     ),

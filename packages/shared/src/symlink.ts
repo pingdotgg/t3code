@@ -4,7 +4,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
-const MAX_SYMLINK_HOPS = 40;
+export const MAX_SYMLINK_HOPS = 40;
 
 const isNotFound = (error: PlatformError.PlatformError) => error.reason._tag === "NotFound";
 
