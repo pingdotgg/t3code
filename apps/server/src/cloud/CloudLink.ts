@@ -39,7 +39,9 @@ import {
 } from "@t3tools/shared/relayJwt";
 import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
+import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Hex from "effect/encoding/Hex";
 import * as Signature from "effect/crypto/Signature";
 import * as Jwk from "effect/jose/Jwk";
 import * as DateTime from "effect/DateTime";
@@ -67,6 +69,7 @@ import { makeRelayEnvironmentClient } from "../relay/relayEnvironmentClient.ts";
 import { loopbackUrlHostForAddress } from "../startupAccess.ts";
 import {
   type CliDesiredLinkMode,
+  dropRevokedCloudLink,
   readCliDesiredCloudLink,
   readCliDesiredLinkMode,
   setCliDesiredCloudLink,
@@ -519,12 +522,20 @@ const make = Effect.gen(function* () {
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const random = yield* SecureRandom.SecureRandom;
+  const digest = yield* Digest.Digest;
   const signature = yield* Signature.Signature;
   const signingKey = yield* EnvironmentSigningKey;
   const config = yield* ServerConfig.ServerConfig;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
+
+  // Relay-signed text must not name a file directly; a digest is also a fixed, safe length.
+  // Untraced: it runs twice per proof inside the health and mint spans.
+  const replayMarkerName = Effect.fnUntraced(function* (prefix: string, value: string) {
+    const hash = yield* digest.digest(Digest.sha256, stringToBytes(value)).pipe(Effect.orDie);
+    return `${prefix}${Hex.encode(hash)}`;
+  });
 
   const withSecrets = Effect.provideService(ServerSecretStore.ServerSecretStore, secrets);
   const withRuntimeFiles = <A, E>(
@@ -749,11 +760,11 @@ const make = Effect.gen(function* () {
     options?: {
       readonly lockHeld?: boolean;
       readonly confirmedOrigin?: RelayManagedEndpointOrigin;
+      readonly replaceRevokedLink?: boolean;
     },
   ) {
     const apply = Effect.gen(function* () {
       yield* validateRelayConfigPayload(payload);
-      yield* validateLinkedCloudUser(payload.cloudUserId);
       yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
       // Reject unsupported runtimes before they can stop a healthy tunnel.
       if (
@@ -768,6 +779,26 @@ const make = Effect.gen(function* () {
           },
         });
       }
+      // Only an explicit link replaces a revoked one: a clock-skew 401 can mark a live link revoked.
+      if (options?.replaceRevokedLink === true) {
+        const [revoked, previousUserId] = yield* Effect.all([
+          secrets.get(CLOUD_LINK_REVOKED),
+          secrets.get(CLOUD_LINKED_USER_ID),
+        ]);
+        // The CLI token may belong to the old account. Release it before the drop so a failed
+        // write leaves the revoked mark for a retry; a partial drop can leave no user id.
+        if (
+          Option.isSome(revoked) &&
+          Option.match(previousUserId, {
+            onNone: () => true,
+            onSome: (userId) => bytesToString(userId) !== payload.cloudUserId,
+          })
+        ) {
+          yield* setCliDesiredCloudLink(false).pipe(withSecrets);
+        }
+        yield* dropRevokedCloudLink.pipe(withSecrets);
+      }
+      yield* validateLinkedCloudUser(payload.cloudUserId);
       const endpointRuntimeJson = payload.endpointRuntime
         ? yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime)
         : null;
@@ -1157,7 +1188,7 @@ const make = Effect.gen(function* () {
 
   const applyRelayConfig = Effect.fn("environment.cloud.relayConfig")(
     function* (payload: RelayEnvironmentConfigRequest) {
-      const result = yield* applyCloudRelayConfig(payload);
+      const result = yield* applyCloudRelayConfig(payload, { replaceRevokedLink: true });
       if (payload.endpointRuntime?.providerKind === "cloudflare_tunnel") {
         const address = httpServer.address;
         if (typeof address === "string" || !("port" in address)) {
@@ -1501,8 +1532,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_HEALTH_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_HEALTH_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = yield* replayMarkerName(CLOUD_HEALTH_JTI_PREFIX, proof.jti);
+      const nonceSecretName = yield* replayMarkerName(CLOUD_HEALTH_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],
@@ -1604,8 +1635,8 @@ const make = Effect.gen(function* () {
       }
       const proof = proofOption.value;
 
-      const jtiSecretName = `${CLOUD_MINT_JTI_PREFIX}${proof.jti}`;
-      const nonceSecretName = `${CLOUD_MINT_NONCE_PREFIX}${proof.nonce}`;
+      const jtiSecretName = yield* replayMarkerName(CLOUD_MINT_JTI_PREFIX, proof.jti);
+      const nonceSecretName = yield* replayMarkerName(CLOUD_MINT_NONCE_PREFIX, proof.nonce);
       const consumedReplayGuards = yield* consumeCloudReplayGuards({
         secrets,
         names: [jtiSecretName, nonceSecretName],

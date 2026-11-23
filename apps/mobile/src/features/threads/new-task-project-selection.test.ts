@@ -2,7 +2,7 @@ import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import { buildHomeProjectScopes, type HomeProjectScope } from "../home/homeThreadList";
 import {
   getProjectScopeSelectionTarget,
   isSameRepository,
@@ -60,6 +60,29 @@ function makeScope(projects: ReadonlyArray<EnvironmentProject>): HomeProjectScop
 }
 
 describe("getProjectScopeSelectionTarget", () => {
+  it("chooses an open copy of a repository over an archived copy on the preferred machine", () => {
+    const repo = { repositoryKey: "github.com/t3tools/t3code" };
+    const archived = {
+      ...makeProject("archived-copy", "mac", repo),
+      archivedAt: "2026-07-02T00:00:00.000Z",
+    };
+    const open = makeProject("open-copy", "server", repo);
+    const [scope] = buildHomeProjectScopes({
+      projects: [archived, open],
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    if (!scope || scope.archived) throw new Error("Expected a pickable repository group");
+
+    expect(
+      getProjectScopeSelectionTarget(
+        scope,
+        archived.environmentId,
+        new Set([archived.environmentId, open.environmentId]),
+      ).id,
+    ).toBe(open.id);
+  });
+
   it("prefers a connected copy of a project that spans environments", () => {
     const mac = makeProject("t3code", "mac");
     const server = makeProject("t3code", "server");
@@ -76,6 +99,29 @@ describe("getProjectScopeSelectionTarget", () => {
     // With nothing connected, the usual order still applies.
     expect(target([], "server")).toBe(server);
     expect(target([])).toBe(mac);
+  });
+
+  it("starts in the repository root over an earlier sub-folder in the same environment", () => {
+    const identity = (project: EnvironmentProject) => ({
+      ...project.repositoryIdentity!,
+      rootPath: "/work/workspace",
+    });
+    const base = makeProject("old-tool", "mac", {
+      workspaceRoot: "/work/workspace/_archive/old-tool",
+      repositoryKey: "github.com/owner/workspace",
+    });
+    const subfolder = { ...base, repositoryIdentity: identity(base) };
+    const root = {
+      ...makeProject("workspace", "mac", { workspaceRoot: "/work/workspace" }),
+      repositoryIdentity: identity(base),
+    };
+    expect(
+      getProjectScopeSelectionTarget(
+        { ...makeScope([subfolder, root]), representative: root },
+        EnvironmentId.make("mac"),
+        new Set([EnvironmentId.make("mac")]),
+      ),
+    ).toBe(root);
   });
 });
 

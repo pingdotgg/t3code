@@ -51,6 +51,7 @@ import {
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -126,6 +127,12 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const DESKTOP_VIEWPORT_READ_TIMEOUT = "1 second";
 /** A desktop page that keeps its size draws nothing on a resize, so the wait gives up. */
 const DESKTOP_RESIZE_WAIT_MS = 1000;
+/** Answered only once the guest paints a frame; one pixel keeps it cheap. */
+const DESKTOP_PAINT_CAPTURE = {
+  format: "jpeg",
+  quality: 1,
+  clip: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
+} as const;
 // A revealed tab's client opens the panel and attaches its stream a few round trips later, remote ones included.
 const REVEAL_VIEWER_WAIT_MS = 1000;
 // A desktop panel's shown report waits on the renderer's layout, which a busy machine can push past a second.
@@ -379,6 +386,8 @@ interface ServerTab {
   desktopViewportChanges: number;
   /** Settles at the desktop page's next main-frame resize. */
   desktopResize: PromiseWithResolvers<void>;
+  /** The last resize failed undrawn, so the tab's setting is a size the page never took. */
+  desktopResizeUndrawn: boolean;
   loading: boolean;
   loadError: PreviewAutomationLoadError | undefined;
   /** The renderer crash this page died of, or the one the page it replaced died of. */
@@ -1183,6 +1192,7 @@ const make = Effect.gen(function* () {
       desktopViewportStale: true,
       desktopViewportChanges: 0,
       desktopResize: Promise.withResolvers<void>(),
+      desktopResizeUndrawn: false,
       loading: false,
       loadError: undefined,
       // The page a crash left behind is blank; the session still names what crashed.
@@ -1236,15 +1246,31 @@ const make = Effect.gen(function* () {
     }
     // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
     // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+    const isMainFrameNavigation = (request: {
+      isNavigationRequest(): boolean;
+      frame(): unknown;
+    }) => {
       try {
         return request.isNavigationRequest() && request.frame() === page.mainFrame();
       } catch {
         return false;
       }
     };
+    // Chromium aborts an app link's request and keeps the page, so it is no navigation.
+    const isMainNavigation = (request: {
+      isNavigationRequest(): boolean;
+      url(): string;
+      frame(): unknown;
+    }) => appLinkUrl(request.url()) === null && isMainFrameNavigation(request);
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
+      if (appLinkUrl(request.url()) !== null && isMainFrameNavigation(request)) {
+        // A redirect into an app link ends the navigation that led there.
+        const redirectedFrom = request.redirectedFrom();
+        const generation = redirectedFrom && navigationGenerations.get(redirectedFrom);
+        if (generation) settleAbortedNavigation(tab, generation, request.url(), undefined);
+        return;
+      }
       if (!isMainNavigation(request)) return;
       // Playwright can deliver the first request after Stop has already settled its navigation.
       const stoppedInitialRequest =
@@ -2815,7 +2841,8 @@ const make = Effect.gen(function* () {
             viewport: tab.page.viewportSize() ?? UNATTACHED_FILL_VIEWPORT,
           };
         }
-        const changed = from?.width !== to?.width || from?.height !== to?.height;
+        const changed =
+          tab.desktopResizeUndrawn || from?.width !== to?.width || from?.height !== to?.height;
         const remainingMs = () => Math.max(0, deadlineMs - performance.now());
         const within = <A>(promise: Promise<A>, ms: number) =>
           runPromise(
@@ -2827,9 +2854,40 @@ const make = Effect.gen(function* () {
         // The desktop draws the new size after the session update; its page resize says it has.
         // Half the time left keeps room for the read, which runs even if nothing was drawn,
         // because a page can keep another size than the one asked for.
-        if (changed) await within(drawn, Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2));
+        let undrawn = false;
+        if (changed) {
+          // Electron resizes no hidden guest it does not paint; a pending capture makes the desktop paint it.
+          let waiting = true;
+          void (async () => {
+            while (waiting && !tab.closing) {
+              await tab.cdp.send("Page.captureScreenshot", DESKTOP_PAINT_CAPTURE);
+            }
+          })().catch(constVoid);
+          try {
+            undrawn =
+              (await within(
+                drawn.then(() => true),
+                Math.min(DESKTOP_RESIZE_WAIT_MS, remainingMs() / 2),
+              )) === null;
+          } finally {
+            waiting = false;
+          }
+        }
         const changes = tab.desktopViewportChanges;
         const measured = await within(measureDesktopViewport(tab), remainingMs());
+        // A window that does not paint, such as a minimized one, never draws the new size.
+        // Fill asks for no size, so only a fixed one can be missed.
+        tab.desktopResizeUndrawn =
+          undrawn &&
+          to !== null &&
+          (measured?.width !== to.width || measured?.height !== to.height);
+        if (tab.desktopResizeUndrawn) {
+          throw new ServerBrowserPage.ServerBrowserOperationError({
+            tag: "PreviewAutomationExecutionError",
+            message:
+              "The desktop did not draw the page at the new size. Show or restore the T3 Code window and try again.",
+          });
+        }
         // Only a read after the draw, with no page resize or load during it, measures this resize.
         return {
           tabId: tab.tabId,

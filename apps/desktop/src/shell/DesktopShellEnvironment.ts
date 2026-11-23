@@ -123,7 +123,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
-  "T3CODE_GITHUB_APP_CLIENT_ID",
+  "T3CODE_FEATURE_FLAGS",
   "T3CODE_RELEASE_BASE_URL",
   "__MISE_DIFF",
   "JAVA_HOME",
@@ -234,6 +234,8 @@ const logShellEnvironmentCommandError = (
 const captureWindowsEnvironmentCommand = (names: ReadonlyArray<string>) =>
   [
     "$ErrorActionPreference = 'Stop'",
+    // Redirected PowerShell output uses the console code page, which mangles non-ASCII paths.
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}",
     ...names.flatMap((name) => {
       return [
         `Write-Output '${startMarker(name)}'`,
@@ -552,7 +554,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "JAVA_HOME",
       "PNPM_HOME",
       "T3CODE_TELEMETRY_ENABLED",
-      "T3CODE_GITHUB_APP_CLIENT_ID",
+      "T3CODE_FEATURE_FLAGS",
       "T3CODE_RELEASE_BASE_URL",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
@@ -659,6 +661,8 @@ const CACHED_ENV_NAMES = [
   "SSL_CERT_DIR",
   "NODE_EXTRA_CA_CERTS",
   "T3CODE_TELEMETRY_ENABLED",
+  // The server reads its flags once at start, before discovery can finish.
+  "T3CODE_FEATURE_FLAGS",
 ] as const;
 
 /** @public */
@@ -669,6 +673,21 @@ export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
   const env = process.env;
+  const isLinuxAppImage =
+    environment.platform === "linux" && (env.APPIMAGE !== undefined || env.APPDIR !== undefined);
+  const appDir = env.APPDIR?.replace(/\/+$/u, "");
+  const stripAppImagePaths = (target: NodeJS.ProcessEnv) => {
+    if (!isLinuxAppImage || target.PATH === undefined) return;
+    // Cached PATHs can outlive the AppImage mount that originally contributed them.
+    const kept = target.PATH.split(":").filter(
+      (entry) =>
+        !(appDir && (entry === appDir || entry.startsWith(`${appDir}/`))) &&
+        !/^\/tmp\/\.mount_T3-[^/]+(?:\/|$)/u.test(entry),
+    );
+    if (kept.length > 0) target.PATH = kept.join(":");
+    else delete target.PATH;
+  };
+  stripAppImagePaths(env);
   const inherited = { ...env };
   const key = encodeCacheKey([
     environment.platform,
@@ -706,6 +725,7 @@ export const make = Effect.gen(function* () {
         budget,
       });
       const { prepared } = discovery;
+      stripAppImagePaths(fresh);
       const patch = Object.fromEntries(
         Object.keys(ShellEnvironmentPatch.fields).map((name) => [name, fresh[name] ?? null]),
       );
@@ -767,6 +787,7 @@ export const make = Effect.gen(function* () {
             return typeof value === "string" ? [[name, value]] : [];
           }),
         );
+        stripAppImagePaths(cached);
         const baseline = { ...inherited };
         const cachedPath = cached.PATH;
         if (cachedPath) {
