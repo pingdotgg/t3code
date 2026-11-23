@@ -733,10 +733,11 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
       const alert = GITHUB_ALERT_MARKER.exec(text);
       const hardBreak =
         alert !== null &&
+        !alert[0].endsWith("\n") &&
         isElement(br, "br") &&
         after?.type === "text" &&
         after.value.startsWith("\n") &&
-        markerEndsInHardBreak(walk.source, text);
+        markerEndsInHardBreak(walk.source, alert[0]);
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)
@@ -744,7 +745,7 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
           ? alert
           : null;
       if (match && first?.type === "text" && isElement(paragraph, "p")) {
-        if (hardBreak && !match[0].endsWith("\n")) {
+        if (hardBreak) {
           first.value = after.value.replace(/^\n/, "");
           paragraph.children.splice(0, indent + 3, first);
         } else {
