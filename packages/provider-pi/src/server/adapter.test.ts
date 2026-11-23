@@ -6952,6 +6952,81 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("marks the answer finished before a steer is read as the final answer", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      const running = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "running",
+      );
+      const providerTurnId =
+        running.type === "provider_turn.updated" ? running.providerTurn.id : undefined;
+      assert.isDefined(providerTurnId);
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Answer one" },
+      });
+
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: providerTurnId!,
+        message: {
+          messageId: "message:thread-pi-test:steer-after-answer" as never,
+          text: "Unrelated question",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "stop" },
+      });
+      yield* fake.emit({ type: "message_start", message: { role: "user" } });
+      yield* fake.emit({ type: "message_end", message: { role: "user" } });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Answer two" },
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: { role: "assistant", stopReason: "stop" },
+      });
+      yield* fake.emit({ type: "agent_settled" });
+
+      const replies = new Map<string, { readonly text: string; readonly phase: unknown }>();
+      yield* takeEvent((event) => {
+        if (event.type === "turn_item.updated" && event.turnItem.type === "assistant_message") {
+          replies.set(event.turnItem.id, {
+            text: event.turnItem.text,
+            phase: event.turnItem.phase,
+          });
+        }
+        return event.type === "turn.terminal";
+      });
+      const [answerOne, answerTwo] = [...replies.values()];
+      assert.equal(answerOne?.text, "Answer one");
+      assert.equal(answerTwo?.text, "Answer two");
+      // The web timeline folds every earlier reply in a run unless it is a final answer.
+      assert.equal(answerOne?.phase, "final_answer");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { handled: false, steer: "starts" },
     { handled: true, steer: "starts" },
