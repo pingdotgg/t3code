@@ -985,22 +985,104 @@ export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
 );
 
 const MACOS_GIT_SHIM = "/usr/bin/git";
+// POSIX default search path (_PATH_DEFPATH) when PATH is unset.
+const POSIX_DEFAULT_PATH = "/usr/bin:/bin";
+const POSIX_PATH_SCAN_CONTINUE_ERRORS = new Set(["ENOENT", "ENOTDIR", "EACCES"]);
+
+function isPosixPathScanContinueError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return typeof code === "string" && POSIX_PATH_SCAN_CONTINUE_ERRORS.has(code);
+}
+
+async function isMacosGitShim(candidate: string): Promise<boolean> {
+  if (candidate === MACOS_GIT_SHIM) return true;
+  try {
+    return (await NodeFS.promises.realpath(candidate)) === MACOS_GIT_SHIM;
+  } catch {
+    return false;
+  }
+}
+
+// An empty or relative POSIX PATH entry depends on the child's cwd, which resolveSpawnCommand does not take.
+function hasRelativePosixPathEntryBefore(
+  pathValue: string | undefined,
+  resolvedPath: string,
+): boolean {
+  if (pathValue === undefined) return false;
+  const resolvedDir = NodePath.posix.resolve(NodePath.posix.dirname(resolvedPath));
+  for (const entry of pathValue.split(POSIX_PATH_DELIMITER)) {
+    if (entry.length === 0 || !entry.startsWith("/")) return true;
+    if (NodePath.posix.resolve(entry) === resolvedDir) return false;
+  }
+  return false;
+}
+
+// Scan macOS PATH entries literally so the kernel resolves `..` after symlinks as native spawn does.
+// Only continue past ENOENT/ENOTDIR/EACCES; other errors (such as ELOOP or EIO) defer to native spawn.
+async function resolveMacosPathExecutable(
+  command: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string | undefined> {
+  const pathValue = env.PATH ?? POSIX_DEFAULT_PATH;
+  for (const entry of pathValue.split(POSIX_PATH_DELIMITER)) {
+    if (entry.length === 0 || !entry.startsWith("/")) return undefined;
+    const candidate = entry.endsWith("/") ? `${entry}${command}` : `${entry}/${command}`;
+    try {
+      if (!(await NodeFS.promises.stat(candidate)).isFile()) continue;
+      await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+      return candidate;
+    } catch (error) {
+      if (!isPosixPathScanContinueError(error)) return undefined;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve bare commands to absolute paths on macOS before spawning.
+ * libuv's macOS posix_spawn walks PATH by calling posix_spawn on each directory; every ENOENT miss
+ * still allocates a kernel PID and triggers syspolicyd provenance errors and Endpoint Security hooks.
+ * Rescans PATH on each spawn (async stat/access only, zero PIDs) so earlier PATH additions take effect immediately.
+ */
+const resolveMacosBareCommand = Effect.fnUntraced(function* (
+  command: string,
+  env: NodeJS.ProcessEnv,
+  resolveExecutable: SpawnExecutableResolver,
+): Effect.fn.Return<string | undefined> {
+  if (resolveExecutable === resolveSpawnExecutableWithNode) {
+    return yield* Effect.promise(() => resolveMacosPathExecutable(command, env));
+  }
+  const found = yield* Effect.promise(async () => resolveExecutable(command, "darwin", env));
+  if (
+    found === undefined ||
+    !NodePath.posix.isAbsolute(found) ||
+    hasRelativePosixPathEntryBefore(env.PATH, found)
+  ) {
+    return undefined;
+  }
+  return found;
+});
 
 /**
  * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
- * User-selected git on PATH still wins, children keep PATH, and lookup failures use `git`.
+ * User-selected git on PATH still wins, children keep PATH, and lookup failures fall back to gitOnPath.
  */
 const resolveMacosGit = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv,
   resolveExecutable: SpawnExecutableResolver,
 ) {
+  const gitOnPath = yield* resolveMacosBareCommand("git", env, resolveExecutable);
+  if (gitOnPath === undefined || !(yield* Effect.promise(() => isMacosGitShim(gitOnPath)))) {
+    return gitOnPath ?? "git";
+  }
+
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    resolvePathEnvironmentVariable(env),
+    env.PATH ?? POSIX_DEFAULT_PATH,
     env.DEVELOPER_DIR ?? "",
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
   const nowNanos = yield* Clock.currentTimeNanos;
@@ -1013,18 +1095,17 @@ const resolveMacosGit = Effect.fnUntraced(function* (
       (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
         undefined
     ) {
-      return cachedPath ?? "git";
+      return cachedPath ?? gitOnPath;
     }
   }
-  const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
-  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const located = locateXcodeGit(env);
   const realGit =
     located !== undefined &&
     (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
       ? located
       : null;
   cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
-  return realGit ?? "git";
+  return realGit ?? gitOnPath;
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
@@ -1080,8 +1161,11 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   options: SpawnCommandOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcess.Platform;
-  const isMacosGit = platform === "darwin" && command === "git";
-  if (platform !== "win32" && !isMacosGit) {
+  if (platform !== "win32" && platform !== "darwin") {
+    return { command, args: [...args], shell: false };
+  }
+  const explicitPath = command.includes("/") || (platform === "win32" && command.includes("\\"));
+  if (platform === "darwin" && (command.length === 0 || explicitPath)) {
     return { command, args: [...args], shell: false };
   }
 
@@ -1093,16 +1177,19 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
         ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
-  if (isMacosGit) {
+  if (platform === "darwin") {
+    const resolved =
+      command === "git"
+        ? yield* resolveMacosGit(env, resolveExecutable)
+        : ((yield* resolveMacosBareCommand(command, env, resolveExecutable)) ?? command);
     return {
-      command: yield* resolveMacosGit(env, resolveExecutable),
+      command: resolved,
       args: [...args],
       shell: false,
     };
   }
   // Cache successful PATH lookups. Explicit paths and misses stay uncached so
   // newly installed executables are discoverable immediately.
-  const explicitPath = command.includes("/") || command.includes("\\");
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
     "spawn",
