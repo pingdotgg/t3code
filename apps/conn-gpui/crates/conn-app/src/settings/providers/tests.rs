@@ -109,6 +109,50 @@ fn the_editor_renders_models_and_variables(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn only_antigravity_offers_a_credential_check(cx: &mut TestAppContext) {
+    let mut snapshot: Value = serde_json::from_str(include_str!(
+        "../../../../../../../crates/conn-state/tests/fixtures/server-config-snapshot.json"
+    ))
+    .expect("fixture is JSON");
+    for provider in snapshot["config"]["providers"]
+        .as_array_mut()
+        .expect("providers")
+    {
+        if provider["driver"] == "antigravity" {
+            provider["auth"] = json!({ "status": "unauthenticated", "type": "gemini-api-key" });
+        }
+    }
+    let mut state = ServerConfigState::new();
+    state.apply(serde_json::from_value(snapshot).expect("snapshot event"));
+    let (window, view) = mount(cx);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_server_config(Arc::new(state), cx);
+            view.focus_provider("antigravity".to_owned(), cx);
+        });
+    });
+    assert!(has(cx, window, "Connect"), "the API-key check");
+    for gone in [
+        "Sign in",
+        "Open browser",
+        "Copy sign-in link",
+        "Sign out",
+        "Open docs",
+    ] {
+        assert!(!has(cx, window, gone), "{gone} is not offered");
+    }
+
+    cx.update(|cx| {
+        view.update(cx, |view, cx| view.focus_provider("codex".to_owned(), cx));
+    });
+    assert!(
+        !has(cx, window, "Connect"),
+        "Codex signs in through the AI router"
+    );
+    assert!(!has(cx, window, "Sign in"));
+}
+
+#[gpui_kit::test]
 fn a_custom_model_opens_its_editor_and_takes_options(cx: &mut TestAppContext) {
     let (window, view) = mount(cx);
     cx.update(|cx| {
