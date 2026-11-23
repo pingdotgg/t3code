@@ -17,6 +17,7 @@ pub(crate) use self::composer_state::{
 };
 mod draft_hero;
 mod icons;
+mod inline_code;
 pub(crate) mod markdown;
 mod provider_banner;
 mod question_logic;
