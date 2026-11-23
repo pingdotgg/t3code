@@ -558,10 +558,17 @@ function* rtf(source: string): Generator<string, void> {
         if (control === "mac" || (control === "ansicpg" && value === 10000))
           state.decoder = new TextDecoder("macintosh");
         else if (control === "ansicpg") {
-          // Per-byte decoding only supports single-byte Windows code pages.
-          if (value !== 874 && (value < 1250 || value > 1258))
-            throw new Error("Unsupported RTF code page");
-          state.decoder = new TextDecoder(`windows-${value}`, { fatal: true });
+          // Per-byte decoding only supports single-byte code pages.
+          const label =
+            value === 0
+              ? "windows-1252"
+              : value === 866
+                ? "ibm866"
+                : value === 874 || (value >= 1250 && value <= 1258)
+                  ? `windows-${value}`
+                  : undefined;
+          if (!label) throw new Error("Unsupported RTF code page");
+          state.decoder = new TextDecoder(label, { fatal: true });
         } else if (control === "uc") {
           if (!Number.isSafeInteger(value) || value < 0)
             throw new Error("Invalid RTF fallback count");
