@@ -115,6 +115,13 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       (extension === ".docx" && node.name === "del") ||
+      (extension === ".docx" &&
+        node.name === "r" &&
+        children(node)
+          .flatMap((child) => (child.name === "rPr" ? children(child) : []))
+          .some(
+            (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
+          )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
