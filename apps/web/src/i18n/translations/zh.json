@@ -12804,13 +12804,8 @@
   "64f2062f36b6ebf5": "Searching {plugin}: {query}",
   "d9d33e25b5476834": "Searched {plugin}: {query}",
   "db33ea7f8cd00bf2": "Make flashcards from my notes",
-  "64eb1641f2ff6d0d": "Explain it with a chart",
-  "c93f046737abf11a": "Show it on a map",
-  "b5a3e4e92111d4c6": "Quiz me on a topic",
   "0357f2b22fd7c07b": "{count, plural, one {{count} card to review} other {{count} cards to review}}",
   "a6be2dbf6ae0def2": "{count, plural, one {{count} thing is waiting for you} other {{count} things are waiting for you}}",
-  "5e81e4ba3149e7a2": "What would you like to learn today?",
-  "b9e3770a879c0aa3": "Ask, drop in your notes, or ask for flashcards, a chart or a map.",
   "fdbce23b3e7823d3": "For today",
   "35b6bae0c9653a65": "Start reviewing",
   "6d87a4b42f4fa703": "Open project",
@@ -12947,5 +12942,10 @@
   "8a71aa97fd850811": "Delete project",
   "575b9b31ebabcbd0": "code git terminal diff worktree checkpoints chat",
   "9243c9e7cfda7102": "locale translation english deutsch german español spanish français french português portuguese brasil brazilian chinese 中文 japanese 日本語 korean 한국어 russian русский swedish svenska polish polski sprache idioma langue 语言 言語 언어 язык",
-  "bcdd5a1286c75b62": "{app} home"
+  "bcdd5a1286c75b62": "{app} home",
+  "d3d2562199393c0e": "Help me write",
+  "ff719a8209f40b86": "Search the web and summarize",
+  "3f53f89765dff709": "Show it on a chart",
+  "3874d62876051b17": "How can I help?",
+  "d6295702818c84ce": "Ask, write, plan or add files, with any model."
 }

@@ -298,7 +298,7 @@ import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ChatStartExtras, ChatStartHeadline } from "../kompas/ChatStart";
-import { defaultRuntimeModeFor } from "../kompas/runtimeMode";
+import { defaultRuntimeModeFor } from "@t3tools/client-runtime/state/conversation-mode";
 import { useChatMode } from "../kompas/state";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -2913,6 +2913,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useChatShortcuts({
     enabled: activeThreadId !== null && !backgroundThread,
+    codingShortcuts: !chatMode,
     embedded,
     composerElement: composerOverlayElement,
     keybindings,
@@ -2973,7 +2974,7 @@ export default function ChatView(props: ChatViewProps) {
   // A focused desktop browser page forwards these chords as menu actions.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle or close the right panel
   useEffect(() => {
-    if (embedded || backgroundThread) return;
+    if (embedded || backgroundThread || chatMode) return;
     return window.desktopBridge?.onMenuAction((action) => {
       if (action === "rightPanel.toggle") toggleRightPanelStable();
       else if (action === "rightPanel.toggleMaximized") toggleRightPanelMaximizedStable();
@@ -2982,6 +2983,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     embedded,
     backgroundThread,
+    chatMode,
     toggleRightPanelStable,
     toggleRightPanelMaximizedStable,
     closeActiveRightPanelSurfaceStable,
@@ -3579,7 +3581,7 @@ export default function ChatView(props: ChatViewProps) {
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
-              {...(activeDraftLogicalProjectKey
+              {...(activeDraftLogicalProjectKey && !chatMode
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
                 : {})}
               {...(threadFindEnabled ? { onFindInThread: openThreadFindStable } : {})}
@@ -3704,15 +3706,14 @@ export default function ChatView(props: ChatViewProps) {
                   announceTurnStatus={!isProviderSubagent}
                   onOpenToolDiff={parentPanel?.openToolDiff ?? onOpenToolDiffStable}
                   // Side chat runs keep no checkpoints to diff, and a fork would promote the side chat.
-                  {...(embedded
-                    ? {}
-                    : { onOpenTurnDiff: onOpenTurnDiffStable, onForkFromRun: onForkFromRunStable })}
+                  {...(embedded || chatMode ? {} : { onOpenTurnDiff: onOpenTurnDiffStable })}
+                  {...(embedded ? {} : { onForkFromRun: onForkFromRunStable })}
                   onOpenThread={onOpenRelatedThreadStable}
                   parentThreadLink={parentThreadLink}
                   workflowOpening={workflowOpening}
                   supportsConversationRollback={supportsConversationRollback}
-                  threadStartCheckpointAvailable={threadStartCheckpointAvailable}
-                  availableRevertTurnCounts={availableRevertTurnCounts}
+                  threadStartCheckpointAvailable={threadStartCheckpointAvailable && !chatMode}
+                  availableRevertTurnCounts={chatMode ? undefined : availableRevertTurnCounts}
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
                   onSendAppMessage={sendAppMessageStable}
@@ -4198,7 +4199,7 @@ export default function ChatView(props: ChatViewProps) {
           </ThreadFindCanvas>
         </div>
 
-        {embedded ? null : (
+        {embedded || chatMode ? null : (
           <ChatTerminalDrawers
             activeThreadKey={activeThreadKey}
             activeTerminalOpen={Boolean(terminalUiState.terminalOpen)}

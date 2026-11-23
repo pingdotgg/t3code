@@ -9,6 +9,7 @@ import {
 } from "../../lib/terminalCloseShortcut";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
+import { isCodingShortcut } from "../../kompas/chatModeShortcuts";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { BranchToolbarHandle } from "../BranchToolbar";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
@@ -31,6 +32,8 @@ const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
 
 interface ChatShortcutsInput {
   readonly enabled: boolean;
+  /** False in chat mode, where a shortcut must not open a hidden tool. */
+  readonly codingShortcuts?: boolean;
   /**
    * A side chat inside another chat leaves the window to the outer chat. It runs only
    * composer chords, for keys pressed inside `composerElement`.
@@ -93,6 +96,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
+    if (input.codingShortcuts === false && isCodingShortcut(command)) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??

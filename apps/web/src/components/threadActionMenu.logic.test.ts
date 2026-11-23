@@ -27,6 +27,28 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it("offers nothing about folders, branches or projects in chat mode", () => {
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      branch: "main",
+      projectFilter: { label: "app", isActive: false },
+      canTurnIntoProject: true,
+      codingActions: false,
+    });
+    const ids = items.flatMap((item) => [item.id, ...(item.children ?? []).map(({ id }) => id)]);
+    for (const id of [
+      "new-thread-on-branch",
+      "filter-by-project",
+      "turn-into-project",
+      "copy-path",
+      "copy-branch",
+      "project-settings",
+    ]) {
+      expect(ids).not.toContain(id);
+    }
+    expect(ids).toContain("copy-thread");
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {

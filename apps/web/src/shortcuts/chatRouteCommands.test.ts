@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import * as commandPalette from "../commandPaletteBus";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
+import * as kompas from "../kompas/state";
 import * as previewActions from "../components/preview/previewActionBus";
 import * as settings from "../hooks/useSettings";
 import * as storage from "../hooks/useLocalStorage";
@@ -50,6 +51,7 @@ describe("new thread commands", () => {
     using storedProject = vi.spyOn(storage, "getLocalStorageItem").mockReturnValue("local:active");
     using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
     using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
+    using _developerMode = vi.spyOn(kompas, "readChatMode").mockReturnValue(false);
     using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
     const router = { state: { matches: [] } } as unknown as AnyRouter;
     using stack = new DisposableStack();
@@ -74,6 +76,23 @@ describe("new thread commands", () => {
         projectId: scenario.count === 1 ? "active" : "idle",
       });
     }
+  });
+
+  it.each(["chat.new", "chat.newLocal"] as const)("%s skips projects in chat mode", (command) => {
+    using _chatMode = vi.spyOn(kompas, "readChatMode").mockReturnValue(true);
+    using openPicker = vi.spyOn(commandPalette, "openCommandPalette").mockImplementation(() => {});
+    using startLocal = vi.spyOn(threadActions, "startNewThreadFromContext").mockResolvedValue(true);
+    using register = vi.spyOn(dispatcher, "registerCommands").mockReturnValue(() => {});
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands({ state: { matches: [] } } as unknown as AnyRouter));
+
+    register.mock.calls[0]![0][command]!({
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+    } as unknown as KeyboardEvent);
+
+    expect(openPicker).not.toHaveBeenCalled();
+    expect(startLocal).not.toHaveBeenCalled();
   });
 });
 

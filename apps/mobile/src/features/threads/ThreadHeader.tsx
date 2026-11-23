@@ -7,6 +7,7 @@ import {
   useWorkspacePaneState,
 } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
+import { useChatMode } from "../kompas/state";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
@@ -26,25 +27,29 @@ export function ThreadHeader(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const chatMode = useChatMode();
   const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
-  const actions: AppBarAction[] = props.hasThreadCwd
-    ? [
-        {
-          accessibilityLabel: filesVisible ? gt("Close files") : gt("Open files"),
-          icon: "folder",
-          selected: filesVisible,
-          disabled: !props.gitControls.canOpenFiles,
-          separateBackground: false,
-          onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
-        },
-      ]
-    : [];
-  const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
+  const actions: AppBarAction[] =
+    props.hasThreadCwd && !chatMode
+      ? [
+          {
+            accessibilityLabel: filesVisible ? gt("Close files") : gt("Open files"),
+            icon: "folder",
+            selected: filesVisible,
+            disabled: !props.gitControls.canOpenFiles,
+            separateBackground: false,
+            onPress: filesVisible ? toggleAuxiliaryPane : props.onOpenFilesInspector,
+          },
+        ]
+      : [];
+  const menus = (chatMode ? [] : [gitMenu, terminalMenu]).filter(
+    (menu): menu is AppBarMenu => menu !== null,
+  );
 
   return (
     <AppBar

@@ -11,6 +11,9 @@ import {
   NodeId,
   OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
+  DEFAULT_KOMPAS_SETTINGS,
+  KOMPAS_WS_METHODS,
+  type KompasSnapshot,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
@@ -550,6 +553,19 @@ const handlers: Record<string, (input: never) => unknown> = {
         if (vcsStatusSubscriber === queue) vcsStatusSubscriber = null;
       };
     }),
+  // These tests cover the coding tools, which chat mode hides.
+  [KOMPAS_WS_METHODS.subscribe]: () =>
+    subscribe<KompasSnapshot>([
+      {
+        settings: { ...DEFAULT_KOMPAS_SETTINGS, developerMode: true },
+        chatProjectId: null,
+        plugins: [],
+        pluginThreads: [],
+        memory: [],
+        decks: [],
+        workstreams: [],
+      },
+    ]),
   [WS_METHODS.subscribeServerConfig]: () =>
     subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
 };

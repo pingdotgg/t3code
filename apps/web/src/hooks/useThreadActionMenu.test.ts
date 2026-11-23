@@ -42,6 +42,7 @@ vi.mock("react", () => ({
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: async () => recordEffect("project-settings") }),
 }));
+vi.mock("../kompas/state", () => ({ readChatMode: () => false }));
 vi.mock("../state/session", () => ({
   readEnvironmentScope: (environmentId: string, scope: string) =>
     scope === AuthOrchestrationOperateScope && state.granted.has(environmentId),

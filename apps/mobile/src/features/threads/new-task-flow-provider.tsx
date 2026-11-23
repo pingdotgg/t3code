@@ -1,3 +1,4 @@
+import { defaultRuntimeModeFor } from "@t3tools/client-runtime/state/conversation-mode";
 import { ActiveNewTaskContext } from "../../state/active-new-task";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { msg, useMessages } from "gt-react-native";
@@ -447,7 +448,10 @@ export function NewTaskFlowProvider(
   );
   const startFromOrigin =
     isGitRepo && (draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin);
-  const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+  const defaultRuntimeMode = defaultRuntimeModeFor(
+    selectedProject,
+    projectSettings.settings.defaultRuntimeMode,
+  );
   const managedPolicy = selectedEnvironmentServerConfig?.managedPolicy;
   const runtimeMode = resolveNewThreadRuntimeMode(
     selectedProjectDraft.runtimeMode,

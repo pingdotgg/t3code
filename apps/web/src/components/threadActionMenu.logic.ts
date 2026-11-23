@@ -125,6 +125,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** False in chat mode, where folders, branches and projects on disk are hidden. */
+  readonly codingActions?: boolean;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -142,6 +144,26 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread-id",
   ].includes(action);
 }
+
+const CODING_ACTIONS: ReadonlySet<ThreadActionMenuId> = new Set<ThreadActionMenuId>([
+  "new-thread-on-branch",
+  "filter-by-project",
+  "turn-into-project",
+  "copy-path",
+  "copy-branch",
+  "project-settings",
+]);
+
+const withoutCodingActions = (
+  items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>>,
+): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> =>
+  items
+    .filter((item) => !CODING_ACTIONS.has(item.id))
+    .map((item) =>
+      item.children === undefined
+        ? item
+        : { ...item, children: item.children.filter((child) => !CODING_ACTIONS.has(child.id)) },
+    );
 
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
@@ -312,9 +334,10 @@ export function buildThreadActionMenuItems(
       icon: "trash",
     },
   ];
+  const shown = state.codingActions === false ? withoutCodingActions(items) : items;
   return state.canOperate
-    ? items
-    : items.map((item) =>
+    ? shown
+    : shown.map((item) =>
         threadActionRequiresOperate(item.id)
           ? {
               ...item,

@@ -14,10 +14,10 @@ export function ChatStartHeadline() {
   return (
     <div className="mx-auto mb-2 flex w-full max-w-3xl flex-col items-center px-4 text-center">
       <h1 className="font-semibold text-3xl tracking-tight sm:text-4xl">
-        <T>What would you like to learn today?</T>
+        <T>How can I help?</T>
       </h1>
       <p className="mt-2 text-muted-foreground">
-        <T>Ask, drop in your notes, or ask for flashcards, a chart or a map.</T>
+        <T>Ask, write, plan or add files, with any model.</T>
       </p>
     </div>
   );
@@ -34,10 +34,10 @@ export function ChatStartExtras(props: { readonly draftId: DraftId | null }) {
   if (draftId === null) return null;
 
   const prompts = [
+    gt("Help me write"),
+    gt("Search the web and summarize"),
+    gt("Show it on a chart"),
     gt("Make flashcards from my notes"),
-    gt("Explain it with a chart"),
-    gt("Show it on a map"),
-    gt("Quiz me on a topic"),
   ];
   const decks = kompas?.snapshot.decks ?? [];
   const due = dueCardCount(decks);

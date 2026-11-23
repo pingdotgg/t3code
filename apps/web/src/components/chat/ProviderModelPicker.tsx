@@ -1,3 +1,4 @@
+import { useChatMode } from "../../kompas/state";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
@@ -172,8 +173,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
+  const chatMode = useChatMode();
   const triggerTitle = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
+    ? chatMode
+      ? getDisplayModelName(selectedModel)
+      : getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? gt("Choose model")
       : props.model || gt("Choose model");

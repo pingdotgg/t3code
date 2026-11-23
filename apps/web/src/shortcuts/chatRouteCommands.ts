@@ -1,3 +1,4 @@
+import { readChatMode } from "../kompas/state";
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { AnyRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
@@ -115,6 +116,11 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const startNewLocal: CommandHandler = (event) => {
     claim(event);
+    if (readChatMode()) {
+      const environmentId = scratch.scratchEnvironmentId(null);
+      if (environmentId !== null) void scratch.startScratchThread(environmentId);
+      return;
+    }
     // With no current or open project, such as when every project is archived, pick one.
     void startNewThreadFromContext(readThreadContext()).then((started) => {
       if (!started) openCommandPalette({ open: "new-thread-in" });
@@ -149,6 +155,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         void scratch.startScratchThread(environmentId);
       },
       "chat.new": (event) => {
+        if (readChatMode()) return startNewLocal(event);
         const groups = readProjectGroups();
         if (
           !shouldCreateNewThreadInCurrentProject(
@@ -164,6 +171,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         startNewLocal(event);
       },
       "preview.toggle": (event) => {
+        if (readChatMode()) return false;
         claim(event);
         const threadRef = readRouteThreadRef();
         if (!threadRef || (!canOperatePreview(threadRef.environmentId) && !readPreviewOpen())) {

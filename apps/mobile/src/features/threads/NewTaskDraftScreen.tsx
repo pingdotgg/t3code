@@ -1,3 +1,4 @@
+import { useChatMode } from "../kompas/state";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { DraftEnvironmentControl } from "./DraftEnvironmentControl";
@@ -168,6 +169,7 @@ export function NewTaskDraftScreen(props: {
   const [creationMetadata] = useState(makeTurnCommandMetadata);
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const chatMode = useChatMode();
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   const goBack = useWorkspaceBackNavigation();
@@ -752,6 +754,7 @@ export function NewTaskDraftScreen(props: {
     navigation.navigate(routeName);
   };
 
+  const isConversation = chatMode && flow.isScratchDraft;
   const environmentControl = (
     <DraftEnvironmentControl
       connectionState={connectionState}
@@ -774,7 +777,15 @@ export function NewTaskDraftScreen(props: {
   const headingBreak = headingBefore.trimEnd().lastIndexOf(" ");
   const headingFirstLine = headingBreak < 0 ? headingBefore : headingBefore.slice(0, headingBreak);
   const headingLead = headingBreak < 0 ? "" : headingBefore.slice(headingBreak + 1);
-  const hero = flow.isScratchDraft ? (
+  const hero = isConversation ? (
+    <View className="items-center gap-2 px-6" testID="new-task-hero">
+      <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
+        <T>How can I help?</T>
+      </Text>
+      {connectionState === "connected" ? null : environmentControl}
+      {shareUnavailableNotice}
+    </View>
+  ) : flow.isScratchDraft ? (
     <View className="items-center gap-2 px-6" testID="new-task-hero">
       <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
         <T>What should we work on?</T>
@@ -1006,8 +1017,8 @@ export function NewTaskDraftScreen(props: {
           />
         </View>
       ) : null}
-      {viewportHeight < SHORT_DRAFT_VIEWPORT_HEIGHT ? contextControls : null}
-      {flow.canChooseWorkspace ? workspaceControls : null}
+      {viewportHeight < SHORT_DRAFT_VIEWPORT_HEIGHT && !isConversation ? contextControls : null}
+      {flow.canChooseWorkspace && !isConversation ? workspaceControls : null}
     </View>
   );
 

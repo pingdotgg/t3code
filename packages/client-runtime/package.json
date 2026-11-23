@@ -587,6 +587,10 @@
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"
     },
+    "./state/conversation-mode": {
+      "types": "./src/state/conversation-mode.ts",
+      "default": "./src/state/conversation-mode.ts"
+    },
     "./state/kompas": {
       "types": "./src/state/kompas.ts",
       "default": "./src/state/kompas.ts"

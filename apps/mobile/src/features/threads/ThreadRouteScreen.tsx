@@ -547,7 +547,7 @@ function ThreadRouteContent(
   // The title it had at delegation, until this client sees the parent itself.
   const delegatedFromThread = useThreadShell(delegatedFromRef);
   const headerSubtitle = [
-    selectedThreadProject?.title ?? null,
+    selectedThreadProject?.isScratch === true ? null : (selectedThreadProject?.title ?? null),
     selectedEnvironmentConnection?.environmentLabel ?? null,
     // A linked environment's delegated task names its parent; other linked work its origin.
     delegatedFrom !== null
