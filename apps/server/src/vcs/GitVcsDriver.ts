@@ -515,6 +515,9 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
+// Twice VcsProcess's default command timeout: a clean filter that wrote nothing for this long is
+// stalled far past the point where a capture would have killed its own.
+const LFS_TEMP_SETTLED_MS = 60_000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
 // one, so an unknown subject keeps its commit attributed.
@@ -1198,10 +1201,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
 
   // git-lfs's clean filter copies each file into lfs/tmp and leaves the copy when it is killed.
-  // Entries that appear while staging fails are recorded, and a later capture removes those still
-  // unchanged once no other capture of the repository is staging: a sibling worktree's git-lfs can
-  // hold its own entry unchanged while it waits, and other git-lfs processes rename or write theirs.
-  const strandedLfsTemp = new Map<string, Map<string, string>>();
+  // Entries that appear while staging fails are recorded. A later capture removes one once no other
+  // capture of the repository is staging and the entry has sat unchanged for LFS_TEMP_SETTLED_MS,
+  // since any git-lfs process can hold its entry unchanged while it waits for input.
+  const strandedLfsTemp = new Map<
+    string,
+    Map<string, { readonly signature: string; readonly mtimeMs: number }>
+  >();
   const lfsTempStaging = new Map<string, number>();
   const withLfsTempStaging = <A, E, R>(directory: string, effect: Effect.Effect<A, E, R>) =>
     Effect.acquireUseRelease(
@@ -1214,13 +1220,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           else lfsTempStaging.delete(directory);
         }),
     );
+  // A missing directory has no entries; any other failure leaves the listing unknown.
   const lfsTempEntries = (directory: string) =>
-    fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-  const lfsTempSignature = (file: string) =>
+    fileSystem.readDirectory(directory).pipe(
+      Effect.catchIf(
+        (cause) => cause.reason._tag === "NotFound",
+        (): Effect.Effect<ReadonlyArray<string>> => Effect.succeed([]),
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+  const lfsTempStat = (file: string) =>
     fileSystem.stat(file).pipe(
       Effect.map((info) =>
         info.type === "File" && Option.isSome(info.mtime)
-          ? `${info.size}:${info.mtime.value.getTime()}`
+          ? {
+              signature: `${info.size}:${info.mtime.value.getTime()}`,
+              mtimeMs: info.mtime.value.getTime(),
+            }
           : undefined,
       ),
       Effect.orElseSucceed(() => undefined),
@@ -1230,27 +1246,34 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   ) {
     const stranded = strandedLfsTemp.get(directory);
     if (stranded === undefined || lfsTempStaging.has(directory)) return;
-    strandedLfsTemp.delete(directory);
-    yield* Effect.forEach(
-      stranded,
-      ([name, signature]) =>
-        Effect.gen(function* () {
-          const file = path.join(directory, name);
-          if ((yield* lfsTempSignature(file)) === signature)
-            yield* fileSystem.remove(file).pipe(Effect.ignore);
-        }),
-      { discard: true },
-    );
+    const settledBefore = (yield* Clock.currentTimeMillis) - LFS_TEMP_SETTLED_MS;
+    for (const [name, recorded] of stranded) {
+      const file = path.join(directory, name);
+      const current = yield* lfsTempStat(file);
+      // Another process renamed or wrote it, so it was never this capture's to remove.
+      if (current?.signature !== recorded.signature) stranded.delete(name);
+      else if (recorded.mtimeMs < settledBefore) {
+        // A failed removal stays recorded for the next capture to retry.
+        const removed = yield* fileSystem.remove(file).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (removed) stranded.delete(name);
+      }
+    }
+    if (stranded.size === 0) strandedLfsTemp.delete(directory);
   });
   const recordStrandedLfsTemp = Effect.fn("GitVcsDriver.recordStrandedLfsTemp")(function* (
     directory: string,
-    before: ReadonlySet<string>,
+    before: ReadonlySet<string> | undefined,
   ) {
-    const stranded = strandedLfsTemp.get(directory) ?? new Map<string, string>();
-    for (const name of yield* lfsTempEntries(directory)) {
-      if (before.has(name)) continue;
-      const signature = yield* lfsTempSignature(path.join(directory, name));
-      if (signature !== undefined) stranded.set(name, signature);
+    // Without a listing from before staging, a new entry cannot be told from an older one.
+    if (before === undefined) return;
+    const stranded = strandedLfsTemp.get(directory) ?? new Map();
+    for (const name of (yield* lfsTempEntries(directory)) ?? []) {
+      if (before.has(name) || stranded.has(name)) continue;
+      const current = yield* lfsTempStat(path.join(directory, name));
+      if (current !== undefined) stranded.set(name, current);
     }
     if (stranded.size > 0) strandedLfsTemp.set(directory, stranded);
   });
@@ -1618,7 +1641,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           );
         const lfsTemp = path.join(gitCommonDir, "lfs", "tmp");
         yield* removeStrandedLfsTemp(lfsTemp);
-        const lfsTempBefore = new Set(yield* lfsTempEntries(lfsTemp));
+        const lfsTempListing = yield* lfsTempEntries(lfsTemp);
+        const lfsTempBefore = lfsTempListing === undefined ? undefined : new Set(lfsTempListing);
         const stagingAt = yield* Clock.currentTimeMillis;
         const staging = stageFiles([]).pipe(
           Effect.catchTags({

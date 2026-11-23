@@ -375,14 +375,39 @@ it.effect.each(["interrupt", "timeout", "success"] as const)(
 const gitLfsAvailable = NodeChildProcess.spawnSync("git", ["lfs", "version"]).status === 0;
 
 // git-lfs runs extension commands without a shell, so it needs git-lfs and a POSIX `cat`.
-for (const stop of ["interrupt", "timeout"] as const)
+for (const { stop, baseline } of [
+  { stop: "interrupt", baseline: "listed" },
+  { stop: "timeout", baseline: "listed" },
+  { stop: "interrupt", baseline: "unreadable" },
+] as const)
   it.effect.skipIf(!gitLfsAvailable || HostProcess.Platform.defaultValue() === "win32")(
-    `checkpoint staging stopped by ${stop} removes its Git LFS temp files but not a concurrent capture's`,
+    `checkpoint staging stopped by ${stop} with a ${baseline} lfs/tmp baseline removes its Git LFS temp files but not a concurrent capture's`,
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        const lfsTempSuffix = path.join(".git", "lfs", "tmp");
+        let failBaselineRead = baseline === "unreadable";
+        let failRemovals = false;
+        const failure = (method: string) =>
+          Effect.fail(
+            PlatformError.systemError({ _tag: "PermissionDenied", module: "FileSystem", method }),
+          );
+        const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) => {
+              if (!failBaselineRead || !directory.endsWith(lfsTempSuffix))
+                return fs.readDirectory(directory, options);
+              failBaselineRead = false;
+              return failure("readDirectory");
+            },
+            remove: (file, options) =>
+              failRemovals && path.dirname(file).endsWith(lfsTempSuffix)
+                ? failure("remove")
+                : fs.remove(file, options),
+          }),
+        );
         const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-lfs-" });
         const cwd = path.join(sandbox, "repo");
         yield* fs.makeDirectory(cwd);
@@ -446,6 +471,7 @@ for (const stop of ["interrupt", "timeout"] as const)
           return fiber;
         });
         const stopped = yield* startBlockedCapture;
+        const stoppedTemp = (yield* lfsTempEntries).filter((name) => name !== "earlier-writer");
         yield* TestClock.adjust("15 seconds");
         // A capture of the same repository holds its own unchanged temp file while it waits.
         const concurrent = yield* startBlockedCapture;
@@ -469,8 +495,24 @@ for (const stop of ["interrupt", "timeout"] as const)
         assert.deepEqual(yield* lfsTempEntries, held);
 
         yield* Fiber.interrupt(concurrent);
+        // Both temp files are still too recently written to count as abandoned.
         yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
-        assert.deepEqual(yield* lfsTempEntries, ["earlier-writer"]);
+        assert.deepEqual(yield* lfsTempEntries, held);
+        // File mtimes are real time; move the test clock well past them.
+        yield* TestClock.adjust("36500 days");
+        // Removals that fail stay recorded, so the next capture retries them.
+        failRemovals = true;
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+        failRemovals = false;
+        assert.deepEqual(yield* lfsTempEntries, held);
+        yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+        // Without a listing from before its staging, the stopped capture recorded nothing.
+        assert.deepEqual(
+          yield* lfsTempEntries,
+          baseline === "listed"
+            ? ["earlier-writer"]
+            : ["earlier-writer", ...stoppedTemp].toSorted(),
+        );
         assert.include(
           (yield* git(["show", `${checkpointRef}:asset.bin`])).stdout,
           "https://git-lfs.github.com/spec/v1",
