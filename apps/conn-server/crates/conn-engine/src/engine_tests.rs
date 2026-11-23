@@ -680,6 +680,27 @@ async fn a_planned_project_refusal_is_replayed() {
         .await
         .unwrap();
     assert_eq!(kind, "project.meta.update");
+    // An offline folder another project holds: T3 checks the folder before planning, so the
+    // refusal stays retryable and the id works once the folder is back and free.
+    std::fs::remove_dir_all(&missing).unwrap();
+    let offline = cause(mutate(create_project("c4", "project:p4", &missing)).await);
+    assert_eq!(offline["_tag"], "ProjectOperationError", "{offline}");
+    std::fs::create_dir_all(&missing).unwrap();
+    mutate(json!({"type": "project.delete", "commandId": "d3", "projectId": "project:p3"}))
+        .await
+        .unwrap();
+    mutate(create_project("c4", "project:p4", &missing))
+        .await
+        .unwrap();
+    // A monogram has at most two graphemes (`Intl.Segmenter`), not two chars.
+    let icon = |id: &str, text: &str| {
+        json!({"type": "project.update", "commandId": id, "projectId": "project:p4",
+            "projectIcon": {"kind": "monogram", "text": text}})
+    };
+    let project = mutate(icon("i1", "किका")).await.unwrap();
+    assert_eq!(project["projectIcon"]["text"], "किका");
+    let long = cause(mutate(icon("i2", "abc")).await);
+    assert_eq!(long["_tag"], "ProjectInvalidError", "{long}");
 }
 
 /// T3's `readCommitted`: a replay whose project row is gone is a typed read error, not null.
@@ -718,9 +739,21 @@ async fn a_project_replay_without_its_row_is_a_read_error() {
 
 /// T3's queue start (`startNextQueuedRun`) checks and starts the queued run on its effective
 /// selection: a message that follows the thread's selection takes the thread's current one.
+/// An unpinned scheduled send and a delegated-task completion both follow it.
 #[tokio::test(flavor = "current_thread")]
 async fn the_queue_starts_on_the_effective_selection() {
-    let db = TempDb::new("queue-effective");
+    queued_run_follows_selection(Queued::Scheduled).await;
+    queued_run_follows_selection(Queued::DelegatedCompletion).await;
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Queued {
+    Scheduled,
+    DelegatedCompletion,
+}
+
+async fn queued_run_follows_selection(queued: Queued) {
+    let db = TempDb::new(&format!("queue-effective-{queued:?}"));
     let mut config = EngineConfig::new(db.path());
     config.projects = vec![ProjectConfig {
         title: "Project".into(),
@@ -741,17 +774,31 @@ async fn the_queue_starts_on_the_effective_selection() {
     next(&mut thread).await;
     dispatch(&engine, message("t1", "c2", "hang")).await;
     until_provider_turn(&mut thread).await;
-    dispatch(&engine, message("t1", "c3", "later")).await;
-    // The queued message follows the thread's selection; the turn ends with it waiting.
+    match queued {
+        // The command the scheduler's `EngineRunner::send` builds: no model selection.
+        Queued::Scheduled => {
+            dispatch(
+                &engine,
+                json!({"type": "message.dispatch", "commandId": "c3", "threadId": "t1",
+                    "messageId": "message:c3", "scheduledTaskId": "scheduled-task:x",
+                    "text": "later", "attachments": [],
+                    "dispatchMode": {"type": "queue_after_active"},
+                    "createdBy": "agent", "creationSource": "server"}),
+            )
+            .await;
+        }
+        // A child's end queues its completion wake (`families::deliver`).
+        Queued::DelegatedCompletion => {
+            dispatch(&engine, delegate("d1", "look", Some("always"))).await;
+            let child = "thread:delegated-task:d1";
+            run_to_end(&engine, child, &format!("run:{child}:1")).await;
+        }
+    }
+    // The turn ends with the message waiting.
     engine
         .inner()
         .db(|store| {
             let mut tx = store.tx()?;
-            let mut message = tx.entity("t1", "messages", "message:c3")?.unwrap();
-            message["followsThreadSelection"] = json!(true);
-            tx.append(
-                crate::store::Draft::new("t1", "message.updated", message).run(Some("run:t1:2")),
-            )?;
             let mut run = tx.entity("t1", "runs", "run:t1:1")?.unwrap();
             run["status"] = json!("interrupted");
             tx.append(crate::store::Draft::new("t1", "run.updated", run).run(Some("run:t1:1")))?;
@@ -759,6 +806,8 @@ async fn the_queue_starts_on_the_effective_selection() {
         })
         .await
         .unwrap();
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued", "{queued:?}");
     let select = |id: &str, instance: &str| {
         json!({"type": "thread.model-selection.set", "commandId": id, "threadId": "t1",
             "modelSelection": {"instanceId": instance, "model": "m"}})
@@ -773,9 +822,9 @@ async fn the_queue_starts_on_the_effective_selection() {
     let p = projection(&engine, "t1").await;
     assert_eq!(
         p["runs"][1]["status"], "queued",
-        "held, not started on run:t1:2's own provider"
+        "{queued:?}: held, not started on run:t1:2's own provider"
     );
-    assert_eq!(p["runs"][1]["queueHeld"], true);
+    assert_eq!(p["runs"][1]["queueHeld"], true, "{queued:?}");
     // On another enabled provider, the run starts there.
     dispatch(&engine, select("s2", "other")).await;
     dispatch(
@@ -784,8 +833,8 @@ async fn the_queue_starts_on_the_effective_selection() {
     )
     .await;
     let p = projection(&engine, "t1").await;
-    assert_ne!(p["runs"][1]["status"], "queued");
-    assert_eq!(p["runs"][1]["providerInstanceId"], "other");
+    assert_ne!(p["runs"][1]["status"], "queued", "{queued:?}");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "other", "{queued:?}");
 }
 
 /// A project write reads its receipt in its own transaction, as T3's `commitProjectCommand`:

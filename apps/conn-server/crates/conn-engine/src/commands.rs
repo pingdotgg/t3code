@@ -625,6 +625,10 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // A scheduled run's message names its task; the client's timeline marks it.
     if let Some(task) = &c.scheduled_task_id {
         message["scheduledTaskId"] = json!(task);
+        // An unpinned scheduled run follows the thread's selection (`Orchestrator.ts`).
+        if c.model_selection.is_none() {
+            message["followsThreadSelection"] = json!(true);
+        }
     }
     if let Some(sender) = &c.sender_thread_id {
         message["senderThreadId"] = json!(sender);
@@ -2498,20 +2502,24 @@ fn follows_current_conversation(message: &Value) -> bool {
     let buffered = message["createdBy"] == "agent"
         && message["creationSource"] == "provider"
         && !is_null(message, "notification")
-        && is_null(message, "delegatedCompletion");
-    !is_null(message, "delegatedCompletion")
+        && !is_delegated_completion(message);
+    is_delegated_completion(message)
         || message["followsThreadSelection"] == true
         || (message["notification"]["source"]["kind"] == "monitor" && !buffered)
 }
 
-/// A message the server queued by itself: a notification or a delegated-task completion. This
-/// engine marks its completion wakes by their id (`families::deliver`).
-fn is_automatic(message: &Value) -> bool {
-    !is_null(message, "notification")
-        || !is_null(message, "delegatedCompletion")
+/// A delegated-task completion. This engine marks its completion wakes by their id
+/// (`families::deliver`).
+fn is_delegated_completion(message: &Value) -> bool {
+    !is_null(message, "delegatedCompletion")
         || message["id"]
             .as_str()
             .is_some_and(|id| id.starts_with("message:delegated-completion:"))
+}
+
+/// A message the server queued by itself: a notification or a delegated-task completion.
+fn is_automatic(message: &Value) -> bool {
+    !is_null(message, "notification") || is_delegated_completion(message)
 }
 
 fn thread_unsnooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
