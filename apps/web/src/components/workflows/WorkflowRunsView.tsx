@@ -119,8 +119,10 @@ export function WorkflowRunsView({
         <AlertDescription>
           <p>
             <T>
-              <span className="text-label text-foreground">A workflow file has a problem.</span> The
-              last version that did keeps running.
+              <span className="text-label text-destructive-foreground">
+                A workflow file has a problem.
+              </span>{" "}
+              The last version that did keeps running.
             </T>
           </p>
         </AlertDescription>
