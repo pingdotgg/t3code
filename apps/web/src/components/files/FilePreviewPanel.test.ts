@@ -217,6 +217,19 @@ describe("document preview contents", () => {
     expect(html.replaceAll(/<[^>]*>/g, "")).toBe("Hello boldUnicode: αvisible");
     expect(html).toContain("<strong>");
     expect(html).not.toContain("https:");
+    const styled = openRtf(
+      bytes(
+        "{\\rtf1\\ansi\\b \\uc0\\u55357 \\u56960  Launch\\b0  \\i\\uc1\\u-10187?\\u-8904?\\i0}",
+      ),
+    );
+    if (styled.type !== "document") throw new Error("Expected document");
+    expect(styled.pages[0]!.html).toBe("<p><strong>🚀 Launch</strong> <em>𝔸</em></p>");
+    const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
+    if (fallbacks.type !== "document") throw new Error("Expected document");
+    expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
+    if (escapedBreak.type !== "document") throw new Error("Expected document");
+    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
