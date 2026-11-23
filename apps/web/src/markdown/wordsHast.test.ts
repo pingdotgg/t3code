@@ -370,6 +370,11 @@ describe("wordsHast", () => {
       '<blockquote data-alert="warning" dir="ltr">\n<p><strong>Bold</strong> body<br>\nmore</p>\n</blockquote>',
     ],
     [
+      "> [!NOTE]\n> \\\n> Body",
+      '<blockquote data-alert="note" dir="ltr">\n<p><br>\nBody</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p><br>\nBody</p>\n</blockquote>',
+    ],
+    [
       "> [!NOTE]**bold**\\\n> Body",
       '<blockquote dir="ltr">\n<p>[!NOTE]<strong>bold</strong><br>\nBody</p>\n</blockquote>',
       '<blockquote dir="ltr">\n<p>[!NOTE]<strong>bold</strong><br>\nBody</p>\n</blockquote>',

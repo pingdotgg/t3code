@@ -718,8 +718,10 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
       const text = first?.type === "text" ? first.value : "";
       const insight = walk.insightMarker?.exec(text);
       const alert = insight ? null : GITHUB_ALERT_MARKER.exec(text);
-      // A hard break or a raw `<br>` after the marker ends its line, as on GitHub.
-      const beforeBreak = alert?.[0] === text && isElement(line[at + 1], "br");
+      // A hard break or a raw `<br>` after the marker ends its line, as on GitHub; after a
+      // marker whose line already ended, the break is the body's.
+      const beforeBreak =
+        alert?.[0] === text && !text.endsWith("\n") && isElement(line[at + 1], "br");
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)

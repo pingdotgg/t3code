@@ -52,6 +52,8 @@ describe("remarkGithubAlerts", () => {
     expect(renderMarkdown("> [!NOTE]\\\n> Body\\\n> more")).toBe(
       renderMarkdown("> [!NOTE]\n> Body\\\n> more"),
     );
+    // A break that opens the body of a marker that already ended its line stays.
+    expect(renderMarkdown("> [!NOTE]\n> \\\n> Body")).toContain("<br>");
     expect(renderMarkdown("> [!NOTE]**bold**\\\n> Body")).not.toContain("data-alert");
   });
 });
