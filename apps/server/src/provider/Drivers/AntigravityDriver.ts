@@ -357,12 +357,7 @@ export const AntigravityDriver: ProviderDriver<
       });
       return {
         ...runtime,
-        setMode: (modeId: string) =>
-          runtime.getModeState.pipe(
-            Effect.flatMap((modeState) =>
-              runtime.setMode(antigravitySessionMode(modeId, modeState)),
-            ),
-          ),
+        setMode: (modeId: string) => runtime.setMode(antigravitySessionMode(modeId)),
         start: () =>
           startCompatible().pipe(
             Effect.tapError((cause): Effect.Effect<void> =>

@@ -459,6 +459,33 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
         }
+        // A session without agy's own Auto must not run an Auto thread in `default`.
+        const autoThreadId = ThreadId.make("thread-antigravity-cli-auto");
+        const autoPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const autoOpen = yield* h.instance.orchestrationAdapter
+          .openSession({
+            threadId: autoThreadId,
+            providerSessionId: ProviderSessionId.make("provider-session-cli-auto"),
+            modelSelection,
+            runtimePolicy: autoPolicy,
+          })
+          .pipe(
+            Effect.flatMap((autoSession) =>
+              autoSession.ensureThread({
+                threadId: autoThreadId,
+                modelSelection,
+                runtimePolicy: autoPolicy,
+              }),
+            ),
+            Effect.flip,
+          );
+        expect(knownProviderFailureMessage(autoOpen)).toBe(
+          'The agent does not offer its "auto" mode in this session. Choose another permission mode, then retry.',
+        );
       }),
   );
 

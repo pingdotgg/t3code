@@ -28,7 +28,6 @@ import {
   unknownRecord,
   type AcpRuntimePolicy,
 } from "@t3tools/provider-acp/server/clientPolicy";
-import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
@@ -167,19 +166,12 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 }
 
 /**
- * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
- * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
- * policy, so permission changes apply on the next turn without a restart.
+ * The agy CLI rejects `yolo` and `auto_edit`; those stay in `default`, where it asks before acting
+ * and T3 answers from the live runtime policy, so permission changes apply on the next turn without
+ * a restart. Auto is always requested: a session without it fails to open, where `default` would
+ * ask about every command while the thread still says Auto.
  */
-export function antigravitySessionMode(
-  modeId: string,
-  modeState: AcpSessionModeState | undefined,
-): string {
-  if (modeId === "auto") {
-    return modeState?.availableModes.some((mode) => mode.id === "auto") === true
-      ? "auto"
-      : "default";
-  }
+export function antigravitySessionMode(modeId: string): string {
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
