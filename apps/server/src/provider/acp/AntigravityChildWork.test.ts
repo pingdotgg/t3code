@@ -221,11 +221,14 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
 
   it.effect("reads only the tail of a large transcript", () =>
     Effect.gen(function* () {
+      const stepPrefix = "x".repeat(3_999);
+      const toolPrefix = "y".repeat(990);
       const filler = JSON.stringify({
         step_index: 0,
         type: "VIEW_FILE",
         status: "DONE",
-        content: "x".repeat(10_000),
+        content: stepPrefix + "🚀" + "x".repeat(6_000),
+        tool_calls: [{ name: "fixture", args: { text: JSON.stringify(toolPrefix + "🚀") } }],
       });
       const { profile } = yield* makeProfile({
         steps: autoApproved,
@@ -235,7 +238,10 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(child?.truncated).toBe(true);
       expect(child?.steps?.length).toBeLessThan(40);
       expect(child?.steps?.at(-1)?.text).toBe("marker 4242 found");
-      expect(child?.steps?.[0]?.text?.length).toBeLessThanOrEqual(4_001);
+      expect(child?.steps?.[0]).toMatchObject({
+        text: stepPrefix + "…",
+        toolCalls: [{ input: `{"text":"${toolPrefix}…` }],
+      });
 
       const lastLine = JSON.stringify(transcriptLines[3]) + "\n";
       const step = { step_index: 2, type: "VIEW_FILE", content: "" };
