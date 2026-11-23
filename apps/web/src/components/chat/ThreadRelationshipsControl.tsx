@@ -101,6 +101,7 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
+  THREAD_DETAILS_PANEL_ROW_TITLE_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
 } from "./threadDetailsPanelStyles";
 
@@ -336,9 +337,7 @@ function RemoteSubagentRow(props: {
             status={status}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
-              {title}
-            </span>
+            <span className={THREAD_DETAILS_PANEL_ROW_TITLE_CLASS}>{title}</span>
           </span>
           <span
             className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
@@ -438,9 +437,7 @@ function DelegatedFromRow(props: {
             status={null}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
-              {title}
-            </span>
+            <span className={THREAD_DETAILS_PANEL_ROW_TITLE_CLASS}>{title}</span>
           </span>
           {label ? (
             <span className="max-w-1/2 shrink-0 truncate text-2xs text-muted-foreground">
@@ -888,9 +885,7 @@ export function ThreadRelationshipsPanel(props: {
           status={rowStatus}
         />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
-            {threadTitle}
-          </span>
+          <span className={THREAD_DETAILS_PANEL_ROW_TITLE_CLASS}>{threadTitle}</span>
         </span>
         {agent ? null : (
           <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />

@@ -12,6 +12,9 @@ const THREAD_DETAILS_PANEL_SPLIT_GROUP_SURFACE_CLASS = `${THREAD_DETAILS_PANEL_H
 
 export const THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS = "gap-2.5 px-2.5 text-left";
 
+export const THREAD_DETAILS_PANEL_ROW_TITLE_CLASS =
+  "block truncate text-left text-sm font-medium leading-4 text-foreground/85";
+
 export const THREAD_DETAILS_PANEL_LABEL_CLASS =
   "[text-box:trim-both_cap_alphabetic] overflow-x-clip overflow-y-visible";
 

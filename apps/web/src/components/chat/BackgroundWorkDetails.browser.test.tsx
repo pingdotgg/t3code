@@ -2,7 +2,7 @@ import "~/index.css";
 import { EnvironmentId, ProviderDriverKind, ThreadId, TurnItemId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
-import { page } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 vi.mock(import("./CommandOutputPanel"), () => ({
   useCommandOutputStreaming: () => true,
   CommandOutputPanel: () => <div>Command output stream</div>,
@@ -77,22 +77,25 @@ it("opens full command details for short labels and keeps pending tasks current"
   );
   await using screen = await render(view("Audit"));
   await screen.getByRole("button", { name: "Details", exact: true }).click();
-  await vi.waitFor(() => expect(page.getByRole("dialog").element().textContent).toContain(command));
+  const popup = page.getByRole("dialog");
+  await expect.element(popup.getByText(command)).not.toBeInTheDocument();
+  await popup.getByRole("button", { name: /^Audit/ }).click();
+  await vi.waitFor(() => expect(popup.element().textContent).toContain(command));
   await expect.element(page.getByText("Command output stream")).not.toBeInTheDocument();
 
   await screen.rerender(view(command));
-  await expect.element(page.getByRole("heading", { name: "Command", exact: true })).toBeVisible();
+  await expect.element(popup.getByRole("button", { name: /^python3 audit\.py/ })).toBeVisible();
   await screen.rerender(view());
-  await expect.element(page.getByRole("heading", { name: "Command", exact: true })).toBeVisible();
+  await expect.element(popup.getByRole("button", { name: /^python3 audit\.py/ })).toBeVisible();
 
   await screen.rerender(view("Check remaining modules", "running"));
   await expect
-    .element(page.getByRole("heading", { name: "Check remaining modules" }))
+    .element(popup.getByRole("button", { name: /^Check remaining modules/ }))
     .toBeVisible();
   await expect.element(page.getByText("Command output stream")).toBeVisible();
   await screen.rerender(view("Native fallback", "completed", false));
   await expect.element(page.getByText("Command output stream")).toBeVisible();
-  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await userEvent.keyboard("{Escape}");
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 });
 
