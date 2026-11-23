@@ -682,6 +682,44 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
 
+it.each([false, true])(
+  "keeps the reading position when a draft rewraps (focused: %s)",
+  async (focused) => {
+    const value = "A long wrapped paragraph should keep the sentence being read in view. ".repeat(
+      100,
+    );
+    const style = document.head.appendChild(document.createElement("style"));
+    style.textContent = ".composer-tiptap { width: 700px; max-height: 160px; overflow-y: auto; }";
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    const scroller = editor.view.dom;
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(500));
+    if (focused) await focusAt(editor, 2000);
+    scroller.scrollTop = 300;
+    scroller.dispatchEvent(new Event("scroll"));
+    const box = scroller.getBoundingClientRect();
+    const position = editor.view.posAtCoords({
+      left: box.left + box.width / 2,
+      top: box.top + 25,
+    })!;
+    const before = editor.view.coordsAtPos(position.pos).top - box.top;
+    if (focused) await focusAt(editor, position.pos);
+    document.dispatchEvent(new Event("selectionchange"));
+    const selection = editor.state.selection.toJSON();
+    for (const width of [420, 700]) {
+      scroller.style.width = `${width}px`;
+      await vi.waitFor(() => {
+        const after =
+          editor.view.coordsAtPos(position.pos).top - scroller.getBoundingClientRect().top;
+        expect(Math.abs(after - before)).toBeLessThan(25);
+      });
+      expect(editor.state.selection.toJSON()).toEqual(selection);
+      expect(editor.view.hasFocus()).toBe(focused);
+    }
+  },
+);
+
 it("does not outline the line under a click made with the node-select modifier held", async () => {
   await using screen = await mountEditor("ship it");
   const { editor } = screen;
