@@ -376,6 +376,7 @@ export function ComposerToolbarButton(props: {
     <Pressable
       accessibilityLabel={props.accessibilityLabel ?? props.label}
       accessibilityRole="button"
+      accessibilityState={props.active === undefined ? undefined : { selected: props.active }}
       disabled={props.disabled}
       onPress={props.onPress}
       className={cn(
