@@ -527,9 +527,10 @@ describe("BrowserSession", () => {
         showMessageBox.mock.calls[1]?.[0].message,
         "https://second.test wants to use your camera and microphone",
       );
+      // Only the microphone is blocked, so the message does not send the user looking for Camera.
       assert.strictEqual(
         showMessageBox.mock.calls[2]?.[0].message,
-        "macOS blocked T3 Code from using your camera and microphone",
+        "macOS blocked T3 Code from using your microphone",
       );
       assert.isFalse(yield* requestMedia("https://second.test/", ["video", "audio"]));
       assert.strictEqual(showMessageBox.mock.calls.length, 3);
@@ -538,6 +539,43 @@ describe("BrowserSession", () => {
       assert.isFalse(checkHandler(null, "media", "https://second.test", { mediaType: "audio" }));
       getMediaAccessStatus.mockReturnValue("granted");
       assert.isTrue(checkHandler(null, "media", "https://second.test", { mediaType: "audio" }));
+    }).pipe(Effect.provide(layerDarwin)),
+  );
+
+  it.effect("names both devices when macOS blocks both", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("scope-a");
+      yield* browserSessions.getSession("scope-a");
+      const requestHandler =
+        sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+      assert.isFunction(requestHandler);
+
+      askForMediaAccess.mockReset();
+      getMediaAccessStatus.mockReset();
+      getMediaAccessStatus.mockReturnValue("denied");
+      const recoveryShown = yield* Deferred.make<string>();
+      showMessageBox.mockReset();
+      showMessageBox.mockImplementation((options) => {
+        if (options.message.startsWith("macOS blocked")) {
+          Deferred.doneUnsafe(recoveryShown, Effect.succeed(options.message));
+        }
+        return 0;
+      });
+
+      const granted = yield* Effect.callback<boolean>((resume) => {
+        requestHandler(null, "media", (value: boolean) => resume(Effect.succeed(value)), {
+          requestingUrl: "https://both.test/",
+          mediaTypes: ["video", "audio"],
+          isMainFrame: true,
+        });
+      });
+      assert.isFalse(granted);
+      assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
+      assert.strictEqual(
+        yield* Deferred.await(recoveryShown),
+        "macOS blocked T3 Code from using your camera and microphone",
+      );
     }).pipe(Effect.provide(layerDarwin)),
   );
 
@@ -655,7 +693,10 @@ describe("BrowserSession", () => {
       yield* browserSessions.clearCookies([partition]);
       answer.resolve(0);
       assert.isFalse(yield* Fiber.join(pending));
+      // With macOS allowing the camera, only a stored stale Allow could make this check pass.
+      getMediaAccessStatus.mockReturnValue("granted");
       assert.isFalse(checkCamera());
+      getMediaAccessStatus.mockReturnValue("not-determined");
       assert.strictEqual(askForMediaAccess.mock.calls.length, 0);
 
       // The macOS check is still running when cookies are cleared.

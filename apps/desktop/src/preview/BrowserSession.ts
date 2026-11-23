@@ -163,13 +163,17 @@ const mediaBlockedMessage = (devices: ReadonlyArray<MediaDevice>): string =>
  * macOS gates capture devices per app and lists an app under Privacy & Security
  * only after it asks, so ask the OS once the user allowed the page.
  */
+/** Returns the devices macOS blocks, so the recovery message names only those; empty means allowed. */
 const ensureSystemMediaAccess = async (
   platform: NodeJS.Platform,
   devices: ReadonlyArray<MediaDevice>,
-): Promise<boolean> => {
-  if (platform !== "darwin") return true;
+): Promise<ReadonlyArray<MediaDevice>> => {
+  if (platform !== "darwin") return [];
   const statuses = devices.map((device) => systemPreferences.getMediaAccessStatus(device));
-  if (statuses.some((status) => status !== "granted" && status !== "not-determined")) return false;
+  const refused = devices.filter(
+    (_device, index) => statuses[index] !== "granted" && statuses[index] !== "not-determined",
+  );
+  if (refused.length > 0) return refused;
   const results = await Promise.all(
     devices.map((device, index) =>
       statuses[index] === "granted"
@@ -177,7 +181,7 @@ const ensureSystemMediaAccess = async (
         : systemPreferences.askForMediaAccess(device).catch(() => false),
     ),
   );
-  return results.every(Boolean);
+  return devices.filter((_device, index) => !results[index]);
 };
 
 /** The camera and microphone answers given in one preview Session. */
@@ -743,7 +747,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 return;
               }
               void ensureSystemMediaAccess(platform, devices).then(
-                (systemGranted) => {
+                (blocked) => {
+                  const systemGranted = blocked.length === 0;
                   if (isStale()) {
                     callback(false);
                     return;
@@ -756,7 +761,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                           {
                             type: "info",
                             buttons: [m(msg("OK"))],
-                            message: mediaBlockedMessage(devices),
+                            message: mediaBlockedMessage(blocked),
                             detail: m(
                               msg(
                                 "Allow T3 Code in System Settings › Privacy & Security, then restart T3 Code.",
