@@ -501,12 +501,16 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          return {
-            kind: "text" as const,
-            text: terminalOutputPlainText(
-              notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
-            ),
-          };
+          const text = terminalOutputPlainText(
+            notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
+          );
+          if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
+          const summary = [output.ename, output.evalue]
+            .filter((part) => typeof part === "string")
+            .map((part) => terminalOutputPlainText(notebookText(part)))
+            .filter((part) => part.trim().length > 0)
+            .join(": ");
+          return { kind: "text" as const, text: summary };
         })
         .filter((output) => output.text.trim().length > 0),
     };

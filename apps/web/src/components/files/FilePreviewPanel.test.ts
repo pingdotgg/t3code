@@ -426,6 +426,25 @@ Third}`;
                     "final entry",
                   ],
                 },
+                {
+                  output_type: "error",
+                  ename: "ZeroDivisionError",
+                  evalue: "division by zero",
+                  traceback: [],
+                },
+                { output_type: "error", ename: "KeyboardInterrupt" },
+                {
+                  output_type: "error",
+                  evalue: "\u001b[31mbad input\u001b[0m",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  ename: "RuntimeError",
+                  evalue: "kernel reset",
+                  traceback: ["\u001b[31m\u001b[0m", "  \n"],
+                },
+                { output_type: "error", ename: ["TypeError"], traceback: [] },
               ],
             },
           ],
@@ -446,6 +465,10 @@ Third}`;
         kind: "text",
         text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
+      { kind: "text", text: "ZeroDivisionError: division by zero" },
+      { kind: "text", text: "KeyboardInterrupt" },
+      { kind: "text", text: "bad input" },
+      { kind: "text", text: "RuntimeError: kernel reset" },
     ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
       expect.objectContaining({ code: "notebook-unsupported" }),
