@@ -377,7 +377,12 @@ impl Inner {
                 // A failure holds the queue, so queued messages do not hit the same wall. A
                 // late end of a run that already ended (a start failing after Force stop)
                 // holds nothing.
-                if held_on_failure && ended {
+                // Only work that would run on the failed provider is held (`providerFailed`
+                // compares the failed run's instance with the next run's).
+                if held_on_failure
+                    && ended
+                    && crate::commands::next_runs_on_failed_provider(tx, &thread_id, &run_id)?
+                {
                     hold_queued(tx, &thread_id, Held::ExceptBufferedWakes)?;
                 }
                 // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback

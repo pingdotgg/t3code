@@ -987,6 +987,30 @@ pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> Store
 
 /// Starts the next queued run when nothing is active (`startNextQueuedRun`). `only` picks one
 /// queued run, as `queued-run.start` does. Returns the effect that starts it.
+/// Whether the next queued run the queue would start runs on the failed run's provider.
+pub(crate) fn next_runs_on_failed_provider(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    failed_run_id: &str,
+) -> StoreResult<bool> {
+    let (Some(thread), Some(failed)) = (
+        tx.thread(thread_id)?,
+        tx.entity(thread_id, "runs", failed_run_id)?,
+    ) else {
+        return Ok(false);
+    };
+    let Some(next) = queued_runs(tx, thread_id)?
+        .into_iter()
+        .find(|run| run["queueHeld"] != true)
+    else {
+        return Ok(false);
+    };
+    Ok(
+        effective_selection(tx, thread_id, &thread, &next)?["instanceId"]
+            == failed["providerInstanceId"],
+    )
+}
+
 /// `latestExecutedRun`: the run that ran last. Unfinished runs count as latest, then by end
 /// time, then by ordinal; queued runs and runs cancelled before they started do not count.
 pub(crate) fn latest_executed_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
@@ -1091,15 +1115,52 @@ pub(crate) fn usage_limit_holds(
     })
 }
 
+/// `queuedRunModelSelection`: a queued run whose message follows the thread's conversation
+/// (a delegated result, a message that follows the selection, a monitor wake that is not
+/// buffered provider output) runs on the thread's current selection; others on their own.
+pub(crate) fn effective_selection(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    thread: &Value,
+    run: &Value,
+) -> StoreResult<Value> {
+    let message = match run["userMessageId"].as_str() {
+        Some(id) => tx.entity(thread_id, "messages", id)?,
+        None => None,
+    };
+    let follows = message.is_some_and(|m| {
+        !is_null(&m, "delegatedCompletion")
+            || m["followsThreadSelection"] == true
+            || (m["notification"]["source"]["kind"] == "monitor"
+                && !is_buffered_provider_notification(&m))
+    });
+    Ok(if follows && thread["modelSelection"].is_object() {
+        thread["modelSelection"].clone()
+    } else {
+        run["modelSelection"].clone()
+    })
+}
+
+/// Starts the next queued run on its own, as after a run ends.
 pub(crate) fn start_next_queued(
     tx: &mut Tx<'_>,
     thread_id: &str,
     only: Option<&str>,
 ) -> StoreResult<Option<Effect>> {
+    start_next_queued_as(tx, thread_id, only, false)
+}
+
+/// `user_started`: the user asked for it (Send now, resume), so a usage limit's reset time
+/// does not hold it, only a limit that is still the thread's last run.
+fn start_next_queued_as(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    only: Option<&str>,
+    user_started: bool,
+) -> StoreResult<Option<Effect>> {
     if active_run(tx, thread_id)?.is_some() {
         return Ok(None);
     }
-    let user_started = only.is_some();
     let Some(thread) = tx.thread(thread_id)? else {
         return Ok(None);
     };
@@ -1147,9 +1208,17 @@ pub(crate) fn start_next_queued(
     // A limited provider would fail and use up every waiting message; the queue keeps its
     // order and waits (`usageLimitHoldsQueue`).
     let now = (!user_started).then(|| tx.now().to_owned());
-    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
-    if usage_limit_holds(tx, thread_id, instance, now.as_deref())? {
+    let selection = effective_selection(tx, thread_id, &thread, &run)?;
+    let instance = selection["instanceId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if usage_limit_holds(tx, thread_id, &instance, now.as_deref())? {
         return Ok(None);
+    }
+    if run["providerInstanceId"] != instance.as_str() {
+        run["modelSelection"] = selection;
+        run["providerInstanceId"] = json!(instance);
     }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
@@ -1236,30 +1305,42 @@ fn queued_run_start(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if active_run(tx, &c.thread_id)?.is_some() {
         return reject("A queued user message can only be sent now while the thread is stopped.");
     }
+    resumable(tx, &c.thread_id, Some(&c.run_id))?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, Some(&c.run_id))?
+    Ok(
+        start_next_queued_as(tx, &c.thread_id, Some(&c.run_id), true)?
+            .into_iter()
+            .collect(),
+    )
+}
+
+/// `queue.resume`'s checks on the run it would start (the selected one, else the next): its
+/// effective provider must not be limited, and no worktree setup may be pending. A refusal
+/// leaves every hold as it was.
+fn resumable(tx: &Tx<'_>, thread_id: &str, selected: Option<&str>) -> Result<(), CommandError> {
+    let thread = live_thread(tx, thread_id)?;
+    let next = queued_runs(tx, thread_id)?
         .into_iter()
-        .collect())
+        .find(|run| selected.is_none_or(|id| run["id"] == id));
+    let instance = match &next {
+        Some(run) => effective_selection(tx, thread_id, &thread, run)?["instanceId"].clone(),
+        None => thread["modelSelection"]["instanceId"].clone(),
+    };
+    if usage_limit_holds(tx, thread_id, instance.as_str().unwrap_or_default(), None)? {
+        return reject("Continue the limited thread before resuming its queue.");
+    }
+    if worktree_setup_pending(tx, thread_id)? {
+        return reject("Retry worktree setup or choose a workspace before resuming the queue.");
+    }
+    Ok(())
 }
 
 fn queue_resume(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
-    let thread = live_thread(tx, &c.thread_id)?;
-    let next = queued_runs(tx, &c.thread_id)?.into_iter().next();
-    let instance = next
-        .as_ref()
-        .and_then(|run| run["providerInstanceId"].as_str())
-        .or_else(|| thread["modelSelection"]["instanceId"].as_str())
-        .unwrap_or_default()
-        .to_owned();
-    if usage_limit_holds(tx, &c.thread_id, &instance, None)? {
-        return reject("Continue the limited thread before resuming its queue.");
-    }
-    if worktree_setup_pending(tx, &c.thread_id)? {
-        return reject("Retry worktree setup or choose a workspace before resuming the queue.");
-    }
+    live_thread(tx, &c.thread_id)?;
+    resumable(tx, &c.thread_id, None)?;
     release_held(tx, &c.thread_id)?;
-    Ok(start_next_queued(tx, &c.thread_id, None)?
+    Ok(start_next_queued_as(tx, &c.thread_id, None, true)?
         .into_iter()
         .collect())
 }
@@ -1952,6 +2033,16 @@ fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Out
         Some(run) if session_steers(tx, &c.thread_id, &run)? => Some(run),
         _ => None,
     };
+    // A steer accepted after Stop never reaches the agent: refused, so the answer can be sent
+    // again (T3's `stopReachedRun`).
+    if let Some(run) = &running {
+        let id = run["id"].as_str().unwrap_or_default();
+        if interrupt_request(tx, &c.thread_id, id)?.is_some() {
+            return reject(format!(
+                "Target run {id} is stopping and cannot be steered."
+            ));
+        }
+    }
     let dispatch_mode = match running {
         Some(run) => json!({"type": "steer_active", "targetRunId": run["id"]}),
         None => json!({"type": "queue_after_active"}),

@@ -817,7 +817,8 @@ impl Session for FakeSession {
                 "fail-usage-limit" => started.push(terminal(
                     &turn,
                     TurnStatus::Failed,
-                    Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false})),
+                    Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false,
+                        "resetAt": conn_support::time::iso_from_ms(conn_support::time::now_ms() + 3_600_000)})),
                 )),
                 _ => {
                     let reply = format!("echo: {text}");
