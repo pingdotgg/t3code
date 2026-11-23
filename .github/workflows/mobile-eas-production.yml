@@ -68,6 +68,7 @@ on:
       - pnpm-lock.yaml
       - pnpm-workspace.yaml
       - .github/workflows/mobile-eas-production.yml
+      - .github/workflows/mobile-eas-production-build.yml
 
 jobs:
   production:
@@ -83,6 +84,7 @@ jobs:
     permissions:
       contents: read
     outputs:
+      version_override: ${{ steps.version_override.outputs.applied }}
       android_build: ${{ steps.reconcile.outputs.android_build || steps.android_manual.outputs.android_build }}
       android_fingerprint: ${{ steps.reconcile.outputs.android_fingerprint || steps.android_manual.outputs.android_fingerprint }}
       android_version: ${{ steps.reconcile.outputs.android_version || steps.android_manual.outputs.android_version }}
@@ -119,21 +121,11 @@ jobs:
             echo "EXPO_PRODUCTION_TOKEN is not available; skipping EAS production job."
           fi
 
-      - id: version_app_token
-        name: Mint release app token for version override
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != '' && inputs.profile != 'testflight'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
-          token: ${{ steps.version_app_token.outputs.token || github.token }}
           # No sparse-checkout here: it makes actions/checkout fetch with
           # --filter=blob:none, and eas-cli archives the project via
           # `git clone --depth 1 file://<workspace>`, which fails (exit 128)
@@ -188,48 +180,21 @@ jobs:
           appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
           NODE
 
-      - name: Apply manual version override
-        if: steps.version_app_token.outcome == 'success'
+      # Only so the versions and fingerprints below are read from the tree that
+      # will be built. This job installs dependencies, so it gets no token that can
+      # push: the version job makes the same commit as the Release App afterwards.
+      - id: version_override
+        name: Apply manual version override
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != '' && inputs.profile != 'testflight'
         env:
-          GH_TOKEN: ${{ steps.version_app_token.outputs.token }}
-          APP_SLUG: ${{ steps.version_app_token.outputs.app-slug }}
           RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_REF_TYPE" != "branch" ]; then
-            echo "Version overrides require dispatching this workflow from a branch; received $GITHUB_REF_TYPE '$GITHUB_REF_NAME'." >&2
-            exit 1
+          node .github/scripts/set-mobile-version.cjs "$RELEASE_VERSION"
+          if ! git diff --quiet -- apps/mobile/app.config.ts; then
+            git -c user.name=mobile-version -c user.email=mobile-version@users.noreply.github.com \
+              commit --no-verify --quiet -m "chore(mobile): bump app version to $RELEASE_VERSION" -- apps/mobile/app.config.ts
           fi
-          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-            echo "Version override must contain two or three dot-separated integers; received '$RELEASE_VERSION'." >&2
-            exit 1
-          fi
-
-          node --input-type=module -e '
-            import fs from "node:fs";
-            const path = "apps/mobile/app.config.ts";
-            const source = fs.readFileSync(path, "utf8");
-            const next = source.replace(
-              /^(  version: repoEnv\.T3CODE_MOBILE_VERSION \?\? ")[^"]+(".*)$/m,
-              `$1${process.env.RELEASE_VERSION}$2`,
-            );
-            if (next === source && !source.includes(`  version: repoEnv.T3CODE_MOBILE_VERSION ?? "${process.env.RELEASE_VERSION}"`)) {
-              throw new Error("Could not update app version");
-            }
-            fs.writeFileSync(path, next);
-          '
-          vp fmt apps/mobile/app.config.ts
-
-          if git diff --quiet -- apps/mobile/app.config.ts; then
-            echo "app.config.ts is already at $RELEASE_VERSION; no version commit needed."
-            exit 0
-          fi
-
-          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git add apps/mobile/app.config.ts
-          git commit --no-verify -m "chore(mobile): bump app version to $RELEASE_VERSION"
-          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          echo "applied=true" >> "$GITHUB_OUTPUT"
 
       - name: Summarize manual build version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
@@ -453,165 +418,95 @@ jobs:
             fi
           done
 
-  # ARM-only, without release lint (see the production profile in eas.json),
-  # with Gradle, ccache, and pnpm state on a sticky disk. Its own concurrency
-  # group keeps later OTAs from waiting on it.
+  # Commits a store version override as the Release App. It installs nothing and
+  # runs no dependency code, so that token never shares a runner with any. It
+  # runs after the production job so the push's own run queues behind this one.
+  version:
+    name: Commit version override
+    needs: production
+    if: ${{ !cancelled() && needs.production.result == 'success' && needs.production.outputs.version_override == 'true' }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      # No owner input: the token covers this repository only, with contents write.
+      - id: app_token
+        name: Mint release app token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          token: ${{ steps.app_token.outputs.token }}
+
+      - id: commit
+        name: Commit and push the version
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node .github/scripts/set-mobile-version.cjs "$RELEASE_VERSION"
+          if git diff --quiet -- apps/mobile/app.config.ts; then
+            echo "app.config.ts is already at $RELEASE_VERSION; no version commit needed."
+          else
+            user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+            git config user.name "${APP_SLUG}[bot]"
+            git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+            git add apps/mobile/app.config.ts
+            git commit --no-verify -m "chore(mobile): bump app version to $RELEASE_VERSION"
+            git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # Each store build runs in mobile-eas-production-build.yml, whose record job
+  # alone gets the token that pushes the tag. The group covers both of its jobs,
+  # and being its own group keeps later OTAs from waiting on a build.
   android:
     name: Android store build
-    needs: production
+    needs: [production, version]
     # Skipped when the production job failed: no store build after a failed OTA.
-    if: needs.production.outputs.android_build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 60
+    # The version job is skipped unless there is an override.
+    if: ${{ !cancelled() && needs.production.result == 'success' && needs.version.result != 'failure' && needs.production.outputs.android_build == 'true' }}
     concurrency:
       group: mobile-android-store-build
       cancel-in-progress: false
     permissions:
-      contents: write # pushes the build record tag
-    env:
-      APP_VARIANT: production
-      NODE_OPTIONS: --max-old-space-size=8192
-      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
-      BUILD_TAG: mobile-android-build/${{ needs.production.outputs.android_version }}/${{ needs.production.outputs.android_fingerprint }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ needs.production.outputs.android_sha }}
-          fetch-depth: 0
+      contents: write # the record job pushes the build record tag
+    uses: ./.github/workflows/mobile-eas-production-build.yml
+    with:
+      platform: android
+      profile: production
+      sha: ${{ needs.version.outputs.sha || needs.production.outputs.android_sha }}
+      tag: mobile-android-build/${{ needs.production.outputs.android_version }}/${{ needs.production.outputs.android_fingerprint }}
+    secrets:
+      EXPO_PRODUCTION_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+      MOBILE_SOURCEMAPS_R2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
 
-      # The steps below run dependency and build scripts; they get no token.
-      - name: Drop checkout credentials
-        uses: ./.github/actions/drop-checkout-credentials
-
-      # A queued run can follow a build of the same fingerprint; manual runs always build.
-      - id: record
-        name: Check build record
-        env:
-          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [ "$FORCE" != "true" ] && [ -n "$(git tag -l "$BUILD_TAG")" ]; then
-            echo "built=true" >> "$GITHUB_OUTPUT"
-            echo ":white_check_mark: android: \`$BUILD_TAG\` was built by an earlier run" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Build
-        if: steps.record.outputs.built != 'true'
-        uses: ./.github/actions/eas-local-build
-        with:
-          platform: android
-          profile: production
-          environment: production
-          expo-token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
-          output: ${{ runner.temp }}/t3code.aab
-          sourcemaps-r2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
-
-      - name: Check ABIs
-        if: steps.record.outputs.built != 'true'
-        run: |
-          abis="$(unzip -Z1 "$RUNNER_TEMP/t3code.aab" | sed -n 's|^base/lib/\([^/]*\)/.*|\1|p' | sort -u | paste -sd, -)"
-          echo "### Android $BUILD_TAG: \`$abis\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$abis" != "arm64-v8a,armeabi-v7a" ]; then
-            echo "::error::Expected only ARM native libraries in the AAB, found $abis"
-            exit 1
-          fi
-
-      # A --path submission doesn't keep its archive on EAS; this is the only downloadable copy.
-      - name: Keep the AAB
-        if: steps.record.outputs.built != 'true'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: android-store-aab-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/t3code.aab
-          retention-days: 14
-          if-no-files-found: error
-
-      - name: Submit to Google Play
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        run: eas submit --platform android --profile production --path "$RUNNER_TEMP/t3code.aab" --non-interactive
-
-      # The tag means "delivered", so it follows the submit. If it can't be
-      # pushed, the next merge rebuilds with a new build number; nothing is lost.
-      - name: Record build
-        if: steps.record.outputs.built != 'true'
-        uses: ./.github/actions/record-build-tag
-        with:
-          tag: ${{ env.BUILD_TAG }}
-          token: ${{ github.token }}
-
-      - name: Summarize
-        if: steps.record.outputs.built != 'true'
-        run: |
-          echo ":rocket: android: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
-
-  # No sticky disk: it mounts ext4 and only works on Linux runners.
   ios:
     name: iOS store build
-    needs: production
+    needs: [production, version]
     # Skipped when the production job failed: no store build after a failed OTA.
-    if: needs.production.outputs.ios_build == 'true'
-    runs-on: blacksmith-12vcpu-macos-27
-    timeout-minutes: 60
+    # The version job is skipped unless there is an override.
+    if: ${{ !cancelled() && needs.production.result == 'success' && needs.version.result != 'failure' && needs.production.outputs.ios_build == 'true' }}
     concurrency:
       group: mobile-ios-store-build
       cancel-in-progress: false
     permissions:
-      contents: write # pushes the build record tag
-    env:
-      APP_VARIANT: production
-      NODE_OPTIONS: --max-old-space-size=8192
-      EXPO_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
-      PROFILE: ${{ needs.production.outputs.ios_profile }}
-      BUILD_TAG: mobile-ios-build/${{ needs.production.outputs.ios_profile }}/${{ needs.production.outputs.ios_version }}/${{ needs.production.outputs.ios_fingerprint }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          ref: ${{ needs.production.outputs.ios_sha }}
-          fetch-depth: 0
-
-      # The steps below run dependency and build scripts; they get no token.
-      - name: Drop checkout credentials
-        uses: ./.github/actions/drop-checkout-credentials
-
-      # A queued run can follow a build of the same fingerprint; manual runs always build.
-      - id: record
-        name: Check build record
-        env:
-          FORCE: ${{ github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [ "$FORCE" != "true" ] && [ -n "$(git tag -l "$BUILD_TAG")" ]; then
-            echo "built=true" >> "$GITHUB_OUTPUT"
-            echo ":white_check_mark: ios: \`$BUILD_TAG\` was built by an earlier run" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Build
-        if: steps.record.outputs.built != 'true'
-        uses: ./.github/actions/eas-local-build
-        with:
-          platform: ios
-          profile: ${{ env.PROFILE }}
-          environment: production
-          expo-token: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
-          output: ${{ runner.temp }}/t3code.ipa
-          sourcemaps-r2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
-
-      - name: Submit to App Store Connect
-        if: steps.record.outputs.built != 'true'
-        working-directory: apps/mobile
-        run: eas submit --platform ios --profile "$PROFILE" --path "$RUNNER_TEMP/t3code.ipa" --non-interactive
-
-      # The tag means "delivered", so it follows the submit. If it can't be
-      # pushed, the next merge rebuilds with a new build number; nothing is lost.
-      - name: Record build
-        if: steps.record.outputs.built != 'true'
-        uses: ./.github/actions/record-build-tag
-        with:
-          tag: ${{ env.BUILD_TAG }}
-          token: ${{ github.token }}
-
-      - name: Summarize
-        if: steps.record.outputs.built != 'true'
-        run: |
-          echo ":rocket: ios: submitted and recorded \`$BUILD_TAG\`" >> "$GITHUB_STEP_SUMMARY"
+      contents: write # the record job pushes the build record tag
+    uses: ./.github/workflows/mobile-eas-production-build.yml
+    with:
+      platform: ios
+      profile: ${{ needs.production.outputs.ios_profile }}
+      sha: ${{ needs.version.outputs.sha || needs.production.outputs.ios_sha }}
+      tag: mobile-ios-build/${{ needs.production.outputs.ios_profile }}/${{ needs.production.outputs.ios_version }}/${{ needs.production.outputs.ios_fingerprint }}
+    secrets:
+      EXPO_PRODUCTION_TOKEN: ${{ secrets.EXPO_PRODUCTION_TOKEN }}
+      MOBILE_SOURCEMAPS_R2: ${{ secrets.MOBILE_SOURCEMAPS_R2 }}
