@@ -132,7 +132,7 @@ type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[
   readonly pendingApprovalRequestIds: NonNullable<
     MessagesTimelineRowsInput["pendingApprovalRequestIds"]
   >;
-  readonly childApprovalThreadIds?: MessagesTimelineRowsInput["childApprovalThreadIds"];
+  readonly childApprovalThreadIds: NonNullable<MessagesTimelineRowsInput["childApprovalThreadIds"]>;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
   readonly toolCallVisibility: Exclude<MessagesTimelineRowsInput["toolCallVisibility"], undefined>;

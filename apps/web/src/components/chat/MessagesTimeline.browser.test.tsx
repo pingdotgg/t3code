@@ -294,7 +294,7 @@ it("guards timeline approval shortcuts, arrow-cycles actions, and keeps disabled
   for (const [disabled, isResponding] of [
     [true, false],
     [false, true],
-  ]) {
+  ] as const) {
     await screen.rerender(ui({ enableShortcuts: true, disabled, isResponding }));
     const approve = screen.getByRole("button", { name: "Approve", exact: true }).element();
     approve.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -2905,7 +2905,9 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await click(screen.button("Why am I being asked this?"));
   await expect.element(page.getByText(/an ask rule in the agent's own settings/)).toBeVisible();
   await click(screen.button("Why am I being asked this?"));
-  await click(commandCard.getByRole("button", { name: "More approval options" }).element());
+  await click(
+    commandCard.getByRole("button", { name: "More approval options" }).element() as HTMLElement,
+  );
   await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
   await userEvent.keyboard("{Escape}");
   const sessionToggle = commandCard.getByRole("button", { name: "Always allow this session" });

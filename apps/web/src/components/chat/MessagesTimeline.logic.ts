@@ -58,6 +58,7 @@ import {
   type OrchestrationV2Notification,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   type RunAttemptId,
   type RuntimeRequestId,
   RunId,
