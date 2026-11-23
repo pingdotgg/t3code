@@ -661,9 +661,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Mistral Vibe pushes its budget from a live session, so a probe must not drop it.
     const latestUsage = yield* Ref.make<ProviderUsageLimitsReport | undefined>(undefined);
     const usagePermit = yield* Semaphore.make(1);
+    const usageReader = yield* Ref.make<Effect.Effect<void> | undefined>(undefined);
     const orchestrationAdapter = yield* createAcpRegistryAdapterV2(
       { instanceId, displayName, accentColor, environment, enabled, config },
       {
+        onUsageReader: (read) => Ref.set(usageReader, read),
         onUsageLimits: (report) =>
           usagePermit.withPermits(1)(
             Effect.gen(function* () {
@@ -838,6 +840,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       // Inspection may fetch the registry when its disk cache is missing; creation must not wait on that.
       initialSnapshot: () => buildInitialAcpRegistrySnapshot(readinessInput),
       checkProvider,
+      // Refresh limits re-reads the budget from the newest live session; with none it keeps the last report.
+      invalidateUsageCache: Ref.get(usageReader).pipe(
+        Effect.flatMap((read) =>
+          read === undefined ? Effect.void : read.pipe(Effect.timeout("5 seconds"), Effect.ignore),
+        ),
+      ),
       enrichSnapshot: Effect.fn("enrichSnapshot")(function ({
         snapshot,
         getSnapshot,

@@ -77,6 +77,8 @@ const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
 export interface AcpRegistryAdapterV2Extras {
   /** Receives usage limits read from a live session; only Mistral Vibe reports them. */
   readonly onUsageLimits?: (report: ProviderUsageLimitsReport) => Effect.Effect<void>;
+  /** Receives the newest live session's budget read, so a refresh can repeat it without a prompt. */
+  readonly onUsageReader?: (read: Effect.Effect<void>) => Effect.Effect<void>;
 }
 
 export interface AcpRegistryAdapterV2Options extends AcpRegistryAdapterV2Extras {
@@ -309,14 +311,12 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(isVibe
       ? {
           registerExtensions: registerMistralVibeAcpExtensions,
-          afterPromptSettled: ({ runtime, sessionId }) =>
-            options.onUsageLimits === undefined
-              ? Effect.void
-              : readMistralVibeUsageLimits({
-                  runtime,
-                  sessionId,
-                  onUsageLimits: options.onUsageLimits,
-                }),
+          afterPromptSettled: ({ runtime, sessionId }) => {
+            const { onUsageLimits, onUsageReader } = options;
+            if (onUsageLimits === undefined) return Effect.void;
+            const read = readMistralVibeUsageLimits({ runtime, sessionId, onUsageLimits });
+            return (onUsageReader?.(read) ?? Effect.void).pipe(Effect.andThen(read));
+          },
         }
       : {}),
     ...(isClaude
