@@ -499,14 +499,14 @@ describe("bounded binary previews", () => {
     }
   });
 
-  it("keeps WhiteIsZero TIFF brightness and alpha and rejects oversized metadata before decoding", async () => {
+  it("keeps WhiteIsZero TIFF brightness and alpha with SubIFDs tags and rejects oversized metadata before decoding", async () => {
     let bytes = new ArrayBuffer(0);
     for (const { pixels, expected } of [
       { pixels: [0, 255], expected: [255, 255, 255, 255, 0, 0, 0, 255] },
       { pixels: [0, 255, 255, 0], expected: [255, 255, 255, 255, 0, 0, 0, 0] },
     ]) {
       const samples = pixels.length / 2;
-      const start = samples === 2 ? 146 : 134;
+      const start = samples === 2 ? 158 : 146;
       const tags = [
         [256, 2],
         [257, 1],
@@ -518,6 +518,7 @@ describe("bounded binary previews", () => {
         [278, 1],
         [279, pixels.length],
         [284, 1],
+        [330, 0, 13],
         ...(samples === 2 ? [[338, 2]] : []),
       ];
       bytes = new ArrayBuffer(start + pixels.length);
@@ -526,10 +527,10 @@ describe("bounded binary previews", () => {
       view.setUint16(2, 42, true);
       view.setUint32(4, 8, true);
       view.setUint16(8, tags.length, true);
-      tags.forEach(([tag, value], index) => {
+      tags.forEach(([tag, value, type = 4], index) => {
         const offset = 10 + index * 12;
         view.setUint16(offset, tag!, true);
-        view.setUint16(offset + 2, 4, true);
+        view.setUint16(offset + 2, type, true);
         view.setUint32(offset + 4, 1, true);
         view.setUint32(offset + 8, value!, true);
       });
