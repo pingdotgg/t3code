@@ -346,6 +346,27 @@ describe("ClaudeAdapterV2 native resume history", () => {
   ])("selects the native history head for $name", ({ messages, head }) => {
     assert.equal(ClaudeAdapterV2.claudeResumeSessionAt(messages), head);
   });
+
+  it("recognizes history that ends on a failed request", () => {
+    const failed = {
+      uuid: "failed",
+      type: "assistant",
+      message: { content: "API Error: Request rejected (429)", model: "<synthetic>" },
+    };
+    assert.isTrue(ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([prompt, failed]));
+    assert.isFalse(
+      ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([
+        prompt,
+        entry("stop", "user", "[Request interrupted by user]"),
+      ]),
+    );
+    assert.isFalse(
+      ClaudeAdapterV2.claudeHistoryEndsOnFailedRequest([
+        prompt,
+        entry("reply", "assistant", "Done"),
+      ]),
+    );
+  });
 });
 
 describe("ClaudeAdapterV2 runtime query policy", () => {
