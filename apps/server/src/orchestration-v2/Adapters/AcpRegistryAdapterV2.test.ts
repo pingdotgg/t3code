@@ -211,21 +211,39 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
   agentId: string | Record<string, unknown> = "claude-acp",
+  replacementEntries?: ReadonlyArray<unknown>,
+  runtimeMode: "approval-required" | "full-access" = "approval-required",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-lifecycle-" });
-  const transcript = yield* decodeAcpReplayTranscript(
-    {
-      provider: ACP_REGISTRY_PROVIDER,
-      protocol: "acp.ndjson-jsonrpc",
-      version: "1",
-      scenario: "claude-lifecycle",
-      entries: entries as never,
-    },
-    ACP_REGISTRY_PROVIDER,
+  const scriptPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
   );
+  const makeReplay = Effect.fn("openClaudeReplaySession.makeReplay")(function* (
+    entries: ReadonlyArray<unknown>,
+    name: string,
+  ) {
+    const transcript = yield* decodeAcpReplayTranscript(
+      {
+        provider: ACP_REGISTRY_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: name,
+        entries: entries as never,
+      },
+      ACP_REGISTRY_PROVIDER,
+    );
+    return makeAcpReplayRuntime({
+      transcript,
+      statusPath: path.join(replayDir, `${name}.json`),
+      scriptPath,
+      childProcessSpawner,
+      fileSystem,
+      ...(replayGate === undefined ? {} : { replayGate }),
+    });
+  });
   const offers: Array<ProviderContinuationRequest> = [];
   const offered = yield* Queue.unbounded<void>();
   const continuationRequests = {
@@ -239,16 +257,12 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   let onTermination: NonNullable<
     AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
   > = () => Effect.die("Runtime has not started");
-  const replayRuntime = makeAcpReplayRuntime({
-    transcript,
-    statusPath: path.join(replayDir, "status.json"),
-    scriptPath: yield* path.fromFileUrl(
-      new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
-    ),
-    childProcessSpawner,
-    fileSystem,
-    ...(replayGate === undefined ? {} : { replayGate }),
-  });
+  const replayRuntime = yield* makeReplay(entries, "claude-lifecycle");
+  const replacementRuntime =
+    replacementEntries === undefined
+      ? replayRuntime
+      : yield* makeReplay(replacementEntries, "replacement");
+  let started = false;
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
@@ -259,7 +273,9 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime({
+      const replay = started ? replacementRuntime : replayRuntime;
+      started = true;
+      return replay({
         ...runtimeInput,
         protocolLogging: {
           logIncoming: false,
@@ -277,7 +293,6 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   );
   const threadId = ThreadId.make("thread-claude-lifecycle");
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtimeMode = "approval-required";
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode,
     interactionMode: "default",
@@ -437,6 +452,196 @@ const claudeUnrelatedChildren = [
 ];
 
 describe("AcpRegistryAdapterV2", () => {
+  it.effect.each([
+    { commandPath: "/root/.local/bin/agy", offers: 1 },
+    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
+    { commandPath: "/opt/bin/other-agent", offers: 0 },
+  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["wake"]);
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          claudeFrames.open[2],
+          claudeFrames.open[3],
+          claudeFrames.prompt(1)[0],
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Background work finished." },
+            }),
+            label: "wake",
+          },
+          // agy ends each reply with usage_update; this one ends before the continuation run starts.
+          update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
+          claudeMarker("late output received"),
+        ],
+        gate,
+        true,
+        { source: "local", commandPath, commandArgs: ["acp"] },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("wake");
+      yield* session.throughMarker("late output received");
+      assert.lengthOf(session.offers, offers, "late output must only wake agy");
+      if (offers === 0) return;
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* TestClock.adjust("3 seconds");
+      const continued = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continued), "Background work finished.");
+      const terminal = continued.at(-1)!;
+      if (terminal.type !== "turn.terminal") throw new Error("Missing continuation terminal");
+      assert.equal(terminal.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["approval-required", "full-access"] as const)(
+    "continues an agy permission request after the prompt settles (%s)",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["wake", "reply"]);
+        const session = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
+                  agentCapabilities: { loadSession: true },
+                  authMethods: [],
+                },
+              },
+            },
+            claudeFrames.open[2],
+            claudeFrames.open[3],
+            claudeFrames.prompt(1)[0],
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "wake",
+              frame: {
+                kind: "request",
+                method: "session/request_permission",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  toolCall: {
+                    toolCallId: "late-command",
+                    title: "Run command",
+                    kind: "execute",
+                    status: "pending",
+                  },
+                  options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+                },
+              },
+            },
+            claudeMarker("late permission received"),
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "session/request_permission",
+                result: { outcome: { outcome: "selected", optionId: "allow" } },
+              },
+            },
+            {
+              ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Command approved." },
+              }),
+              label: "reply",
+            },
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "usage_update",
+              used: 100,
+              size: 1000,
+            }),
+            claudeMarker("reply ended"),
+          ],
+          gate,
+          true,
+          { source: "local", commandPath: "/root/.local/bin/agy", commandArgs: ["acp"] },
+          undefined,
+          runtimeMode,
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        gate.release("wake");
+        yield* session.throughMarker("late permission received");
+        assert.lengthOf(session.offers, 1, "a permission request must offer a continuation");
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        if (runtimeMode === "approval-required") {
+          const events = yield* session.until(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          );
+          const request = events.at(-1)!;
+          if (request.type !== "runtime_request.updated") throw new Error("Missing approval");
+          yield* TestClock.adjust("5 seconds");
+          yield* session.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "accept",
+          });
+        }
+        // The model can be silent longer than the finalize debounce before it goes on.
+        yield* TestClock.adjust("10 seconds");
+        gate.release("reply");
+        // The closing usage_update must be handled before the clock moves, or its debounce never fires.
+        const output = yield* session.throughMarker("reply ended");
+        assert.isTrue(
+          output.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "Command approved.",
+          ),
+        );
+        assert.isFalse(output.some((event) => event.type === "turn.terminal"));
+        yield* TestClock.adjust("3 seconds");
+        assert.equal((yield* session.terminal).status, "completed");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
     const limit = new EffectAcpErrors.AcpRequestError({
       code: -31001,
@@ -2001,7 +2206,10 @@ describe("AcpRegistryAdapterV2", () => {
   );
 
   // regression: #38599 Hermes replies on its own when a background process it started exits
-  it.effect("does not drop Hermes' reply after a background process finishes", () =>
+  it.effect.each([
+    { launch: "hermes acp", commandPath: "hermes", commandArgs: ["acp"] },
+    { launch: "a wrapper", commandPath: "node", commandArgs: ["hermes-acp.mjs"] },
+  ])("does not drop Hermes' reply after a background process finishes ($launch)", (launch) =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["process-exit"]);
       const sessionId = "hermes-session";
@@ -2061,7 +2269,7 @@ describe("AcpRegistryAdapterV2", () => {
         ],
         gate,
         true,
-        { source: "local", commandPath: "hermes", commandArgs: ["acp"] },
+        { source: "local", commandPath: launch.commandPath, commandArgs: launch.commandArgs },
       );
       yield* session.runtime.startTurn(session.turnInput(1));
       const foreground = yield* session.until((event) => event.type === "turn.terminal");
@@ -2075,6 +2283,63 @@ describe("AcpRegistryAdapterV2", () => {
       const continuation = yield* session.until((event) => event.type === "turn.terminal");
       assert.include(JSON.stringify(continuation), "printed DONE");
       assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("protects Hermes background work when a wrapper launches it on replacement", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["process-exit"]);
+      const request = (method: string) => ({
+        type: "expect_outbound",
+        frame: { kind: "request", method, params: "<any>" },
+      });
+      const respond = (method: string, result: object) => ({
+        type: "emit_inbound",
+        frame: { kind: "response", method, result },
+      });
+      const open = (sessionId: string, name: string) => [
+        request("initialize"),
+        respond("initialize", { protocolVersion: 1, agentInfo: { name, version: "1.0.0" } }),
+        request("session/new"),
+        respond("session/new", { sessionId }),
+      ];
+      const sessionId = "hermes-replacement";
+      const session = yield* openClaudeReplaySession(
+        open("initial-session", "generic-agent"),
+        gate,
+        true,
+        { source: "local", commandPath: "node", commandArgs: ["agent-wrapper.mjs"] },
+        [
+          ...open(sessionId, "hermes-agent"),
+          request("session/prompt"),
+          respond("session/prompt", { stopReason: "end_turn" }),
+          {
+            ...claudeFrames.update(sessionId, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Background command finished" },
+            }),
+            label: "process-exit",
+          },
+        ],
+      );
+      const { threadId, modelSelection, runtimePolicy } = session.turnInput(1);
+      const replaceThread = {
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        forceNewNativeThread: true,
+      };
+      const pendingWork = session.runtime.hasPendingBackgroundWork ?? Effect.succeed(false);
+      assert.isFalse(yield* pendingWork);
+      const providerThread = yield* session.runtime.ensureThread(replaceThread);
+      yield* session.runtime.startTurn({ ...session.turnInput(1), providerThread });
+      assert.equal((yield* session.terminal).status, "completed");
+
+      gate.release("process-exit");
+      yield* Queue.take(session.offered);
+      assert.isTrue(yield* pendingWork);
+      const error = yield* session.runtime.ensureThread(replaceThread).pipe(Effect.flip);
+      assert.include(String(error.cause), "background work is active");
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -2660,6 +2925,128 @@ describe("AcpRegistryAdapterV2", () => {
       }
       assert.deepEqual(answer, { outcome: "selected", optionId: "plan_accept_edits" });
       assert.equal((yield* session.terminal).status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("counts per-turn usage for a local glm command", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          // GLM reports per-turn usage on the v1 prompt response.
+          ...claudeFrames.open.map((entry) =>
+            entry.frame.method === "initialize" && entry.type === "emit_inbound"
+              ? {
+                  ...entry,
+                  frame: {
+                    ...entry.frame,
+                    result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                  },
+                }
+              : entry,
+          ),
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: {
+                stopReason: "end_turn",
+                usage: { totalTokens: 3_000, inputTokens: 2_500, outputTokens: 500 },
+              },
+            },
+          },
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        { source: "local", commandPath: "/opt/glm/bin/glm" },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+      const events = yield* session.until((event) => event.type === "turn.terminal");
+      const completed = events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          inputTokens: 2_500,
+          outputTokens: 500,
+        },
+      );
+      const terminal = events.at(-1)!;
+      if (terminal.type !== "turn.terminal") throw new Error("Missing terminal");
+      assert.equal(terminal.status, "completed");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("surfaces Mistral's retry notice for a local vibe command", () =>
+    Effect.gen(function* () {
+      const session = yield* openClaudeReplaySession(
+        [
+          ...claudeFrames.open,
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "user_message",
+            messageId: "user-1",
+            content: [{ type: "text", text: "test prompt" }],
+          }),
+          claudeFrames.update(CLAUDE_ROOT_SESSION, {
+            sessionUpdate: "state_update",
+            state: "running",
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "notification",
+              method: "_session/retrying",
+              params: {
+                sessionId: CLAUDE_ROOT_SESSION,
+                category: "rate_limited",
+                detail: "Backing off for 30s",
+              },
+            },
+          },
+          claudeMarker("retry noticed"),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          claudeFrames.idle("end_turn"),
+          claudeFrames.closeRequest,
+          claudeFrames.closed,
+        ],
+        undefined,
+        false,
+        { source: "local", commandPath: "/opt/vibe/bin/vibe-acp" },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("retry noticed");
+      const retry = events.find(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "error",
+      );
+      if (retry?.type !== "turn_item.updated" || retry.turnItem.type !== "error")
+        throw new Error("Missing provider retry item");
+      assert.equal(retry.turnItem.title, "Provider retry");
+      assert.equal(retry.turnItem.failure.class, "usage_limit");
+      assert.equal(retry.turnItem.retry?.attempt, 1);
+      const terminal = yield* session.terminal;
+      assert.equal(terminal.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

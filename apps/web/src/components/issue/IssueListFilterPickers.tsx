@@ -26,7 +26,7 @@ import {
 } from "~/components/ui/menu";
 import { useIssueFilterCandidates } from "~/state/issues";
 
-import type { ProjectFaviconProject } from "../ProjectFavicon";
+import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 
 import {
   PullRequestFilterRadioSubmenu,
@@ -36,7 +36,6 @@ import {
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 
 const VISIBLE_CHOICES = 30;
-const ALL_PROJECTS = "all";
 const matches = (needle: string, ...fields: ReadonlyArray<string | null | undefined>) =>
   needle.length === 0 || fields.some((field) => field?.toLowerCase().includes(needle));
 
@@ -54,38 +53,18 @@ export function IssueFiltersMenu(props: {
   assignee: string | undefined;
   onAssignee: (assignee: string | undefined) => void;
   projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
-  project: { environmentId: EnvironmentId; projectId: ProjectId } | undefined;
-  onProject: (project: { environmentId: EnvironmentId; projectId: ProjectId } | undefined) => void;
+  hiddenProjects: ReadonlySet<string>;
+  onHiddenProjects: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
   const count = [
     props.state !== "open",
     props.involvement !== "all",
-    props.project,
+    props.hiddenProjects.size > 0,
     props.assignee,
     ...props.labels,
   ].filter(Boolean).length;
-  const projectValue = props.project
-    ? pullRequestProjectKey({
-        id: props.project.projectId,
-        environmentId: props.project.environmentId,
-      })
-    : ALL_PROJECTS;
-  const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: ALL_PROJECTS, label: gt("All projects"), Icon: LayersIcon },
-    // A remembered project this client does not list stays shown, so the filter can be taken off.
-    ...(projectValue !== ALL_PROJECTS &&
-    !props.projects.some((project) => pullRequestProjectKey(project) === projectValue)
-      ? [{ value: projectValue, label: gt("Unavailable project"), Icon: FolderGit2Icon }]
-      : []),
-    ...props.projects.map((project) => ({
-      value: pullRequestProjectKey(project),
-      label: project.title,
-      Icon: FolderGit2Icon,
-      project,
-    })),
-  ];
   // Read when the menu opens, not with every listing: one request per scope.
   const scopes = open ? props.scopes : [];
   return (
@@ -114,20 +93,25 @@ export function IssueFiltersMenu(props: {
           options={props.involvementOptions}
           onChange={props.onInvolvement}
         />
-        {props.projects.length > 1 || props.project ? (
-          <PullRequestFilterRadioSubmenu
-            label={gt("Project")}
-            value={projectValue}
-            options={projectOptions}
-            onChange={(next) => {
-              const project = props.projects.find((p) => pullRequestProjectKey(p) === next);
-              props.onProject(
-                project
-                  ? { environmentId: project.environmentId, projectId: project.id }
-                  : undefined,
-              );
-            }}
-          />
+        {props.projects.length > 0 || props.hiddenProjects.size > 0 ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <FolderGit2Icon aria-hidden className="size-3.5" />
+              <span className="flex-1">{gt("Projects")}</span>
+              <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+                {props.hiddenProjects.size === 0
+                  ? gt("All projects")
+                  : gt("{hidden} hidden", { hidden: props.hiddenProjects.size })}
+              </span>
+            </MenuSubTrigger>
+            <MenuSubPopup>
+              <ProjectChoices
+                projects={props.projects}
+                hidden={props.hiddenProjects}
+                onChange={props.onHiddenProjects}
+              />
+            </MenuSubPopup>
+          </MenuSub>
         ) : null}
         <MenuSeparator />
         <MenuSub>
@@ -166,6 +150,68 @@ export function IssueFiltersMenu(props: {
         </MenuSub>
       </MenuPopup>
     </Menu>
+  );
+}
+
+function ProjectChoices(props: {
+  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  hidden: ReadonlySet<string>;
+  onChange: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
+}) {
+  const gt = useGT();
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const visible = props.projects.filter((project) => matches(needle, project.title));
+  const pairsOf = (keys: Iterable<string>) =>
+    [...keys].map((key) => JSON.parse(key) as readonly [EnvironmentId, ProjectId]);
+  const allShown = props.hidden.size === 0;
+  return (
+    <>
+      {props.projects.length > 8 ? (
+        <MenuSearchInput
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder={gt("Search projects")}
+          aria-label={gt("Search projects")}
+        />
+      ) : null}
+      <MenuCheckboxItem
+        checked={allShown}
+        onCheckedChange={(shown) =>
+          props.onChange(
+            shown ? [] : pairsOf(props.projects.map((project) => pullRequestProjectKey(project))),
+          )
+        }
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <LayersIcon aria-hidden className="size-3.5" />
+          <span className="min-w-0 flex-1 truncate">{gt("Show all")}</span>
+        </span>
+      </MenuCheckboxItem>
+      <MenuSeparator />
+      {visible.length === 0 ? <MenuItem disabled>{gt("No matching projects.")}</MenuItem> : null}
+      {visible.map((project) => {
+        const key = pullRequestProjectKey(project);
+        return (
+          <MenuCheckboxItem
+            key={key}
+            checked={!props.hidden.has(key)}
+            onCheckedChange={(shown) => {
+              const next = new Set(props.hidden);
+              if (shown) next.delete(key);
+              else next.add(key);
+              props.onChange(pairsOf(next));
+            }}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <ProjectFavicon project={project} className="size-3.5" />
+              <span className="min-w-0 flex-1 truncate">{project.title}</span>
+            </span>
+          </MenuCheckboxItem>
+        );
+      })}
+    </>
   );
 }
 
