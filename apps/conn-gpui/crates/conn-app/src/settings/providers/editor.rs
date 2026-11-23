@@ -1,6 +1,6 @@
 //! The provider instance editor behind Settings → Providers (`ProviderSettingsPanel.tsx`,
 //! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`,
-//! `SecretSourceInput.tsx`, `ManagedPolicy.tsx`).
+//! `ManagedPolicy.tsx`).
 //!
 //! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation`, a
 //! project override or a model preference (`conn_state::provider_settings`,
@@ -21,10 +21,9 @@ use conn_contract::{
 use conn_state::provider_auth::{ProviderSummary, StatusKey};
 use conn_state::provider_settings::{
     self as settings_logic, Control, DRIVERS, DriverDef, EnvField, FieldDef, InstanceLocks,
-    InstanceRow, SecretRef, SecretSource,
+    InstanceRow,
 };
 use conn_state::providers::ProviderGroup;
-use conn_state::secret_providers;
 use gpui_kit::Focusable as _;
 use gpui_kit::component::Colorize as _;
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
@@ -50,53 +49,19 @@ pub(super) enum Commit {
     Field(&'static str),
     EnvField(&'static str),
     Variables,
-    Reference(Slot),
     CustomModel,
-}
-
-/// What `Check` found for a reference (`SecretCheckButton`): the reference it asked about
-/// (`provider` and `reference`), so a later edit shows no stale result.
-pub(super) struct SecretCheck {
-    secret: SecretRef,
-    state: CheckState,
-}
-
-enum CheckState {
-    Checking,
-    Resolved,
-    Failed(String),
-}
-
-/// A value that may read from a secret provider instead.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Slot {
-    Field(&'static str),
-    EnvField(&'static str),
-    Variable(u64),
-}
-
-/// The source picker of one secret value (`SecretSourceInput`): the typed value (`None`) or
-/// a secret provider, and the reference typed for it.
-pub(super) struct SecretInput {
-    source: Option<String>,
-    reference: Entity<InputState>,
-    /// The message under a reference the provider does not read.
-    rejected: Option<&'static str>,
 }
 
 /// A driver config field.
 struct FieldRow {
     def: &'static FieldDef,
     input: Option<Entity<InputState>>,
-    /// Only secret fields can read from a secret provider.
-    secret: Option<SecretInput>,
 }
 
 /// A variable a driver asks for by name.
 struct EnvFieldRow {
     def: &'static EnvField,
     input: Entity<InputState>,
-    secret: SecretInput,
 }
 
 /// An environment variable row of the generic Environment section.
@@ -108,9 +73,6 @@ struct VariableRow {
     /// What the server sent, kept while the value input stays empty: a saved secret never
     /// shows, and leaving it empty keeps it.
     original: Option<EnvironmentVariable>,
-    secret: SecretInput,
-    /// The reference the variable reads from, as saved or just committed.
-    secret_ref: Option<SecretRef>,
 }
 
 /// The inputs of the instance being edited.
@@ -167,12 +129,6 @@ fn accent_color(hex: Option<&str>) -> Option<Hsla> {
 impl ProvidersView {
     fn settings(&self) -> Option<&ServerSettings> {
         self.config.settings()
-    }
-
-    pub(super) fn secret_sources(&self) -> Vec<SecretSource> {
-        self.settings()
-            .map(settings_logic::secret_sources)
-            .unwrap_or_default()
     }
 
     pub(super) fn locks(&self, driver: &str) -> Option<InstanceLocks> {
@@ -364,7 +320,6 @@ impl ProvidersView {
                 );
             }
             Commit::Variables => self.commit_variables(&instance_id, locks.as_ref(), cx),
-            Commit::Reference(slot) => self.commit_reference(slot, cx),
             Commit::CustomModel => self.add_custom_model(window, cx),
         }
     }
@@ -387,9 +342,6 @@ impl ProvidersView {
             .map(|row| {
                 let name = row.name.read(cx).value().trim().to_owned();
                 let value = row.value.read(cx).value().to_string();
-                if let Some(secret) = &row.secret_ref {
-                    return settings_logic::secret_variable(&name, secret);
-                }
                 match &row.original {
                     Some(original) if value.is_empty() => EnvironmentVariable {
                         name,
@@ -428,215 +380,6 @@ impl ProvidersView {
         );
     }
 
-    // --- secret references ----------------------------------------------------------------
-
-    /// The reference `slot` reads from, as saved.
-    fn saved_secret(&self, slot: Slot) -> Option<SecretRef> {
-        let editor = self.editor.as_ref()?;
-        let (_, instance) = self.current_instance(&editor.instance_id)?;
-        match slot {
-            Slot::Field(key) => settings_logic::config_secret_reference(&instance, key),
-            Slot::EnvField(name) => settings_logic::environment_variable(&instance, name)
-                .and_then(settings_logic::variable_secret),
-            Slot::Variable(key) => editor
-                .variables
-                .iter()
-                .find(|row| row.key == key)?
-                .secret_ref
-                .clone(),
-        }
-    }
-
-    fn secret_input_mut(&mut self, slot: Slot) -> Option<&mut SecretInput> {
-        let editor = self.editor.as_mut()?;
-        match slot {
-            Slot::Field(key) => editor
-                .fields
-                .iter_mut()
-                .find(|row| row.def.key == key)?
-                .secret
-                .as_mut(),
-            Slot::EnvField(name) => editor
-                .env_fields
-                .iter_mut()
-                .find(|row| row.def.name == name)
-                .map(|row| &mut row.secret),
-            Slot::Variable(key) => editor
-                .variables
-                .iter_mut()
-                .find(|row| row.key == key)
-                .map(|row| &mut row.secret),
-        }
-    }
-
-    /// `Check`: asks the server to resolve the saved reference, so a typo shows here and not
-    /// when a provider starts.
-    fn check_secret(&mut self, slot: Slot, cx: &mut Context<'_, Self>) {
-        let (Some(secret), Some(connection)) = (self.saved_secret(slot), self.connection.clone())
-        else {
-            return;
-        };
-        let key = format!("{slot:?}");
-        self.secret_checks.insert(
-            key.clone(),
-            SecretCheck {
-                secret: secret.clone(),
-                state: CheckState::Checking,
-            },
-        );
-        cx.notify();
-        let payload = secret_providers::check_request(&secret.provider, &secret.reference);
-        cx.spawn(async move |this, cx| {
-            let result = connection
-                .call_json("server.checkSecretSource", payload)
-                .await;
-            let state = match result.map(|value| secret_providers::check_outcome(&value)) {
-                Ok(Ok(())) => CheckState::Resolved,
-                Ok(Err(detail)) => CheckState::Failed(detail),
-                Err(_) => CheckState::Failed("Could not reach the server".to_owned()),
-            };
-            let _ = this.update(cx, |view, cx| {
-                if let Some(check) = view.secret_checks.get_mut(&key)
-                    && check.secret == secret
-                {
-                    check.state = state;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// Picks the typed value (`None`) or a secret provider for `slot`. Back to Value drops a
-    /// saved reference; a provider applies once a reference for it is committed.
-    pub(super) fn pick_secret_source(
-        &mut self,
-        slot: Slot,
-        source: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let saved = self.saved_secret(slot);
-        let Some(input) = self.secret_input_mut(slot) else {
-            return;
-        };
-        input.source.clone_from(&source);
-        input.rejected = None;
-        let reference = input.reference.clone();
-        match source {
-            None => {
-                if saved.is_some() {
-                    self.write_secret(slot, None, cx);
-                }
-            }
-            Some(provider) => {
-                let text = saved
-                    .filter(|s| s.provider == provider)
-                    .map(|s| s.reference)
-                    .unwrap_or_default();
-                reference.update(cx, |state, cx| {
-                    state.set_value(text, window, cx);
-                    state.focus(window, cx);
-                });
-            }
-        }
-        cx.notify();
-    }
-
-    fn commit_reference(&mut self, slot: Slot, cx: &mut Context<'_, Self>) {
-        let saved = self.saved_secret(slot);
-        let sources = self.secret_sources();
-        let Some(input) = self.secret_input_mut(slot) else {
-            return;
-        };
-        let Some(provider) = input.source.clone() else {
-            return;
-        };
-        let text = input.reference.read(cx).value().trim().to_owned();
-        if text.is_empty() {
-            input.rejected = None;
-            if saved.as_ref().is_some_and(|s| s.provider == provider) {
-                self.write_secret(slot, None, cx);
-            }
-            cx.notify();
-            return;
-        }
-        let kind = sources
-            .iter()
-            .find(|s| s.id == provider)
-            .map_or("", |s| s.kind.as_str());
-        if !settings_logic::is_valid_secret_reference(kind, &text) {
-            input.rejected = Some(settings_logic::invalid_secret_reference_message(kind));
-            cx.notify();
-            return;
-        }
-        input.rejected = None;
-        let secret = SecretRef {
-            provider,
-            reference: text,
-        };
-        if saved.as_ref() != Some(&secret) {
-            self.write_secret(slot, Some(secret), cx);
-        }
-        cx.notify();
-    }
-
-    /// Saves `slot` reading from `secret`, or with `None` without its reference.
-    fn write_secret(&mut self, slot: Slot, secret: Option<SecretRef>, cx: &mut Context<'_, Self>) {
-        let Some(editor) = &mut self.editor else {
-            return;
-        };
-        let instance_id = editor.instance_id.clone();
-        match slot {
-            Slot::Field(key) => {
-                let Some(def) = editor
-                    .fields
-                    .iter()
-                    .find(|row| row.def.key == key)
-                    .map(|r| r.def)
-                else {
-                    return;
-                };
-                self.update_instance(
-                    &instance_id,
-                    |instance| match &secret {
-                        Some(secret) => {
-                            settings_logic::with_config_secret_reference(instance, key, secret)
-                        }
-                        None => settings_logic::with_config_field(instance, def, ""),
-                    },
-                    cx,
-                );
-            }
-            Slot::EnvField(name) => {
-                self.update_instance(
-                    &instance_id,
-                    |instance| {
-                        settings_logic::with_environment_field_secret(
-                            instance,
-                            name,
-                            secret.as_ref(),
-                        )
-                    },
-                    cx,
-                );
-            }
-            Slot::Variable(key) => {
-                if let Some(row) = editor.variables.iter_mut().find(|row| row.key == key) {
-                    if secret.is_none() {
-                        // Conn keeps the row as a plain, empty value.
-                        row.original = None;
-                    }
-                    row.secret_ref = secret;
-                }
-                let locks = self
-                    .current_instance(&instance_id)
-                    .and_then(|(row, _)| self.locks(&row.driver));
-                self.commit_variables(&instance_id, locks.as_ref(), cx);
-            }
-        }
-    }
-
     // --- editor inputs ------------------------------------------------------------------
 
     #[expect(
@@ -671,31 +414,6 @@ impl ProvidersView {
             },
         ));
         input
-    }
-
-    fn secret_input(
-        &mut self,
-        saved: Option<&SecretRef>,
-        placeholder: &str,
-        slot: Slot,
-        subscriptions: &mut Vec<Subscription>,
-        window: &mut Window,
-        cx: &mut Context<'_, Self>,
-    ) -> SecretInput {
-        let reference = self.text_input(
-            saved.map_or("", |s| s.reference.as_str()),
-            placeholder,
-            false,
-            Commit::Reference(slot),
-            subscriptions,
-            window,
-            cx,
-        );
-        SecretInput {
-            source: saved.map(|s| s.provider.clone()),
-            reference,
-            rejected: None,
-        }
     }
 
     fn accent_picker(
@@ -823,22 +541,7 @@ impl ProvidersView {
                     ))
                 }
             };
-            let secret = field.secret.then(|| {
-                let saved = settings_logic::config_secret_reference(&instance, field.key);
-                self.secret_input(
-                    saved.as_ref(),
-                    "op://vault/item/field",
-                    Slot::Field(field.key),
-                    &mut subs,
-                    window,
-                    cx,
-                )
-            });
-            fields.push(FieldRow {
-                def: field,
-                input,
-                secret,
-            });
+            fields.push(FieldRow { def: field, input });
         }
         let mut env_fields = Vec::new();
         for field in def.map_or(&[][..], |def| def.env_fields) {
@@ -857,20 +560,7 @@ impl ProvidersView {
                 window,
                 cx,
             );
-            let saved = variable.and_then(settings_logic::variable_secret);
-            let secret = self.secret_input(
-                saved.as_ref(),
-                "op://vault/item/field",
-                Slot::EnvField(field.name),
-                &mut subs,
-                window,
-                cx,
-            );
-            env_fields.push(EnvFieldRow {
-                def: field,
-                input,
-                secret,
-            });
+            env_fields.push(EnvFieldRow { def: field, input });
         }
         let mut next_key = 0;
         let variables =
@@ -935,8 +625,8 @@ impl ProvidersView {
             .map(|variable| {
                 let key = *next_key;
                 *next_key += 1;
-                let secret_ref = settings_logic::variable_secret(&variable);
-                let saved_secret = variable.value_redacted == Some(true) || secret_ref.is_some();
+                let saved_secret =
+                    variable.value_redacted == Some(true) || variable.secret.is_some();
                 let shown = if variable.sensitive == Some(true) || saved_secret {
                     String::new()
                 } else {
@@ -966,22 +656,12 @@ impl ProvidersView {
                     window,
                     cx,
                 );
-                let secret = self.secret_input(
-                    secret_ref.as_ref(),
-                    "op://vault/item/field",
-                    Slot::Variable(key),
-                    subs,
-                    window,
-                    cx,
-                );
                 VariableRow {
                     key,
                     name,
                     value,
                     sensitive,
                     original: Some(variable),
-                    secret,
-                    secret_ref,
                 }
             })
             .collect()
@@ -1032,54 +712,10 @@ impl ProvidersView {
                 None => state.clear_value(window, cx),
             });
         }
-        // A saved reference shows as saved; a provider picked but not committed stays picked.
-        let saved: Vec<(Slot, Option<SecretRef>)> = editor
-            .fields
-            .iter()
-            .filter(|row| row.secret.is_some())
-            .map(|row| {
-                (
-                    Slot::Field(row.def.key),
-                    settings_logic::config_secret_reference(instance, row.def.key),
-                )
-            })
-            .chain(editor.env_fields.iter().map(|row| {
-                (
-                    Slot::EnvField(row.def.name),
-                    settings_logic::environment_variable(instance, row.def.name)
-                        .and_then(settings_logic::variable_secret),
-                )
-            }))
-            .collect();
-        for (slot, saved) in saved {
-            let Some(saved) = saved else {
-                continue;
-            };
-            let Some(input) = self.secret_input_mut(slot) else {
-                continue;
-            };
-            let reference = input.reference.clone();
-            if input.rejected.is_some() || reference.read(cx).focus_handle(cx).is_focused(window) {
-                continue;
-            }
-            input.source = Some(saved.provider.clone());
-            if reference.read(cx).value() != saved.reference.as_str() {
-                reference.update(cx, |state, cx| state.set_value(saved.reference, window, cx));
-            }
-        }
-        let Some(editor) = &self.editor else {
-            return;
-        };
         if editor.variables_stamp != stamp {
             let any_focused = editor.variables.iter().any(|row| {
                 row.name.read(cx).focus_handle(cx).is_focused(window)
                     || row.value.read(cx).focus_handle(cx).is_focused(window)
-                    || row
-                        .secret
-                        .reference
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window)
             });
             if !any_focused {
                 let mut subs = Vec::new();
@@ -1101,14 +737,6 @@ impl ProvidersView {
         let key = self.editor.as_ref().map_or(0, |e| e.next_key);
         let name = self.text_input("", "NAME", false, Commit::Variables, &mut subs, window, cx);
         let value = self.text_input("", "value", false, Commit::Variables, &mut subs, window, cx);
-        let secret = self.secret_input(
-            None,
-            "op://vault/item/field",
-            Slot::Variable(key),
-            &mut subs,
-            window,
-            cx,
-        );
         if let Some(editor) = &mut self.editor {
             editor.next_key = key + 1;
             editor.variables.push(VariableRow {
@@ -1117,8 +745,6 @@ impl ProvidersView {
                 value,
                 sensitive: false,
                 original: None,
-                secret,
-                secret_ref: None,
             });
             editor._subscriptions.extend(subs);
         }
@@ -1566,168 +1192,6 @@ impl ProvidersView {
             .into_any_element()
     }
 
-    /// The `Check` button of a saved reference and what the last check found
-    /// (`SecretCheckButton`). Only where the server serves `server.checkSecretSource`.
-    fn check_row(
-        &self,
-        ax: &str,
-        slot: Slot,
-        input: &SecretInput,
-        saved: Option<&SecretRef>,
-        slot_name: &str,
-        cx: &mut Context<'_, Self>,
-    ) -> Option<AnyElement> {
-        let saved = saved?;
-        if !self.config.supports_secret_source_check()
-            || input.rejected.is_some()
-            || input.source.as_deref() != Some(saved.provider.as_str())
-        {
-            return None;
-        }
-        let state = self
-            .secret_checks
-            .get(&format!("{slot:?}"))
-            .filter(|check| &check.secret == saved)
-            .map(|check| &check.state);
-        let (label, ax_label, running) = match state {
-            None => ("Check".to_owned(), format!("Check {slot_name}"), false),
-            Some(CheckState::Checking) => (
-                "Checking...".to_owned(),
-                format!("Checking {slot_name}"),
-                true,
-            ),
-            Some(CheckState::Resolved) => (
-                "Resolved".to_owned(),
-                format!("{slot_name} resolved"),
-                false,
-            ),
-            Some(CheckState::Failed(detail)) => (
-                "Failed".to_owned(),
-                format!("{slot_name} failed: {detail}"),
-                false,
-            ),
-        };
-        let mut column = div().flex().flex_col().items_end().gap(px(4.0));
-        column = column.child(self.labelled_button(
-            format!("{ax}.check"),
-            &label,
-            &ax_label,
-            false,
-            (!running).then(|| cx.listener(move |view, _, _, cx| view.check_secret(slot, cx))),
-        ));
-        if let Some(CheckState::Failed(detail)) = state {
-            column = column.child(
-                div()
-                    .id(SharedString::from(format!("{ax}.check-error")))
-                    .a11y_group(format!("{ax}.check-error"), detail.clone())
-                    .max_w(px(260.0))
-                    .text_size(px(12.0))
-                    .text_color(hsla(self.tokens.destructive))
-                    .child(detail.clone())
-                    .test_support(),
-            );
-        }
-        Some(column.into_any_element())
-    }
-
-    /// The source picker and value of one secret slot (`SecretSourceInput`). `value` is the
-    /// typed-value control, shown while the source is Value.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "a secret slot needs its ids, its state, its typed-value control and the sources"
-    )]
-    fn secret_control(
-        &self,
-        ax: &str,
-        slot: Slot,
-        input: &SecretInput,
-        saved: Option<&SecretRef>,
-        value: AnyElement,
-        sources: &[SecretSource],
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let saved_provider = saved.map(|s| s.provider.clone());
-        if sources.is_empty() && input.source.is_none() && saved_provider.is_none() {
-            return value;
-        }
-        let slot_name = match slot {
-            Slot::Field(key) => key.to_owned(),
-            Slot::EnvField(name) => name.to_owned(),
-            Slot::Variable(key) => self
-                .editor
-                .as_ref()
-                .and_then(|e| e.variables.iter().find(|row| row.key == key))
-                .map(|row| row.name.read(cx).value().to_string())
-                .filter(|name| !name.trim().is_empty())
-                .unwrap_or_else(|| "this variable".to_owned()),
-        };
-        let mut choices: Vec<(Option<String>, String)> = vec![(None, "Value".to_owned())];
-        choices.extend(
-            sources
-                .iter()
-                .map(|s| (Some(s.id.clone()), s.label.clone())),
-        );
-        // A source no longer configured stays listed while the value points at it.
-        for missing in [input.source.clone(), saved_provider].into_iter().flatten() {
-            if !choices
-                .iter()
-                .any(|(id, _)| id.as_deref() == Some(missing.as_str()))
-            {
-                choices.push((Some(missing.clone()), missing));
-            }
-        }
-        let mut picker = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .justify_end()
-            .gap(px(4.0));
-        for (source, label) in choices {
-            let selected = input.source == source;
-            let suffix = source.as_deref().unwrap_or("value").to_owned();
-            picker = picker.child(self.labelled_button(
-                format!("{ax}.source.{suffix}"),
-                &label,
-                &format!("{label}: source of {slot_name}"),
-                selected,
-                Some(cx.listener(move |view, _, window, cx| {
-                    view.pick_secret_source(slot, source.clone(), window, cx);
-                })),
-            ));
-        }
-        let check = self.check_row(ax, slot, input, saved, &slot_name, cx);
-        let body = if input.source.is_some() {
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(4.0))
-                .child(self.input_box(&input.reference))
-                .when_some(check, |el, check| el.child(check))
-                .when_some(input.rejected, |el, message| {
-                    el.child(
-                        div()
-                            .id(SharedString::from(format!("{ax}.reference-error")))
-                            .a11y_group(format!("{ax}.reference-error"), message)
-                            .max_w(px(260.0))
-                            .text_size(px(12.0))
-                            .text_color(hsla(self.tokens.destructive))
-                            .child(message),
-                    )
-                })
-                .into_any_element()
-        } else {
-            value
-        };
-        div()
-            .flex()
-            .flex_col()
-            .items_end()
-            .gap(px(6.0))
-            .child(picker)
-            .child(body)
-            .into_any_element()
-    }
-
     /// The sections of the instance being edited.
     pub(super) fn editor_sections(
         &mut self,
@@ -1746,7 +1210,6 @@ impl ProvidersView {
         let name = settings_logic::instance_label(&instance);
         let enabled = settings_logic::resolve_instance_enabled(&instance);
         let locks = self.locks(&row.driver);
-        let sources = self.secret_sources();
         let ax = |suffix: &str| format!("settings.providers.{selected}.{suffix}");
         let mut sections = Vec::new();
 
@@ -1871,19 +1334,18 @@ impl ProvidersView {
                 let name = field.name;
                 let variable = settings_logic::environment_variable(&instance, name);
                 let saved = variable.is_some();
-                let saved_secret = variable.and_then(settings_logic::variable_secret);
                 let control = if let Some(locks) = locks.as_ref().filter(|l| l.locks_variable(name))
                 {
                     self.managed_note(ax(&format!("env.{name}.managed")), &locks.reason)
                 } else {
                     let clear_id = selected.clone();
-                    let value = div()
+                    div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(6.0))
                         .child(self.input_box(&field_row.input))
-                        .when(saved && saved_secret.is_none(), |el| {
+                        .when(saved, |el| {
                             el.child(self.button(
                                 ax(&format!("env.{name}.clear")),
                                 "Clear",
@@ -1893,16 +1355,7 @@ impl ProvidersView {
                                 })),
                             ))
                         })
-                        .into_any_element();
-                    self.secret_control(
-                        &ax(&format!("env.{name}")),
-                        Slot::EnvField(name),
-                        &field_row.secret,
-                        saved_secret.as_ref(),
-                        value,
-                        &sources,
-                        cx,
-                    )
+                        .into_any_element()
                 };
                 setup.push(settings_row(
                     field.label,
@@ -1960,18 +1413,16 @@ impl ProvidersView {
                             group.into_any_element()
                         }
                         (_, Some(input)) => {
-                            let saved_secret =
-                                settings_logic::config_secret_reference(&instance, field.key);
                             let saved = field.secret
                                 && settings_logic::config_secret_saved(&instance, field.key);
                             let clear_id = selected.clone();
-                            let value = div()
+                            div()
                                 .flex()
                                 .flex_row()
                                 .items_center()
                                 .gap(px(6.0))
                                 .child(self.input_box(input))
-                                .when(saved && saved_secret.is_none(), |el| {
+                                .when(saved, |el| {
                                     el.child(self.button(
                                         ax(&format!("field.{}.clear", field.key)),
                                         "Clear",
@@ -1981,19 +1432,7 @@ impl ProvidersView {
                                         })),
                                     ))
                                 })
-                                .into_any_element();
-                            match &field_row.secret {
-                                Some(secret) => self.secret_control(
-                                    &ax(&format!("field.{}", field.key)),
-                                    Slot::Field(field.key),
-                                    secret,
-                                    saved_secret.as_ref(),
-                                    value,
-                                    &sources,
-                                    cx,
-                                ),
-                                None => value,
-                            }
+                                .into_any_element()
                         }
                         _ => div().into_any_element(),
                     }
@@ -2056,15 +1495,6 @@ impl ProvidersView {
                     .min_w_0()
                     .child(Input::new(&variable.value))
                     .into_any_element();
-                let value = self.secret_control(
-                    &vax,
-                    Slot::Variable(key),
-                    &variable.secret,
-                    variable.secret_ref.as_ref(),
-                    value,
-                    &sources,
-                    cx,
-                );
                 let line = div()
                     .id(SharedString::from(vax.clone()))
                     .a11y_group(vax.clone(), "Environment variable")
@@ -2084,11 +1514,9 @@ impl ProvidersView {
                             "Plain text"
                         },
                         variable.sensitive,
-                        (variable.secret.source.is_none()).then(|| {
-                            cx.listener(move |view, _, window, cx| {
-                                view.toggle_variable_sensitive(key, window, cx)
-                            })
-                        }),
+                        Some(cx.listener(move |view, _, window, cx| {
+                            view.toggle_variable_sensitive(key, window, cx)
+                        })),
                     ))
                     .child(self.button(
                         format!("{vax}.remove"),

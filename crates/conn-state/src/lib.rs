@@ -22,7 +22,6 @@ mod order_keys;
 pub mod provider_auth;
 pub mod provider_settings;
 pub mod providers;
-pub mod secret_providers;
 mod scheduled;
 mod settled_shelf;
 mod shell;

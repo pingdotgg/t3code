@@ -1,5 +1,5 @@
-//! Headless renders of Settings → Providers and Projects with model preferences, secret
-//! providers, a managed policy and a project scope, so a duplicate AccessKit id or a render
+//! Headless renders of Settings → Providers and Projects with model preferences, a managed
+//! policy and a project scope, so a duplicate AccessKit id or a render
 //! panic fails here before it reaches the live app.
 
 use std::sync::Arc;
@@ -27,17 +27,13 @@ fn config() -> Arc<ServerConfigState> {
     config["settings"]["favorites"] = json!([{ "provider": "codex", "model": "gpt-6-astra" }]);
     config["settings"]["providerModelPreferences"] =
         json!({ "codex": { "hiddenModels": ["gpt-6.1-sol"], "modelOrder": [] } });
-    config["settings"]["secretProviders"] = json!({
-        "op": { "kind": "one_password", "label": "1Password", "config": { "account": "my.1password.com" } },
-    });
     config["settings"]["providerInstances"] = json!({
         "codex": {
             "driver": "codex",
             "config": { "customModels": ["my-model"] },
             "environment": [
                 { "name": "A", "value": "1", "sensitive": false },
-                { "name": "TOKEN", "value": "", "sensitive": true,
-                  "secret": { "provider": "op", "reference": "op://v/i/f" } },
+                { "name": "TOKEN", "value": "", "sensitive": true, "valueRedacted": true },
             ],
         },
         "claudeAgent": { "driver": "claudeAgent", "environment": [{ "name": "B", "value": "2" }] },
@@ -109,7 +105,7 @@ fn has(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> bool {
 }
 
 #[gpui_kit::test]
-fn the_editor_renders_models_secrets_locks_and_a_project_scope(cx: &mut TestAppContext) {
+fn the_editor_renders_models_locks_and_a_project_scope(cx: &mut TestAppContext) {
     let (window, view) = mount(cx);
     cx.update(|cx| {
         view.update(cx, |view, cx| {
@@ -121,14 +117,6 @@ fn the_editor_renders_models_secrets_locks_and_a_project_scope(cx: &mut TestAppC
     assert!(
         has(cx, window, "Add my-model to favorites"),
         "custom models list too"
-    );
-    assert!(
-        has(cx, window, "1Password: source of TOKEN"),
-        "the secret source picker"
-    );
-    assert!(
-        has(cx, window, "Check TOKEN"),
-        "a saved reference offers Check where the server serves it"
     );
     assert!(
         has(cx, window, "Managed by Acme."),

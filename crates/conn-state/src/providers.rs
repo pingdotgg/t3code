@@ -1782,14 +1782,6 @@ pub struct ServerConfigState {
     scratch_workspace_root: Option<String>,
     model_catalog_refresh: bool,
     managed_policy: Option<conn_contract::ManagedPolicySummary>,
-    /// `ServerConfig.secretProviderSettings`: settings patches may carry `secretProviders`.
-    secret_provider_settings: bool,
-    /// `ServerConfig.secretReferences`: settings can hold a secret provider reference.
-    secret_references: bool,
-    /// `environment.capabilities.secretSourceCheck`: `server.checkSecretSource` exists.
-    secret_source_check: bool,
-    /// `environment.capabilities.projectOrganization`: projects can be pinned and archived.
-    project_organization: bool,
     loaded: bool,
 }
 
@@ -1891,31 +1883,6 @@ impl ServerConfigState {
         self.model_catalog_refresh
     }
 
-    /// `ServerConfig.secretProviderSettings`. An older server drops `secretProviders` from a
-    /// settings patch without an error, so Settings → Secrets asks for an update instead.
-    #[must_use]
-    pub fn supports_secret_provider_settings(&self) -> bool {
-        self.secret_provider_settings
-    }
-
-    /// `ServerConfig.secretReferences`.
-    #[must_use]
-    pub fn supports_secret_references(&self) -> bool {
-        self.secret_references
-    }
-
-    /// `environment.capabilities.secretSourceCheck`.
-    #[must_use]
-    pub fn supports_secret_source_check(&self) -> bool {
-        self.secret_source_check
-    }
-
-    /// `environment.capabilities.projectOrganization`. An older server drops pin and archive.
-    #[must_use]
-    pub fn supports_project_organization(&self) -> bool {
-        self.project_organization
-    }
-
     /// Applies one stream event.
     pub fn apply(&mut self, event: ServerConfigStreamEvent) -> ServerConfigChange {
         match event {
@@ -1942,30 +1909,10 @@ impl ServerConfigState {
         let was_loaded = std::mem::replace(&mut self.loaded, true);
         let scratch = config.scratch_workspace_root.clone();
         let refresh = config.environment.capabilities.model_catalog_refresh == Some(true);
-        let capabilities = &config.environment.capabilities;
-        let flags = [
-            config.secret_provider_settings == Some(true),
-            config.secret_references == Some(true),
-            capabilities.secret_source_check == Some(true),
-            capabilities.project_organization == Some(true),
-        ];
         let config_changed = !was_loaded
             || scratch != self.scratch_workspace_root
             || refresh != self.model_catalog_refresh
-            || config.managed_policy != self.managed_policy
-            || flags
-                != [
-                    self.secret_provider_settings,
-                    self.secret_references,
-                    self.secret_source_check,
-                    self.project_organization,
-                ];
-        [
-            self.secret_provider_settings,
-            self.secret_references,
-            self.secret_source_check,
-            self.project_organization,
-        ] = flags;
+            || config.managed_policy != self.managed_policy;
         self.scratch_workspace_root = scratch;
         self.model_catalog_refresh = refresh;
         self.managed_policy.clone_from(&config.managed_policy);
@@ -2201,33 +2148,6 @@ mod live_tests {
         let mut state = loaded();
         let change = state.apply(event(snapshot_json()));
         assert_eq!(change, ServerConfigChange::default());
-    }
-
-    #[test]
-    fn the_snapshot_says_which_secret_and_project_features_the_server_has() {
-        let flags = |state: &ServerConfigState| {
-            [
-                state.supports_secret_provider_settings(),
-                state.supports_secret_references(),
-                state.supports_secret_source_check(),
-                state.supports_project_organization(),
-            ]
-        };
-        // The recorded snapshot is from a server that has all four.
-        let mut bare = snapshot_json();
-        bare["config"]["secretProviderSettings"] = json!(false);
-        bare["config"]["secretReferences"] = json!(false);
-        bare["config"]["environment"]["capabilities"]["secretSourceCheck"] = json!(false);
-        bare["config"]["environment"]["capabilities"]["projectOrganization"] = json!(false);
-        let mut state = ServerConfigState::new();
-        state.apply(event(bare));
-        assert_eq!(flags(&state), [false; 4], "an older server has none");
-        let change = state.apply(event(snapshot_json()));
-        assert!(
-            change.config_changed,
-            "a feature flipping is a config change"
-        );
-        assert_eq!(flags(&state), [true; 4]);
     }
 
     #[test]
