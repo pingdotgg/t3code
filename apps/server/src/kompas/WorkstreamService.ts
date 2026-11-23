@@ -25,7 +25,11 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import { forkParked } from "../serverActivation.ts";
 import { KompasDatabase, kompasError, storageError } from "./KompasDatabase.ts";
 import { MemoryService, projectScope } from "./MemoryService.ts";
-import { type StoredWorkstream, type WorkstreamFields, WorkstreamStore } from "./WorkstreamStore.ts";
+import {
+  type StoredWorkstream,
+  type WorkstreamFields,
+  WorkstreamStore,
+} from "./WorkstreamStore.ts";
 
 export class WorkstreamService extends Context.Service<
   WorkstreamService,
@@ -33,7 +37,10 @@ export class WorkstreamService extends Context.Service<
     readonly list: Effect.Effect<ReadonlyArray<Workstream>, KompasError>;
     readonly create: (
       input: WorkstreamFields & { readonly coordinatorModel: ModelSelection },
-    ) => Effect.Effect<{ readonly id: string; readonly coordinatorThreadId: ThreadId }, KompasError>;
+    ) => Effect.Effect<
+      { readonly id: string; readonly coordinatorThreadId: ThreadId },
+      KompasError
+    >;
     readonly remove: (id: string) => Effect.Effect<void, KompasError>;
     readonly resolveSuggestion: (input: {
       readonly id: string;
@@ -99,16 +106,14 @@ const make = Effect.gen(function* () {
       .filter(
         (shell): shell is OrchestrationV2ThreadShell => shell !== null && shell.deletedAt === null,
       )
-      .map(
-        (shell): WorkstreamThread => ({
-          threadId: shell.id,
-          title: shell.title,
-          model: shell.modelSelection.model,
-          state: stateOf(shell, resolved.has(shell.id)),
-          lastLine: lastLine(shell.latestVisibleMessage?.text),
-          updatedAt: DateTime.formatIso(shell.updatedAt),
-        }),
-      )
+      .map((shell): WorkstreamThread => ({
+        threadId: shell.id,
+        title: shell.title,
+        model: shell.modelSelection.model,
+        state: stateOf(shell, resolved.has(shell.id)),
+        lastLine: lastLine(shell.latestVisibleMessage?.text),
+        updatedAt: DateTime.formatIso(shell.updatedAt),
+      }))
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   });
 
@@ -180,7 +185,8 @@ const make = Effect.gen(function* () {
     const thread = yield* threads
       .getThreadShell(workstream.coordinatorThreadId)
       .pipe(Effect.mapError(storageError));
-    if (thread === null) return yield* kompasError("not-found", "This project's conversation is gone.");
+    if (thread === null)
+      return yield* kompasError("not-found", "This project's conversation is gone.");
     const id = yield* database.newId;
     yield* threads
       .sendToThread({

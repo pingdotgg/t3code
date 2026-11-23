@@ -25,9 +25,6 @@ This memory belongs to the user and is shared by every model they use. It was re
 
 export const SESSION_SEARCH_PROMPT = `- When the user refers to the past ("remember when", "last week we"), call session_search before asking them to repeat it.`;
 
-export const PROMPT_PLUGIN_FALLBACK = `# Plugins
-Your harness does not load the user's plugins itself. plugin_tools lists their tools; plugin_call runs one.`;
-
 const libraryLine = (item: WorkstreamLibraryItem) => {
   switch (item.kind) {
     case "file":

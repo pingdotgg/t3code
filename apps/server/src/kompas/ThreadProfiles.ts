@@ -66,9 +66,7 @@ const make = Effect.gen(function* () {
 
   const isChatProject = (projectId: ProfiledThread["projectId"]) =>
     projects.get(projectId).pipe(
-      Effect.map(
-        Option.exists((project) => path.resolve(project.workspaceRoot) === scratchRoot),
-      ),
+      Effect.map(Option.exists((project) => path.resolve(project.workspaceRoot) === scratchRoot)),
       Effect.orElseSucceed(() => false),
     );
 
@@ -84,7 +82,9 @@ const make = Effect.gen(function* () {
       const parent = parentId === null ? undefined : yield* workstreams.byCoordinator(parentId);
       if (parent !== undefined) return { profile: "worker" as const, workstream: parent };
       return {
-        profile: (yield* isChatProject(thread.projectId)) ? ("chat" as const) : ("developer" as const),
+        profile: (yield* isChatProject(thread.projectId))
+          ? ("chat" as const)
+          : ("developer" as const),
         workstream: null,
       };
     },
@@ -145,13 +145,15 @@ const make = Effect.gen(function* () {
     membership,
     forSession,
     plugins: Effect.fn("ThreadProfiles.plugins")((threadId) =>
-      plugins.forThread(threadId).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("Could not read plugins; this session gets none.", { cause }).pipe(
-            Effect.as([]),
+      plugins
+        .forThread(threadId)
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Could not read plugins; this session gets none.", { cause }).pipe(
+              Effect.as([]),
+            ),
           ),
         ),
-      ),
     ),
     forget: Effect.fn("ThreadProfiles.forget")((threadId) =>
       Effect.sync(() => {

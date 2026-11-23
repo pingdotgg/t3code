@@ -124,9 +124,7 @@ it.effect("serves a conversation's plugins to agents holding its thread credenti
       id: 3,
       result: { isError: true, content: [{ type: "text", text: "Sign in first." }] },
     });
-    assert.deepEqual(calls, [
-      { plugin: "docs", input: { name: "search", arguments: { q: "x" } } },
-    ]);
+    assert.deepEqual(calls, [{ plugin: "docs", input: { name: "search", arguments: { q: "x" } } }]);
   }).pipe(Effect.scoped),
 );
 

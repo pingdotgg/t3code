@@ -28,11 +28,13 @@ const handlers = {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       const workstreams = yield* Effect.serviceOption(WorkstreamService.WorkstreamService);
       if (Option.isSome(workstreams) && scope.thread !== undefined) {
-        yield* workstreams.value.claimThreadStart(scope.thread.threadId).pipe(
-          Effect.mapError(
-            ({ message }) => new OrchestratorMcpFailure({ code: "capability_denied", message }),
-          ),
-        );
+        yield* workstreams.value
+          .claimThreadStart(scope.thread.threadId)
+          .pipe(
+            Effect.mapError(
+              ({ message }) => new OrchestratorMcpFailure({ code: "capability_denied", message }),
+            ),
+          );
       }
       return yield* service.delegateTask(scope, input);
     }),

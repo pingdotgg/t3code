@@ -191,7 +191,9 @@ describe("PluginProxy", () => {
       const proxy = yield* PluginProxy.PluginProxy;
 
       assert.deepEqual(
-        yield* proxy.describeTools(fakePlugin(`${fake.base}/mcp`, { Authorization: "Bearer k-123" })),
+        yield* proxy.describeTools(
+          fakePlugin(`${fake.base}/mcp`, { Authorization: "Bearer k-123" }),
+        ),
         [{ name: "echo" }],
       );
       // A changed header is a new connection, not the cached one.

@@ -8,7 +8,10 @@ import {
   UnauthorizedError,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import { SseError, SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
-import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
   StreamableHTTPClientTransport,
   StreamableHTTPError,
@@ -152,12 +155,11 @@ const make = Effect.gen(function* () {
 
   const loadOAuth = (id: string) =>
     secretStore.get(pluginOAuthSecretName(id)).pipe(
-      Effect.map(
-        (secret): StoredOAuth =>
-          Option.getOrElse(
-            Option.flatMap(secret, (bytes) => decodeStoredOAuth(textDecoder.decode(bytes))),
-            () => ({}),
-          ),
+      Effect.map((secret): StoredOAuth =>
+        Option.getOrElse(
+          Option.flatMap(secret, (bytes) => decodeStoredOAuth(textDecoder.decode(bytes))),
+          () => ({}),
+        ),
       ),
       Effect.orElseSucceed((): StoredOAuth => ({})),
     );
@@ -341,13 +343,11 @@ const make = Effect.gen(function* () {
   });
 
   const describeTools = Effect.fn("PluginProxy.describeTools")(function* (plugin: Plugin) {
-    return (yield* listAllTools(plugin)).filter(visibleToModel).map(
-      (tool): PluginTool => ({
-        name: tool.name,
-        ...(tool.title === undefined ? {} : { title: tool.title }),
-        ...(tool.description === undefined ? {} : { description: tool.description.slice(0, 300) }),
-      }),
-    );
+    return (yield* listAllTools(plugin)).filter(visibleToModel).map((tool): PluginTool => ({
+      name: tool.name,
+      ...(tool.title === undefined ? {} : { title: tool.title }),
+      ...(tool.description === undefined ? {} : { description: tool.description.slice(0, 300) }),
+    }));
   });
 
   const callTool = Effect.fn("PluginProxy.callTool")(function* (

@@ -736,7 +736,12 @@ export type ClaudeAgentSdkQueryTools = ClaudeAgentSdkQueryToolList | ClaudeAgent
 
 export const CLAUDE_READ_ONLY_ALLOWED_TOOLS = ["Read", "Glob", "Grep"] as const;
 
-const CLAUDE_COORDINATOR_TOOLS = ["AskUserQuestion", "ToolSearch", "WebFetch", "WebSearch"] as const;
+const CLAUDE_COORDINATOR_TOOLS = [
+  "AskUserQuestion",
+  "ToolSearch",
+  "WebFetch",
+  "WebSearch",
+] as const;
 /** Conversations keep notes and pages in their own folder, but run no commands. */
 const CLAUDE_PROFILE_TOOLS = {
   chat: [...CLAUDE_COORDINATOR_TOOLS, "Read", "Glob", "Grep", "Edit", "Write"],
@@ -3759,7 +3764,8 @@ export function claudeRuntimeQueryPolicyForRuntimePolicy(
         : CLAUDE_PROFILE_TOOLS[runtimePolicy.profile];
   const allowedTools =
     runtimePolicy.profile === undefined &&
-    readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
+    readOnlyTools !== undefined &&
+    readOnlyPolicyAllowsGlobalReads(runtimePolicy)
       ? readOnlyTools
       : undefined;
   // acceptEdits approves edits before the callback; the callback must ask for everything else.

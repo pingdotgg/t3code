@@ -43,8 +43,7 @@ const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("KompasRpc.snapshot"));
 
   return {
-    [KOMPAS_WS_METHODS.subscribe]: () =>
-      database.changes.pipe(Stream.mapEffect(() => snapshot)),
+    [KOMPAS_WS_METHODS.subscribe]: () => database.changes.pipe(Stream.mapEffect(() => snapshot)),
     [KOMPAS_WS_METHODS.updateSettings]: settings.update,
     [KOMPAS_WS_METHODS.savePlugin]: plugins.save,
     [KOMPAS_WS_METHODS.removePlugin]: ({ id }: { readonly id: string }) => plugins.remove(id),

@@ -51,10 +51,7 @@ export class WorkstreamStore extends Context.Service<
     readonly create: (
       input: WorkstreamFields & { readonly coordinatorThreadId: ThreadId },
     ) => Effect.Effect<StoredWorkstream, KompasError>;
-    readonly update: (
-      id: string,
-      fields: WorkstreamFields,
-    ) => Effect.Effect<void, KompasError>;
+    readonly update: (id: string, fields: WorkstreamFields) => Effect.Effect<void, KompasError>;
     readonly remove: (id: string) => Effect.Effect<void, KompasError>;
     readonly library: (
       workstreamId: string,
@@ -123,7 +120,10 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const database = yield* KompasDatabase;
   const changed = <A, E>(effect: Effect.Effect<A, E>) =>
-    effect.pipe(Effect.mapError(storageError), Effect.tap(() => database.notifyChanged));
+    effect.pipe(
+      Effect.mapError(storageError),
+      Effect.tap(() => database.notifyChanged),
+    );
 
   const toWorkstream = Effect.fnUntraced(function* (row: WorkstreamRow) {
     const fields = yield* decodeFields(row.workstream_json).pipe(Effect.mapError(storageError));
@@ -191,16 +191,14 @@ const make = Effect.gen(function* () {
       SELECT * FROM kompas_library_items WHERE workstream_id = ${workstreamId}
       ORDER BY created_at DESC
     `.pipe(Effect.mapError(storageError));
-    return rows.map(
-      (row): WorkstreamLibraryItem => ({
-        id: row.item_id,
-        kind: row.kind,
-        title: row.title,
-        content: row.content,
-        threadId: row.thread_id === null ? null : ThreadId.make(row.thread_id),
-        createdAt: row.created_at,
-      }),
-    );
+    return rows.map((row): WorkstreamLibraryItem => ({
+      id: row.item_id,
+      kind: row.kind,
+      title: row.title,
+      content: row.content,
+      threadId: row.thread_id === null ? null : ThreadId.make(row.thread_id),
+      createdAt: row.created_at,
+    }));
   });
 
   const addLibraryItem: WorkstreamStore["Service"]["addLibraryItem"] = Effect.fn(

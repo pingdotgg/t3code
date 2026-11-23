@@ -9,11 +9,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 
 import { parseBearerToken } from "../auth/EnvironmentAuth.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
-import {
-  PLUGIN_OAUTH_CALLBACK_PATH,
-  PluginProxy,
-  type PluginProxyError,
-} from "./PluginProxy.ts";
+import { PLUGIN_OAUTH_CALLBACK_PATH, PluginProxy, type PluginProxyError } from "./PluginProxy.ts";
 import { PluginService } from "./PluginService.ts";
 
 const ROUTE_PREFIX = "/mcp/shared/";

@@ -160,10 +160,7 @@ describe("LearningService", () => {
       });
       const { fileName, csv } = yield* learning.exportCsv(deck.id);
       assert.equal(fileName, "Cells mitosis.csv");
-      assert.equal(
-        csv,
-        'front,back,hint,tags\r\n"Say ""hi"", then","line one\nline two",,a b',
-      );
+      assert.equal(csv, 'front,back,hint,tags\r\n"Say ""hi"", then","line one\nline two",,a b');
     }).pipe(Effect.provide(layer())),
   );
 
@@ -238,7 +235,9 @@ describe("WorkstreamStore", () => {
       yield* store.addGrant(workstream.id, taken.title);
       assert.isTrue(yield* store.takeGrant(workstream.id));
       assert.isFalse(yield* store.takeGrant(workstream.id));
-      const answeredTwice = yield* store.takeAsk(suggestions[0]!.id, "suggestion").pipe(Effect.flip);
+      const answeredTwice = yield* store
+        .takeAsk(suggestions[0]!.id, "suggestion")
+        .pipe(Effect.flip);
       assert.equal(answeredTwice.reason, "not-found");
     }).pipe(Effect.provide(layer())),
   );

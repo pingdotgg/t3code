@@ -200,16 +200,14 @@ const make = Effect.gen(function* () {
       GROUP BY decks.deck_id
       ORDER BY decks.created_at DESC
     `.pipe(Effect.mapError(storageError));
-    return rows.map(
-      (row): Deck => ({
-        id: row.deck_id,
-        title: row.title,
-        threadId: row.thread_id === null ? null : ThreadId.make(row.thread_id),
-        cardCount: row.card_count,
-        dueCount: row.due_count,
-        createdAt: row.created_at,
-      }),
-    );
+    return rows.map((row): Deck => ({
+      id: row.deck_id,
+      title: row.title,
+      threadId: row.thread_id === null ? null : ThreadId.make(row.thread_id),
+      cardCount: row.card_count,
+      dueCount: row.due_count,
+      createdAt: row.created_at,
+    }));
   });
 
   const getDeck = Effect.fn("LearningService.getDeck")(function* (id: string) {
@@ -307,9 +305,7 @@ const make = Effect.gen(function* () {
   );
 
   const getRow = Effect.fn("LearningService.getRow")(function* (id: string) {
-    const rows = yield* selectCards(sql`cards.card_id = ${id}`).pipe(
-      Effect.mapError(storageError),
-    );
+    const rows = yield* selectCards(sql`cards.card_id = ${id}`).pipe(Effect.mapError(storageError));
     return rows[0] ?? (yield* kompasError("not-found", "This card no longer exists."));
   });
 
@@ -367,7 +363,11 @@ const make = Effect.gen(function* () {
   const stats = Effect.gen(function* () {
     const now = yield* database.now;
     // The server's local day: reviews belong to the user's day, not to UTC's.
-    const days = yield* sql<{ readonly day: string; readonly today: string; readonly count: number }>`
+    const days = yield* sql<{
+      readonly day: string;
+      readonly today: string;
+      readonly count: number;
+    }>`
       SELECT date(reviewed_at, 'localtime') AS day, date('now', 'localtime') AS today,
         COUNT(*) AS count
       FROM kompas_reviews GROUP BY day
@@ -409,7 +409,7 @@ const make = Effect.gen(function* () {
     const rows = (yield* cards({ deckId, dueOnly: false })).map((card) =>
       [card.front, card.back, card.hint ?? "", card.tags.join(" ")].map(csvField).join(","),
     );
-    const name = deck.title.replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ").trim() || "deck";
+    const name = deck.title.replace(/[\\/:*?"<>|\p{Cc}\s]+/gu, " ").trim() || "deck";
     return { fileName: `${name}.csv`, csv: ["front,back,hint,tags", ...rows].join("\r\n") };
   });
 

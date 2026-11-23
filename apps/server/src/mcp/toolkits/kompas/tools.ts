@@ -19,8 +19,7 @@ const caller = [
   ThreadManagementService.ThreadManagementService,
 ] as const;
 
-const text = (max: number) =>
-  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max));
+const text = (max: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(max));
 const list = <S extends Schema.Top>(item: S, max: number) =>
   Schema.Array(item).check(Schema.isMinLength(1), Schema.isMaxLength(max));
 
@@ -31,7 +30,9 @@ const Widget = Schema.Struct({
   tool: Schema.String,
   resourceUri: Schema.String,
   prefersBorder: Schema.optional(Schema.Boolean),
-  csp: Schema.optional(Schema.Struct({ resourceDomains: Schema.optional(Schema.Array(Schema.String)) })),
+  csp: Schema.optional(
+    Schema.Struct({ resourceDomains: Schema.optional(Schema.Array(Schema.String)) }),
+  ),
 });
 const Shown = Schema.Struct({ widget: Widget, message: Schema.String });
 
@@ -281,7 +282,8 @@ const DueCardsTool = readonlyTool(
 
 const StudyStatsTool = readonlyTool(
   Tool.make("study_stats", {
-    description: "The user's study streak, review counts and weakest cards, to advise what to repeat.",
+    description:
+      "The user's study streak, review counts and weakest cards, to advise what to repeat.",
     parameters: Schema.Struct({}),
     success: Schema.Struct({
       streakDays: Schema.Number,
@@ -451,7 +453,8 @@ const LibraryListTool = readonlyTool(
 
 const LibraryAddTool = readonlyTool(
   Tool.make("project_library_add", {
-    description: "Add to this project's library: a file's absolute path, a deck's id, or a note's text.",
+    description:
+      "Add to this project's library: a file's absolute path, a deck's id, or a note's text.",
     parameters: Schema.Struct({
       kind: LibraryItem.fields.kind,
       title: Title,

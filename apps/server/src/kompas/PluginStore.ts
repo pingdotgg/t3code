@@ -60,9 +60,7 @@ const withSecrets = (
   transport: PluginTransport,
   secrets: Readonly<Record<string, string>>,
 ): PluginTransport =>
-  transport.type === "http"
-    ? { ...transport, headers: secrets }
-    : { ...transport, env: secrets };
+  transport.type === "http" ? { ...transport, headers: secrets } : { ...transport, env: secrets };
 const redacted = (transport: PluginTransport) =>
   withSecrets(
     transport,
@@ -104,14 +102,12 @@ const make = Effect.gen(function* () {
     return yield* Effect.forEach(yield* selectRows, (row) =>
       decodePlugin(row.plugin_json).pipe(
         Effect.mapError(storageError),
-        Effect.map(
-          (plugin): PluginState => ({
-            ...plugin,
-            tools: Option.getOrElse(decodeTools(row.tools_json), () => []),
-            needsSignIn: row.needs_sign_in === 1,
-            error: row.error,
-          }),
-        ),
+        Effect.map((plugin): PluginState => ({
+          ...plugin,
+          tools: Option.getOrElse(decodeTools(row.tools_json), () => []),
+          needsSignIn: row.needs_sign_in === 1,
+          error: row.error,
+        })),
       ),
     );
   }).pipe(Effect.withSpan("PluginStore.list"));

@@ -73,9 +73,12 @@ const ALLOWED: Record<Exclude<ThreadProfile, "developer">, ReadonlySet<string>> 
   coordinator: new Set([...COORDINATOR_TOOLS, ...PROJECT_TOOLS]),
 };
 /** Everything only profiled threads use; a coding thread keeps exactly upstream's tools. */
-const KOMPAS_ONLY = new Set(
-  [...CONVERSATION_TOOLS.slice(0, 15), ...PROJECT_TOOLS, "suggest_threads", "ask_decision"],
-);
+const KOMPAS_ONLY = new Set([
+  ...CONVERSATION_TOOLS.slice(0, 15),
+  ...PROJECT_TOOLS,
+  "suggest_threads",
+  "ask_decision",
+]);
 
 /** Whether a thread's agent sees and may call a T3 tool. */
 export const profileAllowsTool = (

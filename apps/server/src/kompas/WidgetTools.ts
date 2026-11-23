@@ -49,9 +49,9 @@ const make = Effect.gen(function* () {
         return { cards: yield* learning.cards({ deckId: id, dueOnly: false }) };
       }
       case "flashcards_review": {
-        const review = yield* decode(
-          Schema.Struct({ id: Schema.String, rating: ReviewRating }),
-        )(args);
+        const review = yield* decode(Schema.Struct({ id: Schema.String, rating: ReviewRating }))(
+          args,
+        );
         return { card: yield* learning.review(review) };
       }
       case "flashcards_edit": {
@@ -89,9 +89,9 @@ const make = Effect.gen(function* () {
         return {};
       }
       case "memory_resolve": {
-        const answer = yield* decode(
-          Schema.Struct({ id: Schema.String, approve: Schema.Boolean }),
-        )(args);
+        const answer = yield* decode(Schema.Struct({ id: Schema.String, approve: Schema.Boolean }))(
+          args,
+        );
         yield* memory.resolve(answer);
         return {};
       }
@@ -100,16 +100,16 @@ const make = Effect.gen(function* () {
         return yield* workstreamStore.asks(id);
       }
       case "decision_answer": {
-        const answer = yield* decode(
-          Schema.Struct({ id: Schema.String, answer: Schema.String }),
-        )(args);
+        const answer = yield* decode(Schema.Struct({ id: Schema.String, answer: Schema.String }))(
+          args,
+        );
         yield* workstreams.answerDecision(answer);
         return {};
       }
       case "suggestion_resolve": {
-        const answer = yield* decode(
-          Schema.Struct({ id: Schema.String, approve: Schema.Boolean }),
-        )(args);
+        const answer = yield* decode(Schema.Struct({ id: Schema.String, approve: Schema.Boolean }))(
+          args,
+        );
         yield* workstreams.resolveSuggestion(answer);
         return {};
       }

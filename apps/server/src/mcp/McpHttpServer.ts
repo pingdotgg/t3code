@@ -1406,18 +1406,14 @@ const layerProfileVisibility = McpServer.visibility(
     const thread = Option.getOrUndefined(scope)?.thread;
     return (
       thread === undefined ||
-      profileAllowsTool(
-        thread.profile ?? "developer",
-        target,
-        thread.pluginsAttached !== false,
-      )
+      profileAllowsTool(thread.profile ?? "developer", target, thread.pluginsAttached !== false)
     );
   }),
   { global: true },
 );
 
 /** Outside layerTools: coding threads, whose context budget is measured, never list these. */
-export const layerKompasToolkit = Layer.merge(
+const layerKompasToolkit = Layer.merge(
   toolkitRegistration(KompasToolkit, KompasHandlers.layer),
   layerProfileVisibility,
 );

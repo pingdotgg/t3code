@@ -53,15 +53,11 @@ const make = Effect.gen(function* () {
     const plugin = yield* pluginStore.forThread(input.threadId).pipe(
       Effect.map((enabled) => enabled.find(({ name }) => name === app.server)),
       Effect.flatMap((found) =>
-        found === undefined
-          ? Effect.undefined
-          : plugins.forThread(input.threadId, found.id),
+        found === undefined ? Effect.undefined : plugins.forThread(input.threadId, found.id),
       ),
       Effect.mapError((cause) => fail(input.threadId, "request-failed", cause)),
     );
-    return plugin === undefined
-      ? { type: "agent" as const }
-      : { type: "plugin" as const, plugin };
+    return plugin === undefined ? { type: "agent" as const } : { type: "plugin" as const, plugin };
   });
 
   const pluginTool = Effect.fn("KompasApps.pluginTool")(function* (

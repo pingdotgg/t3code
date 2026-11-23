@@ -16,25 +16,23 @@ import { createAttachmentId } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import { kompasError, storageError } from "./KompasDatabase.ts";
 
-export const WIDGET_NAMES = [
-  "flashcards",
-  "quiz",
-  "chart",
-  "diagram",
-  "map",
-  "math",
-  "timeline",
-  "table",
-  "choices",
-  "memory",
-  "decision",
-  "suggestions",
-] as const;
-export type WidgetName = (typeof WIDGET_NAMES)[number];
+export type WidgetName =
+  | "flashcards"
+  | "quiz"
+  | "chart"
+  | "diagram"
+  | "map"
+  | "math"
+  | "timeline"
+  | "table"
+  | "choices"
+  | "memory"
+  | "decision"
+  | "suggestions";
 
 /** Keyless raster tiles for personal use; tile.openstreetmap.org's policy rules apps out. */
 const MAP_CSP: McpAppCsp = { resourceDomains: ["https://*.basemaps.cartocdn.com"] };
-const cspOf = (widget: WidgetName) => (widget === "map" ? MAP_CSP : undefined);
+const cspOf = (widget: string) => (widget === "map" ? MAP_CSP : undefined);
 
 const MARKER = /^<!doctype html><!--kompas-widget:([a-z]+)-->/;
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
@@ -43,9 +41,7 @@ const DATA_SLOT = "<!--widget-data-->";
 const escapeAttribute = (value: string) => value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 
 /** Where the built widget pages are: beside the web client when bundled, else the package. */
-const resolveWidgetFile = Effect.fn("WidgetDocument.resolveWidgetFile")(function* (
-  widget: string,
-) {
+const resolveWidgetFile = Effect.fn("WidgetDocument.resolveWidgetFile")(function* (widget: string) {
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
   const candidates = [
@@ -74,7 +70,7 @@ export const composeWidgetDocument = Effect.fn("WidgetDocument.compose")(functio
   const file = yield* resolveWidgetFile(widget);
   if (file === undefined) return NOT_BUILT;
   const page = yield* fileSystem.readFileString(file);
-  const csp = mcpAppContentSecurityPolicy(cspOf(widget as WidgetName));
+  const csp = mcpAppContentSecurityPolicy(cspOf(widget));
   return page
     .replace(
       /^<!doctype html>/i,

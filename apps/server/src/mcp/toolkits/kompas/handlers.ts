@@ -207,7 +207,11 @@ const handlers = {
       const { weakest, ...stats } = yield* learning.stats.pipe(Effect.mapError(toFailure));
       return {
         ...stats,
-        weakest: weakest.map(({ deckTitle, front, lapses }) => ({ deck: deckTitle, front, lapses })),
+        weakest: weakest.map(({ deckTitle, front, lapses }) => ({
+          deck: deckTitle,
+          front,
+          lapses,
+        })),
       };
     }),
   ),
@@ -372,9 +376,7 @@ const handlers = {
       Effect.gen(function* () {
         const workstream = yield* coordinated;
         const store = yield* WorkstreamStore;
-        yield* store
-          .addSuggestions(workstream.id, input.threads)
-          .pipe(Effect.mapError(toFailure));
+        yield* store.addSuggestions(workstream.id, input.threads).pipe(Effect.mapError(toFailure));
         return {
           widget: yield* publish("suggest_threads", "suggestions", {
             workstreamId: workstream.id,
