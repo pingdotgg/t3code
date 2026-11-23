@@ -159,6 +159,36 @@ describe("orchestration V2 wire projection", () => {
     expect(JSON.stringify(shell).length).toBeLessThan(2_000);
   });
 
+  it("sends a browser secret card in a form clients built before browser delivery can decode", () => {
+    const { toolName: _toolName, input: _input, ...shared } = base;
+    const card = {
+      ...shared,
+      id: TurnItemId.make("secret-1"),
+      type: "secret_request" as const,
+      title: "Secret request",
+      status: "cancelled" as const,
+      label: "Amazon password",
+      reason: "Sign in",
+      delivery: "browser" as const,
+      secretStatus: "cancelled" as const,
+    } satisfies OrchestrationV2TurnItem;
+    const projected = projectTurnItemForWire(card);
+    expect(projected).not.toHaveProperty("delivery");
+    expect(projected).toMatchObject({ fillsBrowserField: true });
+
+    // Before browser delivery, `delivery` accepted only "file" and unknown fields were ignored.
+    const olderClientCard = Schema.Struct({
+      type: Schema.Literal("secret_request"),
+      delivery: Schema.optional(Schema.Literal("file")),
+    });
+    const json = encodeTurnItemJson(decodeTurnItem(projected));
+    expect(() => Schema.decodeUnknownSync(olderClientCard)(json)).not.toThrow();
+    expect(() => Schema.decodeUnknownSync(olderClientCard)(encodeTurnItemJson(card))).toThrow();
+
+    const fileCard = { ...card, delivery: "file" as const };
+    expect(projectTurnItemForWire(fileCard)).toBe(fileCard);
+  });
+
   it("omits even small dynamic tool results while retaining input", () => {
     const item = { ...base, output: { ok: true } } satisfies OrchestrationV2TurnItem;
     expect(projectTurnItemForWire(item)).toEqual({ ...base, outputOmitted: true });

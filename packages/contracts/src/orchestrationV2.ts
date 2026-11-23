@@ -1855,6 +1855,11 @@ const OrchestrationV2SecretRequestFields = {
   placeholder: Schema.optional(Schema.String),
   delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
   fields: Schema.optional(Schema.Array(OrchestrationV2SecretRequestField)),
+  /**
+   * Wire form of `delivery: "browser"`. Clients built before `browser` reject the unknown literal
+   * and drop the whole thread, but ignore an unknown field, so the wire carries this instead.
+   */
+  fillsBrowserField: Schema.optional(Schema.Boolean),
   secretStatus: OrchestrationV2SecretRequestStatus,
 } as const;
 

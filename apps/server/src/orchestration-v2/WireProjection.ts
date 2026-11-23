@@ -187,6 +187,12 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         progress: truncateDetail(item.progress),
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
+    case "secret_request": {
+      if (item.delivery !== "browser") return item;
+      // Older clients know only `delivery: "file"`; see `fillsBrowserField`.
+      const { delivery: _delivery, ...projected } = item;
+      return { ...projected, fillsBrowserField: true };
+    }
     case "dynamic_tool": {
       const { output: rawOutput, ...projected } = item;
       const output = compactDynamicToolOutput(rawOutput);
