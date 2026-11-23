@@ -2509,7 +2509,11 @@ describe("UsageService", () => {
       );
       const summary = yield* service.readSummary(WINDOW);
       const sourcesFor = (provider: "opencode" | "antigravity") =>
-        summary.sources.filter((source) => source.fingerprint.provider === provider);
+        summary.sources.filter(
+          (source) =>
+            source.fingerprint.provider === provider &&
+            !source.fingerprint.resolvedHomePath.endsWith("antigravity-acp"),
+        );
       assert.strictEqual(sourcesFor("opencode").length, 1);
       assert.strictEqual(sourcesFor("antigravity").length, 1);
       assert.strictEqual(
