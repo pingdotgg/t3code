@@ -460,6 +460,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const pairedAt = (yield* DateTime.now).epochMilliseconds;
         // Listed for the whole renewal window, so an idle device can still be revoked.
         expect(yield* sessionExpiry(sessionId)).toBe(pairedAt + 30 * 24 * 60 * 60 * 1000);
+        // The startup pairing code `t3 serve` prints is a pairing link as well.
+        const startup = yield* serverAuth.issueStartupPairingCredential();
+        const startupPaired = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+          startup.credential,
+          undefined,
+          requestMetadata,
+          { proofKeyThumbprint: key.thumbprint },
+        );
+        const startupSession = yield* sessions.verify(startupPaired.access_token);
+        expect(yield* sessionExpiry(startupSession.sessionId)).toBe(
+          pairedAt + 30 * 24 * 60 * 60 * 1000,
+        );
 
         yield* TestClock.adjust("20 days");
         const replay = new EnvironmentAuth.ServerAuthInvalidCredentialError({
