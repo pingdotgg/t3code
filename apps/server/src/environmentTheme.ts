@@ -218,14 +218,11 @@ export function findThemeBackground(
 
 export const readPublishedThemes = Effect.fn(function* (
   themesDir: string,
-  onDirectoryMissing = Effect.void,
+  onDirectoryMissing: Effect.Effect<void> = Effect.void,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs.readDirectory(themesDir).pipe(
-    Effect.tapError((error) =>
-      error.reason._tag === "NotFound" ? onDirectoryMissing : Effect.void,
-    ),
-    Effect.orElseSucceed((): Array<string> => []),
+  const entries = yield* Effect.catch(fs.readDirectory(themesDir), (error) =>
+    Effect.as(error.reason._tag === "NotFound" ? onDirectoryMissing : Effect.void, []),
   );
 
   const themes: Array<EnvironmentTheme> = [];
