@@ -157,7 +157,7 @@ it.effect("routes peer reads to readers and sees uncommitted link updates", () =
         expect((yield* links.list)[0]?.label).toBe("Uncommitted box");
       }),
     );
-    expect(yield* links.unlink(box.environmentId)).toBe(true);
+    expect(yield* links.unlink(box.environmentId)).toEqual({ removed: true, endedThere: false });
     expect(yield* links.list).toEqual([]);
   }),
 );
@@ -206,6 +206,20 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       // A refusal keeps the peer's reason.
       const notFound = yield* probe(a, undefined, "refuse").pipe(Effect.flip);
       expect(notFound).toMatchObject({ code: "thread_not_found", message: "No such thread." });
+
+      // Unlinking ends the session on B too, instead of leaving a live credential behind.
+      expect(yield* a.links.unlink(box.environmentId)).toEqual({ removed: true, endedThere: true });
+      expect(yield* linkedSessions(b)).toEqual([]);
+
+      // An address that now answers as another environment never receives the token.
+      const other = yield* serveApart(descriptorOf("environment-other", "Other"));
+      const relink = yield* b.auth.issuePairingCredential({ access: "auto", purpose: "peer-link" });
+      yield* a.links.link({ url: b.url, pairingCode: relink.credential, access: "auto" });
+      yield* a.sql`UPDATE peer_environment_links SET urls_json = ${JSON.stringify([other.url])}`;
+      expect(yield* a.links.unlink(box.environmentId)).toEqual({
+        removed: true,
+        endedThere: false,
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -575,6 +589,7 @@ it.effect("reads one stored link without asking the peer", () =>
       const stored = yield* a.links.get(box.environmentId);
       expect(Option.map(stored, (link) => link.label)).toEqual(Option.some("Box"));
       expect(Option.isNone(yield* a.links.get(laptop.environmentId))).toBe(true);
+      expect(yield* a.links.names).toEqual([{ environmentId: box.environmentId, label: "Box" }]);
       expect(yield* Ref.get(b.probes)).toBe(0);
 
       // An older answer that lands after a newer one never moves the expiry back.
@@ -691,6 +706,7 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
 
       yield* TestClock.adjust(Duration.days(31));
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["expired"]);
+      expect(yield* a.links.names).toEqual([]);
       yield* Ref.set(b.bearers, []);
       const expired = yield* probe(a).pipe(Effect.flip);
       expect(expired.code).toBe("capability_denied");

@@ -36,12 +36,10 @@ for (const file of positionals) {
     const row = JSON.parse(line);
     const testCase = cases.get(row.id);
     if (testCase === undefined || row.error !== undefined) continue;
-    const failed = gradeSample(
-      testCase.expect,
-      row,
-      pastedText(testCase),
-      worldFilePaths(testCase),
-    ).filter((check) => !check.pass);
+    const expect = row.arm === "raw" ? (testCase.expectRaw ?? testCase.expect) : testCase.expect;
+    const failed = gradeSample(expect, row, pastedText(testCase), worldFilePaths(testCase)).filter(
+      (check) => !check.pass,
+    );
     const cut = failed.length === 0 && row.stopReason === "failed_early";
     const pass = failed.length === 0 && !cut;
     const count = counts.get(row.id) ?? { n: 0, was: 0, now: 0, cut: 0 };

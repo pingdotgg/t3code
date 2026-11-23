@@ -9,6 +9,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render, type Screen } from "../../../test/render";
+import { __setClientSettingsForTests, getClientSettings } from "../../hooks/useSettings";
 
 import "~/index.css";
 
@@ -475,6 +476,11 @@ it("keeps historical workflow phases, metrics, and scripts visible without a coo
 
 it("opens the correct chat for every workflow phase and unphased member", async () => {
   setup();
+  const clientSettings = getClientSettings();
+  using _restoreSettings = {
+    [Symbol.dispose]: () => __setClientSettingsForTests(clientSettings),
+  };
+  __setClientSettingsForTests({ ...clientSettings, sideThreadOpenTarget: "main" });
   state.showTooltips = true;
   state.configs.set("remote", {
     providers: [

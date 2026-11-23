@@ -8,10 +8,11 @@ import type { TelemetryOwner } from "./Identify.ts";
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
+    /** Whether the event was queued to send; false when telemetry is off. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<boolean>;
 
     readonly flush: Effect.Effect<void>;
 
@@ -25,7 +26,7 @@ export class AnalyticsService extends Context.Service<
 export const layer = Layer.succeed(
   AnalyticsService,
   AnalyticsService.of({
-    record: Effect.fn("AnalyticsService.record")(() => Effect.void),
+    record: Effect.fn("AnalyticsService.record")(() => Effect.succeed(false)),
     flush: Effect.void,
     recordOwners: Effect.fn("AnalyticsService.recordOwners")(() => Effect.void),
   }),

@@ -32,6 +32,8 @@ import * as ServerHttp from "../http.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as PeerHttp from "./http.ts";
+import * as PeerClientPairing from "./PeerClientPairing.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as PeerMcpClient from "./PeerMcpClient.ts";
@@ -39,7 +41,8 @@ import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 class PeerTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.metadata)
-  .add(EnvironmentHttpApi.groups.mcpOAuth) {}
+  .add(EnvironmentHttpApi.groups.mcpOAuth)
+  .add(EnvironmentHttpApi.groups.peerLink) {}
 
 export const descriptorOf = (
   environmentId: string,
@@ -58,15 +61,30 @@ export const descriptorOf = (
   },
 });
 
+/** An environment's own sessions and pairing links, on a database and secret store of its own. */
+export const layerEnvironmentAuth = (prefix: string) =>
+  EnvironmentAuth.layer.pipe(
+    Layer.provide(ManagedPolicy.layerTest()),
+    Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
+    Layer.provide(Sqlite.layerMemory),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provideMerge(ServerEnvironment.layerIdentity),
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix })),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Layer.fresh,
+  );
+
 /**
  * The environment a link points at, as it runs: its descriptor, MCP OAuth,
  * and `/mcp` with `tools` behind the real client authenticator, on a real
  * socket. The descriptor can be swapped, as when its address comes to answer
  * as another environment, and every bearer it receives is recorded.
  */
-export const servePeer = <E, R>(
+export const servePeer = <E, R, E2 = never, R2 = never>(
   initial: ExecutionEnvironmentDescriptor,
   tools: Layer.Layer<never, E, R>,
+  /** More of its HTTP routes, whose handlers get the same auth and settings. */
+  routes: Layer.Layer<never, E2, R2> = Layer.empty,
 ) =>
   Effect.gen(function* () {
     const descriptor = yield* Ref.make(initial);
@@ -79,17 +97,7 @@ export const servePeer = <E, R>(
       getEnvironmentId: Ref.get(descriptor).pipe(Effect.map((current) => current.environmentId)),
       getDescriptor: Ref.get(descriptor),
     });
-    const authContext = yield* EnvironmentAuth.layer.pipe(
-      Layer.provide(ManagedPolicy.layerTest()),
-      Layer.provideMerge(ServerSettings.layerTest({ linkedEnvironmentsEnabled: true })),
-      Layer.provide(Sqlite.layerMemory),
-      Layer.provideMerge(ServerSecretStore.layer),
-      Layer.provideMerge(ServerEnvironment.layerIdentity),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-peer-link-peer-" })),
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Layer.fresh,
-      Layer.build,
-    );
+    const authContext = yield* Layer.build(layerEnvironmentAuth("t3-peer-link-peer-"));
     const layerRecordBearers = HttpRouter.middleware(
       (httpEffect) =>
         Effect.gen(function* () {
@@ -129,6 +137,7 @@ export const servePeer = <E, R>(
             ),
           ),
         ),
+        Layer.provide(PeerHttp.layer.pipe(Layer.provide(PeerClientPairing.layerIssuer))),
         Layer.provide(ServerHttp.layerServerEnvironmentHttpApi),
         Layer.provide(AuthHttp.layerAuthenticatedAuth),
       ),
@@ -140,6 +149,7 @@ export const servePeer = <E, R>(
         ),
         Layer.provide(McpOAuth.layerMcpClientAuthenticator),
       ),
+      routes,
     ).pipe(
       Layer.provide(layerRecordBearers),
       Layer.provide(layerEnvironment),
@@ -148,6 +158,7 @@ export const servePeer = <E, R>(
     // Fresh, so the peer never shares a toolkit or MCP server with the
     // environment that links to it in the same test.
     yield* HttpRouter.serve(layerRoutes, { disableListenLog: true, disableLogger: true }).pipe(
+      Layer.provide(Layer.succeedContext(authContext)),
       Layer.fresh,
       Layer.build,
     );

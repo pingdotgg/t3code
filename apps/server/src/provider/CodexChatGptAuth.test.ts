@@ -234,6 +234,7 @@ const makeHarnessFor = Effect.fnUntraced(function* (
         ? Effect.die("analytics unavailable")
         : Effect.sync(() => {
             analyticsEvents.push({ event, properties });
+            return true;
           }),
     flush: Effect.void,
     recordOwners: () => Effect.void,

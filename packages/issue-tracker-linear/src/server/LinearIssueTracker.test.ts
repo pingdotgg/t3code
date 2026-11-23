@@ -135,6 +135,39 @@ function fakeLinear(
 const target = { cwd: "/w/web", host: "linear.app", scope: "ENG" };
 
 describe("LinearIssueTracker", () => {
+  it.effect("matches an issue number only in the team it names", () =>
+    Effect.gen(function* () {
+      const numbers: Array<number | undefined> = [];
+      const { tracker } = fakeLinear({
+        T3Issues: (variables) => {
+          const filter = variables.filter as {
+            or: ReadonlyArray<{ number?: { eq: number } }>;
+          };
+          numbers.push(filter.or.find((clause) => clause.number)?.number?.eq);
+          return { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } };
+        },
+      });
+      const api = yield* tracker;
+      for (const [scope, query] of [
+        [" eng ", "eng-42"],
+        ["OTHER", "ENG-42"],
+        ["OTHER", "42"],
+        ["OTHER", "#42"],
+      ] as const) {
+        yield* api.listIssues({
+          ...target,
+          scope,
+          query,
+          state: "all",
+          involvement: "all",
+          sort: "updated",
+          limit: 50,
+        });
+      }
+      expect(numbers).toEqual([42, undefined, 42, 42]);
+    }),
+  );
+
   it.effect("cancels the in-flight viewer read when the issue is missing", () =>
     Effect.gen(function* () {
       const viewerStarted = yield* Deferred.make<void>();

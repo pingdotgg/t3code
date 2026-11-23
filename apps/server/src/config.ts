@@ -49,6 +49,8 @@ export interface ServerDerivedPaths {
    */
   readonly providerHomesDir: string;
   readonly worktreesDir: string;
+  /** Where workflow definition files live. In the home itself: they are the user's own code. */
+  readonly workflowsDir: string;
   readonly worktreeCheckoutCacheDir: string;
   readonly attachmentsDir: string;
   readonly browserArtifactsDir: string;
@@ -168,6 +170,7 @@ export const deriveServerPaths = Effect.fn(function* (
     providerStatusCacheDir,
     providerHomesDir: join(stateDir, "provider-homes"),
     worktreesDir: join(baseDir, "worktrees"),
+    workflowsDir: join(baseDir, "workflows"),
     worktreeCheckoutCacheDir: join(providerStatusCacheDir, "worktree-checkouts"),
     attachmentsDir,
     browserArtifactsDir: join(stateDir, "browser-artifacts"),

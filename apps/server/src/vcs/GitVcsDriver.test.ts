@@ -1615,6 +1615,66 @@ it.effect("a branch switch landing after the snapshot belongs to the next checkp
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each([{ snapshot: "before the switch" }, { snapshot: "after the switch" }])(
+  "a turn that switched branches from a clean folder starts on the branch it landed on (snapshot $snapshot)",
+  ({ snapshot }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-clean-switch-",
+      });
+      const git = (args: ReadonlyArray<string>, at = 1_700_000_000) =>
+        driver.execute({
+          operation: "checkpoint-test",
+          cwd,
+          args,
+          env: { ...process.env, GIT_COMMITTER_DATE: `@${at} +0000` },
+        });
+      yield* git(["init"]);
+      yield* git(["config", "user.name", "Test"]);
+      yield* git(["config", "user.email", "test@test.com"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "f.txt"), "base\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "base"]);
+      yield* git(["branch", "b"]);
+      yield* git(["checkout", "-b", "a"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "a.txt"), "a\n");
+      yield* git(["add", "."]);
+      yield* git(["commit", "-m", "a"]);
+      const head = (yield* git(["rev-parse", "HEAD"])).stdout.trim();
+      const [first, second] = ["1", "2"].map((turn) =>
+        CheckpointRef.make(`refs/t3/checkpoints/clean-switch/${turn}`),
+      ) as [CheckpointRef, CheckpointRef];
+      const refs = { cwd, fromCheckpointRef: first, toCheckpointRef: second };
+
+      if (snapshot === "before the switch") {
+        yield* driver.checkpoints.captureHeadCheckpoint({ cwd, checkpointRef: first, head });
+      }
+      yield* git(["checkout", "b"], 1_700_002_000);
+      if (snapshot === "after the switch") {
+        yield* driver.checkpoints.captureHeadCheckpoint({
+          cwd,
+          checkpointRef: first,
+          head,
+          seenAt: 1_700_001_000,
+        });
+      }
+      yield* fileSystem.writeFileString(path.join(cwd, "b.txt"), "b\n");
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd,
+        checkpointRef: second,
+        previousCheckpointRef: first,
+      });
+
+      const patch = yield* driver.checkpoints.diffCheckpoints({ ...refs, ignoreWhitespace: false });
+      assert.notInclude(patch, "a.txt");
+      assert.include(patch, "b/b.txt");
+      assert.isNull(yield* driver.checkpoints.listAuthoredPaths(refs));
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect("checkpoint capture preserves racy edits made after resetting the index", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

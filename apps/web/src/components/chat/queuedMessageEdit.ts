@@ -1,5 +1,15 @@
 import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
-import type { ChatAttachment } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ChatFileAttachment,
+  ChatImageAttachment,
+  ComposerContextId,
+  ComposerContextRecord,
+  EnvironmentId,
+  OrchestrationMessageContext,
+  ResponseContextRecord,
+} from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import {
   composerDraftHasUserContent,
   useComposerDraftStore,
@@ -10,6 +20,68 @@ import {
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
+import {
+  attachmentContextRecord,
+  isSameComposerContextPayload,
+} from "../../lib/composerContextRecords";
+import { removeInlineContextReference } from "../../lib/composerContextReferences";
+
+export function isQueuedImageAttachment(
+  attachment: ChatAttachment,
+): attachment is ChatImageAttachment {
+  return attachment.type === "image";
+}
+
+export function isQueuedFileAttachment(
+  attachment: ChatAttachment,
+): attachment is ChatFileAttachment {
+  return attachment.type === "file";
+}
+
+export function attachmentContextIdsForRecord(
+  context: OrchestrationMessageContext | undefined,
+  attachment: Pick<ChatAttachment, "id" | "type">,
+): ComposerContextId[] {
+  return (context?.records ?? []).flatMap((record) =>
+    record.kind === attachment.type &&
+    "attachmentId" in record &&
+    record.attachmentId === attachment.id
+      ? [record.contextId]
+      : [],
+  );
+}
+
+export function matchRestorableQueuedAttachment(input: {
+  readonly environmentId: EnvironmentId;
+  readonly sourceEnvironmentId: EnvironmentId | null;
+  readonly record: Extract<ComposerContextRecord, { kind: "image" | "file" }>;
+  readonly removedQueuedAttachments: ReadonlyArray<{
+    readonly attachment: ChatAttachment;
+    readonly contextIds: ReadonlyArray<ComposerContextId>;
+  }>;
+}): { readonly attachment: ChatAttachment; readonly contextId: ComposerContextId } | null {
+  if (input.sourceEnvironmentId !== input.environmentId) return null;
+  const match = input.removedQueuedAttachments.find(
+    ({ attachment, contextIds }) =>
+      (isQueuedImageAttachment(attachment) || isQueuedFileAttachment(attachment)) &&
+      attachment.type === input.record.kind &&
+      contextIds.some((contextId) =>
+        isSameComposerContextPayload(
+          attachmentContextRecord({
+            attachment,
+            attachmentId: attachment.id,
+            contextId,
+          }),
+          input.record,
+        ),
+      ),
+  );
+  if (!match || match.contextIds.length === 0) return null;
+  const contextId =
+    match.contextIds.find((candidate) => candidate === input.record.contextId) ??
+    match.contextIds[0]!;
+  return { attachment: match.attachment, contextId };
+}
 
 /** Staged attachments upload as soon as they are added, so a dropped edit must release them. */
 export function discardQueuedEditDraft(target: ComposerThreadTarget): void {
@@ -28,21 +100,38 @@ export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
+  readonly originalReplyTo: ResponseContextRecord | null;
   readonly removedExistingAttachment?: boolean;
+  readonly existingAttachmentContextIds?: ReadonlyArray<string>;
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
   const draft = store.getComposerDraft(input.editTarget);
+  const strippedPrompt =
+    draft && (input.existingAttachmentContextIds?.length ?? 0) > 0
+      ? input.existingAttachmentContextIds!.reduce(
+          (prompt, contextId) => removeInlineContextReference(prompt, contextId).prompt,
+          draft.prompt,
+        )
+      : draft?.prompt;
+  const recoveredDraft =
+    draft && strippedPrompt !== undefined && strippedPrompt !== draft.prompt
+      ? { ...draft, prompt: strippedPrompt }
+      : draft;
   const recovery = resolveQueuedEditExit({
     editChanged:
       input.removedExistingAttachment === true ||
+      !Equal.equals(draft?.replyTo ?? null, input.originalReplyTo) ||
       (draft !== null &&
         (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
     // A cleared edit has nothing to put back, so it can only be discarded.
     threadDraftEmpty:
-      composerDraftHasUserContent(draft) &&
+      composerDraftHasUserContent(recoveredDraft) &&
       !composerDraftHasUserContent(store.getComposerDraft(input.threadTarget)),
   });
   if (recovery === "kept") {
+    if (draft && strippedPrompt !== undefined && strippedPrompt !== draft.prompt) {
+      store.setPrompt(input.editTarget, strippedPrompt);
+    }
     store.moveComposerContent(input.editTarget, input.threadTarget);
     store.clearComposerContent(input.editTarget);
   } else {

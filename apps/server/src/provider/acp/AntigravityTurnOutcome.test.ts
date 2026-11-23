@@ -40,6 +40,16 @@ const MISSING_SIGNATURE_ERROR = errorPayload(
 const INVALID_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.3.content.0: Invalid `signature` in `thinking` block"}}, Status: INVALID_ARGUMENT, Details: []',
 );
+const NOT_FOUND_ERROR = errorPayload(
+  "Error 404, Message: Requested entity was not found., Status: NOT_FOUND, Details: []",
+);
+// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message", then the HTTP body.
+const STATUS_NOT_FOUND_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x37]),
+  Buffer.from(
+    'NOT_FOUND (code 404): Requested entity was not found.\u001a\u0080\u0001HTTP 404 Not Found\n\n{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND"}}',
+  ),
+]);
 // The model's reply quoting the agent's quota notice is an ordinary planner response.
 const QUOTED_NOTICE = Buffer.from(
   "Usage Limit Reached\n\nYou have reached your current quota for this period. Your limit will reset in 1 hour.",
@@ -138,6 +148,34 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "INVALID_ARGUMENT",
           retryable: false,
         }),
+      );
+      // A 404 after the turn already reached the model is a transient edge error, not a bad model.
+      for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {
+        assert.deepEqual(
+          yield* turn([
+            [USER_INPUT, input],
+            [PLANNER_RESPONSE, reply],
+            [TOOL, reply],
+            [ERROR_MESSAGE, error],
+          ]),
+          {
+            ...reusable({
+              class: "provider_error",
+              message: "Requested entity was not found.",
+              code: "NOT_FOUND",
+              retryable: true,
+            }),
+            resumeWith: "continue",
+          },
+        );
+      }
+      // A 404 before the model answered is an unknown or unentitled model.
+      assert.equal(
+        (yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, STATUS_NOT_FOUND_ERROR],
+        ]))?.failure.retryable,
+        false,
       );
       // A saved thinking block without a valid signature fails every later prompt.
       for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
