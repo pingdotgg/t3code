@@ -61,6 +61,31 @@ describe("HtmlRenderDocument", () => {
     await expect.element(viewer.getByRole("button", { name: "Next media" })).toBeVisible();
     await expect.element(viewer.getByRole("button", { name: "Previous media" })).toBeVisible();
   });
+
+  it("marks the frame while an element of the page is fullscreen, not the page itself", async () => {
+    const html = injectHtmlRenderBootstrap(
+      `<!doctype html><html><body><div id="viewer"><button onclick="document.getElementById('viewer').requestFullscreen()">Viewer</button><button onclick="document.documentElement.requestFullscreen()">Page</button></div></body></html>`,
+    );
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    await using screen = await render(<HtmlRenderDocument src={src} title="Fullscreen" />);
+    await using _fullscreen = {
+      [Symbol.asyncDispose]: async () => {
+        if (document.fullscreenElement !== null) await document.exitFullscreen();
+      },
+    };
+    const frame = screen.getByTitle("Fullscreen");
+    const pageButtons = page.frameLocator(frame);
+
+    await pageButtons.getByText("Viewer").click();
+    await expect.element(frame).toHaveAttribute("data-element-fullscreen");
+    expect(document.fullscreenElement).toBe(frame.element());
+
+    // The page replaces the viewer as the frame's fullscreen element; the host document sees no change.
+    await pageButtons.getByText("Page").click();
+    await expect.element(frame).not.toHaveAttribute("data-element-fullscreen");
+    expect(document.fullscreenElement).toBe(frame.element());
+  });
 });
 
 it("keeps the chat in place when a label far from its hidden radio is clicked", async () => {

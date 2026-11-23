@@ -58,12 +58,26 @@ if (clientPlatform === "darwin") {
   window.addEventListener("resize", syncWindowControlInset);
 }
 
+// Mirrors HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE; a sandboxed preload cannot import the shared package.
+const ELEMENT_FULLSCREEN_ATTRIBUTE = "data-element-fullscreen";
+let framedFullscreenObserver: MutationObserver | undefined;
 const syncHtmlFullscreen = () => {
   const element = document.fullscreenElement;
-  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window.
+  const framed = element?.tagName === "IFRAME";
+  framedFullscreenObserver?.disconnect();
+  if (element && framed) {
+    // The page's own fullscreenchange arrives after this one, and it can swap elements without one here.
+    framedFullscreenObserver ??= new MutationObserver(syncHtmlFullscreen);
+    framedFullscreenObserver.observe(element, { attributeFilter: [ELEMENT_FULLSCREEN_ATTRIBUTE] });
+  }
+  // A preview guest's fullscreen surfaces here as its <webview>, and a framed page's as its <iframe>.
+  // Both stay inside the window, except a frame whose page reports an element of its own, such as
+  // a video, as the fullscreen one.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
-    element !== null && element.tagName !== "WEBVIEW",
+    element !== null &&
+      element.tagName !== "WEBVIEW" &&
+      (!framed || element.hasAttribute(ELEMENT_FULLSCREEN_ATTRIBUTE)),
   );
 };
 // A reload or renderer crash never reports the old document's exit, so each document reports its start.

@@ -14,10 +14,12 @@ import {
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
+  HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
   readHtmlRenderContentHeight,
+  readHtmlRenderElementFullscreen,
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
@@ -410,6 +412,11 @@ export function HtmlRenderDocument(props: {
     const height = readHtmlRenderContentHeight(event.data);
     if (height !== undefined) {
       props.onContentHeight?.(height);
+      return;
+    }
+    const elementFullscreen = readHtmlRenderElementFullscreen(event.data);
+    if (elementFullscreen !== undefined) {
+      frame.toggleAttribute(HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE, elementFullscreen);
       return;
     }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
