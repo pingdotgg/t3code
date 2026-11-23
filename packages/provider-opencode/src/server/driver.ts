@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -455,73 +456,72 @@ export const OpenCodeDriver: ProviderDriver<
         }).pipe(Effect.scoped),
       );
     const driverScope = yield* Effect.scope;
-    const openCode2Loads = new Map<
-      string,
-      { readonly cold: Deferred.Deferred<boolean>; readonly loaded: Deferred.Deferred<void> }
-    >();
+    const openCode2LoadChecks = yield* Semaphore.make(1);
+    const openCode2Loads = new Map<string, Deferred.Deferred<void>>();
     /**
-     * Some while `directory` still awaits the `model.updated` that ends its first load. OpenCode
-     * lists a location as loaded from its first read on, so the wait outlives the call that found
-     * it cold, and callers ask before any read of their own. OpenCode can name a folder's location
-     * after the project root containing it, so both checks accept a containing location.
+     * Some while the location of `directory` still awaits the `model.updated` ending its first
+     * load. OpenCode lists a location as loaded from its first read on, so the wait outlives the
+     * call that found it cold. OpenCode names the location and asking for the name is a first
+     * read, so the list is read first and checks run one at a time.
      */
-    const openCode2ColdLoad = (directory: string) =>
-      Effect.suspend(() => {
-        const holds = (location: string) =>
-          pathService.relative(location, directory).split(pathService.sep)[0] !== ".." &&
-          !pathService.isAbsolute(pathService.relative(location, directory));
-        const known = openCode2Loads.get(directory);
-        if (known) return Effect.succeed(known);
-        const load = { cold: Deferred.makeUnsafe<boolean>(), loaded: Deferred.makeUnsafe<void>() };
-        openCode2Loads.set(directory, load);
-        return openCode2Server
-          .withConnection(({ client, events }) =>
-            Effect.gen(function* () {
-              // Without events or the location list no load can be awaited: settle as before.
-              const updated = yield* Effect.gen(function* () {
-                const stream = yield* events;
-                const first = yield* stream.pipe(
-                  Stream.filter(
-                    (event) =>
-                      event.type === "model.updated" &&
-                      "location" in event &&
-                      event.location !== undefined &&
-                      holds(event.location.directory),
-                  ),
-                  Stream.runHead,
-                  Effect.forkScoped,
-                );
-                const listed = yield* client.debug.location.list();
-                return listed.some((entry) => holds(entry.directory)) ? undefined : first;
-              }).pipe(Effect.timeout("2 seconds"));
-              if (updated === undefined) return;
-              yield* Deferred.succeed(load.cold, true);
-              const event = yield* Fiber.join(updated).pipe(
-                Effect.timeoutOption(OPENCODE_2_COLD_LOAD_DEADLINE),
+    const openCode2ColdLoad = Effect.fn("OpencodeDriver.openCode2ColdLoad")(function* (
+      directory: string,
+    ) {
+      const answer = yield* Deferred.make<Option.Option<Deferred.Deferred<void>>>();
+      const loaded = yield* Deferred.make<void>();
+      const updated = new Set<string>();
+      let location: string | undefined;
+      yield* openCode2Server
+        .withConnection(({ client, events }) =>
+          Effect.gen(function* () {
+            // Without events, the location list or the name no load can be awaited: settle as before.
+            const watch = yield* Effect.gen(function* () {
+              const stream = yield* events;
+              const watch = yield* stream.pipe(
+                Stream.runForEach((event) => {
+                  if (event.type !== "model.updated" || !("location" in event)) return Effect.void;
+                  const name = event.location?.directory;
+                  if (name !== undefined) updated.add(name);
+                  return name === location ? Deferred.succeed(loaded, undefined) : Effect.void;
+                }),
+                Effect.forkScoped,
               );
-              if (Option.isSome(Option.flatten(event))) {
-                yield* Deferred.succeed(load.loaded, undefined);
+              const listed = yield* client.debug.location.list();
+              const { directory: name } = yield* client.location.get({ location: { directory } });
+              const known = openCode2Loads.get(name);
+              if (known) {
+                yield* Deferred.succeed(answer, Option.some(known));
+                return undefined;
               }
-            }).pipe(Effect.scoped),
-          )
-          .pipe(
-            Effect.ignore,
-            Effect.ensuring(
-              Effect.suspend(() => {
-                openCode2Loads.delete(directory);
-                return Deferred.succeed(load.cold, false);
-              }),
-            ),
-            Effect.forkIn(driverScope),
-            Effect.as(load),
-          );
-      }).pipe(
-        Effect.flatMap(({ cold, loaded }) =>
-          Effect.map(Deferred.await(cold), (isCold) =>
-            isCold ? Option.some(loaded) : Option.none(),
+              if (updated.has(name) || listed.some((entry) => entry.directory === name)) {
+                return undefined;
+              }
+              location = name;
+              openCode2Loads.set(name, loaded);
+              yield* Deferred.succeed(answer, Option.some(loaded));
+              return watch;
+            }).pipe(Effect.timeout("2 seconds"), openCode2LoadChecks.withPermits(1));
+            if (watch === undefined) return;
+            yield* Deferred.await(loaded).pipe(
+              Effect.raceFirst(Fiber.await(watch)),
+              Effect.timeoutOption(OPENCODE_2_COLD_LOAD_DEADLINE),
+            );
+          }).pipe(Effect.scoped),
+        )
+        .pipe(
+          Effect.ignore,
+          Effect.ensuring(
+            Effect.suspend(() => {
+              if (location !== undefined && openCode2Loads.get(location) === loaded) {
+                openCode2Loads.delete(location);
+              }
+              return Deferred.succeed(answer, Option.none());
+            }),
           ),
-        ),
-      );
+          Effect.forkIn(driverScope),
+        );
+      return yield* Deferred.await(answer);
+    });
     const readOpenCode2DirectoryCatalog = (
       cwd: string,
       cold: Option.Option<Deferred.Deferred<void>>,

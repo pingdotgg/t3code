@@ -648,7 +648,13 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
                 ),
               );
             case "/api/debug/location":
-              return json(touched ? [{ directory: location }] : []);
+              // An ancestor the server loaded earlier says nothing about this folder.
+              return json([{ directory: "/" }, ...(touched ? [{ directory: location }] : [])]);
+            case "/api/location":
+              return json({
+                directory: location,
+                project: { id: "global", directory: "/work", canonical: "/work" },
+              });
             case "/api/model":
               return json({
                 location: { directory: location },
