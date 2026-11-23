@@ -7293,6 +7293,8 @@ describe("AcpAdapterV2", () => {
         if (event.type === "turn.terminal" && event.providerTurnId === firstProviderTurnId) break;
       }
       const snapshotBeforeRollback = yield* runtime.readThreadSnapshot({ providerThread });
+      // Turns reach orchestration as events; the session keeps no record of them.
+      assert.deepEqual(snapshotBeforeRollback.providerTurns, []);
 
       const rolledBack = yield* runtime.rollbackThread({
         providerThread: { ...providerThread, appThreadId: rollbackThreadId },
