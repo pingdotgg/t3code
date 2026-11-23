@@ -296,7 +296,10 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
     expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
-    expect(thinkingOf("unseen")).toBeUndefined();
+    const modelOf = (slug: string) => models.find((model) => model.slug === slug);
+    // An observed model without levels clears them; an unobserved one (null) leaves them to the registry.
+    expect(modelOf("plain")?.capabilities).toEqual({ optionDescriptors: [] });
+    expect(modelOf("unseen")?.capabilities).toBeNull();
   });
 });
 
@@ -312,7 +315,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           currentValue,
           options: values.map((value) => ({ value, name: value })),
         }) satisfies EffectAcpSchema.SessionConfigOption;
-      const selecting = (model: string, thinking: EffectAcpSchema.SessionConfigOption) => ({
+      const selecting = (model: string, thinking?: EffectAcpSchema.SessionConfigOption) => ({
         ...started,
         sessionSetupResult: {
           ...sessionSetupResult,
@@ -325,7 +328,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
                 { value: "fast", name: "Fast" },
               ],
             },
-            thinking,
+            ...(thinking ? [thinking] : []),
           ],
         },
       });
@@ -353,6 +356,14 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       const merged = mergeProviderSnapshot(published, yield* after.provider.snapshot.getSnapshot);
       expect(choicesOf(merged, "fast")).toEqual(["low", "medium", "high"]);
       expect(choicesOf(merged, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
+
+      // A model observed without thinking options clears the levels it had before.
+      const plain = yield* makeHarness();
+      yield* plain.initialize;
+      yield* plain.provider.onSessionStarted(selecting("fast"));
+      const cleared = mergeProviderSnapshot(merged, yield* plain.provider.snapshot.getSnapshot);
+      expect(choicesOf(cleared, "fast")).toEqual([]);
+      expect(choicesOf(cleared, "deep")).toEqual(["low", "medium", "high", "xhigh"]);
     }),
   );
 
