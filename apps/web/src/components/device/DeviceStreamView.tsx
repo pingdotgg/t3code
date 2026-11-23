@@ -6,7 +6,6 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { FloatingToolbar } from "~/components/ui/floating-toolbar";
 import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
@@ -442,7 +441,7 @@ export function DeviceStreamView(props: {
           />
         ) : null}
         {props.allowPhoneView && !props.renderControls && status === "streaming" ? (
-          <FloatingToolbar className="absolute top-3 left-3">
+          <div className="absolute top-3 left-3 flex gap-1 rounded-lg border border-border/50 bg-background/90 p-1 shadow-sm">
             <Button
               variant={showPhone ? "secondary" : "ghost"}
               size="xs"
@@ -461,7 +460,7 @@ export function DeviceStreamView(props: {
             >
               <T context="flat device view">Flat</T>
             </Button>
-          </FloatingToolbar>
+          </div>
         ) : null}
         {status === "streaming" && !inputState.connected ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">

@@ -166,7 +166,7 @@ export default function VirtualTablePreview(props: {
               role="row"
               flush
               rounded="top"
-              className="relative z-10 min-h-[29px]"
+              className="relative z-10 min-h-[29px] font-normal leading-4"
             >
               <div
                 className="sticky left-0 z-10 shrink-0 rounded-tl-row surface-card-fill"

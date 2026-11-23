@@ -5,7 +5,6 @@ import { useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
-import { Alert } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "~/components/ui/collapsible";
 import { Input } from "~/components/ui/input";
@@ -120,9 +119,7 @@ export function DeviceToolsPanel(props: {
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error ? (
-          <Alert variant="error" density="strip" edge="bottom">
-            {error}
-          </Alert>
+          <p className="border-b bg-error/10 px-3 py-2 text-xs text-error-foreground">{error}</p>
         ) : null}
         {detail === null && !error ? (
           <div className="flex items-center gap-2 px-3 py-3 text-xs text-muted-foreground">

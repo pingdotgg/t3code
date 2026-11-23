@@ -118,7 +118,6 @@ import {
   DiffFileChangeIcon,
   DiffFileHeaderStat,
 } from "../diffs/DiffFileHeaderParts";
-import { Alert, AlertAction } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -1963,30 +1962,30 @@ function WithheldFileNotice({
 }) {
   const gt = useGT();
   return (
-    <Alert variant="warning" density="strip" role="status">
-      <TriangleAlertIcon aria-hidden />
-      {status === "error"
-        ? gt("Couldn't load this diff.")
-        : status === "empty"
-          ? gt("No text diff for this file.")
-          : gt("Diff too large to display.")}
+    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-meta text-warning-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
+      <span>
+        {status === "error"
+          ? gt("Couldn't load this diff.")
+          : status === "empty"
+            ? gt("No text diff for this file.")
+            : gt("Diff too large to display.")}
+      </span>
       {onLoad === undefined || status === "empty" ? null : (
-        <AlertAction>
-          <Button
-            size="micro"
-            variant="warning-outline"
-            disabled={status === "loading"}
-            onClick={() => onLoad(path)}
-          >
-            {status === "loading"
-              ? gt("Loading...")
-              : status === "error"
-                ? gt("Retry")
-                : gt("Load diff")}
-          </Button>
-        </AlertAction>
+        <Button
+          size="micro"
+          variant="warning-outline"
+          disabled={status === "loading"}
+          onClick={() => onLoad(path)}
+        >
+          {status === "loading"
+            ? gt("Loading...")
+            : status === "error"
+              ? gt("Retry")
+              : gt("Load diff")}
+        </Button>
       )}
-    </Alert>
+    </div>
   );
 }
 

@@ -344,26 +344,25 @@ export function DevicePanel(props: {
             </div>
           ) : null}
           {operationError ? (
-            <Alert variant="error" density="strip" edge="bottom" controlAlignment="first-line">
-              <AlertDescription>
-                <p
-                  tabIndex={0}
-                  className="max-h-32 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words text-error-foreground"
-                >
-                  {operationError}
-                </p>
-              </AlertDescription>
-              <AlertAction>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={gt("Dismiss device error")}
-                  onClick={() => setOperation(null)}
-                >
-                  <X className="size-3" />
-                </Button>
-              </AlertAction>
-            </Alert>
+            <div
+              role="alert"
+              className="flex items-start gap-2 border-b bg-error/5 px-3 py-2 text-xs text-error-foreground"
+            >
+              <p
+                tabIndex={0}
+                className="max-h-32 min-w-0 flex-1 overflow-y-auto whitespace-pre-wrap break-words"
+              >
+                {operationError}
+              </p>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label={gt("Dismiss device error")}
+                onClick={() => setOperation(null)}
+              >
+                <X className="size-3" />
+              </Button>
+            </div>
           ) : null}
         </div>
         <div

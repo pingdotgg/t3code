@@ -78,8 +78,6 @@ import { Button, ContentButton } from "../ui/button";
 import { FloatingToolbar } from "../ui/floating-toolbar";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Meter } from "../ui/meter";
-import { PanelFrame } from "../ui/panel-frame";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -1304,7 +1302,10 @@ function CodeOnlyNotice({
   const machines = dropped.machineIds.flatMap((id) => byId.get(id) ?? []);
   if (source === undefined || machines.length === 0) return null;
   return (
-    <PanelFrame.Notice role="status">
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-meta"
+    >
       <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
         {needsCodeText(machines.length, gt)}
       </p>
@@ -1328,7 +1329,7 @@ function CodeOnlyNotice({
       <Button size="icon-xs" variant="ghost" aria-label={gt("Dismiss")} onClick={onDismiss}>
         <XIcon />
       </Button>
-    </PanelFrame.Notice>
+    </div>
   );
 }
 
@@ -1967,14 +1968,12 @@ const FleetScene = memo(function FleetScene({
                         "on a card for a group of linked machines: how many of them answer right now",
                     })}
                   </span>
-                  <Meter
-                    aria-hidden
-                    tone="warning"
-                    size="xs"
-                    value={stack.reachable}
-                    max={count}
-                    className="flex-1 forced-colors:hidden"
-                  />
+                  <span className="h-1 min-w-0 flex-1 overflow-clip rounded-full bg-warning/25 forced-colors:hidden">
+                    <span
+                      className="block h-full rounded-full bg-warning"
+                      style={{ width: `${(stack.reachable / count) * 100}%` }}
+                    />
+                  </span>
                 </span>
               )}
             </ContentButton>

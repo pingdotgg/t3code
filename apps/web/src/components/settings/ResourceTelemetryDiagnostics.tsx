@@ -183,7 +183,15 @@ function SourceStatusBadge({
         tone === "danger" && "border-transparent bg-error/12 text-error-foreground",
       )}
     >
-      <StatusDot tone={tone === "default" ? "success" : tone} />
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          tone === "neutral" && "bg-muted-foreground/55",
+          tone === "default" && "bg-success",
+          tone === "warning" && "bg-warning",
+          tone === "danger" && "bg-destructive",
+        )}
+      />
       {label} {presentation?.label ?? status}
     </span>
   );
