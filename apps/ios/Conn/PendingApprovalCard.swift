@@ -97,28 +97,39 @@ struct PendingApprovalCard: View {
 
 // MARK: - ConnButton (port of mobile's ui/Button)
 
-/// A full-width capsule button, 48pt high, in one of mobile's tones.
+/// A capsule button in one of mobile's tones: full width and 48pt high, or compact (40pt,
+/// sized to its label).
 struct ConnButton: View {
+    enum Size { case regular, compact }
+
     let label: String
     let tone: FfiButtonTone
+    var size: Size = .regular
     var disabled = false
+    var loading = false
     let action: () -> Void
 
     @Environment(\.connTheme) private var theme
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(disabled ? theme.mutedForeground : labelColor)
-                .lineLimit(1)
-                .padding(.horizontal, 24)
-                .frame(maxWidth: .infinity, minHeight: 48)
-                .background(Capsule().fill(fill))
-                .contentShape(Capsule())
+            ZStack {
+                Text(label)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(disabled ? theme.mutedForeground : labelColor)
+                    .lineLimit(1)
+                    .opacity(loading ? 0 : 1)
+                if loading {
+                    ProgressView().tint(labelColor)
+                }
+            }
+            .padding(.horizontal, size == .compact ? 20 : 24)
+            .frame(maxWidth: size == .compact ? nil : .infinity, minHeight: size == .compact ? 40 : 48)
+            .background(Capsule().fill(fill))
+            .contentShape(Capsule())
         }
         .buttonStyle(PressedOpacityStyle())
-        .disabled(disabled)
+        .disabled(disabled || loading)
     }
 
     private var fill: Color {
@@ -139,7 +150,7 @@ struct ConnButton: View {
 }
 
 /// `active:opacity-70`.
-private struct PressedOpacityStyle: ButtonStyle {
+struct PressedOpacityStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.opacity(configuration.isPressed ? 0.7 : 1)
     }
@@ -147,11 +158,23 @@ private struct PressedOpacityStyle: ButtonStyle {
 
 // MARK: - HeightCappedScroll
 
-/// Its content's own height up to `maxHeight`, scrolling past that.
+/// Its content's own height up to `maxHeight`, scrolling past that. `onEdges` hears whether
+/// content is scrolled out of view at the top and at the bottom.
 struct HeightCappedScroll<Content: View>: View {
     let maxHeight: CGFloat
-    @ViewBuilder let content: Content
+    let content: Content
+    let onEdges: ((Bool, Bool) -> Void)?
     @State private var contentHeight: CGFloat = 0
+
+    init(
+        maxHeight: CGFloat,
+        @ViewBuilder content: () -> Content,
+        onEdges: ((Bool, Bool) -> Void)? = nil
+    ) {
+        self.maxHeight = maxHeight
+        self.content = content()
+        self.onEdges = onEdges
+    }
 
     var body: some View {
         ScrollView {
@@ -159,5 +182,11 @@ struct HeightCappedScroll<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: min(max(contentHeight, 1), maxHeight))
+        .onScrollGeometryChange(for: [Bool].self) { geo in
+            let offset = geo.contentOffset.y + geo.contentInsets.top
+            return [offset > 1, offset + geo.containerSize.height < geo.contentSize.height - 1]
+        } action: { _, edges in
+            onEdges?(edges[0], edges[1])
+        }
     }
 }

@@ -16,6 +16,7 @@ mod drafts;
 mod layout;
 pub mod provider_auth;
 pub mod providers;
+mod question;
 mod scheduled;
 mod shell;
 mod sidebar;
@@ -58,6 +59,9 @@ pub use crate::layout::{
     LayoutState, PanelSurface, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
     RIGHT_PANEL_MIN_WIDTH, RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
+};
+pub use crate::question::{
+    clamp_context, markdown_preview_text, seed_user_input_drafts, split_recommended_label,
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
 pub use crate::sidebar::{

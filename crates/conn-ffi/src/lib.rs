@@ -9,6 +9,7 @@ mod coalesce;
 mod core;
 mod orbit;
 mod phone_tasks;
+mod questions;
 mod theme;
 mod types;
 
@@ -36,6 +37,11 @@ pub use crate::orbit::{
 pub use crate::phone_tasks::{
     FfiPhoneNotice, FfiPhoneTaskLane, FfiPhoneTaskRow, FfiPhoneTasks, FfiPhoneTasksView,
     FfiTaskDot, phone_tasks_error_text, phone_tasks_view,
+};
+pub use crate::questions::{
+    FfiPendingQuestion, FfiQuestionDraft, FfiQuestionPanel, FfiQuestionPanelOption, FfiTextFits,
+    question_answers, question_context_clamp, question_panel, question_set_custom_answer,
+    question_toggle_option,
 };
 pub use crate::theme::{
     FfiAppearance, FfiColor, FfiShellGeometry, FfiThemeSummary, FfiThemeTokens, builtin_themes,

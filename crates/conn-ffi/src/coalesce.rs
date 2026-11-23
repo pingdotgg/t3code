@@ -174,6 +174,7 @@ mod tests {
             queued_count: 0,
             synchronized: true,
             pending_approvals: Vec::new(),
+            pending_question: None,
         }
     }
 

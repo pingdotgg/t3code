@@ -242,17 +242,8 @@ struct TimelineEntryRow: View {
             // feed keeps a work row for it, like Conn mobile's "Approval requested".
             ToolRow(kind: "approval", title: title, detail: detail, status: .running, durationMs: nil)
 
-        case let .userInputRequest(_, requestId, title, questions, _, pending, answers, dismissible, _):
-            UserInputRequestCard(
-                threadId: threadId,
-                requestId: requestId,
-                title: title,
-                questions: questions,
-                pending: pending,
-                answers: answers,
-                dismissible: dismissible,
-                store: store
-            )
+        case let .userInputRequest(_, _, _, _, _, pending, answers, _, _):
+            QuestionRow(pending: pending, answers: answers)
 
         case let .secretRequest(id, label, reason, url, placeholder, _, status, pending, _):
             SecretRequestCard(
@@ -362,163 +353,40 @@ struct ToolRow: View {
     }
 }
 
-private struct UserInputRequestCard: View {
-    let threadId: String
-    let requestId: String
-    let title: String?
-    let questions: [FfiUserInputQuestion]
+/// A question's feed row, like Conn mobile's "Input requested" work row: it expands to the
+/// answers (`QuestionAnswerHistory`). The open question has no row; the panel above the
+/// composer asks it.
+private struct QuestionRow: View {
     let pending: Bool
     let answers: [FfiUserInputAnswer]
-    let dismissible: Bool
-    @Bindable var store: CoreStore
     @Environment(\.connTheme) private var theme
 
-    @State private var selections: [String: Set<String>] = [:]
-    @State private var customText: [String: String] = [:]
-    @State private var submitting = false
-
     var body: some View {
-        VStack(alignment: .leading, spacing: Kit.Space.m) {
-            HStack(spacing: Kit.Space.s) {
-                KitStatusIcon(pending ? .warning : .ok, size: 15, label: "Question")
-                Text(title ?? "Question")
-                    .font(.kitLabel.weight(.semibold))
-                    .foregroundStyle(theme.cardForeground)
-                Spacer()
-            }
-
-            if pending {
-                ForEach(questions, id: \.id) { q in
-                    VStack(alignment: .leading, spacing: Kit.Space.s) {
-                        if !q.header.isEmpty {
-                            Text(q.header)
-                                .font(.kitDetail.weight(.semibold))
+        KitCollapsibleCard(
+            "Input requested",
+            status: pending ? .working : .ok,
+            statusLabel: "question",
+            trailingText: nil,
+            expandable: !answers.isEmpty
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(answers, id: \.questionId) { answer in
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !answer.question.isEmpty {
+                            Text(answer.question)
+                                .font(.system(size: 14))
                                 .foregroundStyle(theme.mutedForeground)
                         }
-                        Text(q.question)
-                            .font(.kitBody)
-                            .foregroundStyle(theme.cardForeground)
-
-                        ForEach(q.options, id: \.value) { opt in
-                            let selected = selections[q.id]?.contains(opt.value) == true
-                            Button {
-                                toggle(option: opt.value, for: q)
-                            } label: {
-                                HStack(alignment: .top, spacing: Kit.Space.s) {
-                                    Image(systemName: selected
-                                        ? (q.multiSelect ? "checkmark.square.fill" : "largecircle.fill.circle")
-                                        : (q.multiSelect ? "square" : "circle"))
-                                        .foregroundStyle(selected ? theme.primary : theme.mutedForeground)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(opt.label)
-                                            .font(.kitDetail.weight(.medium))
-                                            .foregroundStyle(theme.cardForeground)
-                                        if !opt.description.isEmpty {
-                                            Text(opt.description)
-                                                .font(.kitDetail)
-                                                .foregroundStyle(theme.mutedForeground)
-                                        }
-                                    }
-                                    Spacer()
-                                }
-                                .padding(Kit.Space.s)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                        .fill(selected ? theme.accent.opacity(0.2) : theme.secondary.opacity(0.4))
-                                )
-                            }
-                            .buttonStyle(.plain)
-                        }
-
-                        if q.allowCustomAnswer {
-                            TextField(
-                                "Other answer…",
-                                text: Binding(
-                                    get: { customText[q.id] ?? "" },
-                                    set: { customText[q.id] = $0 }
-                                )
-                            )
-                            .textFieldStyle(.roundedBorder)
-                            .font(.kitDetail)
+                        if !answer.answer.isEmpty {
+                            Text(answer.answer)
+                                .font(.system(size: 14))
+                                .foregroundStyle(theme.mutedForeground)
+                                .padding(.leading, 12)
                         }
                     }
                 }
-
-                HStack(spacing: Kit.Space.s) {
-                    Button("Submit") {
-                        submit()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(submitting)
-
-                    if dismissible {
-                        Button("Dismiss") {
-                            submitting = true
-                            Task {
-                                await store.dismissUserInput(threadId: threadId, requestId: requestId)
-                                submitting = false
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(submitting)
-                    }
-                }
-            } else {
-                ForEach(answers, id: \.questionId) { ans in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(ans.question)
-                            .font(.kitDetail)
-                            .foregroundStyle(theme.mutedForeground)
-                        Text(ans.answer)
-                            .font(.kitDetail.weight(.medium))
-                            .foregroundStyle(theme.cardForeground)
-                    }
-                }
             }
-        }
-        .padding(Kit.Space.l)
-        .background(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .fill(theme.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .strokeBorder(theme.border, lineWidth: 0.5)
-        )
-    }
-
-    private func toggle(option: String, for question: FfiUserInputQuestion) {
-        var current = selections[question.id] ?? []
-        if question.multiSelect {
-            if current.contains(option) {
-                current.remove(option)
-            } else {
-                current.insert(option)
-            }
-        } else {
-            current = [option]
-        }
-        selections[question.id] = current
-    }
-
-    private func submit() {
-        submitting = true
-        var submissions: [FfiUserInputSubmission] = []
-        for q in questions {
-            let custom = (customText[q.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let chosen = Array(selections[q.id] ?? [])
-            if q.multiSelect {
-                var all = chosen
-                if !custom.isEmpty { all.append(custom) }
-                submissions.append(FfiUserInputSubmission(questionId: q.id, value: .multi(values: all)))
-            } else {
-                let val = !custom.isEmpty ? custom : (chosen.first ?? q.options.first?.value ?? "")
-                submissions.append(FfiUserInputSubmission(questionId: q.id, value: .single(value: val)))
-            }
-        }
-        Task {
-            await store.respondUserInput(threadId: threadId, requestId: requestId, answers: submissions)
-            submitting = false
+            .textSelection(.enabled)
         }
     }
 }

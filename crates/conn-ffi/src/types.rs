@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::approvals::FfiPendingApproval;
+use crate::questions::FfiPendingQuestion;
 use conn_client::{ClientError, ConnectionStatus, Credential, commands::format_client_error};
 use conn_contract::{
     ChatAttachment, OrchestrationV2AppThread, OrchestrationV2ProviderFailureClass,
@@ -12,8 +13,9 @@ use conn_contract::{
 use conn_state::{
     EntryTiming, ItemStatus, PLAN_PREVIEW_MAX_LINES, SecretRequestStatus, ShellState,
     ThreadActivity, ThreadShell, ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus,
-    collapsed_plan_preview, extract_model_slug, format_duration, parse_iso8601_epoch_ms,
-    plan_can_collapse, strip_displayed_plan_markdown, subagent_settled, subagent_status_visual,
+    UserInputQuestion, collapsed_plan_preview, extract_model_slug, format_duration,
+    parse_iso8601_epoch_ms, plan_can_collapse, strip_displayed_plan_markdown, subagent_settled,
+    subagent_status_visual,
 };
 
 /// Credential presented to `conn-server` when opening a session.
@@ -264,8 +266,10 @@ impl From<&ChatAttachment> for FfiAttachment {
 pub struct FfiUserInputOption {
     pub label: String,
     pub description: String,
-    /// Value submitted when chosen (`option.value ?? option.label`).
+    /// Value submitted when chosen (`option.value ?? option.label.trim()`).
     pub value: String,
+    /// Markdown shown under the option (`option.preview`).
+    pub preview: Option<String>,
 }
 
 /// One question in an [`FfiTimelineEntry::UserInputRequest`].
@@ -478,6 +482,9 @@ pub struct FfiThreadSnapshot {
     /// Approvals still waiting for an answer, in timeline order; the card above the composer
     /// shows the first (Conn mobile's `activePendingApproval`).
     pub pending_approvals: Vec<FfiPendingApproval>,
+    /// The question the panel above the composer asks; `entries` leaves its row out, since the
+    /// panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
+    pub pending_question: Option<FfiPendingQuestion>,
 }
 
 /// Categorized reason for an [`FfiError::Orbit`] failure (mirrors [`conn_orbit::OrbitErrorReason`]).
@@ -850,16 +857,20 @@ pub(crate) fn build_thread_snapshot(
     let mut entries = Vec::with_capacity(thread.entries.len() + thread.turn_checkpoints.len());
     let mut emitted_checkpoints: HashSet<&str> = HashSet::new();
     let mut queued_count: u32 = 0;
+    let pending_question = crate::questions::pending_question(thread);
+    let open_question = pending_question.as_ref().map(|q| q.entry_id.as_str());
 
     for (idx, entry) in thread.entries.iter().enumerate() {
         if matches!(entry, TimelineEntry::QueuedUser { .. }) {
             queued_count = queued_count.saturating_add(1);
         }
-        entries.push(map_timeline_entry_with_context(
-            entry,
-            &thread.approval_requests,
-            &thread.entry_timings,
-        ));
+        if open_question != Some(entry.id()) {
+            entries.push(map_timeline_entry_with_context(
+                entry,
+                &thread.approval_requests,
+                &thread.entry_timings,
+            ));
+        }
 
         // Insert a TurnCheckpoint card right after the final non-user, non-queued item belonging
         // to `run_id`, matching desktop `conn-app/src/chat/cache.rs`.
@@ -900,6 +911,30 @@ pub(crate) fn build_thread_snapshot(
         queued_count,
         synchronized: thread.synchronized,
         pending_approvals: crate::approvals::pending_approvals(thread),
+        pending_question,
+    }
+}
+
+/// Maps one provider question; an option without a provider value answers with its trimmed
+/// label, like Conn mobile.
+pub(crate) fn map_user_input_question(question: &UserInputQuestion) -> FfiUserInputQuestion {
+    FfiUserInputQuestion {
+        id: question.id.clone(),
+        header: question.header.clone(),
+        question: question.question.clone(),
+        options: question
+            .options
+            .iter()
+            .map(|o| FfiUserInputOption {
+                label: o.label.clone(),
+                description: o.description.clone(),
+                value: o.value.clone().unwrap_or_else(|| o.label.trim().to_owned()),
+                preview: o.preview.clone(),
+            })
+            .collect(),
+        multi_select: question.multi_select,
+        allow_custom_answer: question.allow_custom_answer,
+        initial_answer: question.initial_answer.clone(),
     }
 }
 
@@ -1017,26 +1052,7 @@ pub(crate) fn map_timeline_entry_with_context(
             id: id.clone(),
             request_id: request_id.clone(),
             title: title.clone(),
-            questions: questions
-                .iter()
-                .map(|q| FfiUserInputQuestion {
-                    id: q.id.clone(),
-                    header: q.header.clone(),
-                    question: q.question.clone(),
-                    options: q
-                        .options
-                        .iter()
-                        .map(|o| FfiUserInputOption {
-                            label: o.label.clone(),
-                            description: o.description.clone(),
-                            value: o.answer_value().to_owned(),
-                        })
-                        .collect(),
-                    multi_select: q.multi_select,
-                    allow_custom_answer: q.allow_custom_answer,
-                    initial_answer: q.initial_answer.clone(),
-                })
-                .collect(),
+            questions: questions.iter().map(map_user_input_question).collect(),
             status: (*status).into(),
             pending: *pending,
             answers: answers
@@ -1332,10 +1348,10 @@ mod tests {
                         label: "SwiftUI".to_owned(),
                         description: "Native iOS".to_owned(),
                         value: Some("swiftui".to_owned()),
-                        preview: None,
+                        preview: Some("`View`".to_owned()),
                     },
                     UserInputOption {
-                        label: "UIKit".to_owned(),
+                        label: " UIKit ".to_owned(),
                         description: "Classic".to_owned(),
                         value: None,
                         preview: None,
@@ -1370,11 +1386,13 @@ mod tests {
                             label: "SwiftUI".to_owned(),
                             description: "Native iOS".to_owned(),
                             value: "swiftui".to_owned(),
+                            preview: Some("`View`".to_owned()),
                         },
                         FfiUserInputOption {
-                            label: "UIKit".to_owned(),
+                            label: " UIKit ".to_owned(),
                             description: "Classic".to_owned(),
                             value: "UIKit".to_owned(),
+                            preview: None,
                         },
                     ],
                     multi_select: true,
