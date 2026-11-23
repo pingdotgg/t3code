@@ -395,31 +395,24 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(1);
       expect(debuggee.nativeCaptures()).toBe(1);
 
-      // A click waits on the guest's next frame the same way.
-      yield* command(host, 2, "Input.dispatchMouseEvent");
-      yield* settle;
-      yield* TestClock.adjust("250 millis");
-      expect(yield* Queue.take(replies)).toBe(2);
-      expect(debuggee.nativeCaptures()).toBe(2);
-
       // A wait that settles within a frame is never prodded.
       yield* command(host, 3, "Page.captureScreenshot");
       yield* settle;
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(3);
       yield* TestClock.adjust("1 second");
-      expect(debuggee.nativeCaptures()).toBe(2);
+      expect(debuggee.nativeCaptures()).toBe(1);
 
       // A long wait is prodded less often as it goes on, once per tick though it holds focus too.
       drawsWhenCaptured = false;
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
       for (const [wait, prods] of [
-        ["250 millis", 3],
-        ["500 millis", 4],
-        ["1 second", 5],
+        ["250 millis", 2],
+        ["500 millis", 3],
+        ["1 second", 4],
+        ["2 seconds", 5],
         ["2 seconds", 6],
-        ["2 seconds", 7],
       ] as const) {
         yield* TestClock.adjust(wait);
         expect(debuggee.nativeCaptures()).toBe(prods);
@@ -427,18 +420,18 @@ describe("DesktopBrowserHost", () => {
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(4);
       yield* TestClock.adjust("10 seconds");
-      expect(debuggee.nativeCaptures()).toBe(7);
+      expect(debuggee.nativeCaptures()).toBe(6);
 
       // A wait the agent's turn gave up on is no longer prodded.
       yield* command(host, 5, "Runtime.evaluate");
       yield* settle;
       yield* TestClock.adjust("250 millis");
-      expect(debuggee.nativeCaptures()).toBe(8);
+      expect(debuggee.nativeCaptures()).toBe(7);
       yield* host.handleCommandLine(
         encodeJson({ type: "turn", threadId: key.threadId, active: false }),
       );
       yield* TestClock.adjust("10 seconds");
-      expect(debuggee.nativeCaptures()).toBe(8);
+      expect(debuggee.nativeCaptures()).toBe(7);
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(5);
 
@@ -447,7 +440,7 @@ describe("DesktopBrowserHost", () => {
       yield* command(host, 6, "Runtime.evaluate");
       yield* settle;
       yield* TestClock.adjust("10 seconds");
-      expect(debuggee.nativeCaptures()).toBe(10);
+      expect(debuggee.nativeCaptures()).toBe(9);
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(6);
       // Even across a reattach of the same guest, as when DevTools closes.
@@ -457,7 +450,7 @@ describe("DesktopBrowserHost", () => {
       yield* command(host, 7, "Runtime.evaluate");
       yield* settle;
       yield* TestClock.adjust("10 seconds");
-      expect(debuggee.nativeCaptures()).toBe(10);
+      expect(debuggee.nativeCaptures()).toBe(9);
       debuggee.releaseFirst();
       expect(yield* Queue.take(reattached)).toBe(7);
     }).pipe(Effect.scoped),

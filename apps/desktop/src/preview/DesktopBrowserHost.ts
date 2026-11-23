@@ -267,15 +267,13 @@ export const make = Effect.gen(function* () {
     runFork(PubSub.publish(painting, { key: tab.key, active }));
   };
 
-  /**
-   * A hidden, minimized or covered window stops drawing its guest even while unthrottled, and
-   * Electron reports a covered one as visible, so a capture, or a command that waits on a frame,
-   * can wait forever. Electron's own capture still draws one, so a wait that outlasts a frame
-   * prods the guest, less often as it goes on.
-   */
   /** By guest rather than attachment, since reopening DevTools reattaches the same guest. */
   const nativeCaptures = new WeakMap<Electron.WebContents, number>();
 
+  /**
+   * A hidden, minimized or covered window (which Electron reports as visible) stops drawing its
+   * guest, so a wait on its next frame never ends. Electron's own capture still draws one.
+   */
   const nudgePaint = (tab: AttachedTab, delayMs: number): Effect.Effect<void> =>
     Effect.sleep(delayMs).pipe(
       Effect.andThen(
