@@ -156,6 +156,7 @@ export const layer: Layer.Layer<
       readonly requestId?: CommandId;
     }) {
       const context = yield* projections.getCheckpointRollbackContext(input.threadId, input);
+      if (context.thread.deletedAt !== null) return;
       const { providerThread, checkpoint, scope, targetAttempt, runsToRollback, staleCheckpoints } =
         context;
       const restoreFiles = input.restoreFiles !== false;
