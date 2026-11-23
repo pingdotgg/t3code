@@ -21,6 +21,14 @@ import type { ThreadStructure, ThreadStructureTurnItem } from "./models.ts";
 // Fallback TTL: Claude's 1h cache plus slack.
 const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
 
+// This fork answers these drivers' /compact with vcc, which makes no model call, so compacting a
+// stale thread before the next prompt costs nothing and saves re-reading the uncached history.
+const RESUME_COMPACTION_DRIVERS: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "pi",
+  "antigravity",
+]);
+
 // A typed `/compact`, with or without instructions, is already the compaction. Queueing a
 // bare one ahead of it would run an uninstructed compaction first and charge for two.
 export const COMPACT_COMMAND_PATTERN = /^\/compact(?:\s|$)/i;
@@ -282,7 +290,7 @@ export function shouldOfferResumeCompaction(input: {
   readonly now: string;
 }): boolean {
   if (
-    input.provider !== "claudeAgent" ||
+    !RESUME_COMPACTION_DRIVERS.has(input.provider ?? "") ||
     (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
   ) {
     return false;

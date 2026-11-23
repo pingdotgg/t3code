@@ -210,6 +210,19 @@ describe("latestProviderTurnTokenUsage", () => {
     ).toBe(true);
   });
 
+  it("offers resume compaction for the drivers whose /compact vcc answers", () => {
+    const stale = {
+      usedTokens: 513_000,
+      updatedAt: "2026-10-19T10:00:00.000Z",
+      now: "2026-10-19T12:00:00.000Z",
+    };
+    expect(shouldOfferResumeCompaction({ ...stale, provider: "claudeAgent" })).toBe(true);
+    expect(shouldOfferResumeCompaction({ ...stale, provider: "pi" })).toBe(true);
+    expect(shouldOfferResumeCompaction({ ...stale, provider: "antigravity" })).toBe(true);
+    expect(shouldOfferResumeCompaction({ ...stale, provider: "codex" })).toBe(false);
+    expect(shouldOfferResumeCompaction({ ...stale, provider: null })).toBe(false);
+  });
+
   it("replaces inherited usage with the fork's own report", () => {
     const tokenUsage = { usedTokens: 42_000, updatedAt: "2026-10-19T12:10:00.000Z" };
     expect(
