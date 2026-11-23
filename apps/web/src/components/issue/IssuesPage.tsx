@@ -46,16 +46,18 @@ import {
 } from "~/components/issue/issueListPreferences";
 import { IssueGlyph, issueTrackerPresentation } from "~/components/issue/issuePresentation";
 import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
+import { PullRequestMarkdownPanelContext } from "~/components/pullRequest/PullRequestMarkdown";
 import { PullRequestListGhost } from "~/components/pullRequest/PullRequestGhosts";
 import {
   PullRequestFilterOptionIcon,
+  pullRequestProjectKey,
   PullRequestSearchInput,
   type PullRequestFilterOption,
 } from "~/components/pullRequest/PullRequestListFilters";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { resolveFilterOptions } from "../pullRequest/pullRequestListOptions";
 import { IssueFiltersMenu } from "./IssueListFilterPickers";
-import { issueFilterProjects } from "./issuesSearch.logic";
+import { issueFilterProjects, issueListTargets, issueProjectKeys } from "./issuesSearch.logic";
 import { ISSUE_SAVED_VIEWS } from "./issueSavedViews";
 import { SavedViewsMenu } from "~/components/SavedViewsMenu";
 import { PullRequestCompactFilterMenu } from "../pullRequest/PullRequestCompactFilterMenu";
@@ -68,6 +70,7 @@ import { PanelLayoutControls } from "~/components/chat/PanelLayoutControls";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -94,7 +97,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useProjects } from "~/state/entities";
 import { useEnvironments, useIssuesSupported } from "~/state/environments";
-import { issueEnvironment, useIssueList, type IssueListTarget } from "~/state/issues";
+import { issueEnvironment, useIssueList } from "~/state/issues";
 import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
@@ -206,26 +209,30 @@ export function IssuesPage() {
     ),
     environmentLabels,
   );
-  const scopedProject =
-    search.issueServer && search.issueProject
-      ? { environmentId: search.issueServer, projectId: search.issueProject }
-      : undefined;
+  const hiddenProjects = issueProjectKeys(search.hideProjects);
 
   const debouncedQuery = useDebouncedValue(search.q ?? "", 300);
   const listInput: IssueListInput = {
     state: search.status,
     involvement: search.who,
     limit: PAGE_SIZE,
-    ...(scopedProject ? { projectId: scopedProject.projectId } : {}),
     ...(search.host ? { host: search.host } : {}),
     ...(debouncedQuery ? { query: debouncedQuery } : {}),
     ...(search.label?.length ? { labels: search.label } : {}),
     ...(search.assignee ? { assignee: search.assignee } : {}),
     ...(search.order ? { sort: search.order } : {}),
   };
-  const targets: ReadonlyArray<IssueListTarget> = capableEnvironments
-    .filter((e) => scopedProject === undefined || e.environmentId === scopedProject.environmentId)
-    .map((e) => ({ environmentId: e.environmentId, input: listInput }));
+  const everyProjectHidden =
+    filterProjects.length > 0 &&
+    filterProjects.every((project) => hiddenProjects.has(pullRequestProjectKey(project)));
+  const targets = everyProjectHidden
+    ? []
+    : issueListTargets(
+        capableEnvironments.map((e) => e.environmentId),
+        filterProjects,
+        search.hideProjects,
+        listInput,
+      );
   const list = useIssueList(targets);
   // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
   useLiveRefresh(
@@ -245,7 +252,9 @@ export function IssuesPage() {
     const cursors = page ? issueCursorsForHost(page.nextCursors, host) : {};
     if (!page || Object.keys(cursors).length === 0 || loadingMore !== null) return;
     setLoadingMore(`${environmentId} ${host}`);
-    const result = await loadPage({ environmentId, input: { ...listInput, cursors } });
+    const input = targets.find((target) => target.environmentId === environmentId)?.input;
+    if (!input) return;
+    const result = await loadPage({ environmentId, input: { ...input, cursors } });
     setLoadingMore(null);
     const failure = result._tag === "Failure" ? squashAtomCommandFailure(result) : null;
     setPages((current) => {
@@ -271,24 +280,49 @@ export function IssuesPage() {
   // would be, and each tracker's rows carry on from their own cursors.
   // The server names every tracker so the menu can switch hosts, but reads only the chosen one.
   const chosenHost = search.host?.toLowerCase();
-  const shown = chosenHost
-    ? new Map(
-        [...held].map(([environmentId, page]) => [
-          environmentId,
-          {
-            ...page,
-            answer: {
-              ...page.answer,
-              trackers: page.answer.trackers.filter(
-                (tracker) => tracker.host.toLowerCase() === chosenHost,
+  // A server older than `excludeProjectIds` still answers for hidden projects.
+  const shown =
+    chosenHost || hiddenProjects.size > 0
+      ? new Map(
+          [...held].map(([environmentId, page]) => [
+            environmentId,
+            {
+              ...page,
+              entries: page.entries.filter(
+                (entry) =>
+                  !hiddenProjects.has(
+                    pullRequestProjectKey({ environmentId, id: entry.projectId }),
+                  ),
               ),
+              errors: page.errors.filter(
+                (error) =>
+                  !hiddenProjects.has(
+                    pullRequestProjectKey({ environmentId, id: error.projectId }),
+                  ),
+              ),
+              answer: {
+                ...page.answer,
+                scopes: page.answer.scopes?.filter(
+                  (scope) =>
+                    !hiddenProjects.has(
+                      pullRequestProjectKey({ environmentId, id: scope.projectId }),
+                    ),
+                ),
+                trackers: chosenHost
+                  ? page.answer.trackers.filter(
+                      (tracker) => tracker.host.toLowerCase() === chosenHost,
+                    )
+                  : page.answer.trackers,
+              },
             },
-          },
-        ]),
-      )
-    : held;
+          ]),
+        )
+      : held;
   const groups = groupIssues(shown, debouncedQuery, projects, search.order ?? "updated");
-  const filterScopes = issueFilterScopes(shown, projects, scopedProject);
+  const filterScopes = issueFilterScopes(
+    shown,
+    projects.filter((project) => !hiddenProjects.has(pullRequestProjectKey(project))),
+  );
 
   const hostOptions = hostOptionsFor(
     [...held.values()].flatMap((page) => page.answer.trackers),
@@ -301,9 +335,7 @@ export function IssuesPage() {
     const next: IssuesSearch = {
       who: merged.who ?? search.who,
       status: merged.status ?? search.status,
-      ...(merged.issueServer && merged.issueProject
-        ? { issueServer: merged.issueServer, issueProject: merged.issueProject }
-        : {}),
+      ...(merged.hideProjects?.length ? { hideProjects: merged.hideProjects } : {}),
       ...(merged.host ? { host: merged.host } : {}),
       q: merged.q || undefined,
       ...(merged.label?.length ? { label: merged.label } : {}),
@@ -387,7 +419,7 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = (entry: IssueRowTarget) => {
+  const selectEntry = (entry: Omit<IssueRowTarget, "host"> & { readonly host?: string }) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openIssue(rightPanelRef, entry);
     updateSearch({
@@ -485,6 +517,22 @@ export function IssuesPage() {
       onRetry={list.retry}
       refreshing={list.isPending}
     />
+  ) : everyProjectHidden ? (
+    <Empty>
+      <EmptyMedia variant="icon">
+        <IssueGlyph.issue />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>
+          <T>Every project is hidden</T>
+        </EmptyTitle>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" onClick={() => updateSearch({ hideProjects: undefined })}>
+          <T>Show all projects</T>
+        </Button>
+      </EmptyContent>
+    </Empty>
   ) : groups.length === 0 ? (
     <Empty>
       <EmptyMedia variant="icon">
@@ -691,13 +739,8 @@ export function IssuesPage() {
                   assignee={search.assignee}
                   onAssignee={(assignee) => updateSearch({ assignee })}
                   projects={filterProjects}
-                  project={scopedProject}
-                  onProject={(project) =>
-                    updateSearch({
-                      issueServer: project?.environmentId,
-                      issueProject: project?.projectId,
-                    })
-                  }
+                  hiddenProjects={hiddenProjects}
+                  onHiddenProjects={(hideProjects) => updateSearch({ hideProjects })}
                 />
                 <SavedViewsMenu
                   kind={ISSUE_SAVED_VIEWS}
@@ -707,8 +750,7 @@ export function IssuesPage() {
                     updateSearch({
                       who: view.who,
                       status: view.status,
-                      issueServer: view.issueServer,
-                      issueProject: view.issueProject,
+                      hideProjects: view.hideProjects,
                       host: view.host,
                       q: view.q,
                       label: view.label,
@@ -800,44 +842,53 @@ export function IssuesPage() {
             pullRequestsAvailable={false}
             deviceAvailable={false}
           >
-            {renderedSurface.kind === "issue" ? (
-              <IssueDetailPanel
-                key={`${panelEnvironmentId}:${renderedSurface.id}`}
-                environmentId={panelEnvironmentId}
-                listEntry={panelListEntry}
-                reference={{
-                  projectId: renderedSurface.projectId as ProjectId,
-                  tracker: renderedSurface.tracker as IssueTrackerKind,
-                  ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
-                  scope: renderedSurface.scope,
-                  key: renderedSurface.key,
-                }}
-                onSelectPullRequest={(reference) => {
-                  useRightPanelStore.getState().openPullRequest(rightPanelRef, {
-                    projectId: reference.projectId,
-                    repository: reference.repository,
-                    number: reference.number,
-                    ...(reference.host === undefined ? {} : { host: reference.host }),
-                    environmentId: panelEnvironmentId,
-                  });
-                }}
-              />
-            ) : (
-              <PullRequestDetailPanel
-                key={renderedSurface.id}
-                getShortcutContext={getShortcutContext}
-                shortcutsEnabled={panelSurface?.id === renderedSurface.id}
-                environmentId={panelEnvironmentId}
-                reference={{
-                  projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
-                  repository: (renderedSurface as PullRequestSurface).repository,
-                  number: (renderedSurface as PullRequestSurface).number,
-                  ...((renderedSurface as PullRequestSurface).host
-                    ? { host: (renderedSurface as PullRequestSurface).host }
-                    : {}),
-                }}
-              />
-            )}
+            <PullRequestMarkdownPanelContext value={rightPanelRef}>
+              {renderedSurface.kind === "issue" ? (
+                <IssueDetailPanel
+                  key={`${panelEnvironmentId}:${renderedSurface.id}`}
+                  environmentId={panelEnvironmentId}
+                  listEntry={panelListEntry}
+                  reference={{
+                    projectId: renderedSurface.projectId as ProjectId,
+                    tracker: renderedSurface.tracker as IssueTrackerKind,
+                    ...(renderedSurface.host ? { host: renderedSurface.host } : {}),
+                    scope: renderedSurface.scope,
+                    key: renderedSurface.key,
+                  }}
+                  onSelectPullRequest={(reference) => {
+                    useRightPanelStore.getState().openPullRequest(rightPanelRef, {
+                      projectId: reference.projectId,
+                      repository: reference.repository,
+                      number: reference.number,
+                      ...(reference.host === undefined ? {} : { host: reference.host }),
+                      environmentId: panelEnvironmentId,
+                    });
+                  }}
+                  onSelectIssue={({ host, ...reference }) =>
+                    selectEntry({
+                      ...reference,
+                      ...(host === undefined ? {} : { host }),
+                      environmentId: panelEnvironmentId,
+                    })
+                  }
+                />
+              ) : (
+                <PullRequestDetailPanel
+                  key={renderedSurface.id}
+                  getShortcutContext={getShortcutContext}
+                  shortcutsEnabled={panelSurface?.id === renderedSurface.id}
+                  environmentId={panelEnvironmentId}
+                  reference={{
+                    projectId: (renderedSurface as PullRequestSurface).projectId as ProjectId,
+                    repository: (renderedSurface as PullRequestSurface).repository,
+                    number: (renderedSurface as PullRequestSurface).number,
+                    ...((renderedSurface as PullRequestSurface).host
+                      ? { host: (renderedSurface as PullRequestSurface).host }
+                      : {}),
+                  }}
+                />
+              )}
+            </PullRequestMarkdownPanelContext>
           </RightPanelTabs>
         ) : null}
       </div>

@@ -6,7 +6,9 @@ import {
   type AttachmentDeleteInput,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -14,9 +16,8 @@ import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcCommand,
-  executeAtomQuery,
+  awaitAtomResult,
   runAtomCommand,
-  squashAtomCommandFailure,
   type AtomCommand,
 } from "./runtime.ts";
 
@@ -65,25 +66,25 @@ export function verifyPersistedAttachmentUpload<A, E>(input: {
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
 }): Effect.Effect<PersistedAttachmentVerification> {
-  return Effect.promise(() =>
-    executeAtomQuery(
-      input.registry,
-      input.createAssetUrl({
-        environmentId: input.environmentId,
-        input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
-      }),
-      // `refresh` forces a server round trip: the asset URL query atom caches
-      // results (SWR), so a retry right after a transient failure would
-      // otherwise re-observe the cached failure and never ask the server.
-      { reportFailure: false, reportDefect: false, refresh: true },
-    ),
+  return awaitAtomResult(
+    input.registry,
+    input.createAssetUrl({
+      environmentId: input.environmentId,
+      input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
+    }),
+    // `refresh` forces a server round trip: the asset URL query atom caches
+    // results (SWR), so a retry right after a transient failure would
+    // otherwise re-observe the cached failure and never ask the server.
+    { refresh: true },
   ).pipe(
-    Effect.map((result): PersistedAttachmentVerification => {
-      if (result._tag === "Success") return { status: "verified" };
-      const error = squashAtomCommandFailure(result);
-      return isAssetAttachmentNotFoundFailure(error)
-        ? { status: "missing" }
-        : { status: "failed", error };
+    Effect.matchCause({
+      onSuccess: (): PersistedAttachmentVerification => ({ status: "verified" }),
+      onFailure: (cause): PersistedAttachmentVerification => {
+        const error = Cause.squash(cause);
+        return isAssetAttachmentNotFoundFailure(error)
+          ? { status: "missing" }
+          : { status: "failed", error };
+      },
     }),
     Effect.withSpan("Attachments.verifyPersistedUpload"),
   );
@@ -141,20 +142,18 @@ export function runAttachmentUploadCycle<E, RE, TE>(input: {
 }): Effect.Effect<AttachmentUploadCycleResult> {
   return Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const minted = yield* Effect.promise(() =>
-        runAtomCommand(
-          input.registry,
-          input.createUploadUrl,
-          { environmentId: input.environmentId, input: input.upload },
-          { reportFailure: false },
-        ),
+      const minted = yield* Effect.exit(
+        input.createUploadUrl.run(input.registry, {
+          environmentId: input.environmentId,
+          input: input.upload,
+        }),
       );
-      if (minted._tag !== "Success") {
+      if (Exit.isFailure(minted)) {
         return {
           status: "failed",
           step: "mint",
           attachmentId: null,
-          error: squashAtomCommandFailure(minted),
+          error: Cause.squash(minted.cause),
         } as const;
       }
       const attachmentId = minted.value.attachmentId;
