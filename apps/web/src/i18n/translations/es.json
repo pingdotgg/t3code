@@ -7518,9 +7518,20 @@
   "dc87902396b8ade4": "Letras, dígitos, '-' o '_'.",
   "251dfec07b7c3612": "Este driver no tiene configuración obligatoria. Puedes añadir la instancia ahora.",
   "08fe32f007e788f1": "Configurar manualmente",
+  "65300794c1edb929": "Token de portador (opcional)",
   "84eb2878dc17d3eb": "Clave de gestión",
   "7ac196c1e8175928": "Por defecto, el nombre de host del hub",
+  "0c026221dcd2820b": "Añadir una fuente de cuotas HTTP",
   "e3548407052e9e12": "Añadir un hub de CLIProxyAPI",
+  "d185c750156b2121": [
+    "Consulta las cuotas desde un punto de conexión en ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Muestra la cuota de cada cuenta que agrupa el hub, junto a los proveedores en",
     " ",
@@ -7531,7 +7542,9 @@
     },
     ". La clave se queda en ese servidor."
   ],
+  "2324770ba91371ac": "URL del punto de conexión",
   "556a695b117565ac": "URL del hub",
+  "e4e5b75bba51396c": "Token de portador (opcional)",
   "e62cedcbcdbafc75": "Clave de gestión",
   "f1b3d0634ec035cb": "Etiqueta (opcional)",
   "52814dd6f7d0a15c": "Añadir hub",
@@ -11513,10 +11526,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "No hay hubs configurados.",
+  "39f64d971ba424b5": "No hay fuentes de uso configuradas.",
+  "dbd877abdc2c7c81": "Fuente de cuotas HTTP",
   "4cf6a373a7535324": "{name} · Deshabilitado",
-  "1d1e9cda847bd398": "La clave de gestión del hub se elimina de este servidor. Sus cuentas salen de la vista Límites; el hub en sí no se toca. Vuelve a añadirlo con la URL y la clave para recuperarlas.",
-  "c9bee4f93481b77a": "Quitar hub",
+  "c792e744936dbe1b": "Añadir fuente HTTP",
+  "4032a03ee5301037": "La conexión guardada y sus credenciales se eliminan de este entorno.",
   "0424112d5a0ecd71": "Automático",
   "3f0e1b77e45d53a9": "Toca para alternar, mantén para hablar",
   "45928549c050a1b4": "Mantener",

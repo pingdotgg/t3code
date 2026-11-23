@@ -7524,9 +7524,20 @@
   "dc87902396b8ade4": "Bokstäver, siffror, '-' eller '_'.",
   "251dfec07b7c3612": "Den här drivrutinen har ingen obligatorisk konfiguration. Du kan lägga till instansen nu.",
   "08fe32f007e788f1": "Konfigurera manuellt",
+  "65300794c1edb929": "Bearer-token (valfritt)",
   "84eb2878dc17d3eb": "Hanteringsnyckel",
   "7ac196c1e8175928": "Standard är hubbens värdnamn",
+  "0c026221dcd2820b": "Lägg till en HTTP-källa för kvoter",
   "e3548407052e9e12": "Lägg till en CLIProxyAPI-hubb",
+  "d185c750156b2121": [
+    "Hämta kvoter från en slutpunkt på ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Visa kvoten för alla konton som hubben samlar, bredvid leverantörerna på",
     " ",
@@ -7537,7 +7548,9 @@
     },
     ". Nyckeln stannar på den servern."
   ],
+  "2324770ba91371ac": "Slutpunktens URL",
   "556a695b117565ac": "Hubb-URL",
+  "e4e5b75bba51396c": "Bearer-token (valfritt)",
   "e62cedcbcdbafc75": "Hanteringsnyckel",
   "f1b3d0634ec035cb": "Etikett (valfritt)",
   "52814dd6f7d0a15c": "Lägg till hubb",
@@ -11526,10 +11539,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Inga hubbar konfigurerade.",
+  "39f64d971ba424b5": "Inga användningskällor har konfigurerats.",
+  "dbd877abdc2c7c81": "HTTP-källa för kvoter",
   "4cf6a373a7535324": "{name} · Inaktiverad",
-  "1d1e9cda847bd398": "Hubbens hanteringsnyckel tas bort från den här servern. Dess konton försvinner från vyn Gränser; själva hubben påverkas inte. Lägg till den igen med URL och nyckel för att få tillbaka dem.",
-  "c9bee4f93481b77a": "Ta bort hubb",
+  "c792e744936dbe1b": "Lägg till HTTP-källa",
+  "4032a03ee5301037": "Den sparade anslutningen och dess autentiseringsuppgifter tas bort från den här miljön.",
   "0424112d5a0ecd71": "Auto",
   "3f0e1b77e45d53a9": "Tryck för att växla, håll ned för att prata",
   "45928549c050a1b4": "Håll ned",

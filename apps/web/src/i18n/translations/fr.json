@@ -7519,9 +7519,20 @@
   "dc87902396b8ade4": "Lettres, chiffres, '-' ou '_'.",
   "251dfec07b7c3612": "Ce driver n’a aucune configuration requise. Vous pouvez ajouter l’instance maintenant.",
   "08fe32f007e788f1": "Configurer manuellement",
+  "65300794c1edb929": "Jeton Bearer (facultatif)",
   "84eb2878dc17d3eb": "Clé de gestion",
   "7ac196c1e8175928": "Par défaut, le nom d’hôte du hub",
+  "0c026221dcd2820b": "Ajouter une source de quotas HTTP",
   "e3548407052e9e12": "Ajouter un hub CLIProxyAPI",
+  "d185c750156b2121": [
+    "Consultez les quotas depuis un point de terminaison sur ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "."
+  ],
   "432e85a50e2e7964": [
     "Affichez le quota de chaque compte regroupé par le hub, à côté des fournisseurs sur",
     " ",
@@ -7532,7 +7543,9 @@
     },
     ". La clé reste sur ce serveur."
   ],
+  "2324770ba91371ac": "URL du point de terminaison",
   "556a695b117565ac": "URL du hub",
+  "e4e5b75bba51396c": "Jeton Bearer (facultatif)",
   "e62cedcbcdbafc75": "Clé de gestion",
   "f1b3d0634ec035cb": "Libellé (facultatif)",
   "52814dd6f7d0a15c": "Ajouter le hub",
@@ -11518,10 +11531,11 @@
       "v": "v"
     }
   ],
-  "f54364b854a07918": "Aucun hub configuré.",
+  "39f64d971ba424b5": "Aucune source de suivi de l’utilisation configurée.",
+  "dbd877abdc2c7c81": "Source de quotas HTTP",
   "4cf6a373a7535324": "{name} · Désactivé",
-  "1d1e9cda847bd398": "La clé de gestion du hub est supprimée de ce serveur. Ses comptes quittent la vue Limites ; le hub lui-même n’est pas touché. Ajoutez-le à nouveau avec l’URL et la clé pour les récupérer.",
-  "c9bee4f93481b77a": "Supprimer le hub",
+  "c792e744936dbe1b": "Ajouter une source HTTP",
+  "4032a03ee5301037": "La connexion enregistrée et ses identifiants sont supprimés de cet environnement.",
   "0424112d5a0ecd71": "Auto",
   "3f0e1b77e45d53a9": "Appuyer pour basculer, maintenir pour parler",
   "45928549c050a1b4": "Maintenir",
