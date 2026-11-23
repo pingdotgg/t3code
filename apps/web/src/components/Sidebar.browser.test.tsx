@@ -415,7 +415,7 @@ describe("sidebar thread menu", () => {
 });
 
 describe("sidebar settled pagination", () => {
-  it("pages in settled threads at the end of their scroller and starts over when reopened", async () => {
+  it("pages in settled threads at the end of their scroller and keeps its place when reopened", async () => {
     using stack = new DisposableStack();
     const style = document.createElement("style");
     style.textContent = appCss;
@@ -487,9 +487,16 @@ describe("sidebar settled pagination", () => {
     expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
     await act(() => scroller.scrollTo({ top: scroller.scrollHeight }));
     await vi.waitFor(() => expect(settledRows()).toBe(50));
+    scroller.scrollTop = 300;
+    scroller.dispatchEvent(new Event("scroll"));
     await act(() => shelf.click());
     expect(shelf.isConnected).toBe(true);
     await act(() => shelf.click());
-    await vi.waitFor(() => expect(settledRows()).toBe(25));
+    expect(settledRows()).toBe(50);
+    const reopened = screen.container
+      .querySelector('[data-thread-item*="settled-"]')!
+      .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    expect(reopened).not.toBe(scroller);
+    expect(reopened.scrollTop).toBe(300);
   });
 });

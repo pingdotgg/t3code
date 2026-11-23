@@ -633,13 +633,7 @@ function useSidebarThreads(input: {
         count: current.count + SETTLED_TAIL_PAGE_COUNT,
       })),
     settledShelfExpanded,
-    toggleSettledShelf: () => {
-      // Reopening starts from the first page again.
-      if (settledShelfExpanded) {
-        setSettledTail({ scopeKey: projectScopeKey, count: SETTLED_TAIL_INITIAL_COUNT });
-      }
-      setSettledShelfExpanded(!settledShelfExpanded);
-    },
+    toggleSettledShelf: () => setSettledShelfExpanded((value) => !value),
     snoozedShelfExpanded,
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
@@ -1108,6 +1102,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // The Settled shelf scrolls on its own, so its rows get their own motion and shift guard.
   const settledMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const settledShiftGuardRef = useRef<ReturnType<typeof createSidebarShiftGuard> | null>(null);
+  const settledScrollTopRef = useRef(0);
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
@@ -1801,7 +1796,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     motion.update(false);
     const shiftGuard = createSidebarShiftGuard(node);
     settledShiftGuardRef.current = shiftGuard;
+    // Reopening the shelf returns to where it was scrolled; collapsing unmounts the scroller.
+    const viewport = node.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    const rememberScroll = () => {
+      settledScrollTopRef.current = viewport?.scrollTop ?? 0;
+    };
+    if (viewport !== null) viewport.scrollTop = settledScrollTopRef.current;
+    viewport?.addEventListener("scroll", rememberScroll, { passive: true });
     return () => {
+      viewport?.removeEventListener("scroll", rememberScroll);
       motion.dispose();
       shiftGuard.dispose();
       if (settledMotionRef.current === motion) settledMotionRef.current = null;
