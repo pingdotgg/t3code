@@ -1203,11 +1203,16 @@ export function PullRequestDetailPanel({
     if (!detail || handoff !== null || !canOperateThread) return;
     setHandoff("create");
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
-    const opened = await newThread(projectRef, { freshDraft: true, prompt: detail.url }).catch(
-      () => null,
-    );
+    const opened = await newThread(projectRef, { freshDraft: true }).catch(() => null);
     setHandoff(null);
-    if (!opened) toastManager.add({ type: "error", title: m(msg("Could not open a thread")) });
+    if (!opened) {
+      toastManager.add({ type: "error", title: m(msg("Could not open a thread")) });
+      return;
+    }
+    writeHandoffToComposer(opened.draftId, {
+      prompt: "",
+      reviewComments: [buildPullRequestContext(detail)],
+    });
   };
 
   const askAboutPullRequest = () => {
