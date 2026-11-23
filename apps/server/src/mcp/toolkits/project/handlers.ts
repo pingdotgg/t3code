@@ -468,6 +468,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           creationSource: "mcp",
           ...(linkOrigin === undefined ? {} : { linkOrigin }),
           ...(delegatedFrom === undefined ? {} : { delegatedFrom }),
+          // A link's word for it, like `delegatedFrom`: nothing else may name a run.
+          ...(linkOrigin === undefined || input.workflowRun === undefined
+            ? {}
+            : { workflowRun: input.workflowRun }),
         }).pipe(
           Effect.mapError((error) => {
             if (error._tag === "AttachmentClaimError") {

@@ -52,8 +52,8 @@ export interface AutoFailoverPlan {
 /**
  * What to do when a run on an Auto thread fails: bench the instance that failed and send the
  * thread back through Auto, which then picks the next subscription in the chain. Null when the
- * run did not fail for lack of room, or the thread is a delegated one not on Auto, or the run is
- * no longer the thread's latest.
+ * run did not fail for lack of room, the thread is a delegated one not on Auto or a workflow's
+ * step, or the run is no longer the thread's latest.
  */
 export function autoFailoverPlan(input: {
   readonly shell: OrchestrationV2ThreadShell;
@@ -69,7 +69,9 @@ export function autoFailoverPlan(input: {
     shell.settledOverride === "settled" ||
     shell.pendingRuntimeRequest !== null ||
     // A provider's own subagent cannot receive messages; its parent sees the failure.
-    isProviderNativeSubagentThread(shell)
+    isProviderNativeSubagentThread(shell) ||
+    // A workflow retries a step whose turn died; a message here would do the step twice.
+    shell.lineage.workflowStep === true
   )
     return null;
   // A thread not on Auto (an older thread, or one where a model was picked by hand) moves to
