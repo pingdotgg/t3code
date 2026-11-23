@@ -40,10 +40,16 @@ class HostedChild
   /** No longer awaited: its spawn failed, timed out or it exited. */
   settled = false;
   readonly launcher: Launcher;
+  /** The fds requested as pipes, each of which must arrive before the child counts as started. */
+  readonly pipes: ReadonlyArray<number>;
 
-  constructor(launcher: Launcher) {
+  constructor(launcher: Launcher, stdio: NodeChildProcess.SpawnOptions["stdio"]) {
     super();
     this.launcher = launcher;
+    const modes = typeof stdio === "string" || stdio === undefined ? Array(3).fill(stdio) : stdio;
+    this.pipes = modes.flatMap((mode, fd) =>
+      mode === undefined || mode === null || mode === "pipe" || mode === "overlapped" ? [fd] : [],
+    );
   }
 
   kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
@@ -208,6 +214,13 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
         child.pid = event.pid;
         break;
       case "spawn":
+        // A lost handle would otherwise read as a command that printed nothing.
+        if (child.pipes.some((fd) => child.stdio[fd] == null)) {
+          if (child.pid !== undefined) killGroup(child.pid);
+          for (const stream of child.stdio) stream?.destroy();
+          child.fail(new Error("The process launcher did not hand over the command's pipes."));
+          break;
+        }
         child.started = true;
         child.emit("spawn");
         break;
@@ -267,7 +280,7 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
       return NodeChildProcess.spawn(command, [...commandArgs], options);
     }
     const id = ++nextId;
-    const child = new HostedChild(launcher);
+    const child = new HostedChild(launcher, options.stdio);
     launcher.children.set(id, child);
     syncRef(launcher);
     const request: LauncherSpawnRequest = {

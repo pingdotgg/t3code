@@ -348,7 +348,7 @@ describe("ProcessRunner.layer", () => {
         const run = yield* runner
           .run({
             command: "sh",
-            args: ["-c", `(trap "" TERM; exec sleep 1000) & echo $$; wait`],
+            args: ["-c", `(trap "" TERM; echo $$; exec sleep 1000) & wait`],
             onStdoutChunk: (chunk) =>
               Deferred.doneUnsafe(leader, Exit.succeed(Number(new TextDecoder().decode(chunk)))),
           })
@@ -481,6 +481,48 @@ describe("ProcessRunner.layer", () => {
 
         expect((yield* Effect.flip(Fiber.join(run)))._tag).toBe("ProcessSpawnError");
         yield* Deferred.await(commandGone);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "fails a command whose output pipe never arrives instead of returning no output",
+    () =>
+      Effect.gen(function* () {
+        const childProcess: typeof NodeChildProcess = NodeModule.createRequire(import.meta.url)(
+          "node:child_process",
+        );
+        const spawn = childProcess.spawn;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
+              const helper = spawn(...args);
+              const emit = helper.emit.bind(helper);
+              helper.emit = ((event: string, ...rest: Array<unknown>) => {
+                const [message, socket] = rest as [{ type?: string; fd?: number }, NodeNet.Socket?];
+                if (event !== "message" || message.type !== "stdio" || message.fd !== 1) {
+                  return emit(event, ...rest);
+                }
+                socket?.destroy();
+                return emit(event, message, undefined);
+              }) as typeof helper.emit;
+              return helper;
+            }) as typeof spawn;
+            NodeModule.syncBuiltinESMExports();
+          }),
+          () =>
+            Effect.sync(() => {
+              childProcess.spawn = spawn;
+              NodeModule.syncBuiltinESMExports();
+            }),
+        );
+        const runner = Context.get(
+          yield* Layer.build(ProcessRunner.layer),
+          ProcessRunner.ProcessRunner,
+        );
+
+        const error = yield* runner.run({ command: "echo", args: ["output"] }).pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProcessSpawnError");
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
