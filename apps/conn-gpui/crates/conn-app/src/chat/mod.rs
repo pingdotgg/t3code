@@ -465,8 +465,8 @@ impl ChatView {
         cx.notify();
     }
 
-    /// Stages local file paths into the composer attachment strip (used by automation and tests).
-    #[cfg(any(test, feature = "automation"))]
+    /// Stages local file paths into the composer attachment strip (files dropped on a thread row,
+    /// automation and tests).
     pub(crate) fn attach_paths(
         &mut self,
         paths: Vec<std::path::PathBuf>,

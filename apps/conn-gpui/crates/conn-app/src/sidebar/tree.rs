@@ -41,6 +41,9 @@ pub(crate) struct SidebarTree {
     /// Where the keyboard last was among the rows.
     last_focus: Option<FocusedRow>,
     scroll: ScrollHandle,
+    /// Where the search results were last painted. They take no keyboard, so they are not rows,
+    /// but the highlighted one scrolls into view.
+    results: HashMap<String, Rc<Cell<Option<Bounds<Pixels>>>>>,
 }
 
 impl SidebarTree {
@@ -50,6 +53,7 @@ impl SidebarTree {
             rows: Vec::new(),
             last_focus: None,
             scroll: ScrollHandle::new(),
+            results: HashMap::new(),
         }
     }
 
@@ -66,6 +70,15 @@ impl SidebarTree {
     /// Starts a render: the rows are listed again, top to bottom, with [`Self::row`].
     pub(crate) fn begin(&mut self) {
         self.rows.clear();
+        self.results.clear();
+    }
+
+    /// Where the search result `key` will be painted. A result is not a row: it takes no
+    /// keyboard (`tabIndex={-1}`).
+    pub(crate) fn result_bounds(&mut self, key: &str) -> Rc<Cell<Option<Bounds<Pixels>>>> {
+        let bounds = Rc::new(Cell::new(None));
+        self.results.insert(key.to_owned(), Rc::clone(&bounds));
+        bounds
     }
 
     /// Lists `row` next in the display order and returns what it needs to take the keyboard.
@@ -166,12 +179,18 @@ impl SidebarTree {
     pub(crate) fn reveal_row(&self, key: &str) {
         if let Some(slot) = self.slots.get(key) {
             self.reveal(slot);
+        } else if let Some(bounds) = self.results.get(key) {
+            self.reveal_bounds(bounds.get());
         }
     }
 
     /// Scrolls the list the least that shows `slot`'s row (`scrollIntoView({ block: "nearest" })`).
     fn reveal(&self, slot: &RowFocus) {
-        let (Some(row), container) = (slot.bounds.get(), self.scroll.bounds()) else {
+        self.reveal_bounds(slot.bounds.get());
+    }
+
+    fn reveal_bounds(&self, row: Option<Bounds<Pixels>>) {
+        let (Some(row), container) = (row, self.scroll.bounds()) else {
             return;
         };
         if container.size.height <= px(0.0) {

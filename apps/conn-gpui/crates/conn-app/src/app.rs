@@ -22,10 +22,11 @@ use crate::shell::{CardJoin, inset_card, two_tone_divider};
 use crate::sidebar::drafts::{DraftRowView, DraftSidebar, UndoNotice};
 use crate::sidebar::hover_card_state::ThreadHoverState;
 use crate::sidebar::rail::render_workspace_rail;
-use crate::sidebar::thread_list::{ThreadHoverView, render_thread_sidebar};
+use crate::sidebar::thread_list::{SidebarMarks, ThreadHoverView, render_thread_sidebar};
 use crate::sidebar::thread_menu::{
     DraftMenuState, MenuCursor, ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState,
-    build_draft_action_menu_items, build_thread_action_menu_items, render_thread_action_menu,
+    build_bulk_menu_items, build_draft_action_menu_items, build_thread_action_menu_items,
+    render_thread_action_menu,
 };
 use crate::sidebar::tree::SidebarTree;
 use crate::theme::{apply_kit_theme, hsla};
@@ -83,13 +84,46 @@ fn settle_facts(thread: &conn_state::ThreadShell) -> conn_state::SettledThreadFa
     }
 }
 
+/// What a thread's undo puts back, and what else ends it (`ThreadUndo` claim kinds): a newer
+/// action of the same kind on the thread replaces its entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ThreadUndoKind {
+    Settle,
+    /// An unpin.
+    Pin,
+    Snooze,
+    Archive,
+}
+
+impl ThreadUndoKind {
+    /// What the notice says of it.
+    fn action(self) -> conn_state::UndoAction {
+        match self {
+            Self::Settle => conn_state::UndoAction::Settled,
+            Self::Pin => conn_state::UndoAction::Unpinned,
+            Self::Snooze => conn_state::UndoAction::Snoozed,
+            Self::Archive => conn_state::UndoAction::Archived,
+        }
+    }
+}
+
+/// Where the open thread goes when it leaves the active list (`planForwardNavigation`).
+enum ForwardNavigation {
+    /// The next thread.
+    Thread(String),
+    /// A new thread in this project, when no thread is left.
+    NewThread(Option<String>),
+}
+
 /// What `Undo` and `⌘Z` bring back.
 enum UndoEntry {
     /// A discarded draft or thread input.
     Draft(DiscardedDraft),
-    /// A settled thread, and the commands that put it back as it was.
-    Settled {
+    /// A settled, unpinned, snoozed or archived thread, and the commands that put it back as it
+    /// was.
+    Thread {
         thread_id: String,
+        kind: ThreadUndoKind,
         plan: Vec<conn_state::SettleUndoStep>,
     },
 }
@@ -148,6 +182,15 @@ pub(crate) struct ConnApp {
     /// The search result the arrow keys highlighted, by thread id (`searchHighlightKey`); the
     /// first result while none, or when its thread left the results.
     sidebar_search_highlight: Option<String>,
+    /// `⌘` has been held long enough for the rows to show their jump numbers
+    /// (`useThreadJumpHintsVisible`).
+    jump_hints: bool,
+    /// Counts the `⌘` presses, so a timer that outlived its press does nothing.
+    jump_hint_generation: u64,
+    /// The threads picked with `⌘`-click and `Shift`-click for a bulk action.
+    thread_selection: conn_state::ThreadSelection,
+    /// A thread opened, so its row scrolls into view once the list has drawn it.
+    reveal_open_row: bool,
     /// Why the last undo could not put the input back, until its notice expires.
     discard_failure: Option<&'static str>,
     discard_failure_generation: u64,
@@ -505,6 +548,10 @@ impl ConnApp {
             drafts: DraftBook::default(),
             discards: conn_state::DiscardUndo::default(),
             sidebar_search_highlight: None,
+            jump_hints: false,
+            jump_hint_generation: 0,
+            thread_selection: conn_state::ThreadSelection::default(),
+            reveal_open_row: false,
             discard_failure: None,
             discard_failure_generation: 0,
             undo_focus: cx.focus_handle().tab_index(0).tab_stop(true),
@@ -1680,6 +1727,10 @@ impl ConnApp {
                 has_project: self.shell.project(&draft.project_id).is_some(),
             }));
         }
+        if anchor.bulk {
+            let ids = self.bulk_targets();
+            return (!ids.is_empty()).then(|| build_bulk_menu_items(self.bulk_facts(&ids)));
+        }
         let thread = self.shell.find_thread(&anchor.thread_id)?;
         let state =
             ThreadMenuState::for_thread(&self.shell, thread, self.active_workspace.as_deref());
@@ -1703,6 +1754,7 @@ impl ConnApp {
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id: draft_id,
             draft: true,
+            bulk: false,
             position,
             copy_open: false,
             cursor: MenuCursor::default(),
@@ -3360,6 +3412,23 @@ impl ConnApp {
             .shell
             .find_thread(&thread_id)
             .map(|t| t.project_id.clone());
+        // Opening a thread ends a selection, and anchors the next `Shift`-click (`navigateToThread`).
+        self.thread_selection.clear();
+        self.thread_selection.set_anchor(&thread_id);
+        // A thread the project filter hides widens the filter to every project, and its row
+        // scrolls into view (`routeReveal`).
+        if let Some(project_id) = &project_id
+            && self.active_workspace.is_some()
+            && !crate::sidebar::thread_list::project_in_scope(
+                &self.shell,
+                &self.orbit.workspaces,
+                self.active_workspace.as_deref(),
+                project_id,
+            )
+        {
+            self.active_workspace = None;
+        }
+        self.reveal_open_row = true;
         // Always reveal the chat column when selecting a thread in the sidebar.
         self.right_panel_maximized = false;
         self.open_thread(thread_id);
@@ -3570,6 +3639,8 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.active_workspace = workspace_id;
+        // A selection made under one scope can hold threads the next scope hides.
+        self.thread_selection.clear();
         self.sidebar_filter_menu_open = false;
         cx.notify();
     }
@@ -3856,6 +3927,18 @@ impl ConnApp {
         settled: bool,
         cx: &mut Context<'_, Self>,
     ) {
+        self.settle_thread_along(thread_id, settled, &HashSet::new(), cx);
+    }
+
+    /// [`Self::settle_thread`] for a thread settled together with others (`settleThreads`): the
+    /// open thread moves on to one that is not being settled with it.
+    fn settle_thread_along(
+        &mut self,
+        thread_id: String,
+        settled: bool,
+        co_settling: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -3867,25 +3950,31 @@ impl ConnApp {
         let undo_plan = settled.then(|| {
             conn_state::plan_settle_undo(self.shell.find_thread(&thread_id).map(settle_facts))
         });
-        if !settled {
-            self.forget_settle_undo(&thread_id);
+        if settled {
+            // Settling supersedes an older unpin or snooze undo, which the server would read as
+            // a promotion that un-settles.
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin, ThreadUndoKind::Snooze]);
+        } else {
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Settle]);
         }
-        // `planForwardNavigation`: settling the open thread moves on to the next active one.
-        let advance = settled
+        // `planForwardNavigation`: settling the open thread moves on, planned before the shell
+        // changes under it.
+        let forward = (settled
             && self.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
-            && self.draft.is_none();
+            && self.draft.is_none())
+        .then(|| self.plan_forward_navigation(&thread_id, co_settling));
         cx.spawn(
             async move |this, cx| match connection.dispatch_command(cmd).await {
                 Ok(_) => {
                     let _ = this.update(cx, |app, cx| {
-                        if advance
+                        if let Some(forward) = forward
                             && app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
                         {
-                            app.navigate_forward_from(&thread_id, cx);
+                            app.go_forward(forward, cx);
                         }
                         // Only a settle the server took shows the notice (`showThreadUndoNotice`).
                         if let Some(plan) = undo_plan {
-                            app.offer_settle_undo(thread_id, plan, cx);
+                            app.offer_thread_undo(thread_id, ThreadUndoKind::Settle, plan, cx);
                         }
                     });
                 }
@@ -3895,27 +3984,28 @@ impl ConnApp {
         .detach();
     }
 
-    /// `planForwardNavigation`: open the next active thread after `thread_id` in sidebar
-    /// order (wrapping), else start a new thread in its project.
-    fn navigate_forward_from(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+    /// `planForwardNavigation`: the next active thread after `thread_id` in sidebar order
+    /// (wrapping) that is not in `parked`, else a new thread in its project.
+    fn plan_forward_navigation(
+        &self,
+        thread_id: &str,
+        parked: &HashSet<String>,
+    ) -> ForwardNavigation {
         let ordered = crate::sidebar::thread_list::ordered_active_thread_ids(&self.shell);
-        let next = ordered
-            .iter()
-            .position(|id| id == thread_id)
-            .and_then(|idx| {
-                ordered[idx + 1..]
-                    .iter()
-                    .chain(ordered[..idx].iter())
-                    .find(|id| id.as_str() != thread_id)
-                    .cloned()
-            });
-        match next {
-            Some(next) => self.select_thread(next, cx),
-            None => {
-                let project_id = self
-                    .shell
+        match conn_state::next_after_settle(&ordered, thread_id, |id| parked.contains(id)) {
+            Some(next) => ForwardNavigation::Thread(next.to_owned()),
+            None => ForwardNavigation::NewThread(
+                self.shell
                     .find_thread(thread_id)
-                    .map(|t| t.project_id.clone());
+                    .map(|t| t.project_id.clone()),
+            ),
+        }
+    }
+
+    fn go_forward(&mut self, forward: ForwardNavigation, cx: &mut Context<'_, Self>) {
+        match forward {
+            ForwardNavigation::Thread(next) => self.select_thread(next, cx),
+            ForwardNavigation::NewThread(project_id) => {
                 self.start_new_thread(project_id, None, cx);
             }
         }
@@ -3967,17 +4057,59 @@ impl ConnApp {
         pinned: bool,
         cx: &mut Context<'_, Self>,
     ) {
-        // Pinning clears what a settle undo would restore (`sendPin` invalidates it).
         if pinned {
-            self.forget_settle_undo(&thread_id);
+            // Pinning clears a snooze and un-settles, so an older unpin, settle or snooze undo
+            // would fight this pin (`sendPin` invalidates them).
+            self.forget_thread_undo(
+                &thread_id,
+                &[
+                    ThreadUndoKind::Pin,
+                    ThreadUndoKind::Settle,
+                    ThreadUndoKind::Snooze,
+                ],
+            );
+            self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, true), cx);
+            return;
         }
-        self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, pinned), cx);
+        // The undo pins the thread again in the place it had (`planThreadUndo("unpin", thread)`),
+        // and the notice shows once the server took the unpin (`unpinThread`).
+        let plan =
+            conn_state::plan_unpin_undo(self.shell.find_thread(&thread_id).map(settle_facts));
+        let undo_id = thread_id.clone();
+        self.dispatch_thread_command_then(
+            "unpin",
+            crate::commands::pin_thread(&thread_id, false),
+            cx,
+            move |app, cx| app.offer_thread_undo(undo_id, ThreadUndoKind::Pin, plan, cx),
+        );
     }
 
     /// Opens the Thread Actions menu for `thread_id` at `position` (window coordinates).
     pub(crate) fn open_thread_menu(
         &mut self,
         thread_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.open_thread_menu_as(thread_id, false, position, cx);
+    }
+
+    /// Opens the menu of a sidebar row: on a picked row it acts on every picked thread
+    /// (`handleThreadContextMenu`).
+    pub(crate) fn open_row_menu(
+        &mut self,
+        thread_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let bulk = self.thread_selection.contains(&thread_id);
+        self.open_thread_menu_as(thread_id, bulk, position, cx);
+    }
+
+    fn open_thread_menu_as(
+        &mut self,
+        thread_id: String,
+        bulk: bool,
         position: gpui_kit::Point<gpui_kit::Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -3988,6 +4120,7 @@ impl ConnApp {
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id,
             draft: false,
+            bulk,
             position,
             copy_open: false,
             cursor: MenuCursor::default(),
@@ -4095,8 +4228,13 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        let bulk = self.thread_menu.as_ref().is_some_and(|menu| menu.bulk);
         self.thread_menu = None;
         cx.notify();
+        if bulk {
+            self.run_bulk_action(action, window, cx);
+            return;
+        }
         let Some(thread) = self.shell.find_thread(&thread_id).cloned() else {
             return;
         };
@@ -4178,21 +4316,77 @@ impl ConnApp {
                 return;
             }
             let _ = this.update(cx, |app, cx| {
-                if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
-                    app.navigate_forward_from(&thread_id, cx);
-                }
-                app.forget_settle_undo(&thread_id);
-                // The thread's unsent input goes with it (`clearComposerDraftForThread`).
-                let deleted = thread_id.clone();
-                app.dispatch_thread_command_then(
-                    "delete thread",
-                    crate::commands::delete_thread(&thread_id),
-                    cx,
-                    move |app, cx| app.forget_thread_draft(&deleted, cx),
-                );
+                app.delete_thread_now(&thread_id, &HashSet::new(), cx);
             });
         })
         .detach();
+    }
+
+    /// `Delete N threads?` for the threads picked for a bulk action, then `thread.delete` for
+    /// each (`handleMultiSelectContextMenu` `delete`).
+    fn confirm_delete_threads(
+        &mut self,
+        thread_ids: Vec<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let count = thread_ids.len();
+        let answer = window.prompt(
+            gpui_kit::PromptLevel::Critical,
+            &format!(
+                "Delete {count} {}?",
+                if count == 1 { "thread" } else { "threads" }
+            ),
+            Some("This permanently clears conversation history for these threads."),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            let _ = this.update(cx, |app, cx| {
+                let deleting: HashSet<String> = thread_ids.iter().cloned().collect();
+                for thread_id in &thread_ids {
+                    app.delete_thread_now(thread_id, &deleting, cx);
+                }
+                app.thread_selection.remove(&thread_ids);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sends `thread.delete`. The open thread moves on to one that is not deleted with it, the
+    /// undos that restore its place end, and its unsent input goes with it.
+    fn delete_thread_now(
+        &mut self,
+        thread_id: &str,
+        deleting: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.layout.selected_thread_id.as_deref() == Some(thread_id) {
+            let forward = self.plan_forward_navigation(thread_id, deleting);
+            self.go_forward(forward, cx);
+        }
+        // Deleting ends every undo that restores the thread's place (`expireThreadUndos`).
+        self.forget_thread_undo(
+            thread_id,
+            &[
+                ThreadUndoKind::Settle,
+                ThreadUndoKind::Snooze,
+                ThreadUndoKind::Pin,
+                ThreadUndoKind::Archive,
+            ],
+        );
+        // The thread's unsent input goes with it (`clearComposerDraftForThread`).
+        let deleted = thread_id.to_owned();
+        self.dispatch_thread_command_then(
+            "delete thread",
+            crate::commands::delete_thread(thread_id),
+            cx,
+            move |app, cx| app.forget_thread_draft(&deleted, cx),
+        );
     }
 
     /// Ticks the sidebar each second while a visible row shows a live elapsed label, else each
@@ -6291,6 +6485,11 @@ impl Render for ConnApp {
                     }
                 }),
             )
+            .on_modifiers_changed(cx.listener(
+                |app, event: &gpui_kit::ModifiersChangedEvent, window, cx| {
+                    app.modifiers_changed(&event.modifiers, window, cx);
+                },
+            ))
             .on_mouse_down(
                 gpui_kit::MouseButton::Left,
                 cx.listener(|app, _, _window, cx| {
@@ -6366,6 +6565,19 @@ impl Render for ConnApp {
             undo_focus: &self.undo_focus,
             unsent_threads: self.sidebar_unsent_threads(cx),
         };
+        if std::mem::take(&mut self.reveal_open_row)
+            && let Some(open) = self.layout.selected_thread_id.clone()
+        {
+            // The row is drawn by the end of this frame, which is when its place is known.
+            let app = cx.entity().downgrade();
+            window.on_next_frame(move |_, cx| {
+                let _ = app.update(cx, |app, cx| {
+                    app.sidebar_tree.reveal_row(&open);
+                    cx.notify();
+                });
+            });
+        }
+        let jump_order = self.jump_hint_order(window, cx);
         let hover_open_for = self
             .thread_hover
             .open_for()
@@ -6386,6 +6598,10 @@ impl Render for ConnApp {
                     &self.orbit.workspaces,
                     self.active_workspace.as_deref(),
                     &draft_sidebar,
+                    &SidebarMarks {
+                        jump_order: &jump_order,
+                        selection: &self.thread_selection,
+                    },
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
                     self.sidebar_search_highlight.as_deref(),

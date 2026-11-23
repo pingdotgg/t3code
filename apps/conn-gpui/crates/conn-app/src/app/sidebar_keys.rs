@@ -6,21 +6,28 @@
 //! `hooks/useThreadActions.ts`). What each key does comes from `conn_state::sidebar_nav` and
 //! `conn_state::discard_undo`; this file applies it to the app.
 
-use conn_state::{
-    DISCARD_UNDO_SECS, KeyMods, MenuKey, MenuNavItem, MenuStep, RowKey, RowKind, SearchKey,
-    SettleUndoStep, ThreadStep, TreeStep, UNDO_FAILED_NEW_CONTENT, UNDO_FAILED_SETTLE, UndoAction,
-    UndoShortcutScene, adjacent_thread, draft_has_content, first_enabled, is_modifier_key,
-    is_undo_key, menu_key, menu_step, row_key, row_kind, search_highlight_index, search_key,
-    search_step, thread_traversal_key, traversal_order, tree_key, tree_step, undo_shortcut_applies,
-};
-use gpui_kit::{Context, Focusable as _, KeyDownEvent, KeystrokeEvent, Modifiers, Window};
+use std::collections::HashSet;
 
-use super::{ConnApp, DiscardedDraft, UndoEntry};
+use conn_state::{
+    BulkFacts, DISCARD_UNDO_SECS, KeyMods, MenuKey, MenuNavItem, MenuStep, RowClick, RowKey,
+    RowKind, SearchKey, SettleUndoStep, ShellState, THREAD_JUMP_HINT_DELAY_MS, ThreadStep,
+    TreeStep, UNDO_FAILED_NEW_CONTENT, UndoAction, UndoShortcutScene, adjacent_thread,
+    draft_has_content, first_enabled, is_modifier_key, is_undo_key, jump_target, menu_key,
+    menu_step, row_click, row_key, row_kind, search_highlight_index, search_key_unless_composing,
+    search_step, shows_jump_hints, thread_jump_key, thread_traversal_key, traversal_order,
+    tree_key, tree_step, undo_failure_text, undo_shortcut_applies,
+};
+use gpui_kit::{
+    Context, EntityInputHandler as _, Focusable as _, KeyDownEvent, KeystrokeEvent, Modifiers,
+    Window,
+};
+
+use super::{ConnApp, DiscardedDraft, ThreadUndoKind, UndoEntry};
 use crate::sidebar::thread_list::{
     SETTLED_SHELF_TOGGLE_KEY, SidebarThreads, current_unix_secs, parse_iso8601_unix_secs,
     sidebar_threads,
 };
-use crate::sidebar::thread_menu::{MenuCursor, ThreadMenuItem};
+use crate::sidebar::thread_menu::{MenuCursor, ThreadMenuAction, ThreadMenuItem};
 
 fn key_mods(modifiers: &Modifiers) -> KeyMods {
     KeyMods {
@@ -136,7 +143,7 @@ impl ConnApp {
             }
             (RowKind::Thread(id), RowKey::Menu) => {
                 if let Some(position) = self.sidebar_tree.below(row) {
-                    self.open_thread_menu(id.to_owned(), position, cx);
+                    self.open_row_menu(id.to_owned(), position, cx);
                     self.highlight_first_menu_row();
                 }
             }
@@ -400,10 +407,7 @@ impl ConnApp {
         }
         // Key repeats cannot be told apart here (Conn leaves them out), so this handles the
         // key only when nothing has the keyboard and the root's key handler is out of reach.
-        if window.focused(cx).is_none()
-            && let Some(step) = thread_traversal_key(&keystroke.key, mods)
-            && self.traverse_threads(step, cx)
-        {
+        if window.focused(cx).is_none() && self.thread_shortcut(&keystroke.key, mods, cx) {
             self.consume_keystroke(cx);
             return;
         }
@@ -451,27 +455,34 @@ impl ConnApp {
         self.offer_undo(UndoAction::Discarded, UndoEntry::Draft(discarded), cx);
     }
 
-    /// Keeps a settled thread for `Undo` (`settleThread` shows the notice once the server took
-    /// the settle). A thread settled again replaces its older entry, as its claim does.
-    pub(super) fn offer_settle_undo(
+    /// Keeps a thread's settle, unpin, snooze or archive for `Undo` (`showThreadUndoNotice`,
+    /// shown once the server took the action). The same action on the thread again replaces its
+    /// older entry, as its claim does (`ThreadUndo.begin`).
+    pub(super) fn offer_thread_undo(
         &mut self,
         thread_id: String,
+        kind: ThreadUndoKind,
         plan: Vec<SettleUndoStep>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.forget_settle_undo(&thread_id);
+        self.forget_thread_undo(&thread_id, &[kind]);
         self.offer_undo(
-            UndoAction::Settled,
-            UndoEntry::Settled { thread_id, plan },
+            kind.action(),
+            UndoEntry::Thread {
+                thread_id,
+                kind,
+                plan,
+            },
             cx,
         );
     }
 
-    /// `ThreadUndo.invalidate("settle", thread)`: something else un-settled, pinned or deleted
-    /// the thread, so undoing its settle would undo the wrong thing.
-    pub(super) fn forget_settle_undo(&mut self, thread_id: &str) {
+    /// `ThreadUndo.invalidate(kind, thread)`: something else changed the thread's place, so
+    /// undoing these actions would undo the wrong thing.
+    pub(super) fn forget_thread_undo(&mut self, thread_id: &str, kinds: &[ThreadUndoKind]) {
         self.discards.retain(|entry| {
-            !matches!(entry, UndoEntry::Settled { thread_id: settled, .. } if settled == thread_id)
+            !matches!(entry, UndoEntry::Thread { thread_id: id, kind, .. }
+                if id == thread_id && kinds.contains(kind))
         });
     }
 
@@ -499,7 +510,11 @@ impl ConnApp {
         for entry in self.discards.undo() {
             match entry {
                 UndoEntry::Draft(discarded) => failed |= !self.restore_discarded(discarded, cx),
-                UndoEntry::Settled { thread_id, plan } => self.undo_settled(thread_id, plan, cx),
+                UndoEntry::Thread {
+                    thread_id,
+                    kind,
+                    plan,
+                } => self.undo_thread(thread_id, kind, plan, cx),
             }
         }
         if failed {
@@ -509,16 +524,18 @@ impl ConnApp {
         cx.notify();
     }
 
-    /// Runs the commands that bring a settled thread back, each once the one before it worked
+    /// Runs the commands that bring a thread back, each once the one before it worked
     /// (`executeThreadUndo`). A failure says so in the notice.
-    fn undo_settled(
+    fn undo_thread(
         &mut self,
         thread_id: String,
+        kind: ThreadUndoKind,
         plan: Vec<SettleUndoStep>,
         cx: &mut Context<'_, Self>,
     ) {
+        let failure = undo_failure_text(kind.action());
         let Some(connection) = self.connection.clone() else {
-            self.show_undo_failure(UNDO_FAILED_SETTLE, cx);
+            self.show_undo_failure(failure, cx);
             return;
         };
         cx.spawn(async move |this, cx| {
@@ -534,9 +551,9 @@ impl ConnApp {
                     Err(error) => Err(error.to_string()),
                 };
                 if let Err(error) = sent {
-                    eprintln!("undo settle: {error}");
+                    eprintln!("undo {kind:?}: {error}");
                     let _ = this.update(cx, |app, cx| {
-                        app.show_undo_failure(UNDO_FAILED_SETTLE, cx);
+                        app.show_undo_failure(failure, cx);
                     });
                     return;
                 }
@@ -647,7 +664,13 @@ impl ConnApp {
         } else {
             Vec::new()
         };
-        let Some(action) = search_key(key, searching, results.len()) else {
+        // `event.nativeEvent.isComposing`: a key typed while an input method composes text
+        // belongs to it (`Enter` commits the composition, `Escape` cancels it).
+        let composing = self.sidebar_search_input.update(cx, |input, cx| {
+            input.marked_text_range(window, cx).is_some()
+        });
+        let Some(action) = search_key_unless_composing(key, searching, results.len(), composing)
+        else {
             return false;
         };
         let active =
@@ -721,43 +744,293 @@ impl ConnApp {
         }
     }
 
-    /// `thread.previous` / `thread.next` (`⌘⇧[` / `⌘⇧]`): opens the thread above or below the
-    /// open one, in sidebar order, and stops at the ends. Conn leaves out key repeats and
-    /// ignores the keys while the command palette or the model picker is open. Returns whether
-    /// a thread opened.
+    /// The thread shortcuts: `thread.previous` / `thread.next` (`⌘⇧[` / `⌘⇧]`) open the thread
+    /// above or below the open one, in sidebar order, and stop at the ends;
+    /// `thread.jump.1`..`9` (`⌘1`..`⌘9`) open the thread at that place of the same order. Conn
+    /// leaves out key repeats and ignores the keys while the command palette or the model picker
+    /// is open. Returns whether a thread opened.
     pub(crate) fn thread_traversal_key_down(
         &mut self,
         event: &KeyDownEvent,
         cx: &mut Context<'_, Self>,
     ) -> bool {
-        let Some(step) =
-            thread_traversal_key(&event.keystroke.key, key_mods(&event.keystroke.modifiers))
-        else {
-            return false;
-        };
-        !event.is_held && self.traverse_threads(step, cx)
+        !event.is_held
+            && self.thread_shortcut(
+                &event.keystroke.key,
+                key_mods(&event.keystroke.modifiers),
+                cx,
+            )
+    }
+
+    /// Runs the thread shortcut `key` is, if it is one.
+    fn thread_shortcut(&mut self, key: &str, mods: KeyMods, cx: &mut Context<'_, Self>) -> bool {
+        if let Some(step) = thread_traversal_key(key, mods) {
+            return self.traverse_threads(step, cx);
+        }
+        if let Some(index) = thread_jump_key(key, mods) {
+            return self.jump_to_thread(index, cx);
+        }
+        false
+    }
+
+    /// An overlay that owns the keyboard leaves the thread shortcuts alone.
+    fn overlay_has_keyboard(&self, cx: &gpui_kit::App) -> bool {
+        self.command_palette.is_some()
+            || self.settings_modal.is_some()
+            || self.chat.read(cx).model_picker_open(cx)
     }
 
     /// Opens the thread `step` away from the open one, unless an overlay has the keyboard.
     fn traverse_threads(&mut self, step: ThreadStep, cx: &mut Context<'_, Self>) -> bool {
-        if self.command_palette.is_some()
-            || self.settings_modal.is_some()
-            || self.chat.read(cx).model_picker_open(cx)
-        {
+        if self.overlay_has_keyboard(cx) {
             return false;
         }
         let order = self.thread_traversal_ids();
-        let open = self
-            .layout
-            .selected_thread_id
-            .as_deref()
-            .filter(|_| self.draft.is_none());
+        let open = self.open_row_thread();
         let Some(target) = adjacent_thread(&order, open, step).map(str::to_owned) else {
             return false;
         };
         self.select_thread(target.as_str(), cx);
         self.sidebar_tree.reveal_row(&target);
         true
+    }
+
+    /// `thread.jump.N`: opens the thread at place `index` of the traversal order, as the jump
+    /// numbers on the rows show. A place with no thread does nothing.
+    fn jump_to_thread(&mut self, index: usize, cx: &mut Context<'_, Self>) -> bool {
+        if self.overlay_has_keyboard(cx) {
+            return false;
+        }
+        let order = self.thread_traversal_ids();
+        let Some(target) = jump_target(&order, index).map(str::to_owned) else {
+            return false;
+        };
+        self.select_thread(target.as_str(), cx);
+        self.sidebar_tree.reveal_row(&target);
+        true
+    }
+
+    /// `⌘` goes down or up. Held `200ms` on its own it shows the jump numbers on the rows, and
+    /// any other change of the modifiers hides them again (`createModifierHoldStore`). Conn keeps
+    /// them off while a terminal has the keyboard, where holding a modifier is routine.
+    pub(crate) fn modifiers_changed(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.jump_hint_generation = self.jump_hint_generation.wrapping_add(1);
+        let generation = self.jump_hint_generation;
+        let hide = self.jump_hints;
+        self.jump_hints = false;
+        if hide {
+            cx.notify();
+        }
+        let terminal_focus = window
+            .context_stack()
+            .iter()
+            .any(|context| context.contains("Terminal"));
+        if !shows_jump_hints(key_mods(modifiers)) || terminal_focus {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(THREAD_JUMP_HINT_DELAY_MS))
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app.jump_hint_generation == generation {
+                    app.jump_hints = true;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// The threads whose rows wear a jump number while the hints show, in the order of their
+    /// numbers; none while they are hidden. The hints go while the model picker, which takes
+    /// `⌘1`..`⌘9` for itself, is open.
+    pub(crate) fn jump_hint_order(&self, window: &Window, cx: &gpui_kit::App) -> Vec<String> {
+        if self.jump_hints
+            && window.is_window_active()
+            && shows_jump_hints(key_mods(&window.modifiers()))
+            && !self.chat.read(cx).model_picker_open(cx)
+        {
+            self.thread_traversal_ids()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// A click on a thread row (`handleThreadClick`): `⌘`-click picks the thread for a bulk action
+    /// or takes it back out, `Shift`-click picks every thread from the last one opened or picked
+    /// to this one, and a plain click opens it.
+    pub(crate) fn thread_row_clicked(
+        &mut self,
+        thread_id: &str,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        match row_click(key_mods(modifiers)) {
+            RowClick::Toggle => {
+                self.thread_selection.toggle(thread_id);
+                cx.notify();
+            }
+            RowClick::Range => {
+                let order = self.thread_traversal_ids();
+                self.thread_selection.range_select_to(thread_id, &order);
+                cx.notify();
+            }
+            RowClick::Open => self.open_thread_row(thread_id, window, cx),
+        }
+    }
+
+    /// Files dropped on a thread row go to that thread's composer, and the thread opens when it
+    /// is not the open one (`handleThreadFileDrop`).
+    pub(crate) fn thread_files_dropped(
+        &mut self,
+        thread_id: &str,
+        paths: Vec<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if paths.is_empty() {
+            return;
+        }
+        if self.layout.selected_thread_id.as_deref() != Some(thread_id) || self.draft.is_some() {
+            self.open_thread_row(thread_id, window, cx);
+        }
+        self.chat
+            .update(cx, |chat, cx| chat.attach_paths(paths, window, cx));
+    }
+
+    /// The picked threads the sidebar still lists, in the order they were picked
+    /// (`threadByKeyRef.has`).
+    pub(super) fn bulk_targets(&self) -> Vec<String> {
+        self.thread_selection.listed(&self.thread_traversal_ids())
+    }
+
+    /// What the picked threads are like, for the bulk menu.
+    pub(super) fn bulk_facts(&self, ids: &[String]) -> BulkFacts {
+        let threads: Vec<_> = ids
+            .iter()
+            .filter_map(|id| self.shell.find_thread(id))
+            .collect();
+        BulkFacts {
+            selected: threads.len(),
+            pinned: threads
+                .iter()
+                .filter(|thread| thread.pinned_at.as_ref().is_some_and(Option::is_some))
+                .count(),
+            settling: threads
+                .iter()
+                .filter(|thread| !ShellState::is_settled(thread))
+                .count(),
+            regenerating: threads
+                .iter()
+                .filter(|thread| {
+                    thread
+                        .title_regeneration
+                        .as_ref()
+                        .is_some_and(Option::is_some)
+                })
+                .count(),
+        }
+    }
+
+    /// One row of the bulk menu, run on every picked thread; the selection ends with it
+    /// (`clearSelection`), a delete takes only the deleted threads out.
+    pub(super) fn run_bulk_action(
+        &mut self,
+        action: ThreadMenuAction,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let ids = self.bulk_targets();
+        if ids.is_empty() {
+            return;
+        }
+        let shell = &self.shell;
+        let thread_is = |id: &str, test: fn(&conn_state::ThreadShell) -> bool| {
+            shell.find_thread(id).is_some_and(test)
+        };
+        let pinned = |thread: &conn_state::ThreadShell| {
+            thread.pinned_at.as_ref().is_some_and(Option::is_some)
+        };
+        let regenerating = |thread: &conn_state::ThreadShell| {
+            thread
+                .title_regeneration
+                .as_ref()
+                .is_some_and(Option::is_some)
+        };
+        match action {
+            ThreadMenuAction::Unpin => {
+                let targets: Vec<String> = ids
+                    .iter()
+                    .filter(|id| thread_is(id, pinned))
+                    .cloned()
+                    .collect();
+                for id in targets {
+                    self.pin_thread(id, false, cx);
+                }
+            }
+            ThreadMenuAction::Settle => {
+                // `settleThreads`: the open thread moves on to one that is not settling too.
+                let targets: Vec<String> = ids
+                    .iter()
+                    .filter(|id| {
+                        thread_is(id, |thread| !conn_state::ShellState::is_settled(thread))
+                    })
+                    .cloned()
+                    .collect();
+                let along: HashSet<String> = targets.iter().cloned().collect();
+                for id in targets {
+                    self.settle_thread_along(id, true, &along, cx);
+                }
+            }
+            ThreadMenuAction::RegenerateTitle => {
+                let targets: Vec<String> = ids
+                    .iter()
+                    .filter(|id| !thread_is(id, regenerating))
+                    .cloned()
+                    .collect();
+                for id in targets {
+                    self.dispatch_thread_command(
+                        "regenerate title",
+                        crate::commands::regenerate_thread_title(&id),
+                        cx,
+                    );
+                }
+            }
+            ThreadMenuAction::MarkUnread => {
+                for id in &ids {
+                    self.dispatch_thread_command(
+                        "mark unread",
+                        crate::commands::mark_thread_unread(id),
+                        cx,
+                    );
+                }
+            }
+            ThreadMenuAction::Delete => {
+                self.confirm_delete_threads(ids, window, cx);
+                return;
+            }
+            _ => return,
+        }
+        self.thread_selection.clear();
+        cx.notify();
+    }
+
+    /// The thread whose row is current: the open thread, or the thread it is a subagent of when
+    /// the sidebar does not list it (`routeRowThreadKey`). None while a draft is open.
+    fn open_row_thread(&self) -> Option<&str> {
+        let open = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .filter(|_| self.draft.is_none())?;
+        Some(self.shell.listed_ancestor(open).unwrap_or(open))
     }
 
     /// The threads traversal walks (`orderedThreadKeys`): what the sidebar lists, search aside.
@@ -780,10 +1053,7 @@ impl ConnApp {
             &ids(&active),
             &ids(&settled),
             self.collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY),
-            self.layout
-                .selected_thread_id
-                .as_deref()
-                .filter(|_| self.draft.is_none()),
+            self.open_row_thread(),
         )
     }
 
@@ -860,6 +1130,31 @@ impl ConnApp {
         cx.notify();
     }
 
+    pub(crate) fn active_workspace_for_test(&self) -> Option<&str> {
+        self.active_workspace.as_deref()
+    }
+
+    /// The threads picked for a bulk action, in the order they were picked.
+    pub(crate) fn thread_selection_for_test(&self) -> Vec<String> {
+        self.thread_selection.keys().to_vec()
+    }
+
+    /// An input method composing `text` in the search box, as it does before a candidate is
+    /// chosen.
+    pub(crate) fn compose_in_search_for_test(
+        &mut self,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.sidebar_search_input.update(cx, |input, cx| {
+            input.focus(window, cx);
+            let end = input.value().encode_utf16().count();
+            input.replace_and_mark_text_in_range(Some(end..end), text, None, window, cx);
+        });
+        cx.notify();
+    }
+
     pub(crate) fn root_focus_for_test(&self) -> gpui_kit::FocusHandle {
         self.focus_handle.clone()
     }
@@ -879,7 +1174,23 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let plan = conn_state::plan_settle_undo(None);
-        self.offer_settle_undo(thread_id.to_owned(), plan, cx);
+        self.offer_thread_undo(thread_id.to_owned(), ThreadUndoKind::Settle, plan, cx);
+    }
+
+    /// An unpin, snooze or archive the server took (`unpinThread`, `snoozeThread`,
+    /// `archiveThread`), as their actions offer them.
+    pub(crate) fn offer_placement_undo_for_test(
+        &mut self,
+        thread_id: &str,
+        kind: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (kind, plan) = match kind {
+            "unpin" => (ThreadUndoKind::Pin, conn_state::plan_unpin_undo(None)),
+            "snooze" => (ThreadUndoKind::Snooze, conn_state::plan_snooze_undo()),
+            _ => (ThreadUndoKind::Archive, conn_state::plan_archive_undo()),
+        };
+        self.offer_thread_undo(thread_id.to_owned(), kind, plan, cx);
     }
 
     pub(crate) fn settled_shelf_open_for_test(&self) -> bool {

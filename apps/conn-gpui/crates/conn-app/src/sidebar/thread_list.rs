@@ -21,10 +21,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
 use conn_state::{
-    LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadShell, TreeRow,
-    search_highlight_index,
+    LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadSelection, ThreadShell,
+    TreeRow, jump_hint_label, jump_hint_number, search_highlight_index,
 };
 use conn_theme::{Appearance, ShellGeometry, Tokens};
+use gpui_kit::Focusable as _;
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
@@ -82,6 +83,23 @@ const SIDEBAR_TOGGLE_LEFT_OFFSET_PX: f32 = MACOS_TRAFFIC_LIGHTS_INSET_PX - WORKS
 /// without requiring a new field on `ConnApp`.
 pub(crate) const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
 
+/// Ties the lifetime of the thread a row is built for to the row, which a closure cannot say.
+fn row_builder<'a, F>(build: F) -> F
+where
+    F: Fn(&'a ThreadShell, usize, RowFocus) -> RowCtx<'a>,
+{
+    build
+}
+
+/// What the rows wear beyond what the shell says about their thread.
+pub(crate) struct SidebarMarks<'a> {
+    /// The threads that carry a jump number while `⌘` is held, in the order of their numbers
+    /// (`jumpLabelByKey`); empty while the hints are hidden.
+    pub(crate) jump_order: &'a [String],
+    /// The threads picked with `⌘`-click and `Shift`-click for a bulk action.
+    pub(crate) selection: &'a ThreadSelection,
+}
+
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
 #[expect(
     clippy::too_many_arguments,
@@ -94,6 +112,7 @@ pub(crate) fn render_thread_sidebar(
     workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
     drafts: &DraftSidebar<'_>,
+    marks: &SidebarMarks<'_>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
     search_highlight: Option<&str>,
@@ -115,6 +134,7 @@ pub(crate) fn render_thread_sidebar(
     let has_projects = !shell.projects.is_empty();
     let search_query = search_input.read(cx).value().to_string();
     let has_query = !search_query.trim().is_empty();
+    let search_focused = search_input.focus_handle(cx).is_focused(window);
 
     // 44px transparent header above the inset thread card.
     // Places the sidebar toggle directly right of the macOS traffic lights
@@ -158,11 +178,19 @@ pub(crate) fn render_thread_sidebar(
 
     // Top row (`SidebarThreadHeader.tsx`): "Search" soft field + trailing icon buttons.
     let mut header_actions = div().flex().flex_row().items_center().flex_shrink_0();
+    // The button shows the project it filters to (`ProjectFavicon`, `size-4`), else the filter
+    // glyph.
+    let filter_icon = active_workspace
+        .and_then(|id| shell.project(id))
+        .map_or_else(
+            || header_icon(IconName::ListFilter, tokens),
+            |project| render_project_favicon(project, ROW_FAVICON_PX, tokens).into_any_element(),
+        );
     if has_projects {
         let mut filter_slot = div().relative().child(
             sidebar_header_icon_btn(
                 "sidebar-filter-projects",
-                IconName::ListFilter,
+                filter_icon,
                 tokens,
                 cx.listener(|app, _event, _window, cx| {
                     cx.stop_propagation();
@@ -193,7 +221,7 @@ pub(crate) fn render_thread_sidebar(
         header_actions = header_actions.child(filter_slot).child(
             sidebar_header_icon_btn(
                 "sidebar-add-project",
-                IconName::FolderPlus,
+                header_icon(IconName::FolderPlus, tokens),
                 tokens,
                 cx.listener(|app, _event, window, cx| app.add_project_via_picker(window, cx)),
             )
@@ -204,7 +232,7 @@ pub(crate) fn render_thread_sidebar(
     header_actions = header_actions.child(
         sidebar_header_icon_btn(
             "sidebar-new-thread",
-            IconName::SquarePen,
+            header_icon(IconName::SquarePen, tokens),
             tokens,
             cx.listener(|app, _event, window, cx| app.start_new_thread(None, Some(window), cx)),
         )
@@ -231,6 +259,17 @@ pub(crate) fn render_thread_sidebar(
         .font_weight(gpui_kit::FontWeight::MEDIUM)
         .text_color(fg)
         .hover(move |s| s.bg(hover_bg))
+        // `focus-within:bg-sidebar-row-hover focus-within:ring-1 focus-within:ring-inset
+        // focus-within:ring-ring/70`.
+        .when(search_focused, |el| {
+            el.bg(hover_bg).shadow(vec![gpui_kit::BoxShadow {
+                color: hsla_alpha(tokens.ring, 0.70),
+                offset: gpui_kit::point(px(0.0), px(0.0)),
+                blur_radius: px(0.0),
+                spread_radius: px(1.0),
+                inset: true,
+            }])
+        })
         .child(icons::chrome(IconName::Search, search_icon_color))
         .child(
             div().flex_1().min_w_0().child(
@@ -275,7 +314,11 @@ pub(crate) fn render_thread_sidebar(
     // Flat list of threads, scoped to `active_workspace` (either an Orbit workspace or a
     // direct project filter) and live sidebar search when set.
     let now_secs = current_unix_secs();
-    let selected_id = layout.selected_thread_id.as_deref();
+    // A subagent that is open keeps its parent's row current (`routeRowThreadKey`).
+    let selected_id = layout
+        .selected_thread_id
+        .as_deref()
+        .map(|id| shell.listed_ancestor(id).unwrap_or(id));
     let row_flags = |thread: &ThreadShell| {
         (
             selected_id == Some(thread.id.as_str()),
@@ -301,22 +344,19 @@ pub(crate) fn render_thread_sidebar(
     };
     let highlighted_id = search_highlight_index(&result_ids, search_highlight)
         .and_then(|at| result_ids.get(at).map(String::as_str));
-    let highlight_of = |thread: &ThreadShell| has_query.then(|| highlighted_id == Some(&thread.id));
 
     let mut thread_rows: Vec<gpui_kit::AnyElement> =
         Vec::with_capacity(pinned.len() + active.len() + drafts.rows.len() + 2);
-    // Search lists threads only; drafts return when it clears (`SidebarDraftBlock`).
-    if !has_query {
-        thread_rows.extend(render_draft_block(&drafts.rows, tree, tokens, cx));
-    }
-    for (idx, thread) in pinned.iter().enumerate() {
-        let row_key = idx;
+    // The row of `thread`, whatever list it is in.
+    let row_of = row_builder(|thread: &ThreadShell, row_key: usize, focus: RowFocus| {
         let (selected, is_renaming) = row_flags(thread);
-        let row = RowCtx {
+        RowCtx {
             row_key,
             thread,
             project: shell.project(&thread.project_id),
             selected,
+            picked: marks.selection.contains(&thread.id),
+            jump_hint: jump_hint_number(marks.jump_order, &thread.id).map(jump_hint_label),
             is_renaming,
             unsent_draft: drafts.unsent_threads.contains(&thread.id),
             rename_input,
@@ -325,67 +365,59 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
-            highlight: highlight_of(thread),
-            focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
+            focus,
             tokens,
-        };
-        thread_rows.push(render_thread_card(&row, cx).into_any_element());
-    }
-    if !pinned.is_empty() && !has_query {
-        // `pinned-divider`: a hairline between the Pinned and Active groups.
-        thread_rows.push(
-            div()
-                .w_full()
-                .px(px(ROW_HORIZONTAL_INSET_PX))
-                .py(px(4.0))
-                .child(div().h(px(1.0)).bg(hsla_alpha(tokens.sidebar_border, 0.60)))
-                .into_any_element(),
-        );
-    }
-    for (idx, thread) in active.iter().enumerate() {
-        let row_key = 10_000 + idx;
-        let (selected, is_renaming) = row_flags(thread);
-        let row = RowCtx {
-            row_key,
-            thread,
-            project: shell.project(&thread.project_id),
-            selected,
-            is_renaming,
-            unsent_draft: drafts.unsent_threads.contains(&thread.id),
-            rename_input,
-            now_secs,
-            sidebar_width: layout.sidebar_width,
-            hover_open: hover.open_for == Some(thread.id.as_str()),
-            hover_rect: hover.rect,
-            environment_label: hover.environment_label,
-            highlight: highlight_of(thread),
-            focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
-            tokens,
-        };
-        thread_rows.push(render_thread_card(&row, cx).into_any_element());
-    }
-
+        }
+    });
     if has_query {
-        for (idx, thread) in settled_threads.iter().enumerate() {
-            let (selected, is_renaming) = row_flags(thread);
-            let row = RowCtx {
-                row_key: 100_000 + idx,
+        // Search swaps the list for slim result rows, which are not tab stops
+        // (`SidebarSearchResultRow`, `tabIndex={-1}`): the keyboard stays in the search box and
+        // the arrow keys work the highlight. Drafts return when the search clears.
+        let settled_ids: HashSet<&str> = settled_threads.iter().map(|t| t.id.as_str()).collect();
+        for (idx, thread) in pinned
+            .iter()
+            .chain(&active)
+            .chain(&settled_threads)
+            .enumerate()
+        {
+            let result = SearchResultRow {
+                row_key: idx,
                 thread,
                 project: shell.project(&thread.project_id),
-                selected,
-                is_renaming,
-                unsent_draft: drafts.unsent_threads.contains(&thread.id),
-                rename_input,
+                settled: settled_ids.contains(thread.id.as_str()),
+                open: selected_id == Some(thread.id.as_str()),
+                highlighted: highlighted_id == Some(thread.id.as_str()),
                 now_secs,
-                sidebar_width: layout.sidebar_width,
                 hover_open: hover.open_for == Some(thread.id.as_str()),
                 hover_rect: hover.rect,
                 environment_label: hover.environment_label,
-                highlight: highlight_of(thread),
-                focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
+                bounds: tree.result_bounds(&thread.id),
                 tokens,
             };
-            thread_rows.push(render_settled_row(&row, cx).into_any_element());
+            thread_rows.push(render_search_result_row(&result, cx));
+        }
+    } else {
+        thread_rows.extend(render_draft_block(&drafts.rows, tree, tokens, cx));
+        for (idx, thread) in pinned.iter().enumerate() {
+            let focus = tree.row(TreeRow::leaf(thread.id.clone()), cx);
+            let row = row_of(thread, idx, focus);
+            thread_rows.push(render_thread_card(&row, cx).into_any_element());
+        }
+        if !pinned.is_empty() {
+            // `pinned-divider`: a hairline between the Pinned and Active groups.
+            thread_rows.push(
+                div()
+                    .w_full()
+                    .px(px(ROW_HORIZONTAL_INSET_PX))
+                    .py(px(4.0))
+                    .child(div().h(px(1.0)).bg(hsla_alpha(tokens.sidebar_border, 0.60)))
+                    .into_any_element(),
+            );
+        }
+        for (idx, thread) in active.iter().enumerate() {
+            let focus = tree.row(TreeRow::leaf(thread.id.clone()), cx);
+            let row = row_of(thread, 10_000 + idx, focus);
+            thread_rows.push(render_thread_card(&row, cx).into_any_element());
         }
     }
 
@@ -502,25 +534,8 @@ pub(crate) fn render_thread_sidebar(
                 .collect()
         };
         for (idx, thread) in shown.into_iter().enumerate() {
-            let row_key = 100_000 + idx;
-            let (selected, is_renaming) = row_flags(thread);
-            let row = RowCtx {
-                row_key,
-                thread,
-                project: shell.project(&thread.project_id),
-                selected,
-                is_renaming,
-                unsent_draft: drafts.unsent_threads.contains(&thread.id),
-                rename_input,
-                now_secs,
-                sidebar_width: layout.sidebar_width,
-                hover_open: hover.open_for == Some(thread.id.as_str()),
-                hover_rect: hover.rect,
-                environment_label: hover.environment_label,
-                highlight: None,
-                focus: tree.row(TreeRow::child(thread.id.clone(), SETTLED_SHELF_ROW), cx),
-                tokens,
-            };
+            let focus = tree.row(TreeRow::child(thread.id.clone(), SETTLED_SHELF_ROW), cx);
+            let row = row_of(thread, 100_000 + idx, focus);
             list_scroll = list_scroll.child(render_settled_row(&row, cx));
         }
     }
@@ -566,11 +581,10 @@ pub(crate) fn render_thread_sidebar(
 
 fn sidebar_header_icon_btn(
     id: impl Into<gpui_kit::ElementId>,
-    icon_name: IconName,
+    icon: gpui_kit::AnyElement,
     tokens: &Tokens,
     on_click: impl Fn(&gpui_kit::ClickEvent, &mut gpui_kit::Window, &mut gpui_kit::App) + 'static,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
-    let icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.80);
     let hover_bg = hsla(tokens.sidebar_row_hover);
 
     div()
@@ -584,7 +598,12 @@ fn sidebar_header_icon_btn(
         .cursor_pointer()
         .hover(move |s| s.bg(hover_bg))
         .on_click(on_click)
-        .child(icons::chrome(icon_name, icon_color))
+        .child(icon)
+}
+
+/// The glyph of a sidebar header button.
+fn header_icon(name: IconName, tokens: &Tokens) -> gpui_kit::AnyElement {
+    icons::chrome(name, hsla_alpha(tokens.sidebar_muted_foreground, 0.80)).into_any_element()
 }
 
 /// Popover menu listing "All projects" plus every registered project for scoping the sidebar.
@@ -900,6 +919,10 @@ struct RowCtx<'a> {
     thread: &'a ThreadShell,
     project: Option<&'a ProjectShell>,
     selected: bool,
+    /// Picked with `⌘`-click or `Shift`-click for a bulk action (`isSelected`).
+    picked: bool,
+    /// The jump number shown while `⌘` is held (`jumpHintLabel`), as `⌘3`.
+    jump_hint: Option<String>,
     is_renaming: bool,
     /// The thread's composer holds unsent input (`useThreadHasUnsentDraft`).
     unsent_draft: bool,
@@ -910,9 +933,6 @@ struct RowCtx<'a> {
     /// This thread's hover flyout is open.
     hover_open: bool,
     environment_label: Option<&'a str>,
-    /// `Some` for a search result, and whether the arrow keys have it highlighted (`Enter` opens
-    /// it). A highlighted result looks like the open thread.
-    highlight: Option<bool>,
     /// What the row needs to take the keyboard.
     focus: RowFocus,
     tokens: &'a Tokens,
@@ -921,21 +941,12 @@ struct RowCtx<'a> {
 impl RowCtx<'_> {
     /// The row wears the open thread's look.
     fn lit(&self) -> bool {
-        self.selected || self.highlight == Some(true)
+        self.selected
     }
 
-    /// A search result is a listbox option; any other row is a list item.
-    fn role(&self) -> gpui_kit::Role {
-        if self.highlight.is_some() {
-            gpui_kit::Role::ListBoxOption
-        } else {
-            gpui_kit::Role::ListItem
-        }
-    }
-
-    /// `aria-selected`: the highlighted result of a search, else the open thread.
+    /// `aria-selected`: the open thread, or a thread picked for a bulk action.
     fn aria_selected(&self) -> bool {
-        self.highlight.unwrap_or(self.selected)
+        self.selected || self.picked
     }
 }
 
@@ -971,6 +982,37 @@ fn render_rename_field(
         .into_any_element()
 }
 
+/// The look of a row while files are dragged over it (`isFileDragOver`): `ring-1 ring-inset
+/// ring-primary/70`, and the hover fill unless the row has a stronger one.
+#[derive(Clone, Copy)]
+struct DropLook {
+    ring: gpui_kit::Hsla,
+    fill: Option<gpui_kit::Hsla>,
+}
+
+impl DropLook {
+    fn new(tokens: &Tokens, has_fill: bool) -> Self {
+        Self {
+            ring: hsla_alpha(tokens.primary, 0.70),
+            fill: (!has_fill).then(|| hsla(tokens.sidebar_row_hover)),
+        }
+    }
+
+    fn apply(self, style: gpui_kit::StyleRefinement) -> gpui_kit::StyleRefinement {
+        let style = style.shadow(vec![gpui_kit::BoxShadow {
+            color: self.ring,
+            offset: gpui_kit::point(px(0.0), px(0.0)),
+            blur_radius: px(0.0),
+            spread_radius: px(1.0),
+            inset: true,
+        }]);
+        match self.fill {
+            Some(fill) => style.bg(fill),
+            None => style,
+        }
+    }
+}
+
 /// Right-click opens the Thread Actions menu; double-click starts inline rename; hovering opens
 /// the delayed `ThreadHoverCard` flyout and a press closes it.
 fn attach_row_interactions(
@@ -985,14 +1027,16 @@ fn attach_row_interactions(
     let rename_title = thread.title.clone();
     let menu_id = thread.id.clone();
     let hover_id = thread.id.clone();
-    let highlight_id = thread.id.clone();
+    let drop_id = thread.id.clone();
+    let drop_look = DropLook::new(ctx.tokens, ctx.lit() || ctx.picked);
     let row = row
-        // The pointer moves the search highlight along, so there is one (`onMouseMove`).
-        .when(ctx.highlight.is_some(), |row| {
-            row.on_mouse_move(cx.listener(move |app, _, _, cx| {
-                app.highlight_search_result(&highlight_id, cx);
-            }))
-        })
+        // Files dropped on a row go to that thread (`handleThreadFileDrop`).
+        .drag_over::<gpui_kit::ExternalPaths>(move |style, _, _, _| drop_look.apply(style))
+        .on_drop(cx.listener(
+            move |app, dropped: &gpui_kit::ExternalPaths, window, cx| {
+                app.thread_files_dropped(&drop_id, dropped.paths().to_vec(), window, cx);
+            },
+        ))
         .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
             app.thread_hover_changed(&hover_id, *hovered, cx);
         }))
@@ -1020,14 +1064,14 @@ fn attach_row_interactions(
                 app.start_thread_rename(rename_id.clone(), rename_title.clone(), window, cx);
                 return;
             }
-            app.open_thread_row(&select_id, window, cx);
+            app.thread_row_clicked(&select_id, &modifiers, window, cx);
         }),
     )
     .on_mouse_down(
         MouseButton::Right,
         cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
             cx.stop_propagation();
-            app.open_thread_menu(menu_id.clone(), event.position, cx);
+            app.open_row_menu(menu_id.clone(), event.position, cx);
         }),
     )
 }
@@ -1216,8 +1260,9 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         line1 = line1.child(render_pin_indicator(row, cx));
     }
 
-    // Hover-only icon-only settle control (`CircleCheckIcon`, `size-3.5`).
-    if row.unsent_draft {
+    // Hover-only icon-only settle control (`CircleCheckIcon`, `size-3.5`). While `⌘` is held the
+    // jump number takes the slot, and the controls in it are hidden (`JUMP_HINT_SLOT_CLASS_NAME`).
+    if row.unsent_draft && row.jump_hint.is_none() {
         line1 = line1.child(render_discard_thread_draft_button(row, &group, cx));
     }
     let settle_id = thread.id.clone();
@@ -1248,7 +1293,10 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         }))
         .conn_tooltip("Settle thread", tokens)
         .child(icons::concept("superhero/check-circle.svg", 14.0, muted));
-    line1 = line1.child(settle_btn);
+    line1 = match &row.jump_hint {
+        Some(label) => line1.child(render_jump_hint(row, label)),
+        None => line1.child(settle_btn),
+    };
 
     // Line 2 (`cardMetaLine`: `mt-1 flex min-w-0 items-center gap-1.5 text-secondary-label text-ui`,
     // `ps-5.5` when project is present): agent · project · branch · time.
@@ -1325,7 +1373,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let mut card = div()
         .id(("thread-row", row.row_key))
         .a11y(
-            row.role(),
+            gpui_kit::Role::ListItem,
             SharedString::from(format!("sidebar.thread.{}", thread.id)),
             thread.title.clone(),
         )
@@ -1351,6 +1399,23 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .bg(active_bg)
             .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
             .hover(move |s| s.bg(active_bg));
+        if tokens.appearance == Appearance::Light {
+            card = card.relative().child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(ROW_RADIUS_PX))
+                    .border_1()
+                    .border_color(hsla_alpha(tokens.sidebar_border, 0.70)),
+            );
+        }
+    } else if row.picked {
+        // `isSelected`: `bg-sidebar-row-selected`, with the light ring of the active row.
+        let picked_bg = hsla(tokens.sidebar_row_selected);
+        card = card
+            .bg(picked_bg)
+            .border_color(gpui_kit::transparent_black())
+            .hover(move |s| s.bg(picked_bg));
         if tokens.appearance == Appearance::Light {
             card = card.relative().child(
                 div()
@@ -1436,8 +1501,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .into_any_element()
     };
 
-    let unsent_discard = row
-        .unsent_draft
+    let unsent_discard = (row.unsent_draft && row.jump_hint.is_none())
         .then(|| render_discard_thread_draft_button(row, &group, cx));
     let unsettle_id = thread.id.clone();
     let time_slot = div()
@@ -1491,7 +1555,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let mut slim = div()
         .id(("thread-row", row.row_key))
         .a11y(
-            row.role(),
+            gpui_kit::Role::ListItem,
             SharedString::from(format!("sidebar.thread.{}", thread.id)),
             thread.title.clone(),
         )
@@ -1510,8 +1574,11 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(favicon_slot)
         .children(row.unsent_draft.then(|| render_unsent_indicator(row)))
         .child(title_el)
-        .children(unsent_discard)
-        .child(time_slot);
+        .children(unsent_discard);
+    slim = match &row.jump_hint {
+        Some(label) => slim.child(div().ml_auto().child(render_jump_hint(row, label))),
+        None => slim.child(time_slot),
+    };
     slim = attach_row_keyboard(attach_row_interactions(slim, row, cx), row, cx);
     if row.lit() {
         slim = slim
@@ -1523,6 +1590,12 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                 .border_1()
                 .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
         }
+    } else if row.picked {
+        let picked_bg = hsla(tokens.sidebar_row_selected);
+        slim = slim
+            .bg(picked_bg)
+            .border_color(gpui_kit::transparent_black())
+            .hover(move |s| s.bg(picked_bg));
     } else if row.unsent_draft {
         let warning = tokens.warning;
         slim = slim
@@ -1535,6 +1608,219 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .hover(move |s| s.bg(hover_bg));
     }
     div().w_full().child(slim)
+}
+
+/// `JumpHintBadge`: the `Kbd` (`h-5 min-w-5 rounded px-1 text-xs font-medium`, `bg-foreground/7`,
+/// `text-muted-foreground`) that takes a row's right slot while `⌘` is held. Purely visual
+/// (`aria-hidden`): the shortcut is `⌘1`..`⌘9`.
+fn render_jump_hint(row: &RowCtx<'_>, label: &str) -> gpui_kit::AnyElement {
+    let tokens = row.tokens;
+    let badge = div()
+        .id(("thread-jump-hint", row.row_key))
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .h(px(20.0))
+        .min_w(px(20.0))
+        .px(px(4.0))
+        .rounded(px(4.0))
+        .bg(hsla_alpha(tokens.foreground, 0.07))
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
+        .text_color(hsla(tokens.muted_foreground))
+        .child(label.to_owned());
+    #[cfg(test)]
+    let badge = badge.test_support().a11y_group(
+        SharedString::from(format!("test.sidebar.thread.{}.jump-hint", row.thread.id)),
+        SharedString::from(label.to_owned()),
+    );
+    badge.into_any_element()
+}
+
+/// One result of the sidebar search (`SidebarSearchResultRow`).
+struct SearchResultRow<'a> {
+    row_key: usize,
+    thread: &'a ThreadShell,
+    project: Option<&'a ProjectShell>,
+    /// On the Settled shelf: a quieter favicon and title.
+    settled: bool,
+    /// The thread is open (`isRouteActive`).
+    open: bool,
+    /// The arrow keys are on it, so `Enter` opens it (`isHighlighted`).
+    highlighted: bool,
+    now_secs: i64,
+    hover_open: bool,
+    hover_rect: &'a RowRectCell,
+    environment_label: Option<&'a str>,
+    /// Where the row is painted, to scroll the highlighted result into view.
+    bounds: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
+    tokens: &'a Tokens,
+}
+
+/// The slim result row Conn lists while searching (`SidebarSearchResultRow`): `min-h-9
+/// rounded-lg px-2.5 py-1 gap-2.5 text-sm`, a `size-4` favicon, the title (`font-medium`,
+/// `font-normal` when settled), and the age (`w-8 text-right text-xs text-muted-foreground/55`).
+/// The highlighted and open results wear the active row's fill. The row is a listbox option and
+/// not a tab stop (`tabIndex={-1}`): a press keeps the keyboard in the search box, as `Enter` does
+/// (`onPointerDown` `preventDefault`), and the pointer moves the highlight (`onMouseMove`).
+fn render_search_result_row(
+    row: &SearchResultRow<'_>,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::AnyElement {
+    let tokens = row.tokens;
+    let thread = row.thread;
+    let fg = hsla(tokens.foreground);
+    let sidebar_fg = hsla(tokens.sidebar_foreground);
+    let secondary = hsla(tokens.sidebar_muted_foreground);
+    let hover_bg = hsla(tokens.sidebar_row_hover);
+    let active_bg = hsla(tokens.sidebar_row_active);
+    let lit = row.highlighted || row.open;
+    let quiet = row.settled && !lit;
+    let group = SharedString::from(format!("sidebar-result-{}", row.row_key));
+    let regenerating = thread
+        .title_regeneration
+        .as_ref()
+        .is_some_and(Option::is_some);
+
+    let favicon = row.project.map_or_else(
+        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
+        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
+    );
+    // GPUI has no grayscale filter; `opacity-40` carries the muted look and hover restores it.
+    let favicon_slot = div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .when(quiet, |slot| {
+            slot.opacity(0.4)
+                .group_hover(group.clone(), |s| s.opacity(1.0))
+        })
+        .child(favicon);
+
+    let title = div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .text_size(px(TITLE_FONT_SIZE_PX))
+        .line_height(px(TITLE_LINE_HEIGHT_PX))
+        .font_weight(if row.settled {
+            gpui_kit::FontWeight::NORMAL
+        } else {
+            gpui_kit::FontWeight::MEDIUM
+        })
+        .text_color(if regenerating {
+            hsla(tokens.muted_foreground)
+        } else if quiet {
+            hsla_alpha(tokens.sidebar_muted_foreground, 0.70)
+        } else {
+            fg
+        })
+        .when(quiet && !regenerating, |title| {
+            title.group_hover(group.clone(), move |s| s.text_color(fg))
+        })
+        .child(thread.title.clone());
+
+    let age = div()
+        .w(px(32.0))
+        .flex_shrink_0()
+        .text_right()
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .text_color(hsla_alpha(tokens.muted_foreground, 0.55))
+        .child(
+            format_compact_relative_age_at(thread_time_timestamp(thread), row.now_secs)
+                .unwrap_or_default(),
+        );
+
+    let thread_id = row.thread.id.clone();
+    let hover_id = row.thread.id.clone();
+    let highlight_id = row.thread.id.clone();
+    let drop_id = row.thread.id.clone();
+    let drop_look = DropLook::new(tokens, lit);
+    let bounds = std::rc::Rc::clone(&row.bounds);
+    let label = match row.project {
+        Some(project) if !project.title.is_empty() => {
+            format!("{}, {}", thread.title, project.title)
+        }
+        _ => thread.title.clone(),
+    };
+    let mut result = div()
+        .id(("thread-search-result", row.row_key))
+        .a11y(
+            gpui_kit::Role::ListBoxOption,
+            SharedString::from(format!("sidebar.search-result.{}", thread.id)),
+            label,
+        )
+        .when(row.open, |el| el.aria_description("Open thread"))
+        .aria_selected(row.highlighted)
+        .group(group)
+        .relative()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .w_full()
+        .min_h(px(SLIM_ROW_HEIGHT_PX))
+        .px(px(ROW_HORIZONTAL_INSET_PX))
+        .py(px(4.0))
+        .rounded(px(ROW_RADIUS_PX))
+        .cursor_pointer()
+        .text_color(if lit { sidebar_fg } else { secondary })
+        .on_mouse_move(cx.listener(move |app, _, _, cx| {
+            app.highlight_search_result(&highlight_id, cx);
+        }))
+        .drag_over::<gpui_kit::ExternalPaths>(move |style, _, _, _| drop_look.apply(style))
+        .on_drop(cx.listener(
+            move |app, dropped: &gpui_kit::ExternalPaths, window, cx| {
+                app.thread_files_dropped(&drop_id, dropped.paths().to_vec(), window, cx);
+            },
+        ))
+        .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+            app.thread_hover_changed(&hover_id, *hovered, cx);
+        }))
+        // The keyboard stays in the search box: the root would take it on a press.
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|app, _, _, cx| {
+                app.dismiss_thread_hover(cx);
+                cx.stop_propagation();
+            }),
+        )
+        .on_click(cx.listener(move |app, _, window, cx| {
+            app.open_thread_row(&thread_id, window, cx);
+        }))
+        .child(favicon_slot)
+        .child(title)
+        .child(age)
+        .child(
+            canvas(
+                move |painted, _, _| bounds.set(Some(painted)),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        );
+    result = if lit {
+        result.bg(active_bg).hover(move |s| s.bg(active_bg))
+    } else {
+        result.hover(move |s| s.bg(hover_bg).text_color(sidebar_fg))
+    };
+    if row.hover_open {
+        result = result.child(render_thread_hover_card(
+            thread,
+            row.project,
+            row.environment_label,
+            row.hover_rect,
+            cx.entity().downgrade(),
+            tokens,
+        ));
+    }
+    div()
+        .w_full()
+        .child(result.test_support())
+        .into_any_element()
 }
 
 /// `draftSurfaceClassName` rest colour: `bg-warning/4`.

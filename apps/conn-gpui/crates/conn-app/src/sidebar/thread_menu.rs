@@ -239,6 +239,30 @@ pub(crate) fn build_thread_action_menu_items(state: &ThreadMenuState) -> Vec<Thr
     items
 }
 
+/// The menu of the threads picked for a bulk action (`handleMultiSelectContextMenu`): the rows of
+/// `conn_state::bulk_menu`, each running the thread action of the same name on every picked thread.
+#[must_use]
+pub(crate) fn build_bulk_menu_items(facts: conn_state::BulkFacts) -> Vec<ThreadMenuItem> {
+    use ThreadMenuAction as A;
+    use conn_state::BulkAction;
+    conn_state::bulk_menu(facts)
+        .into_iter()
+        .map(|entry| {
+            let (action, icon) = match entry.action {
+                BulkAction::Unpin => (A::Unpin, "superhero/unpin.svg"),
+                BulkAction::Settle => (A::Settle, "superhero/check-circle.svg"),
+                BulkAction::RegenerateTitles => (A::RegenerateTitle, "superhero/refresh.svg"),
+                BulkAction::MarkUnread => (A::MarkUnread, "superhero/mail-open.svg"),
+                BulkAction::Delete => (A::Delete, "superhero/delete.svg"),
+            };
+            let mut item = ThreadMenuItem::new(action, entry.label, icon);
+            item.disabled = entry.disabled;
+            item.destructive = entry.destructive;
+            item
+        })
+        .collect()
+}
+
 /// What a sidebar draft row's menu offers (`buildDraftActionMenuItems`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DraftMenuState {
@@ -304,6 +328,8 @@ pub(crate) struct ThreadMenuAnchor {
     pub(crate) thread_id: String,
     /// The menu belongs to a new-thread draft row ([`build_draft_action_menu_items`]).
     pub(crate) draft: bool,
+    /// The menu acts on every thread picked for a bulk action ([`build_bulk_menu_items`]).
+    pub(crate) bulk: bool,
     /// Window-space pointer position of the right-click (or the header chevron click).
     pub(crate) position: Point<Pixels>,
     /// Whether the `Copy` submenu is open.

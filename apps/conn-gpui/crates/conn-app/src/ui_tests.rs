@@ -2543,3 +2543,409 @@ fn a_settled_thread_shows_its_notice_and_command_z_takes_it_back_until_something
     );
     assert!(!notice(cx, "Undo settle"), "the notice is gone");
 }
+
+fn open_thread(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Option<String> {
+    cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned))
+}
+
+fn labelled(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> bool {
+    cx.update_window(window, |_, window, cx| has_label(window, cx, label))
+        .unwrap_or(false)
+}
+
+fn click_row(cx: &mut TestAppContext, window: AnyWindowHandle, title: &str, button: MouseButton) {
+    let at = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, title)) {
+        Ok(at) => at,
+        Err(err) => panic!("failed to locate the row `{title}`: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(at, None, cx);
+        window.pointer_down(at, button, cx);
+        window.pointer_up(at, button, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn hold(cx: &mut TestAppContext, window: AnyWindowHandle, modifiers: gpui_kit::Modifiers) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.change_modifiers(modifiers, cx);
+    });
+}
+
+fn command() -> gpui_kit::Modifiers {
+    gpui_kit::Modifiers {
+        platform: true,
+        ..gpui_kit::Modifiers::default()
+    }
+}
+
+#[gpui_kit::test]
+fn command_digits_open_the_thread_at_that_place_of_the_walk(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert!(
+        order.len() >= 5,
+        "five threads to jump to (order: {order:?})"
+    );
+
+    press(cx, window, "cmd-1");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[0].as_str()));
+    press(cx, window, "cmd-3");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[2].as_str()));
+    press(cx, window, "cmd-9");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some(order[2].as_str()),
+        "a place with no thread does nothing"
+    );
+    press(cx, window, "cmd-shift-1");
+    press(cx, window, "1");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some(order[2].as_str()),
+        "only ⌘ and a digit jump"
+    );
+
+    // The keys work from the search box too, and jump in the order the walk has, not the
+    // order of the results.
+    search_for(cx, window, &app, "thread");
+    press(cx, window, "cmd-2");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some(order[1].as_str()));
+}
+
+#[gpui_kit::test]
+fn holding_command_numbers_the_rows_after_a_beat(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    // GPUI sends a modifier change to the focused element's handlers, so something has the
+    // keyboard, as it does after any click. The window has to be active too: activating one
+    // resets the modifiers it knows.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus_for_test();
+        window.focus(&root, cx);
+    });
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "no numbers before ⌘ is held");
+
+    hold(cx, window, command());
+    cx.executor().advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(
+        !labelled(cx, window, "⌘1"),
+        "a quick ⌘ shortcut never flashes the numbers"
+    );
+
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    for number in 1..=order.len().min(5) {
+        assert!(
+            labelled(cx, window, &format!("⌘{number}")),
+            "row {number} wears its number once ⌘ has been held 200ms"
+        );
+    }
+    assert!(!labelled(cx, window, "⌘6"), "only rows that exist have one");
+
+    // Another modifier is another shortcut, and releasing hides the numbers at once.
+    hold(
+        cx,
+        window,
+        gpui_kit::Modifiers {
+            shift: true,
+            ..command()
+        },
+    );
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "⌘⇧ is not the jump shortcut");
+    hold(cx, window, command());
+    cx.executor().advance_clock(Duration::from_millis(250));
+    cx.run_until_parked();
+    render_twice(cx, window);
+    assert!(labelled(cx, window, "⌘1"));
+    hold(cx, window, gpui_kit::Modifiers::default());
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "⌘1"), "released");
+}
+
+#[gpui_kit::test]
+fn the_unpin_snooze_and_archive_notices_stack_by_kind_and_undo_names_what_failed(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let offer = |cx: &mut TestAppContext, thread: &str, kind: &str| {
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.offer_placement_undo_for_test(thread, kind, cx);
+            });
+        });
+        render_twice(cx, window);
+    };
+    offer(cx, "thread-failed", "unpin");
+    offer(cx, "thread-waiting", "unpin");
+    assert!(
+        labelled(cx, window, "Unpinned 2 threads, ⌘Z to undo"),
+        "unpins stack in one notice"
+    );
+    assert!(labelled(cx, window, "Undo unpin"));
+
+    offer(cx, "thread-failed", "snooze");
+    assert!(labelled(cx, window, "Snoozed 1 thread, ⌘Z to undo"));
+    offer(cx, "thread-failed", "archive");
+    assert!(
+        labelled(cx, window, "Archived 1 thread, ⌘Z to undo"),
+        "a different kind starts its own notice"
+    );
+
+    // Pinning a thread ends what an older unpin, settle or snooze would restore (`sendPin`).
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.pin_thread("thread-failed".to_owned(), true, cx);
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        labelled(cx, window, "Archived 1 thread, ⌘Z to undo"),
+        "an archive is not undone by a pin"
+    );
+
+    // With no server to take the commands, each undo says what failed.
+    press(cx, window, "cmd-z");
+    assert!(labelled(cx, window, "Failed to undo archive."));
+    for _ in 0..4 {
+        cx.executor().advance_clock(Duration::from_secs(6));
+        cx.run_until_parked();
+    }
+    render_twice(cx, window);
+    assert!(!labelled(cx, window, "Failed to undo archive."));
+}
+
+#[gpui_kit::test]
+fn command_click_picks_threads_and_the_menu_acts_on_all_of_them(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let picked = |cx: &mut TestAppContext| cx.read(|cx| app.read(cx).thread_selection_for_test());
+
+    hold(cx, window, command());
+    click_row(cx, window, "Failed thread card", MouseButton::Left);
+    click_row(cx, window, "Thread awaiting approval", MouseButton::Left);
+    hold(cx, window, gpui_kit::Modifiers::default());
+    assert_eq!(
+        picked(cx),
+        ["thread-failed", "thread-waiting"],
+        "⌘-click picks, in the order picked"
+    );
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "and opens nothing"
+    );
+
+    // A right-click on a picked row opens the bulk menu.
+    click_row(cx, window, "Failed thread card", MouseButton::Right);
+    for label in [
+        "Settle (2)",
+        "Regenerate titles (2)",
+        "Mark unread (2)",
+        "Delete (2)",
+    ] {
+        assert!(labelled(cx, window, label), "the bulk menu has `{label}`");
+    }
+    assert!(
+        !labelled(cx, window, "Rename thread"),
+        "and none of the single-thread rows"
+    );
+    press(cx, window, "escape");
+    assert!(!cx.read(|cx| app.read(cx).thread_menu_open_for_test()));
+
+    // Shift-click picks from the last thread picked to this one.
+    hold(
+        cx,
+        window,
+        gpui_kit::Modifiers {
+            shift: true,
+            ..gpui_kit::Modifiers::default()
+        },
+    );
+    click_row(
+        cx,
+        window,
+        "Unselected background working thread",
+        MouseButton::Left,
+    );
+    hold(cx, window, gpui_kit::Modifiers::default());
+    assert_eq!(
+        picked(cx),
+        ["thread-failed", "thread-waiting", "thread-working-bg"],
+        "the range from the anchor joins"
+    );
+    click_row(cx, window, "Failed thread card", MouseButton::Right);
+    assert!(labelled(cx, window, "Settle (3)"));
+    press(cx, window, "escape");
+
+    // The menu of a thread that is not picked is its own, and a plain click ends the selection.
+    click_row(cx, window, "Pinned active thread", MouseButton::Right);
+    assert!(labelled(cx, window, "Rename thread"));
+    press(cx, window, "escape");
+    click_row(cx, window, "Pinned active thread", MouseButton::Left);
+    assert!(picked(cx).is_empty(), "opening a thread ends the selection");
+    assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-pinned"));
+}
+
+#[gpui_kit::test]
+fn search_results_are_slim_options_that_take_no_tab_stop(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    assert!(!sidebar_rows(cx, &app).is_empty());
+    search_for(cx, window, &app, "thread");
+    assert!(
+        sidebar_rows(cx, &app).is_empty(),
+        "no result is a row the keyboard can reach (tabIndex -1)"
+    );
+    assert!(
+        labelled(cx, window, "Failed thread card, conn-gpui"),
+        "a result is named by its title and project"
+    );
+    let results = cx.read(|cx| app.read(cx).search_results_for_test(cx));
+    assert!(
+        results.contains(&"thread-settled-1".to_owned()),
+        "settled threads are results"
+    );
+    assert!(
+        !labelled(cx, window, "Settle thread"),
+        "a result has no hover controls, the card's settle button among them"
+    );
+    // Clicking a result opens it, and the keyboard stays in the box.
+    click_row(
+        cx,
+        window,
+        "Failed thread card, conn-gpui",
+        MouseButton::Left,
+    );
+    assert_eq!(open_thread(cx, &app).as_deref(), Some("thread-failed"));
+    assert_eq!(cx.read(|cx| app.read(cx).search_text_for_test(cx)), "");
+}
+
+#[gpui_kit::test]
+fn keys_typed_while_an_input_method_composes_belong_to_it(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "thr");
+    let before = search_highlight(cx, &app);
+    assert!(before.is_some(), "the search has results");
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.compose_in_search_for_test("e", window, cx)
+        });
+    });
+    render_twice(cx, window);
+
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app),
+        before,
+        "ArrowDown picks a candidate, it does not move the highlight"
+    );
+    press(cx, window, "enter");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "Enter commits the composition, it does not open a result"
+    );
+    press(cx, window, "escape");
+    assert!(
+        !cx.read(|cx| app.read(cx).search_text_for_test(cx))
+            .is_empty(),
+        "Escape cancels the composition, it does not clear the search"
+    );
+}
+
+#[gpui_kit::test]
+fn opening_a_thread_the_project_filter_hides_widens_the_filter(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.select_workspace(Some("proj-other".to_owned()), cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("proj-other".to_owned())
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| app.select_thread("thread-failed", cx));
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the thread's project is not in the filter, so the filter shows every project"
+    );
+    assert!(
+        labelled(cx, window, "Failed thread card"),
+        "and the thread's row is there"
+    );
+}
+
+#[gpui_kit::test]
+fn files_dropped_on_a_thread_row_open_that_thread(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let file = std::env::temp_dir().join(format!("conn-row-drop-{}.png", std::process::id()));
+    if let Err(err) = std::fs::write(&file, [0x89_u8, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        panic!("failed to write the dropped file: {err}");
+    }
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.thread_files_dropped("thread-failed", vec![file.clone()], window, cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-failed"),
+        "the drop opens the thread it landed on (the composer takes the files once it has a server)"
+    );
+    let _ = std::fs::remove_file(file);
+}
+
+#[gpui_kit::test]
+fn an_open_subagent_keeps_its_parents_row_current_for_the_walk(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let mut shell = kitchen_sink_shell();
+    let mut subagent = make_thread_shell(ThreadSeedSpec {
+        id: "thread-subagent",
+        project_id: "proj-parity",
+        title: "Delegated subagent",
+        status: "running",
+        activity_run_status: Some("running"),
+        pinned_at: None,
+        settled_at: None,
+        pending_kind: None,
+    });
+    subagent.lineage.parent_thread_id = Some("thread-waiting".to_owned());
+    shell.threads.push(subagent);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(shell, cx);
+            app.select_thread("thread-subagent", cx);
+        });
+    });
+    render_twice(cx, window);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert!(
+        !order.iter().any(|id| id == "thread-subagent"),
+        "a subagent has no row of its own"
+    );
+    let parent = order
+        .iter()
+        .position(|id| id == "thread-waiting")
+        .unwrap_or(0);
+
+    press(cx, window, "cmd-shift-]");
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        order.get(parent + 1).map(String::as_str),
+        "⌘⇧] walks on from the parent's row"
+    );
+}
