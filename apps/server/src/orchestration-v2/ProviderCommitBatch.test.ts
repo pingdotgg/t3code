@@ -417,7 +417,7 @@ it.effect.each([false, true])(
 );
 
 it.effect.each(["none", "writer", "snapshots"] as const)(
-  "runs another stream's control during a busy commit; splits slow backlogs for a write waiting on %s",
+  "runs another stream's control during a busy commit; splits slow backlogs only for a write waiting on the writer (%s)",
   (waitingOn) =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
@@ -468,7 +468,8 @@ it.effect.each(["none", "writer", "snapshots"] as const)(
       yield* Fiber.join(write);
       assert.deepEqual(
         yield* Queue.takeAll(recorder.output),
-        waitingOn === "none"
+        // A write still waiting on its own thread's snapshots gains nothing from a shorter batch.
+        waitingOn !== "writer"
           ? [[event(-1)], backlog]
           : [[event(-1)], ...backlog.map((raw) => [raw])],
       );
