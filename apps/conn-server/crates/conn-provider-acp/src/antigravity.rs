@@ -683,8 +683,8 @@ pub(crate) fn entry(
     Value::Object(entry)
 }
 
-/// `checkAntigravityProvider` without starting the agent (T3's probe never starts it: it
-/// unpacks about 1 GB per launch): the executable resolves and the sign-in is configured.
+/// `checkAntigravityProvider`'s probe: the executable resolves and the sign-in is configured.
+/// The agent starts only when [`needs_session`] says so.
 /// `version` is what `<agy> --version` printed in this check ([`cli_version`]); it replaces
 /// the last one, so the version follows the binary on `PATH` when Orbit updates it. A missing
 /// executable or a failed `--version` leaves no version.
@@ -724,6 +724,29 @@ pub(crate) fn check(
         })
     });
     next
+}
+
+/// Whether a health check should open a throwaway session (`loadModels`): only a session
+/// proves the sign-in and lists the models, so the check opens one while neither is known.
+pub(crate) fn needs_session(observed: &Observed) -> bool {
+    observed.installed && observed.status == Some("warning") && !observed.authenticated
+}
+
+/// `onSessionStarted`: the session proves the sign-in; its models are listed. A version from
+/// a health check's `--version` stays; the session's own counts only before one.
+pub(crate) fn session_started(previous: &Observed, initialize: &Value, setup: &Value) -> Observed {
+    let session_version = initialize["agentInfo"]["version"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned);
+    Observed {
+        installed: true,
+        version: previous.version.clone().or(session_version),
+        status: Some("ready"),
+        authenticated: true,
+        message: None,
+        models: models_from_session(setup),
+    }
 }
 
 /// `buildAntigravityModelsFromSession`: the `model` option's values (or the session's
@@ -859,6 +882,50 @@ mod tests {
         let entry = entry("antigravity", &settings, &next, "2026-11-20T00:00:00.000Z");
         assert_eq!(entry["version"], "1.5.13");
         assert_eq!(entry["setup"]["canInstall"], false);
+    }
+
+    /// A health check that finds no account opens a session; the session makes the entry
+    /// ready with its models, keeps the `--version` version, and stops the next check's load.
+    #[test]
+    fn health_check_loads_models_until_the_account_is_known() {
+        let settings = AntigravitySettings::from_instance(Some(&json!({"enabled": true})));
+        let agy = || Ok(PathBuf::from("/usr/local/bin/agy"));
+        let checked = check(
+            &settings,
+            &Observed::default(),
+            agy(),
+            cli_version("1.5.14\n"),
+        );
+        assert!(needs_session(&checked));
+        let initialize =
+            json!({"agentInfo": {"name": "Antigravity ACP Server", "version": "0.0.0"}});
+        let ready = session_started(&checked, &initialize, &setup());
+        assert!(!needs_session(&ready));
+        let entry = entry("antigravity", &settings, &ready, "2026-11-23T00:00:00.000Z");
+        assert_eq!(entry["status"], "ready");
+        assert_eq!(entry["auth"]["status"], "authenticated");
+        assert_eq!(entry["version"], "1.5.14");
+        assert!(entry.get("message").is_none());
+        assert_eq!(entry["models"], json!(models_from_session(&setup())));
+        let again = check(&settings, &ready, agy(), cli_version("1.5.14\n"));
+        assert!(!needs_session(&again));
+        assert_eq!(again.models, ready.models);
+        // No executable or a configuration problem: nothing to start.
+        assert!(!needs_session(&check(
+            &settings,
+            &Observed::default(),
+            Err("gone".into()),
+            None
+        )));
+        let no_key = AntigravitySettings::from_instance(Some(&json!({
+            "enabled": true, "config": {"authMethod": "gemini-api-key"}
+        })));
+        assert!(!needs_session(&check(
+            &no_key,
+            &Observed::default(),
+            agy(),
+            None
+        )));
     }
 
     #[test]

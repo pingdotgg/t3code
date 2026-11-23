@@ -202,6 +202,11 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, observedSpawner));
   const refresh = instance.refreshModels;
   if (!refresh) return yield* Effect.die("Antigravity does not expose model refresh.");
+  // The first health check loads the account and models; tests count what follows it.
+  const firstCheck = yield* instance.snapshot.refresh;
+  const checkLaunches = launches.length;
+  yield* fs.remove(requestLog, { force: true });
+  yield* fs.remove(runLog, { force: true });
   const readLines = (file: string) =>
     Effect.gen(function* () {
       if (!(yield* fs.exists(file))) return [];
@@ -212,8 +217,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   );
   /** Runtime names of the agents started so far, in order. */
   const readRuns = readLines(runLog);
-  /** ACP agent starts; `agy --version` checks are left out. */
-  const agentLaunches = () => launches.filter((launch) => launch.args[0] === "acp");
+  /** ACP agent starts after the first health check; `agy --version` checks are left out. */
+  const agentLaunches = () =>
+    launches.slice(checkLaunches).filter((launch) => launch.args[0] === "acp");
   const assertClosed = Effect.gen(function* () {
     for (const launch of launches) {
       yield* launch.handle.exitCode.pipe(Effect.ignore);
@@ -224,6 +230,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   });
   return {
     instance,
+    firstCheck,
     refresh,
     makeExecutable,
     use,
@@ -547,6 +554,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
+        // The first check starts the agent once, so models are ready before any thread.
+        expect(h.firstCheck).toMatchObject({
+          status: "ready",
+          version: "1.5.13",
+          auth: { status: "authenticated" },
+        });
+        expect(h.firstCheck.models.map((model) => model.slug)).toEqual([
+          "gemini-test-low",
+          "gemini-test-high",
+        ]);
         expect((yield* h.instance.snapshot.refresh).version).toBe("1.5.13");
         // Orbit updates agy in place on PATH; the next check reports the new build.
         yield* h.use(yield* h.makeExecutable("runtime updated", { version: "1.6.0" }));
@@ -559,7 +576,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         const missing = yield* h.instance.snapshot.refresh;
         expect(missing.version).toBeNull();
         expect(missing.installed).toBe(false);
-        // The health check only asks `agy --version`; it never starts the agent.
+        // Once the account is known, a health check only asks `agy --version`.
         expect(h.agentLaunches()).toEqual([]);
         yield* h.assertClosed;
       }),

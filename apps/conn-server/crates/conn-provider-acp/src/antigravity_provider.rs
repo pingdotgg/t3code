@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use conn_contract::{ProviderCapabilities, ProviderInstanceId, from_json, to_json};
 use conn_provider::{
-    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult,
+    BoxFuture, OpenSessionInput, OpenedSession, Provider, ProviderError, ProviderResult, Session,
 };
 use conn_provider_support::ids::{Env, SystemEnv};
 use conn_provider_support::process::{LaunchSpec, Process};
@@ -126,19 +126,116 @@ impl AntigravityProvider {
     /// `onSessionStarted`: the session proves the sign-in; its models and commands are listed.
     fn session_started(&self, initialize: &Value, setup: &Value) {
         let mut observed = lock(&self.observed);
-        observed.installed = true;
-        observed.authenticated = true;
-        observed.status = Some("ready");
-        observed.message = None;
-        if let Some(version) = initialize["agentInfo"]["version"]
-            .as_str()
-            .filter(|v| !v.is_empty())
-        {
-            observed.version = Some(version.to_owned());
+        *observed = antigravity::session_started(&observed, initialize, setup);
+    }
+
+    /// Starts `agy acp` and opens a session in `cwd` (T3's `openSession` start); the session
+    /// reports the account and models.
+    async fn start(
+        &self,
+        cwd: String,
+        policy: Value,
+        model: String,
+        provider_session_id: String,
+        mcp_servers: Vec<conn_provider::McpServer>,
+    ) -> ProviderResult<(AcpSession, mpsc::Receiver<conn_provider::ProviderEvent>)> {
+        if let Some(issue) = self.settings.config_issue() {
+            return Err(ProviderError::Failed {
+                operation: "configure",
+                detail: issue.into(),
+            });
         }
-        observed.models = antigravity::models_from_session(setup);
+        let executable = self
+            .resolve()
+            .await
+            .map_err(|detail| ProviderError::Failed {
+                operation: "resolve",
+                detail,
+            })?;
+        let (dirs, settings) = (self.dirs.clone(), self.settings.clone());
+        tokio::task::spawn_blocking(move || antigravity::prepare_profile(&dirs, &settings))
+            .await
+            .map_err(|_| ProviderError::Failed {
+                operation: "start",
+                detail: "The Antigravity profile directory could not be created.".into(),
+            })?
+            .map_err(|_| ProviderError::Failed {
+                operation: "start",
+                detail: "The Antigravity profile directory could not be created.".into(),
+            })?;
+        let self_command = self.self_command();
+        let config = session::Config {
+            flush_interval: Some(session::FLUSH_INTERVAL),
+            finalize_debounce: session::FINALIZE_DEBOUNCE,
+            flavor: &ANTIGRAVITY,
+            instance_id: self.instance_id.as_str().to_owned(),
+            provider_session_id,
+            cwd: cwd.clone(),
+            runtime_mode: policy["runtimeMode"]
+                .as_str()
+                .unwrap_or("full-access")
+                .to_owned(),
+            policy,
+            effort: None,
+            model,
+            mcp_servers,
+            client_version: "0.0.0".into(),
+            attachments_dir: self.config.attachments_dir.clone(),
+            auth_method: Some(self.settings.auth_method.clone()),
+            // The `agy` CLI on `PATH` has no version known before `initialize`.
+            runtime_version: None,
+            self_command: self_command.clone(),
+        };
+        let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
+        let (session, _) = AcpSession::open(
+            config,
+            spawner(
+                executable,
+                self.dirs.clone(),
+                self.settings.clone(),
+                self.base_env(),
+                self_command,
+                cwd,
+            ),
+            session::system_env(),
+            tx,
+        )
+        .await?;
+        let (initialize, setup) = session.handshake().await;
+        self.session_started(&initialize, &setup);
+        Ok((session, events))
+    }
+
+    /// `loadModels`: a throwaway session in a scratch folder, closed once it has answered.
+    /// A failure leaves the entry as the check made it; the next check tries again.
+    async fn load_models(&self) {
+        let parent = self.dirs.runtime_temp.join("setup");
+        let Ok(Ok(cwd)) = tokio::task::spawn_blocking(move || make_run_temp(&parent)).await else {
+            return;
+        };
+        let workspace = cwd.display().to_string();
+        let policy =
+            json!({"runtimeMode": "full-access", "interactionMode": "default", "cwd": workspace});
+        let started = tokio::time::timeout(
+            MODEL_LOAD_TIMEOUT,
+            self.start(
+                workspace,
+                policy,
+                String::new(),
+                format!("antigravity-models-{}", conn_support::uuid_v4()),
+                Vec::new(),
+            ),
+        )
+        .await;
+        if let Ok(Ok((session, _events))) = started {
+            session.close().await;
+        }
+        let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&cwd)).await;
     }
 }
+
+/// T3's `refreshModels` limit for the throwaway session.
+const MODEL_LOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// Starts `agy acp` with a fresh temp folder of its own (`run-<random>` under the runtime
 /// temp folder); the folder goes when the process has ended.
@@ -252,8 +349,14 @@ impl Provider for AntigravityProvider {
                 Ok(path) => self.cli_version(path).await,
                 Err(_) => None,
             };
-            let mut observed = lock(&self.observed);
-            *observed = antigravity::check(&self.settings, &observed, executable, version);
+            let load = {
+                let mut observed = lock(&self.observed);
+                *observed = antigravity::check(&self.settings, &observed, executable, version);
+                antigravity::needs_session(&observed)
+            };
+            if load {
+                self.load_models().await;
+            }
         })
     }
 
@@ -268,30 +371,6 @@ impl Provider for AntigravityProvider {
                     detail: "This provider is disabled.".into(),
                 });
             }
-            if let Some(issue) = self.settings.config_issue() {
-                return Err(ProviderError::Failed {
-                    operation: "configure",
-                    detail: issue.into(),
-                });
-            }
-            let executable = self
-                .resolve()
-                .await
-                .map_err(|detail| ProviderError::Failed {
-                    operation: "resolve",
-                    detail,
-                })?;
-            let (dirs, settings) = (self.dirs.clone(), self.settings.clone());
-            tokio::task::spawn_blocking(move || antigravity::prepare_profile(&dirs, &settings))
-                .await
-                .map_err(|_| ProviderError::Failed {
-                    operation: "start",
-                    detail: "The Antigravity profile directory could not be created.".into(),
-                })?
-                .map_err(|_| ProviderError::Failed {
-                    operation: "start",
-                    detail: "The Antigravity profile directory could not be created.".into(),
-                })?;
             let cwd = input.runtime_policy.cwd.clone().unwrap_or_else(|| {
                 std::env::current_dir()
                     .map(|d| d.display().to_string())
@@ -299,46 +378,15 @@ impl Provider for AntigravityProvider {
             });
             let policy = to_json(&input.runtime_policy);
             let selection = to_json(&input.model_selection);
-            let self_command = self.self_command();
-            let config = session::Config {
-                flush_interval: Some(session::FLUSH_INTERVAL),
-                finalize_debounce: session::FINALIZE_DEBOUNCE,
-                flavor: &ANTIGRAVITY,
-                instance_id: self.instance_id.as_str().to_owned(),
-                provider_session_id: input.provider_session_id.as_str().to_owned(),
-                cwd: cwd.clone(),
-                policy: policy.clone(),
-                runtime_mode: policy["runtimeMode"]
-                    .as_str()
-                    .unwrap_or("full-access")
-                    .to_owned(),
-                effort: None,
-                model: selection["model"].as_str().unwrap_or("").to_owned(),
-                mcp_servers: input.mcp_servers.clone(),
-                client_version: "0.0.0".into(),
-                attachments_dir: self.config.attachments_dir.clone(),
-                auth_method: Some(self.settings.auth_method.clone()),
-                // The `agy` CLI on `PATH` has no version known before `initialize`.
-                runtime_version: None,
-                self_command: self_command.clone(),
-            };
-            let (tx, events) = mpsc::channel(session::EVENT_CAPACITY);
-            let (session, _) = AcpSession::open(
-                config,
-                spawner(
-                    executable,
-                    self.dirs.clone(),
-                    self.settings.clone(),
-                    self.base_env(),
-                    self_command,
+            let (session, events) = self
+                .start(
                     cwd.clone(),
-                ),
-                session::system_env(),
-                tx,
-            )
-            .await?;
-            let (initialize, setup) = session.handshake().await;
-            self.session_started(&initialize, &setup);
+                    policy,
+                    selection["model"].as_str().unwrap_or("").to_owned(),
+                    input.provider_session_id.as_str().to_owned(),
+                    input.mcp_servers.clone(),
+                )
+                .await?;
             let now = SystemEnv.now();
             let row = json!({
                 "id": input.provider_session_id.as_str(),

@@ -424,8 +424,10 @@ gaps in the crate README, "Antigravity"). The server lists the default `antigrav
   answered "antigravity ok"; the key moved from `settings.json` to the secret store.
 - **The ACP registry stays unregistered** (Nick, 2026-11-14: no index download or install). RPC
   196 of 251 and `/mcp` 103 tools, unchanged.
-- **Known differences:** `BROWSER` names this server's helper, not T3's Node script; the
-  status entry lists models only after the first session (T3 the same without a sign-in).
+- **Known differences:** `BROWSER` names this server's helper, not T3's Node script.
+- **Models before the first thread (2026-11-23):** while the account is unknown, a health check
+  opens a throwaway session in a scratch folder and closes it, as T3's health check now does,
+  so the entry is `ready` with its models after start. `--version` keeps the version.
 
 ## Environment themes (2026-11-20)
 
