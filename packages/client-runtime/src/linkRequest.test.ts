@@ -22,9 +22,9 @@ import {
   linkRequestFailureMessage,
   linkRequestInitialMachine,
   linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
   linkRequestTargetName,
-  linkTargetUrls,
   rankMachinesByHint,
 } from "./linkRequest.ts";
 
@@ -366,12 +366,6 @@ describe("linkableMachines", () => {
       },
       expect.objectContaining({ label: "Local", linkedAccess: "auto", urls: [], linkUrls: [] }),
     ]);
-    // A code this client mints goes only to its own addresses; one the user fetched, to both.
-    expect(linkTargetUrls(listed[0]!, true)).toEqual(["https://vps.ts.net"]);
-    expect(linkTargetUrls(listed[0]!, false)).toEqual([
-      "https://vps.ts.net",
-      "https://vps.example.com",
-    ]);
   });
 
   it("offers machines only on T3 Connect after the saved ones, at their Connect address", () => {
@@ -567,6 +561,16 @@ describe("linkRequestTarget", () => {
     expect(linkRequestTarget({}, [box], box.environmentId)).toMatchObject({ kind: "machine" });
     expect(linkRequestTarget({}, [box], ANOTHER_ADDRESS)).toEqual({ kind: "address" });
     expect(linkRequestTarget({}, [box], null)).toEqual({ kind: "none" });
+    // Where only the environment's link reached it is no address of its own: the user
+    // starts from it, and sees it, before a code goes there.
+    const linkedOnly = { ...box, urls: [] };
+    const target = linkRequestTarget({ environmentId: box.environmentId }, [linkedOnly], null);
+    expect(target).toMatchObject({ kind: "machine", urls: [] });
+    expect(linkRequestSuggestedAddress({}, target)).toBe("https://box.peer.example");
+    expect(linkRequestSuggestedAddress({ url: "https://other.example" }, { kind: "address" })).toBe(
+      "https://other.example",
+    );
+    expect(linkRequestSuggestedAddress({}, { kind: "none" })).toBe("");
   });
 
   it("keeps a link the machine has unless the agent asked for more access than it allows", () => {

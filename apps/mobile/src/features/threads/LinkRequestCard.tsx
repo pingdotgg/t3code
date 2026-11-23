@@ -10,8 +10,8 @@ import {
   linkRequestInitialMachine,
   type LinkRequestItem,
   linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
-  linkTargetUrls,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
 import {
@@ -209,7 +209,8 @@ function LinkRequestSheet(props: {
   const listed = useLinkableMachines(props.environmentId, true);
   const machines = useMemo(() => rankMachinesByHint(listed, item.hint), [listed, item.hint]);
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  // Null until the user types; until then the field holds the suggested address.
+  const [typedAddress, setAddress] = useState<string | null>(null);
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -225,6 +226,7 @@ function LinkRequestSheet(props: {
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
   const target = linkRequestTarget(item, machines, selected, m);
+  const address = typedAddress ?? linkRequestSuggestedAddress(item, target);
   const targetName =
     target.kind === "machine"
       ? target.label
@@ -235,15 +237,13 @@ function LinkRequestSheet(props: {
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
   const needsAddress =
-    target.kind === "address" ||
-    (target.kind === "machine" && target.urls.length === 0 && target.linkUrls.length === 0);
+    target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
   // This phone mints a code there when it is connected with a session that may
-  // create pairing links, and only for its own addresses: anything can answer as
-  // that machine at one typed in or only a link reached, so those get a code the user fetched.
+  // create pairing links, and only for its own addresses: anything can answer
+  // as that machine at one typed in, so that one gets a code the user fetched.
   const canMint =
     targetId !== null &&
-    target.kind === "machine" &&
-    target.urls.length > 0 &&
+    !needsAddress &&
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
@@ -273,10 +273,7 @@ function LinkRequestSheet(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target:
-        target.kind === "machine" && !needsAddress
-          ? { ...target, urls: linkTargetUrls(target, canMint) }
-          : { url: address },
+      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
       access,
       pairingCode: code,
     });
@@ -382,7 +379,7 @@ function LinkRequestSheet(props: {
             />
           </SettingsSection>
         ) : null}
-        {needsAddress && item.url === undefined ? (
+        {needsAddress && item.url === undefined && !useExisting ? (
           <View className="gap-2">
             <TextInput
               accessibilityLabel={gt("Address")}

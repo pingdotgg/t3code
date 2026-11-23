@@ -96,16 +96,10 @@ export interface LinkableMachine {
   readonly urls: ReadonlyArray<string>;
   /**
    * Where only the thread's environment's link reached it. Anything can answer
-   * there as this machine, so a code this client mints never goes to them.
+   * there as this machine, so these only suggest an address the user checks.
    */
   readonly linkUrls: ReadonlyArray<string>;
 }
-
-/** Where a link sends its pairing code: one this client minted goes only to its own addresses. */
-export const linkTargetUrls = (
-  machine: Pick<LinkableMachine, "urls" | "linkUrls">,
-  minted: boolean,
-): ReadonlyArray<string> => (minted ? machine.urls : [...machine.urls, ...machine.linkUrls]);
 
 /** A loopback address names whichever machine opens it: the linking server, not this one. */
 const isLoopbackUrl = (url: string) => {
@@ -258,7 +252,7 @@ export const ANOTHER_ADDRESS = "another-address";
 
 /**
  * What a link request links: a machine from the client's catalog, or an address.
- * With neither `urls` nor `linkUrls`, nothing knows an address for the machine,
+ * `urls` is empty when the client knows no direct address for the machine,
  * so the user types one.
  */
 export type LinkRequestTarget =
@@ -308,6 +302,15 @@ export function linkRequestTarget(
     linkedAccess: machine?.linkedAccess ?? null,
   };
 }
+
+/**
+ * Where a card's address field starts: the agent's address, else where the environment's
+ * link reached the machine. The user sees it, with its warning, before a code goes there.
+ */
+export const linkRequestSuggestedAddress = (
+  item: Pick<LinkRequestItem, "url">,
+  target: LinkRequestTarget,
+): string => item.url ?? (target.kind === "machine" ? target.linkUrls[0] : undefined) ?? "";
 
 /**
  * Whether the card answers with the link its machine already has. An agent that asks for

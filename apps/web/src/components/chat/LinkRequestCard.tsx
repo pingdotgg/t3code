@@ -10,9 +10,9 @@ import {
   linkRequestInitialMachine,
   type LinkRequestItem,
   linkRequestKeepsLink,
+  linkRequestSuggestedAddress,
   linkRequestTarget,
   linkRequestTargetName,
-  linkTargetUrls,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
 import {
@@ -191,7 +191,8 @@ function LinkRequestDialog(props: {
   const machines = rankMachinesByHint(listed, item.hint);
   // Null until the user picks; until then the hint's best match is picked.
   const [choice, setChoice] = useState<string | null>(null);
-  const [address, setAddress] = useState(item.url ?? "");
+  // Null until the user types; until then the field holds the suggested address.
+  const [typedAddress, setAddress] = useState<string | null>(null);
   const [access, setAccess] = useState<AuthMcpClientAccess>(() => linkRequestDefaultAccess(item));
   const [pairingCode, setPairingCode] = useState("");
   const [step, setStep] = useState<LinkStep>("machine");
@@ -209,6 +210,7 @@ function LinkRequestDialog(props: {
   });
   const selected = choice ?? linkRequestInitialMachine(item, machines);
   const target = linkRequestTarget(item, machines, selected, messages);
+  const address = typedAddress ?? linkRequestSuggestedAddress(item, target);
   const targetName =
     target.kind === "machine" ? target.label : linkRequestTargetName(item, messages);
   // Without a catalog entry or an address, the name is the generic "a machine".
@@ -222,21 +224,19 @@ function LinkRequestDialog(props: {
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
   const needsAddress =
-    target.kind === "address" ||
-    (target.kind === "machine" && target.urls.length === 0 && target.linkUrls.length === 0);
+    target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
   // This client mints a code there when it is connected with a session that may
-  // create pairing links, and only for its own addresses: anything can answer as
-  // that machine at one typed in or only a link reached, so those get a code the user fetched.
+  // create pairing links, and only for its own addresses: anything can answer
+  // as that machine at one typed in, so that one gets a code the user fetched.
   const canMint =
     targetId !== null &&
-    target.kind === "machine" &&
-    target.urls.length > 0 &&
+    !needsAddress &&
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
-  // An address the agent gave is already filled in; only one the user must type is asked for.
-  const asksAddress = needsAddress && item.url === undefined;
   const useExisting = linkRequestKeepsLink(item, target);
+  // An address the agent gave is already filled in; only one the user must type is asked for.
+  const asksAddress = needsAddress && item.url === undefined && !useExisting;
   // A named machine with an address it answers at has nothing to choose before access.
   const steps: ReadonlyArray<LinkStep> =
     pickMachine || asksAddress ? ["machine", "access"] : ["access"];
@@ -247,7 +247,7 @@ function LinkRequestDialog(props: {
 
   const reset = () => {
     setChoice(null);
-    setAddress(item.url ?? "");
+    setAddress(null);
     setAccess(linkRequestDefaultAccess(item));
     setPairingCode("");
     setStep("machine");
@@ -281,10 +281,7 @@ function LinkRequestDialog(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target:
-        target.kind === "machine" && !needsAddress
-          ? { ...target, urls: linkTargetUrls(target, canMint) }
-          : { url: address },
+      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
       access,
       pairingCode: code,
     });
