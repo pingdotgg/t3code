@@ -7915,9 +7915,8 @@
   "ad25ae072f65b934": "Keine archivierten Threads",
   "4e690f420bcbdb5d": "Verbundene Umgebungen werden geprüft.",
   "89d08a5be3347890": "Archivierte Threads erscheinen hier.",
-  "128f70c4e9a7e699": [
-    "Archiviert",
-    " ",
+  "5a81a2cc634258c3": [
+    "Archived ",
     {
       "i": 1,
       "k": "_gt_time_1",
