@@ -25,11 +25,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, ClipboardItem, Context, Entity, FontWeight, Hsla,
     InteractiveElement, IntoElement, ParentElement, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, px, relative,
+    Styled, Subscription, Task, Window, div, px,
 };
 
 use super::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
 use super::composer_state::{ComposerPendingRequest, PendingQuestion};
+use super::question_logic::{question_primary, split_recommended_label};
 use super::{
     BODY_FONT_PX, BODY_LINE_HEIGHT_PX, ChatEvent, ChatView, MONO_FONT_FAMILY, UI_FONT_PX,
     UI_LINE_HEIGHT_PX, icons, markdown,
@@ -50,11 +51,8 @@ const TREE_INDENT_PX: f32 = 14.0;
 pub(super) struct UserInputCardState {
     pub(super) question_index: usize,
     pub(super) drafts: HashMap<String, UserInputDraft>,
-    pub(super) collapsed: bool,
     pub(super) responding: bool,
     pub(super) error: Option<String>,
-    /// Free-text answer field for the active question (when custom answers are allowed).
-    custom_input: Option<(String, Entity<InputState>, Subscription)>,
     _auto_advance: Option<Task<()>>,
 }
 
@@ -63,10 +61,8 @@ impl UserInputCardState {
         Self {
             question_index: 0,
             drafts: HashMap::new(),
-            collapsed: false,
             responding: false,
             error: None,
-            custom_input: None,
             _auto_advance: None,
         }
     }
@@ -489,54 +485,10 @@ impl ChatView {
                         },
                     );
                 }
-                TimelineEntry::UserInputRequest { questions, .. } => {
-                    let state = self
-                        .user_input_cards
+                TimelineEntry::UserInputRequest { .. } => {
+                    self.user_input_cards
                         .entry(id.clone())
                         .or_insert_with(UserInputCardState::new);
-                    let index = state.question_index.min(questions.len().saturating_sub(1));
-                    let Some(question) = questions.get(index) else {
-                        continue;
-                    };
-                    if !question.allow_custom_answer {
-                        state.custom_input = None;
-                        continue;
-                    }
-                    if state
-                        .custom_input
-                        .as_ref()
-                        .is_some_and(|(qid, _, _)| *qid == question.id)
-                    {
-                        continue;
-                    }
-                    let initial = state
-                        .drafts
-                        .get(&question.id)
-                        .and_then(|d| d.custom.clone())
-                        .or_else(|| question.initial_answer.clone())
-                        .unwrap_or_default();
-                    let input = cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .placeholder("Type your own answer")
-                            .default_value(initial)
-                    });
-                    let entry_id = id.clone();
-                    let question_for_sub = question.clone();
-                    let subscription = cx.subscribe_in(
-                        &input,
-                        window,
-                        move |view, input, event: &InputEvent, _, cx| match event {
-                            InputEvent::Change => {
-                                let text = input.read(cx).value().to_string();
-                                view.set_user_input_custom(&entry_id, &question_for_sub, &text, cx);
-                            }
-                            InputEvent::PressEnter { .. } => {
-                                view.advance_user_input(&entry_id, cx);
-                            }
-                            _ => {}
-                        },
-                    );
-                    state.custom_input = Some((question.id.clone(), input, subscription));
                 }
                 _ => {}
             }
@@ -564,7 +516,6 @@ impl ChatView {
         entry_id: &str,
         question: &UserInputQuestion,
         value: &str,
-        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(state) = self.user_input_cards.get_mut(entry_id) else {
@@ -575,11 +526,6 @@ impl ChatView {
         }
         let next = question.toggle_option(state.drafts.get(&question.id), value);
         state.drafts.insert(question.id.clone(), next);
-        // A picked option replaces any typed answer.
-        if let Some((_, input, _)) = &state.custom_input {
-            let input = input.clone();
-            input.update(cx, |field, cx| field.set_value("", window, cx));
-        }
         if !question.multi_select {
             let entry_id = entry_id.to_owned();
             state._auto_advance = Some(cx.spawn(async move |this, cx| {
@@ -790,7 +736,7 @@ impl ChatView {
             return self.render_user_input_history(id, title, questions, status, answers, cx);
         }
         let Some(state) = self.user_input_cards.get(id) else {
-            // Inputs are created on the next render pass.
+            // The state is created on the next render pass.
             return div().h(px(24.0)).into_any_element();
         };
         let index = state.question_index.min(questions.len().saturating_sub(1));
@@ -799,116 +745,12 @@ impl ChatView {
         };
         let draft = state.drafts.get(&question.id);
         let disabled = state.responding;
-        let collapsed = state.collapsed;
 
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground);
-        let hover_bg = hsla(self.tokens.shell_highlight);
 
-        // `ComposerBanner.Row` header: header text, `N/M`, chevron, optional dismiss.
-        let toggle_id = id.to_owned();
-        let mut header = div()
-            .id(SharedString::from(format!("question-toggle-{id}")))
-            .a11y_button(
-                SharedString::from(format!("chat.question.toggle.{id}")),
-                if collapsed {
-                    "Show the question and its options"
-                } else {
-                    "Hide the question and its options"
-                },
-            )
-            .aria_expanded(!collapsed)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.0))
-            .w_full()
-            .min_w_0()
-            .px(px(16.0))
-            .pt(px(6.0))
-            .pb(px(if collapsed { 6.0 } else { 0.0 }))
-            .cursor_pointer()
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(UI_LINE_HEIGHT_PX))
-            .on_click(cx.listener(move |view, _, _, cx| {
-                if let Some(state) = view.user_input_cards.get_mut(&toggle_id) {
-                    state.collapsed = !state.collapsed;
-                }
-                view.remeasure_for_id(&toggle_id);
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(muted)
-                            .when(collapsed, |d| d.max_w(relative(0.5)))
-                            .child(question.header.clone()),
-                    )
-                    .when(collapsed, |d| {
-                        d.child(div().text_color(muted).child("·")).child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(prose_foreground(&self.tokens))
-                                .child(question.question.clone()),
-                        )
-                    }),
-            );
-        if questions.len() > 1 {
-            header = header.child(
-                div()
-                    .flex_none()
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(format!("{}/{}", index + 1, questions.len())),
-            );
-        }
-        header = header.child(icons::icon(
-            if collapsed {
-                icons::CARET_RIGHT
-            } else {
-                icons::CARET_DOWN
-            },
-            12.0,
-            muted_icon(&self.tokens),
-        ));
-        if dismissible {
-            let dismiss_id = id.to_owned();
-            header = header.child(
-                div()
-                    .id(SharedString::from(format!("question-dismiss-{id}")))
-                    .a11y_button(
-                        SharedString::from(format!("chat.question.dismiss.{id}")),
-                        "Dismiss question without answering",
-                    )
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(22.0))
-                    .rounded(px(6.0))
-                    .when(!disabled, |d| {
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(hover_bg).text_color(fg))
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                cx.stop_propagation();
-                                view.dismiss_user_input(&dismiss_id, cx);
-                            }))
-                    })
-                    .conn_tooltip("Dismiss question without answering", &self.tokens)
-                    .child(icons::icon(icons::CLOSE, 12.0, muted)),
-            );
-        }
-
+        // `ComposerPendingUserInputCard`: no header and no answer field; the composer takes typed
+        // answers. The border and tile stand in for the composer banner this card sits in.
         let mut card = div()
             .id(SharedString::from(format!("question-card-{id}")))
             .a11y(
@@ -920,174 +762,240 @@ impl ChatView {
             .flex_col()
             .w_full()
             .min_w_0()
+            .px(px(4.0))
+            .pt(px(12.0))
+            .pb(px(4.0))
             .rounded(px(14.0))
             .border_1()
             .border_color(hsla(self.tokens.shell_divider))
-            .bg(hsla(self.tokens.shell_tile))
-            .child(header);
+            .bg(hsla(self.tokens.shell_tile));
 
-        if !collapsed {
-            let mut body = div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .min_w_0()
-                .pl(px(22.0))
-                .pr(px(16.0))
-                .pb(px(8.0));
-            // Markdown-rendered question prompt (`text-foreground/85`, `pt-2`).
-            body = body.child(
-                div()
-                    .pt(px(8.0))
-                    .text_color(hsla_alpha(self.tokens.foreground, 0.85))
-                    .child(markdown::render_markdown(
-                        &format!("question-{id}-{}", question.id),
-                        &question.question,
-                        &self.tokens,
-                        &markdown::MarkdownOptions::default(),
-                    )),
-            );
-            let mut options = div().flex().flex_col().mt(px(6.0)).ml(px(-6.0));
-            for (opt_idx, option) in question.options.iter().enumerate() {
-                let value = option.answer_value().to_owned();
-                let selected = question.is_option_selected(draft, &value);
-                let entry_id = id.to_owned();
-                let q = question.clone();
-                let indicator: AnyElement = if question.multi_select {
-                    self.render_checkbox_mark(selected)
-                } else {
-                    self.render_option_radio(selected)
-                };
-                let mut row = div()
-                    .id((SharedString::from(format!("question-opt-{id}")), opt_idx))
-                    .a11y_button(
-                        SharedString::from(format!("chat.question.option.{id}.{opt_idx}")),
-                        option.label.clone(),
-                    )
-                    .aria_selected(selected)
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap(px(10.0))
-                    .w_full()
-                    .rounded(px(6.0))
-                    .py(px(6.0))
-                    .pl(px(6.0))
-                    .text_color(if selected {
-                        fg
-                    } else {
-                        hsla_alpha(self.tokens.foreground, 0.70)
-                    })
-                    .child(div().flex().items_center().h(px(20.0)).child(indicator))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .flex_1()
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .text_size(px(BODY_FONT_PX))
-                                    .line_height(px(20.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child(option.label.clone()),
-                            )
-                            .when(
-                                !option.description.is_empty()
-                                    && option.description != option.label,
-                                |d| {
-                                    d.child(
-                                        div()
-                                            .text_size(px(11.0))
-                                            .line_height(px(14.0))
-                                            .text_color(muted)
-                                            .child(option.description.clone()),
-                                    )
-                                },
-                            ),
-                    );
-                if disabled {
-                    row = row.opacity(0.5);
-                } else {
-                    let hover = hsla_alpha(self.tokens.muted, 0.30);
-                    row = row
-                        .cursor_pointer()
-                        .when(!selected, move |d| d.hover(move |s| s.bg(hover)))
-                        .on_click(cx.listener(move |view, _, window, cx| {
-                            view.select_user_input_option(&entry_id, &q, &value, window, cx);
-                        }));
-                }
-                options = options.child(row);
-            }
-            body = body.child(options);
+        // The question starts 12px inside the option highlights.
+        card = card.child(div().px(px(12.0)).pb(px(4.0)).text_color(fg).child(
+            markdown::render_markdown(
+                &format!("question-{id}-{}", question.id),
+                &question.question,
+                &self.tokens,
+                &markdown::MarkdownOptions::default(),
+            ),
+        ));
 
-            if let Some((qid, input, _)) = &state.custom_input
-                && *qid == question.id
-            {
-                body = body.child(
-                    div()
-                        .mt(px(6.0))
-                        .w_full()
-                        .child(Input::new(input).disabled(disabled)),
-                );
-            }
-
-            if let Some(error) = &state.error {
-                body = body.child(
-                    div()
-                        .mt(px(6.0))
-                        .text_size(px(UI_FONT_PX))
-                        .line_height(px(UI_LINE_HEIGHT_PX))
-                        .text_color(hsla(self.tokens.destructive))
-                        .child(error.clone()),
-                );
-            }
-
-            // Back / Next / Submit actions.
-            let answered = question.resolve_answer(draft).is_some();
-            let is_last = index + 1 >= questions.len();
-            let complete = build_user_input_answers(questions, &state.drafts).is_some();
-            let mut actions = div()
-                .mt(px(8.0))
+        let mut options = div().flex().flex_col().gap(px(2.0)).mt(px(8.0)).pb(px(4.0));
+        for (opt_idx, option) in question.options.iter().enumerate() {
+            let value = option.answer_value().to_owned();
+            let selected = question.is_option_selected(draft, &value);
+            let entry_id = id.to_owned();
+            let q = question.clone();
+            let (title_text, recommended) = split_recommended_label(&option.label);
+            let indicator: AnyElement = if question.multi_select {
+                self.render_checkbox_mark(selected)
+            } else {
+                self.render_option_radio(selected)
+            };
+            // No `1`-`9` key badge: the digit shortcuts are not ported (docs/parity/composer.md).
+            let main = div()
                 .flex()
                 .flex_row()
-                .items_center()
-                .justify_end()
-                .gap(px(6.0));
-            if index > 0 {
-                let back_id = id.to_owned();
-                actions = actions.child(
-                    self.ghost_button(&format!("question-back-{id}"), "Back", !disabled, cx)
-                        .on_click(cx.listener(move |view, _, _, cx| {
-                            view.go_back_user_input(&back_id, cx);
-                        })),
+                .items_start()
+                .gap(px(10.0))
+                .child(div().flex().items_center().h(px(20.0)).child(indicator))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.0))
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_size(px(BODY_FONT_PX))
+                                .line_height(px(20.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(fg)
+                                .child(title_text.to_owned()),
+                        )
+                        .when(
+                            !option.description.is_empty() && option.description != option.label,
+                            |d| {
+                                d.child(
+                                    div()
+                                        .text_size(px(UI_FONT_PX))
+                                        .line_height(px(16.0))
+                                        .text_color(muted)
+                                        .child(option.description.clone()),
+                                )
+                            },
+                        ),
                 );
-            }
-            let primary_enabled = !disabled && if is_last { complete } else { answered };
-            let primary_label = if disabled {
-                "Sending…"
-            } else if is_last {
-                "Submit"
-            } else {
-                "Next"
-            };
-            let primary_id = id.to_owned();
-            actions = actions.child(
-                self.primary_button(
-                    &format!("question-submit-{id}"),
-                    primary_label,
-                    primary_enabled,
+            let mut row = div()
+                .id((SharedString::from(format!("question-opt-{id}")), opt_idx))
+                .a11y_button(
+                    SharedString::from(format!("chat.question.option.{id}.{opt_idx}")),
+                    option.label.clone(),
                 )
-                .when(primary_enabled, |d| {
+                .aria_selected(selected)
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .w_full()
+                .rounded(px(12.0))
+                .px(px(12.0))
+                .py(px(14.0))
+                .when(selected, |d| d.bg(hsla(self.tokens.shell_highlight)))
+                .when(recommended, |d| {
+                    // On its own line above the title, so the mark lines up with the title.
+                    d.child(
+                        div().flex().pl(px(26.0)).child(
+                            div()
+                                .rounded_full()
+                                .bg(hsla_alpha(self.tokens.primary, 0.15))
+                                .px(px(8.0))
+                                .py(px(1.0))
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(hsla(self.tokens.primary))
+                                .child("Recommended"),
+                        ),
+                    )
+                })
+                .child(main);
+            if disabled {
+                row = row.opacity(0.5);
+            } else {
+                let hover = hsla_alpha(self.tokens.foreground, 0.04);
+                row = row
+                    .cursor_pointer()
+                    .when(!selected, move |d| d.hover(move |s| s.bg(hover)))
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        view.select_user_input_option(&entry_id, &q, &value, cx);
+                    }));
+            }
+            options = options.child(row);
+        }
+        card = card.child(options);
+
+        if let Some(error) = &state.error {
+            card = card.child(
+                div()
+                    .px(px(12.0))
+                    .pb(px(4.0))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(hsla(self.tokens.destructive))
+                    .child(error.clone()),
+            );
+        }
+
+        // Bottom row: `N of M`, Skip, Back, Next / Send.
+        let answered = question.resolve_answer(draft).is_some();
+        let is_last = index + 1 >= questions.len();
+        let complete = build_user_input_answers(questions, &state.drafts).is_some();
+        let auto_advancing = !question.multi_select && state._auto_advance.is_some();
+        let primary = question_primary(
+            is_last,
+            question.multi_select,
+            answered,
+            complete,
+            auto_advancing,
+            disabled,
+        );
+        let mut actions = div()
+            .mt(px(8.0))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(16.0))
+            .min_h(px(32.0));
+        if questions.len() > 1 {
+            actions = actions.child(
+                div()
+                    .pl(px(12.0))
+                    .text_size(px(12.0))
+                    .text_color(muted)
+                    .child(format!("{} of {}", index + 1, questions.len())),
+            );
+        }
+        actions = actions.child(div().flex_1());
+        if dismissible {
+            let dismiss_id = id.to_owned();
+            actions = actions.child(
+                question_text_action(
+                    &self.tokens,
+                    format!("question-dismiss-{id}"),
+                    format!("chat.question.dismiss.{id}"),
+                    "Skip question",
+                    "Skip",
+                    !disabled,
+                    index == 0 && !primary.show,
+                )
+                .when(!disabled, |d| {
                     d.on_click(cx.listener(move |view, _, _, cx| {
-                        view.advance_user_input(&primary_id, cx);
+                        view.dismiss_user_input(&dismiss_id, cx);
                     }))
                 }),
             );
-            body = body.child(actions);
-            card = card.child(body);
         }
+        if index > 0 {
+            let back_id = id.to_owned();
+            actions = actions.child(
+                question_text_action(
+                    &self.tokens,
+                    format!("question-back-{id}"),
+                    format!("chat.question-back-{id}"),
+                    "Back",
+                    "Back",
+                    !disabled,
+                    !primary.show,
+                )
+                .when(!disabled, |d| {
+                    d.on_click(cx.listener(move |view, _, _, cx| {
+                        view.go_back_user_input(&back_id, cx);
+                    }))
+                }),
+            );
+        }
+        if primary.show {
+            let (ax_label, text) = if disabled {
+                ("Submitting", "Submitting...")
+            } else if is_last {
+                ("Send answers", "Send")
+            } else {
+                ("Next", "Next")
+            };
+            let primary_id = id.to_owned();
+            let hover_bg = hsla_alpha(self.tokens.primary, 0.88);
+            actions = actions.child(
+                div()
+                    .id(SharedString::from(format!("question-submit-{id}")))
+                    .a11y_button(
+                        SharedString::from(format!("chat.question-submit-{id}")),
+                        ax_label,
+                    )
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .h(px(32.0))
+                    .px(px(16.0))
+                    .rounded_full()
+                    .bg(hsla(self.tokens.primary))
+                    .text_color(hsla(self.tokens.primary_foreground))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(20.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .when(!primary.enabled, |d| d.opacity(0.64))
+                    .when(primary.enabled, |d| {
+                        d.cursor_pointer()
+                            .hover(move |s| s.bg(hover_bg))
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                view.advance_user_input(&primary_id, cx);
+                            }))
+                    })
+                    .child(text),
+            );
+        }
+        card = card.child(actions);
 
         div()
             .w_full()
@@ -1199,7 +1107,7 @@ impl ChatView {
                 )
         } else {
             radio
-                .border_color(hsla(self.tokens.input))
+                .border_color(hsla_alpha(self.tokens.foreground, 0.55))
                 .bg(hsla(self.tokens.background))
         };
         radio.into_any_element()
@@ -2280,6 +2188,34 @@ impl ChatView {
         .text_size(px(UI_FONT_PX))
         .child(label.to_owned())
     }
+}
+
+/// A quiet text button of the question card (`TextAction`): `text-sm font-medium`, muted until
+/// hovered. The last action ends in line with the question text, not at the pill edge.
+fn question_text_action(
+    tokens: &conn_theme::Tokens,
+    key: String,
+    ax_id: String,
+    ax_label: &'static str,
+    text: &'static str,
+    enabled: bool,
+    last: bool,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let fg = hsla(tokens.foreground);
+    div()
+        .id(SharedString::from(key))
+        .a11y_button(SharedString::from(ax_id), ax_label)
+        .flex_none()
+        .text_size(px(BODY_FONT_PX))
+        .line_height(px(20.0))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(hsla(tokens.muted_foreground))
+        .when(last, |d| d.mr(px(12.0)))
+        .when(enabled, move |d| {
+            d.cursor_pointer().hover(move |s| s.text_color(fg))
+        })
+        .when(!enabled, |d| d.opacity(0.5))
+        .child(text)
 }
 
 /// Colors and behavior of Conn `Button variant="outline"`: `border-input`, `bg-popover`

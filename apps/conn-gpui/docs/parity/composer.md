@@ -252,12 +252,7 @@ Every branch in `ComposerPrimaryActions.tsx:154-391` (evaluated in exact priorit
   - Stacked consecutive banners join edge-to-edge (no inner border-radius or double borders); grouped deterministically (`environment` first, then `attention`) so banners never jump order.
   - `NoticeText`: detects truncated title/description overflow and automatically adds an `InfoIcon` hover popover showing the full scrollable message.
   - Detached mode (`detached={true}`) for draft hero layout (cards stand below composer so hero doesn't shift).
-- `[ ]` **`ComposerPendingUserInputPanel` (interactive agent questions drawer)** (`ComposerPendingUserInputPanel.tsx:30-352`, `ChatComposer.tsx:3197-3225`) — Attached `info` drawer above composer for `ask_question` / `pendingUserInputs`:
-  - Collapsible header row: question `header` (and truncated `question` preview when collapsed), `questionIndex+1 / total` counter badge when multi-question, expand/collapse chevron, optional `X` dismiss button (`"Dismiss question without answering"`).
-  - Scrollable body (`max-h-[min(24rem,40dvh)]`): Markdown-rendered question text (`ChatMarkdown`).
-  - Option list: single-select radio (`OptionRadio`, with optimistic select + **200ms auto-advance** to next question/submit) or multi-select checkbox (`CheckboxMark`), option label + muted description, right-aligned `<Kbd>1</Kbd>`–`<Kbd>9</Kbd>` shortcut badges.
-  - Document-level `1`–`9` digit keydown shortcuts when panel is expanded and editor isn't focused.
-  - Pairs with `ComposerPrimaryActions` State 1 (`Previous` / `Next question` / `Submit answer(s)`) and editor custom-answer input.
+- `[~]` **`ComposerPendingUserInputPanel` (pending question card)** (`ComposerPendingUserInputPanel.tsx`, `ChatComposer.tsx:3757,3783` -> `chat/cards.rs` `render_user_input_card`, `chat/question_logic.rs`) — The card has no header, no collapse and no answer field of its own: Conn takes typed answers only through the composer (`customAnswer`), and so does `conn-gpui`. It shows the Markdown question, radio (200ms auto-advance) or checkbox options with label, description and a `Recommended` pill, and a bottom row `N of M` / `Skip` / `Back` / `Next` or `Send` (`Submitting...`). **Drift:** the `1`-`9` digit shortcuts and their `Kbd` badges are not ported, nor are option `preview` and the context message block; the card sits inline in the timeline (border and tile stand in for the composer banner), not in the composer.
 - `[ ]` **`ComposerPlanFollowUpBanner`** (`ComposerPlanFollowUpBanner.tsx:4-20`, `ChatComposer.tsx:3217-3222`) — Attached `info` drawer above composer when a proposed plan is ready: `"Plan ready"` muted label + truncated `planTitle` parsed from plan Markdown. Pairs with `ComposerPrimaryActions` State 2 (`Refine` / `Implement` split button).
 - `[~]` **`ComposerPendingApprovalActions` (4 decisions + warnings + composer redirect)** (`ComposerPendingApprovalActions.tsx:13-141`, `ChatComposer.tsx:1187-1194,3419-3422` -> `chat/mod.rs:2013-2094`) — `conn-gpui` only renders inline `"Approve"` (`accept`) and `"Decline"` (`decline`) text links in the timeline row. **Missing:**
   - Dynamic `approval.options` support with `More` (`EllipsisIcon`) menu for `"Always allow this session"` (`acceptForSession`) and `"Cancel"` (`cancel`) (plus any provider-specific approval options).
@@ -372,7 +367,7 @@ All `[ ]` and `[~]` items grouped into parallel-safe implementation chunks align
    - Compact-before-send pill (`Minimize2Icon` + `Compact`/`Keep` + token count)
    - Busy spinner & exact disabled-reason tooltips
 3. **Interactive Composer Drawers & Banners**:
-   - `ComposerPendingUserInputPanel` (collapsible header, Markdown question, radio 200ms auto-advance / multi-select checkboxes, `1`–`9` shortcuts, dismiss, custom-answer editor lock)
+   - `ComposerPendingUserInputPanel` (Markdown question, radio 200ms auto-advance / multi-select checkboxes, `Skip`, `1`–`9` shortcuts, custom-answer editor lock)
    - `ComposerPlanFollowUpBanner` (`"Plan ready"` + title)
    - `ComposerPendingApprovalActions` (full option list + `More` menu for `Always allow this session` / `Cancel` + warnings + composer redirect-on-send) & `ChildThreadApprovals`
    - `QueuedRunsControl` + inline composer edit (`Send now`, `Edit`, `Remove`, collapse >3, `ComposerQueuedAttachmentRow`, external-cancel recovery)
