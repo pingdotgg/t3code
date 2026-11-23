@@ -30,6 +30,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import { detectCustomAnthropicVendor } from "./customVendorModels.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
@@ -227,6 +228,16 @@ const shouldRetainMissingProviderModels = (provider: ServerProvider): boolean =>
   }
 
   if (provider.driver === ProviderDriverKind.make("claudeAgent")) {
+    // Custom Anthropic-compatible gateways (Zhipu GLM, DeepSeek) discover their own official model
+    // list directly, so a ready probe is authoritative and must clear any stale cached Claude models.
+    if (
+      detectCustomAnthropicVendor(provider.auth.endpoint) !== undefined &&
+      provider.installed &&
+      provider.status === "ready" &&
+      provider.models.length > 0
+    ) {
+      return false;
+    }
     // Claude Code keeps one gateway model cache per Claude home, for one base URL at a time, so a
     // ready probe can omit this instance's gateway models after another instance or a terminal
     // `claude` on a different gateway rewrote that cache.

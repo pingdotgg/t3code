@@ -9,7 +9,7 @@ import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
-import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -27,7 +27,6 @@ import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
 import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
-import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
   type TraitsSelectionInput,
@@ -325,6 +324,142 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
   );
 }
 
+const EFFORT_STARS = [
+  { left: "8%", top: "30%", size: 2.5, duration: "2.6s", delay: "0s" },
+  { left: "14%", top: "62%", size: 3.5, duration: "3.1s", delay: "-0.8s" },
+  { left: "22%", top: "24%", size: 2, duration: "2.4s", delay: "-1.4s" },
+  { left: "31%", top: "70%", size: 2.5, duration: "2.9s", delay: "-0.4s" },
+  { left: "40%", top: "40%", size: 3, duration: "3.3s", delay: "-1.9s" },
+  { left: "48%", top: "66%", size: 2, duration: "2.5s", delay: "-1.1s" },
+  { left: "56%", top: "26%", size: 3.5, duration: "3.0s", delay: "-0.6s" },
+  { left: "63%", top: "54%", size: 2.5, duration: "2.7s", delay: "-2.1s" },
+  { left: "71%", top: "32%", size: 3, duration: "3.2s", delay: "-1.5s" },
+  { left: "78%", top: "68%", size: 2, duration: "2.6s", delay: "-0.3s" },
+  { left: "85%", top: "42%", size: 2.5, duration: "2.9s", delay: "-1.7s" },
+  { left: "92%", top: "58%", size: 2, duration: "2.4s", delay: "-0.9s" },
+] as const;
+
+function EffortSpectrumSlider(props: {
+  readonly label: string;
+  readonly choices: ReturnType<typeof selectableProviderOptionChoices>;
+  readonly currentIndex: number;
+  readonly disabled: boolean;
+  readonly onSelectIndex: (index: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const draggingRef = useRef(false);
+  const count = props.choices.length;
+  const safeIndex = Math.max(0, Math.min(count - 1, props.currentIndex));
+  const fillPercent = count <= 1 ? 100 : 22 + (safeIndex / (count - 1)) * 78;
+  const currentChoice = props.choices[safeIndex];
+
+  const pickFromClientX = (clientX: number) => {
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || count <= 1) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const nextIndex = Math.round(ratio * (count - 1));
+    if (nextIndex !== safeIndex) {
+      props.onSelectIndex(nextIndex);
+    }
+  };
+
+  return (
+    <div className="mb-2 flex flex-col gap-1.5 px-1.5 pt-0.5">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="text-muted-foreground">{props.label}</span>
+        <span className="font-medium text-foreground">{currentChoice?.label ?? ""}</span>
+      </div>
+      <div
+        ref={trackRef}
+        role="slider"
+        data-effort-level={currentChoice?.label ?? ""}
+        aria-label={props.label}
+        aria-valuemin={0}
+        aria-valuemax={Math.max(0, count - 1)}
+        aria-valuenow={safeIndex}
+        aria-valuetext={currentChoice?.label ?? ""}
+        aria-disabled={props.disabled}
+        tabIndex={props.disabled ? -1 : 0}
+        className={cn(
+          "relative h-7 w-full select-none rounded-full bg-muted/80 shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          props.disabled ? "cursor-not-allowed opacity-55" : "cursor-pointer",
+        )}
+        onPointerDown={(event) => {
+          if (props.disabled) return;
+          draggingRef.current = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+          pickFromClientX(event.clientX);
+        }}
+        onPointerMove={(event) => {
+          if (!draggingRef.current || props.disabled) return;
+          pickFromClientX(event.clientX);
+        }}
+        onPointerUp={(event) => {
+          if (!draggingRef.current) return;
+          draggingRef.current = false;
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (props.disabled || count <= 1) return;
+          if (event.key === "ArrowRight" || event.key === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onSelectIndex(Math.min(count - 1, safeIndex + 1));
+          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onSelectIndex(Math.max(0, safeIndex - 1));
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onSelectIndex(0);
+          } else if (event.key === "End") {
+            event.preventDefault();
+            event.stopPropagation();
+            props.onSelectIndex(count - 1);
+          }
+        }}
+      >
+        <div
+          className="pointer-events-none absolute inset-y-0 left-0 overflow-hidden rounded-full transition-[width] duration-300 ease-out"
+          style={{ width: `${fillPercent}%` }}
+        >
+          <div
+            className="effort-spectrum-fill absolute inset-y-0 left-0"
+            style={{ width: `${(100 / fillPercent) * 100}%` }}
+          />
+          <div className="effort-spectrum-sheen absolute inset-y-0 left-0 w-1/2" />
+          {EFFORT_STARS.map((star) => (
+            <span
+              key={`${star.left}-${star.top}`}
+              aria-hidden="true"
+              className="effort-spectrum-star absolute rounded-full"
+              style={
+                {
+                  left: star.left,
+                  top: star.top,
+                  width: `${star.size}px`,
+                  height: `${star.size}px`,
+                  "--star-duration": star.duration,
+                  "--star-delay": star.delay,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </div>
+
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute top-1/2 size-6 -translate-y-1/2 rounded-full bg-white shadow-md transition-[left] duration-300 ease-out"
+          style={{ left: `calc(${fillPercent}% - 1.625rem)` }}
+        />
+      </div>
+    </div>
+  );
+}
+
 type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
 function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
@@ -356,6 +491,10 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
   const choices = selectableProviderOptionChoices(control.descriptor);
   // An "Ultrathink:" prefix selects a level the column does not offer.
   const shown = choices.some((option) => option.id === value);
+  const currentIndex = Math.max(
+    0,
+    choices.findIndex((option) => option.id === value),
+  );
   return (
     <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
       {locked ? (
@@ -363,18 +502,31 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
           {messages(ULTRATHINK_IN_BODY_NOTE)}
         </div>
       ) : null}
-      {choices.map((option, index) => (
-        <ColumnRow
-          key={option.id}
-          label={option.label}
-          selected={option.id === value}
-          tabStop={shown ? option.id === value : index === 0}
-          description={option.description}
-          isDefault={option.isDefault}
+      {choices.length > 1 ? (
+        <EffortSpectrumSlider
+          label={descriptor.label}
+          choices={choices}
+          currentIndex={currentIndex}
           disabled={locked}
-          onPick={() => traits.changeSelect(control.descriptor, option.id)}
+          onSelectIndex={(index) => {
+            const target = choices[index];
+            if (target) traits.changeSelect(control.descriptor, target.id);
+          }}
         />
-      ))}
+      ) : (
+        choices.map((option, index) => (
+          <ColumnRow
+            key={option.id}
+            label={option.label}
+            selected={option.id === value}
+            tabStop={shown ? option.id === value : index === 0}
+            description={option.description}
+            isDefault={option.isDefault}
+            disabled={locked}
+            onPick={() => traits.changeSelect(control.descriptor, option.id)}
+          />
+        ))
+      )}
     </div>
   );
 }
@@ -536,41 +688,10 @@ function NoEffortRow() {
 
 /** The model picker's effort column: the selected model's levels and its other options. */
 export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
-  const gt = useGT();
-  const messages = useMessages();
-  const picker = use(DockedPickerContext);
-  const visibility = props.traits
-    ? getTraitsSectionVisibility({ ...props.traits, resolve: messages })
-    : null;
-  const controls =
-    props.traits && visibility
-      ? columnControls(visibility.selectDescriptors, visibility.booleanDescriptors)
-      : null;
   return (
-    <>
-      {/* Matches the search row's box, so one rule runs across the top of the popup. */}
-      <div className="shrink-0 px-3 pt-2.5">
-        <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
-          <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ??
-              (controls?.others.length
-                ? gt("Options", { $context: "heading for model options" })
-                : gt("Effort", { $context: "heading for reasoning effort levels" }))}
-          </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
-            {picker.modelLabel}
-          </span>
-        </div>
-      </div>
-      {/* pt-2.5 puts the first level on the same line as the first model. */}
-      <div
-        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto overscroll-contain px-2 pt-2.5 pb-1.5"
-        // Capture, so Up and Down on an option row move rows instead of opening its menu.
-        onKeyDownCapture={moveBetweenRows}
-      >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
-      </div>
-    </>
+    <div className="flex flex-col gap-1 px-2.5 py-2" onKeyDownCapture={moveBetweenRows}>
+      {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+    </div>
   );
 }
 

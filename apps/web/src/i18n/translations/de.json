@@ -3177,10 +3177,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "auf dem Computer, der diese Seite geöffnet hat"
-      ]
+      "c": [" ", "auf dem Computer, der diese Seite geöffnet hat"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3192,10 +3189,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· wer es ausführt, erhält diesen Zugriff"
-      ]
+      "c": [" ", "· wer es ausführt, erhält diesen Zugriff"]
     }
   ],
   "c54cc9c75db9dc58": "Genehmige nur eine Anmeldung, die du gerade selbst gestartet hast.",
@@ -3514,8 +3508,6 @@
   "f59314a884aae1ff": "Standard",
   "57d2ef7f9e3de4e1": "An",
   "335ddcec2aaeee34": "Aus",
-  "8fdc1770be94d8d4": "Optionen",
-  "ac2b8be618fffb13": "Aufwand",
   "0c06344ab668ef45": "Schnell",
   "8c15a1823752ea98": "Standard",
   "1ed68d1bf9db2d7a": "Keine Aufwandsstufen",
@@ -3931,6 +3923,11 @@
   "656e11e9444ed41e": "Projektmodelle werden durchsucht...",
   "4a1b2d720142a885": "Keine Modelle gefunden",
   "1b4fa45dbaca4b1d": "Anbietereinstellungen",
+  "0a36ba023285ac35": "Guthaben ({currency})",
+  "7371e41e0852885f": "Verfügbar",
+  "9348d2d891cc934b": "Aufgebraucht",
+  "681d6385cd8cdcea": "Aufgeladen {amount}",
+  "aa754d0628684632": "Gewährt {amount}",
   "07f5912af296f9ea": "{remaining} % übrig",
   "de040014896526eb": "{used}% verbraucht · {remaining}% übrig",
   "a01c358de99da345": "Zurückgesetzt {resetsAt} · {resetsIn}",
@@ -5152,7 +5149,6 @@
   "830103d02a9ac4e2": "Relay offline",
   "0b2dd2fe0a45c628": "Relay-Status wird geprüft…",
   "6280ea23e2192d27": "Relay-Status nicht verfügbar",
-  "7371e41e0852885f": "Verfügbar",
   "81ca8a49acedf36d": "Wird geprüft…",
   "363b49d2880a5109": "Relay-Status wird geprüft",
   "548f9db69b69ff04": "Wird hinzugefügt…",
@@ -9341,6 +9337,7 @@
   "2dd3d423f65eafa9": "Umgebungsvariable {name} entfernen",
   "1e4ace2e970af2e7": "Umgebungsvariable {name} als sensibel markieren",
   "7227b3a7adec0134": "Sensibel, separat gespeichert",
+  "d65d317b3e4c563f": "Der Variablenname muss mit einem Buchstaben oder Unterstrich beginnen und darf nur Buchstaben, Ziffern und Unterstriche enthalten.",
   "408874d82161c2c2": "Wert",
   "49b6197b574e7531": "Wert der Umgebungsvariable {number}",
   "82a90493beec7c75": "Sensible Werte werden separat gespeichert und nie an die App zurückgegeben. Gib einen neuen Wert ein, um einen gespeicherten umzubenennen oder als Klartext zu speichern.",
@@ -9355,6 +9352,10 @@
   "4cd59ceb5e2d6c47": "Update-Befehl für {provider} kopiert",
   "7a425150e0d6f830": "Führe ihn in einem Terminal aus, wenn du bereit für das Update bist.",
   "30d8752e8b862700": "Update-Befehl für {provider} konnte nicht kopiert werden",
+  "3455f6b6fcce00d2": "API-Basis-URL",
+  "4b1bb93c044e229a": "Anthropic-kompatible Endpunkt-URL (Zhipu GLM: https://open.bigmodel.cn/api/anthropic, DeepSeek: https://api.deepseek.com/anthropic).",
+  "0bc1743a077cfe10": "API-Schlüssel / Auth-Token",
+  "2e596c1bfb7dba58": "Instanzspezifische Zugangsdaten für den obigen Endpunkt. Lokal verschlüsselt gespeichert und überschreibt ~/.claude/settings.json.",
   "d2ddf02127f8abf1": "Inkompatibel",
   "d82511ccb6662fab": "Nicht unterstützt",
   "f67e8a1dbd410fff": "Eingeschränkt unterstützt",
@@ -9373,6 +9374,9 @@
   "f31ce60f3f118c0d": "Anzeigename",
   "c45028de5c2f6cbb": "Instanzbezeichnung",
   "cf69675106e4bf46": "Einrichtung",
+  "bc46fbd1a76fbb99": "Endpunkt-Vorlage",
+  "7dc9d0e524f42b71": "Offizielle Anthropic-kompatible Endpunkt-URL schnell ausfüllen.",
+  "f19ab784b550c727": "Zhipu GLM",
   "22078dd501ba3102": "Laufzeit",
   "288c2d92df27a68c": "Modelle",
   "68a76cecbc1e0b6d": "Variable hinzufügen",

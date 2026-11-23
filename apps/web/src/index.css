@@ -2658,3 +2658,64 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
+
+@keyframes effort-sheen-flow {
+  0% {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  100% {
+    transform: translateX(320%) skewX(-18deg);
+  }
+}
+
+@keyframes effort-star-drift {
+  0% {
+    transform: translate3d(-4px, 0, 0) scale(0.75);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translate3d(5px, -1px, 0) scale(1.15);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translate3d(12px, 0.5px, 0) scale(0.7);
+    opacity: 0.2;
+  }
+}
+
+.effort-spectrum-fill {
+  background: linear-gradient(
+    90deg,
+    #34d399 0%,
+    #10b981 20%,
+    #06b6d4 46%,
+    #0ea5e9 70%,
+    #2563eb 88%,
+    #6366f1 100%
+  );
+}
+
+.effort-spectrum-sheen {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.28) 45%,
+    rgba(255, 255, 255, 0.45) 55%,
+    transparent 100%
+  );
+  animation: effort-sheen-flow 3.2s linear infinite;
+}
+
+.effort-spectrum-star {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 6px 1px rgba(255, 255, 255, 0.65);
+  animation: effort-star-drift var(--star-duration, 2.8s) ease-in-out infinite;
+  animation-delay: var(--star-delay, 0s);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .effort-spectrum-sheen,
+  .effort-spectrum-star {
+    animation: none;
+  }
+}

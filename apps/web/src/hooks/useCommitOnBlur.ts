@@ -1,4 +1,4 @@
-import { type ChangeEvent, type KeyboardEvent, useRef, useState } from "react";
+import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 
 export function useCommitOnBlur(
   value: string,
@@ -6,23 +6,50 @@ export function useCommitOnBlur(
   normalizeDraft?: (previous: string, next: string) => string,
 ) {
   const [draft, setDraft] = useState<string | null>(null);
+  const draftRef = useRef<string | null>(null);
+  const valueRef = useRef(value);
   const valueOnFocus = useRef(value);
+  const onCommitRef = useRef(onCommit);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep latest committed value and callback for unmount flush
+  useEffect(() => {
+    valueRef.current = value;
+    onCommitRef.current = onCommit;
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- flush pending draft on unmount before blur (closing settings or switching tabs)
+  useEffect(
+    () => () => {
+      const pending = draftRef.current;
+      if (pending !== null && pending !== valueOnFocus.current && pending !== valueRef.current) {
+        draftRef.current = null;
+        onCommitRef.current(pending);
+      }
+    },
+    [],
+  );
 
   return {
     value: draft ?? value,
     onChange: (event: ChangeEvent<HTMLInputElement>) => {
       const next = event.target.value;
-      setDraft(normalizeDraft ? normalizeDraft(draft ?? value, next) : next);
+      const normalized = normalizeDraft
+        ? normalizeDraft(draftRef.current ?? valueRef.current, next)
+        : next;
+      draftRef.current = normalized;
+      setDraft(normalized);
     },
     onFocus: () => {
       valueOnFocus.current = value;
+      draftRef.current = value;
       setDraft(value);
     },
     onBlur: () => {
-      const next = draft ?? value;
+      const next = draftRef.current ?? valueRef.current;
+      draftRef.current = null;
       setDraft(null);
-      if (next !== valueOnFocus.current && next !== value) {
-        onCommit(next);
+      if (next !== valueOnFocus.current && next !== valueRef.current) {
+        onCommitRef.current(next);
       }
     },
     onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => {

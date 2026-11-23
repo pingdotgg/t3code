@@ -11,11 +11,21 @@ import {
   AnthropicIcon,
   AntigravityIcon,
   ClaudeAI,
+  DeepSeekIcon,
   Icon,
   OllamaIcon,
   OpenAI,
   OpenRouterIcon,
+  ZhipuIcon,
 } from "../Icons";
+
+function isZhipuProviderDisplayName(displayName: string): boolean {
+  return /zcode|zhipu|智谱|bigmodel|\bglm\b|\bz\.ai\b/i.test(displayName);
+}
+
+function isDeepSeekProviderDisplayName(displayName: string): boolean {
+  return /deepseek|深度求索/i.test(displayName);
+}
 
 import { cn } from "~/lib/utils";
 import { providerClients } from "../settings/providerDriverMeta";
@@ -113,6 +123,10 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const badgeContent = props.badgeContent ?? "initials";
   const iconClassName = cn(props.size === "compact" && "size-3.5", props.iconClassName);
   const isAcpRegistry = props.driverKind === "acpRegistry";
+  const isZhipuInstance =
+    props.driverKind === "claudeAgent" && isZhipuProviderDisplayName(props.displayName);
+  const isDeepSeekInstance =
+    props.driverKind === "claudeAgent" && isDeepSeekProviderDisplayName(props.displayName);
   // A custom OpenAI-compatible endpoint has no brand: show its name, marked with the protocol.
   const isCustomEndpoint = props.driverKind === "openaiCompatible";
   const acpRegistryIconUrl = resolveProviderInstanceAcpRegistryIconUrl({
@@ -130,7 +144,19 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {isZhipuInstance ? (
+        <ZhipuIcon
+          className={cn("size-5 shrink-0", iconClassName)}
+          style={{ color: "#3859FF" }}
+          aria-hidden
+        />
+      ) : isDeepSeekInstance ? (
+        <DeepSeekIcon
+          className={cn("size-5 shrink-0", iconClassName)}
+          style={{ color: "#4D6BFE" }}
+          aria-hidden
+        />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"
@@ -172,7 +198,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {isCustomEndpoint ? null : props.showBadge ? (
+      {isCustomEndpoint || isZhipuInstance || isDeepSeekInstance ? null : props.showBadge ? (
         <span
           className={cn(
             "pointer-events-none absolute right-0 bottom-0 z-10 flex h-3.5 min-w-3.5 items-center justify-center rounded-full border px-0.5 text-4xs font-semibold leading-none shadow-sm",

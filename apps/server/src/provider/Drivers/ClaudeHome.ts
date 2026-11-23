@@ -5,7 +5,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { expandHomePath, expandHomeVariable } from "@t3tools/provider-core/server/pathExpansion";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readClaudeSettingsEnv } from "./ClaudeSkills.ts";
@@ -86,6 +86,42 @@ export const mergeClaudeProcessEnvironment = Effect.fn("mergeClaudeProcessEnviro
     ? { ...environment, CLAUDE_CODE_ENTRYPOINT: settingsEntrypoint }
     : environment;
 });
+
+/**
+ * Extracts explicit per-instance environment overrides so they can be passed via Claude Code
+ * flag settings (`--settings`), which outrank `~/.claude/settings.json`'s `env` block.
+ * Without this, a user's global `~/.claude/settings.json` `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN`
+ * silently overrides custom Claude instances (e.g. Zhipu GLM or DeepSeek) that share the default home.
+ */
+export const resolveClaudeInstanceEnvOverrides = Effect.fn("resolveClaudeInstanceEnvOverrides")(
+  function* (
+    instanceEnvironment: ProviderInstanceEnvironment | undefined,
+  ): Effect.fn.Return<Record<string, string> | undefined> {
+    if (!instanceEnvironment || instanceEnvironment.length === 0) {
+      return undefined;
+    }
+    const home = yield* HostProcess.HomeDirectory;
+    const windows = (yield* HostProcess.Platform) === "win32";
+    const overrides: Record<string, string> = {};
+    for (const variable of instanceEnvironment) {
+      if (typeof variable.value !== "string") continue;
+      const name = windows ? variable.name.toUpperCase() : variable.name;
+      overrides[name] = expandHomeVariable(name, variable.value, home);
+    }
+    // When an instance targets a custom gateway, blank out the complementary global auth variable
+    // so `~/.claude/settings.json` cannot leak credentials from another gateway.
+    if (overrides.ANTHROPIC_BASE_URL?.trim()) {
+      const hasAuthToken = Boolean(overrides.ANTHROPIC_AUTH_TOKEN?.trim());
+      const hasApiKey = Boolean(overrides.ANTHROPIC_API_KEY?.trim());
+      if (hasAuthToken && !hasApiKey) {
+        overrides.ANTHROPIC_API_KEY = "";
+      } else if (hasApiKey && !hasAuthToken) {
+        overrides.ANTHROPIC_AUTH_TOKEN = "";
+      }
+    }
+    return Object.keys(overrides).length > 0 ? overrides : undefined;
+  },
+);
 
 /** managed-mcp.json excludes other MCP config and forbids --strict-mcp-config; omit the flag when present. */
 export const hasClaudeManagedMcpConfig = Effect.fn("hasClaudeManagedMcpConfig")(function* () {

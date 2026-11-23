@@ -17,21 +17,23 @@ import {
   remainingPercent,
 } from "./usageLimits.ts";
 
-export const MODEL_VENDOR_IDS = ["claude", "gpt", "gemini"] as const;
+export const MODEL_VENDOR_IDS = ["claude", "gpt", "gemini", "glm", "deepseek"] as const;
 export type ModelVendorId = (typeof MODEL_VENDOR_IDS)[number];
 
 export type ModelVendorTabId = `vendor:${ModelVendorId}`;
-
-export const MODEL_VENDOR_TAB_IDS: ReadonlyArray<ModelVendorTabId> = MODEL_VENDOR_IDS.map(
-  (vendor) => `vendor:${vendor}` as const,
-);
 
 export function modelVendorTabId(vendor: ModelVendorId): ModelVendorTabId {
   return `vendor:${vendor}`;
 }
 
 export function isModelVendorTabId(value: string): value is ModelVendorTabId {
-  return value === "vendor:claude" || value === "vendor:gpt" || value === "vendor:gemini";
+  return (
+    value === "vendor:claude" ||
+    value === "vendor:gpt" ||
+    value === "vendor:gemini" ||
+    value === "vendor:glm" ||
+    value === "vendor:deepseek"
+  );
 }
 
 export function parseModelVendorTabId(value: string): ModelVendorId | null {
@@ -47,6 +49,10 @@ export function modelVendorDisplayName(vendor: ModelVendorId): string {
       return "GPT";
     case "gemini":
       return "Gemini";
+    case "glm":
+      return "GLM";
+    case "deepseek":
+      return "DeepSeek";
   }
 }
 
@@ -58,6 +64,9 @@ export function modelVendorIconDriver(vendor: ModelVendorId): ProviderDriverKind
       return ProviderDriverKind.make("codex");
     case "gemini":
       return ProviderDriverKind.make("antigravity");
+    case "glm":
+    case "deepseek":
+      return ProviderDriverKind.make("claudeAgent");
   }
 }
 
@@ -69,6 +78,10 @@ export function modelVendorAccentColor(vendor: ModelVendorId): string {
       return "#10a37f";
     case "gemini":
       return "#5b87bf";
+    case "glm":
+      return "#3859FF";
+    case "deepseek":
+      return "#4D6BFE";
   }
 }
 
@@ -88,6 +101,22 @@ export function classifyModelVendor(input: {
   const name = (input.name ?? "").trim().toLowerCase();
   const sub = (input.subProvider ?? "").trim().toLowerCase();
 
+  if (
+    /^deepseek\b|^deepseek-/.test(base) ||
+    /\bdeepseek\b/.test(name) ||
+    sub.includes("deepseek")
+  ) {
+    return "deepseek";
+  }
+  if (
+    /^glm\b|^glm-|^chatglm/.test(base) ||
+    /\b(glm|chatglm|zhipu)\b/.test(name) ||
+    sub.includes("zhipu") ||
+    sub.includes("bigmodel") ||
+    sub.includes("glm")
+  ) {
+    return "glm";
+  }
   if (
     /^(claude|opus|sonnet|haiku)\b|^claude-/.test(base) ||
     /\b(claude|opus|sonnet|haiku)\b/.test(name) ||
@@ -257,8 +286,43 @@ function providerDisplayName(provider: ServerProvider): string {
   return provider.displayName?.trim() || PROVIDER_DISPLAY_NAMES[provider.driver] || provider.driver;
 }
 
+export function resolveCustomClaudeVendor(provider: ServerProvider): ModelVendorId | undefined {
+  if (provider.driver !== "claudeAgent") return undefined;
+  const endpoint = provider.auth.endpoint?.toLowerCase() ?? "";
+  if (endpoint.includes("deepseek.com")) return "deepseek";
+  if (endpoint.includes("bigmodel.cn") || endpoint.includes("z.ai")) return "glm";
+  if (provider.usageLimits?.windows.some((window) => window.id.startsWith("deepseek-"))) {
+    return "deepseek";
+  }
+  if (
+    provider.usageLimits?.windows.some(
+      (window) => window.id.startsWith("zhipu-") || window.id.startsWith("glm-"),
+    )
+  ) {
+    return "glm";
+  }
+  const customModels = provider.models.filter((model) => model.isCustom);
+  if (customModels.length > 0) {
+    if (
+      customModels.every(
+        (model) => classifyModelVendor({ slug: model.slug, name: model.name }) === "deepseek",
+      )
+    ) {
+      return "deepseek";
+    }
+    if (
+      customModels.every(
+        (model) => classifyModelVendor({ slug: model.slug, name: model.name }) === "glm",
+      )
+    ) {
+      return "glm";
+    }
+  }
+  return undefined;
+}
+
 /**
- * Aggregates real-time quota windows by vendor family (Claude, GPT, Gemini).
+ * Aggregates real-time quota windows by vendor family (Claude, GPT, Gemini, GLM, DeepSeek).
  * Maps Antigravity's Claude/Opus (`3p-*` / `claude-*`) quota under `claude` (tagged `viaAntigravity`).
  */
 export function collectVendorQuotas(input: {
@@ -270,16 +334,22 @@ export function collectVendorQuotas(input: {
     claude: [],
     gpt: [],
     gemini: [],
+    glm: [],
+    deepseek: [],
   };
   const checkedAtByVendor: Record<ModelVendorId, string[]> = {
     claude: [],
     gpt: [],
     gemini: [],
+    glm: [],
+    deepseek: [],
   };
   const unavailableByVendor: Record<ModelVendorId, string | null> = {
     claude: null,
     gpt: null,
     gemini: null,
+    glm: null,
+    deepseek: null,
   };
   const seenKeys = new Set<string>();
 
@@ -297,11 +367,13 @@ export function collectVendorQuotas(input: {
     readonly instanceId: ProviderInstanceId | null;
     readonly limits: ServerProviderUsageLimits;
     readonly idPrefix: string;
+    readonly vendorOverride?: ModelVendorId | undefined;
   }) => {
-    const { driver, sourceName, instanceId, limits, idPrefix } = params;
+    const { driver, sourceName, instanceId, limits, idPrefix, vendorOverride } = params;
     if (limits.unavailable) {
       const msg = limits.unavailable.message ?? null;
-      if (driver === "claudeAgent") unavailableByVendor.claude ??= msg;
+      if (vendorOverride) unavailableByVendor[vendorOverride] ??= msg;
+      else if (driver === "claudeAgent") unavailableByVendor.claude ??= msg;
       else if (driver === "codex") unavailableByVendor.gpt ??= msg;
       else if (driver === "antigravity") {
         unavailableByVendor.gemini ??= msg;
@@ -311,9 +383,16 @@ export function collectVendorQuotas(input: {
     }
 
     if (driver === "claudeAgent") {
+      const targetVendor =
+        vendorOverride ??
+        (limits.windows.some((w) => w.id.startsWith("deepseek-"))
+          ? "deepseek"
+          : limits.windows.some((w) => w.id.startsWith("zhipu-") || w.id.startsWith("glm-"))
+            ? "glm"
+            : "claude");
       for (const window of limits.windows) {
         pushItem(
-          "claude",
+          targetVendor,
           makeWindowItem({
             key: `${idPrefix}:${window.id}`,
             window,
@@ -382,6 +461,7 @@ export function collectVendorQuotas(input: {
       instanceId: provider.instanceId,
       limits: provider.usageLimits,
       idPrefix: `native:${provider.instanceId}`,
+      vendorOverride: resolveCustomClaudeVendor(provider),
     });
   }
 
@@ -420,6 +500,8 @@ export function collectVendorQuotas(input: {
     claude: buildSummary("claude"),
     gpt: buildSummary("gpt"),
     gemini: buildSummary("gemini"),
+    glm: buildSummary("glm"),
+    deepseek: buildSummary("deepseek"),
   };
 }
 

@@ -109,6 +109,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     catalog: ClaudeModelCatalog,
     cwd: string,
   ) => Effect.Effect<ClaudeModelCatalog> = Effect.succeed,
+  instanceEnvOverrides?: Readonly<Record<string, string>>,
 ) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -254,6 +255,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
     const settings = {
       ...launchArgSettings,
+      ...(instanceEnvOverrides
+        ? {
+            env: {
+              ...instanceEnvOverrides,
+              ...launchArgSettings?.env,
+            },
+          }
+        : {}),
       disableAllHooks: true,
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),

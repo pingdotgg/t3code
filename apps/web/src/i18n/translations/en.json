@@ -3176,10 +3176,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "on the computer that opened this page"
-      ]
+      "c": [" ", "on the computer that opened this page"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3191,10 +3188,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· whoever runs it gets this access"
-      ]
+      "c": [" ", "· whoever runs it gets this access"]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -3513,8 +3507,6 @@
   "f59314a884aae1ff": "Default",
   "57d2ef7f9e3de4e1": "On",
   "335ddcec2aaeee34": "Off",
-  "8fdc1770be94d8d4": "Options",
-  "ac2b8be618fffb13": "Effort",
   "0c06344ab668ef45": "Fast",
   "8c15a1823752ea98": "Standard",
   "1ed68d1bf9db2d7a": "No effort levels",
@@ -3930,6 +3922,11 @@
   "656e11e9444ed41e": "Searching project models...",
   "4a1b2d720142a885": "No models found",
   "1b4fa45dbaca4b1d": "Provider settings",
+  "0a36ba023285ac35": "Balance ({currency})",
+  "7371e41e0852885f": "Available",
+  "9348d2d891cc934b": "Exhausted",
+  "681d6385cd8cdcea": "Top-up {amount}",
+  "aa754d0628684632": "Granted {amount}",
   "07f5912af296f9ea": "{remaining}% left",
   "de040014896526eb": "{used}% used · {remaining}% left",
   "a01c358de99da345": "Resets {resetsAt} · {resetsIn}",
@@ -5152,7 +5149,6 @@
   "830103d02a9ac4e2": "Relay offline",
   "0b2dd2fe0a45c628": "Checking relay status…",
   "6280ea23e2192d27": "Relay status unavailable",
-  "7371e41e0852885f": "Available",
   "81ca8a49acedf36d": "Checking…",
   "363b49d2880a5109": "Checking relay status",
   "548f9db69b69ff04": "Adding…",
@@ -9349,6 +9345,7 @@
   "2dd3d423f65eafa9": "Remove environment variable {name}",
   "1e4ace2e970af2e7": "Mark environment variable {name} as sensitive",
   "7227b3a7adec0134": "Sensitive, stored separately",
+  "d65d317b3e4c563f": "Variable name must start with a letter or underscore and use only letters, digits, and underscores.",
   "408874d82161c2c2": "value",
   "49b6197b574e7531": "Environment variable value {number}",
   "82a90493beec7c75": "Sensitive values are stored separately and never returned to the app. Enter a new value to rename a saved one or make it plain text.",
@@ -9363,6 +9360,10 @@
   "4cd59ceb5e2d6c47": "{provider} update command copied",
   "7a425150e0d6f830": "Run it in a terminal when you are ready to update.",
   "30d8752e8b862700": "Could not copy {provider} update command",
+  "3455f6b6fcce00d2": "API Base URL",
+  "4b1bb93c044e229a": "Anthropic-compatible endpoint URL (Zhipu GLM: https://open.bigmodel.cn/api/anthropic, DeepSeek: https://api.deepseek.com/anthropic).",
+  "0bc1743a077cfe10": "API Key / Auth Token",
+  "2e596c1bfb7dba58": "Per-instance credential for the endpoint above. Stored encrypted locally and overrides ~/.claude/settings.json.",
   "d2ddf02127f8abf1": "Incompatible",
   "d82511ccb6662fab": "Unsupported",
   "f67e8a1dbd410fff": "Limited support",
@@ -9381,6 +9382,9 @@
   "f31ce60f3f118c0d": "Display name",
   "c45028de5c2f6cbb": "Instance label",
   "cf69675106e4bf46": "Setup",
+  "bc46fbd1a76fbb99": "Endpoint preset",
+  "7dc9d0e524f42b71": "Quickly fill the official Anthropic-compatible endpoint URL.",
+  "f19ab784b550c727": "Zhipu GLM",
   "22078dd501ba3102": "Runtime",
   "288c2d92df27a68c": "Models",
   "68a76cecbc1e0b6d": "Add variable",

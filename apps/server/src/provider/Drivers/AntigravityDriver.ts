@@ -576,9 +576,29 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    const renewCliToken = Effect.fn("AntigravityDriver.renewCliToken")(
+      function* () {
+        const processScope = yield* Scope.make();
+        yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
+        yield* authFlow
+          .withProcess(
+            Scope.close(processScope, Exit.void),
+            Effect.gen(function* () {
+              const runtime = yield* makeDisposableRuntime({});
+              yield* runtime.start();
+            }),
+          )
+          .pipe(Effect.provideService(Scope.Scope, processScope));
+      },
+      Effect.scoped,
+      Effect.timeout("45 seconds"),
+      Effect.ignore,
+    );
+
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      renewCliToken: renewCliToken(),
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),

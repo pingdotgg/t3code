@@ -3176,10 +3176,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "b2d53b4d1d48fbef": [
@@ -3191,10 +3188,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "· quien lo ejecute obtiene este acceso"
-      ]
+      "c": [" ", "· quien lo ejecute obtiene este acceso"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -3513,8 +3507,6 @@
   "f59314a884aae1ff": "Predeterminado",
   "57d2ef7f9e3de4e1": "Activado",
   "335ddcec2aaeee34": "Desactivado",
-  "8fdc1770be94d8d4": "Opciones",
-  "ac2b8be618fffb13": "Esfuerzo",
   "0c06344ab668ef45": "Rápido",
   "8c15a1823752ea98": "Estándar",
   "1ed68d1bf9db2d7a": "Sin niveles de esfuerzo",
@@ -3928,6 +3920,11 @@
   "656e11e9444ed41e": "Buscando modelos del proyecto...",
   "4a1b2d720142a885": "No se encontraron modelos",
   "1b4fa45dbaca4b1d": "Ajustes del proveedor",
+  "0a36ba023285ac35": "Saldo ({currency})",
+  "7371e41e0852885f": "Disponible",
+  "9348d2d891cc934b": "Agotado",
+  "681d6385cd8cdcea": "Recargado {amount}",
+  "aa754d0628684632": "Otorgado {amount}",
   "07f5912af296f9ea": "Queda un {remaining}%",
   "de040014896526eb": "{used}% usado · {remaining}% restante",
   "a01c358de99da345": "Se restablece {resetsAt} · {resetsIn}",
@@ -5150,7 +5147,6 @@
   "830103d02a9ac4e2": "Relay sin conexión",
   "0b2dd2fe0a45c628": "Comprobando el estado del relay…",
   "6280ea23e2192d27": "Estado del relay no disponible",
-  "7371e41e0852885f": "Disponible",
   "81ca8a49acedf36d": "Comprobando…",
   "363b49d2880a5109": "Comprobando el estado del relay",
   "548f9db69b69ff04": "Añadiendo…",
@@ -9339,6 +9335,7 @@
   "2dd3d423f65eafa9": "Quitar la variable de entorno {name}",
   "1e4ace2e970af2e7": "Marcar la variable de entorno {name} como confidencial",
   "7227b3a7adec0134": "Confidencial, se guarda aparte",
+  "d65d317b3e4c563f": "El nombre de la variable debe comenzar con una letra o un guion bajo y usar solo letras, dígitos y guiones bajos.",
   "408874d82161c2c2": "valor",
   "49b6197b574e7531": "Valor de la variable de entorno {number}",
   "82a90493beec7c75": "Los valores confidenciales se guardan aparte y nunca se devuelven a la app. Introduce un valor nuevo para renombrar uno guardado o convertirlo en texto sin formato.",
@@ -9353,6 +9350,10 @@
   "4cd59ceb5e2d6c47": "Comando de actualización de {provider} copiado",
   "7a425150e0d6f830": "Ejecútalo en una terminal cuando quieras actualizar.",
   "30d8752e8b862700": "No se pudo copiar el comando de actualización de {provider}",
+  "3455f6b6fcce00d2": "URL base de la API",
+  "4b1bb93c044e229a": "URL de punto de conexión compatible con Anthropic (Zhipu GLM: https://open.bigmodel.cn/api/anthropic, DeepSeek: https://api.deepseek.com/anthropic).",
+  "0bc1743a077cfe10": "Clave de API / Token de autenticación",
+  "2e596c1bfb7dba58": "Credencial por instancia para el punto de conexión anterior. Se guarda cifrada localmente y reemplaza ~/.claude/settings.json.",
   "d2ddf02127f8abf1": "Incompatible",
   "d82511ccb6662fab": "No compatible",
   "f67e8a1dbd410fff": "Compatibilidad limitada",
@@ -9371,6 +9372,9 @@
   "f31ce60f3f118c0d": "Nombre visible",
   "c45028de5c2f6cbb": "Etiqueta de la instancia",
   "cf69675106e4bf46": "Configuración",
+  "bc46fbd1a76fbb99": "Preajuste de punto de conexión",
+  "7dc9d0e524f42b71": "Rellena rápidamente la URL oficial del punto de conexión compatible con Anthropic.",
+  "f19ab784b550c727": "Zhipu GLM",
   "22078dd501ba3102": "Entorno de ejecución",
   "288c2d92df27a68c": "Modelos",
   "68a76cecbc1e0b6d": "Añadir variable",

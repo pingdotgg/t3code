@@ -65,6 +65,9 @@ import {
   claudeUsageResponseToLimits,
   recordClaudeUsageResponse,
 } from "./claudeUsageLimits.ts";
+import { detectCustomAnthropicVendor, fetchCustomVendorModels } from "./customVendorModels.ts";
+import { fetchDeepSeekUsageLimits, isDeepSeekEndpoint } from "./deepseekUsageLimits.ts";
+import { fetchZhipuUsageLimits, isZhipuEndpoint } from "./zhipuUsageLimits.ts";
 import {
   BUNDLED_CLAUDE_MODEL_CATALOG,
   CLAUDE_EFFORT_LEVELS,
@@ -83,6 +86,22 @@ const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabili
   optionDescriptors: [],
 });
 
+const GLM_REASONING_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "max", label: "Max" },
+      ],
+    },
+  ],
+});
+
 function claudeProviderModels(
   builtInModels: ReadonlyArray<ServerProviderModel>,
   customModels: ClaudeSettings["customModels"],
@@ -91,9 +110,16 @@ function claudeProviderModels(
     builtInModels,
     customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  ).map((model) =>
-    model.isCustom ? { ...model, capabilities: withUltracodeToggle(model.capabilities) } : model,
-  );
+  ).map((model) => {
+    if (!model.isCustom) return model;
+    const baseSlug = model.slug.slice(model.slug.lastIndexOf("/") + 1);
+    const supportsCustomReasoning = /^(glm|chatglm|deepseek)\b|^(glm|deepseek)-/i.test(baseSlug);
+    const baseCapabilities =
+      supportsCustomReasoning && model.capabilities.optionDescriptors.length === 0
+        ? GLM_REASONING_CAPABILITIES
+        : model.capabilities;
+    return { ...model, capabilities: withUltracodeToggle(baseCapabilities) };
+  });
 }
 
 const CLAUDE_PRESENTATION = {
@@ -272,6 +298,7 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
   readonly executablePath: string;
   readonly abortController: AbortController;
   readonly environment: NodeJS.ProcessEnv;
+  readonly instanceEnvOverrides?: Readonly<Record<string, string>>;
   readonly cwd: string | undefined;
   readonly managedMcpConfig: boolean;
   readonly spawnVia: "env" | "launcher-thread" | undefined;
@@ -286,7 +313,10 @@ export function buildClaudeCapabilitiesProbeQueryOptions(input: {
     abortController: input.abortController,
     settingSources: [...CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES],
     // Keep settings for slash-command discovery, but disable hooks so health checks do not run SessionStart repeatedly.
-    settings: { disableAllHooks: true },
+    settings: {
+      disableAllHooks: true,
+      ...(input.instanceEnvOverrides ? { env: input.instanceEnvOverrides } : {}),
+    },
     allowedTools: [],
     // Exclude filesystem MCP servers; omit strict mode when managed-mcp.json already excludes them and forbids the flag.
     mcpServers: {},
@@ -491,6 +521,7 @@ const probeClaudeCapabilities = (
   environment?: NodeJS.ProcessEnv,
   cwd?: string,
   includeStatus = true,
+  instanceEnvOverrides?: Readonly<Record<string, string>>,
 ) => {
   const abort = new AbortController();
   const abortProbe = Effect.sync(() => {
@@ -508,6 +539,7 @@ const probeClaudeCapabilities = (
       ? claudeGatewayDiscoveryGraceMs({
           ...claudeEnvironment,
           ...(yield* readClaudeSettingsEnv(claudeSettings, cwd, claudeEnvironment)),
+          ...instanceEnvOverrides,
         })
       : 0;
     const platform = yield* HostProcess.Platform;
@@ -528,6 +560,7 @@ const probeClaudeCapabilities = (
             executablePath,
             abortController: abort,
             environment: claudeEnvironment,
+            ...(instanceEnvOverrides ? { instanceEnvOverrides } : {}),
             cwd,
             managedMcpConfig,
             spawnVia,
@@ -675,6 +708,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   /** Shared with the adapter so turn events reuse the scoped-bucket names this probe saw. */
   scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>,
   resolveResetCredits?: (version: string) => Effect.Effect<ServerProviderResetCredits | undefined>,
+  instanceEnvOverrides?: Readonly<Record<string, string>>,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -777,8 +811,32 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  const updateRequiredModels = resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
-  const versionUpgradeMessage = formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
+  const claudeSettingsEnv = yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment);
+  const effectiveEnv = {
+    ...claudeSettingsEnv,
+    ...instanceEnvOverrides,
+  };
+  const baseUrl = effectiveEnv.ANTHROPIC_BASE_URL || resolvedEnvironment.ANTHROPIC_BASE_URL;
+  const customApiKey =
+    instanceEnvOverrides?.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    instanceEnvOverrides?.ANTHROPIC_API_KEY?.trim() ||
+    instanceEnvOverrides?.DEEPSEEK_API_KEY?.trim() ||
+    instanceEnvOverrides?.ZHIPU_API_KEY?.trim() ||
+    claudeSettingsEnv.ANTHROPIC_AUTH_TOKEN ||
+    resolvedEnvironment.ANTHROPIC_AUTH_TOKEN ||
+    claudeSettingsEnv.ANTHROPIC_API_KEY ||
+    resolvedEnvironment.ANTHROPIC_API_KEY ||
+    claudeSettingsEnv.DEEPSEEK_API_KEY ||
+    resolvedEnvironment.DEEPSEEK_API_KEY ||
+    claudeSettingsEnv.ZHIPU_API_KEY ||
+    resolvedEnvironment.ZHIPU_API_KEY;
+  const customVendor = detectCustomAnthropicVendor(baseUrl);
+  const updateRequiredModels = customVendor
+    ? []
+    : resolveClaudeUpdateRequiredModels(modelCatalog, parsedVersion);
+  const versionUpgradeMessage = customVendor
+    ? undefined
+    : formatClaudeVersionUpgradeMessage(modelCatalog, parsedVersion);
 
   const probeResult = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.result)
@@ -787,17 +845,39 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     probeResult && Result.isSuccess(probeResult) ? probeResult.success : undefined;
   const probeFailure =
     probeResult && Result.isFailure(probeResult) ? probeResult.failure : undefined;
-  const models = capClaudeCatalogEffort(
-    modelCatalog,
-    claudeProviderModels(
-      [
-        ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
-        ...claudeReportedModels(modelCatalog, claudeSettings.customModels, capabilities?.models),
-      ],
-      claudeSettings.customModels,
-    ),
-    capabilities?.effortCapSources ?? [],
-  );
+  const models =
+    customVendor && baseUrl
+      ? yield* fetchCustomVendorModels({
+          vendor: customVendor,
+          baseUrl,
+          apiKey: customApiKey,
+          customModels: claudeSettings.customModels,
+          envModels: [
+            effectiveEnv.ANTHROPIC_MODEL || resolvedEnvironment.ANTHROPIC_MODEL,
+            effectiveEnv.ANTHROPIC_DEFAULT_OPUS_MODEL ||
+              resolvedEnvironment.ANTHROPIC_DEFAULT_OPUS_MODEL,
+            effectiveEnv.ANTHROPIC_DEFAULT_SONNET_MODEL ||
+              resolvedEnvironment.ANTHROPIC_DEFAULT_SONNET_MODEL,
+            effectiveEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL ||
+              resolvedEnvironment.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+          ],
+          capabilities: withUltracodeToggle(GLM_REASONING_CAPABILITIES),
+        })
+      : capClaudeCatalogEffort(
+          modelCatalog,
+          claudeProviderModels(
+            [
+              ...resolveClaudeModelsForVersion(modelCatalog, parsedVersion),
+              ...claudeReportedModels(
+                modelCatalog,
+                claudeSettings.customModels,
+                capabilities?.models,
+              ),
+            ],
+            claudeSettings.customModels,
+          ),
+          capabilities?.effortCapSources ?? [],
+        );
   const skills = yield* discoverClaudeSkills(claudeSettings, cwd, resolvedEnvironment);
   const slashCommands = [COMPACT_SLASH_COMMAND, ...(capabilities?.slashCommands ?? [])];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
@@ -826,9 +906,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   // First-party account fields cannot verify custom endpoint credentials.
-  const baseUrl =
-    (yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment)).ANTHROPIC_BASE_URL ??
-    resolvedEnvironment.ANTHROPIC_BASE_URL;
   const customApiEndpoint = customClaudeApiEndpointHost(baseUrl) !== undefined;
   const endpoint = customApiEndpoint ? URL.parse(baseUrl?.trim() ?? "")?.origin : undefined;
   if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
@@ -868,17 +945,30 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       apiKeySource: capabilities.apiKeySource,
     });
   const usageCheckedAt = capabilities.usageCheckedAt ?? checkedAt;
-  const usageLimits = !capabilities.usage
-    ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
-    : scopedLimitNames
-      ? yield* recordClaudeUsageResponse(scopedLimitNames, {
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
+  const usageLimits =
+    baseUrl && isZhipuEndpoint(baseUrl) && customApiKey
+      ? yield* fetchZhipuUsageLimits({
+          baseUrl,
+          apiKey: customApiKey,
+          checkedAt,
         })
-      : claudeUsageResponseToLimits({
-          response: capabilities.usage,
-          checkedAt: usageCheckedAt,
-        }).limits;
+      : baseUrl && isDeepSeekEndpoint(baseUrl) && customApiKey
+        ? yield* fetchDeepSeekUsageLimits({
+            baseUrl,
+            apiKey: customApiKey,
+            checkedAt,
+          })
+        : !capabilities.usage
+          ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
+          : scopedLimitNames
+            ? yield* recordClaudeUsageResponse(scopedLimitNames, {
+                response: capabilities.usage,
+                checkedAt: usageCheckedAt,
+              })
+            : claudeUsageResponseToLimits({
+                response: capabilities.usage,
+                checkedAt: usageCheckedAt,
+              }).limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&
@@ -916,12 +1006,17 @@ export const makePendingClaudeProvider = Effect.fn("ClaudeProvider.makePendingCl
   function* (
     claudeSettings: ClaudeSettings,
     modelCatalog: ClaudeModelCatalog = BUNDLED_CLAUDE_MODEL_CATALOG,
+    baseUrl?: string,
   ): Effect.fn.Return<ServerProviderDraft> {
     const checkedAt = yield* nowIso;
-    const models = claudeProviderModels(
-      modelCatalog.models.map((entry) => entry.model),
-      claudeSettings.customModels,
-    );
+    // Custom Anthropic-compatible gateways (Zhipu GLM, DeepSeek) discover their own official models;
+    // never seed Anthropic Claude models into their pending snapshot.
+    const models = detectCustomAnthropicVendor(baseUrl)
+      ? []
+      : claudeProviderModels(
+          modelCatalog.models.map((entry) => entry.model),
+          claudeSettings.customModels,
+        );
 
     if (!claudeSettings.enabled) {
       return buildServerProvider({

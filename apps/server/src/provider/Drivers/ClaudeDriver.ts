@@ -1,6 +1,7 @@
 import { ClaudeSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import type * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,8 @@ import {
 import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
+import { fetchDeepSeekUsageLimits, isDeepSeekEndpoint } from "../deepseekUsageLimits.ts";
+import { fetchZhipuUsageLimits, isZhipuEndpoint } from "../zhipuUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
@@ -63,6 +66,7 @@ import {
   makeClaudeContinuationGroupKey,
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
+  resolveClaudeInstanceEnvOverrides,
 } from "./ClaudeHome.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { makeClaudeMaintenanceResolution } from "./ClaudeMaintenance.ts";
@@ -122,6 +126,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       .current(DRIVER_KIND)
       .pipe(Effect.map(resolveClaudeModelCatalog));
     const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, process.env);
+    const instanceEnvOverrides = yield* resolveClaudeInstanceEnvOverrides(environment);
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -208,6 +213,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       processEnv,
       modelCatalog,
       modelRoutes.route,
+      instanceEnvOverrides,
     );
 
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
@@ -216,7 +222,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
+        probeClaudeCapabilities(
+          effectiveConfig,
+          processEnv,
+          stateDir,
+          true,
+          instanceEnvOverrides,
+        ).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
               Effect.map((workspaceId) => ({
@@ -290,6 +302,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   Effect.provideService(FileSystem.FileSystem, fileSystem),
                   Effect.provideService(Path.Path, path),
                 ),
+              instanceEnvOverrides,
             ),
           ),
           Effect.tap((provider) =>
@@ -315,7 +328,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: (settings) =>
         modelCatalog.pipe(
-          Effect.flatMap((catalog) => makePendingClaudeProvider(settings.provider, catalog)),
+          Effect.flatMap((catalog) =>
+            makePendingClaudeProvider(
+              settings.provider,
+              catalog,
+              instanceEnvOverrides?.ANTHROPIC_BASE_URL || processEnv.ANTHROPIC_BASE_URL,
+            ),
+          ),
           Effect.map(stampIdentity),
         ),
       checkProvider,
@@ -417,6 +436,39 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       ),
     );
 
+    const customBaseUrl = processEnv.ANTHROPIC_BASE_URL;
+    const customApiKey =
+      processEnv.ANTHROPIC_AUTH_TOKEN ??
+      processEnv.ANTHROPIC_API_KEY ??
+      processEnv.DEEPSEEK_API_KEY ??
+      processEnv.ZHIPU_API_KEY;
+    const refreshCustomUsage =
+      customBaseUrl &&
+      customApiKey &&
+      (isZhipuEndpoint(customBaseUrl) || isDeepSeekEndpoint(customBaseUrl))
+        ? Effect.gen(function* () {
+            const checkedAt = DateTime.formatIso(yield* DateTime.now);
+            const limits = isZhipuEndpoint(customBaseUrl)
+              ? yield* fetchZhipuUsageLimits({
+                  baseUrl: customBaseUrl,
+                  apiKey: customApiKey,
+                  checkedAt,
+                })
+              : yield* fetchDeepSeekUsageLimits({
+                  baseUrl: customBaseUrl,
+                  apiKey: customApiKey,
+                  checkedAt,
+                });
+            if (!limits.unavailable && limits.windows.length > 0) {
+              yield* snapshot.applyUsageLimits({
+                checkedAt: limits.checkedAt,
+                windows: limits.windows,
+                complete: true,
+              });
+            }
+          })
+        : undefined;
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -427,7 +479,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       displayName,
       accentColor,
       enabled,
-      snapshot,
+      snapshot: refreshCustomUsage ? { ...snapshot, refreshUsage: refreshCustomUsage } : snapshot,
       invalidateCaches: Cache.invalidateAll(capabilitiesProbeCache),
       workspaceRescans: Stream.fromQueue(workspaceRescans),
       snapshotForCwd: (cwd: string) =>

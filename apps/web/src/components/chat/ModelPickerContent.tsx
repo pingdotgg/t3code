@@ -17,6 +17,7 @@ import {
   modelVendorDisplayName,
   modelVendorTabId,
   parseModelVendorTabId,
+  resolveCustomClaudeVendor,
   type ModelVendorId,
   type ModelVendorTabId,
 } from "@t3tools/shared/modelVendorQuota";
@@ -390,6 +391,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onFocusEffort?: () => void;
   /** Closes the list column, inside the popup's fixed height. */
   listFooter?: ReactNode;
+  /** Effort/reasoning controls rendered below the quota info in the right panel. */
+  effortSection?: ReactNode;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -777,16 +780,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   })();
   const sidebarInstanceEntries = (() => {
     const enabledEntries = instanceEntries.filter(isProviderInstancePickerVisible);
-    const driverCounts = new Map<string, number>();
+    // Group Claude-compatible custom vendors (GLM, DeepSeek) under their own vendor bucket so
+    // having Claude + Zcode (GLM) + DeepSeek does not make all three spill into the bottom rail.
+    const vendorBucketOf = (entry: ProviderInstanceEntry): string =>
+      entry.driverKind === "claudeAgent"
+        ? (resolveCustomClaudeVendor(entry.snapshot) ?? "claude")
+        : entry.driverKind;
+    const bucketCounts = new Map<string, number>();
     for (const entry of enabledEntries) {
-      driverCounts.set(entry.driverKind, (driverCounts.get(entry.driverKind) ?? 0) + 1);
+      const bucket = vendorBucketOf(entry);
+      bucketCounts.set(bucket, (bucketCounts.get(bucket) ?? 0) + 1);
     }
-    // Single instances of Claude, Codex, and Antigravity are represented by the vendor tabs above
-    // so the rail never shows duplicate brand icons. Keep them only if they need setup or have
-    // multiple accounts of the same driver.
+    // Single instances of Claude, Codex, Antigravity, GLM, and DeepSeek are represented by the
+    // vendor tabs above so the rail never shows duplicate brand icons. Keep them only if they need
+    // setup or have multiple accounts of the same vendor.
     const deduplicated = enabledEntries.filter((entry) => {
       if (!VENDOR_COVERED_DRIVERS.has(entry.driverKind)) return true;
-      if ((driverCounts.get(entry.driverKind) ?? 0) > 1) return true;
+      if ((bucketCounts.get(vendorBucketOf(entry)) ?? 0) > 1) return true;
       return !isProviderInstancePickerReady(entry);
     });
     if (!isLocked) {
@@ -1118,7 +1128,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       <div
         ref={pickerContentRef}
         className={cn(
-          "relative flex w-screen max-w-142 flex-row overflow-hidden",
+          "relative flex w-172 max-w-full flex-row overflow-hidden",
           props.docked ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none" : "max-h-86.5",
         )}
         // Docked, the popup sets the height; a minimum here would overflow short windows.
@@ -1206,7 +1216,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         >
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden bg-muted/40",
+              "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-muted/40",
               showSidebar && "border-l border-border/70",
             )}
           >
@@ -1394,8 +1404,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     showInstanceBadge={badgedInstanceIds.has(model.instanceId)}
                     channelLabel={
                       selectedVendor !== null &&
-                      (model.driverKind === "antigravity" ||
-                        new Set(visibleModels.map((item) => item.instanceId)).size > 1)
+                      new Set(visibleModels.map((item) => item.instanceId)).size > 1
                         ? model.instanceDisplayName
                         : undefined
                     }
@@ -1431,6 +1440,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           sources={usageLimitSources}
           environmentId={props.environmentId}
           onRequestClose={onRequestClose}
+          effortSection={props.effortSection}
+          onFocusSearch={focusSearchInput}
         />
       </div>
     </TooltipProvider>

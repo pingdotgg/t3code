@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { Fragment, useState, type ReactElement, type ReactNode } from "react";
+import { Fragment, useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   isProviderDriverKind,
@@ -384,66 +384,78 @@ export function ProviderEnvironmentSection(props: {
   }
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
-  const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) =>
-    setDraft({ ...draft, rows: nextRows });
+  const rowsRef = useRef(rows);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep latest rows available to rapid blur+click handlers before React re-renders
+  useEffect(() => {
+    rowsRef.current = rows;
+  }, [rows]);
+  const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
+    rowsRef.current = nextRows;
+    setDraft((current) => ({ ...current, rows: nextRows }));
+  };
 
   const publishRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     const published: ProviderInstanceEnvironmentVariable[] = [];
     for (const row of nextRows) {
       const name = row.name.trim();
       if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(name)) {
-        if (
-          name.length > 0 ||
-          row.value !== "" ||
-          row.sensitive !== true ||
-          row.valueRedacted !== undefined
-        ) {
-          return;
-        }
+        // Skip incomplete or invalid draft rows instead of silently blocking valid rows from saving.
         continue;
       }
       const { id: _id, ...rest } = row;
       published.push({ ...rest, name });
     }
-    setDraft({ rows: nextRows, seen: draft.seen, lastPublished: published });
+    rowsRef.current = nextRows;
+    setDraft((current) => ({ rows: nextRows, seen: current.seen, lastPublished: published }));
     props.onChange(published);
   };
 
   const updateVariable = (id: string, patch: Partial<Omit<EnvironmentDraftRow, "id">>) => {
+    let resolvedPatch = patch;
+    // If the user pastes `KEY=VALUE` into the variable name box, split it into name + value.
+    if (typeof patch.name === "string" && patch.name.includes("=")) {
+      const eqIndex = patch.name.indexOf("=");
+      const candidateName = patch.name.slice(0, eqIndex).trim();
+      const candidateValue = patch.name.slice(eqIndex + 1).trim();
+      if (ENVIRONMENT_VARIABLE_NAME_PATTERN.test(candidateName)) {
+        resolvedPatch = {
+          ...patch,
+          name: candidateName,
+          ...(candidateValue.length > 0 ? { value: candidateValue } : {}),
+        };
+      }
+    }
     // A row named like a pinned variable renders as the policy's, with no way to edit or remove it.
-    if (patch.name !== undefined && props.managed?.names.has(patch.name)) return;
-    const nextRows = rows.map((row) =>
+    if (resolvedPatch.name !== undefined && props.managed?.names.has(resolvedPatch.name)) return;
+    const nextRows = rowsRef.current.map((row) =>
       row.id === id
         ? {
             ...row,
-            ...patch,
-            ...(patch.value !== undefined ? { valueRedacted: false } : {}),
+            ...resolvedPatch,
+            ...(resolvedPatch.value !== undefined ? { valueRedacted: false } : {}),
           }
         : row,
     );
-    setRows(nextRows);
     publishRows(nextRows);
   };
 
   const setVariableSecret = (id: string, secret: SecretReference | undefined) => {
-    const nextRows = rows.map((row) => {
+    const nextRows = rowsRef.current.map((row) => {
       if (row.id !== id) return row;
       const { valueRedacted: _valueRedacted, ...rest } = row;
       return { ...rest, value: secret ?? "" };
     });
-    setRows(nextRows);
     publishRows(nextRows);
   };
 
   const removeVariable = (id: string) => {
-    const nextRows = rows.filter((row) => row.id !== id);
-    setRows(nextRows);
+    const nextRows = rowsRef.current.filter((row) => row.id !== id);
     publishRows(nextRows);
   };
 
   const addVariable = () =>
     setRows([
-      ...rows,
+      ...rowsRef.current,
       {
         id: nextEnvironmentVariableDraftId(),
         name: "",
@@ -539,6 +551,9 @@ export function ProviderEnvironmentSection(props: {
                   </TooltipPopup>
                 </Tooltip>
               ) : null;
+            const trimmedName = variable.name.trim();
+            const hasInvalidName =
+              trimmedName.length > 0 && !ENVIRONMENT_VARIABLE_NAME_PATTERN.test(trimmedName);
             const layout = (source: ReactNode, value: ReactNode) => (
               <div className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -550,6 +565,13 @@ export function ProviderEnvironmentSection(props: {
                   {value}
                   {sensitiveToggle}
                 </div>
+                {hasInvalidName ? (
+                  <p className="text-2xs text-destructive">
+                    {gt(
+                      "Variable name must start with a letter or underscore and use only letters, digits, and underscores.",
+                    )}
+                  </p>
+                ) : null}
               </div>
             );
             return (
@@ -947,8 +969,17 @@ export function ProviderInstanceCard({
     );
   };
 
+  const latestEnvironmentRef = useRef<
+    ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined
+  >(instance.environment);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep latest committed environment synced across rapid multi-field edits before server echo
+  useEffect(() => {
+    latestEnvironmentRef.current = instance.environment;
+  }, [instance.environment]);
+
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
+    latestEnvironmentRef.current = cleaned.length > 0 ? cleaned : undefined;
     const { environment: _omit, ...rest } = instance;
     onUpdate(
       cleaned.length > 0
@@ -956,7 +987,33 @@ export function ProviderInstanceCard({
         : (rest as ProviderInstanceConfig),
     );
   };
-  const environmentFields = driverOption?.environmentFields ?? [];
+  const claudeEnvironmentFields: ReadonlyArray<ProviderEnvironmentField> =
+    instance.driver === "claudeAgent"
+      ? [
+          {
+            name: "ANTHROPIC_BASE_URL",
+            label: gt("API Base URL"),
+            description: gt(
+              "Anthropic-compatible endpoint URL (Zhipu GLM: https://open.bigmodel.cn/api/anthropic, DeepSeek: https://api.deepseek.com/anthropic).",
+            ),
+            placeholder: "https://api.anthropic.com",
+            sensitive: false,
+          },
+          {
+            name: "ANTHROPIC_AUTH_TOKEN",
+            label: gt("API Key / Auth Token"),
+            description: gt(
+              "Per-instance credential for the endpoint above. Stored encrypted locally and overrides ~/.claude/settings.json.",
+            ),
+            placeholder: "sk-...",
+            sensitive: true,
+          },
+        ]
+      : [];
+  const environmentFields =
+    driverOption?.environmentFields && driverOption.environmentFields.length > 0
+      ? driverOption.environmentFields
+      : claudeEnvironmentFields;
   const environmentFieldNames = new Set(environmentFields.map((field) => field.name));
   const genericEnvironment = providerEnvironmentWithoutNames(
     instance.environment,
@@ -965,22 +1022,29 @@ export function ProviderInstanceCard({
   const updateGenericEnvironment = (
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   ) => {
-    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
+    const current = latestEnvironmentRef.current;
+    const dedicatedEnvironment = (current ?? []).filter((variable) =>
       environmentFieldNames.has(variable.name),
     );
     updateEnvironment([...dedicatedEnvironment, ...environment]);
   };
   const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+    updateEnvironment(
+      nextProviderEnvironmentWithFieldValue(latestEnvironmentRef.current, field, value),
+    );
   };
   const updateEnvironmentFieldSecret = (
     field: ProviderEnvironmentField,
     secret: SecretReference | undefined,
   ) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldSecret(instance.environment, field, secret));
+    updateEnvironment(
+      nextProviderEnvironmentWithFieldSecret(latestEnvironmentRef.current, field, secret),
+    );
   };
   const removeEnvironmentField = (field: ProviderEnvironmentField) => {
-    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+    updateEnvironment(
+      providerEnvironmentWithoutNames(latestEnvironmentRef.current, new Set([field.name])),
+    );
   };
 
   const titleIconNode = (
@@ -1400,9 +1464,58 @@ export function ProviderInstanceCard({
               aria-disabled={readOnly || undefined}
               className={readOnly ? "opacity-50 select-none" : undefined}
             >
+              {instance.driver === "claudeAgent" &&
+              !instanceLocks?.wholeEnvironment &&
+              !instanceLocks?.environmentNames.has("ANTHROPIC_BASE_URL") ? (
+                <SettingsRow
+                  title={gt("Endpoint preset")}
+                  description={gt("Quickly fill the official Anthropic-compatible endpoint URL.")}
+                  control={
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {(
+                        [
+                          {
+                            label: gt("Zhipu GLM"),
+                            url: "https://open.bigmodel.cn/api/anthropic",
+                          },
+                          {
+                            label: "DeepSeek",
+                            url: "https://api.deepseek.com/anthropic",
+                          },
+                        ] as const
+                      ).map((preset) => {
+                        const baseUrlField = environmentFields.find(
+                          (field) => field.name === "ANTHROPIC_BASE_URL",
+                        );
+                        const currentBaseUrl = readProviderEnvironmentVariable(
+                          instance.environment,
+                          "ANTHROPIC_BASE_URL",
+                        );
+                        const isActive =
+                          typeof currentBaseUrl?.value === "string" &&
+                          currentBaseUrl.value.trim().replace(/\/+$/, "") === preset.url;
+                        return (
+                          <Button
+                            key={preset.url}
+                            type="button"
+                            size="xs"
+                            variant={isActive ? "secondary" : "outline"}
+                            disabled={!baseUrlField}
+                            onClick={() => {
+                              if (baseUrlField) updateEnvironmentField(baseUrlField, preset.url);
+                            }}
+                          >
+                            {preset.label}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  }
+                />
+              ) : null}
               {environmentFields.map((field) => (
                 <ProviderEnvironmentFieldRow
-                  key={field.name}
+                  key={`${instanceId}:${field.name}`}
                   field={field}
                   variable={readProviderEnvironmentVariable(instance.environment, field.name)}
                   idPrefix={`provider-instance-${instanceId}`}
@@ -1461,6 +1574,7 @@ export function ProviderInstanceCard({
         ) : null}
         <div className={instanceLocks?.wholeEnvironment ? "opacity-50" : undefined}>
           <ProviderEnvironmentSection
+            key={instanceId}
             environment={genericEnvironment}
             onChange={updateGenericEnvironment}
             secretSources={secretSources}
