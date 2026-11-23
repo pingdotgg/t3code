@@ -160,6 +160,22 @@ describe("HTML in native Markdown", () => {
     ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
   });
 
+  it("reads an alert whose marker line ends in a break", async () => {
+    const native = (markdown: string) =>
+      parseMarkdown(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX));
+    const alert = await native("> [!NOTE]\n> Body");
+    expect(alert.children?.[0]?.type).toBe("Admonition");
+    for (const marker of ["[!NOTE]\\", "[!NOTE]  "]) {
+      expect(await native(`> ${marker}\n> Body`)).toEqual(alert);
+      expect(await native(`> ${marker}\r\n> Body`)).toEqual(alert);
+    }
+    const code = "`[!NOTE]\\\n`";
+    expect(markdownForNativeRendering(code, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(code);
+    // A break in the body of a marker that already ended its line stays.
+    const body = "> [!NOTE]\n> Body\\\n> more";
+    expect(markdownForNativeRendering(body, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(body);
+  });
+
   it("converts separated HTML without changing code examples or an unfinished tag", () => {
     const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
     expect(markdownWithHtml(literal)).toBe(literal);

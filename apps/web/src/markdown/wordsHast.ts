@@ -708,25 +708,42 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
       const paragraph = child.children.find((item) => item.type === "element");
-      const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
+      const line = isElement(paragraph, "p") ? paragraph.children : [];
+      // A user message's marker line keeps its indent when Words does not read it as a marker.
+      const at =
+        isElement(line[0], "span") && line[0].properties.dataLeadingWhitespace !== undefined
+          ? 1
+          : 0;
+      const first = line[at];
       const text = first?.type === "text" ? first.value : "";
       const insight = walk.insightMarker?.exec(text);
-      const alert = GITHUB_ALERT_MARKER.exec(text);
+      const alert = insight ? null : GITHUB_ALERT_MARKER.exec(text);
+      // A hard break or a raw `<br>` after the marker ends its line, as on GitHub.
+      const beforeBreak = alert?.[0] === text && isElement(line[at + 1], "br");
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)
-        : alert && (alert[0].endsWith("\n") || (paragraph as Element).children.length === 1)
+        : alert && (alert[0].endsWith("\n") || line.length === at + 1 || beforeBreak)
           ? alert
           : null;
       if (match && first?.type === "text" && isElement(paragraph, "p")) {
         first.value = first.value.slice(match[0].length);
-        if (first.value === "") paragraph.children.shift();
-        if (paragraph.children.length === 0) {
-          const at = child.children.indexOf(paragraph);
-          const next = child.children[at + 1];
+        line.splice(0, first.value === "" ? at + 1 : at);
+        if (beforeBreak) {
+          line.shift();
+          // The break's own line ending goes with it.
+          const body = line[0];
+          if (body?.type === "text") {
+            body.value = body.value.replace(/^\r?\n/, "");
+            if (body.value === "") line.shift();
+          }
+        }
+        if (line.length === 0) {
+          const emptied = child.children.indexOf(paragraph);
+          const next = child.children[emptied + 1];
           // The line ending after it goes too, as remark leaves none for a removed paragraph.
           const blank = next?.type === "text" && next.value.trim() === "" ? 2 : 1;
-          child.children.splice(at, blank);
+          child.children.splice(emptied, blank);
         }
         props.dataAlert = match[1]!.toLowerCase();
       }

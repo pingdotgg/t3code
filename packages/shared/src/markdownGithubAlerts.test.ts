@@ -43,4 +43,15 @@ describe("remarkGithubAlerts", () => {
     expect(html).not.toContain("data-alert");
     expect(html).toContain("[!NOTE] an ordinary quote");
   });
+
+  it("ends the marker's line at a break written after it", () => {
+    const alert = renderMarkdown("> [!NOTE]\n> Body");
+    for (const marker of ["[!NOTE]\\", "[!NOTE]  ", "[!NOTE]<br>", "[!NOTE]<br />"]) {
+      expect(renderMarkdown(`> ${marker}\n> Body`)).toBe(alert);
+    }
+    expect(renderMarkdown("> [!NOTE]\\\n> Body\\\n> more")).toBe(
+      renderMarkdown("> [!NOTE]\n> Body\\\n> more"),
+    );
+    expect(renderMarkdown("> [!NOTE]**bold**\\\n> Body")).not.toContain("data-alert");
+  });
 });

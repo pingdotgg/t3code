@@ -184,6 +184,18 @@ describe("wordsHast", () => {
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
     );
+    // An indented marker whose line ends in a hard break or one space is still the alert's marker.
+    for (const marker of ["[!NOTE]", "[!NOTE]  ", "[!NOTE] ", "[!NOTE]\\"]) {
+      expect(
+        wordsHtml(`>   ${marker}\n>   Body`, {
+          breaks: true,
+          extensions: { userMessage: true, leadingWhitespace: true },
+        }),
+        marker,
+      ).toBe(
+        '<blockquote data-alert="note" dir="ltr">\n<p><span data-leading-whitespace="">  </span>Body</p>\n</blockquote>',
+      );
+    }
   });
 
   it("gives elements the source positions components read", () => {
@@ -331,6 +343,36 @@ describe("wordsHast", () => {
       "Hard  \nbreak and a\\\nbackslash",
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
+    ],
+    [
+      "> [!NOTE]\\\n> Body",
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]  \n> Body",
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]<br>\n> Body",
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]\\\n> Body\n\n`[!NOTE]<br>`",
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>\n<p><code data-inline-code="" dir="ltr">[!NOTE]&#x3C;br></code></p>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>\n<p><code data-inline-code="" dir="ltr">[!NOTE]&#x3C;br></code></p>',
+    ],
+    [
+      "> [!WARNING]  \n> **Bold** body\\\n> more",
+      '<blockquote data-alert="warning" dir="ltr">\n<p><strong>Bold</strong> body<br>\nmore</p>\n</blockquote>',
+      '<blockquote data-alert="warning" dir="ltr">\n<p><strong>Bold</strong> body<br>\nmore</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]**bold**\\\n> Body",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<strong>bold</strong><br>\nBody</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<strong>bold</strong><br>\nBody</p>\n</blockquote>',
     ],
   ])(
     "breaks lines next to images and hard breaks as remark did: %j",

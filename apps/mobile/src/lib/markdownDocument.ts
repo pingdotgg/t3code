@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import {
   absoluteFilePathMatches,
@@ -498,9 +499,41 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const ALERT_MARKER_BACKSLASH_BREAK = /\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\\\r?\n/i;
+
+/**
+ * md4c reads an alert marker whose line ends after `]` or in spaces, but not in a backslash
+ * hard break, which GitHub and web end the marker's line at too. Dropping the backslash
+ * leaves the line ending the native parser reads.
+ */
+function markdownWithAlertMarkerLines(markdown: string): string {
+  if (!ALERT_MARKER_BACKSLASH_BREAK.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    const paragraph = node.type === "blockquote" ? node.children[0] : undefined;
+    const [marker, next] = paragraph?.type === "paragraph" ? paragraph.children : [];
+    const end = marker?.position?.end.offset;
+    if (
+      marker?.type === "text" &&
+      GITHUB_ALERT_MARKER.exec(marker.value)?.[0] === marker.value &&
+      !marker.value.endsWith("\n") &&
+      next?.type === "break" &&
+      end !== undefined &&
+      markdown[end] === "\\"
+    ) {
+      edits.push({ start: end, end: end + 1, content: "" });
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  return markdownWithWindowsPathDestinations(
+    markdownWithAlertMarkerLines(markdownWithHtml(markdown)),
+  );
 }
 
 export function parseMarkdownDocument(markdown: string): Root {

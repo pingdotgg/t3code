@@ -786,6 +786,8 @@ it("shows the spaces and tabs typed at the start of each line of a user message"
   const alert = ">  [!NOTE]\n>    indented body";
   expect(shown(inline)).toBe("Plan\n   bold link code ~/a and gone /tmp/a.ts");
   expect(shown(alert)).toBe("   indented body");
+  expect(shown(">  [!NOTE]  \n>    indented body")).toBe("   indented body");
+  expect(shown(">  [!NOTE]\\\n>    indented body")).toBe("   indented body");
   for (const markdown of [inline, alert]) {
     expect(withoutRestoredWhitespace(userMessage(markdown)), markdown).toEqual(
       withoutRestoredWhitespace(commonMarkUserMessage(markdown)),
