@@ -2,11 +2,13 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import { resolveTerminalActivityStatus } from "@t3tools/client-runtime/state/terminal";
 import {
   type ContextMenuItem,
+  type ContextMenuSource,
   type KeybindingCommand,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { contextMenuSourceOf } from "../contextMenuSource";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { msg, useGT, useMessages } from "gt-react";
@@ -1420,6 +1422,7 @@ export async function showLayoutTabMenu(
   position: { x: number; y: number },
   keybindings: ResolvedKeybindingsConfig,
   onRename: () => void = () => renameLayoutTab(tabId),
+  source?: ContextMenuSource,
 ): Promise<void> {
   const api = readLocalApi();
   if (!api) return;
@@ -1435,6 +1438,7 @@ export async function showLayoutTabMenu(
       ),
     ],
     position,
+    source,
   );
   if (action === null) return;
   if (isLayoutTabMenuId(action)) runLayoutTabMenuAction(action, tabId);
@@ -1565,7 +1569,9 @@ function PlainLayoutPaneTab({ tab }: { tab: LayoutTab }) {
   return (
     <LayoutPaneTabButton
       tab={tab}
-      onOpenMenu={(position) => void showLayoutTabMenu(tab.id, position, keybindings)}
+      onOpenMenu={(position, source) =>
+        void showLayoutTabMenu(tab.id, position, keybindings, undefined, source)
+      }
     />
   );
 }
@@ -1596,7 +1602,7 @@ function LayoutPaneTabButton({
   onOpenMenu,
 }: {
   tab: LayoutTab;
-  onOpenMenu: (position: { x: number; y: number }) => void;
+  onOpenMenu: (position: { x: number; y: number }, source?: ContextMenuSource) => void;
 }) {
   const label = useLayoutTabLabel(tab);
   const focusTab = () => {
@@ -1621,7 +1627,7 @@ function LayoutPaneTabButton({
   const openMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onOpenMenu({ x: event.clientX, y: event.clientY });
+    onOpenMenu({ x: event.clientX, y: event.clientY }, contextMenuSourceOf(event));
   };
   return (
     <span className={LAYOUT_TAB_SLOT_CLASS}>

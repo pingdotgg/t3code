@@ -863,6 +863,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         { x: event.clientX, y: event.clientY },
         props.keybindings,
         () => setRenamingDevice(surface.id),
+        contextMenuSourceOf(event),
       );
       return;
     }

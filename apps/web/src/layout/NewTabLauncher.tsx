@@ -5,6 +5,7 @@ import { T, useGT } from "gt-react";
 import { SquareDashedIcon } from "lucide-react";
 import { useEffect, useEffectEvent, useLayoutEffect, useRef } from "react";
 
+import { contextMenuSourceOf } from "../contextMenuSource";
 import { useBrowserDefaults } from "../browser/browserDefaults";
 import {
   DraftProjectGroupLabel,
@@ -493,7 +494,13 @@ function LauncherTabNotch({ tabId }: { tabId: string | null }) {
             onContextMenu={(event) => {
               if (tabId === null) return;
               event.preventDefault();
-              void showLayoutTabMenu(tabId, { x: event.clientX, y: event.clientY }, keybindings);
+              void showLayoutTabMenu(
+                tabId,
+                { x: event.clientX, y: event.clientY },
+                keybindings,
+                undefined,
+                contextMenuSourceOf(event),
+              );
             }}
           >
             {closable ? <span className={LAYOUT_TAB_ICON_CLASS}>{icon}</span> : icon}
