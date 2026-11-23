@@ -8,6 +8,7 @@ import {
   type CustomModelSetting,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -65,6 +66,12 @@ import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import { isCopilotAcpSettings } from "./copilotAcp.ts";
+import {
+  applyCopilotDiscoveredSkills,
+  discoverCopilotSkills,
+  filterCopilotSlashCommands,
+} from "./copilotSkills.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -652,6 +659,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       continuationKey: continuationIdentity.continuationKey,
     };
     const effectiveConfig = { ...config, enabled } satisfies AcpRegistrySettings;
+    const isCopilot = isCopilotAcpSettings(effectiveConfig);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(
       environment,
       hostEnvironment,
@@ -690,6 +698,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Refreshes rebuild the snapshot from the probe, so per-model options
     // learned from earlier sessions are kept here.
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
+    const discoveredCopilotSkills = yield* Ref.make<
+      Option.Option<ReadonlyArray<ServerProviderSkill>>
+    >(Option.none());
+    const clearDiscoveredCopilotSkills = Ref.set(discoveredCopilotSkills, Option.none());
+    const discoverCopilotSkillsFor = (cwd: string) =>
+      discoverCopilotSkills({
+        settings: effectiveConfig,
+        environment: processEnvironment,
+        cwd,
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+      );
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
@@ -704,6 +727,27 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         return [next, next.models === provider.models ? learned : next.models];
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
+    const applyAvailableCommands = (
+      provider: ServerProvider,
+      commands: Option.Option<AcpRegistryAvailableCommands>,
+      cachedSkills: Option.Option<ReadonlyArray<ServerProviderSkill>>,
+    ): ServerProvider => {
+      if (!isCopilot) {
+        return applyAcpRegistryAvailableCommands(provider, commands);
+      }
+      const effectiveSkills =
+        provider.skills.length > 0
+          ? provider.skills
+          : Option.getOrElse(cachedSkills, () => provider.skills);
+      return Option.match(commands, {
+        onNone: () => applyCopilotDiscoveredSkills(provider, effectiveSkills),
+        onSome: ({ slashCommands }) => ({
+          ...provider,
+          slashCommands: filterCopilotSlashCommands(slashCommands, effectiveSkills),
+          skills: effectiveSkills,
+        }),
+      });
+    };
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
@@ -715,26 +759,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         (yield* confirmedAuthentication.get)
           ? { ...input, auth: { ...input.auth, status: "authenticated" as const } }
           : input;
-      return yield* Option.isNone(runtimeCoordinator)
-        ? Effect.succeed(provider)
-        : Effect.all({
-            commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
-            configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
-            authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
-          }).pipe(
-            Effect.flatMap(({ commands, configuration, authAction }) => {
-              const withCommands = applyAcpRegistryAvailableCommands(provider, commands);
-              return Option.match(configuration, {
-                onNone: () => Effect.succeed(withCommands),
-                onSome: (liveConfiguration) =>
-                  applyLiveConfiguration(withCommands, liveConfiguration),
-              }).pipe(
-                Effect.map((withConfiguration) =>
-                  applyAcpRegistryUrlAuthAction(withConfiguration, authAction),
-                ),
-              );
-            }),
-          );
+      const cachedSkills = isCopilot
+        ? yield* Ref.get(discoveredCopilotSkills)
+        : Option.none<ReadonlyArray<ServerProviderSkill>>();
+      if (Option.isNone(runtimeCoordinator)) {
+        return isCopilot ? applyAvailableCommands(provider, Option.none(), cachedSkills) : provider;
+      }
+      const { commands, configuration, authAction } = yield* Effect.all({
+        commands: runtimeCoordinator.value.getAvailableCommands(instanceId),
+        configuration: runtimeCoordinator.value.getLiveConfiguration(instanceId),
+        authAction: runtimeCoordinator.value.getUrlAuthAction(instanceId),
+      });
+      const withCommands = applyAvailableCommands(provider, commands, cachedSkills);
+      const withConfiguration = Option.isSome(configuration)
+        ? yield* applyLiveConfiguration(withCommands, configuration.value)
+        : withCommands;
+      return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
     });
     // A local executable's version comes only from probing it, so readiness checks reuse the last report.
     const reportedLocalVersion = yield* Ref.make<string | null>(null);
@@ -751,19 +791,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ),
       Effect.flatMap(withLiveRuntimeState),
     );
-    const enrichProvider = checkAcpRegistryProviderStatus(
-      {
-        ...readinessInput,
-        cwd: host.paths.cwd,
-      },
-      probeAcpRegistryConfiguration,
-    ).pipe(
-      Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(SecureRandom.SecureRandom, random),
-    );
+    const enrichProvider = Effect.gen(function* () {
+      const enriched = yield* checkAcpRegistryProviderStatus(
+        {
+          ...readinessInput,
+          cwd: host.paths.cwd,
+        },
+        probeAcpRegistryConfiguration,
+      ).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(SecureRandom.SecureRandom, random),
+      );
+      if (!isCopilot || !enriched.installed) {
+        return enriched;
+      }
+      const skills = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(Effect.option);
+      if (Option.isNone(skills)) {
+        return enriched;
+      }
+      yield* Ref.set(discoveredCopilotSkills, skills);
+      return applyCopilotDiscoveredSkills(enriched, skills.value);
+    });
     const enrichmentCache = yield* Ref.make<AcpRegistryEnrichmentCache>({
       generation: 0,
       entry: null,
@@ -860,18 +911,41 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
           instanceId,
-          ({ slashCommands, skills }) =>
-            liveSnapshotSemaphore.withPermit(
-              getSnapshot.pipe(
-                Effect.flatMap((current) =>
-                  publishSnapshot({
-                    ...current,
-                    slashCommands,
-                    skills,
-                  }),
+          Effect.fnUntraced(function* ({ slashCommands, skills }) {
+            if (!isCopilot) {
+              return yield* liveSnapshotSemaphore.withPermit(
+                getSnapshot.pipe(
+                  Effect.flatMap((current) =>
+                    publishSnapshot({
+                      ...current,
+                      slashCommands,
+                      skills,
+                    }),
+                  ),
                 ),
-              ),
-            ),
+              );
+            }
+            if (Option.isNone(yield* Ref.get(discoveredCopilotSkills))) {
+              const discovered = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(
+                Effect.option,
+              );
+              if (Option.isSome(discovered)) {
+                yield* Ref.set(discoveredCopilotSkills, discovered);
+              }
+            }
+            yield* liveSnapshotSemaphore.withPermit(
+              Effect.gen(function* () {
+                const current = yield* getSnapshot;
+                const cachedSkills = yield* Ref.get(discoveredCopilotSkills);
+                const effectiveSkills = Option.getOrElse(cachedSkills, () => current.skills);
+                yield* publishSnapshot({
+                  ...current,
+                  skills: effectiveSkills,
+                  slashCommands: filterCopilotSlashCommands(slashCommands, effectiveSkills),
+                });
+              }),
+            );
+          }),
         );
         const publishLiveConfiguration = runtimeCoordinator.value.watchLiveConfiguration(
           instanceId,
@@ -960,7 +1034,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             .clearLiveConfiguration(instanceId)
             .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
         : Effect.void
-    ).pipe(Effect.andThen(clearLearnedModels));
+    ).pipe(Effect.andThen(clearLearnedModels), Effect.andThen(clearDiscoveredCopilotSkills));
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -991,6 +1065,28 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ),
     };
 
+    const snapshotForCwd = (workspaceCwd: string) =>
+      !effectiveConfig.enabled
+        ? snapshot.getSnapshot
+        : Effect.all([
+            snapshot.getSnapshot,
+            discoverCopilotSkillsFor(workspaceCwd).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderDriverError({
+                    driver: DRIVER_KIND,
+                    instanceId,
+                    detail: `Failed to discover Copilot skills for '${workspaceCwd}'`,
+                    cause,
+                  }),
+              ),
+            ),
+          ]).pipe(
+            Effect.map(([machineSnapshot, skills]) =>
+              applyCopilotDiscoveredSkills(machineSnapshot, skills),
+            ),
+          );
+
     return {
       instanceId,
       driverKind: DRIVER_KIND,
@@ -1003,11 +1099,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ...snapshot,
         refresh: snapshot.refresh.pipe(Effect.tap(() => controller.refreshMethods ?? Effect.void)),
       },
+      ...(isCopilot ? { snapshotForCwd } : {}),
       invalidateCaches: (Option.isSome(runtimeCoordinator)
         ? runtimeCoordinator.value.clearLiveConfiguration(instanceId)
         : Effect.void
       ).pipe(
         Effect.andThen(clearLearnedModels),
+        Effect.andThen(clearDiscoveredCopilotSkills),
         Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
       ),
       orchestrationAdapter,

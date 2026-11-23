@@ -8,6 +8,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -19,7 +20,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
@@ -926,6 +929,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     });
   } else if (method === "session/new") {
     const modelIds = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    const availableCommands = process.argv[3]
+      ? JSON.parse(readFileSync(process.argv[3], "utf8"))
+      : [];
     send({
       id,
       result: {
@@ -940,7 +946,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       method: "session/update",
       params: {
         sessionId: "probe-session",
-        update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+        update: { sessionUpdate: "available_commands_update", availableCommands },
       },
     });
   } else {
@@ -981,6 +987,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         installed: false,
         message: "Checking ACP Registry agent readiness...",
       });
+      expect(instance.snapshotForCwd).toBeUndefined();
     }),
   );
 
@@ -1187,5 +1194,311 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         "model-a:effort,model-b:effort",
       );
     }),
+  );
+
+  const makeCopilotSkillSpawner = (
+    resolveSkills: (cwd: string | undefined) => {
+      readonly stdout?: string;
+      readonly exitCode?: number;
+    },
+  ) =>
+    Effect.gen(function* () {
+      const baseSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return ChildProcessSpawner.make((command) => {
+        if (command._tag === "StandardCommand" && command.args[0] === "skill") {
+          const result = resolveSkills(command.options?.cwd);
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode ?? 0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.encodeText(Stream.make(result.stdout ?? "[]")),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        }
+        return baseSpawner.spawn(command);
+      });
+    });
+
+  it.effect(
+    "exposes snapshotForCwd for Copilot, filters skill-hinted commands while keeping built-ins, and maps discovery errors",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-copilot-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        const commandsPath = path.join(directory, "commands.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["copilot-model"]));
+        yield* fileSystem.writeFileString(
+          commandsPath,
+          JSON.stringify([
+            { name: "compact", description: "Compact context" },
+            { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+            {
+              name: "deploy",
+              description: "Deploy skill",
+              input: { hint: "instructions for the skill" },
+            },
+            {
+              name: "workspace-only",
+              description: "Workspace skill",
+              input: { hint: "instructions for the skill" },
+            },
+          ]),
+        );
+
+        let skillProbeCount = 0;
+        const spawner = yield* makeCopilotSkillSpawner((cwd) => {
+          skillProbeCount += 1;
+          if (cwd === "/workspaces/city-college") {
+            return { exitCode: 1, stdout: "" };
+          }
+          if (cwd === "/workspaces/greendale") {
+            return {
+              stdout: JSON.stringify([
+                {
+                  name: "deploy",
+                  description: "Deploy app",
+                  source: "personal",
+                  path: "/home/troy/.copilot/skills/deploy",
+                  enabled: true,
+                },
+                {
+                  name: "workspace-only",
+                  description: "Greendale workflow",
+                  source: "project",
+                  path: "/workspaces/greendale/.github/skills/workspace-only",
+                  enabled: true,
+                },
+                {
+                  name: "plan",
+                  description: "Custom plan skill",
+                  source: "project",
+                  path: "/workspaces/greendale/.github/skills/plan",
+                  enabled: true,
+                },
+              ]),
+            };
+          }
+          return {
+            stdout: JSON.stringify([
+              {
+                name: "deploy",
+                description: "Deploy app",
+                source: "personal",
+                path: "/home/troy/.copilot/skills/deploy",
+                enabled: true,
+              },
+            ]),
+          };
+        });
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: "GitHub Copilot",
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "github-copilot-cli" }),
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "github-copilot-cli",
+              version: "1.0.105",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath, commandsPath] },
+              }),
+          }),
+        );
+
+        expect(skillProbeCount).toBe(0);
+        expect(instance.snapshotForCwd).toBeDefined();
+
+        const enriched = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((m) => m.slug === "copilot-model")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const machineSnapshot = Option.getOrThrow(yield* Fiber.join(enriched));
+        expect(machineSnapshot.skills.map((skill) => skill.name)).toEqual(["deploy"]);
+        expect(machineSnapshot.slashCommands.map((command) => command.name)).toEqual([
+          "compact",
+          "plan",
+          "workspace-only",
+        ]);
+
+        const workspaceSnapshot = yield* instance.snapshotForCwd!("/workspaces/greendale");
+        expect(workspaceSnapshot.skills.map((skill) => skill.name)).toEqual([
+          "deploy",
+          "plan",
+          "workspace-only",
+        ]);
+        expect(workspaceSnapshot.slashCommands).toEqual([
+          { name: "compact", description: "Compact context" },
+          { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+        ]);
+
+        const failure = yield* instance.snapshotForCwd!("/workspaces/city-college").pipe(
+          Effect.flip,
+        );
+        expect(failure).toBeInstanceOf(ProviderDriverError);
+        expect(failure).toMatchObject({
+          _tag: "ProviderDriverError",
+          driver: "acpRegistry",
+          instanceId: identity.instanceId,
+          detail: "Failed to discover Copilot skills for '/workspaces/city-college'",
+        });
+        expect(failure.cause).toBeDefined();
+      }),
+  );
+
+  it.effect(
+    "preserves discovered Copilot skills and filters skill-hinted commands on live available_commands_update",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-copilot-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["copilot-model"]));
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+        let skillPayload = JSON.stringify([
+          {
+            name: "deploy",
+            description: "Deploy app",
+            source: "project",
+            path: "/workspaces/greendale/.github/skills/deploy",
+            enabled: true,
+          },
+          {
+            name: "plan",
+            description: "Custom plan skill",
+            source: "project",
+            path: "/workspaces/greendale/.github/skills/plan",
+            enabled: true,
+          },
+        ]);
+        const spawner = yield* makeCopilotSkillSpawner(() => ({ stdout: skillPayload }));
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: "GitHub Copilot",
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "github-copilot-cli" }),
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "github-copilot-cli",
+              version: "1.0.105",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              }),
+          }),
+        );
+
+        const enriched = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((m) => m.slug === "copilot-model")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(enriched);
+
+        const liveUpdated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.slashCommands.some((command) => command.name === "review"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(identity.instanceId, {
+          slashCommands: [
+            {
+              name: "deploy",
+              description: "Deploy skill",
+              input: { hint: "instructions for the skill" },
+            },
+            { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+            { name: "review", description: "Review changes" },
+          ],
+          skills: [],
+        });
+        const afterLive = Option.getOrThrow(yield* Fiber.join(liveUpdated));
+        expect(afterLive.skills.map((skill) => skill.name)).toEqual(["deploy", "plan"]);
+        expect(afterLive.slashCommands).toEqual([
+          { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+          { name: "review", description: "Review changes" },
+        ]);
+
+        // Refreshing with live available_commands_update still in coordinator keeps discovered skills.
+        yield* instance.snapshot.refresh;
+        const afterRefresh = yield* instance.snapshot.getSnapshot;
+        expect(afterRefresh.skills.map((skill) => skill.name)).toEqual(["deploy", "plan"]);
+        expect(afterRefresh.slashCommands).toEqual([
+          { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+          { name: "review", description: "Review changes" },
+        ]);
+
+        // After invalidateCaches resets discovered skills, live updates lazily re-discover skills.
+        skillPayload = JSON.stringify([
+          {
+            name: "audit",
+            description: "Audit workspace",
+            source: "project",
+            path: "/workspaces/greendale/.github/skills/audit",
+            enabled: true,
+          },
+        ]);
+        const lazilyDiscovered = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.slashCommands.some((command) => command.name === "compact"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.invalidateCaches ?? Effect.void;
+        yield* coordinator.publishAvailableCommands(identity.instanceId, {
+          slashCommands: [
+            {
+              name: "audit",
+              description: "Audit skill",
+              input: { hint: "instructions for the skill" },
+            },
+            { name: "compact", description: "Compact context" },
+          ],
+          skills: [],
+        });
+        const afterLazy = Option.getOrThrow(yield* Fiber.join(lazilyDiscovered));
+        expect(afterLazy.skills.map((skill) => skill.name)).toEqual(["audit"]);
+        expect(afterLazy.slashCommands).toEqual([
+          { name: "compact", description: "Compact context" },
+        ]);
+      }),
   );
 });
