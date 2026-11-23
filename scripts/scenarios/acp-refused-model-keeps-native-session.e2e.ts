@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { makeState, runPromise, test, WEB } from "./t3.ts";
@@ -130,18 +131,17 @@ test(
 
       // The agent offers the model again, and the next message is sent.
       await NodeFSP.writeFile(onlineFlag, "online");
-      let restored = false;
-      for (let wait = 0; wait < 100 && !restored; wait++) {
-        restored = (await NodeFSP.readFile(`${onlineFlag}.ack`, "utf8").catch(() => "")) !== "";
-        if (!restored) await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      if (!restored) throw new Error("The agent did not offer the model again.");
+      await expect
+        .poll(() => NodeFSP.readFile(`${onlineFlag}.ack`, "utf8").catch(() => ""), {
+          timeout: 10_000,
+        })
+        .not.toBe("");
       // The app applies the agent's update on its own schedule, so a send can still meet the old
       // model list. Retrying cannot hide the bug: without the fix the pending handoff replaces the
       // session before the model is checked, and with it a refused send leaves the session in place.
       let last = await send(first.threadId, "Fourth request");
       for (let attempt = 0; attempt < 5 && refusedModel(last); attempt++) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
+        await runPromise(Effect.sleep("500 millis"));
         last = await send(first.threadId, "Fourth request");
       }
       if (last.status !== "completed") {
