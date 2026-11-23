@@ -135,6 +135,18 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
+when something happens without reading threads over and over: a turn ended, an
+agent waits on a person, a guest asked something, a watched pull request woke
+its thread. Each of these is an event type it can poll or stream, narrowed to
+projects or threads. [Workflow runs](workflows.md) have their own event types,
+narrowed to workflows or runs: a run started, paused, resumed or ended, and a
+question it asks was raised or settled. Runs that another run started are left
+out unless asked for, as subagent threads are, and narrowing thread events to a
+run also picks out the threads that are its agent steps. The environment keeps its latest 1,000 milestones in
+memory, so a bot that was away longer, or reconnects after a restart, is told
+some may be missing and should reread the threads it cares about.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `t3 thread` uses the same tools
