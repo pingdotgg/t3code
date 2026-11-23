@@ -411,15 +411,16 @@ it.effect.each(["interrupt", "timeout"] as const)(
       const address = server.address();
       assert.isTrue(address !== null && typeof address !== "string");
       if (address === null || typeof address === "string") return;
-      // Like git-lfs clean: copy the content into .git/lfs/tmp while hashing, and only
+      // Like git-lfs clean: copy the content into <lfs.storage>/tmp while hashing, and only
       // move or remove that copy once hashing finishes. A killed filter strands it.
       const filter = path.join(sandbox, "lfs-clean.cjs");
       yield* fs.writeFileString(
         filter,
         [
           "const fs = require('node:fs');",
-          "fs.mkdirSync('.git/lfs/tmp', { recursive: true });",
-          "fs.writeFileSync('.git/lfs/tmp/' + process.pid, Buffer.alloc(1024 * 1024));",
+          `const storage = require('node:child_process').execSync('git config --default .git/lfs lfs.storage').toString().trim();`,
+          "fs.mkdirSync(storage + '/tmp', { recursive: true });",
+          "fs.writeFileSync(storage + '/tmp/' + process.pid, Buffer.alloc(1024 * 1024));",
           `const s = require('node:net').connect(${address.port}, '127.0.0.1');`,
           "s.resume(); process.stdin.resume();",
           "s.on('close', () => process.exit(0));",
@@ -434,6 +435,8 @@ it.effect.each(["interrupt", "timeout"] as const)(
         .captureCheckpoint({ cwd, checkpointRef })
         .pipe(Effect.exit, Effect.forkScoped);
       yield* Effect.promise(() => connected.promise);
+      const laterOperation = path.join(lfsTmp, "started-during-capture");
+      yield* fs.writeFileString(laterOperation, "another git-lfs process started later");
       if (stop === "interrupt") yield* Fiber.interrupt(fiber);
       else yield* TestClock.adjust("30 seconds");
       const result = yield* Fiber.await(fiber);
@@ -441,12 +444,60 @@ it.effect.each(["interrupt", "timeout"] as const)(
         assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
       else assert.isTrue(Exit.isSuccess(result) && Exit.isFailure(result.value));
 
-      assert.deepEqual(yield* fs.readDirectory(lfsTmp), ["owned-by-another-git-lfs"]);
+      assert.sameMembers(yield* fs.readDirectory(lfsTmp), [
+        "owned-by-another-git-lfs",
+        "started-during-capture",
+      ]);
       assert.strictEqual(
         yield* fs.readFileString(otherOperation),
         "another git-lfs process is hashing this",
       );
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint staging moves Git LFS objects its clean filter wrote into LFS storage", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
+    const cwd = path.join(sandbox, "repo");
+    yield* fs.makeDirectory(cwd);
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    // Like git-lfs clean: hash through <lfs.storage>/tmp, then move the copy into objects.
+    const filter = path.join(sandbox, "lfs-clean.cjs");
+    yield* fs.writeFileString(
+      filter,
+      [
+        "const fs = require('node:fs');",
+        `const storage = require('node:child_process').execSync('git config --default .git/lfs lfs.storage').toString().trim();`,
+        "const content = fs.readFileSync(0);",
+        "const oid = require('node:crypto').createHash('sha256').update(content).digest('hex');",
+        "fs.mkdirSync(storage + '/tmp', { recursive: true });",
+        "const dir = storage + '/objects/' + oid.slice(0, 2) + '/' + oid.slice(2, 4);",
+        "fs.mkdirSync(dir, { recursive: true });",
+        "fs.writeFileSync(storage + '/tmp/' + process.pid, content);",
+        "fs.renameSync(storage + '/tmp/' + process.pid, dir + '/' + oid);",
+        "process.stdout.write('oid sha256:' + oid + '\\n');",
+      ].join("\n"),
+    );
+    yield* git(["config", "filter.lfs.clean", `"${process.execPath}" "${filter}"`]);
+    yield* git(["config", "filter.lfs.required", "true"]);
+    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs\n");
+    yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const pointer = yield* git(["show", `${checkpointRef}:weights.npz`]);
+    const oid = pointer.stdout.trim().slice("oid sha256:".length);
+    assert.strictEqual(
+      yield* fs.readFileString(
+        path.join(cwd, ".git/lfs/objects", oid.slice(0, 2), oid.slice(2, 4), oid),
+      ),
+      "large untracked data\n",
+    );
+    assert.isFalse(yield* fs.exists(path.join(cwd, ".git/lfs/tmp")));
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each(["failure", "interrupt"] as const)(

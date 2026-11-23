@@ -1259,6 +1259,60 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ),
           ),
       );
+      // git-lfs's clean filter copies each file into <lfs.storage>/tmp while hashing it and strands
+      // that copy when killed. Give it storage that is removed with the capture's private objects.
+      const privateLfs = path.join(privateObjects, "lfs");
+      const publishLfsObjects = Effect.gen(function* () {
+        const source = path.join(privateLfs, "objects");
+        const objects = (yield* fileSystem
+          .readDirectory(source, { recursive: true })
+          .pipe(Effect.orElseSucceed(() => []))).filter((entry) =>
+          /^[0-9a-f]{2}[\\/][0-9a-f]{2}[\\/][0-9a-f]{64}$/.test(entry),
+        );
+        if (objects.length === 0) return;
+        const configured = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "--get", "lfs.storage"],
+          allowNonZeroExit: true,
+        });
+        // git-lfs resolves a relative lfs.storage against the common Git directory.
+        const storage = path.resolve(gitCommonDir, configured.stdout.trim() || "lfs");
+        yield* Effect.forEach(
+          objects,
+          (entry) =>
+            Effect.gen(function* () {
+              const from = path.join(source, entry);
+              const to = path.join(storage, "objects", entry);
+              if (yield* fileSystem.exists(to)) return;
+              yield* fileSystem.makeDirectory(path.dirname(to), { recursive: true });
+              // Identical oids are interchangeable, so losing a race to another writer is fine.
+              // lfs.storage may be on another volume, where only a copy can move the object.
+              const partial = `${to}.${indexId}`;
+              yield* fileSystem.rename(from, to).pipe(
+                Effect.catch((cause) =>
+                  Effect.flatMap(fileSystem.exists(to), (exists) =>
+                    exists
+                      ? Effect.void
+                      : fileSystem.copyFile(from, partial).pipe(
+                          Effect.andThen(fileSystem.rename(partial, to)),
+                          Effect.ensuring(
+                            fileSystem.remove(partial, { force: true }).pipe(Effect.ignore),
+                          ),
+                          Effect.mapError(() => cause),
+                        ),
+                  ),
+                ),
+              );
+            }),
+          { concurrency: 16, discard: true },
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsCheckpointStorageError({ operation, cwd: input.cwd, stage: "publish", cause }),
+          ),
+        );
+      });
       const commitEnv: NodeJS.ProcessEnv = {
         GIT_INDEX_FILE: tempIndexPath,
         GIT_OBJECT_DIRECTORY: privateObjects,
@@ -1272,6 +1326,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
         GIT_COMMITTER_NAME: "T3 Code",
         GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+        // Any command on the scratch index can run the clean filter, not just add.
+        ...VcsProcess.gitConfigEnv(hostEnv, "lfs.storage", privateLfs, hostPlatform),
       };
 
       const cleanupTempIndex = Effect.forEach(
@@ -1558,21 +1614,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               () => Effect.void,
             ),
           );
-        // git-lfs's clean filter copies content here while hashing and strands it when killed.
-        const lfsTmp = path.join(gitCommonDir, "lfs", "tmp");
-        const readLfsTmp = fileSystem.readDirectory(lfsTmp).pipe(Effect.orElseSucceed(() => []));
-        const lfsTmpBefore = new Set(yield* readLfsTmp);
-        const removeStrandedLfsTmp = Effect.gen(function* () {
-          const stranded = (yield* readLfsTmp).filter((name) => !lfsTmpBefore.has(name));
-          yield* Effect.forEach(
-            stranded,
-            (name) =>
-              fileSystem
-                .remove(path.join(lfsTmp, name), { recursive: true, force: true })
-                .pipe(Effect.ignore),
-            { discard: true },
-          );
-        });
         const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -1629,7 +1670,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
-          Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : removeStrandedLfsTmp)),
         );
 
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
@@ -1807,6 +1847,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           });
         }
 
+        yield* publishLfsObjects;
         // Git writers have exited; bound publication by fanout directory.
         yield* fileSystem.readDirectory(privateObjects).pipe(
           Effect.flatMap((directories) =>
