@@ -130,6 +130,31 @@ async fn remote_status_reads_divergence_after_fetch() {
     assert_eq!((detached.ref_name, detached.is_repo), (None, Some(true)));
 }
 
+/// T3's `statusDetailsRemote`: with no usable remote default (here `origin/HEAD` names a
+/// deleted `origin/master`), both `main` and `master` count as the default, even when the
+/// other one exists locally.
+#[tokio::test]
+async fn either_conventional_branch_is_the_default_without_a_remote_default() {
+    let fx = Fixture::new("dangling-remote-head");
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/master",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "master"]);
+    write(&fx.work, "m.txt", "m\n");
+    commit_all(&fx.work, "ahead of main");
+
+    let local = status::local_status(&fx.work).await.unwrap();
+    assert_eq!(local.ref_name.as_deref(), Some("master"));
+    assert!(local.is_default_ref, "master is a default branch");
+    let remote = status::remote_status(&fx.work).await.unwrap().unwrap();
+    assert_eq!(remote.ahead_of_default_count, Some(0));
+}
+
 #[tokio::test]
 async fn list_refs_orders_filters_and_pages() {
     let fx = Fixture::new("refs");

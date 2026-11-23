@@ -272,19 +272,39 @@ async fn only_a_plain_folder_counts_as_no_repository() {
         "a folder in a plain folder"
     );
 
+    // A dangling `.git` link: Git reads no repository, on every runner.
+    let dangling = TempDir::new("dangling-git");
+    std::os::unix::fs::symlink(
+        dangling.path().join("missing"),
+        dangling.path().join(".git"),
+    )
+    .unwrap();
+    assert!(
+        !checkpoint::is_repository(dangling.path()).await.unwrap(),
+        "Git reads a dangling .git as no repository"
+    );
+    assert!(
+        !repo::is_plain_folder(dangling.path()).await,
+        "a dangling .git keeps its worktree"
+    );
+
     let unreadable = TempDir::new("unreadable-git");
     git(unreadable.path(), &["init", "-q"]);
     let metadata = unreadable.path().join(".git");
     std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // A privileged runner (root on Linux CI) reads it anyway; only a denial tests Git's view.
+    let denied = std::fs::read_dir(&metadata).is_err();
     let in_repository = !checkpoint::is_repository(unreadable.path())
         .await
         .unwrap_or(true);
     let plain_folder = repo::is_plain_folder(unreadable.path()).await;
     std::fs::set_permissions(&metadata, std::fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(
-        in_repository,
-        "Git reads an unreadable .git as no repository"
-    );
+    if denied {
+        assert!(
+            in_repository,
+            "Git reads an unreadable .git as no repository"
+        );
+    }
     assert!(!plain_folder, "an unreadable .git keeps its worktree");
 }
 

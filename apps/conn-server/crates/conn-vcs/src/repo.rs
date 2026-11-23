@@ -53,14 +53,24 @@ async fn is_dir(path: &Path) -> bool {
 /// `isNonGitProject` for a folder: Git finds no work tree there, and no `.git` entry sits in
 /// it or a folder above it. A repository Git cannot read (a bad config, unreadable metadata)
 /// is not "no repository": Git calls an unreadable `.git` "not a git repository" too.
+///
+/// The walk follows the physical path, as Git's discovery does, up to and including the
+/// filesystem root. Only `NotFound` shows that a folder holds no `.git`.
 pub async fn is_plain_folder(cwd: &Path) -> bool {
     if !matches!(crate::checkpoint::is_repository(cwd).await, Ok(false)) {
         return false;
     }
     let cwd = cwd.to_owned();
     tokio::task::spawn_blocking(move || {
-        !cwd.ancestors()
-            .any(|dir| std::fs::symlink_metadata(dir.join(".git")).is_ok())
+        let Ok(physical) = std::fs::canonicalize(&cwd) else {
+            return false;
+        };
+        physical.ancestors().all(|dir| {
+            matches!(
+                std::fs::symlink_metadata(dir.join(".git")),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound
+            )
+        })
     })
     .await
     .unwrap_or(false)
@@ -372,23 +382,17 @@ impl Remotes {
 pub async fn default_branch(cwd: &Path) -> VcsResult<Option<String>> {
     // Boxed: the nested git calls make a large future.
     Box::pin(async {
-        let remotes = Remotes::load(cwd).await?;
-        default_branch_with(cwd, &remotes).await
+        if let Some(branch) = Remotes::load(cwd).await?.primary_default {
+            return Ok(Some(branch));
+        }
+        for name in ["main", "master"] {
+            if ref_exists(cwd, &format!("refs/heads/{name}")).await? {
+                return Ok(Some(name.into()));
+            }
+        }
+        Ok(None)
     })
     .await
-}
-
-/// [`default_branch`] with the remotes already read.
-pub async fn default_branch_with(cwd: &Path, remotes: &Remotes) -> VcsResult<Option<String>> {
-    if let Some(branch) = &remotes.primary_default {
-        return Ok(Some(branch.clone()));
-    }
-    for name in ["main", "master"] {
-        if ref_exists(cwd, &format!("refs/heads/{name}")).await? {
-            return Ok(Some(name.into()));
-        }
-    }
-    Ok(None)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
