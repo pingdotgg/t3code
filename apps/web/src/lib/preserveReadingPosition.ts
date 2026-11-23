@@ -93,7 +93,6 @@ export function preserveReadingPosition(
   if (scroller.isContentEditable) document.addEventListener("selectionchange", captureSelection);
   const interrupt = () => {
     if (frame !== null) cancelAnimationFrame(frame);
-    frame = null;
     anchor = null;
     // Input wins over a pending resize correction; the next frame captures the reader's new place.
     frame = requestAnimationFrame(() => {
