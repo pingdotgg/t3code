@@ -75,6 +75,18 @@ const configWithObservability: DesktopBackendBootstrapValue = {
   otlpTracesUrl: "http://127.0.0.1:4318/v1/traces",
 };
 
+const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
+const readyControlChannel: ChildProcessSpawner.ChildProcessHandle["getOutputFd"] = (fd) =>
+  fd === 5 ? Stream.encodeText(Stream.make(`${readyLine}\n`)) : Stream.empty;
+
+// WSL backends get their bootstrap on stdin and have no control channel, so readiness is polled.
+const { desktopTelemetryControlFd: _controlFd, ...pollingBootstrap } = baseConfig.bootstrap;
+const pollingConfig: DesktopBackendManager.DesktopBackendStartConfig = {
+  ...baseConfig,
+  bootstrap: pollingBootstrap,
+  bootstrapDelivery: "stdin",
+};
+
 function makeProcess(options?: {
   readonly stdout?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
   readonly stderr?: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
@@ -92,7 +104,7 @@ function makeProcess(options?: {
     kill: options?.kill ?? (() => Effect.void),
     stdin: Sink.drain,
     getInputFd: () => Sink.drain,
-    getOutputFd: options?.getOutputFd ?? (() => Stream.empty),
+    getOutputFd: options?.getOutputFd ?? readyControlChannel,
     unref: Effect.succeed(Effect.void),
   });
 }
@@ -205,6 +217,7 @@ describe("DesktopBackendManager", () => {
       const ready = yield* Deferred.make<void>();
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const instance = yield* makeTestInstance({
+        config: pollingConfig,
         spawnerLayer: Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>
@@ -245,7 +258,7 @@ describe("DesktopBackendManager", () => {
       const ready = yield* Deferred.make<void>();
       const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
       const instance = yield* makeTestInstance({
-        config: { ...baseConfig, httpBaseUrl: new URL("http://172.20.84.98:3773") },
+        config: { ...pollingConfig, httpBaseUrl: new URL("http://172.20.84.98:3773") },
         onReady: Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
         spawnerLayer: Layer.succeed(
           ChildProcessSpawner.ChildProcessSpawner,
@@ -471,40 +484,41 @@ describe("DesktopBackendManager", () => {
     }),
   );
 
-  it.effect("becomes ready from the server ready line while HTTP probes stall", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const probeStarted = yield* Deferred.make<void>();
-        const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        const readyLine = encodeDesktopTelemetryControl({ version: 1, type: "serverReady" });
-        const instance = yield* makeTestInstance({
-          spawnerLayer: Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() =>
-              Effect.succeed(
-                makeProcess({
-                  getOutputFd: (fd) =>
-                    fd === 5
-                      ? Stream.fromEffect(Deferred.await(probeStarted)).pipe(
-                          Stream.flatMap(() => Stream.encodeText(Stream.make(`${readyLine}\n`))),
-                        )
-                      : Stream.empty,
-                  exitCode: Deferred.await(exit),
-                  kill: () =>
-                    Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
-                }),
-              ),
+  it.effect("a backend with a control channel is ready only once it says so there", () =>
+    Effect.gen(function* () {
+      const announce = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const instance = yield* makeTestInstance({
+        spawnerLayer: Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.succeed(
+              makeProcess({
+                getOutputFd: (fd) =>
+                  fd === 5
+                    ? Stream.fromEffect(Deferred.await(announce)).pipe(
+                        Stream.flatMap(() => readyControlChannel(fd)),
+                      )
+                    : Stream.empty,
+                exitCode: Deferred.await(exit),
+                kill: () =>
+                  Deferred.succeed(exit, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+              }),
             ),
           ),
-          httpClientLayer: layerHttpClient(() =>
-            Deferred.succeed(probeStarted, undefined).pipe(Effect.andThen(Effect.never)),
-          ),
-        });
+        ),
+        // An HTTP answer on the port is not the backend's own ready signal.
+        httpClientLayer: layerHealthyHttpClient,
+      });
 
-        yield* instance.start;
-        assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
-      }),
-    ),
+      yield* instance.start;
+      const early = yield* instance.waitForReady(Duration.seconds(15)).pipe(Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(15));
+      assert.isFalse(yield* Fiber.join(early));
+
+      yield* Deferred.succeed(announce, undefined);
+      assert.isTrue(yield* instance.waitForReady(Duration.seconds(15)));
+    }).pipe(Effect.scoped),
   );
 
   it.effect("continues routing desktop telemetry control messages after an invalid line", () =>
@@ -804,6 +818,7 @@ describe("DesktopBackendManager", () => {
       const reports = yield* Queue.unbounded<DesktopBackendManager.BackendStartupFailure>();
       const startInstance = (status: Ref.Ref<number>, onReady?: Effect.Effect<void>, stdout = "") =>
         makeTestInstance({
+          config: pollingConfig,
           spawnerLayer: Layer.succeed(
             ChildProcessSpawner.ChildProcessSpawner,
             ChildProcessSpawner.make(() =>
