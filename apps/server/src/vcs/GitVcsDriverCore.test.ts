@@ -9588,6 +9588,30 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("resolves remote branches whose names end in Unicode whitespace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        for (const branch of ["feature/memo\u3000", "feature/memo\u00a0"]) {
+          yield* git(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+          const head = yield* git(cwd, ["rev-parse", "HEAD"]);
+          assert.deepEqual(
+            yield* driver.resolveRemoteTrackingCommit({
+              cwd,
+              refName: `origin/${branch}`,
+              fallbackRemoteName: "origin",
+            }),
+            { commitSha: head, remoteRefName: `origin/${branch}` },
+          );
+        }
+      }),
+    );
+
     it.effect("fetches the selected worktree base for Changes", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
