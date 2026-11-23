@@ -1064,14 +1064,21 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   threadIds: ReadonlyArray<string>,
 ) {
   const http = yield* HttpClient.HttpClient;
-  const ticketResponse = yield* http.execute(
-    HttpClientRequest.post(`${server.origin}/api/auth/websocket-ticket`).pipe(
-      HttpClientRequest.bearerToken(token),
-    ),
-  );
-  const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(
-    yield* ticketResponse.text,
-  );
+  // Headers alone do not finish a request; the deadline covers the body too.
+  const ticketBody = yield* http
+    .execute(
+      HttpClientRequest.post(`${server.origin}/api/auth/websocket-ticket`).pipe(
+        HttpClientRequest.bearerToken(token),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((response) => response.text),
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(15),
+        orElse: () => new MetricsError({ message: "the WebSocket ticket never arrived" }),
+      }),
+    );
+  const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(ticketBody);
   const protocol = yield* Layer.build(
     RpcClient.layerProtocolSocket().pipe(
       Layer.provide(
@@ -1127,9 +1134,11 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     }),
   );
   yield* report;
+  // Renewals start every 25 s from the previous send, not its reply, so with the 15 s deadline
+  // each lands well inside the 45 s lease.
   yield* report.pipe(
+    Effect.repeat(Schedule.fixed(Duration.seconds(25))),
     Effect.delay(Duration.seconds(25)),
-    Effect.forever,
     Effect.catchCause(() => Ref.update(lost, (first) => first ?? "an activity report failed")),
     Effect.forkScoped,
   );
