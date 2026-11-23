@@ -70,6 +70,9 @@ const MAX_LABEL_CHARS: usize = 128;
 pub struct TerminalConfig {
     /// Where scrollback is kept across restarts; `None` keeps it in memory only.
     pub history_dir: Option<PathBuf>,
+    /// The T3 server's terminal history folder (`<state>/logs/terminals`); a terminal with
+    /// no history of its own takes T3's from there.
+    pub t3_history_dir: Option<PathBuf>,
     /// Scrollback per terminal. `apps/server` keeps 8 MiB but replays at most 512 KiB to a new
     /// session, and the web client asks for 512 KiB; we keep only what is ever sent.
     pub history_bytes: usize,
@@ -96,6 +99,7 @@ impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             history_dir: None,
+            t3_history_dir: None,
             history_bytes: 512 * 1024,
             history_lines: 5000,
             kill_grace: Duration::from_secs(1),
@@ -210,7 +214,10 @@ struct Launch {
 impl TerminalManager {
     /// Needs a tokio runtime with IO, time and process support.
     pub fn new(config: TerminalConfig) -> Self {
-        let store = config.history_dir.clone().map(Store::new);
+        let store = config
+            .history_dir
+            .clone()
+            .map(|dir| Store::new(dir, config.t3_history_dir.clone()));
         Self {
             inner: Arc::new(Inner {
                 config,

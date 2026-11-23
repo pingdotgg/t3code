@@ -4,13 +4,14 @@
 //! Inputs are checked against the contract's bounds here, as Effect's schema does in the T3
 //! server: a payload outside them is a defect, not a typed error.
 
-use std::future::Future;
+use std::{future::Future, path::PathBuf, sync::Arc};
 
 use conn_contract::{
     TerminalAttachInput, TerminalAttachStreamEvent, TerminalClearInput, TerminalCloseInput,
-    TerminalMetadataStreamEvent, TerminalOpenInput, TerminalResizeInput, TerminalWriteInput,
-    to_json,
+    TerminalMetadataStreamEvent, TerminalOpenError, TerminalOpenInput, TerminalResizeInput,
+    TerminalWriteInput, ThreadId, to_json,
 };
+use conn_engine::Engine;
 use conn_terminal::{MetadataSubscription, Subscription, TerminalConfig, TerminalManager};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -29,6 +30,7 @@ const STREAM_BUFFER: usize = 4;
 pub fn manager(environment: Option<&crate::environment::Environment>) -> TerminalManager {
     TerminalManager::new(TerminalConfig {
         history_dir: environment.map(|e| e.state_dir.join("terminals")),
+        t3_history_dir: environment.map(|e| e.state_dir.join("logs").join("terminals")),
         version: CONTRACT_SERVER_VERSION.into(),
         ..TerminalConfig::default()
     })
@@ -40,27 +42,63 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         .clone()
         .unwrap_or_else(|| manager(deps.environment.as_deref()));
 
-    let m = manager.clone();
-    table.unary("terminal.open", move |_, input: TerminalOpenInput| {
-        let m = m.clone();
+    let restore = Restore {
+        engine: deps.engine.clone(),
+        environment: deps.environment.clone(),
+        locks: Arc::default(),
+    };
+    let (m, r) = (manager.clone(), restore.clone());
+    table.unary("terminal.open", move |_, mut input: TerminalOpenInput| {
+        let (m, r) = (m.clone(), r.clone());
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(input.cols, input.rows)?;
-            m.open(input).map_err(|e| Failure::fail(&e))
+            input.env = launch_env(
+                r.environment.as_deref(),
+                input.provider_instance_id.as_deref(),
+                input.env.take(),
+            )?;
+            match m.open(input.clone()) {
+                Err(TerminalOpenError::TerminalCwdNotFoundError(_))
+                    if r.worktree(&input.thread_id, &input.cwd).await =>
+                {
+                    m.open(input)
+                }
+                opened => opened,
+            }
+            .map_err(|e| Failure::fail(&e))
         }
     });
-    let m = manager.clone();
-    table.stream("terminal.attach", move |ctx, input: TerminalAttachInput| {
-        let m = m.clone();
-        async move {
-            check_session(&input.thread_id, &input.terminal_id)?;
-            check_grid(input.cols, input.rows)?;
-            let sub = m
-                .attach(input, ctx.connection_id)
+    let (m, r) = (manager.clone(), restore);
+    table.stream(
+        "terminal.attach",
+        move |ctx, mut input: TerminalAttachInput| {
+            let (m, r) = (m.clone(), r.clone());
+            async move {
+                check_session(&input.thread_id, &input.terminal_id)?;
+                check_grid(input.cols, input.rows)?;
+                input.env = launch_env(
+                    r.environment.as_deref(),
+                    input.provider_instance_id.as_deref(),
+                    input.env.take(),
+                )?;
+                let sub = match m.attach(input.clone(), ctx.connection_id) {
+                    Err(TerminalOpenError::TerminalCwdNotFoundError(_))
+                        if r.worktree(
+                            &input.thread_id,
+                            input.cwd.as_deref().unwrap_or_default(),
+                        )
+                        .await =>
+                    {
+                        m.attach(input, ctx.connection_id)
+                    }
+                    attached => attached,
+                }
                 .map_err(|e| Failure::fail(&e))?;
-            Ok(forward(sub))
-        }
-    });
+                Ok(forward(sub))
+            }
+        },
+    );
     let m = manager.clone();
     table.stream("terminal.observe", move |_, input: TerminalClearInput| {
         let m = m.clone();
@@ -164,6 +202,108 @@ fn forward(mut source: impl Source) -> ItemStream {
     rx
 }
 
+/// `TerminalCwdRecovery` from `prepareTerminalLaunch` (T3 `restoreMissingWorktree.ts`): a
+/// terminal whose folder is inside its thread's managed worktree, gone with its branch kept,
+/// gets the checkout back before the open is tried again.
+#[derive(Clone)]
+struct Restore {
+    engine: Option<Arc<dyn Engine>>,
+    environment: Option<Arc<crate::environment::Environment>>,
+    /// One restore per worktree at a time; a second open waits and finds it back.
+    locks: Arc<conn_vcs::locks::WorkspaceLocks>,
+}
+
+impl Restore {
+    /// Whether the thread's worktree holding `cwd` is back: restored now, or by an open that
+    /// held the lock first.
+    async fn worktree(&self, thread_id: &str, cwd: &str) -> bool {
+        let (Some(engine), Some(environment)) = (&self.engine, &self.environment) else {
+            return false;
+        };
+        let Ok(projection) = engine
+            .get_thread_projection(ThreadId::from(thread_id.to_owned()))
+            .await
+        else {
+            return false;
+        };
+        let thread = if projection["thread"].is_object() {
+            &projection["thread"]
+        } else {
+            &projection
+        };
+        // A thread without a branch has a scratch folder, not a worktree to restore.
+        let (Some(worktree), Some(branch), Some(project_id)) = (
+            thread["worktreePath"].as_str(),
+            thread["branch"].as_str(),
+            thread["projectId"].as_str(),
+        ) else {
+            return false;
+        };
+        let worktree = PathBuf::from(worktree);
+        let target = conn_files::paths::normalize(&worktree.join(cwd));
+        if !conn_files::paths::is_within(&target, &worktree) {
+            return false;
+        }
+        let Some(root) = engine.projects_snapshot().await.ok().and_then(|projects| {
+            projects
+                .iter()
+                .find(|p| p["id"] == project_id)
+                .and_then(|p| p["workspaceRoot"].as_str())
+                .map(PathBuf::from)
+        }) else {
+            return false;
+        };
+        let dirs = crate::host::managed_worktree_dirs(environment);
+        let path = worktree.clone();
+        let managed = tokio::task::spawn_blocking(move || {
+            crate::host::is_managed_worktree_path(&dirs, &path)
+        })
+        .await
+        .unwrap_or(false);
+        if !managed {
+            return false;
+        }
+        let _lock = self.locks.workspace(&worktree.to_string_lossy()).await;
+        match conn_vcs::worktree::restore_missing_worktree(&root, &worktree, branch).await {
+            Ok(true) => true,
+            Ok(false) => tokio::fs::try_exists(worktree.join(".git"))
+                .await
+                .unwrap_or(false),
+            Err(error) => {
+                eprintln!("conn-server: could not recreate a missing worktree: {error}");
+                false
+            }
+        }
+    }
+}
+
+/// `resolveLaunchInputEnvironment`: a terminal opened for a provider instance starts with that
+/// instance's environment; an instance the settings do not have is refused.
+fn launch_env(
+    environment: Option<&crate::environment::Environment>,
+    instance_id: Option<&str>,
+    env: Option<conn_contract::support::Map<String, String>>,
+) -> Result<Option<conn_contract::support::Map<String, String>>, Failure> {
+    let Some(instance_id) = instance_id else {
+        return Ok(env);
+    };
+    environment
+        .and_then(|e| {
+            crate::settings::provider_terminal_env(
+                &e.settings.raw(),
+                instance_id,
+                env.unwrap_or_default(),
+            )
+        })
+        .map(Some)
+        .ok_or_else(|| {
+            Failure::fail(&conn_contract::TerminalProviderInstanceNotFoundError {
+                tag: Default::default(),
+                provider_instance_id: instance_id.to_owned(),
+            })
+        })
+}
+
 fn check_session(thread_id: &str, terminal_id: &str) -> Result<(), Failure> {
     check_id(thread_id, usize::MAX)?;
     check_id(terminal_id, 128)
@@ -226,8 +366,12 @@ mod tests {
 
     impl Client {
         fn connect() -> Self {
+            Self::connect_with(&Deps::default())
+        }
+
+        fn connect_with(deps: &Deps) -> Self {
             let mut table = MethodTable::new();
-            register(&mut table, &Deps::default());
+            register(&mut table, deps);
             let (to_server, incoming) = unbounded_channel();
             let (sent, from_server) = unbounded_channel();
             tokio::spawn(run(
@@ -291,6 +435,315 @@ mod tests {
                     .to_owned()
             })
             .collect()
+    }
+
+    /// The text a fresh terminal prints for `$AUDIT_PROFILE`, opened for `instance`.
+    async fn profile_marker(
+        client: &mut Client,
+        id: i64,
+        terminal: &str,
+        instance: Option<&str>,
+    ) -> String {
+        let mut attach = json!({"threadId": "thread-p", "terminalId": terminal,
+            "cwd": std::env::temp_dir(), "cols": 80, "rows": 24,
+            "env": {"PS1": "$ ", "HISTFILE": "/dev/null"}});
+        if let Some(instance) = instance {
+            attach["providerInstanceId"] = json!(instance);
+        }
+        client.request(id, "terminal.attach", attach);
+        client.until(|f| f["_tag"] == "Chunk").await;
+        client.send(json!({"_tag": "Ack", "requestId": id}));
+        client.request(
+            id + 1,
+            "terminal.write",
+            json!({"threadId": "thread-p", "terminalId": terminal,
+                "data": "echo \"marker:${AUDIT_PROFILE-unset}:end\"\n"}),
+        );
+        let mut seen = String::new();
+        loop {
+            let (_, frame) = client
+                .next(Duration::from_secs(15))
+                .await
+                .expect("shell output");
+            if frame["_tag"] == "Chunk" && frame["requestId"] == id {
+                client.send(json!({"_tag": "Ack", "requestId": id}));
+            }
+            seen.push_str(&output(&frame));
+            // The echoed command line holds `${`, the output does not.
+            let printed = seen
+                .match_indices("marker:")
+                .map(|(start, _)| &seen[start + "marker:".len()..])
+                .filter(|rest| !rest.starts_with("${"))
+                .find_map(|rest| rest.find(":end").map(|end| rest[..end].to_owned()));
+            if let Some(value) = printed {
+                return value;
+            }
+        }
+    }
+
+    /// T3 `resolveLaunchInputEnvironment`: each instance's terminal gets that instance's
+    /// environment, a terminal without one gets none, and an unknown instance is refused with
+    /// its typed error before any terminal exists.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_provider_instance_terminal_gets_its_environment() {
+        let dir =
+            std::env::temp_dir().join(format!("conn-terminal-profile-{}", std::process::id()));
+        let environment = crate::environment::Environment::load(
+            &dir,
+            Some("Test".into()),
+            dir.clone(),
+            Default::default(),
+        )
+        .unwrap();
+        let marker =
+            |value: &str| json!([{"name": "AUDIT_PROFILE", "value": value, "sensitive": false}]);
+        environment
+            .settings
+            .update(
+                json!({"providerInstances": {
+                    "fixtureprofile": {"driver": "codex", "environment": marker("fixture-value")},
+                    "otherprofile": {"driver": "claudeAgent", "environment": marker("other-value")},
+                }}),
+                None,
+            )
+            .unwrap();
+        let deps = Deps {
+            environment: Some(Arc::new(environment)),
+            ..Deps::default()
+        };
+        let mut client = Client::connect_with(&deps);
+        client.request(
+            1,
+            "terminal.open",
+            json!({"threadId": "thread-p", "terminalId": "unknown", "cwd": std::env::temp_dir(),
+                "providerInstanceId": "unused-fixture-provider"}),
+        );
+        let refused = client.until(|f| is_exit(f, 1)).await;
+        let exit = &refused.last().unwrap()["exit"];
+        assert_eq!(
+            exit["cause"][0]["error"]["_tag"], "TerminalProviderInstanceNotFoundError",
+            "{exit}"
+        );
+        assert_eq!(
+            exit["cause"][0]["error"]["providerInstanceId"],
+            "unused-fixture-provider"
+        );
+        // No terminal was made: attaching without a folder finds none.
+        client.request(
+            2,
+            "terminal.attach",
+            json!({"threadId": "thread-p", "terminalId": "unknown"}),
+        );
+        let lookup = client.until(|f| is_exit(f, 2)).await;
+        assert_eq!(
+            lookup.last().unwrap()["exit"]["cause"][0]["error"]["_tag"],
+            "TerminalSessionLookupError"
+        );
+
+        assert_eq!(
+            profile_marker(&mut client, 10, "first", Some("fixtureprofile")).await,
+            "fixture-value"
+        );
+        assert_eq!(
+            profile_marker(&mut client, 20, "second", Some("otherprofile")).await,
+            "other-value"
+        );
+        assert_eq!(
+            profile_marker(&mut client, 30, "plain", None).await,
+            "unset"
+        );
+        client.request(
+            4,
+            "terminal.close",
+            json!({"threadId": "thread-p", "deleteHistory": true}),
+        );
+        client.until(|f| is_exit(f, 4)).await;
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Serves one thread and its project, for the worktree restore.
+    struct OneThread {
+        thread: Value,
+        projects: Vec<Value>,
+    }
+
+    impl Engine for OneThread {
+        fn dispatch(
+            &self,
+            _: conn_contract::Command,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_contract::DispatchCommandResult,
+                conn_engine::EngineError<conn_contract::DispatchCommandError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("not called".into())) })
+        }
+        fn subscribe_shell(
+            &self,
+            _: conn_contract::SubscribeShellInput,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_engine::Subscription<
+                    conn_contract::ShellStreamItem,
+                    conn_contract::GetShellSnapshotError,
+                >,
+                conn_engine::EngineError<conn_contract::GetShellSnapshotError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("not called".into())) })
+        }
+        fn subscribe_thread(
+            &self,
+            _: conn_contract::SubscribeThreadInput,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<
+                conn_engine::Subscription<
+                    conn_contract::ThreadStreamItem,
+                    conn_contract::GetThreadProjectionError,
+                >,
+                conn_engine::EngineError<conn_contract::GetThreadProjectionError>,
+            >,
+        > {
+            Box::pin(async { Err(conn_engine::EngineError::Internal("not called".into())) })
+        }
+        fn get_thread_projection(
+            &self,
+            _: ThreadId,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<Value, conn_engine::EngineError<conn_contract::GetThreadProjectionError>>,
+        > {
+            let thread = self.thread.clone();
+            Box::pin(async move { Ok(json!({"thread": thread})) })
+        }
+        fn projects_snapshot(
+            &self,
+        ) -> conn_engine::BoxFuture<
+            '_,
+            Result<Vec<Value>, conn_engine::EngineError<conn_contract::GetShellSnapshotError>>,
+        > {
+            let projects = self.projects.clone();
+            Box::pin(async move { Ok(projects) })
+        }
+    }
+
+    fn git(cwd: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@e",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// T3 `prepareTerminalLaunch` with `restoreMissingWorktree`: two terminals opened in a
+    /// removed managed worktree whose branch survives both open, after one restore of that
+    /// branch; a missing folder outside the thread's worktree keeps its error.
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminals_restore_a_missing_managed_worktree_once() {
+        let dir = std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!("conn-terminal-restore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let project = dir.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        git(&project, &["init", "-q", "-b", "main"]);
+        std::fs::write(project.join("README.md"), "base\n").unwrap();
+        git(&project, &["add", "."]);
+        git(&project, &["commit", "-qm", "base"]);
+        let state = dir.join("state");
+        let worktree = state.join("worktrees/project/feature-restore-0123456789abcdef");
+        git(
+            &project,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature/restore",
+                &worktree.to_string_lossy(),
+            ],
+        );
+        std::fs::write(worktree.join("thread.txt"), "thread work\n").unwrap();
+        git(&worktree, &["add", "."]);
+        git(&worktree, &["commit", "-qm", "thread tip"]);
+        let tip = git(&worktree, &["rev-parse", "HEAD"]);
+        std::fs::remove_dir_all(&worktree).unwrap();
+
+        let environment = crate::environment::Environment::load(
+            &state,
+            Some("Test".into()),
+            state.clone(),
+            Default::default(),
+        )
+        .unwrap();
+        let deps = Deps {
+            environment: Some(Arc::new(environment)),
+            engine: Some(Arc::new(OneThread {
+                thread: json!({"id": "thread-r", "projectId": "p1", "branch": "feature/restore",
+                    "worktreePath": worktree}),
+                projects: vec![json!({"id": "p1", "workspaceRoot": project})],
+            })),
+            ..Deps::default()
+        };
+        let mut client = Client::connect_with(&deps);
+        let open = |terminal: &str, cwd: &std::path::Path| {
+            json!({"threadId": "thread-r", "terminalId": terminal, "cwd": cwd,
+                "env": {"PS1": "$ ", "HISTFILE": "/dev/null"}})
+        };
+        client.request(1, "terminal.open", open("one", &worktree));
+        client.request(2, "terminal.open", open("two", &worktree));
+        let mut exits = Vec::new();
+        while exits.len() < 2 {
+            let (_, frame) = client
+                .next(Duration::from_secs(30))
+                .await
+                .expect("open answers");
+            if frame["_tag"] == "Exit" {
+                exits.push(frame);
+            }
+        }
+        for exit in &exits {
+            assert_eq!(exit["exit"]["_tag"], "Success", "{exit}");
+        }
+        assert_eq!(
+            git(&worktree, &["branch", "--show-current"]),
+            "feature/restore"
+        );
+        assert_eq!(git(&worktree, &["rev-parse", "HEAD"]), tip);
+        assert!(worktree.join("thread.txt").exists());
+
+        let elsewhere = dir.join("not-the-worktree");
+        client.request(3, "terminal.open", open("three", &elsewhere));
+        let refused = client.until(|f| is_exit(f, 3)).await;
+        assert_eq!(
+            refused.last().unwrap()["exit"]["cause"][0]["error"]["_tag"],
+            "TerminalCwdNotFoundError"
+        );
+        client.request(
+            4,
+            "terminal.close",
+            json!({"threadId": "thread-r", "deleteHistory": true}),
+        );
+        client.until(|f| is_exit(f, 4)).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[tokio::test(flavor = "current_thread")]

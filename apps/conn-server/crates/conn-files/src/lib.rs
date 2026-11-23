@@ -5,6 +5,7 @@
 //! the file system or a short `git` call; the server runs them on `spawn_blocking`.
 
 use std::{
+    cell::OnceCell,
     io,
     path::{Path, PathBuf},
 };
@@ -58,26 +59,27 @@ impl Files {
     }
 }
 
-/// The folders `projects.writeFile` may write in: project roots, and thread worktrees that
-/// `git worktree list` names for their project (`KnownWorkspaces.ts`). Built per call from the
-/// engine's shell snapshot; never cached.
+/// The folders `projects.writeFile` may write in: project roots, thread worktrees that
+/// `git worktree list` names for their project, and, with [`KnownWorkspaces::with_managed`],
+/// any worktree such a list names inside a managed worktree folder (`KnownWorkspaces.ts`).
+/// Built per call from the engine's shell snapshot; never cached.
 #[derive(Debug, Default)]
 pub struct KnownWorkspaces {
     roots: Vec<PathBuf>,
+    projects: Vec<PathBuf>,
+    /// Managed worktree folders, resolved.
+    managed: Vec<PathBuf>,
+    /// The projects' worktrees inside `managed`, listed on the first path that needs them.
+    managed_worktrees: OnceCell<Vec<PathBuf>>,
 }
 
 impl KnownWorkspaces {
     /// `projects`: workspace roots. `worktrees`: `(project root, thread worktree path)`.
     pub fn new(projects: &[String], worktrees: &[(String, String)]) -> Self {
-        let real = |p: &str| {
-            let path = paths::normalize(Path::new(p));
-            let real = std::fs::canonicalize(&path).ok()?;
-            (path.is_absolute() && !paths::is_filesystem_root(&real)).then_some(real)
-        };
-        let mut roots: Vec<PathBuf> = projects.iter().filter_map(|p| real(p)).collect();
+        let mut roots: Vec<PathBuf> = projects.iter().filter_map(|p| real_root(p)).collect();
         let mut listed: Vec<(String, Vec<PathBuf>)> = Vec::new();
         for (project, worktree) in worktrees {
-            let Some(worktree_real) = real(worktree) else {
+            let Some(worktree_real) = real_root(worktree) else {
                 continue;
             };
             if roots.contains(&worktree_real) {
@@ -94,13 +96,50 @@ impl KnownWorkspaces {
                 roots.push(worktree_real);
             }
         }
-        Self { roots }
+        Self {
+            roots,
+            projects: projects.iter().map(PathBuf::from).collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Also allows worktrees of these projects inside `dirs`, the managed worktree folders,
+    /// before any thread names them: a worktree made by `vcs.createWorktree`.
+    #[must_use]
+    pub fn with_managed(mut self, dirs: &[PathBuf]) -> Self {
+        self.managed = dirs
+            .iter()
+            .filter_map(|d| real_root(&d.to_string_lossy()))
+            .collect();
+        self
     }
 
     /// `real` must be canonical.
     pub fn contains(&self, real: &Path) -> bool {
-        self.roots.iter().any(|root| real.starts_with(root))
+        if self.roots.iter().any(|root| real.starts_with(root)) {
+            return true;
+        }
+        if !self.managed.iter().any(|dir| real.starts_with(dir)) {
+            return false;
+        }
+        self.managed_worktrees
+            .get_or_init(|| {
+                self.projects
+                    .iter()
+                    .flat_map(|project| git_worktrees(project))
+                    .filter(|w| self.managed.iter().any(|dir| w.starts_with(dir)))
+                    .collect()
+            })
+            .iter()
+            .any(|worktree| real.starts_with(worktree))
     }
+}
+
+/// A canonical, absolute folder that is not a filesystem root.
+fn real_root(p: &str) -> Option<PathBuf> {
+    let path = paths::normalize(Path::new(p));
+    let real = std::fs::canonicalize(&path).ok()?;
+    (path.is_absolute() && !paths::is_filesystem_root(&real)).then_some(real)
 }
 
 fn git_worktrees(project: &Path) -> Vec<PathBuf> {

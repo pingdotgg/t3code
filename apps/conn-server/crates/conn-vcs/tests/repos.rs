@@ -977,3 +977,180 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
 }
+
+/// T3 `ProviderTurnStartService.test.ts` "recovers the local or pushed thread tip, else the
+/// current branch, remote default, or detached HEAD", through `restore_missing_worktree`.
+#[tokio::test]
+async fn a_missing_worktree_is_restored_from_its_surviving_tip() {
+    let root = TempDir::new("restore");
+    let project = root.path().join("project");
+    let origin = root.path().join("origin.git");
+    let path = root.path().join("worktrees/project/restore");
+    std::fs::create_dir_all(&project).unwrap();
+    git(
+        root.path(),
+        &[
+            "init",
+            "-q",
+            "--bare",
+            "-b",
+            "main",
+            origin.to_str().unwrap(),
+        ],
+    );
+    git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["commit", "-q", "--allow-empty", "-m", "base"]);
+    let base_tip = git(&project, &["rev-parse", "HEAD"]).trim().to_owned();
+    git(
+        &project,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    git(&project, &["push", "-q", "origin", "main"]);
+    git(&project, &["remote", "set-head", "origin", "main"]);
+    git(
+        &project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "feature/restore",
+            path.to_str().unwrap(),
+        ],
+    );
+    write(&path, "thread.txt", "thread work");
+    let thread_tip = commit_all(&path, "thread tip");
+    git(&project, &["switch", "-q", "-c", "project-current"]);
+    write(&project, "project.txt", "new project code");
+    let project_tip = commit_all(&project, "project tip");
+    // Tags must neither hide the thread branch nor select a different tip.
+    git(&project, &["tag", "feature/restore", &project_tip]);
+    git(&project, &["tag", "project-current", &thread_tip]);
+    git(&project, &["tag", "origin/feature/restore", &thread_tip]);
+    let config = |key: &str| {
+        std::process::Command::new("git")
+            .args(["-C", project.to_str().unwrap(), "config", "--get"])
+            .arg(format!("branch.feature/restore.{key}"))
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+            .unwrap()
+    };
+    /// (scenario, tip, file, upstream, recorded base)
+    type Case<'a> = (&'a str, &'a str, Option<&'a str>, Option<&'a str>, &'a str);
+    let cases: [Case<'_>; 8] = [
+        ("retained", &thread_tip, Some("thread.txt"), None, ""),
+        ("leftover", &thread_tip, Some("thread.txt"), None, ""),
+        (
+            "deleted",
+            &project_tip,
+            Some("project.txt"),
+            None,
+            "project-current",
+        ),
+        (
+            "pushed",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/origin/feature/restore"),
+            "",
+        ),
+        (
+            "pushed-detached",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/origin/feature/restore"),
+            "",
+        ),
+        (
+            "pushed-sole-remote",
+            &thread_tip,
+            Some("thread.txt"),
+            Some("refs/remotes/upstream/feature/restore"),
+            "",
+        ),
+        ("detached", &base_tip, None, None, "main"),
+        (
+            "detached-no-remote",
+            &project_tip,
+            Some("project.txt"),
+            None,
+            "",
+        ),
+    ];
+    for (scenario, tip, file, upstream, base) in cases {
+        match scenario {
+            "pushed" => {
+                git(
+                    &project,
+                    &[
+                        "push",
+                        "-q",
+                        "origin",
+                        &format!("{thread_tip}:refs/heads/feature/restore"),
+                    ],
+                );
+                git(&project, &["fetch", "-q", "origin"]);
+            }
+            "pushed-detached" => {
+                git(&project, &["switch", "-q", "--detach"]);
+            }
+            "pushed-sole-remote" => {
+                git(&project, &["remote", "rename", "origin", "upstream"]);
+            }
+            "detached" => {
+                git(&project, &["remote", "rename", "upstream", "origin"]);
+                git(
+                    &project,
+                    &["push", "-q", "origin", "--delete", "feature/restore"],
+                );
+            }
+            "detached-no-remote" => {
+                git(&project, &["remote", "remove", "origin"]);
+            }
+            _ => {}
+        }
+        std::fs::remove_dir_all(&path).unwrap();
+        if scenario == "leftover" {
+            std::fs::create_dir_all(path.join("node_modules")).unwrap();
+        }
+        if scenario != "retained" && scenario != "leftover" {
+            git(&project, &["worktree", "prune"]);
+            git(&project, &["branch", "-q", "-D", "feature/restore"]);
+        }
+        assert!(
+            worktree::restore_missing_worktree(&project, &path, "feature/restore")
+                .await
+                .unwrap(),
+            "{scenario}"
+        );
+        assert_eq!(
+            git(&path, &["branch", "--show-current"]).trim(),
+            "feature/restore",
+            "{scenario}"
+        );
+        assert_eq!(git(&path, &["rev-parse", "HEAD"]).trim(), tip, "{scenario}");
+        for name in ["thread.txt", "project.txt"] {
+            assert_eq!(
+                path.join(name).exists(),
+                Some(name) == file,
+                "{scenario} {name}"
+            );
+        }
+        if let Some(upstream) = upstream {
+            assert_eq!(
+                git(&path, &["rev-parse", "--symbolic-full-name", "@{upstream}"]).trim(),
+                upstream,
+                "{scenario}"
+            );
+        } else {
+            assert_eq!(config("merge"), "", "{scenario}");
+        }
+        assert_eq!(config("t3-merge-base"), base, "{scenario}");
+    }
+    // A checkout that is there, or a folder with other files, is left alone.
+    assert!(
+        !worktree::restore_missing_worktree(&project, &path, "feature/restore")
+            .await
+            .unwrap()
+    );
+}

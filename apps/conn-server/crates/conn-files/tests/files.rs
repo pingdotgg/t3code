@@ -229,6 +229,77 @@ fn writes_only_inside_known_workspaces_and_outside_git() {
         fs::read_to_string(f.outside.join("secret.txt")).unwrap(),
         "outside"
     );
+
+    // A worktree of the project in a managed folder, before a thread names it (T3
+    // `KnownWorkspaces.contains`); a plain folder there, or a foreign repository, is not one.
+    let managed = f.outside.join("managed");
+    git(
+        &f.project,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    );
+    let worktree = managed.join("project/probe-0123");
+    git(
+        &f.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "probe",
+            &worktree.to_string_lossy(),
+        ],
+    );
+    fs::create_dir_all(managed.join("project/plain")).unwrap();
+    let foreign = managed.join("other/repo");
+    fs::create_dir_all(&foreign).unwrap();
+    git(&foreign, &["init", "-q"]);
+    let with_managed =
+        KnownWorkspaces::new(&projects, &[]).with_managed(std::slice::from_ref(&managed));
+    let save = |cwd: &Path, known: &KnownWorkspaces| {
+        let input = ProjectWriteFileInput {
+            cwd: cwd.to_string_lossy().into_owned(),
+            relative_path: "audit.txt".into(),
+            contents: "probe".into(),
+        };
+        workspace::write_file(&input, &|real| known.contains(real)).map_err(|e| e.failure)
+    };
+    assert_eq!(
+        save(&worktree, &known).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    assert_eq!(
+        save(&worktree, &with_managed).unwrap().relative_path,
+        "audit.txt"
+    );
+    assert_eq!(
+        fs::read_to_string(worktree.join("audit.txt")).unwrap(),
+        "probe"
+    );
+    // A link in the worktree cannot carry the save out of it.
+    symlink(&f.outside, worktree.join("escape")).unwrap();
+    assert_eq!(
+        save(&worktree.join("escape"), &with_managed).unwrap_err(),
+        Failure::WorkspacePathOutsideRoot
+    );
+    assert!(!f.outside.join("audit.txt").exists());
+    for elsewhere in [managed.join("project/plain"), foreign] {
+        assert_eq!(
+            save(&elsewhere, &with_managed).unwrap_err(),
+            Failure::WorkspacePathOutsideRoot,
+            "{}",
+            elsewhere.display()
+        );
+    }
 }
 
 #[test]

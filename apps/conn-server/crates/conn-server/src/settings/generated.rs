@@ -186,3 +186,18 @@ pub(super) const DEFAULT_DISABLED_DRIVERS: &[&str] = &[
 
 /// Default instances that run before settings name them (`DEFAULT_ENABLED_DEFAULT_INSTANCES`).
 pub(super) const DEFAULT_ENABLED_INSTANCES: &[&str] = &["claudeAgent", "codex"];
+
+/// Drivers with an instance named after them even when settings name none
+/// (`deriveProviderInstanceConfigMap`, `hasDefaultInstance`; apps/server/src/policy/managedProviders.ts).
+pub(super) const DEFAULT_INSTANCE_DRIVERS: &[&str] = &[
+    "antigravity",
+    "claudeAgent",
+    "codex",
+    "cursor",
+    "fx",
+    "grok",
+    "kiro",
+    "muse",
+    "opencode",
+    "pi",
+];
