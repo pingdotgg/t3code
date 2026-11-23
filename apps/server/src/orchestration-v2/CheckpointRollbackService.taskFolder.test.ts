@@ -152,7 +152,13 @@ const layerFor = (state: State, options: Options) => {
     IdAllocator.layer,
     CheckpointCaptureService.layer.pipe(
       Layer.provide(
-        Layer.mergeAll(layerCheckpoints, layerEventSink, IdAllocator.layer, layerProjections),
+        Layer.mergeAll(
+          layerCheckpoints,
+          layerEventSink,
+          IdAllocator.layer,
+          layerProjections,
+          ThreadCommandExecutor.layer,
+        ),
       ),
     ),
     CheckpointRollbackService.layer.pipe(

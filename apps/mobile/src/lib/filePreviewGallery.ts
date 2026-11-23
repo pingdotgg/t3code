@@ -1,4 +1,25 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import type { FilePreviewItem, FilePreviewSource } from "../components/ui/FilePreviewModal.types";
+
+export function remoteAttachmentImageSource(
+  environmentId: EnvironmentId,
+  attachmentId: string,
+  { name, mimeType }: { readonly name: string; readonly mimeType: string },
+) {
+  const resource = {
+    _tag: "attachment" as const,
+    attachmentId,
+    fileName: name,
+    mimeType,
+  };
+  return {
+    kind: "image",
+    name,
+    environmentId,
+    resource,
+    actionsSource: { name, mimeType, environmentId, resource },
+  } satisfies FilePreviewItem;
+}
 
 export function filePreviewKey(source: FilePreviewItem): string {
   if ("resource" in source)
