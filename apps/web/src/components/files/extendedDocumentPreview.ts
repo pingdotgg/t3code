@@ -704,6 +704,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         const label =
           (
             {
+              0: "windows-1252",
+              866: "ibm866",
               65001: "utf-8",
               932: "shift_jis",
               936: "gbk",

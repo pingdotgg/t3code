@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Measures a checkout's server process (CPU, wakeups, memory, time to the API) against a fake
-// Anthropic API and the real `claude` CLI. See docs/internals/performance-regressions.md.
+// Anthropic API and the real `claude` CLI. See docs/internals/16_performance-regressions.md.
 // @effect-diagnostics nodeBuiltinImport:off - NodeHttpServer takes a node:http server.
 import * as NodeHttp from "node:http";
 
