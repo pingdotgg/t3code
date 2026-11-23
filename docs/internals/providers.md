@@ -11,9 +11,14 @@ clients read declared capabilities, never provider names.
 - **Route by provider instance, not driver kind.** Session state, catalogs, and credentials belong
   to a provider instance so two accounts on the same driver cannot share mutable state. Strip
   ambient credentials the instance did not configure.
-- **ACP vs. native.** ACP agents start as [ACP Registry](../user/providers-acp.md) entries with no
-  per-agent branches in the generic registry adapter. Add a dedicated ACP flavor only when behavior
-  exceeds the ACP spec, and a native `ProviderAdapterV2` only for non-ACP protocols.
+- **Strict ACP compliance for non-first-party agents.** Generic
+  [ACP Registry](../user/providers-acp.md) and local ACP commands follow the ACP specification
+  strictly—never deviate from the spec or add agent-id checks, vendor extensions, or
+  driver-specific workarounds in the shared ACP adapter for non-first-party agents. If an upstream
+  ACP agent deviates from or lacks part of the spec, let orchestration degrade through capabilities
+  rather than special-casing it here. Dedicated ACP flavors (over `packages/provider-acp`) are
+  reserved for first-party drivers that need behavior outside the ACP spec; native
+  `ProviderAdapterV2` adapters are only for non-ACP protocols.
 - **Package boundaries.** Providers live in `packages/provider-<name>` (see
   [Pi](../../packages/provider-pi) as reference). Server code imports only
   `@t3tools/provider-core/server/*`, contracts, and shared, reaching host capabilities through
