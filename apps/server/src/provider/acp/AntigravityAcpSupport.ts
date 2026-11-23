@@ -1,6 +1,7 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type AntigravityAuthMethod,
+  isRuntimeModeAbove,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ProviderSendTurnInput,
@@ -166,11 +167,19 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-/**
- * The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`.
- * Those stay in `default`, where it asks before acting and T3 answers from the live runtime
- * policy, so permission changes apply on the next turn without a restart.
- */
+export function shouldSkipAntigravityPermissions(
+  policy: AcpRuntimePolicy & { readonly maxRuntimeMode?: RuntimeMode | undefined },
+): boolean {
+  return (
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined &&
+    (policy.maxRuntimeMode === undefined ||
+      !isRuntimeModeAbove(policy.runtimeMode, policy.maxRuntimeMode))
+  );
+}
+
+/** The agy CLI rejects `yolo` and `auto_edit`, and sessions without native Auto reject `auto`. */
 export function antigravitySessionMode(
   modeId: string,
   modeState: AcpSessionModeState | undefined,

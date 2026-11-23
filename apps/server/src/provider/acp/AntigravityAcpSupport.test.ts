@@ -20,6 +20,7 @@ import {
   antigravitySessionMeta,
   antigravitySessionMode,
   buildAntigravityPrompt,
+  shouldSkipAntigravityPermissions,
 } from "./AntigravityAcpSupport.ts";
 
 const modelConfig = {
@@ -99,6 +100,43 @@ describe("Antigravity Auto", () => {
       availableModes: offered.map((id) => ({ id, name: id })),
     };
     expect(antigravitySessionMode("auto", modeState)).toBe(expected);
+  });
+
+  it("skips native permissions at launch only for unrestricted full-access policies", () => {
+    expect(shouldSkipAntigravityPermissions({ runtimeMode: "full-access", cwd: "/worktree" })).toBe(
+      true,
+    );
+    expect(
+      shouldSkipAntigravityPermissions({
+        runtimeMode: "full-access",
+        maxRuntimeMode: "full-access",
+        cwd: "/worktree",
+      }),
+    ).toBe(true);
+    for (const runtimeMode of ["approval-required", "auto-accept-edits", "auto"] as const) {
+      expect(shouldSkipAntigravityPermissions({ runtimeMode, cwd: "/worktree" })).toBe(false);
+    }
+    expect(
+      shouldSkipAntigravityPermissions({
+        runtimeMode: "full-access",
+        approvalPolicy: "on-request",
+        cwd: "/worktree",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSkipAntigravityPermissions({
+        runtimeMode: "full-access",
+        sandboxPolicy: { type: "readOnly" },
+        cwd: "/worktree",
+      }),
+    ).toBe(false);
+    expect(
+      shouldSkipAntigravityPermissions({
+        runtimeMode: "full-access",
+        maxRuntimeMode: "auto",
+        cwd: "/worktree",
+      }),
+    ).toBe(false);
   });
 
   it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {

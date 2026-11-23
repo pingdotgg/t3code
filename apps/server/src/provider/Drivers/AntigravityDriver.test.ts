@@ -396,7 +396,17 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           modelSelection,
           runtimePolicy,
         });
+        expect(
+          session.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+        ).toBe(false);
         yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        expect(h.launches.at(-1)?.args).toEqual([
+          "acp",
+          "--gemini-dir",
+          h.profileDirectory,
+          "--app-data-dir",
+          "antigravity-acp",
+        ]);
 
         const helper = {
           fs: { readTextFile: false, writeTextFile: false },
@@ -420,19 +430,44 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
+        // Full access passes `--dangerously-skip-permissions` so native subagents do not hang on
+        // unattended tool approvals; policy overrides and narrower modes stay in ask mode.
         h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        for (const [caseName, cliPolicy, expectsSkipFlag] of [
+          [
+            "full-access",
+            ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: workspace,
+            }),
+            true,
+          ],
+          [
+            "full-access-sandbox-override",
+            ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              sandboxPolicy: { type: "readOnly" },
+              cwd: workspace,
+            }),
+            false,
+          ],
+          [
+            "auto-accept-edits",
+            ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "auto-accept-edits",
+              interactionMode: "default",
+              cwd: workspace,
+            }),
+            false,
+          ],
+        ] as const) {
           const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
-          const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
-            interactionMode: "default",
-            cwd: workspace,
-          });
+          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${caseName}`);
           const cliSession = yield* h.instance.orchestrationAdapter.openSession({
             threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
+            providerSessionId: ProviderSessionId.make(`provider-session-cli-${caseName}`),
             modelSelection,
             runtimePolicy: cliPolicy,
           });
@@ -447,6 +482,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             h.profileDirectory,
             "--app-data-dir",
             "antigravity-acp",
+            ...(expectsSkipFlag ? ["--dangerously-skip-permissions"] : []),
           ]);
           expect(
             (yield* h.readRequests)

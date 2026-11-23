@@ -184,6 +184,35 @@ describe("Antigravity process environment", () => {
     expect(perRun.env?.TMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
   });
 
+  it("appends --dangerously-skip-permissions only when requested", () => {
+    const baseInput = {
+      installation: { executablePath: "/usr/bin/agy" },
+      profile,
+      cwd: "/project",
+      baseEnv: { PATH: "/usr/bin" },
+    };
+    expect(buildAntigravityAcpSpawnInput(baseInput).args).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+    ]);
+    expect(
+      buildAntigravityAcpSpawnInput({ ...baseInput, shouldSkipPermissions: false }).args,
+    ).toEqual(["acp", "--gemini-dir", profile.geminiHome, "--app-data-dir", "antigravity-acp"]);
+    expect(
+      buildAntigravityAcpSpawnInput({ ...baseInput, shouldSkipPermissions: true }).args,
+    ).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+      "--dangerously-skip-permissions",
+    ]);
+  });
+
   it.effect("keeps accounts separate even when instance IDs differ only by case", () =>
     Effect.gen(function* () {
       const first = yield* resolveAntigravityInstanceDirectories(

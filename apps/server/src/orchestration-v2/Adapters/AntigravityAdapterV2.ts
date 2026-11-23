@@ -64,7 +64,7 @@ const AntigravityProviderCapabilitiesV2 = {
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: true,
-    supportsRuntimeModeSwitchInSession: true,
+    supportsRuntimeModeSwitchInSession: false,
   },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
@@ -80,7 +80,10 @@ const AntigravityProviderCapabilitiesV2 = {
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
-> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+> & {
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly runtimePolicy?: AcpAdapterV2RuntimeInput["runtimePolicy"];
+};
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
