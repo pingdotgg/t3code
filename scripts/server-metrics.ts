@@ -13,6 +13,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
+import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -59,6 +60,7 @@ import { run } from "./scenarios/shell.ts";
 import {
   compareMetrics,
   CpuProfile,
+  describeFailure,
   HeapProfile,
   HeapSnapshot,
   heapByConstructor,
@@ -67,6 +69,7 @@ import {
   loadWarnings,
   noiseReport,
   noisePairProblem,
+  profileMismatch,
   round,
   ServerMetrics,
   slope,
@@ -91,10 +94,41 @@ const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
 /** A prompt holding this streams a reply that ends in a Write tool call, then a short answer. */
 const EDIT_MARKER = "[[edit-files]]";
-/** Sequential turns in the pipeline scenario. */
-const PIPELINE_TURNS = 50;
-/** Threads working at once in each window of the working scenario. */
-const WORKING_THREADS = [5, 10, 20];
+/**
+ * How long each scenario measures. `quick` keeps every scenario but shortens its windows, for a
+ * per-PR or nightly check; its numbers compare only with other quick runs.
+ */
+const PROFILES = {
+  full: {
+    /** Idle time before a quiet window, so startup and thread setup work has drained. */
+    settleSeconds: 15,
+    windowSeconds: 30,
+    streamingSeconds: 60,
+    profileSeconds: 20,
+    /** Sequential turns in the pipeline scenario. */
+    pipelineTurns: 50,
+    /** Threads working at once in each window of the working scenario. */
+    workingThreads: [5, 10, 20],
+    workingWarmupSeconds: 10,
+    /** Long enough that most threads finish a turn inside it even at 20 working. */
+    workingSeconds: 30,
+    threads: "0,5,10,20",
+    runs: 5,
+  },
+  quick: {
+    settleSeconds: 5,
+    windowSeconds: 10,
+    streamingSeconds: 20,
+    profileSeconds: 5,
+    pipelineTurns: 15,
+    workingThreads: [5, 20],
+    workingWarmupSeconds: 5,
+    workingSeconds: 20,
+    threads: "0,10",
+    runs: 3,
+  },
+} as const;
+type Profile = (typeof PROFILES)[keyof typeof PROFILES];
 /** A user's devices: clients that drop and reconnect at once, each holding this many threads. */
 const RECONNECT_CLIENTS = 3;
 const RECONNECT_THREADS = 10;
@@ -1584,6 +1618,7 @@ interface RunOptions {
   readonly ballastMB: number;
   /** Also runs the upper-bound stress cases, such as the 20-client reconnect storm. */
   readonly stress: boolean;
+  readonly profile: Profile;
   /** Where full CPU and allocation profiles go; none are written without it. */
   readonly profileDir: string | undefined;
 }
@@ -1613,9 +1648,21 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     name: string,
     body: (server: Server) => Effect.Effect<A, E, R>,
     serverOptions: ServerOptions = {},
-  ) => Effect.scoped(Effect.flatMap(startServer(environment, name, serverOptions), body));
+  ) =>
+    Effect.scoped(Effect.flatMap(startServer(environment, name, serverOptions), body)).pipe(
+      // Names the scenario and its cause in one line, instead of a stack from deep in the RPC client.
+      Effect.catchCauseIf(
+        (cause) => !Cause.hasInterruptsOnly(cause),
+        (cause) =>
+          Effect.fail(
+            new MetricsError({
+              message: `the ${name} scenario failed: ${describeFailure(Cause.squash(cause))}`,
+            }),
+          ),
+      ),
+    );
   const profile = Effect.fn("serverMetrics.saveProfile")(function* (server: Server, name: string) {
-    const { summary, raw } = yield* server.profile(20);
+    const { summary, raw } = yield* server.profile(options.profile.profileSeconds);
     profiles[name] = summary;
     if (options.profileDir === undefined) return;
     yield* fs.makeDirectory(options.profileDir, { recursive: true });
@@ -1634,8 +1681,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       Effect.gen(function* () {
         measured.startup = { readyMs: server.readyMs };
         if (wanted("rest")) {
-          yield* Effect.sleep(Duration.seconds(15));
-          measured.rest = yield* server.measure(30);
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+          measured.rest = yield* server.measure(options.profile.windowSeconds);
         }
         if (wanted("firstWord")) {
           measured.firstWord = {
@@ -1654,8 +1701,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         for (const threads of options.threads) {
           if (threads > open) yield* openThreads(server, open, threads - open);
           open = Math.max(open, threads);
-          yield* Effect.sleep(Duration.seconds(15));
-          points.push({ threads, window: yield* server.measure(30) });
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+          points.push({ threads, window: yield* server.measure(options.profile.windowSeconds) });
         }
         const last = points.at(-1);
         if (last) measured.quiet = last.window;
@@ -1698,8 +1745,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           yield* Effect.scoped(
             Effect.gen(function* () {
               const client = yield* attachClient(server, token, threads.slice(0, count));
-              yield* Effect.sleep(Duration.seconds(10));
-              attached[`${count}`] = yield* server.measure(30);
+              yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds));
+              attached[`${count}`] = yield* server.measure(options.profile.windowSeconds);
               yield* client.healthy;
             }),
           );
@@ -1733,7 +1780,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     yield* withServer("working", (server) =>
       Effect.gen(function* () {
         const token = yield* server.issueToken;
-        const counts = WORKING_THREADS;
+        const counts = options.profile.workingThreads;
         const threads = yield* openWorktreeThreads(server, Math.max(...counts));
         const active: Record<string, WorkingPoint> = {};
         for (const [index, count] of counts.entries()) {
@@ -1742,7 +1789,10 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             server,
             token,
             threads.slice(0, count),
-            { warmupSeconds: 10, windowSeconds: 30 },
+            {
+              warmupSeconds: options.profile.workingWarmupSeconds,
+              windowSeconds: options.profile.workingSeconds,
+            },
             30_000 + index * 10_000,
           );
         }
@@ -1761,7 +1811,11 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   if (wanted("pipeline")) {
     yield* withServer("pipeline", (server) =>
       Effect.gen(function* () {
-        measured.pipeline = yield* pipelineTurns(environment, server, PIPELINE_TURNS);
+        measured.pipeline = yield* pipelineTurns(
+          environment,
+          server,
+          options.profile.pipelineTurns,
+        );
       }),
     );
   }
@@ -1793,7 +1847,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           return yield* new MetricsError({ message: "fewer than 5 replies started streaming" });
         }
         yield* Effect.sleep(Duration.seconds(5));
-        measured.streaming = yield* server.measure(60);
+        measured.streaming = yield* server.measure(options.profile.streamingSeconds);
         yield* profile(server, "streaming");
       }),
     );
@@ -1807,8 +1861,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
       (server) =>
         Effect.gen(function* () {
           yield* server.ballast(options.ballastMB);
-          yield* Effect.sleep(Duration.seconds(30));
-          const rest = yield* server.measure(30);
+          yield* Effect.sleep(Duration.seconds(options.profile.settleSeconds * 2));
+          const rest = yield* server.measure(options.profile.windowSeconds);
           yield* server.assertIdle(server.startedAt);
           const shell = yield* loadShell(server, 5);
           const largest = server.largest;
@@ -1818,7 +1872,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const git = yield* Effect.raceFirst(
             Effect.gen(function* () {
               yield* Effect.sleep(Duration.seconds(5));
-              const window = yield* server.measure(30);
+              const window = yield* server.measure(options.profile.windowSeconds);
               yield* profile(server, "busyGit");
               return window;
             }),
@@ -1866,8 +1920,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             yield* takeSample;
             nextSample += 120_000;
           }
-          const threadId =
-            threads[yield* Random.nextIntBetween(0, threads.length, { halfOpen: true })];
+          // Round robin, so two soaks send the same turns to the same threads.
+          const threadId = threads[turn % threads.length];
           if (threadId === undefined)
             return yield* new MetricsError({ message: "no soak threads" });
           const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
@@ -2044,6 +2098,7 @@ const metaFor = Effect.fn("serverMetrics.metaFor")(function* (options: RunOption
       yield* output("git", ["rev-parse", "--short=12", "HEAD"], options.checkout),
     ),
     noAgentScope: options.noAgentScope,
+    profile: options.profile === PROFILES.quick ? "quick" : "full",
     agentScope:
       platform === "linux" &&
       !options.noAgentScope &&
@@ -2070,6 +2125,8 @@ const report = Effect.fn("serverMetrics.report")(function* (
   after: ServerMetrics,
   threshold: number,
 ) {
+  const mismatch = profileMismatch(before, after);
+  if (mismatch !== undefined) return yield* new MetricsError({ message: mismatch });
   const { table, regressed, improved, informational, compared, warnings } = compareMetrics(
     before,
     after,
@@ -2107,12 +2164,20 @@ const runFlags = {
   ),
   runs: Flag.Int("runs").pipe(
     Flag.withSchema(PositiveInt),
-    Flag.withDescription("firstWord runs in each variant."),
-    Flag.withDefault(5),
+    Flag.withDescription("firstWord runs in each variant. Default 5, 3 with --quick."),
+    Flag.optional,
   ),
   threads: Flag.String("threads").pipe(
-    Flag.withDescription("Open thread counts the quiet scenario measures."),
-    Flag.withDefault("0,5,10,20"),
+    Flag.withDescription(
+      "Open thread counts the quiet and clients scenarios measure. Default 0,5,10,20; 0,10 with --quick.",
+    ),
+    Flag.optional,
+  ),
+  quick: Flag.Boolean("quick").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription(
+      "Shorter windows, fewer turns and fewer points (about a third of the time), for a per-PR or nightly check. Compare quick runs only with quick runs.",
+    ),
   ),
   only: Flag.String("only").pipe(
     Flag.withDescription(`Scenarios to run, comma separated: ${SCENARIOS.join(", ")}.`),
@@ -2157,8 +2222,9 @@ const runFlags = {
 };
 interface RunFlags {
   readonly noAgentScope: boolean;
-  readonly runs: number;
-  readonly threads: string;
+  readonly runs: Option.Option<number>;
+  readonly threads: Option.Option<string>;
+  readonly quick: boolean;
   readonly only: Option.Option<string>;
   readonly soak: number;
   readonly seedDir: Option.Option<string>;
@@ -2174,9 +2240,10 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
   profileDir: string | undefined,
 ) {
   const path = yield* Path.Path;
+  const profile = flags.quick ? PROFILES.quick : PROFILES.full;
   const selection = parseRunSelection({
     only: Option.getOrElse(flags.only, () => ""),
-    threads: flags.threads,
+    threads: Option.getOrElse(flags.threads, () => profile.threads),
     soak: flags.soak,
     scenarios: SCENARIOS,
   });
@@ -2185,7 +2252,7 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
   const options: RunOptions = {
     checkout: path.resolve(checkout),
     noAgentScope: flags.noAgentScope,
-    runs: flags.runs,
+    runs: Option.getOrElse(flags.runs, () => profile.runs),
     threads,
     only,
     soakMinutes: flags.soak,
@@ -2193,6 +2260,7 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
     seed: undefined,
     ballastMB: flags.busyBallast,
     stress: flags.stress,
+    profile,
   };
   return options;
 });
@@ -2255,7 +2323,7 @@ const runCommand = Command.make(
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(
-    "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
+    "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), clients, many threads working, the turn pipeline, streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
   ),
 );
 
@@ -2379,7 +2447,18 @@ const noiseCommand = Command.make(
 
 const serverMetricsCommand = Command.make("server-metrics").pipe(
   Command.withDescription(
-    "Measure the server process against a fake Anthropic API and the real claude CLI, on Linux, macOS and Windows.",
+    `Measure the server process against a fake Anthropic API and the real claude CLI, on Linux, macOS and Windows.
+
+Which scenario answers what:
+  working     Many threads editing files at once, one client watching all: steer performance work by its loop delay, turn end and turns per minute.
+  pipeline    One thread's overhead per turn: send to API request, reply end to run end.
+  clients     What an attached client costs, and a user's 3 devices reconnecting. --stress adds the 20-client storm, an upper bound.
+  quiet       Idle cost per open thread (the scaling fit); rest is an idle server.
+  streaming   CPU and loop delay while 5 replies stream.
+  firstWord   A new thread's time to the API; startup is time to the first answer. Latency on a shared machine is noisy.
+  busy        Opt-in: a copy of your real database, read-only, for costs an empty one hides.
+
+Trust a change only from \`ab\` on one machine. compare gates on floors measured from A/A runs (\`noise\`), shows metrics too noisy to gate on without counting them, and warns when other processes loaded the machine; rerun then. --quick suits a per-PR or nightly check; decide on full runs.`,
   ),
   Command.withSubcommands([runCommand, abCommand, compareCommand, noiseCommand]),
 );
@@ -2393,6 +2472,16 @@ if (import.meta.main) {
         NodeSocket.layerWebSocketConstructor,
       ),
     ),
+    Effect.catchTags({
+      MetricsError: (error) =>
+        Console.error(`server-metrics: ${error.message}`).pipe(
+          Effect.andThen(
+            Effect.sync(() => {
+              process.exitCode = 1;
+            }),
+          ),
+        ),
+    }),
     NodeRuntime.runMain,
   );
 }
