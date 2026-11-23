@@ -713,6 +713,34 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates missing proxy variables from the login shell", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            HTTPS_PROXY: "http://127.0.0.1:3128",
+            HTTP_PROXY: "http://127.0.0.1:3128",
+            NO_PROXY: "localhost,127.0.0.1,.corp.example",
+            https_proxy: "http://127.0.0.1:3128",
+            http_proxy: "http://127.0.0.1:3128",
+            no_proxy: "localhost,127.0.0.1,.corp.example",
+          }),
+      });
+
+      assert.equal(env.HTTPS_PROXY, "http://127.0.0.1:3128");
+      assert.equal(env.HTTP_PROXY, "http://127.0.0.1:3128");
+      assert.equal(env.NO_PROXY, "localhost,127.0.0.1,.corp.example");
+      assert.equal(env.https_proxy, "http://127.0.0.1:3128");
+      assert.equal(env.http_proxy, "http://127.0.0.1:3128");
+      assert.equal(env.no_proxy, "localhost,127.0.0.1,.corp.example");
+    }),
+  );
+
   it.effect.each([
     {
       name: "hydrates both Android SDK names when neither is inherited",
