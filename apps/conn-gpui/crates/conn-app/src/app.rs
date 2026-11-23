@@ -6744,7 +6744,7 @@ impl Render for ConnApp {
                                 });
                             },
                         );
-                        let up_entity = entity.clone();
+                        let up_entity = entity;
                         window.on_mouse_event(
                             move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
                                 if phase != gpui_kit::DispatchPhase::Capture {
