@@ -962,11 +962,38 @@ const focusedTextField = async (page: Page, timeout: number) => {
   );
 };
 
+// Serialized into the page's main world, so it must not reference module scope.
+const focusedValueOnlyInput = (target: FocusCandidate) => {
+  let element = target.getRootNode().activeElement;
+  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+  return (
+    element?.tagName === "INPUT" &&
+    ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(
+      element.type ?? "",
+    )
+  );
+};
+
+// Keys reach pages that build their value from keydown. Line breaks stay text: Enter would submit the form.
+const typeKeys = async (page: Page, text: string) => {
+  for (const [index, part] of text.split(/([\r\n]+)/u).entries()) {
+    if (index % 2 === 1) await page.keyboard.insertText(part);
+    else if (part !== "") await page.keyboard.type(part);
+  }
+};
+
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
+    // fill follows a label to its control and leaves that control focused for the keys.
+    await locator.fill("", { timeout });
+    // Pickers take a value such as 2026-01-31 only from fill; keys would enter their segments.
+    if (await locator.evaluate(focusedValueOnlyInput, undefined, { timeout })) {
+      await locator.fill(input.text, { timeout });
+      return;
+    }
+    await typeKeys(page, input.text);
     return;
   }
   const focused =
@@ -983,7 +1010,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.press("Delete");
   }
-  await page.keyboard.insertText(input.text);
+  await typeKeys(page, input.text);
 };
 
 export const hover = async (
