@@ -94,6 +94,9 @@ opt-level = 0
 
 [profile.dev.package."*"]
 opt-level = 2
+# Full debuginfo for every dependency made `target` grow past 140 GB. Line tables keep
+# backtraces and file:line in the debugger; workspace crates keep full debuginfo.
+debug = "line-tables-only"
 
 # Optimize wire decoding and state reducers even in dev/hot-reload builds so large
 # thread snapshots decode at full speed while conn-app stays opt-level = 0 for fast hot-patches.
