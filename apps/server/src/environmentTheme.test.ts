@@ -358,7 +358,7 @@ describe("environment theme", () => {
       Effect.gen(function* () {
         const resumeProbes = yield* Deferred.make<void>();
         let linkedEntry: string | undefined;
-        let moveAfterListing: Effect.Effect<void, unknown> | undefined;
+        let moveAfterListing: Effect.Effect<void> | undefined;
         let holdProbes = false;
         yield* withEnvironmentThemes(
           { "nightfall.json": encodeThemeFile(NIGHTFALL_THEME) },
@@ -394,7 +394,7 @@ describe("environment theme", () => {
             );
 
             // The next listing succeeds, then the tree moves before its files are opened.
-            moveAfterListing = fs.rename(active, previous);
+            moveAfterListing = Effect.orDie(fs.rename(active, previous));
             holdProbes = true;
             yield* fs.writeFileString(
               path.join(target, "nightfall.json"),
@@ -415,7 +415,7 @@ describe("environment theme", () => {
                       const move = directory === linkedEntry ? moveAfterListing : undefined;
                       if (move === undefined) return Effect.void;
                       moveAfterListing = undefined;
-                      return Effect.orDie(move);
+                      return move;
                     }),
                   ),
                 stat: (entry) =>
