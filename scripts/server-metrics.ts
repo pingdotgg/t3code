@@ -1119,7 +1119,13 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       ttlMs: 45_000,
       observedAt: yield* DateTime.now,
     });
-  });
+  }).pipe(
+    // A server that keeps the socket open but never answers would otherwise hang the scenario.
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(15),
+      orElse: () => new MetricsError({ message: "an activity report got no answer" }),
+    }),
+  );
   yield* report;
   yield* report.pipe(
     Effect.delay(Duration.seconds(25)),
@@ -1334,7 +1340,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         );
         const resubscribedMs = Math.round((yield* nowMs) - dropped);
         const loop = yield* server.loopRead;
-        yield* Effect.forEach(second, (client) => client.healthy, { discard: true });
+        // The first cohort again: a loss between its check and the drop happened in the storm.
+        yield* Effect.forEach([...first, ...second], (client) => client.healthy, { discard: true });
         yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), {
           discard: true,
         });
