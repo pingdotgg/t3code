@@ -56,6 +56,10 @@ type SyncCommand = Extract<
   OrchestrationCommand,
   { readonly type: "thread.pull-request-link.sync" }
 >;
+type ReadFailedCommand = Extract<
+  OrchestrationV2InternalCommand,
+  { readonly type: "thread.pull-request-link.read-failed" }
+>;
 type LinkCommand = Extract<OrchestrationCommand, { readonly type: "thread.pull-request.link" }>;
 type ChecksReopenCommand = Extract<
   OrchestrationV2InternalCommand,
@@ -199,6 +203,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
   const shellSnapshotReads = yield* Ref.make(0);
   const syncCommands = yield* Ref.make<ReadonlyArray<SyncCommand>>([]);
   const linkCommands = yield* Ref.make<ReadonlyArray<LinkCommand>>([]);
+  const readFailedCommands = yield* Ref.make<ReadonlyArray<ReadFailedCommand>>([]);
   const reopenCommands = yield* Queue.unbounded<ChecksReopenCommand>();
   const summaryCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
   const stackCalls = yield* Ref.make<ReadonlyArray<PullRequestRef>>([]);
@@ -226,6 +231,11 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     if (command.type === "thread.pull-request-link.sync") {
       return Ref.update(syncCommands, (recorded) => [...recorded, command]).pipe(
         Effect.andThen(options.onSync?.(command) ?? Effect.void),
+        Effect.as({ sequence: 1, storedEvents: [] }),
+      );
+    }
+    if (command.type === "thread.pull-request-link.read-failed") {
+      return Ref.update(readFailedCommands, (recorded) => [...recorded, command]).pipe(
         Effect.as({ sequence: 1, storedEvents: [] }),
       );
     }
@@ -300,6 +310,7 @@ const makeHarness = Effect.fn("makePullRequestSyncHarness")(function* (options: 
     shellSnapshotReads,
     syncCommands,
     linkCommands,
+    readFailedCommands,
     reopenCommands,
     summaryCalls,
     stackCalls,
@@ -865,6 +876,19 @@ describe("PullRequestSyncReactor", () => {
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
         assert.strictEqual((yield* Ref.get(fixture.stackCalls)).length, 1);
         assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
+
+        // An unchanged answer still clears the error an earlier read left on the link.
+        yield* Ref.update(fixture.snapshots, (snapshot) => ({
+          ...snapshot,
+          threads: snapshot.threads.map((thread) => ({
+            ...thread,
+            pullRequests: thread.pullRequests.map((link) => ({ ...link, readError: "host down" })),
+          })),
+        }));
+        yield* reactor.requestSync(makeLink(42));
+        yield* Queue.take(fixture.snapshotReads);
+        yield* reactor.drain;
+        assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 2);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -1744,6 +1768,14 @@ describe("PullRequestSyncReactor", () => {
         assert.deepStrictEqual(
           (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
           [8],
+        );
+        // The thread shows why its link has no fresh state.
+        assert.deepStrictEqual(
+          (yield* Ref.get(fixture.readFailedCommands)).map(({ number, readError }) => ({
+            number,
+            readError,
+          })),
+          [{ number: 7, readError: "Pull request operation summary failed: host down" }],
         );
       }).pipe(Effect.provide(fixture.layer));
     }),

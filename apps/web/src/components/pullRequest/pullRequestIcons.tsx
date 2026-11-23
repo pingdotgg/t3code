@@ -18,6 +18,7 @@ export const PullRequestGlyph = {
   closed: GitPullRequestClosedIcon,
   merged: GitMergeIcon,
   conflicting: TriangleAlertIcon,
+  readFailed: TriangleAlertIcon,
   stack: LayersIcon,
   link: Link2Icon,
   unlink: Unlink2Icon,

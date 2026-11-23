@@ -3822,6 +3822,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** A failed host read: recorded on the link, which keeps its last snapshot. */
+  Schema.Struct({
+    type: Schema.Literal("thread.pull-request-link.read-failed"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    ...ThreadPullRequestKey.fields,
+    readError: TrimmedNonEmptyString,
+  }),
   // The server issues this after checking the value against the run's declared schema.
   Schema.Struct({
     type: Schema.Literal("run.output.submit"),

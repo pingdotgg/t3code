@@ -140,6 +140,8 @@ export const ThreadPullRequestLink = Schema.Struct({
   linkedAt: IsoDateTime,
   snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
   stack: Schema.NullOr(ThreadPullRequestStack),
+  /** Why the last read from the host failed; cleared by the next successful read. */
+  readError: Schema.optional(TrimmedNonEmptyString),
   watch: Schema.optional(ThreadPullRequestWatch),
   /** Resume from the ended watch to avoid duplicate notifications. */
   endedWatch: Schema.optional(ThreadPullRequestWatch),

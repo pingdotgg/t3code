@@ -51,19 +51,17 @@ function isLocalRemoteUrl(url: string): boolean {
   return colonIndex === -1 || (slashIndex !== -1 && slashIndex < colonIndex);
 }
 
-// Reads `git config -z` records (`key\nvalue\0`). The configured URL, not the one `url.*.insteadOf`
-// rewrites it to, names the forge: a proxy or mirror rewrite must not change the identity.
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const record of stdout.split("\0")) {
-    const newline = record.indexOf("\n");
-    if (newline === -1) continue;
-    const remoteName = /^remote\.(.+)\.url$/su.exec(record.slice(0, newline))?.[1];
-    const remoteUrl = record.slice(newline + 1);
-    // Git fetches from a remote's first url.
+  for (const line of stdout.split(/\r?\n/)) {
+    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
+    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
+    if (!match) continue;
+    const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (
-      remoteName === undefined ||
-      remotes.has(remoteName) ||
+      direction !== "fetch" ||
+      remoteName.length === 0 ||
       remoteUrl.length === 0 ||
       isLocalRemoteUrl(remoteUrl)
     ) {
@@ -72,6 +70,35 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
     remotes.set(remoteName, remoteUrl);
   }
   return remotes;
+}
+
+// `git remote -v` prints URLs after `url.*.insteadOf`. A rewrite to a proxy or mirror must not
+// hide the forge, so a remote whose configured URL (`key\nvalue\0` records from `git config -z`)
+// names a forge keeps it; an alias that only the rewrite expands keeps the rewritten URL.
+function preferConfiguredForgeUrls(
+  remotes: ReadonlyMap<string, string>,
+  configStdout: string,
+): Map<string, string> {
+  const configured = new Map<string, string>();
+  for (const record of configStdout.split("\0")) {
+    const newline = record.indexOf("\n");
+    if (newline === -1) continue;
+    const remoteName = /^remote\.(.+)\.url$/su.exec(record.slice(0, newline))?.[1];
+    // Git fetches from a remote's first url.
+    if (remoteName !== undefined && !configured.has(remoteName)) {
+      configured.set(remoteName, record.slice(newline + 1));
+    }
+  }
+  return new Map(
+    [...remotes].map(([remoteName, remoteUrl]) => {
+      const configuredUrl = configured.get(remoteName);
+      return configuredUrl !== undefined &&
+        configuredUrl !== remoteUrl &&
+        (sourceControlDefinitions.recognizeRemote(configuredUrl)?.kind ?? "unknown") !== "unknown"
+        ? [remoteName, configuredUrl]
+        : [remoteName, remoteUrl];
+    }),
+  );
 }
 
 // `gh repo set-default` marks one remote with `base`, or with OWNER/REPO when it picked a
@@ -334,8 +361,9 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.option);
-  const [remoteResult, resolvedResult] = yield* Effect.all(
+  const [remoteResult, configuredResult, resolvedResult] = yield* Effect.all(
     [
+      runGit(["remote", "-v"]),
       runGit(["config", "-z", "--get-regexp", "^remote\\..*\\.url$"]),
       runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"]),
     ],
@@ -345,7 +373,12 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
-  const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
+  const remotes = preferConfiguredForgeUrls(
+    parseRemoteFetchUrls(remoteResult.value.stdout),
+    configuredResult._tag === "Some" && configuredResult.value.code === 0
+      ? configuredResult.value.stdout
+      : "",
+  );
   // Exits 1 when no remote has a mark.
   const resolved =
     resolvedResult._tag === "Some" && resolvedResult.value.code === 0

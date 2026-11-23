@@ -144,6 +144,17 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(identity?.canonicalKey).toBe("github.com/owner/repo");
       expect(identity?.provider).toBe("github");
+
+      // An alias that only the rewrite turns into a forge URL keeps the rewritten URL.
+      const aliasDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-insteadof-alias-test-",
+      });
+      yield* git(aliasDir, ["init"]);
+      yield* git(aliasDir, ["remote", "add", "origin", "gh:owner/repo"]);
+      yield* git(aliasDir, ["config", "url.git@github.com:.insteadOf", "gh:"]);
+      const aliased = yield* resolver.resolve(aliasDir);
+      expect(aliased?.canonicalKey).toBe("github.com/owner/repo");
+      expect(aliased?.locator.remoteUrl).toBe("git@github.com:owner/repo");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 

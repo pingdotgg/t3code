@@ -4405,7 +4405,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
 
-      // A client start sends no CI state, so the link's last sync seeds it.
+      const readErrorOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.readError,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.read-failed",
+        commandId: CommandId.make("pr-watch-read-failed"),
+        threadId,
+        ...key,
+        readError: "GitHub has no working credentials.",
+      });
+      assert.equal(yield* readErrorOf, "GitHub has no working credentials.");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal(yield* readErrorOf, "GitHub has no working credentials.");
+
+      // A client start sends no CI state, so the link's last sync seeds it; a read clears the error.
       yield* orchestrator.dispatch({
         type: "thread.pull-request-link.sync",
         commandId: CommandId.make("pr-watch-ci-running"),
@@ -4431,6 +4446,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         watching: true,
       });
       assert.isTrue((yield* watchOf)?.checksPending);
+      assert.isUndefined(yield* readErrorOf);
     }),
   );
 

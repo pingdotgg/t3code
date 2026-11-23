@@ -461,6 +461,7 @@ export const make = Effect.gen(function* () {
       const nextStack = fetchedStack === null ? link.stack : fetchedStack.stack;
       const changed =
         link.snapshot === null ||
+        link.readError !== undefined ||
         !snapshotFieldsEqual(link.snapshot, fields) ||
         !stacksEqual(link.stack, nextStack);
       // Persist siblings before terminal snapshots trigger settlement; settled threads get snapshots without new links.
@@ -645,7 +646,34 @@ export const make = Effect.gen(function* () {
           const skip = skips.get(reason);
           if (skip === undefined) skips.set(reason, { count: 1, key });
           else skip.count += 1;
-          return Effect.void;
+          // A rate limit only delays the read; anything else stays on the link until a read succeeds.
+          const readError = reason.trim();
+          if (retryAt !== undefined || readError.length === 0) return Effect.void;
+          return Effect.forEach(
+            entries.filter(({ link }) => link.readError !== readError),
+            ({ thread, link }) =>
+              random.uuidV4().pipe(
+                Effect.flatMap((uuid) =>
+                  engine.dispatch({
+                    type: "thread.pull-request-link.read-failed",
+                    commandId: CommandId.make(`server:pr-read-failed:${thread.id}:${uuid}`),
+                    threadId: thread.id,
+                    host: normalizeThreadPullRequestKey(link).host,
+                    repository: link.repository,
+                    number: link.number,
+                    readError,
+                  }),
+                ),
+                persistence.withPermits(1),
+                Effect.catchCause(
+                  logSkipped("pull request read failure not recorded", {
+                    threadId: thread.id,
+                    key,
+                  }),
+                ),
+              ),
+            { discard: true },
+          );
         }),
       );
     const pools = {

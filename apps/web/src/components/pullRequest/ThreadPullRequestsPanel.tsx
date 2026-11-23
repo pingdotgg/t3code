@@ -163,7 +163,17 @@ function LinkRowImpl({
       style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
     >
       {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
-      {snapshot === null ? (
+      {snapshot === null && link.readError !== undefined ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="flex shrink-0" />}>
+            <PullRequestGlyph.readFailed
+              aria-label={link.readError}
+              className="size-4 shrink-0 text-destructive"
+            />
+          </TooltipTrigger>
+          <TooltipPopup>{link.readError}</TooltipPopup>
+        </Tooltip>
+      ) : snapshot === null ? (
         <PullRequestGlyph.pullRequest
           aria-label={gt("Waiting for host state")}
           className="size-4 shrink-0 text-muted-foreground"
