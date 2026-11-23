@@ -94,7 +94,7 @@ function view(
         options={{}}
         renderHeaderFilenameSuffix={() => null}
         renderHeaderPrefix={() => null}
-        onRevealSearchMatch={() => {}}
+        onFileCollapsedChange={() => {}}
       />
     </StrictMode>
   );

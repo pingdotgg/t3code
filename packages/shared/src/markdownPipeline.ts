@@ -1,23 +1,41 @@
-import { isLocalEditorFileUrl, LOCAL_FILE_LINK_SCHEMES } from "@t3tools/contracts";
-import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import type {
+  Heading,
+  Link,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  RootContent,
+  TableCell,
+  Text,
+} from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { find, html } from "property-information";
 import rehypeRaw from "rehype-raw";
-import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+import rehypeSanitize from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
 import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
-  CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES,
-  remarkCodexDirectives,
-} from "./codexMarkdownDirectives.ts";
-import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
-import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
+  remarkEnableLeadingWhitespace,
+  remarkKeepLeadingWhitespace,
+} from "./markdownLeadingWhitespace.ts";
+import { remarkCodexDirectives } from "./codexMarkdownDirectives.ts";
+import { absoluteFilePathMatches } from "./markdownLinks.ts";
+import { isWindowsAbsolutePath } from "./path.ts";
+import {
+  CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  chatMarkdownImageSource,
+  rehypeNormalizeLocalEditorLinks,
+  rehypePreserveImageSourceMeta,
+  type ChatMarkdownImageProperties,
+} from "./markdownHast.ts";
+
+export { chatMarkdownImageSource, type ChatMarkdownImageProperties };
 
 export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 
@@ -29,43 +47,8 @@ type MarkdownImageHastNode = {
   children?: MarkdownImageHastNode[];
 };
 
-function meaningfulHastChildren(node: MarkdownImageHastNode): MarkdownImageHastNode[] {
-  return (node.children ?? []).filter(
-    (child) => !(child.type === "text" && (child as { value?: string }).value?.trim() === ""),
-  );
-}
-
-const STANDALONE_IMAGE_BLOCKS = new Set([
-  "p",
-  "div",
-  "li",
-  "td",
-  "th",
-  "figure",
-  "center",
-  "blockquote",
-]);
-
-function soleImageDescendant(node: MarkdownImageHastNode): MarkdownImageHastNode | undefined {
-  const children = meaningfulHastChildren(node);
-  if (children.length !== 1) return undefined;
-  const only = children[0];
-  if (only?.type !== "element") return undefined;
-  if (only.tagName === "img") return only;
-  return only.tagName === "a" || only.tagName === "strong" || only.tagName === "em"
-    ? soleImageDescendant(only)
-    : undefined;
-}
-
-function markStandaloneImages(node: MarkdownImageHastNode) {
-  if (node.type === "root" || (node.tagName && STANDALONE_IMAGE_BLOCKS.has(node.tagName))) {
-    const image = soleImageDescendant(node);
-    if (image) image.properties = { ...image.properties, dataStandalone: true };
-  }
-  node.children?.forEach((child) => {
-    if (child.type === "element") markStandaloneImages(child);
-  });
-}
+// Whole tags, attributes, and comments, so closing-anchor text inside them never counts as a tag.
+const RAW_HTML_TAG_PATTERN = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
 
 function rehypePreserveBareAnchorPlaceholders() {
   return (tree: MarkdownImageHastNode) => {
@@ -73,8 +56,7 @@ function rehypePreserveBareAnchorPlaceholders() {
     let rawTextTag: string | undefined;
     const visit = (node: MarkdownImageHastNode) => {
       if (node.type === "raw" && typeof node.value === "string") {
-        // Scan whole tags, attributes, and comments so embedded closing-anchor text cannot match a placeholder.
-        const tags = /<!--[\s\S]*?(?:-->|$)|<\/?[A-Za-z](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+        const tags = new RegExp(RAW_HTML_TAG_PATTERN);
         let offset = 0;
         while (rawTextTag !== "plaintext") {
           // Raw text ends at its closing tag even inside comment-looking text.
@@ -113,124 +95,11 @@ function rehypePreserveBareAnchorPlaceholders() {
   };
 }
 
-const COLOR_SCHEME_MEDIA = /^\(\s*prefers-color-scheme\s*:\s*(dark|light)\s*\)$/i;
-
-/**
- * The renderer resolves an `<img>`'s `src` (workspace files, host media) but never a `<source>`'s
- * `srcset`, which would load unresolved whenever its media matched. A color-scheme source moves
- * onto the `<img>` for the renderer to pick by theme; every source is then dropped.
- */
-function moveColorSchemeSourcesToImage(picture: MarkdownImageHastNode) {
-  if (!picture.children) return;
-  const image = picture.children.find((child) => child.tagName === "img");
-  for (const source of picture.children) {
-    if (source.tagName !== "source" || !image) continue;
-    const media = source.properties?.media;
-    const scheme = typeof media === "string" ? COLOR_SCHEME_MEDIA.exec(media)?.[1] : undefined;
-    const srcSet = source.properties?.srcSet;
-    const candidate = Array.isArray(srcSet) ? srcSet[0] : srcSet;
-    // A candidate's URL runs to the first space (a descriptor such as `2x` may follow).
-    const url =
-      typeof candidate === "string" ? candidate.trim().split(/\s/, 1)[0]?.replace(/,+$/, "") : "";
-    const key = scheme?.toLowerCase() === "dark" ? "dataDarkSrc" : "dataLightSrc";
-    // As in a browser, the first source that matches a scheme is the one shown.
-    if (scheme && url && image.properties?.[key] === undefined) {
-      // The sanitizer reads a drive letter as a protocol; as a file URL it resolves to the same path.
-      const value = isWindowsDrivePathHref(url) ? `file:///${url.replaceAll("\\", "/")}` : url;
-      image.properties = { ...image.properties, [key]: value };
-    }
-  }
-  picture.children = picture.children.filter((child) => child.tagName !== "source");
-}
-
-function rehypePreserveImageSourceMeta() {
-  return (tree: MarkdownImageHastNode) => {
-    const visit = (node: MarkdownImageHastNode) => {
-      const src = node.properties?.src;
-      const title = node.properties?.title;
-      if (node.type === "element" && node.tagName === "picture") {
-        moveColorSchemeSourcesToImage(node);
-      }
-      if (node.type === "element" && node.tagName === "img") {
-        node.properties = {
-          ...node.properties,
-          ...(typeof src === "string" && isWindowsDrivePathHref(src) ? { dataLocalSrc: src } : {}),
-          ...(typeof title === "string" ? { dataMarkdownTitle: title } : {}),
-        };
-      }
-      node.children?.forEach(visit);
-    };
-
-    visit(tree);
-    markStandaloneImages(tree);
-  };
-}
-
-const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
-
-// The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
-function rehypeNormalizeLocalEditorLinks() {
-  return (tree: MarkdownImageHastNode) => {
-    const visit = (node: MarkdownImageHastNode) => {
-      const href = node.properties?.href;
-      if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
-        try {
-          const url = new URL(href);
-          if (isLocalEditorFileUrl(url)) node.properties = { ...node.properties, href: url.href };
-        } catch {
-          // Not an absolute URL; the sanitizer decides.
-        }
-      }
-      node.children?.forEach(visit);
-    };
-
-    visit(tree);
-  };
-}
-
-const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
-  ...defaultSchema,
-  attributes: {
-    ...defaultSchema.attributes,
-    "*": (defaultSchema.attributes?.["*"] ?? []).filter((attribute) => attribute !== "title"),
-    // Fence languages plus the two math classes the web chat's math plugin emits.
-    code: [
-      ["className", /^language-./, "math-inline", "math-display"],
-      "dataCodeMeta",
-      "dataInlineCode",
-    ],
-    blockquote: [...(defaultSchema.attributes?.blockquote ?? []), "dataAlert"],
-    div: [...(defaultSchema.attributes?.div ?? []), ...CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES],
-    a: [...(defaultSchema.attributes?.a ?? []), "dataPullRequestAutolink"],
-    img: [
-      ...(defaultSchema.attributes?.img ?? []),
-      "dataDarkSrc",
-      "dataLightSrc",
-      "dataLocalSrc",
-      "dataMarkdownTitle",
-      "dataStandalone",
-    ],
-  },
-  protocols: {
-    ...defaultSchema.protocols,
-    href: [
-      ...(defaultSchema.protocols?.href ?? []),
-      "file",
-      "t3-citation",
-      "t3-context",
-      THREAD_LINK_PROTOCOL,
-      // Scheme only: the renderer's URL transform checks the rest of the link shape.
-      ...LOCAL_FILE_LINK_SCHEMES,
-    ],
-    src: IMAGE_SRC_PROTOCOLS,
-    dataDarkSrc: IMAGE_SRC_PROTOCOLS,
-    dataLightSrc: IMAGE_SRC_PROTOCOLS,
-  },
-} satisfies Parameters<typeof rehypeSanitize>[0];
-
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -241,9 +110,13 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkNormalizeLinksAndTagInlineCode,
 ];
 
+// Leading whitespace is kept only where each line renders as a line.
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
+  remarkKeepLeadingWhitespace,
+  remarkLinkAbsoluteFilePaths,
   remarkKeepWindowsPaths,
   remarkGithubAlerts,
   remarkKeepOrderedListNumbers,
@@ -253,6 +126,14 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkBreaks,
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
+];
+
+// Users type paths like ~/a and (~/b, which GFM's single-tilde strikethrough hides as <del>.
+// Appended after the base list, this reconfigures its remark-gfm entry; ~~double~~ still strikes.
+// Users also indent lines with spaces, which CommonMark drops from a paragraph.
+export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
+  [remarkGfm, { singleTilde: false }],
+  remarkEnableLeadingWhitespace,
 ];
 
 // Start tags an HTML parser closes an open `<p>` for.
@@ -445,6 +326,233 @@ function remarkKeepAutolinkSuffixes(): Transformer<Root> {
   };
 }
 
+// Punctuation and symbols from CJK Symbols and Punctuation and from Halfwidth and Fullwidth Forms,
+// plus the Arabic-script comma, semicolon, question mark, and full stop.
+const SCRIPT_PUNCTUATION = /(?=[　-〿＀-￯،؛؟۔])[\p{P}\p{S}]/u;
+
+/**
+ * GFM runs a bare URL on until whitespace, so Chinese, Japanese, and Arabic punctuation joins it,
+ * along with the rest of the sentence and any `**` that should have closed around it. A URL that is
+ * ASCII up to such a mark ends there. Unicode earlier in the URL means the mark may belong to it, so it stays.
+ */
+function scriptPunctuationIndex(link: Link): number {
+  const label = link.children.length === 1 ? link.children[0] : undefined;
+  if (label?.type !== "text" || !/^https?:\/\//i.test(link.url)) return -1;
+  if (link.url !== label.value && link.url !== `http://${label.value}`) return -1;
+  const index = label.value.search(/[^!-~]/u);
+  return index > 0 && SCRIPT_PUNCTUATION.test(label.value.charAt(index)) ? index : -1;
+}
+
+/** GFM's text pass links bare URLs without positions; its tokenizer's links span their URL. */
+function isBareLink(link: Link, source: string): boolean {
+  const start = link.position?.start.offset;
+  const end = link.position?.end.offset;
+  const label = link.children[0];
+  return (
+    !link.position ||
+    (start !== undefined &&
+      end !== undefined &&
+      label?.type === "text" &&
+      source.slice(start, end) === label.value)
+  );
+}
+
+/** Source offsets of the marks that tokenized bare URLs run past. */
+function scriptPunctuationOffsets(node: RootContent, source: string): number[] {
+  if (node.type === "link") {
+    const index = scriptPunctuationIndex(node);
+    const start = node.position?.start.offset;
+    return index > 0 && start !== undefined && isBareLink(node, source) ? [start + index] : [];
+  }
+  return "children" in node && node.type !== "linkReference"
+    ? (node.children as RootContent[]).flatMap((child) => scriptPunctuationOffsets(child, source))
+    : [];
+}
+
+const hasReference = (node: RootContent): boolean =>
+  node.type === "linkReference" ||
+  node.type === "imageReference" ||
+  node.type === "footnoteReference" ||
+  ("children" in node && (node.children as RootContent[]).some(hasReference));
+
+/** How many of the ascending numbers are below `value`. */
+function countBelow(sorted: readonly number[], value: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if (sorted[middle]! < value) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+/**
+ * Parses the block's text again with a tab before each mark. The tab ends the URL as a space would,
+ * so emphasis around the URL closes and later URLs and code get their own nodes. The tabs are then
+ * dropped and positions mapped back to the source. Returns false and leaves the block alone when its
+ * text would parse differently on its own, as a quote's continuation lines do.
+ */
+function reparseAtScriptPunctuation(
+  processor: Processor,
+  block: Paragraph | Heading | TableCell,
+  source: string,
+  offsets: number[],
+): boolean {
+  // A task item's paragraph starts at its checkbox; its first child starts after it.
+  const from = block.children[0]?.position?.start;
+  const to = block.children.at(-1)?.position?.end;
+  if (from?.offset === undefined || to?.offset === undefined || hasReference(block)) return false;
+  const base = from.offset;
+  const text = source.slice(base, to.offset);
+  // A tab is the marker, a quote's `>` on a later line would read as a new quote, a list's
+  // indentation would join a code span, and only a table unescapes `\|` in code.
+  if (
+    text.includes("\t") ||
+    /[\r\n][ ]*>/.test(text) ||
+    (/[\r\n] /.test(text) && text.includes("`")) ||
+    (block.type === "tableCell" && text.includes("\\|"))
+  ) {
+    return false;
+  }
+  const marks = offsets.map((offset) => offset - base);
+  // Each pass finds the next URL in a run with no spaces, like `http://a，http://b，http://c`.
+  for (let attempt = 0; attempt < 16; attempt++) {
+    marks.sort((a, b) => a - b);
+    const tabs = marks.map((mark, index) => mark + index);
+    const unmarked = (offset: number) => offset - countBelow(tabs, offset);
+    const marked = [0, ...marks]
+      .map((start, index) => text.slice(start, marks[index] ?? text.length))
+      .join("\t");
+    const [paragraph, ...rest] = (processor.parse(marked) as Root).children;
+    if (paragraph?.type !== "paragraph" || rest.length > 0) return false;
+    const more = scriptPunctuationOffsets(paragraph, marked);
+    if (more.length > 0) {
+      marks.push(...more.map(unmarked));
+      continue;
+    }
+
+    let tabCount = 0;
+    const moved = new Set<object>();
+    const restore = (node: RootContent): boolean => {
+      for (const point of node.position ? [node.position.start, node.position.end] : []) {
+        const offset = point.offset;
+        if (offset === undefined || moved.has(point)) continue;
+        moved.add(point);
+        const tabsOnLine = countBelow(tabs, offset) - countBelow(tabs, offset - point.column + 1);
+        point.column = (point.line === 1 ? from.column - 1 : 0) + point.column - tabsOnLine;
+        point.line += from.line - 1;
+        point.offset = base + unmarked(offset);
+      }
+      if (node.type === "text") {
+        tabCount += node.value.split("\t").length - 1;
+        node.value = node.value.replaceAll("\t", "");
+      } else if (
+        ("value" in node && node.value.includes("\t")) ||
+        ("url" in node && node.url.includes("\t"))
+      ) {
+        return false;
+      }
+      if (!("children" in node)) return true;
+      const children = node.children as RootContent[];
+      if (!children.every(restore)) return false;
+      node.children = children.filter(
+        (child) => child.type !== "text" || child.value !== "",
+      ) as typeof node.children;
+      return true;
+    };
+    if (!restore(paragraph) || tabCount !== tabs.length) return false;
+    block.children = paragraph.children;
+    return true;
+  }
+  return false;
+}
+
+/** Ends the bare URLs a reparse could not, and those GFM's text pass linked after emphasis. */
+function splitAtScriptPunctuation(node: RootContent, source: string) {
+  if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+  const children = node.children as RootContent[];
+  for (let index = 0; index < children.length; index++) {
+    const child = children[index]!;
+    if (child.type !== "link") {
+      splitAtScriptPunctuation(child, source);
+      continue;
+    }
+    const at = isBareLink(child, source) ? scriptPunctuationIndex(child) : -1;
+    const label = child.children[0];
+    if (at < 0 || label?.type !== "text") continue;
+    // GFM drops this punctuation from the end of a URL; remarkKeepAutolinkSuffixes restores `_` and `~`.
+    const length = label.value.slice(0, at).replace(/[!"'*,.:;?_~]+$/, "").length;
+    const tail: Text = { type: "text", value: label.value.slice(length) };
+    const start = child.position?.start;
+    if (child.position && start?.offset !== undefined) {
+      const end = {
+        line: start.line,
+        column: start.column + length,
+        offset: start.offset + length,
+      };
+      tail.position = { start: end, end: child.position.end };
+      child.position = { start, end };
+      label.position = { start, end };
+    }
+    child.url = child.url.slice(0, child.url.length - label.value.length + length);
+    label.value = label.value.slice(0, length);
+    children.splice(index + 1, 0, tail);
+    index++;
+  }
+}
+
+function remarkEndAutolinksAtScriptPunctuation(this: Processor): Transformer<Root> {
+  return (tree, file) => {
+    const source = String(file);
+    if (!SCRIPT_PUNCTUATION.test(source)) return;
+    const visit = (node: RootContent) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offsets = scriptPunctuationOffsets(node, source);
+        if (offsets.length > 0) reparseAtScriptPunctuation(this, node, source, offsets);
+        splitAtScriptPunctuation(node, source);
+      } else if ("children" in node) {
+        (node.children as RootContent[]).forEach(visit);
+      }
+    };
+    tree.children.forEach(visit);
+  };
+}
+
+function remarkLinkAbsoluteFilePaths(): Transformer<Root> {
+  return (tree) => {
+    // Raw `<a>` tags are sibling html nodes, so text inside one is not under a link node.
+    let rawAnchorDepth = 0;
+    const visit = (node: Root | RootContent) => {
+      if (!("children" in node) || node.type === "link" || node.type === "linkReference") return;
+      node.children = node.children.flatMap((child): typeof node.children => {
+        if (child.type === "html") {
+          for (const [tag] of child.value.matchAll(RAW_HTML_TAG_PATTERN)) {
+            if (/^<a[\s/>]/i.test(tag)) rawAnchorDepth += 1;
+            else if (/^<\/a[\s>]/i.test(tag)) rawAnchorDepth = Math.max(0, rawAnchorDepth - 1);
+          }
+        }
+        if (child.type !== "text" || rawAnchorDepth > 0) {
+          visit(child);
+          return [child];
+        }
+        const parts: PhrasingContent[] = [];
+        let offset = 0;
+        for (const { index, path } of absoluteFilePathMatches(child.value)) {
+          if (index > offset) parts.push({ type: "text", value: child.value.slice(offset, index) });
+          parts.push({ type: "link", url: path, children: [{ type: "text", value: path }] });
+          offset = index + path.length;
+        }
+        if (offset === 0) return [child];
+        if (offset < child.value.length)
+          parts.push({ type: "text", value: child.value.slice(offset) });
+        return parts;
+      });
+    };
+    visit(tree);
+  };
+}
+
 function remarkPreserveCodeMeta() {
   return (tree: MarkdownAstNode) => {
     const visit = (node: MarkdownAstNode) => {
@@ -489,10 +597,6 @@ function remarkNormalizeLinksAndTagInlineCode() {
 
     visit(tree, false);
   };
-}
-
-export function shouldPreserveAssistantLineBreaks(text: string): boolean {
-  return /^★ Insight(?:\s|─)/mu.test(text);
 }
 
 export function remarkAssistantInsights(this: Processor) {
@@ -582,37 +686,49 @@ const imageSourceProcessor = unified()
 interface ImageSourceNode {
   readonly type: string;
   readonly tagName?: string;
-  readonly properties?: {
-    readonly src?: unknown;
-    readonly dataLocalSrc?: unknown;
-    readonly dataDarkSrc?: unknown;
-    readonly dataLightSrc?: unknown;
-  };
+  readonly properties?: ChatMarkdownImageProperties;
   readonly children?: ReadonlyArray<ImageSourceNode>;
 }
 
 /**
- * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
- * them. Code, comments, and plain links show no image, so they add none.
+ * Collect the fallback and every theme variant so images are available to all viewers.
  */
 export function chatMarkdownImageSources(markdown: string): Array<string> {
   const sources: Array<string> = [];
   const visit = (node: ImageSourceNode) => {
     if (node.type === "element" && node.tagName === "img") {
-      const { src, dataLocalSrc, dataDarkSrc, dataLightSrc } = node.properties ?? {};
-      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
-      if (typeof dataLocalSrc === "string") {
-        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
-      } else if (typeof src === "string") {
-        sources.push(normalizeMarkdownLinkDestination(src));
-      }
-      // A `<picture>` shows one of these instead, by the viewer's theme.
-      for (const variant of [dataDarkSrc, dataLightSrc]) {
-        if (typeof variant === "string") sources.push(normalizeMarkdownLinkDestination(variant));
+      const properties = node.properties;
+      const fallback = chatMarkdownImageSource(properties);
+      if (fallback) sources.push(fallback.classifiedSrc);
+      for (const [theme, variant] of [
+        ["dark", properties?.dataDarkSrc],
+        ["light", properties?.dataLightSrc],
+      ] as const) {
+        if (typeof variant !== "string") continue;
+        const source = chatMarkdownImageSource(properties, theme);
+        if (source) sources.push(source.classifiedSrc);
       }
     }
     node.children?.forEach(visit);
   };
   visit(imageSourceProcessor.runSync(imageSourceProcessor.parse(markdown)) as ImageSourceNode);
   return sources;
+}
+
+const linkDestinationProcessor = unified().use(remarkParse).use(remarkKeepWindowsPaths);
+
+// An angle destination cannot hold an unescaped `<` or `>`, or end on a lone backslash.
+const ANGLE_DESTINATION_CONTENT = /^(?:[^\\<>]|\\.)*$/;
+
+/** Reads a destination from `extractMarkdownLinkHrefs` as the renderer's parser does. */
+export function decodeMarkdownLinkEscapes(href: string): string {
+  // Only the parser knows character references, so destinations that may have one go through it.
+  if (href.includes("&")) {
+    // The extractor drops angle brackets, and only that form keeps an unmatched `)` in the path.
+    const destination = ANGLE_DESTINATION_CONTENT.test(href) ? `<${href}>` : href;
+    const paragraph = linkDestinationProcessor.parse(`[](${destination})`).children[0];
+    const link = paragraph?.type === "paragraph" ? paragraph.children[0] : undefined;
+    if (link?.type === "link") return link.url;
+  }
+  return isWindowsAbsolutePath(href) ? href : href.replace(/\\([!-/:-@[-`{-~])/g, "$1");
 }

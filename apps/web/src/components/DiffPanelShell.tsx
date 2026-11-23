@@ -10,7 +10,7 @@ export type DiffPanelMode = "inline" | "sheet" | "sidebar" | "embedded";
 function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
   const shouldUseDragRegion = isElectron && mode !== "sheet" && mode !== "embedded";
   return cn(
-    "flex items-center justify-between gap-2 @max-[42rem]/diff-panel:flex-wrap @max-[42rem]/diff-panel:h-auto @max-[42rem]/diff-panel:py-1",
+    "@container/diff-header flex items-center justify-between gap-2 @max-[42rem]/diff-panel:flex-wrap @max-[42rem]/diff-panel:h-auto @max-[42rem]/diff-panel:py-1",
     mode === "embedded" ? "px-2" : "px-4",
     shouldUseDragRegion
       ? "drag-region h-[var(--workspace-topbar-height)] border-b border-border wco:pr-(--workspace-native-controls-inset)"
