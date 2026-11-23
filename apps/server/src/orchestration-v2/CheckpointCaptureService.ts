@@ -277,6 +277,7 @@ export const layer: Layer.Layer<
             stopRequest?.type === "run_interrupt_request" &&
             (stopRequest.providerTurnId === null ||
               (attemptEndedAt !== null &&
+                stopRequest.startedAt !== null &&
                 DateTime.isLessThan(stopRequest.startedAt, attemptEndedAt)));
           const finalStatus = stopRequested ? ("interrupted" as const) : ("completed" as const);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
