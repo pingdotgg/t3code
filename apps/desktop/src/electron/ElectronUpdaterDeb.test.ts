@@ -245,5 +245,32 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         assert.equal(errors.length, 1);
       }).pipe(Effect.provide(NodeServices.layer)),
     );
+
+    it.live("honors ELECTRON_BUILDER_LINUX_PACKAGE_MANAGER=apt when both dpkg and apt exist", () =>
+      Effect.gen(function* () {
+        autoUpdater.logger = null;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { dir, binDir, debPath, updater } = yield* stageDebInstall((dir) => [
+          `printf '%s\\n' "$*" >> '${dir}/calls'`,
+        ]);
+        yield* writeScript(path.join(binDir, "apt"), ["exit 0"]);
+        yield* Effect.acquireRelease(
+          Effect.sync(() => vi.stubEnv("ELECTRON_BUILDER_LINUX_PACKAGE_MANAGER", "apt")),
+          () => Effect.sync(() => vi.unstubAllEnvs()),
+        );
+
+        yield* updater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
+
+        const calls = (yield* fileSystem.readFileString(path.join(dir, "calls")))
+          .trim()
+          .split("\n");
+        assert.deepEqual(calls, [
+          `--disable-internal-agent ${path.join(binDir, "apt")} install -y --allow-unauthenticated --allow-downgrades --allow-change-held-packages ${debPath}`,
+        ]);
+        assert.equal(electronStub.app.relaunch.mock.calls.length, 1);
+        assert.equal(electronStub.app.quit.mock.calls.length, 1);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    );
   },
 );

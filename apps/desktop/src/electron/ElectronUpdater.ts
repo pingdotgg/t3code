@@ -183,6 +183,24 @@ const runAsRoot = Effect.fn("ElectronUpdater.runDebCommandAsRoot")(function* (
   });
 });
 
+const readDebPackageManagerOverride = (): string | undefined =>
+  process.env.ELECTRON_BUILDER_LINUX_PACKAGE_MANAGER?.trim();
+
+const resolveDebPackageManager = Effect.fnUntraced(function* (binDirs: ReadonlyArray<string>) {
+  const order =
+    readDebPackageManagerOverride() === "apt"
+      ? (["apt", "dpkg"] as const)
+      : (["dpkg", "apt"] as const);
+  for (const name of order) {
+    const path = yield* resolveSystemBinary(name, binDirs);
+    if (path !== null) return { name, path } as const;
+  }
+  return yield* new DebInstallError({
+    reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
+    exitCode: null,
+  });
+});
+
 // DebUpdater.doInstall runs the privileged `dpkg -i` through spawnSync, freezing Electron's main
 // thread for as long as the polkit prompt and dpkg take. This mirrors it without blocking, detached
 // with ignored stdio so the app quitting cannot SIGPIPE dpkg mid-transaction.
@@ -206,9 +224,9 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
         exitCode: null,
       });
     }
-    const dpkgPath = yield* resolveSystemBinary("dpkg", binDirs);
-    if (dpkgPath !== null) {
-      yield* runAsRoot(deb, [dpkgPath, "-i", installerPath], binDirs).pipe(
+    const packageManager = yield* resolveDebPackageManager(binDirs);
+    if (packageManager.name === "dpkg") {
+      yield* runAsRoot(deb, [packageManager.path, "-i", installerPath], binDirs).pipe(
         Effect.catch((error) => {
           if (AUTHORIZATION_EXIT_CODES.has(error.exitCode)) return Effect.fail(error);
           deb._logger.warn(`${error.message}; fixing broken dependencies with apt-get`);
@@ -225,17 +243,10 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
         }),
       );
     } else {
-      const aptPath = yield* resolveSystemBinary("apt", binDirs);
-      if (aptPath === null) {
-        return yield* new DebInstallError({
-          reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
-          exitCode: null,
-        });
-      }
       yield* runAsRoot(
         deb,
         [
-          aptPath,
+          packageManager.path,
           "install",
           "-y",
           "--allow-unauthenticated",
