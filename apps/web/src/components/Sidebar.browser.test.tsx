@@ -361,6 +361,14 @@ describe("sidebar thread click", () => {
     );
     const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
 
+    const openRow = screen.getByText("Thread 0").first().element();
+    await act(() => {
+      openRow.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }),
+      );
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
     const row = screen.getByText("Thread 1").first().element();
     await act(() => {
       row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }));
