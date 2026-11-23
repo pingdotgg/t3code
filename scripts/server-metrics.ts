@@ -72,6 +72,9 @@ const output = (program: string, args: ReadonlyArray<string>, cwd?: string) =>
 const powershell = (script: string) =>
   output("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
 
+/** Milliseconds on a monotonic clock, for intervals only. */
+const nowMs = Effect.map(Clock.monotonicTimeNanos, (nanos) => Number(nanos) / 1e6);
+
 const httpServerOn = (port: number) =>
   NodeHttpServer.layer(() => NodeHttp.createServer(), { port, host: "127.0.0.1" });
 
@@ -108,7 +111,7 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
     );
     const streamed = body.stream === true;
     requests.push({
-      at: yield* Clock.currentTimeMillis,
+      at: yield* nowMs,
       stream: streamed,
       // Title and branch-name jobs carry only their structured-output tool; the agent carries many.
       agent: streamed && (body.tools?.length ?? 0) > 1,
@@ -194,13 +197,18 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
   const socket = yield* Socket.makeWebSocket(url);
   const reader = yield* socket.reader;
   const writer = yield* socket.writer;
-  const pending = new Map<number, Deferred.Deferred<unknown>>();
+  const pending = new Map<
+    number,
+    { method: string; answer: Deferred.Deferred<unknown, MetricsError> }
+  >();
   const chunks: string[] = [];
   let nextId = 0;
+  let closed = false;
   const decodeMessage = decodeJson(
     Schema.Struct({
       id: Schema.optional(Schema.Number),
       result: Schema.optional(Schema.Unknown),
+      error: Schema.optional(Schema.Struct({ message: Schema.String })),
       method: Schema.optional(Schema.String),
       params: Schema.optional(Schema.Struct({ chunk: Schema.optional(Schema.String) })),
     }),
@@ -214,7 +222,13 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
             if (message.id !== undefined) {
               const waiting = pending.get(message.id);
               pending.delete(message.id);
-              return waiting ? Deferred.succeed(waiting, message.result) : Effect.void;
+              if (!waiting) return Effect.void;
+              return message.error
+                ? Deferred.fail(
+                    waiting.answer,
+                    new MetricsError({ message: `${waiting.method}: ${message.error.message}` }),
+                  )
+                : Deferred.succeed(waiting.answer, message.result);
             }
             if (message.method === "HeapProfiler.addHeapSnapshotChunk") {
               chunks.push(message.params?.chunk ?? "");
@@ -227,12 +241,24 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
     ),
     Effect.forever,
     Effect.ignore,
+    // A closed connection answers nothing, so every waiting call fails instead of hanging.
+    Effect.ensuring(
+      Effect.suspend(() => {
+        closed = true;
+        const waiting = [...pending.values()];
+        pending.clear();
+        return Effect.forEach(waiting, ({ method, answer }) =>
+          Deferred.fail(answer, new MetricsError({ message: `${method}: the inspector closed` })),
+        );
+      }),
+    ),
     Effect.forkScoped,
   );
   const send = Effect.fn("serverMetrics.cdp")(function* (method: string, params: object = {}) {
+    if (closed) return yield* new MetricsError({ message: `${method}: the inspector closed` });
     const id = ++nextId;
-    const answer = yield* Deferred.make<unknown>();
-    pending.set(id, answer);
+    const answer = yield* Deferred.make<unknown, MetricsError>();
+    pending.set(id, { method, answer });
     yield* writer.write(encodeJson({ id, method, params }));
     return yield* Deferred.await(answer);
   });
@@ -276,34 +302,46 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
   };
 });
 
-/** CPU seconds and RSS bytes of one process. */
+/** CPU seconds and RSS bytes of one process; a failed or unreadable probe fails the window. */
 const sample = Effect.fn("serverMetrics.sample")(function* (pid: number) {
   const platform = yield* HostProcess.Platform;
+  const checked = (cpuSeconds: number, rss: number, probe: string) =>
+    Number.isFinite(cpuSeconds) && Number.isFinite(rss)
+      ? Effect.succeed({ cpuSeconds, rss })
+      : Effect.fail(new MetricsError({ message: `could not read process ${pid}: ${probe}` }));
   if (platform === "linux") {
     const fs = yield* FileSystem.FileSystem;
     const stat = (yield* fs.readFileString(`/proc/${pid}/stat`)).split(") ")[1]?.split(" ") ?? [];
     const status = yield* fs.readFileString(`/proc/${pid}/status`);
-    return {
-      cpuSeconds: (Number(stat[11]) + Number(stat[12])) / 100,
-      rss: Number(/VmRSS:\s+(\d+)/.exec(status)?.[1] ?? 0) * 1024,
-    };
+    const rss = /VmRSS:\s+(\d+)/.exec(status)?.[1];
+    return yield* checked(
+      (Number(stat[11]) + Number(stat[12])) / 100,
+      rss === undefined ? Number.NaN : Number(rss) * 1024,
+      "/proc",
+    );
   }
   if (platform === "win32") {
     const line = yield* powershell(
       `$p = Get-Process -Id ${pid}; "$($p.TotalProcessorTime.TotalSeconds) $($p.WorkingSet64)"`,
     );
-    const [cpu = "0", rss = "0"] = Option.getOrElse(line, () => "").split(/\s+/);
-    return { cpuSeconds: Number(cpu), rss: Number(rss) };
+    const [cpu = "", rss = ""] = Option.getOrElse(line, () => "").split(/\s+/);
+    return yield* checked(
+      cpu ? Number(cpu) : Number.NaN,
+      rss ? Number(rss) : Number.NaN,
+      "Get-Process",
+    );
   }
   const line = yield* output("ps", ["-o", "rss=,time=", "-p", `${pid}`]);
-  const [rss = "0", time = "0:0"] = Option.getOrElse(line, () => "")
+  const [rss = "", time = ""] = Option.getOrElse(line, () => "")
     .split(/\s+/)
     .filter(Boolean);
   const cpuSeconds = time
-    .split(":")
-    .map(Number)
-    .reduce((total, part) => total * 60 + part, 0);
-  return { cpuSeconds, rss: Number(rss) * 1024 };
+    ? time
+        .split(":")
+        .map(Number)
+        .reduce((total, part) => total * 60 + part, 0)
+    : Number.NaN;
+  return yield* checked(cpuSeconds, rss ? Number(rss) * 1024 : Number.NaN, "ps");
 });
 
 const numberOrNull = (text: Option.Option<string>) => {
@@ -311,24 +349,34 @@ const numberOrNull = (text: Option.Option<string>) => {
   return Option.isSome(text) && text.value !== "" && Number.isFinite(value) ? value : null;
 };
 
-/** Context switches of one process since it started, or null when this platform cannot tell. */
+/**
+ * Context switches so far, by Linux task (one total elsewhere), or null when this platform
+ * cannot tell. Per task, so a thread that exits between two samples drops out of both.
+ */
 const contextSwitches = Effect.fn("serverMetrics.contextSwitches")(function* (pid: number) {
   const platform = yield* HostProcess.Platform;
   if (platform === "linux") {
     const fs = yield* FileSystem.FileSystem;
-    let switches = 0;
+    const switches = new Map<string, number>();
     for (const task of yield* fs.readDirectory(`/proc/${pid}/task`)) {
       const status = yield* fs
         .readFileString(`/proc/${pid}/task/${task}/status`)
-        .pipe(Effect.orElseSucceed(() => ""));
-      for (const match of status.matchAll(/ctxt_switches:\s+(\d+)/g)) switches += Number(match[1]);
+        .pipe(Effect.option);
+      if (Option.isNone(status)) continue;
+      let total = 0;
+      for (const match of status.value.matchAll(/ctxt_switches:\s+(\d+)/g))
+        total += Number(match[1]);
+      switches.set(task, total);
     }
     return switches;
   }
+  const total = (value: number | null) => (value === null ? null : new Map([["process", value]]));
   if (platform === "win32") {
-    return numberOrNull(
-      yield* powershell(
-        `(Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=${pid}" | Measure-Object ContextSwitchesPersec -Sum).Sum`,
+    return total(
+      numberOrNull(
+        yield* powershell(
+          `(Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=${pid}" | Measure-Object ContextSwitchesPersec -Sum).Sum`,
+        ),
       ),
     );
   }
@@ -338,8 +386,19 @@ const contextSwitches = Effect.fn("serverMetrics.contextSwitches")(function* (pi
     .split("\n")
     .map((line) => line.trim().split(/\s+/))
     .find(([first]) => first === `${pid}`);
-  return numberOrNull(Option.fromNullishOr(row?.[1]));
+  return total(numberOrNull(Option.fromNullishOr(row?.[1])));
 });
+
+/** Switches between two samples: tasks new in the second count whole; a negative total is unknown. */
+const switchesBetween = (
+  first: ReadonlyMap<string, number> | null,
+  last: ReadonlyMap<string, number> | null,
+) => {
+  if (first === null || last === null) return null;
+  let delta = 0;
+  for (const [task, count] of last) delta += count - (first.get(task) ?? 0);
+  return delta < 0 ? null : delta;
+};
 
 /** Every process below `pid`. Windows needs none: taskkill /T stops the tree. */
 const descendantsOf = Effect.fn("serverMetrics.descendantsOf")(function* (pid: number) {
@@ -428,6 +487,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   const dropped = new Set([
     "ANTHROPIC_AUTH_TOKEN",
     "T3CODE_HOME",
+    "CLAUDE_CONFIG_DIR",
     ...(environment.noAgentScope ? ["XDG_RUNTIME_DIR"] : []),
   ]);
   const env: Record<string, string> = {
@@ -445,7 +505,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     T3CODE_DEV_SEED: "0",
   };
   const port = yield* freePort;
-  const started = yield* Clock.currentTimeMillis;
+  const started = yield* nowMs;
   const child = yield* spawner.spawn(
     ChildProcess.make(
       node,
@@ -482,7 +542,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
-      const spawned = yield* descendantsOf(pid);
+      const spawned = yield* descendantsOf(pid).pipe(Effect.orElseSucceed(() => []));
       if (platform === "win32") yield* output("taskkill", ["/PID", `${pid}`, "/T", "/F"]);
       else yield* child.kill({ killSignal: "SIGTERM" }).pipe(Effect.ignore);
       yield* child.exitCode.pipe(Effect.timeout(Duration.seconds(10)), Effect.ignore);
@@ -497,7 +557,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   const readyMs = yield* http.get(`http://127.0.0.1:${port}/`).pipe(
     Effect.timeout(Duration.seconds(1)),
     Effect.retry({ schedule: Schedule.spaced(Duration.millis(100)), times: 600 }),
-    Effect.flatMap(() => Clock.currentTimeMillis),
+    Effect.andThen(nowMs),
     Effect.map((now) => Math.round(now - started)),
     Effect.catch(() =>
       Effect.flatMap(
@@ -524,25 +584,26 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   // Spawning PowerShell for each sample costs a few hundred ms of the machine's CPU.
   const sampleEvery = Duration.millis(platform === "win32" ? 5_000 : 1_000);
   const measure = Effect.fn("serverMetrics.measure")(function* (seconds: number) {
+    // Each counter is divided by the time between its own two reads; a CIM probe can take seconds.
+    const switchesStart = yield* nowMs;
     const firstSwitches = yield* contextSwitches(pid);
+    const start = yield* nowMs;
     const first = yield* sample(pid);
     let rssPeak = first.rss;
-    const start = yield* Clock.currentTimeMillis;
-    while ((yield* Clock.currentTimeMillis) - start < seconds * 1_000) {
+    while ((yield* nowMs) - start < seconds * 1_000) {
       yield* Effect.sleep(sampleEvery);
       rssPeak = Math.max(rssPeak, (yield* sample(pid)).rss);
     }
     const last = yield* sample(pid);
+    const cpuElapsed = ((yield* nowMs) - start) / 1_000;
     const lastSwitches = yield* contextSwitches(pid);
-    const elapsed = ((yield* Clock.currentTimeMillis) - start) / 1_000;
+    const switchesElapsed = ((yield* nowMs) - switchesStart) / 1_000;
+    const switches = switchesBetween(firstSwitches, lastSwitches);
     const heap = yield* devtools.heapAfterGc;
     const window: Window = {
-      cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / elapsed) * 100),
-      wakeupsPerSec:
-        firstSwitches === null || lastSwitches === null
-          ? null
-          : round((lastSwitches - firstSwitches) / elapsed),
-      rssPeakMB: Math.round(rssPeak / 1e6),
+      cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / cpuElapsed) * 100),
+      wakeupsPerSec: switches === null ? null : round(switches / switchesElapsed),
+      rssPeakMB: Math.round(Math.max(rssPeak, last.rss) / 1e6),
       rssMB: Math.round((yield* sample(pid)).rss / 1e6),
       heapAfterGcMB: round(heap / 1e6),
     };
@@ -583,14 +644,16 @@ const firstWord = Effect.fn("serverMetrics.firstWord")(function* (
   const toDone: number[] = [];
   for (let index = 0; index < runs; index++) {
     const marker = `bench-run-${worktree ? 1000 + index : index}`;
-    const started = yield* Clock.currentTimeMillis;
+    const started = yield* nowMs;
     const result = yield* server.threadStart(`Say hello. ${marker}`, [
       "--wait",
       ...(worktree ? ["--worktree", "main"] : []),
     ]);
-    const done = (yield* Clock.currentTimeMillis) - started;
+    const done = (yield* nowMs) - started;
     if (result.exitCode !== 0) {
-      return yield* new MetricsError({ message: `thread start failed: ${result.stdout}` });
+      return yield* new MetricsError({
+        message: `thread start failed: ${result.stderr.trim() || result.stdout.trim()}`,
+      });
     }
     const request = environment.requests.find(
       (entry) => entry.agent && entry.marker === marker && entry.at >= started,
@@ -616,9 +679,18 @@ const openThreads = Effect.fn("serverMetrics.openThreads")(function* (
     (index) => server.threadStart(`Say hello ${index}.`, ["--wait"]),
     { concurrency: "unbounded" },
   );
-  const failed = answers.filter((answer) => answer.exitCode !== 0).length;
-  if (failed) return yield* new MetricsError({ message: `${failed} of ${count} threads failed` });
-  return answers.map((answer) => /Thread (\S+)/.exec(answer.stdout)?.[1] ?? "");
+  const failed = answers.find((answer) => answer.exitCode !== 0);
+  if (failed) {
+    return yield* new MetricsError({
+      message: `a thread failed to answer: ${failed.stderr.trim() || failed.stdout.trim()}`,
+    });
+  }
+  // Without --json, `thread start` prints the new thread's id to stderr, older releases too.
+  const ids = answers.map((answer) => /^Thread (\S+)$/m.exec(answer.stderr)?.[1]);
+  if (ids.some((id) => id === undefined)) {
+    return yield* new MetricsError({ message: "thread start printed no thread id" });
+  }
+  return ids.filter((id) => id !== undefined);
 });
 
 const SCENARIOS = ["startup", "rest", "firstWord", "quiet", "streaming"] as const;
@@ -634,7 +706,7 @@ interface RunOptions {
   readonly profileDir: string | undefined;
 }
 
-/** One pass over the scenarios, each on a fresh server. */
+/** One pass: startup, rest and firstWord share a server; quiet, streaming and soak get their own. */
 const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -725,17 +797,28 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   if (wanted("streaming")) {
     yield* withServer("streaming", (server) =>
       Effect.gen(function* () {
+        // Earlier scenarios share the fake API, so only this launch's markers count.
+        const markers = [0, 1, 2, 3, 4].map((index) => `bench-run-${9_000 + index}`);
         const started = yield* Effect.forEach(
-          [0, 1, 2, 3, 4],
-          (index) => server.threadStart(`Write a long answer ${index}. ${SLOW_MARKER}`),
+          markers,
+          (marker) => server.threadStart(`Write a long answer. ${SLOW_MARKER} ${marker}`),
           { concurrency: "unbounded" },
         );
         if (started.some((answer) => answer.exitCode !== 0)) {
           return yield* new MetricsError({ message: "streaming start failed" });
         }
-        const streaming = () => api.requests.filter((request) => request.agent && request.stream);
-        for (let attempt = 0; attempt < 300 && streaming().length < 5; attempt++) {
+        const streaming = () =>
+          new Set(
+            api.requests
+              .filter((request) => request.agent && request.stream)
+              .map((request) => request.marker),
+          );
+        for (let attempt = 0; attempt < 300; attempt++) {
+          if (markers.every((marker) => streaming().has(marker))) break;
           yield* Effect.sleep(Duration.millis(100));
+        }
+        if (!markers.every((marker) => streaming().has(marker))) {
+          return yield* new MetricsError({ message: "fewer than 5 replies started streaming" });
         }
         yield* Effect.sleep(Duration.seconds(5));
         measured.streaming = yield* server.measure(60);
@@ -751,8 +834,8 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         // The snapshot inflates RSS once, so the slopes start after it.
         const before = yield* server.snapshot;
         const samples: Array<{ hours: number; window: Window }> = [];
-        const start = yield* Clock.currentTimeMillis;
-        const elapsed = Effect.map(Clock.currentTimeMillis, (now) => now - start);
+        const start = yield* nowMs;
+        const elapsed = Effect.map(nowMs, (now) => now - start);
         const takeSample = Effect.gen(function* () {
           samples.push({ hours: (yield* elapsed) / 3_600_000, window: yield* server.measure(5) });
         });
@@ -762,8 +845,16 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             yield* takeSample;
             nextSample += 120_000;
           }
-          const threadId = threads[yield* Random.nextIntBetween(0, threads.length)] ?? "";
-          yield* server.threadSend(threadId, `Short reply ${turn}.`);
+          const threadId =
+            threads[yield* Random.nextIntBetween(0, threads.length, { halfOpen: true })];
+          if (threadId === undefined)
+            return yield* new MetricsError({ message: "no soak threads" });
+          const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
+          if (sent.exitCode !== 0) {
+            return yield* new MetricsError({
+              message: `soak turn ${turn} on ${threadId} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
+            });
+          }
           yield* Effect.sleep(Duration.millis(Math.max(0, (turn + 1) * 30_000 - (yield* elapsed))));
         }
         yield* takeSample;
@@ -853,8 +944,13 @@ const report = Effect.fn("serverMetrics.report")(function* (
   after: ServerMetrics,
   threshold: number,
 ) {
-  const { table, regressed, improved } = compareMetrics(before, after, threshold);
+  const { table, regressed, improved, compared } = compareMetrics(before, after, threshold);
   yield* Console.log(table);
+  if (compared === 0) {
+    return yield* new MetricsError({
+      message: "the two files share no metric, so nothing was compared",
+    });
+  }
   if (improved.length) yield* Console.error(`Better: ${improved.join(", ")}`);
   if (regressed.length === 0) return;
   yield* Console.error(`Worse: ${regressed.join(", ")}`);
@@ -916,9 +1012,19 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
     return yield* new MetricsError({ message: `unknown scenario: ${unknown.join(", ")}` });
   }
   const threads = flags.threads.split(",").map(Number);
-  if (threads.some((count) => !Number.isInteger(count) || count < 0)) {
-    return yield* new MetricsError({ message: "--threads takes counts such as 0,5,10,20" });
+  // Threads stay open, so a lower count after a higher one would mislabel its window.
+  if (
+    threads.some(
+      (count, index) => !Number.isInteger(count) || count < 0 || count < (threads[index - 1] ?? 0),
+    )
+  ) {
+    return yield* new MetricsError({
+      message: "--threads takes ascending counts such as 0,5,10,20",
+    });
   }
+  if (flags.runs < 1) return yield* new MetricsError({ message: "--runs must be at least 1" });
+  if (flags.soak < 0)
+    return yield* new MetricsError({ message: "--soak takes minutes, 0 for none" });
   const options: RunOptions = {
     checkout: path.resolve(checkout),
     noAgentScope: flags.noAgentScope,
@@ -953,6 +1059,8 @@ const runCommand = Command.make(
     const profileDir = Option.getOrUndefined(
       Option.map(input.out, (out) => `${out.replace(/\.json$/, "")}-profiles`),
     );
+    if (input.repeat < 1)
+      return yield* new MetricsError({ message: "--repeat must be at least 1" });
     const options = yield* toRunOptions(input, checkout, profileDir);
     const meta = yield* metaFor(options);
     const runs: Measured[] = [];
@@ -970,7 +1078,7 @@ const runCommand = Command.make(
   }),
 ).pipe(
   Command.withDescription(
-    "Measure a checkout's server: startup, rest, first word, quiet threads with their cost per thread, streaming, and an optional soak.",
+    "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
   ),
 );
 
@@ -991,6 +1099,8 @@ const abCommand = Command.make(
     threshold: thresholdFlag,
   },
   Effect.fn("serverMetrics.ab")(function* (input) {
+    if (input.rounds < 1)
+      return yield* new MetricsError({ message: "--rounds must be at least 1" });
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const outDir = path.resolve(input.outDir);

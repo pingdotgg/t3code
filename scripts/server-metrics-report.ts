@@ -153,6 +153,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   ];
   const regressed: string[] = [];
   const improved: string[] = [];
+  let compared = 0;
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
     if (metric === "soak.minutes" || metric.startsWith("scaling.points")) continue;
     const x = a.get(metric);
@@ -161,6 +162,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       lines.push(`| ${metric} | ${x ? median(x) : "–"} | ${y ? median(y) : "–"} | n/a | | |`);
       continue;
     }
+    compared++;
     const mx = median(x);
     const my = median(y);
     // A change counts only past both the relative threshold and the absolute noise floor.
@@ -179,7 +181,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       `| ${metric} | ${round(mx, 2)} | ${round(my, 2)} | ${shown} | ${interval} | ${verdict} |`,
     );
   }
-  return { table: lines.join("\n"), regressed, improved };
+  return { table: lines.join("\n"), regressed, improved, compared };
 }
 
 const CallFrame = Schema.Struct({
@@ -290,8 +292,10 @@ export function heapGrowth(
     .map(([name, { count, bytes }]) => ({
       constructor: name,
       count: count - (before.get(name)?.count ?? 0),
-      MB: round((bytes - (before.get(name)?.bytes ?? 0)) / 1e6, 2),
+      bytes: bytes - (before.get(name)?.bytes ?? 0),
     }))
-    .toSorted((a, b) => b.MB - a.MB)
-    .slice(0, 25);
+    .filter((entry) => entry.bytes > 0)
+    .toSorted((a, b) => b.bytes - a.bytes)
+    .slice(0, 25)
+    .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
 }
