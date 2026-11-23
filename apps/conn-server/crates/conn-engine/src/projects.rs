@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::commands::{self, CommandError, Effect, is_live};
 use crate::engine::{Inner, project_id};
-use crate::store::{ReceiptKey, ReceiptOwner, Tx, new_project};
+use crate::store::{Receipt, ReceiptKey, ReceiptOwner, StoredOwner, Tx, new_project};
 
 /// Title of the project that holds threads without a project (`ManagedProjectFolders.ts`).
 const SCRATCH_TITLE: &str = "No project";
@@ -361,25 +361,83 @@ fn make_project_folder(home: &Path, name: &str) -> ProjectResult<(PathBuf, Optio
     Ok((folder, commit_error))
 }
 
+/// A project command's receipt key: its id, its type and its project.
+struct ProjectCommand {
+    id: String,
+    kind: String,
+    project_id: String,
+}
+
+impl ProjectCommand {
+    /// Whether this command may answer from `receipt` (T3's `ProjectService.commit`).
+    fn check(&self, receipt: Receipt) -> ProjectResult<()> {
+        let id = &self.id;
+        match receipt.owner {
+            Some(StoredOwner::Project(Some(project)))
+                if project == self.project_id && receipt.command_type == self.kind =>
+            {
+                match receipt.refusal {
+                    Some(refusal) => Err(ProjectFailure::rejected(format!(
+                        "Command {id} was previously rejected: {refusal}"
+                    ))),
+                    None => Ok(()),
+                }
+            }
+            Some(StoredOwner::Project(Some(project))) => Err(ProjectFailure::rejected(format!(
+                "Command {id} was already used by {} for {project}.",
+                receipt.command_type
+            ))),
+            Some(StoredOwner::Project(None)) => Err(ProjectFailure::rejected(format!(
+                "Command {id} was already used by a project command whose project is not recorded."
+            ))),
+            _ => Err(ProjectFailure::rejected(format!(
+                "Command {id} was already used by a thread command."
+            ))),
+        }
+    }
+}
+
 impl Inner {
-    /// Runs one project write, with a receipt when the input has a `commandId`.
+    /// Runs one project write that has no command id, so no receipt.
     async fn project_write<T: Send + 'static>(
         self: &Arc<Self>,
-        command_id: Option<String>,
+        f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
+    ) -> ProjectResult<T> {
+        let no_replay = |_: &Tx<'_>| Err(ProjectFailure::rejected("No receipt to replay."));
+        self.project_command_write(None, no_replay, f).await
+    }
+
+    /// Runs one project write. A command with an id reads its receipt in the same write, as
+    /// T3's `commitProjectCommand`: a retry of it answers with `replay`, and an id another
+    /// command used is refused with that receipt kept.
+    async fn project_command_write<T: Send + 'static>(
+        self: &Arc<Self>,
+        command: Option<ProjectCommand>,
+        replay: impl FnOnce(&Tx<'_>) -> ProjectResult<T> + Send + 'static,
         f: impl FnOnce(&mut Tx<'_>) -> ProjectResult<(T, Vec<Effect>)> + Send + 'static,
     ) -> ProjectResult<T> {
         let result = self
             .db(move |store| {
+                if let Some(command) = &command
+                    && let Some(receipt) =
+                        store.outcome(&command.id).map_err(ProjectFailure::from)?
+                {
+                    command.check(receipt)?;
+                    let tx = store.tx().map_err(ProjectFailure::from)?;
+                    let value = replay(&tx);
+                    tx.rollback();
+                    return Ok((value?, vec![], store.high_water()));
+                }
                 let mut tx = store.tx().map_err(ProjectFailure::from)?;
                 match f(&mut tx) {
                     Ok((value, effects)) => {
-                        let receipt = command_id.as_deref().map(|id| ReceiptKey {
-                            command_id: id,
-                            command_type: "project",
-                            owner: ReceiptOwner::Project,
+                        let receipt = command.as_ref().map(|c| ReceiptKey {
+                            command_id: &c.id,
+                            command_type: &c.kind,
+                            owner: ReceiptOwner::Project(&c.project_id),
                         });
-                        let seq = tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
-                        Ok((value, effects, seq))
+                        tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
+                        Ok((value, effects, store.high_water()))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -388,8 +446,14 @@ impl Inner {
                 }
             })
             .await;
-        let (value, effects, seq) = result?;
-        self.notify.send_replace(seq);
+        let (value, effects, high) = result?;
+        self.notify.send_if_modified(|current| {
+            let moved = high > *current;
+            if moved {
+                *current = high;
+            }
+            moved
+        });
         for effect in effects {
             self.spawn_effect(effect);
         }
@@ -397,26 +461,23 @@ impl Inner {
     }
 
     pub(crate) async fn project_mutate(self: &Arc<Self>, input: Value) -> ProjectResult<Value> {
-        let command_id = input["commandId"].as_str().unwrap_or_default().to_owned();
-        let project_id = input["projectId"].as_str().unwrap_or_default().to_owned();
+        let command = ProjectCommand {
+            id: input["commandId"].as_str().unwrap_or_default().to_owned(),
+            kind: input["type"].as_str().unwrap_or_default().to_owned(),
+            project_id: input["projectId"].as_str().unwrap_or_default().to_owned(),
+        };
         // A retried command returns the project as it is now.
-        let (cid, pid) = (command_id.clone(), project_id.clone());
-        let replay = self
-            .db(move |store| -> Result<Option<Value>, String> {
-                if store.receipt(&cid)?.is_none() {
-                    return Ok(None);
-                }
-                let tx = store.tx()?;
-                let project = tx.project_any(&pid);
-                tx.rollback();
-                project
-            })
-            .await?;
-        if let Some(project) = replay {
-            return Ok(project);
-        }
-        self.project_write(Some(command_id), move |tx| mutate(tx, &input))
-            .await
+        let pid = command.project_id.clone();
+        self.project_command_write(
+            Some(command),
+            move |tx| {
+                tx.project_any(&pid)
+                    .map(Option::unwrap_or_default)
+                    .map_err(ProjectFailure::from)
+            },
+            move |tx| mutate(tx, &input),
+        )
+        .await
     }
 
     pub(crate) async fn project_ensure_scratch(self: &Arc<Self>) -> ProjectResult<Value> {
@@ -430,7 +491,7 @@ impl Inner {
             })?;
         let root = root.to_string_lossy().into_owned();
         let id = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 let (id, created) = bootstrap(tx, SCRATCH_TITLE, &root)?;
                 if created && let Some(mut project) = tx.project(&id)? {
                     project["projectIcon"] =
@@ -457,7 +518,7 @@ impl Inner {
         let root = folder.to_string_lossy().into_owned();
         let written = root.clone();
         let created = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 // A fresh id, as T3's `createNamedProject`: a folder freed by a moved project
                 // must not bring that project's id back.
                 let id = conn_support::uuid_v4();
@@ -500,7 +561,7 @@ impl Inner {
         let thread_id = input["threadId"].as_str().unwrap_or_default().to_owned();
         let scratch = self.home.join("scratch");
         let id = self
-            .project_write(None, move |tx| {
+            .project_write(move |tx| {
                 let refuse = || {
                     ProjectFailure::rejected(
                         "Only a No project thread with its own folder can become a project.",

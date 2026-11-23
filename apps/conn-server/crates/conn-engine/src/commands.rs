@@ -956,6 +956,13 @@ pub(crate) fn start_next_queued(
         }
         break run;
     };
+    // T3's `startNextQueuedRun`: a provider turned off for the project holds the queue for
+    // the user instead of starting the run.
+    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
+    if !tx.provider_enabled(thread["projectId"].as_str(), instance) {
+        hold_queue(tx, thread_id)?;
+        return Ok(None);
+    }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
     let now = tx.now().to_owned();
@@ -1790,9 +1797,10 @@ fn thread_visit(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // T3's `dispatchThreadVisit`: only a later visit moves the read mark, compared as times,
     // and the event carries the visit, not the thread.
     let thread = live_thread(tx, &c.thread_id)?;
+    // The stored mark may be in any form main stored; read it as the command time is read.
     let moves_forward = thread["lastVisitedAt"]
         .as_str()
-        .and_then(crate::time::millis_from_iso)
+        .and_then(|last| tx.date_input_millis(last))
         .is_none_or(|last| visited > last);
     if !moves_forward {
         return Ok(vec![]);

@@ -278,6 +278,7 @@ impl SqliteEngine {
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
         store.zone = config.zone.clone();
+        store.host = config.host.clone();
         store.generates_titles = config.title_generator.is_some();
         let attention = config
             .attention
@@ -1363,7 +1364,7 @@ fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, 
                 key.command_id
             )));
         }
-        Some(StoredOwner::Project) => {
+        Some(StoredOwner::Project(_)) => {
             return Err(CommandError::Rejected(
                 "Conflicting receipt is not a thread command receipt.".into(),
             ));

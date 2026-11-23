@@ -330,6 +330,14 @@ async fn receipts_from_before_owners_name_them_or_refuse() {
         let (engine, _) = open(&db);
         dispatch(&engine, create("a", "c1")).await;
         dispatch(&engine, create("b", "c2")).await;
+        // A message main indexed, with accents, for the search after the upgrade.
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "a"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("a", "m1", "Ångström café citation")).await;
+        until_run_ends(&mut thread).await;
         dispatch(
             &engine,
             json!({"type": "thread.settle", "commandId": "s1", "threadId": "a"}),
@@ -353,24 +361,7 @@ async fn receipts_from_before_owners_name_them_or_refuse() {
             .await
             .unwrap();
     }
-    // The store as a server before receipt owners left it.
-    {
-        let conn = rusqlite::Connection::open(db.path()).unwrap();
-        let columns: Vec<String> = conn
-            .prepare("SELECT name FROM pragma_table_info('receipts')")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        for column in columns {
-            if !["command_id", "command_type", "sequence"].contains(&column.as_str()) {
-                conn.execute_batch(&format!("ALTER TABLE receipts DROP COLUMN {column}"))
-                    .unwrap();
-            }
-        }
-        conn.execute_batch("PRAGMA user_version = 4").unwrap();
-    }
+    downgrade_to_v4(&db);
     let (engine, _) = open(&db);
     let settle_b = rejection(
         &engine,
@@ -423,6 +414,13 @@ async fn receipts_from_before_owners_name_them_or_refuse() {
         project.contains("Conflicting receipt is not a thread command receipt."),
         "{project}"
     );
+    // Main's search index still answers, accents included.
+    let found = engine
+        .inner()
+        .db(|s| s.search_threads(&json!({"query": "Ångström café"})))
+        .await
+        .unwrap();
+    assert!(found.to_string().contains("\"a\""), "{found}");
 }
 
 /// T3's deciders emit their event even when nothing changes: a re-pin records `thread.pinned`
@@ -477,6 +475,318 @@ async fn a_repin_records_its_event_and_a_quiet_stop_answers_its_thread() {
     )
     .await;
     assert_eq!(stopped, a_latest);
+}
+
+/// A host whose provider instances can be switched off during a test.
+#[derive(Default)]
+struct Switchable(std::sync::atomic::AtomicBool);
+
+impl crate::EngineHost for Switchable {
+    fn provider_instance_enabled(&self, _project_id: Option<&str>, _instance_id: &str) -> bool {
+        !self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+/// T3's queue start holds the queue when the next run's provider is off for its project
+/// (`startNextQueuedRun`): a replayed `queue.resume` answers its recorded sequence and starts
+/// nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_resume_holds_a_queue_whose_provider_is_off() {
+    let db = TempDb::new("resume-replay-off");
+    let host = Arc::new(Switchable::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "later")).await;
+    let resume = json!({"type": "queue.resume", "commandId": "r1", "threadId": "t1"});
+    let recorded = dispatch(&engine, resume.clone()).await;
+    engine
+        .inner()
+        .db(|store| {
+            let mut tx = store.tx()?;
+            let mut run = tx.entity("t1", "runs", "run:t1:1")?.unwrap();
+            run["status"] = json!("interrupted");
+            tx.append(crate::store::Draft::new("t1", "run.updated", run).run(Some("run:t1:1")))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    host.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(dispatch(&engine, resume).await, recorded);
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["runs"][1]["status"], "queued", "nothing starts");
+    assert_eq!(p["runs"][1]["queueHeld"], true, "the queue is held");
+}
+
+/// The store as main (schema 4) left it: receipts with no owner, error or later columns.
+fn downgrade_to_v4(db: &TempDb) {
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    // Main wrote every project receipt as `project`.
+    conn.execute_batch("UPDATE receipts SET command_type = 'project' WHERE owner_kind = 'project'")
+        .unwrap();
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('receipts')")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for column in columns {
+        if !["command_id", "command_type", "sequence"].contains(&column.as_str()) {
+            conn.execute_batch(&format!("ALTER TABLE receipts DROP COLUMN {column}"))
+                .unwrap();
+        }
+    }
+    conn.execute_batch("PRAGMA user_version = 4").unwrap();
+}
+
+/// Main kept events but pruned receipts, so an id can have an older execution's events. The
+/// upgrade names an owner only from the event at the receipt's own sequence: B's retry is a
+/// replay, and A does not get B's receipt.
+#[tokio::test(flavor = "current_thread")]
+async fn a_reused_id_after_pruning_belongs_to_its_last_execution() {
+    let db = TempDb::new("reused-id");
+    let settle =
+        |thread: &str| json!({"type": "thread.settle", "commandId": "x", "threadId": thread});
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("a", "c1")).await;
+        dispatch(&engine, create("b", "c2")).await;
+        dispatch(&engine, settle("a")).await;
+        // Main pruned A's receipt; the id then ran again, for B.
+        engine
+            .inner()
+            .db(|store| {
+                store
+                    .raw()
+                    .execute("DELETE FROM receipts WHERE command_id = 'x'", [])
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .unwrap();
+        dispatch(&engine, settle("b")).await;
+    }
+    downgrade_to_v4(&db);
+    let (engine, _) = open(&db);
+    let b_events = engine.inner().db(|s| s.event_count("b")).await;
+    dispatch(&engine, settle("b")).await;
+    assert_eq!(
+        engine.inner().db(|s| s.event_count("b")).await,
+        b_events,
+        "a replay"
+    );
+    let a = rejection(&engine, settle("a")).await;
+    assert!(
+        a.contains("Command x was already handled for thread b and cannot be replayed for a."),
+        "{a}"
+    );
+}
+
+/// A v4 delegation's events end with the child's first message; its receipt still belongs to
+/// the parent, proved by the parent's task row naming the created child.
+#[tokio::test(flavor = "current_thread")]
+async fn a_legacy_delegation_belongs_to_its_parent() {
+    let db = TempDb::new("legacy-delegation");
+    let child = "thread:delegated-task:d1";
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        let mut thread = engine
+            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .await
+            .unwrap();
+        next(&mut thread).await;
+        dispatch(&engine, message("t1", "c2", "hang")).await;
+        until_provider_turn(&mut thread).await;
+        dispatch(&engine, delegate("d1", "look around", None)).await;
+        let last = engine
+            .inner()
+            .db(|s| {
+                s.raw()
+                    .query_row(
+                        "SELECT sequence FROM receipts WHERE command_id = 'd1'",
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .unwrap();
+        let on: String = engine
+            .inner()
+            .db(move |s| {
+                s.raw()
+                    .query_row("SELECT thread_id FROM events WHERE seq = ?1", [last], |r| {
+                        r.get(0)
+                    })
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            on, child,
+            "the delegation's last event is the child's first message"
+        );
+    }
+    downgrade_to_v4(&db);
+    let (engine, _) = open(&db);
+    dispatch(&engine, delegate("d1", "look around", None)).await;
+    let wrong = rejection(
+        &engine,
+        json!({"type": "thread.settle", "commandId": "d1", "threadId": child}),
+    )
+    .await;
+    assert!(
+        wrong.contains("Command d1 was already handled for thread t1 and cannot be replayed for"),
+        "{wrong}"
+    );
+}
+
+/// The upgrade from main's schema commits atomically: a failure leaves schema 4 and no owner,
+/// and the next open finishes it.
+#[tokio::test(flavor = "current_thread")]
+async fn the_receipt_upgrade_is_all_or_nothing() {
+    let db = TempDb::new("upgrade-atomic");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("a", "c1")).await;
+        dispatch(&engine, create("b", "c2")).await;
+    }
+    downgrade_to_v4(&db);
+    {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER stop_upgrade BEFORE UPDATE ON receipts WHEN NEW.command_id = 'c2'
+             BEGIN SELECT RAISE(ABORT, 'test: stop the upgrade'); END;",
+        )
+        .unwrap();
+    }
+    let mut config = EngineConfig::new(db.path());
+    config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
+    assert!(SqliteEngine::open(config).is_err(), "the upgrade fails");
+    {
+        let conn = rusqlite::Connection::open(db.path()).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 4);
+        let columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('receipts') WHERE name = 'owner_kind'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(columns, 0, "no half-written owners");
+        conn.execute_batch("DROP TRIGGER stop_upgrade").unwrap();
+    }
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("a", "c1")).await;
+}
+
+/// A project write reads its receipt in its own transaction, as T3's `commitProjectCommand`:
+/// a thread command's id, or another project's or command's, is refused and the receipt kept.
+#[tokio::test(flavor = "current_thread")]
+async fn a_project_write_checks_the_receipt_it_would_reuse() {
+    let db = TempDb::new("project-receipt");
+    let (engine, _) = open(&db);
+    // A thread command refused under the id.
+    let refused = rejection(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "x", "threadId": "missing"}),
+    )
+    .await;
+    assert!(refused.contains("does not exist"), "{refused}");
+    let folder = |name: &str| {
+        let dir = std::env::temp_dir().join(format!(
+            "conn-project-receipt-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.to_string_lossy().into_owned()
+    };
+    let create_project = |id: &str, project: &str, root: &str| {
+        json!({"type": "project.create", "commandId": id, "projectId": project,
+            "title": "P", "workspaceRoot": root})
+    };
+    let (root1, root2) = (folder("one"), folder("two"));
+    let used = engine
+        .call("projects.mutate", create_project("x", "project:p1", &root1))
+        .await;
+    let error = format!("{used:?}");
+    assert!(used.is_err(), "a thread command's id is refused");
+    assert!(
+        error.contains("Command x was already used by a thread command."),
+        "{error}"
+    );
+    let again = rejection(
+        &engine,
+        json!({"type": "thread.archive", "commandId": "x", "threadId": "missing"}),
+    )
+    .await;
+    assert!(
+        again.contains("Command x was previously rejected"),
+        "the receipt is kept: {again}"
+    );
+    // A project receipt answers only for its project and command.
+    engine
+        .call("projects.mutate", create_project("p", "project:p1", &root1))
+        .await
+        .unwrap();
+    engine
+        .call("projects.mutate", create_project("p", "project:p1", &root1))
+        .await
+        .unwrap();
+    let other = engine
+        .call("projects.mutate", create_project("p", "project:p2", &root2))
+        .await;
+    let error = format!("{other:?}");
+    assert!(
+        error.contains("Command p was already used by project.create for project:p1."),
+        "{error}"
+    );
+}
+
+/// A visit is compared with the stored read mark as T3 reads it, whatever form main stored.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stale_visit_loses_to_a_mark_in_mains_format() {
+    let db = TempDb::new("visit-main-format");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    // Main stored the client's string as it came.
+    engine
+        .inner()
+        .db(|store| {
+            let mut tx = store.tx()?;
+            let mut thread = tx.thread("t1")?.unwrap();
+            thread["lastVisitedAt"] = json!("2020-01-02");
+            tx.append(crate::store::Draft::new("t1", "thread.visited", thread))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "thread.visit", "commandId": "v1", "threadId": "t1",
+            "visitedAt": "2020-01-01T12:00:00.000Z"}),
+    )
+    .await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["lastVisitedAt"], "2020-01-02");
+    assert!(command_events(&engine, "v1").await.is_empty());
 }
 
 /// T3 replays `queue.resume` and `queued-run.start` by checking the queue again

@@ -537,12 +537,15 @@ function storedEvents(side) {
           "SELECT event_type AS type, stream_id AS thread, payload_json AS payload, metadata_json AS meta FROM orchestration_events WHERE aggregate_kind = 'thread' ORDER BY sequence",
         )
         .all()
-        .map((row) => ({ type: row.type, thread: row.thread, payload: JSON.parse(row.payload), instance: JSON.parse(row.meta ?? "{}").providerInstanceId }))
+        .map((row) => {
+          const meta = JSON.parse(row.meta ?? "{}");
+          return { type: row.type, thread: row.thread, run: meta.runId, payload: JSON.parse(row.payload), instance: meta.providerInstanceId };
+        })
     : db
         .prepare("SELECT event FROM events ORDER BY seq")
         .all()
         .map((row) => JSON.parse(row.event))
-        .map((event) => ({ type: event.type, thread: event.threadId, payload: event.payload, instance: event.providerInstanceId }));
+        .map((event) => ({ type: event.type, thread: event.threadId, run: event.runId, payload: event.payload, instance: event.providerInstanceId }));
   db.close();
   return rows;
 }
@@ -553,14 +556,20 @@ const keyOf = (row) => (row.type === "turn-item.updated" ? `${row.type}:${row.pa
  * The one known difference, matched row by row. T3's ingestor cancels a pending question when
  * its provider turn ends (`dismissNativeUserInputs`, the session's instance). Conn has no such
  * step: the question stays pending until its session is released, which expires it, and T3's
- * release names no instance. So a Conn row is excused only when it is a question expired
- * right after its own session's release, and T3 has a cancelled question with an instance.
+ * release names no instance. A Conn row is excused only when it is that question: expired
+ * right after its own session's release, the one pending row of its thread and request, and
+ * paired with exactly one T3 question cancelled for the same native request, on the same run
+ * of the scenario, after exactly one pending row of its own thread, run and request.
  */
+const REQUEST = "runtime-request.updated";
+const runOrdinal = (run) => (typeof run === "string" ? run.slice(run.lastIndexOf(":") + 1) : undefined);
+const sameRef = (a, b) => a != null && JSON.stringify(a) === JSON.stringify(b);
+
 function excusedQuestion(rows, index, t3Rows) {
   const row = rows[index];
   const before = rows[index - 1];
-  return (
-    row.type === "runtime-request.updated" &&
+  const shaped =
+    row.type === REQUEST &&
     row.instance === undefined &&
     row.payload?.kind === "user_input" &&
     row.payload?.status === "expired" &&
@@ -568,15 +577,36 @@ function excusedQuestion(rows, index, t3Rows) {
     before?.type === "provider-session.updated" &&
     before.thread === row.thread &&
     before.payload?.status === "stopped" &&
-    before.payload?.id === row.payload.responseCapability.providerSessionId &&
-    t3Rows.some(
-      (t3) =>
-        t3.type === "runtime-request.updated" &&
-        t3.payload?.kind === "user_input" &&
-        t3.payload?.status === "cancelled" &&
-        t3.instance !== undefined,
-    )
+    before.payload?.id === row.payload.responseCapability.providerSessionId;
+  if (!shaped) return false;
+  const pending = rows.filter(
+    (r) =>
+      r.type === REQUEST &&
+      r.thread === row.thread &&
+      r.payload?.id === row.payload.id &&
+      r.payload?.status === "pending" &&
+      r.instance !== undefined,
   );
+  if (pending.length !== 1 || (row.run !== undefined && row.run !== pending[0].run)) return false;
+  const cancelled = t3Rows.filter(
+    (t) =>
+      t.type === REQUEST &&
+      t.payload?.kind === "user_input" &&
+      t.payload?.status === "cancelled" &&
+      t.instance !== undefined &&
+      sameRef(t.payload?.nativeRequestRef, row.payload.nativeRequestRef),
+  );
+  if (cancelled.length !== 1) return false;
+  const [match] = cancelled;
+  const t3Pending = t3Rows.filter(
+    (t) =>
+      t.type === REQUEST &&
+      t.thread === match.thread &&
+      t.run === match.run &&
+      t.payload?.id === match.payload.id &&
+      t.payload?.status === "pending",
+  );
+  return t3Pending.length === 1 && runOrdinal(match.run) === runOrdinal(pending[0].run);
 }
 
 /** `key -> Set` of the instances (or "(none)") the rows name. */
@@ -593,13 +623,17 @@ function instancesByKey(rows) {
 function compareInstances(t3, conn) {
   const t3Rows = storedEvents(t3);
   const connAll = storedEvents(conn);
-  const connRows = connAll.filter((_, i) => {
-    if (!excusedQuestion(connAll, i, t3Rows)) return true;
+  const excused = connAll.map((_, i) => excusedQuestion(connAll, i, t3Rows));
+  const count = excused.filter(Boolean).length;
+  // The scenario asks one question; more matches would hide something else.
+  const connRows = count === 1 ? connAll.filter((_, i) => !excused[i]) : connAll;
+  if (count === 1) {
     console.log(
-      "  known Conn expires a question at its session's release with no instance; T3 cancels it at the turn's end (dismissNativeUserInputs)",
+      "  known Conn expires its one question at its session's release with no instance; T3 cancels it at the turn's end (dismissNativeUserInputs)",
     );
-    return false;
-  });
+  } else if (count > 1) {
+    console.log(`  ${count} questions match the known difference; none is excused`);
+  }
   const a = instancesByKey(t3Rows);
   const b = instancesByKey(connRows);
   let failures = 0;

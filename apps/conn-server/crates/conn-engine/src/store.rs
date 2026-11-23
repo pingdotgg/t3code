@@ -259,6 +259,8 @@ pub(crate) struct Store {
     clock: std::sync::Arc<dyn crate::clock::Clock>,
     /// `EngineConfig::zone`.
     pub(crate) zone: jiff::tz::TimeZone,
+    /// `EngineConfig::host`: the queue start asks it whether a run's provider is enabled.
+    pub(crate) host: Option<std::sync::Arc<dyn crate::EngineHost>>,
     /// A title generator is configured, so commands may ask for titles.
     pub(crate) generates_titles: bool,
     /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
@@ -323,6 +325,7 @@ impl Store {
             next_seq: high as u64 + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             zone: jiff::tz::TimeZone::UTC,
+            host: None,
             generates_titles: false,
             starts: StartLedger::default(),
             attention: None,
@@ -372,6 +375,7 @@ impl Store {
         let now_ms = self.clock.now_millis();
         Ok(Tx {
             zone: self.zone.clone(),
+            host: self.host.clone(),
             attention: self.attention.clone(),
             attention_written: false,
             now_ms,
@@ -396,7 +400,8 @@ impl Store {
     pub(crate) fn outcome(&self, command_id: &str) -> StoreResult<Option<Receipt>> {
         self.conn
             .query_row(
-                "SELECT sequence, owner_kind, owner_id, error FROM receipts WHERE command_id = ?1",
+                "SELECT sequence, owner_kind, owner_id, error, command_type FROM receipts
+                 WHERE command_id = ?1",
                 [command_id],
                 |row| {
                     let kind: Option<String> = row.get(1)?;
@@ -405,10 +410,11 @@ impl Store {
                         sequence: row.get::<_, i64>(0)? as u64,
                         owner: match (kind.as_deref(), id) {
                             (Some("thread"), Some(id)) => Some(StoredOwner::Thread(id)),
-                            (Some("project"), _) => Some(StoredOwner::Project),
+                            (Some("project"), id) => Some(StoredOwner::Project(id)),
                             _ => None,
                         },
                         refusal: row.get(3)?,
+                        command_type: row.get(4)?,
                     })
                 },
             )
@@ -1098,6 +1104,7 @@ pub(crate) struct Tx<'a> {
     attention_written: bool,
     now_ms: u64,
     zone: jiff::tz::TimeZone,
+    host: Option<std::sync::Arc<dyn crate::EngineHost>>,
 }
 
 impl Tx<'_> {
@@ -1179,6 +1186,14 @@ impl Tx<'_> {
             .map_err(err)?
             .flatten();
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
+    }
+
+    /// Whether `instance` may start work in `project` (the server's settings; all, without a
+    /// host).
+    pub(crate) fn provider_enabled(&self, project: Option<&str>, instance: &str) -> bool {
+        self.host
+            .as_ref()
+            .is_none_or(|host| host.provider_instance_enabled(project, instance))
     }
 
     /// Milliseconds since the epoch of a command's time string, as T3's `DateTime.make`.
@@ -2045,8 +2060,10 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
     if version < 5 {
         // 5: a receipt names what it answers for and records a refusal (T3's
         // `CommandReceiptV2`). Older receipts get their owner where their own events prove it.
+        // One transaction: the columns, the owners and the version land together or not at all.
+        let tx = conn.unchecked_transaction().map_err(err)?;
         for column in ["owner_kind", "owner_id", "error"] {
-            let present: bool = conn
+            let present: bool = tx
                 .query_row(
                     "SELECT EXISTS(SELECT 1 FROM pragma_table_info('receipts') WHERE name = ?1)",
                     [column],
@@ -2054,64 +2071,125 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
                 )
                 .map_err(err)?;
             if !present {
-                conn.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
+                tx.execute_batch(&format!("ALTER TABLE receipts ADD COLUMN {column} TEXT"))
                     .map_err(err)?;
             }
         }
-        name_receipt_owners(conn)?;
-        conn.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        name_receipt_owners(&tx)?;
+        tx.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+        tx.commit().map_err(err)?;
     }
     Ok(())
 }
 
-/// Names the owner of receipts written before receipts had one. A project command's receipt is
-/// a project's. A thread command's is the one thread its events were written to; when they
-/// also created a thread (a delegated task's child), the thread besides it. A receipt nothing
-/// proves keeps no owner: a retry of it is refused rather than run twice or answered for the
-/// wrong thread. One pass over the events.
+/// Receipts read per page while naming owners, so memory stays bounded on any store.
+const OWNER_PAGE: i64 = 256;
+
+/// Commands whose receipt belongs to the parent thread (T3's `commandThreadId`).
+const PARENT_OWNED: [&str; 8] = [
+    "delegated_task.request",
+    "delegated_task.remote.request",
+    "delegated_task.remote.complete",
+    "delegated_task.remote.stop",
+    "delegated_task.wake-policy",
+    "delegated_task.completion-delivery.acknowledge",
+    "delegated_task.completion-delivery.dispose",
+    "thread.created.record",
+];
+
+/// Names the owner of receipts written before receipts had one: a project command's is a
+/// project's, a thread command's the one its own execution proves. A receipt nothing proves
+/// keeps no owner, so a retry of it is refused rather than run twice or answered for the
+/// wrong thread.
 fn name_receipt_owners(conn: &Connection) -> StoreResult<()> {
     conn.execute(
         "UPDATE receipts SET owner_kind = 'project' WHERE owner_kind IS NULL AND command_type = 'project'",
         [],
     )
     .map_err(err)?;
-    let rows: Vec<(String, String, String)> = {
-        let mut stmt = conn
-            .prepare(
-                "SELECT e.command_id, e.thread_id, e.type FROM events e
-                 JOIN receipts r ON r.command_id = e.command_id
-                 WHERE r.owner_kind IS NULL",
-            )
-            .map_err(err)?;
-        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+    let mut after = String::new();
+    loop {
+        let page: Vec<(String, String, i64)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT command_id, command_type, sequence FROM receipts
+                     WHERE owner_kind IS NULL AND command_id > ?1 ORDER BY command_id LIMIT ?2",
+                )
+                .map_err(err)?;
+            stmt.query_map(params![after, OWNER_PAGE], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
             .map_err(err)?
             .collect::<rusqlite::Result<_>>()
             .map_err(err)?
-    };
-    // command id -> (every thread written, the threads written by more than a creation)
-    let mut written: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
-        std::collections::HashMap::new();
-    for (command_id, thread_id, event_type) in rows {
-        let (all, besides) = written.entry(command_id).or_default();
-        if !all.contains(&thread_id) {
-            all.push(thread_id.clone());
-        }
-        if event_type != "thread.created" && !besides.contains(&thread_id) {
-            besides.push(thread_id);
-        }
-    }
-    for (command_id, (all, besides)) in written {
-        let owner = match (all.as_slice(), besides.as_slice()) {
-            ([only], _) | (_, [only]) => only,
-            _ => continue,
         };
-        conn.execute(
-            "UPDATE receipts SET owner_kind = 'thread', owner_id = ?2 WHERE command_id = ?1",
-            params![command_id, owner],
-        )
-        .map_err(err)?;
+        let Some((last, _, _)) = page.last() else {
+            break;
+        };
+        after = last.clone();
+        for (command_id, command_type, sequence) in &page {
+            if let Some(owner) = proved_owner(conn, command_id, command_type, *sequence)? {
+                conn.execute(
+                    "UPDATE receipts SET owner_kind = 'thread', owner_id = ?2 WHERE command_id = ?1",
+                    params![command_id, owner],
+                )
+                .map_err(err)?;
+            }
+        }
     }
     Ok(())
+}
+
+/// The thread a receipt's own execution proves. A receipt's sequence is the last event its
+/// commit wrote, so that event must carry the receipt's command id; an older execution of a
+/// reused id (main pruned receipts, not events) never sits there. A delegation's last event
+/// can be its child's first message: the parent is then the thread whose task row, written by
+/// the same command, names that created child.
+fn proved_owner(
+    conn: &Connection,
+    command_id: &str,
+    command_type: &str,
+    sequence: i64,
+) -> StoreResult<Option<String>> {
+    let last: Option<(String, Option<String>)> = conn
+        .query_row(
+            "SELECT thread_id, command_id FROM events WHERE seq = ?1",
+            [sequence],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(err)?;
+    let Some((thread, Some(tagged))) = last else {
+        return Ok(None);
+    };
+    if tagged != command_id {
+        return Ok(None);
+    }
+    if !PARENT_OWNED.contains(&command_type) {
+        return Ok(Some(thread));
+    }
+    let event_of = |thread_id: &str, event_type: &str| -> StoreResult<Option<Value>> {
+        conn.query_row(
+            "SELECT event FROM events WHERE thread_id = ?1 AND type = ?2 AND command_id = ?3
+               AND seq <= ?4 ORDER BY seq DESC LIMIT 1",
+            params![thread_id, event_type, command_id, sequence],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(err)?
+        .map(parse)
+        .transpose()
+    };
+    let Some(created) = event_of(&thread, "thread.created")? else {
+        return Ok(Some(thread));
+    };
+    let Some(parent) = created["payload"]["lineage"]["parentThreadId"].as_str() else {
+        return Ok(None);
+    };
+    let task = event_of(parent, "subagent.updated")?;
+    Ok(task
+        .filter(|task| task["payload"]["childThreadId"] == thread.as_str())
+        .map(|_| parent.to_owned()))
 }
 
 /// Puts the final text of one message into `message_search`, replacing an older version.
@@ -2173,21 +2251,20 @@ pub(crate) struct ReceiptKey<'a> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ReceiptOwner<'a> {
     Thread(&'a str),
-    Project,
+    Project(&'a str),
 }
 
 impl<'a> ReceiptOwner<'a> {
     fn kind(self) -> &'static str {
         match self {
             Self::Thread(_) => "thread",
-            Self::Project => "project",
+            Self::Project(_) => "project",
         }
     }
 
     fn id(self) -> Option<&'a str> {
         match self {
-            Self::Thread(id) => Some(id),
-            Self::Project => None,
+            Self::Thread(id) | Self::Project(id) => Some(id),
         }
     }
 }
@@ -2201,12 +2278,14 @@ pub(crate) struct Receipt {
     pub owner: Option<StoredOwner>,
     /// The refusal, for a refused command.
     pub refusal: Option<String>,
+    pub command_type: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum StoredOwner {
     Thread(String),
-    Project,
+    /// `None` on a project receipt from before receipts named their project.
+    Project(Option<String>),
 }
 
 /// The sequence a command that wrote nothing answers: its thread's latest event.
