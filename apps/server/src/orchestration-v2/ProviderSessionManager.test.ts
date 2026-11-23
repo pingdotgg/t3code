@@ -611,6 +611,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          resumeTurn: () => options.startTurn ?? Effect.void,
+          compactThread: () => options.startTurn ?? Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -2135,6 +2137,132 @@ it.effect.each([
         assert.isFalse(yield* manager.isLive(providerSessionId));
       }).pipe(Effect.provide(layerTest({ state, capabilities })));
     }),
+);
+
+const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn", startFails: boolean) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread-${start}-outlasts-idle-timeout`);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscriber = yield* runtime.subscribeEvents!;
+      const terminal = yield* subscriber.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const run = {
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+      };
+      const messageId = yield* idAllocator.allocate.message({ threadId, ordinal: 1 });
+      const started = yield* Effect.exit(
+        start === "compactThread"
+          ? runtime.compactThread!({
+              ...run,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId,
+                text: "/compact",
+                attachments: [],
+              },
+            })
+          : runtime.resumeTurn!({ ...run, messageId }),
+      );
+      assert.equal(Exit.isFailure(started), startFails);
+
+      // A running compaction or continuation can go minutes without a provider event.
+      yield* TestClock.adjust("2 seconds");
+      assert.equal(yield* manager.isLive(providerSessionId), !startFails);
+      if (startFails) return;
+
+      const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(queue);
+      yield* Queue.offer(queue!, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: providerThread.id,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: `native-turn-${start}`,
+        }),
+        runOrdinal: 1,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      // The event pump marks the run idle before it publishes the event.
+      yield* Fiber.join(terminal);
+      yield* TestClock.adjust("2 seconds");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 1_000,
+          ...(startFails
+            ? {
+                startTurn: Effect.fail(
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CODEX_DRIVER,
+                    detail: "query ended before the run could start",
+                  }),
+                ),
+              }
+            : {}),
+        }),
+      ),
+    );
+  });
+
+it.effect.each([
+  { run: "compaction", start: "compactThread" },
+  { run: "manual continuation", start: "resumeTurn" },
+] as const)(
+  "ProviderSessionManagerV2 keeps a session through a $run that outlasts the idle timeout",
+  ({ start }) => idleReleaseAroundRun(start, false),
+);
+
+it.effect.each([
+  { run: "compaction", start: "compactThread" },
+  { run: "manual continuation", start: "resumeTurn" },
+] as const)(
+  "ProviderSessionManagerV2 still idles out a session after a $run that failed to start",
+  ({ start }) => idleReleaseAroundRun(start, true),
 );
 
 it.effect.each(["session metadata", "session status changes", "provider work"] as const)(
