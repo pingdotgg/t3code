@@ -224,6 +224,31 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
   ),
 );
 
+it.effect("a long step result is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.stepStarted("r1", "write", "step");
+      yield* store.stepResult("r1", "write", `${"a".repeat(7_998)}\u{1F680}tail`);
+      const [step] = yield* store.steps("r1");
+      // The cut is of the JSON text, which opens with a quote.
+      assert.equal(WorkflowStore.jsonValue(step?.result_json ?? "null"), `"${"a".repeat(7_998)}…`);
+    }),
+  ),
+);
+
+it.effect("what a long agent step said is cut without leaving half an emoji", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      yield* store.stepStarted("r1", "write", "agent");
+      yield* store.stepResult("r1", "write", null, `${"a".repeat(7_999)}\u{1F680}tail`);
+      const [step] = yield* store.steps("r1");
+      assert.equal(step?.said, `${"a".repeat(7_999)}…`);
+    }),
+  ),
+);
+
 it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
   withStore(
     Effect.gen(function* () {

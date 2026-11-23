@@ -1959,6 +1959,10 @@ export const layer: Layer.Layer<
           : { nativeThreadId: runningProviderThread.nativeThreadRef.nativeId }),
         status: "running",
         startedAt: now,
+        startedModes: {
+          runtimeMode: projection.thread.runtimeMode,
+          interactionMode: projection.thread.interactionMode,
+        },
       };
       const runningRootNode: OrchestrationV2ExecutionNode = {
         ...rootNode,
