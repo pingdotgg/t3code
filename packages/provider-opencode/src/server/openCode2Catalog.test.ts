@@ -7,6 +7,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { describe } from "vite-plus/test";
 
+import { chatGptWorkspaceScope } from "./chatGptWorkspaceScope.ts";
 import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import { makeOpenCode2ModelLoader } from "./status.ts";
 import * as OpenCode2Client from "./v2/OpenCode2Client.ts";
@@ -64,6 +65,47 @@ const readCatalog = (
   );
 
 describe("loadOpenCode2Catalog", () => {
+  const codex = "https://chatgpt.com/backend-api/codex";
+  it.effect.each([
+    ["Codex destination", codex, {}, {}, "openai"],
+    ["API alias without a rewrite", "https://api.openai.com/v1", {}, {}, undefined],
+    ["independent endpoint", "http://127.0.0.1:48990/v1", {}, {}, undefined],
+    ["mixed variant destinations", codex, { baseURL: "https://example.test" }, {}, undefined],
+    [
+      "project account override",
+      codex,
+      {},
+      { "ChatGPT-Account-ID": "project" },
+      chatGptWorkspaceScope("project"),
+    ],
+  ] as const)("resolves the quota scope for %s", ([, endpoint, variant, headers, scope]) =>
+    Effect.gen(function* () {
+      const models = yield* readCatalog({
+        "/api/model": MODELS_BODY.replace(
+          '"providerID":"opencode-go"',
+          `"providerID":"personal","headers":${JSON.stringify(headers)}`,
+        )
+          .replace('"providerID":"opencode"', '"providerID":"openai"')
+          .replace('"apiKey":"sk-demo-not-real",', "")
+          .replace("http://127.0.0.1:48990/v1", endpoint)
+          .replace('{"reasoningEffort":"low"}', JSON.stringify(variant)),
+        "/api/provider": PROVIDERS_BODY.replace(
+          '"id":"opencode-go","integrationID":"opencode-go"',
+          '"id":"personal","integrationID":"openai"',
+        )
+          .replace('"id":"opencode"', '"id":"openai"')
+          .replace('"apiKey":"sk-demo-not-real",', "")
+          .replace("http://127.0.0.1:48990/v1", codex),
+      });
+      assert.deepStrictEqual(
+        models.map((model) => [model.providerID, model.usageScope]),
+        [
+          ["personal", scope],
+          ["openai", undefined],
+        ],
+      );
+    }),
+  );
   it.effect("names the provider each listed model came from", () =>
     Effect.gen(function* () {
       const models = yield* readCatalog({

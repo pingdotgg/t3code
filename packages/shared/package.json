@@ -215,6 +215,10 @@
       "types": "./src/dpopCommon.ts",
       "import": "./src/dpopCommon.ts"
     },
+    "./sha256Hex": {
+      "types": "./src/sha256Hex.ts",
+      "import": "./src/sha256Hex.ts"
+    },
     "./telemetryId": {
       "types": "./src/telemetryId.ts",
       "import": "./src/telemetryId.ts"

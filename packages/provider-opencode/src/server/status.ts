@@ -528,6 +528,7 @@ export const makePendingOpenCodeProvider = Effect.fn(
 });
 
 export interface OpenCode2Model extends OpenCodeRelease {
+  readonly usageScope?: string;
   readonly name: string;
   readonly providerName?: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
@@ -552,6 +553,7 @@ const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
         model.id,
         model.name,
         model.providerName,
+        model.usageScope,
         model.variants.map((variant) => variant.id).toSorted(),
       ]),
     )
@@ -886,6 +888,7 @@ export function openCode2ProviderModels(
             slug: `${model.providerID}/${model.id}`,
             name: model.name,
             ...(subProvider ? { subProvider } : {}),
+            ...(model.usageScope ? { usageScope: model.usageScope } : {}),
             isCustom: false,
             capabilities: openCode2ModelCapabilities(model),
           },

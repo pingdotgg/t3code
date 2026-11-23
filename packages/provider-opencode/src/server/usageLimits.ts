@@ -41,9 +41,7 @@ const UsageResponse = Schema.Struct({
   usage: Schema.Struct({ rolling: UsageWindow, weekly: UsageWindow, monthly: UsageWindow }),
 });
 
-// Select before decoding so an OAuth or self-hosted connection cannot fall
-// through to another stored account. NULL-active rows predate the selection flag.
-class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialReadError>()(
+export class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialReadError>()(
   "OpenCodeCredentialReadError",
   { databasePath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -52,6 +50,8 @@ class OpenCodeCredentialReadError extends Schema.TaggedError<OpenCodeCredentialR
   }
 }
 
+// Select before decoding so an OAuth or self-hosted connection cannot fall
+// through to another stored account. NULL-active rows predate the selection flag.
 const readStoredApiKey = (databasePath: string, integrationId: "opencode" | "opencode-go") =>
   Effect.try({
     try: () => {
@@ -88,6 +88,7 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
   readonly enabled: boolean;
   readonly serverUrl: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly openCode2?: { readonly databasePath: string | undefined };
 }) {
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const unsupported = makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
@@ -107,12 +108,15 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     const authPath = path.join(dataHome, "opencode", "auth.json");
     const contents =
       env.OPENCODE_AUTH_CONTENT ||
-      (yield* fs.readFileString(authPath).pipe(
-        Effect.catchTags({
-          PlatformError: (error) =>
-            error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
-        }),
-      ));
+      (input.openCode2 !== undefined &&
+      input.openCode2.databasePath !== path.join(dataHome, "opencode", "opencode.db")
+        ? "{}"
+        : yield* fs.readFileString(authPath).pipe(
+            Effect.catchTags({
+              PlatformError: (error) =>
+                error.reason._tag === "NotFound" ? Effect.succeed("{}") : Effect.fail(error),
+            }),
+          ));
     const auth = yield* decodeAuthFile(contents);
     const apiAuth = decodeApiAuth(auth["opencode-go"]);
     // OpenCode overlays stored API credentials after environment credentials.
@@ -120,9 +124,12 @@ export const readOpenCodeGoUsageLimits = Effect.fn("readOpenCodeGoUsageLimits")(
     // Console supplies Go credentials in OpenCode 2. Inline auth explicitly
     // overrides local credentials, including the Console connection.
     const databaseFile = env.OPENCODE_DB ?? "opencode.db";
-    const databasePath = path.resolve(dataHome, "opencode", databaseFile);
+    const databasePath =
+      input.openCode2 === undefined
+        ? path.resolve(dataHome, "opencode", databaseFile)
+        : input.openCode2.databasePath;
     const storedKeys =
-      env.OPENCODE_AUTH_CONTENT || databaseFile === ":memory:"
+      env.OPENCODE_AUTH_CONTENT || !databasePath || databaseFile === ":memory:"
         ? []
         : [
             yield* readStoredApiKey(databasePath, "opencode"),
