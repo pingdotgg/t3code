@@ -17,6 +17,7 @@ use crate::{
     process::{OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
     review::METADATA_MAX_BYTES,
+    status::is_non_repo_stderr,
 };
 
 pub const DEFAULT_LIST_LIMIT: usize = 100;
@@ -63,6 +64,17 @@ fn empty_list(is_repo: bool) -> VcsListRefsResult {
     }
 }
 
+/// The metadata folder from `rev-parse --git-common-dir`, as T3's `readGitCommonDir`: `None`
+/// outside a repository, and any other failed probe fails the listing.
+fn common_dir(cwd: &Path, probe: Result<String, ProcessError>) -> VcsResult<Option<PathBuf>> {
+    match probe {
+        // Git ends the path with one newline; any other white space belongs to the folder name.
+        Ok(dir) => Ok(Some(cwd.join(dir.strip_suffix('\n').unwrap_or(&dir)))),
+        Err(ProcessError::Exit { stderr, .. }) if is_non_repo_stderr(&stderr) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> {
     let cwd = PathBuf::from(&input.cwd);
     let Some(root) = repo::toplevel(&cwd).await? else {
@@ -82,7 +94,7 @@ pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> 
     .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
     .text()
     .await?;
-    let (worktrees, common_dir, remotes, origin_default) = tokio::join!(
+    let (worktrees, common_dir_probe, remotes, origin_default) = tokio::join!(
         git(
             "GitVcsDriver.listRefs",
             &cwd,
@@ -103,10 +115,7 @@ pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> 
     let worktrees = worktrees
         .map(|o| parse_worktree_branches(&o.stdout_text()))
         .unwrap_or_default();
-    // Git ends the path with one newline; any other white space belongs to the folder name.
-    let common_dir = common_dir
-        .ok()
-        .map(|dir| cwd.join(dir.strip_suffix('\n').unwrap_or(&dir)));
+    let common_dir = common_dir(&cwd, common_dir_probe)?;
     // Without `core.worktree`, Git lists a separate git dir as the main checkout; it has no
     // working files to reuse.
     let worktrees: HashMap<String, PathBuf> = tokio::task::spawn_blocking(move || {
@@ -473,6 +482,37 @@ pub async fn init(input: VcsInitInput) -> VcsResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T3's `readGitCommonDir`: only "not a repository" means no metadata folder; any other
+    /// failed probe fails the listing instead of turning the metadata-folder check off.
+    #[test]
+    fn a_failed_common_dir_probe_fails_the_listing() {
+        let cwd = Path::new("/repo/linked");
+        let exit = |stderr: &str| ProcessError::Exit {
+            context: crate::process::ProcessContext {
+                operation: "GitVcsDriver.listRefs",
+                command: "git rev-parse".into(),
+                cwd: "/repo/linked".into(),
+                argument_count: 2,
+            },
+            code: 128,
+            stderr: stderr.into(),
+            stderr_truncated: false,
+        };
+        let failed = exit("fatal: bad config line 1 in file .git/config\n");
+        assert_eq!(
+            common_dir(cwd, Err(failed.clone())),
+            Err(VcsError::Process(failed))
+        );
+        assert_eq!(
+            common_dir(cwd, Err(exit("fatal: not a git repository: .git\n"))),
+            Ok(None)
+        );
+        assert_eq!(
+            common_dir(cwd, Ok("../git-metadata \n".into())),
+            Ok(Some(PathBuf::from("/repo/linked/../git-metadata ")))
+        );
+    }
 
     #[test]
     fn worktree_porcelain_skips_prunable_and_detached() {

@@ -40,7 +40,7 @@ pub fn non_repo_local() -> VcsStatusLocalResult {
     }
 }
 
-fn is_non_repo_stderr(stderr: &str) -> bool {
+pub(crate) fn is_non_repo_stderr(stderr: &str) -> bool {
     let s = stderr.to_ascii_lowercase();
     s.contains("not a git repository") || s.contains("cannot use bare repository")
 }
