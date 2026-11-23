@@ -246,6 +246,37 @@ async fn list_refs_never_offers_the_git_metadata_folder_as_a_worktree() {
         "the metadata folder is no checkout"
     );
 
+    // Git keeps a trailing space in the folder name; only its final newline is output framing.
+    let spaced = TempDir::new("refs-split-space");
+    let checkout = spaced.path().join("checkout");
+    let metadata = spaced.path().join("git-metadata ");
+    std::fs::create_dir_all(&checkout).unwrap();
+    git(
+        &checkout,
+        &[
+            "init",
+            "-qb",
+            "main",
+            &format!("--separate-git-dir={}", metadata.display()),
+        ],
+    );
+    commit_all_empty(&checkout, "seed");
+    let linked = spaced.path().join("linked");
+    git(
+        &checkout,
+        &["worktree", "add", "-qb", "topic", &linked.to_string_lossy()],
+    );
+    let mut input = list_input(&linked.to_string_lossy());
+    input.refresh = Some(true);
+    input.query = Some("main".into());
+    input.ref_kind = Some(VcsListRefsInputRefKind::Local);
+    let from_linked = refs::list_refs(input).await.unwrap();
+    let main = from_linked.refs.iter().find(|r| r.name == "main").unwrap();
+    assert_eq!(
+        main.worktree_path, None,
+        "a metadata folder named with a trailing space is no checkout"
+    );
+
     // The conventional layout: a linked worktree's path is offered.
     let fx = Fixture::new("refs-linked");
     let other = fx.root.path().join("other-worktree");

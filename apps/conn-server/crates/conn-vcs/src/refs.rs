@@ -103,11 +103,14 @@ pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> 
     let worktrees = worktrees
         .map(|o| parse_worktree_branches(&o.stdout_text()))
         .unwrap_or_default();
-    let common_dir = common_dir.ok().map(|dir| cwd.join(dir.trim()));
+    // Git ends the path with one newline; any other white space belongs to the folder name.
+    let common_dir = common_dir
+        .ok()
+        .map(|dir| cwd.join(dir.strip_suffix('\n').unwrap_or(&dir)));
     // Without `core.worktree`, Git lists a separate git dir as the main checkout; it has no
     // working files to reuse.
     let worktrees: HashMap<String, PathBuf> = tokio::task::spawn_blocking(move || {
-        let common_dir = common_dir.and_then(|dir| std::fs::canonicalize(dir).ok());
+        let common_dir = common_dir.map(|dir| std::fs::canonicalize(&dir).unwrap_or(dir));
         worktrees
             .into_iter()
             .filter(|(_, path)| {
