@@ -5628,7 +5628,6 @@
     },
     ". Kontrollera länkens sökväg eller leta upp filen i Filer."
   ],
-  "b9b6bbd1e1ea189f": "Hela filen",
   "d715e9494fdbaaf6": "Teckensnittet kunde inte läsas in.",
   "ff17c777a72b4408": "Förhandsvisningar av teckensnitt är begränsade till 10 MB.",
   "6bd41ad699e22f10": "Teckensnittet är inte tillgängligt.",
@@ -5638,6 +5637,7 @@
   "a9abaaa4220eae21": "{error} Spara det för att öppna det i en annan app.",
   "c508c9000d9656f8": "Förhandsvisning av teckensnitt",
   "1c416d621d250be8": "Flygande bäckasiner söka hwila på mjuka tuvor.",
+  "d7d08260f16b7828": "Filen läses fortfarande in. Försök igen om en stund.",
   "76ebb03de52c92d6": "Textvisaren stoppades.",
   "f48162e8e8c12af7": "Kunde inte läsa in textvisaren. Stäng filen och försök igen.",
   "bc4c5b13d38a5da7": "Förhandsvisningen stängdes.",
@@ -5645,8 +5645,6 @@
   "9450d1827ef336a1": "En annan kopiering pågår.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} rad} other {{formatted} rader}}",
   "13b14784f8707ddd": "0 byte",
-  "f6e9581cba3467fa": "Indexerar…",
-  "2d1f293ac12463fc": "Läser in resten av filen…",
   "b75105bef8f564a4": "Visar de första 1 024 kolumnerna. Källa och Spara behåller alla kolumner.",
   "2a6e1b1f209c3888": "Den här filen är tom.",
   "192fc79eb3b5b2cb": "Det här diagrammet innehåller resurs-URL:er, markup, nodmetadata eller anpassad konfiguration. Visa Mermaid-källan för att granska det säkert.",
@@ -12499,5 +12497,9 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "99d51127f573296b": "Ett konto till",
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "99963c0142e17f00": "För det nya {tracker}-kontot.",
+  "6d8e4ebc889bace9": "Lägg till konto"
 }

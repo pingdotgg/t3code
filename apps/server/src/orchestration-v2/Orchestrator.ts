@@ -14572,6 +14572,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
+      if (projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -15101,9 +15108,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const readDelegatedChildControls = Effect.fn("Orchestrator.readDelegatedChildControls")(
     function* (childThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
-      const controls: DelegatedChildControls = yield* projectionStore.getDelegatedChildControls(
-        childThreadId,
-        { taskIds, windowSize: DELEGATED_CHILD_RUN_WINDOW },
+      // Progress tells a held wake from a held message the user wrote by the run's message.
+      const withHeldMessages = Effect.fn("Orchestrator.readHeldRunMessages")(function* <
+        A extends Omit<DelegatedChildControls, "runsFloor">,
+      >(read: A) {
+        const heldRunIds = read.runs.flatMap((run) =>
+          run.status === "queued" && run.queueHeld === true ? [run.id] : [],
+        );
+        if (heldRunIds.length === 0) return read;
+        const { messages } = yield* projectionStore.getThreadRecords(childThreadId, ["messages"], {
+          messageRoles: ["user"],
+          messageRunIds: heldRunIds,
+        });
+        return { ...read, messages: [...read.messages, ...messages] };
+      });
+      const controls: DelegatedChildControls = yield* withHeldMessages(
+        yield* projectionStore.getDelegatedChildControls(childThreadId, {
+          taskIds,
+          windowSize: DELEGATED_CHILD_RUN_WINDOW,
+        }),
       );
       const progress = delegatedTaskProgress(controls);
       // The latest result may have ended before the runs read above; then read them all.
@@ -15111,7 +15134,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         controls.runsFloor !== undefined &&
         (progress.resultRun === undefined || !ranSince(progress.resultRun, controls.runsFloor))
       ) {
-        const all = yield* readAllDelegatedChildControls(childThreadId);
+        const all = yield* withHeldMessages(yield* readAllDelegatedChildControls(childThreadId));
         return { controls: all, progress: delegatedTaskProgress(all) };
       }
       return { controls, progress };
@@ -15493,12 +15516,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       childThreadId,
       openTasks.map((task) => task.id),
     );
+    const cancelAwaitsWork = progress.state === "working" && !progress.onlyAwaitsUserRun;
     for (const task of openTasks) {
       // A cancelled task does not wait for the work its cancel is stopping.
       const cancelled = task.cancelledRunId !== undefined;
       if (
         task.id === forkedFrom.nodeId &&
-        (cancelled ? progress.state === "working" : progress.state !== "result_available")
+        (cancelled ? cancelAwaitsWork : progress.state !== "result_available")
       )
         continue;
       yield* finalizeAppOwnedSubagentTask(childControls, {
@@ -15517,7 +15541,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       resultTask?.cancelledRunId !== undefined && resultTask.cancelledRunId === resultRun?.id;
     if (
       resultRun === undefined ||
-      (taskCancelled ? progress.state === "working" : progress.state !== "result_available")
+      (taskCancelled ? cancelAwaitsWork : progress.state !== "result_available")
     )
       return;
     const status = delegatedTaskTerminalStatus(runOutcome(resultRun));

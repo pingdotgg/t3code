@@ -582,8 +582,14 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
+          copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}

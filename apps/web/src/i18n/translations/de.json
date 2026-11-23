@@ -5628,7 +5628,6 @@
     },
     ". Prüfe den Pfad des Links oder suche die Datei unter Dateien."
   ],
-  "b9b6bbd1e1ea189f": "Ganze Datei",
   "d715e9494fdbaaf6": "Die Schriftart konnte nicht geladen werden.",
   "ff17c777a72b4408": "Schriftvorschauen sind auf 10 MB begrenzt.",
   "6bd41ad699e22f10": "Die Schriftart ist nicht verfügbar.",
@@ -5638,6 +5637,7 @@
   "a9abaaa4220eae21": "{error} Speichere sie, um sie in einer anderen App zu öffnen.",
   "c508c9000d9656f8": "Schriftvorschau",
   "1c416d621d250be8": "Victor jagt zwölf Boxkämpfer quer über den großen Sylter Deich.",
+  "d7d08260f16b7828": "Die Datei wird noch geladen. Versuche es gleich noch einmal.",
   "76ebb03de52c92d6": "Der Textbetrachter wurde beendet.",
   "f48162e8e8c12af7": "Der Textbetrachter konnte nicht geladen werden. Schließe die Datei und versuche es erneut.",
   "bc4c5b13d38a5da7": "Vorschau geschlossen.",
@@ -5645,8 +5645,6 @@
   "9450d1827ef336a1": "Ein anderer Kopiervorgang läuft.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} Zeile} other {{formatted} Zeilen}}",
   "13b14784f8707ddd": "0 Byte",
-  "f6e9581cba3467fa": "Wird indiziert…",
-  "2d1f293ac12463fc": "Der Rest der Datei wird geladen…",
   "b75105bef8f564a4": "Die ersten 1.024 Spalten werden angezeigt. Quelltext und Speichern behalten alle Spalten.",
   "2a6e1b1f209c3888": "Diese Datei ist leer.",
   "192fc79eb3b5b2cb": "Dieses Diagramm enthält Ressourcen-URLs, Markup, Knotenmetadaten oder eine benutzerdefinierte Konfiguration. Zeige den Mermaid-Quelltext an, um es sicher zu prüfen.",
@@ -12492,5 +12490,9 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "99d51127f573296b": "Weiteres Konto",
+  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
+  "99963c0142e17f00": "Für das neue {tracker}-Konto.",
+  "6d8e4ebc889bace9": "Konto hinzufügen"
 }

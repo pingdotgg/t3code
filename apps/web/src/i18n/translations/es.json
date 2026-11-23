@@ -5627,7 +5627,6 @@
     },
     ". Revisa la ruta del enlace o busca el archivo en Archivos."
   ],
-  "b9b6bbd1e1ea189f": "Archivo completo",
   "d715e9494fdbaaf6": "No se pudo cargar la fuente.",
   "ff17c777a72b4408": "Las vistas previas de fuentes están limitadas a 10 MB.",
   "6bd41ad699e22f10": "La fuente no está disponible.",
@@ -5637,6 +5636,7 @@
   "a9abaaa4220eae21": "{error} Guárdala para abrirla en otra app.",
   "c508c9000d9656f8": "Vista previa de la fuente",
   "1c416d621d250be8": "El veloz murciélago hindú comía feliz cardillo y kiwi.",
+  "d7d08260f16b7828": "El archivo aún se está cargando. Inténtalo de nuevo en un momento.",
   "76ebb03de52c92d6": "El visor de texto se detuvo.",
   "f48162e8e8c12af7": "No se pudo cargar el visor de texto. Cierra el archivo y vuelve a intentarlo.",
   "bc4c5b13d38a5da7": "Vista previa cerrada.",
@@ -5644,8 +5644,6 @@
   "9450d1827ef336a1": "Ya hay otra copia en curso.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} línea} other {{formatted} líneas}}",
   "13b14784f8707ddd": "0 bytes",
-  "f6e9581cba3467fa": "Indexando…",
-  "2d1f293ac12463fc": "Cargando el resto del archivo…",
   "b75105bef8f564a4": "Se muestran las primeras 1024 columnas. El código fuente y Guardar conservan todas las columnas.",
   "2a6e1b1f209c3888": "Este archivo está vacío.",
   "192fc79eb3b5b2cb": "Este diagrama contiene URL de recursos, marcado, metadatos de nodos o configuración personalizada. Muestra el código fuente de Mermaid para inspeccionarlo de forma segura.",
@@ -12487,5 +12485,9 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "99d51127f573296b": "Otra cuenta",
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
+  "6d8e4ebc889bace9": "Añadir cuenta"
 }

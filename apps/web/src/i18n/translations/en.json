@@ -5629,7 +5629,6 @@
     },
     ". Check the link's path or locate the file in Files."
   ],
-  "b9b6bbd1e1ea189f": "Full file",
   "d715e9494fdbaaf6": "The font could not be loaded.",
   "ff17c777a72b4408": "Font previews are limited to 10 MB.",
   "6bd41ad699e22f10": "The font is unavailable.",
@@ -5639,6 +5638,7 @@
   "a9abaaa4220eae21": "{error} Save it to open in another app.",
   "c508c9000d9656f8": "Font preview",
   "1c416d621d250be8": "The quick brown fox jumps over the lazy dog.",
+  "d7d08260f16b7828": "The file is still loading. Try again in a moment.",
   "76ebb03de52c92d6": "The text viewer stopped.",
   "f48162e8e8c12af7": "Could not load the text viewer. Close the file and try again.",
   "bc4c5b13d38a5da7": "Preview closed.",
@@ -5646,8 +5646,6 @@
   "9450d1827ef336a1": "Another copy is in progress.",
   "8f48999eb6d9e2e3": "{count, plural, one {{formatted} line} other {{formatted} lines}}",
   "13b14784f8707ddd": "0 bytes",
-  "f6e9581cba3467fa": "Indexing…",
-  "2d1f293ac12463fc": "Loading the rest of the file…",
   "b75105bef8f564a4": "Showing the first 1,024 columns. Source and Save retain every column.",
   "2a6e1b1f209c3888": "This file is empty.",
   "192fc79eb3b5b2cb": "This diagram contains resource URLs, markup, node metadata, or custom configuration. Show Mermaid source to inspect it safely.",
@@ -12501,5 +12499,9 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "99d51127f573296b": "Another account",
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "99963c0142e17f00": "For the new {tracker} account.",
+  "6d8e4ebc889bace9": "Add account"
 }
