@@ -94,6 +94,7 @@ import {
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
 import {
+  type AgentFeedbackMode,
   type ChatAttachment,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   ClaudeSettings,
@@ -166,7 +167,11 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { snapshotMcpApp } from "../../mcpApps/McpAppSnapshot.ts";
-import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
+import {
+  claudeProgramReader,
+  claudeProgramWasReplaced,
+  resolveClaudeSdkExecutablePath,
+} from "../../provider/Drivers/ClaudeExecutable.ts";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 import {
   planClaudeSkillDispatch,
@@ -397,7 +402,7 @@ const CLAUDE_STOP_CONFIRM_TIMEOUT_MS = 10_000;
 const CLAUDE_STDERR_TAIL_LENGTH = 2_048;
 // The process group is killed on exit, so its stderr closes promptly.
 const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
-// How often the CLI's process tree is recorded when no agent scope will stop what it leaves.
+// How often a working CLI's process tree is recorded when no agent scope will stop what it leaves.
 const CLAUDE_DESCENDANT_POLL = "1 second";
 // Claude Code's refusal of bypassPermissions as root, which it explains only on stderr.
 const CLAUDE_ROOT_REFUSAL =
@@ -529,40 +534,93 @@ function claudeDescendants(
   return found;
 }
 
-/** What a CLI started, by pid and start time, recorded from each process table read while it runs. */
-export function makeClaudeDescendantTracker(
-  cliPid: number,
+const processIdentity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
+
+/** What one CLI started, by pid and start time, recorded from each process table read while it runs. */
+function makeClaudeDescendantTracker(cliPid: number) {
+  const tracked = new Map<string, ClaudeProcessRow>();
+  // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
+  const record = (rows: ReadonlyArray<ClaudeProcessRow>, cliRunning: boolean) => {
+    const running = new Set(rows.map(processIdentity));
+    // `ps -A` lists itself, so no rows is a failed read.
+    if (rows.length === 0) return running;
+    const roots = cliRunning ? [cliPid] : [];
+    for (const [key, row] of tracked) {
+      if (running.has(key)) roots.push(row.pid);
+      else tracked.delete(key);
+    }
+    for (const row of claudeDescendants(rows, roots)) tracked.set(processIdentity(row), row);
+    return running;
+  };
+  return { tracked: tracked as ReadonlyMap<string, ClaudeProcessRow>, record };
+}
+
+/**
+ * Process table reads for every working CLI. A poll reads the table once for all of them, so the
+ * `ps` cost does not grow with open sessions. Jobs start only while a CLI works, so an idle CLI is
+ * left out of polls; its turn ends with one last read.
+ */
+export function makeClaudeDescendantPoll(
   readProcessTable: Effect.Effect<ReadonlyArray<ClaudeProcessRow>>,
 ) {
-  const tracked = new Map<string, ClaudeProcessRow>();
-  const identity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
-  // The poll, a session close and the exit read one at a time, so each table is newer than all
-  // recorded here, and a pid and start time it no longer lists never run again.
+  const live = new Set<ReturnType<typeof makeClaudeDescendantTracker>>();
+  // Polls, session closes and exits read one at a time, so each table is newer than all recorded,
+  // and a pid and start time it no longer lists never run again.
   const reading = Semaphore.makeUnsafe(1);
-  // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
-  const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(
-    function* (cliRunning: boolean) {
-      const rows = yield* readProcessTable;
-      const running = new Set(rows.map(identity));
-      // `ps -A` lists itself, so no rows is a failed read.
-      if (rows.length === 0) return running;
-      const roots = cliRunning ? [cliPid] : [];
-      for (const [key, row] of tracked) {
-        if (running.has(key)) roots.push(row.pid);
-        else tracked.delete(key);
-      }
-      for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
-      return running;
-    },
-    (effect) => reading.withPermits(1)(effect),
-  );
+  const read = <A>(apply: (rows: ReadonlyArray<ClaudeProcessRow>) => A) =>
+    reading.withPermits(1)(readProcessTable.pipe(Effect.map(apply)));
   return {
-    tracked: tracked as ReadonlyMap<string, ClaudeProcessRow>,
-    refresh: refresh(true).pipe(Effect.asVoid),
-    /** Reads the table after the CLI exited: what it left that is still the same process. */
-    leftovers: refresh(false).pipe(
-      Effect.map((running) => [...tracked.values()].filter((row) => running.has(identity(row)))),
+    // A table read before a CLI started may list an older process under its pid, so a poll records
+    // only into the CLIs working when its read began.
+    poll: Effect.suspend(() =>
+      live.size === 0
+        ? Effect.void
+        : reading
+            .withPermits(1)(
+              Effect.suspend(() => {
+                const working = [...live];
+                return readProcessTable.pipe(
+                  Effect.map((rows) => {
+                    for (const tracker of working)
+                      if (live.has(tracker)) tracker.record(rows, true);
+                  }),
+                );
+              }),
+            )
+            .pipe(Effect.withSpan("ClaudeAgentSdkQueryRunner.trackDescendants")),
     ),
+    track: (cliPid: number) => {
+      const tracker = makeClaudeDescendantTracker(cliPid);
+      let exited = false;
+      const refresh = read((rows) => void tracker.record(rows, true));
+      return {
+        tracked: tracker.tracked,
+        refresh,
+        /** Polls this CLI from now until its turn settles. */
+        work: () => {
+          if (!exited) live.add(tracker);
+        },
+        settle: Effect.suspend(() => {
+          live.delete(tracker);
+          return exited ? Effect.void : refresh;
+        }),
+        /** Reads the table after the CLI exited: what it left that is still the same process. */
+        leftovers: Effect.sync(() => {
+          exited = true;
+          live.delete(tracker);
+        }).pipe(
+          Effect.andThen(
+            read((rows) => {
+              const running = tracker.record(rows, false);
+              return [...tracker.tracked.values()].filter((row) =>
+                running.has(processIdentity(row)),
+              );
+            }),
+          ),
+        ),
+      };
+    },
+    hasLive: () => live.size > 0,
   };
 }
 
@@ -1364,11 +1422,22 @@ const decodeClaudeHistoryMessages = Schema.decodeUnknownEffect(
       Schema.Struct({
         type: Schema.String,
         uuid: Schema.String,
-        message: Schema.Struct({ content: Schema.Unknown }),
+        message: Schema.Struct({ content: Schema.Unknown, model: Schema.optional(Schema.Unknown) }),
       }),
     ),
   ),
 );
+
+// The placeholder reply the CLI records for a failed request.
+export function claudeHistoryEndsOnFailedRequest(
+  messages: ReadonlyArray<{
+    readonly type: string;
+    readonly message: { readonly content: unknown; readonly model?: unknown };
+  }>,
+): boolean {
+  const last = messages.at(-1);
+  return last?.type === "assistant" && last.message.model === "<synthetic>";
+}
 
 // Claude's interactive reply-on-resume removes native abort rows before querying the saved history.
 export function claudeResumeSessionAt(
@@ -1533,14 +1602,37 @@ export const layerQueryRunner: Layer.Layer<
     // Without an agent scope, a job that left the CLI's group escapes the group kill and is
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
+    const descendantPoll = makeClaudeDescendantPoll(readProcessTable);
+    // One poll serves every CLI. The first tracked CLI starts it; it stops once none is left.
+    let polling: Fiber.Fiber<unknown> | undefined;
+    const startPolling = () => {
+      polling ??= runFork(
+        descendantPoll.poll.pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced(CLAUDE_DESCENDANT_POLL),
+            // Cleared in the same step that ends the poll, so the next tracked CLI starts a new one.
+            while: () => {
+              if (descendantPoll.hasLive()) return true;
+              polling = undefined;
+              return false;
+            },
+          }),
+        ),
+      );
+    };
     const trackDescendants = (cliPid: number) => {
-      const tracker = makeClaudeDescendantTracker(cliPid, readProcessTable);
+      const tracker = descendantPoll.track(cliPid);
+      const work = () => {
+        tracker.work();
+        startPolling();
+      };
+      work();
       const stop = tracker.leftovers.pipe(
         Effect.map((rows) => {
           for (const row of rows) killClaudeDescendant(row);
         }),
       );
-      return { refresh: tracker.refresh, stop };
+      return { refresh: tracker.refresh, work, settle: tracker.settle, stop };
     };
 
     // The open span below is the tracing boundary for both attempts.
@@ -1564,6 +1656,7 @@ export const layerQueryRunner: Layer.Layer<
       const { mcpServers, ...sdkOptions } = input.options;
       // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
       let resumeSessionAt = sdkOptions.resumeSessionAt;
+      let endsOnFailedRequest = false;
       if (input.resume && sdkOptions.resume !== undefined) {
         const messages = yield* runClaudeWorker({
           method: "getSessionMessages",
@@ -1580,14 +1673,17 @@ export const layerQueryRunner: Layer.Layer<
           resumeSessionAt === undefined
             ? messages.length
             : messages.findIndex((message) => message.uuid === resumeSessionAt) + 1;
-        resumeSessionAt = claudeResumeSessionAt(messages.slice(0, boundary)) ?? resumeSessionAt;
+        const history = messages.slice(0, boundary);
+        endsOnFailedRequest = claudeHistoryEndsOnFailedRequest(history);
+        resumeSessionAt = claudeResumeSessionAt(history) ?? resumeSessionAt;
       }
       const queryOptions = {
         ...sdkOptions,
         ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
         env: {
           ...(sdkOptions.env ?? hostEnvironment),
-          ...(input.resume
+          // The CLI would re-run a failed request by itself, then run the resume prompt as a second turn.
+          ...(input.resume && !endsOnFailedRequest
             ? {
                 CLAUDE_CODE_RESUME_INTERRUPTED_TURN: "1",
                 CLAUDE_CODE_RESUME_REASON: "user_resume",
@@ -1629,7 +1725,7 @@ export const layerQueryRunner: Layer.Layer<
         if (answered) return;
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
       };
-      let refreshDescendants: Effect.Effect<void> = Effect.void;
+      let descendants: ReturnType<typeof trackDescendants> | undefined;
       const spawnProcess =
         options.spawnClaudeCodeProcess ??
         ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1646,13 +1742,8 @@ export const layerQueryRunner: Layer.Layer<
             );
             if (unit === undefined && child.pid !== undefined) {
               const tracker = trackDescendants(child.pid);
-              const polling = runFork(
-                tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
-              );
-              child.once("exit", () =>
-                runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-              );
-              refreshDescendants = tracker.refresh;
+              child.once("exit", () => runFork(tracker.stop));
+              descendants = tracker;
             }
             return child;
           }
@@ -1833,6 +1924,16 @@ export const layerQueryRunner: Layer.Layer<
               }
             }),
           ),
+          // The result waits for the turn's last tree read, so a session closed on it keeps that job.
+          Stream.tap((message) =>
+            descendants === undefined
+              ? Effect.void
+              : message.type === "result"
+                ? descendants.settle
+                : message.type === "assistant"
+                  ? Effect.sync(descendants.work)
+                  : Effect.void,
+          ),
           Stream.tap((message) =>
             logProtocolEvent({
               direction: "incoming",
@@ -1844,7 +1945,12 @@ export const layerQueryRunner: Layer.Layer<
         offer: (message, onQueued) =>
           Effect.uninterruptibleMask((restore) =>
             restore(Queue.offer(promptQueue, message)).pipe(
-              Effect.tap(() => Effect.sync(() => onQueued?.())),
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  descendants?.work();
+                  onQueued?.();
+                }),
+              ),
             ),
           ).pipe(
             Effect.asVoid,
@@ -2035,7 +2141,9 @@ export const layerQueryRunner: Layer.Layer<
           ),
         ),
         // A job started since the last poll is recorded before the CLI is told to exit.
-        close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
+        close: Effect.suspend(() =>
+          processExited || descendants === undefined ? Effect.void : descendants.refresh,
+        ).pipe(
           Effect.andThen(Queue.shutdown(promptQueue)),
           Effect.andThen(closeClaudeQuery(queryRuntime)),
           Effect.tap(() =>
@@ -2317,6 +2425,7 @@ export function makeClaudeQueryOptions(input: {
   readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
+  readonly agentFeedback?: AgentFeedbackMode;
   /** The thread's T3 MCP session holds the `device` capability. */
   readonly deviceToolsAvailable?: boolean;
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -2422,6 +2531,7 @@ export function makeClaudeQueryOptions(input: {
           },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
+  const agentFeedback = input.mcpServers === undefined ? "off" : (input.agentFeedback ?? "off");
   const options: ClaudeAgentSdkQueryOptions = {
     model: compiledSelection.apiModelId,
     // T3 names threads; a supplied title skips Claude's redundant naming request.
@@ -2477,6 +2587,7 @@ export function makeClaudeQueryOptions(input: {
       append: [
         buildRuntimeInstructions({
           harness: "Claude Code",
+          agentFeedback,
           runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
         }) +
           (input.mcpServers === undefined
@@ -2682,7 +2793,7 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
-// Claude 5.1+ emits at most one pre-tool text block as thinking; treat only a second consecutive thinking block as text.
+// Claude 5.1+ emits pre-tool text as thinking; treat a second thinking block as text (the first may be empty in default display).
 function claudeWritesUpdatesAsThinking(model: string): boolean {
   const match = /claude-[a-z]+-(\d+)(?:-(\d{1,2}))?(?!\d)/u.exec(model);
   if (match === null) return false;
@@ -5318,6 +5429,8 @@ interface ClaudeLiveQueryContext {
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
   selection: CompiledClaudeModelSelection;
+  readonly program: string | undefined;
+  readonly startedWithApiModelId: string;
   readonly closed: Deferred.Deferred<void, never>;
   lastTurn: ActiveClaudeTurnContext | null;
   // "early" echoes on the first frame; "acknowledged" confirms uuid acceptance, but resume turns can still precede the prompt.
@@ -6028,6 +6141,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
+        const readProgram = yield* claudeProgramReader(
+          adapterOptions.settings.binaryPath,
+          adapterOptions.environment,
+        );
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const taskOutputTails = new Map<
@@ -11211,6 +11328,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (
                   block.type === "tool_use" &&
                   update !== null &&
+                  update.text.trim() !== "" &&
                   update.messageId === message.message.id &&
                   update.followsThinking &&
                   claudeWritesUpdatesAsThinking(message.message.model)
@@ -11235,14 +11353,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 emitEmpty: false,
               });
               const previous = context.reasoning.lastThinking;
-              context.reasoning.lastThinking = completedText.trim()
-                ? {
-                    messageId: message.message.id,
-                    itemId,
-                    text: completedText,
-                    followsThinking: previous !== null && previous.messageId === message.message.id,
-                  }
-                : null;
+              // Empty thinking from default display still precedes a pre-tool update.
+              context.reasoning.lastThinking = {
+                messageId: message.message.id,
+                itemId,
+                text: completedText,
+                followsThinking: previous !== null && previous.messageId === message.message.id,
+              };
             }
             // A repeated snapshot frame must not re-emit streamed text under its uuid.
             if (streamedSnapshotReply !== null && unstreamedSnapshotText.join("").length === 0) {
@@ -13201,7 +13318,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             launchArgSettings,
           );
           let compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
+          // Once an update replaces the running CLI, a model other than the one
+          // it started with moves to the new CLI unless background work is active.
+          const startsUpdatedProgram =
+            !turnInput.resume &&
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            existing.queryPolicyKey === queryPolicyKey &&
+            !existing.stopping &&
+            existing.startedWithApiModelId !== compiledSelection.apiModelId &&
+            claudeProgramWasReplaced(existing.program, yield* readProgram) &&
+            !(yield* liveProcessRunsBackgroundWork(existing));
           if (
+            !startsUpdatedProgram &&
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -13215,6 +13344,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* applySelectionLive(existing, compiledSelection);
           }
           if (
+            !startsUpdatedProgram &&
             !turnInput.resume &&
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -13296,6 +13426,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
+            agentFeedback: turnInput.agentFeedback ?? "off",
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,
@@ -13347,14 +13478,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const resolvedTurnCwd = yield* fileSystem
             .realPath(turnInput.runtimePolicy.cwd ?? ".")
             .pipe(Effect.orElseSucceed(() => turnInput.runtimePolicy.cwd));
-          const openQueryRuntime = queryRunner.open({
-            threadId: turnInput.threadId,
-            providerSessionId: input.providerSessionId,
-            options: queryOptions,
-            ...(turnInput.resume ? { resume: true } : {}),
-          });
+          // Read right before opening so an update during startup counts too.
+          const openQueryRuntime = readProgram.pipe(
+            Effect.flatMap((program) =>
+              queryRunner
+                .open({
+                  threadId: turnInput.threadId,
+                  providerSessionId: input.providerSessionId,
+                  options: queryOptions,
+                  ...(turnInput.resume ? { resume: true } : {}),
+                })
+                .pipe(Effect.map((querySession) => ({ program, querySession }))),
+            ),
+          );
           // The SDK spawns the CLI per turn, so only the open waits for a provider update.
-          const querySession = yield* (
+          const { program, querySession } = yield* (
             adapterOptions.installationGate === undefined
               ? openQueryRuntime
               : adapterOptions.installationGate.execute(adapterOptions.instanceId, openQueryRuntime)
@@ -13396,6 +13534,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             query: querySession,
             queryPolicyKey,
             selection: compiledSelection,
+            program,
+            startedWithApiModelId: compiledSelection.apiModelId,
             closed,
             lastTurn: null,
             promptEchoMode: "unknown",
