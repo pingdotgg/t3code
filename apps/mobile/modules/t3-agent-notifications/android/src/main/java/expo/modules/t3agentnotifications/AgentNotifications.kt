@@ -100,13 +100,18 @@ object AgentNotifications {
   @Synchronized
   fun setThreadOnScreen(context: Context, path: String?) {
     threadOnScreen = path
-    if (path == null) return
-    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
-    if (prefs.getBoolean("lastActive", false)) return
-    val lastTerminal = prefs.getString("lastTerminal", null) ?: return
-    if (lastTerminal.endsWith("\ntrue") && lastTerminal.substringBefore('\n') == path) {
-      prefs.edit().putString("coveredTerminal", lastTerminal).apply()
-      cancelActivity(context)
+    if (path != null) {
+      val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      val lastTerminal = prefs
+        .takeUnless { it.getBoolean("lastActive", false) }
+        ?.getString("lastTerminal", null)
+      val matchesSingleRow = lastTerminal != null &&
+        lastTerminal.endsWith("\ntrue") &&
+        lastTerminal.substringBefore('\n') == path
+      if (matchesSingleRow) {
+        prefs.edit().putString("coveredTerminal", lastTerminal).apply()
+        cancelActivity(context)
+      }
     }
   }
 
@@ -244,17 +249,9 @@ object AgentNotifications {
     alerted: Boolean
   ) {
     val terminal = terminalKey(data)
-    val singleRow = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
     // Hide a finished card when its alert already covered the visible rows or the
     // user is already looking at the finished thread on screen.
-    val covered = terminal?.takeIf {
-      if (singleRow) {
-        (alerted && data["alert_path"] == data["activity_path"]) ||
-          isThreadOnScreen(data["activity_path"])
-      } else {
-        alerted && data["alert_path"] == "/"
-      }
-    }
+    val covered = coveredTerminal(data, terminal, alerted)
     if (covered != null) coverTerminal(prefs, covered, updatedAt)
     if (updatedAt < prefs.getLong("lastUpdate", 0)) {
       // A newer replay of this same finish may already show the card.
@@ -283,6 +280,20 @@ object AgentNotifications {
     } else {
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
       showActivity(context, scheme, data, active, remainingMs)
+    }
+  }
+
+  private fun coveredTerminal(
+    data: Map<String, String>,
+    terminal: String?,
+    alerted: Boolean
+  ): String? = terminal?.takeIf {
+    val singleRow = data.containsKey("activity_line_0") && !data.containsKey("activity_line_1")
+    if (singleRow) {
+      (alerted && data["alert_path"] == data["activity_path"]) ||
+        isThreadOnScreen(data["activity_path"])
+    } else {
+      alerted && data["alert_path"] == "/"
     }
   }
 
