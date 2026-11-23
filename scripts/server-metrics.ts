@@ -62,6 +62,7 @@ import {
   ServerMetrics,
   slope,
   spread,
+  activityRenewalMissed,
   nextActivityReport,
   parsePsCpuTime,
   pathRewrites,
@@ -1145,8 +1146,12 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
         return yield* new MetricsError({ message: "an activity renewal missed its lease" });
       }
       yield* Effect.sleep(Duration.millis(next.waitMs));
-      lastSent = yield* nowMs;
+      const sentAt = yield* nowMs;
       yield* report;
+      if (activityRenewalMissed(lastSent, sentAt, yield* nowMs)) {
+        return yield* new MetricsError({ message: "an activity renewal missed its lease" });
+      }
+      lastSent = sentAt;
     }
   }).pipe(
     Effect.catchCause(() => Ref.update(lost, (first) => first ?? "an activity report failed")),

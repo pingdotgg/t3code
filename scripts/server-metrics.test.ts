@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compareMetrics,
+  activityRenewalMissed,
   heapGrowth,
   nextActivityReport,
   parsePsCpuTime,
@@ -313,5 +314,15 @@ describe("nextActivityReport", () => {
     ["past the safe point: the lease would lapse", 1_000, 42_000, { waitMs: 0, late: true }],
   ])("%s", (_name, lastSentAt, now, expected) => {
     expect(nextActivityReport(lastSentAt, now)).toEqual(expected);
+  });
+});
+
+describe("activityRenewalMissed", () => {
+  it.each([
+    ["sent on time, answered inside the lease", 25_000, 30_000, false],
+    ["a delayed wake: sent past the safe point", 41_000, 42_000, true],
+    ["sent on time, answered after the lease lapsed", 25_000, 46_000, true],
+  ])("%s", (_name, sentAt, repliedAt, missed) => {
+    expect(activityRenewalMissed(0, sentAt, repliedAt)).toBe(missed);
   });
 });

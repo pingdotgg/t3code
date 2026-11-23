@@ -441,3 +441,17 @@ export function nextActivityReport(
   const due = lastSentAt + intervalMs;
   return { waitMs: Math.max(0, due - now), late: Math.max(due, now) - lastSentAt > latestMs };
 }
+
+/**
+ * Whether a renewal let the previous send's lease lapse: it went out past `latestMs` after that
+ * send (a stalled loop wakes late), or its answer came after the lease (`leaseMs`) ran out.
+ */
+export function activityRenewalMissed(
+  previousSentAt: number,
+  sentAt: number,
+  repliedAt: number,
+  latestMs = 40_000,
+  leaseMs = 45_000,
+) {
+  return sentAt - previousSentAt > latestMs || repliedAt - previousSentAt > leaseMs;
+}
