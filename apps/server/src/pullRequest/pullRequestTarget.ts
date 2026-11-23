@@ -97,7 +97,9 @@ export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(func
   if (host === undefined) {
     return yield* new PullRequestHostRequiredError({});
   }
-  const repository = input.repository.toLowerCase();
+  // Agents often pass the `gh --repo` form HOST/OWNER/REPO; the forge wants it without the host.
+  const named = input.repository.toLowerCase();
+  const repository = named.startsWith(`${host}/`) ? named.slice(host.length + 1) : named;
   // Without a URL, a public forge host says what shape its change request URLs take;
   // any other host is taken to run the project's own forge.
   const recognizedKind = sourceControlDefinitions.recognizeRemote(`https://${host}`)?.kind;
