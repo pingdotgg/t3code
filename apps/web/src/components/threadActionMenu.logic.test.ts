@@ -75,6 +75,11 @@ describe("buildThreadActionMenuItems", () => {
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
   });
 
+  it("omits mark unread while the thread is running", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, isRunning: true });
+    expect(items.map((item) => item.id)).not.toContain("mark-unread");
+  });
+
   it("disables only rename where no inline title editor exists", () => {
     const items = buildThreadActionMenuItems({ ...baseState, canRename: false });
     expect(items.filter((item) => item.disabled).map((item) => item.id)).toEqual(["rename"]);
