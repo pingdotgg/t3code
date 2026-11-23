@@ -164,7 +164,7 @@ export function ChatCanvas({
   const htmlPreviewLane =
     layout.htmlPreview.width > layout.chat.width
       ? {
-          "--html-preview-lane-start": `${layout.htmlPreview.left - measurements.padding}px`,
+          "--html-preview-lane-offset": `${layout.htmlPreview.left - layout.chat.left}px`,
           "--html-preview-lane-width": `${layout.htmlPreview.width}px`,
         }
       : null;

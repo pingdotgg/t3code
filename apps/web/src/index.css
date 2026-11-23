@@ -984,10 +984,9 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   /* ChatCanvas sets these only while HTML previews run wider than the chat column. */
-  .chat-content-lane[data-html-preview-lane] {
-    width: var(--html-preview-lane-width, 100%);
-    max-width: var(--html-preview-lane-width, var(--chat-content-max-width));
-    margin-inline-start: var(--html-preview-lane-start, auto);
+  .html-preview-lane {
+    width: var(--html-preview-lane-width, auto);
+    margin-inline-start: var(--html-preview-lane-offset, 0px);
   }
 
   .messages-timeline-row-frame {

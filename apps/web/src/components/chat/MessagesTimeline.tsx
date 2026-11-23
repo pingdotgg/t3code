@@ -1396,12 +1396,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
         onPauseCapture={(event) => onAudioPlaybackChange(item.id, event)}
         onEndedCapture={(event) => onAudioPlaybackChange(item.id, event)}
       >
-        {/* A preview lane can run wider than the chat column, which the gutter is measured from. */}
         <div
-          ref={item.kind === "html-render" ? undefined : observeLaneWidth}
-          className="chat-content-lane overflow-x-clip"
-          data-html-preview-lane={item.kind === "html-render" || undefined}
-          data-timeline-root={item.kind === "html-render" ? undefined : "true"}
+          ref={observeLaneWidth}
+          // An HTML preview can run wider than this lane, which stays the chat column's width.
+          className={cn("chat-content-lane", item.kind !== "html-render" && "overflow-x-clip")}
+          data-timeline-root="true"
         >
           <AudioPreviewUnmountContext value={onAudioUnmount}>
             <TimelineRowContent row={item} />
