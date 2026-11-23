@@ -145,12 +145,15 @@ export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta
   const max = element.scrollWidth - element.clientWidth;
   reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
   const chase = wheelChases.get(element);
-  if (!easesWheel(event) || reducedMotion.matches) {
-    if (chase) {
-      chase.position += delta;
+  const direct = !easesWheel(event);
+  if (direct || reducedMotion.matches) {
+    element.scrollLeft = position + delta;
+    if (reducedMotion.matches) {
+      wheelChases.delete(element);
+    } else if (chase) {
+      chase.position = element.scrollLeft;
       chase.target = Math.min(Math.max(chase.target + delta, 0), Math.max(0, max));
     }
-    element.scrollLeft = position + delta;
     return Math.min(Math.max(position + delta, 0), max) !== position;
   }
   const target = wheelScrollTarget(position, chase?.target, delta, max);

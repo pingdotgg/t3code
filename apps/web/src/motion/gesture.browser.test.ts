@@ -237,4 +237,25 @@ describe("scrollLeftByWheel", () => {
     expect(positions).toEqual([0, 7, 16]);
     await vi.waitFor(() => expect(row.scrollLeft).toBe(56));
   });
+
+  it("keeps an active ease alive when a direct wheel hits the left edge", async () => {
+    using row = mountRow();
+    const positions = feed(row, [
+      [50_000, 100, -120],
+      [50_016, -10, 30],
+    ]);
+    expect(positions).toEqual([0, 0]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBe(90));
+  });
+
+  it("ends a running ease when reduced motion turns on", async () => {
+    using row = mountRow();
+    using other = mountRow();
+    expect(feed(other, [[60_000, 100, -120]])).toEqual([0]);
+    expect(feed(row, [[60_001, 100, -120]])).toEqual([0]);
+    using _reduced = vi.spyOn(MediaQueryList.prototype, "matches", "get").mockReturnValue(true);
+    expect(feed(row, [[60_016, 40, -120]])).toEqual([40]);
+    await vi.waitFor(() => expect(other.scrollLeft).toBe(100));
+    expect(row.scrollLeft).toBe(40);
+  });
 });
