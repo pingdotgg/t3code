@@ -109,7 +109,7 @@ it("fails on disconnect and times out stalled inference", async () => {
 
 it("asks the environment for a cloud provider's live stream", () => {
   const socket = new TestSocket();
-  openSpeechStream({
+  const stream = openSpeechStream({
     url: "wss://environment.test/ws/voice",
     options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
     cloudProvider: "xai",
@@ -119,10 +119,14 @@ it("asks the environment for a cloud provider's live stream", () => {
     onError: vi.fn(),
     createSocket: () => socket as unknown as WebSocket,
   });
-  socket.dispatchEvent(new Event("open"));
-  expect(JSON.parse(socket.sent[0] as string)).toEqual({
-    type: "start",
-    options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
-    cloudProvider: "xai",
-  });
+  try {
+    socket.dispatchEvent(new Event("open"));
+    expect(JSON.parse(socket.sent[0] as string)).toEqual({
+      type: "start",
+      options: DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      cloudProvider: "xai",
+    });
+  } finally {
+    stream.cancel();
+  }
 });

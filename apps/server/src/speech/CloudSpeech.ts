@@ -414,6 +414,8 @@ export const layer = Layer.effect(
         Effect.timeoutOrElse({ duration: "10 seconds", orElse: () => Effect.fail(unavailable()) }),
       );
       let byteLength = 0;
+      // Frames between xAI results only acknowledge audio; the client keeps the last text.
+      let shownRevision = 0;
       return {
         // Runs for every ~100 ms audio frame, so it adds no span of its own.
         feed: Effect.fnUntraced(function* (bytes: Uint8Array) {
@@ -438,7 +440,8 @@ export const layer = Layer.effect(
             try: () => socket.send(pcm),
             catch: () => failure ?? unavailable(),
           });
-          if (revision === 0) return { revision, text: null };
+          if (revision === shownRevision) return { revision, text: null };
+          shownRevision = revision;
           const committed = applySpeechAliases(lockedText(), options.speechCustomWords);
           const tentative = applySpeechAliases(interim, options.speechCustomWords);
           return {

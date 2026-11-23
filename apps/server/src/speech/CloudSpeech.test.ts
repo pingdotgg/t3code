@@ -334,8 +334,10 @@ it.live("streams dictation to xAI live and finishes with the corrected transcrip
       revision: 2,
       text: { committed: "um T3 Code", tentative: " is live" },
     });
+    // No newer xAI result: the frame is acknowledged without resending the same text.
+    expect(yield* stream.feed(pcm(0))).toEqual({ revision: 2, text: null });
     expect(yield* stream.finish).toBe("T3 Code is live");
-    expect(samples).toEqual([16384, -16384, 0]);
+    expect(samples).toEqual([16384, -16384, 0, 0]);
     expect(controls).toEqual(['{"type":"audio.done"}']);
 
     // An xAI error mid-recording fails the next frame and the finish without upstream detail.
