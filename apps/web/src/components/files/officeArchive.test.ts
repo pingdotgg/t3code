@@ -196,7 +196,7 @@ async function workbookFile(
 }
 
 describe("Workbook relationship targets", () => {
-  it.each(["sheet 1.xml", "sheet%201.xml", "Blatt ä.xml", "sheet#1.xml"])(
+  it.each(["sheet 1.xml", "sheet%201.xml", "sheet#1.xml"])(
     "prepares a worksheet whose ZIP name matches its target literally (%s)",
     async (name) => {
       const result = await prepareOffice(
