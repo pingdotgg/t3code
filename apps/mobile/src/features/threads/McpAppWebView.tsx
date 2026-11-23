@@ -324,11 +324,16 @@ export function ThreadMcpApp(props: {
         ),
       hostContext,
       callTool: async ({ name, arguments: args }) => {
+        // receive dispatches synchronously; read activation before awaiting.
+        const active = userActive.current;
         const { environmentId, input } = scope();
         const info = await latest.current.toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
+        // Asking without a tap lets apps queue dialogs as they load.
+        if (!info.value.readOnly && !active)
+          throw new McpAppHostRefusal({ message: "This tool runs only from a tap in the app." });
         if (
           !info.value.readOnly &&
           !(await confirm(
