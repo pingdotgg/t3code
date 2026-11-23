@@ -26,7 +26,7 @@ function shipItPrint(fields: {
   readonly state?: string;
   readonly pid?: number | string;
   readonly activeCount?: number;
-  readonly lastExitCode?: number;
+  readonly lastExitCode?: number | string;
   readonly runs?: number;
   readonly nested?: boolean;
 }): string {
@@ -49,6 +49,91 @@ const idlePrint = shipItPrint({
   lastExitCode: 0,
   runs: 1,
 });
+
+// `launchctl print gui/501/com.t3tools.t3code.ShipIt` on macOS 27.0.1 after
+// the submitting build was uninstalled. Only the home directory is changed.
+const realIdlePrint = [
+  `gui/${UID}/${LABEL} = {`,
+  "\tactive count = 0",
+  "\tpath = (submitted by T3 Code (Beta)[87630])",
+  "\ttype = Submitted",
+  "\tstate = not running",
+  "",
+  "\tprogram = /Applications/T3 Code (Beta).app/Contents/Frameworks/Squirrel.framework/Resources/ShipIt",
+  "\targuments = {",
+  "\t\t/Applications/T3 Code (Beta).app/Contents/Frameworks/Squirrel.framework/Resources/ShipIt",
+  "\t\tcom.t3tools.t3code.ShipIt",
+  "\t\t/Users/tester/Library/Caches/com.t3tools.t3code.ShipIt/ShipItState.plist",
+  "\t}",
+  "",
+  "\tstdout path = /Users/tester/Library/Caches/com.t3tools.t3code.ShipIt/ShipIt_stdout.log",
+  "\tstderr path = /Users/tester/Library/Caches/com.t3tools.t3code.ShipIt/ShipIt_stderr.log",
+  "\tinherited environment = {",
+  "\t\tSSH_AUTH_SOCK => /var/run/com.apple.launchd.example/Listeners",
+  "\t}",
+  "",
+  "\tdefault environment = {",
+  "\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin",
+  "\t}",
+  "",
+  "\tenvironment = {",
+  "\t\tOSLogRateLimit => 64",
+  "\t\tXPC_SERVICE_NAME => com.t3tools.t3code.ShipIt",
+  "\t}",
+  "",
+  "\tdomain = gui/501 [100020]",
+  "\tasid = 100020",
+  "\tminimum runtime = 2",
+  "\texit timeout = 5",
+  "\tnice = -1",
+  "\truns = 1",
+  "\tlast exit code = 0",
+  "",
+  "\tsemaphores = {",
+  "\t\tsuccessful exit => 0",
+  "\t}",
+  "",
+  "\tendpoints = {",
+  '\t\t"com.t3tools.t3code.ShipIt" = {',
+  "\t\t\tport = 0x12d66f",
+  "\t\t\tactive = 0",
+  "\t\t\tmanaged = 1",
+  "\t\t\treset = 0",
+  "\t\t\thide = 0",
+  "\t\t\twatching = 1",
+  "\t\t}",
+  "\t}",
+  "",
+  "\tresource coalition = {",
+  "\t\tID = 155515",
+  "\t\ttype = resource",
+  "\t\tstate = active",
+  "\t\tactive count = 1",
+  "\t\tname = com.t3tools.t3code.ShipIt",
+  "\t}",
+  "",
+  "\tjetsam coalition = {",
+  "\t\tID = 155516",
+  "\t\ttype = jetsam",
+  "\t\tstate = active",
+  "\t\tactive count = 1",
+  "\t\tname = com.t3tools.t3code.ShipIt",
+  "\t}",
+  "",
+  "\tspawn type = daemon (3)",
+  "\tjetsam priority = 40",
+  "\tjetsam memory limit (active) = (unlimited)",
+  "\tjetsam memory limit (inactive) = (unlimited)",
+  "\tjetsamproperties category = daemon",
+  "\tsubmitted job. ignore execute allowed",
+  "\tjetsam thread limit = 32",
+  "\tcpumon = default",
+  "\tjob state = uninitialized",
+  "\tsanitizer flags = 0x0",
+  "",
+  "\tproperties = inferred program",
+  "}",
+].join("\n");
 
 function commandLine(command: ChildProcess.Command): ReadonlyArray<string> {
   if (!ChildProcess.isStandardCommand(command)) return [];
@@ -137,6 +222,64 @@ it.effect(
         {
           steps: [{ stdout: idlePrint }, { exitCode: 0 }],
           expected: [PRINT, REMOVE],
+        },
+        {
+          steps: [{ stdout: realIdlePrint }, { exitCode: 0 }],
+          expected: [PRINT, REMOVE],
+        },
+        {
+          steps: [
+            {
+              stdout: shipItPrint({
+                state: "not running",
+                activeCount: 1,
+                lastExitCode: 0,
+                runs: 1,
+              }),
+            },
+          ],
+          expected: [PRINT],
+        },
+        {
+          steps: [
+            {
+              stdout: shipItPrint({
+                state: "not running",
+                activeCount: 0,
+                lastExitCode: 0,
+                runs: 0,
+              }),
+            },
+          ],
+          expected: [PRINT],
+        },
+        {
+          steps: [
+            {
+              stdout: shipItPrint({
+                state: "not running",
+                activeCount: 0,
+                lastExitCode: "(never exited)",
+                runs: 1,
+              }),
+            },
+          ],
+          expected: [PRINT],
+        },
+        {
+          steps: [
+            {
+              stdout: [
+                `gui/${UID}/${LABEL} = {`,
+                "    active count = 0",
+                "    state = not running",
+                "    runs = 1",
+                "    last exit code = 0",
+                "}",
+              ].join("\n"),
+            },
+          ],
+          expected: [PRINT],
         },
         {
           bundleId: "com.t3tools.t3code.dev.local",
@@ -254,6 +397,22 @@ it.effect("drops a ShipIt job that finishes exiting after the app is ready", () 
       {
         steps: [
           { stdout: shipItPrint({ state: "xpcproxy", activeCount: 1, runs: 1 }) },
+          { stdout: idlePrint },
+          { exitCode: 0 },
+        ],
+        expected: [PRINT, PRINT, REMOVE],
+      },
+      {
+        steps: [
+          {
+            stdout: shipItPrint({
+              state: "not running",
+              pid: "unknown",
+              activeCount: 0,
+              lastExitCode: 0,
+              runs: 1,
+            }),
+          },
           { stdout: idlePrint },
           { exitCode: 0 },
         ],

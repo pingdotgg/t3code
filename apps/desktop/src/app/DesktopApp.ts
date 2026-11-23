@@ -423,11 +423,12 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
-  // Before an install can be submitted. A ShipIt that is still exiting is rechecked once.
+  // Started before an install can be submitted, in the background so a
+  // still-exiting ShipIt does not gate the backend or window.
   yield* releaseIdleShipItJob({
     platform: environment.platform,
     bundleId: environment.appUserModelId,
-  });
+  }).pipe(Effect.forkScoped);
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
