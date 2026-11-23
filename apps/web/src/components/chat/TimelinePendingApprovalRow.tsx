@@ -253,14 +253,18 @@ export function TimelineApprovalCard({
       data-approval-request-id={approval.requestId}
       className="@container/approval-card my-1.5 flex min-w-0 flex-col gap-2.5 rounded-card surface-panel p-3 text-meta"
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <ShieldIcon aria-hidden className="size-4 shrink-0 text-warning-foreground" />
-        <span className="min-w-0 text-label text-foreground wrap-anywhere">{cardTitle}</span>
-        {approval.appName ? (
-          <span className="min-w-0 truncate text-meta text-muted-foreground">
-            {approval.appName}
-          </span>
-        ) : null}
+      <div className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <ShieldIcon aria-hidden className="mt-0.5 size-4 shrink-0 text-warning-foreground" />
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="min-w-0 text-label text-foreground wrap-anywhere">{cardTitle}</span>
+            {approval.appName ? (
+              <span className="min-w-0 truncate text-meta text-muted-foreground">
+                {approval.appName}
+              </span>
+            ) : null}
+          </div>
+        </div>
         {approval.fullAccessOverride || headerTrailing ? (
           <div className="ms-auto flex shrink-0 items-center gap-2">
             {approval.fullAccessOverride ? (
