@@ -43,8 +43,8 @@ nested submodules, without opening another project. Detached checkouts appear as
 
 Changes, Uncommitted, commit lists and comparison branches use the selected repository.
 Switching repositories resets the comparison branch to Automatic. File paths are relative to
-the selected repository. Turn diffs still show the thread's checkpoints and do not capture
-uncommitted contents inside submodules. Initialize a submodule with Git before selecting it.
+the selected repository. Turn diffs use the repositories recorded in that turn's checkpoints.
+Initialize a submodule with Git before selecting it.
 
 ## Connect an account
 

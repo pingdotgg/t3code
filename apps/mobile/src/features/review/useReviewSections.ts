@@ -203,8 +203,6 @@ export function useReviewSections(input: {
       activeTurnDiff.refresh();
       if (!repositoryFailureVisible) return;
     }
-    diffPreview.refresh();
-    repositoriesQuery.refresh();
     repositoriesQuery.refresh();
     if (selectedGitPreview) {
       selectedGitPreview.refresh();

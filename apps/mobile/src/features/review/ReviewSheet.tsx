@@ -114,12 +114,12 @@ function ReviewHeader(
         ...(props.repositories.length > 1
           ? [
               {
-                title: "Select repository",
+                title: gt("Select Git repository"),
                 icon: "folder" as const,
                 items: props.repositories.map((repo) => ({
                   id: repo.cwd,
                   title: repo.name + ": " + (repo.branch ?? "HEAD"),
-                  subtitle: repo.path || "Workspace repository",
+                  subtitle: repo.path || gt("Workspace repository"),
                   selected: repo.cwd === props.selectedGitRepository?.cwd,
                   onPress: () => props.onSelectGitRepository(repo.cwd),
                 })),
@@ -745,7 +745,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
         subtitle={headerSubtitle}
         androidSubtitle={androidHeaderSubtitle}
         selectedThreadCwd={repositoryPath ? null : selectedThreadCwd}
-        repositories={selectedSection?.kind === "turn" ? [] : repositories}
+        repositories={repositories}
         selectedGitRepository={selectedGitRepository}
         onSelectGitRepository={selectGitRepository}
         sectionMenu={sectionMenu}

@@ -12776,5 +12776,10 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "e2e33c27c4a3af4c": "Buscar repositorio...",
+  "b781f558378592af": "No hay repositorios que coincidan.",
+  "18ed3e1af363c529": "Repositorio del espacio de trabajo",
+  "332d417f22d1e83e": "La detección alcanzó el límite de repositorios.",
+  "9bdaf65c667dedf2": "Revisar el repositorio del hilo"
 }

@@ -381,7 +381,8 @@ export default function DiffPanel({
   const repositoryPending =
     repositoryUnresolved &&
     (repositoriesQuery.isPending || taskFolderQuery.isPending || projectFoldersQuery.isPending);
-  const repositoryError = repositoryUnresolved && !repositoryPending ? repositoriesQuery.error : null;
+  const repositoryError =
+    repositoryUnresolved && !repositoryPending ? repositoriesQuery.error : null;
   const gitCwd = repositoryUnresolved ? undefined : (gitRepository?.cwd ?? activeCwd);
   const isGitRepo = threadFolderIsRepo || gitRepository !== null;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
@@ -614,8 +615,7 @@ export default function DiffPanel({
           ...gitRepositories,
         ]
       : gitRepositories;
-  const repositoryLabel =
-    gitRepository?.name ?? repositoryOptions[0]?.name ?? threadFolderName;
+  const repositoryLabel = gitRepository?.name ?? repositoryOptions[0]?.name ?? threadFolderName;
   const preview = branchDiffPreview.data;
   const gitDiff = selectedGitSource?.diff;
 
@@ -1271,7 +1271,6 @@ export default function DiffPanel({
             <ComboboxTrigger
               render={<Button size="xs" variant="secondary" className="max-w-56 min-w-0" />}
               aria-label={gt("Repository: {name}", { name: repositoryLabel })}
-
             >
               <span className="truncate">{repositoryLabel}</span>
               <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
@@ -1289,11 +1288,10 @@ export default function DiffPanel({
                   return (
                     <ComboboxItem key={cwd} value={cwd}>
                       <span className="min-w-0">
-                        <span className="block truncate">
-                          {repo.name}
-                        </span>
+                        <span className="block truncate">{repo.name}</span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {repo.path || (repo.cwd === activeCwd ? gt("Workspace repository") : repo.cwd)}
+                          {repo.path ||
+                            (repo.cwd === activeCwd ? gt("Workspace repository") : repo.cwd)}
                         </span>
                       </span>
                     </ComboboxItem>
@@ -1302,7 +1300,7 @@ export default function DiffPanel({
               </ComboboxList>
               {repositoriesQuery.data?.truncated && (
                 <p className="px-3 py-2 text-xs text-muted-foreground">
-                  <T>Repository discovery reached its limit.</T>
+                  {gt("Repository discovery reached its limit.")}
                 </p>
               )}
               {repositoriesQuery.error && (
@@ -1734,14 +1732,14 @@ export default function DiffPanel({
                 {isGitSelection && repositoryError && routeThreadRef && (
                   <div className="flex flex-wrap gap-2">
                     <Button size="xs" variant="secondary" onClick={repositoriesQuery.refresh}>
-                      <T>Retry</T>
+                      {gt("Retry")}
                     </Button>
                     <Button
                       size="xs"
                       variant="secondary"
                       onClick={() => useDiffPanelStore.getState().clearRepository(routeThreadRef)}
                     >
-                      <T>Review the thread's repository</T>
+                      {gt("Review the thread's repository")}
                     </Button>
                   </div>
                 )}

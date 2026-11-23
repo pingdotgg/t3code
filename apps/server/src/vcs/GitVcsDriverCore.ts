@@ -4727,7 +4727,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                     ? ""
                     : path.relative(canonicalWorkspace, real).split(path.sep).join("/"),
                 name: path.basename(real) || "Repository",
-                branch: repo.currentBranch,
+                branch: yield* readCurrentBranch("GitVcsDriver.review.repositories.branch", real),
               },
               children,
             };

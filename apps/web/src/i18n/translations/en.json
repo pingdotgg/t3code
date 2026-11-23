@@ -12790,5 +12790,10 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "99963c0142e17f00": "For the new {tracker} account.",
-  "6d8e4ebc889bace9": "Add account"
+  "6d8e4ebc889bace9": "Add account",
+  "e2e33c27c4a3af4c": "Find repository...",
+  "b781f558378592af": "No matching repository.",
+  "18ed3e1af363c529": "Workspace repository",
+  "332d417f22d1e83e": "Repository discovery reached its limit.",
+  "9bdaf65c667dedf2": "Review the thread's repository"
 }

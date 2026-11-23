@@ -34,6 +34,7 @@ const state = vi.hoisted(() => ({
   thread: null as ReturnType<typeof makeThreadFixture> | null,
   threadRef: null as ScopedThreadRef | null,
   previews: new Map<string | null, ResultAtom<ReviewDiffPreviewResult>>(),
+  repositoryPreviews: new Map<string, ResultAtom<ReviewDiffPreviewResult>>(),
   patch: null as unknown as ResultAtom<ReviewDiffPreviewSource>,
   diffFilesCollapsed: false,
   project: {
@@ -56,8 +57,8 @@ vi.mock("~/state/server", () => ({
 }));
 vi.mock("~/state/review", () => ({
   reviewEnvironment: {
-    diffPreview: ({ input }: { input: { baseRef?: string } }) =>
-      state.previews.get(input.baseRef ?? null)!,
+    diffPreview: ({ input }: { input: { cwd: string; baseRef?: string } }) =>
+      state.repositoryPreviews.get(input.cwd) ?? state.previews.get(input.baseRef ?? null)!,
     repositories: () => state.repositories,
     branchCommits: () => state.commits,
     diffFilePatch: () => state.patch,
@@ -170,6 +171,7 @@ function setup(failedBaseRef: string | null) {
     worktreePath: cwd,
   });
   state.previews.clear();
+  state.repositoryPreviews.clear();
   state.previews.set(null, Atom.make(AsyncResult.success(preview())));
   state.previews.set("main", Atom.make(AsyncResult.success(preview())));
   state.previews.set(failedBaseRef, Atom.make(AsyncResult.fail(new Error(errorMessage))));
@@ -326,6 +328,45 @@ it.each([false, true])(
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },
 );
+
+it("switches Changes between the workspace and an initialized submodule", async () => {
+  using context = setup("main");
+  const childCwd = `${cwd}/packages/auth`;
+  state.repositories = Atom.make(
+    AsyncResult.success({
+      repositories: [
+        { cwd, name: "workspace", path: "", branch: "dev" },
+        { cwd: childCwd, name: "auth", path: "packages/auth", branch: "fix-auth" },
+      ],
+      truncated: false,
+    }),
+  );
+  const childPreview = preview();
+  state.repositoryPreviews.set(
+    childCwd,
+    Atom.make(
+      AsyncResult.success({
+        ...childPreview,
+        cwd: childCwd,
+        sources: childPreview.sources.map((source) => ({ ...source, baseRef: "auth-base" })),
+      }),
+    ),
+  );
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await userEvent.click(screen.getByRole("combobox", { name: "Repository: Project folder: dev" }));
+  await userEvent.click(page.getByRole("option", { name: /auth: fix-auth/ }));
+  await expect
+    .element(screen.getByRole("combobox", { name: "Repository: auth: fix-auth" }))
+    .toBeVisible();
+  await expect.element(screen.getByLabelText("Comparing dev against auth-base")).toBeVisible();
+  expect(
+    useDiffPanelStore.getState().branchBaseRefByThreadKey[scopedThreadKey(context.threadRef)],
+  ).toBeNull();
+});
 
 it("keeps the loading state while a saved repository is still being discovered", async () => {
   using context = setup(null);
