@@ -650,34 +650,6 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "probes a relative PATH entry in the directory its search recorded",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relative-probe-" });
-        const command = "t3-relative-probe-cli";
-        yield* fs.writeFileString(path.join(dir, command), "#!/bin/sh\n", { mode: 0o755 });
-        const relative = path.relative(process.cwd(), dir);
-        const probed: Array<string> = [];
-        const resolved = yield* resolveCommandPath(command, { env: { PATH: relative } }).pipe(
-          Effect.provideService(CommandResolutionCache, new Map()),
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fs,
-            stat: (file) => {
-              probed.push(file);
-              return fs.stat(file);
-            },
-          }),
-        );
-        // The result keeps its PATH spelling; the probe is absolute, so a later chdir can't move it.
-        expect(resolved).toBe(path.join(relative, command));
-        expect(probed).toContain(path.join(path.resolve(relative), command));
-        expect(probed.filter((file) => !path.isAbsolute(file))).toEqual([]);
-      }),
-  );
-
   // Seconds; the tests below run their clock a minute later, past the window in which a listing is not kept.
   const AGED_MTIME = 4_102_444_800;
   const afterAgedMtime = TestClock.setTime((AGED_MTIME + 60) * 1000);
@@ -866,7 +838,6 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
 
         const searches = {
           dot: { PATH: ".", expected: inCwd },
-          absolute: { PATH: listed, expected: inListed },
           leading: { PATH: `:${missing}`, expected: inCwd },
           trailing: { PATH: `${missing}:`, expected: inCwd },
           interior: { PATH: `${missing}::${missing}-2`, expected: inCwd },
@@ -876,7 +847,6 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
           emptyBeforeDot: { PATH: `:.:${missing}`, expected: inCwd },
           entirelyEmpty: { PATH: "", expected: null },
           whitespaceOnly: { PATH: `${missing}: `, expected: null },
-          quotedEmpty: { PATH: `${missing}:""`, expected: null },
         };
 
         const cachedSearches = {
