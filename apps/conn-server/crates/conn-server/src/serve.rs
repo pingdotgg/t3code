@@ -429,6 +429,7 @@ pub async fn serve_with_instances(
         }
     };
     let addr = or_exit(listener.local_addr(), "cannot read the listening address");
+    crate::routes::preview_tunnel::serving_on(addr.port());
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     // The write and its fsync run on a blocking thread, as all file work here does.
     let published = {
@@ -575,6 +576,7 @@ async fn start_managed(
         }
     };
     if let Ok(addr) = listener.local_addr() {
+        crate::routes::preview_tunnel::serving_on(addr.port());
         println!("managed ingress on http://{addr}");
     }
     let ingress = managed::ingress::Managed::new(shared, gateway, provision.preview_tabs);

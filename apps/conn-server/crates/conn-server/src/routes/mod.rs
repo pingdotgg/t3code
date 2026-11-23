@@ -12,6 +12,7 @@ mod hooks;
 pub mod mcp;
 mod oauth_mcp;
 pub(crate) mod preview;
+pub(crate) mod preview_tunnel;
 mod pull_requests;
 
 pub fn router() -> Router<AppState> {
@@ -22,5 +23,6 @@ pub fn router() -> Router<AppState> {
         .merge(device_hub::router())
         .merge(hooks::router())
         .merge(preview::router())
+        .merge(preview_tunnel::router())
         .merge(pull_requests::router())
 }
