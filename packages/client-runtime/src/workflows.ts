@@ -700,7 +700,15 @@ export function workflowSaidStart(said: string, limit: number): string | null {
     kept = `${kept}\n\n${paragraph}`;
   }
   // One paragraph that runs on is cut at a word, which can still split markup but not a word.
-  if (kept.length > limit * 2) kept = `${kept.slice(0, kept.lastIndexOf(" ", limit))}…`;
+  // Text with no space before the limit, such as Chinese, is cut at the limit, never inside a
+  // surrogate pair.
+  if (kept.length > limit * 2) {
+    const space = kept.lastIndexOf(" ", limit);
+    const before = kept.charCodeAt(limit - 1);
+    const highSurrogateLast = before >= 0xd800 && before <= 0xdbff;
+    const end = space > 0 ? space : highSurrogateLast ? limit - 1 : limit;
+    kept = `${kept.slice(0, end)}…`;
+  }
   return kept === said ? null : kept;
 }
 
