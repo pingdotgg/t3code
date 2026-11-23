@@ -362,6 +362,17 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Ok(true)))
     }
 
+    /// Every thread's committed `command_execution` item updates and run updates, from now on,
+    /// as `(thread id, event)` (the part of T3's `streamDomainEvents` the pull request watch
+    /// reads). An engine without them answers an error.
+    fn subscribe_command_events(
+        &self,
+    ) -> BoxFuture<'_, Result<mpsc::Receiver<(String, Value)>, String>> {
+        Box::pin(std::future::ready(Err(
+            "this engine has no command events".to_owned()
+        )))
+    }
+
     /// The shell stream: projects and thread summaries. Starts with a `snapshot` item (or
     /// replays from `afterSequence`), then `synchronized`, then live updates.
     fn subscribe_shell(

@@ -907,8 +907,11 @@ tools), and the engine commands `thread.pull-request.watch` and the server-only
   `queue_after_active`, `createdBy: agent`, `creationSource: server`. Checks, approvals,
   remarks (review-thread pages included), conflicts, rebases, merge-queue removals, "no checks
   after 15 minutes", 10 comment-only wakes, closed and merged PRs, and 8 failed reads all
-  follow T3. Watches live on the thread's links, so they survive a restart. Archive, settle
-  and Stop end them. New watches that overflow the loop's queue ask for one more full pass.
+  follow T3. A merge or close wakes the thread with the base branch, merger and commit, except
+  one the watching thread's own agent ran: the engine's command feed and `close_commands.rs`
+  (T3's `agentEnds` and host close commands, generated) end that watch quietly. A merged link
+  the host cannot read ends from its snapshot. Watches live on the thread's links, so they
+  survive a restart. Archive, settle and Stop end them. New watches that overflow the loop's queue ask for one more full pass.
 - **Queued wakes are checked when they start** (`startNextQueuedRun`): a wake whose watches
   all ended or moved is cancelled; a wake for several PRs is narrowed to the current ones.
 - **A push reopens checks.** When an agent's push command finishes (`isPushCommand`, ported

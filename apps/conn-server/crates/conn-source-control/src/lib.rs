@@ -5,6 +5,7 @@
 pub mod cache;
 pub mod checkout;
 pub mod cli;
+pub mod close_commands;
 pub mod detect;
 pub mod discovery;
 pub mod hosts;

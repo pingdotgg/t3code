@@ -242,6 +242,44 @@ pub(crate) async fn subscribe_thread(
     Ok(rx)
 }
 
+/// `Engine::subscribe_command_events`: from the current high water on, read in pages after
+/// each commit. A slow reader holds the task, not memory: the cursor stays in the store.
+pub(crate) async fn subscribe_command_events(
+    inner: Arc<Inner>,
+) -> Result<mpsc::Receiver<(String, Value)>, String> {
+    let mut wake = inner.notify.subscribe();
+    let mut cursor = inner.db(|store| store.high_water()).await;
+    let (tx, rx) = mpsc::channel(64);
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = tx.closed() => return,
+                changed = wake.changed() => if changed.is_err() { return },
+            }
+            loop {
+                let after = cursor;
+                let Ok(events) = inner
+                    .db(move |store| store.command_events_after(after, LIVE_READ_BATCH))
+                    .await
+                else {
+                    return;
+                };
+                let full = events.len() == LIVE_READ_BATCH;
+                for (seq, thread_id, event) in events {
+                    cursor = seq;
+                    if tx.send((thread_id, event)).await.is_err() {
+                        return;
+                    }
+                }
+                if !full {
+                    break;
+                }
+            }
+        }
+    });
+    Ok(rx)
+}
+
 /// The thread snapshot item, compacted for clients that opted in: a turn item's text that its
 /// message carries is blanked and marked (`acceptDedupedBodies`), and `turnItems` leaves out
 /// the items `visibleTurnItems` already holds (`acceptCompactTurnItems`). Clients undo both

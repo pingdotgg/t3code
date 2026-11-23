@@ -927,6 +927,41 @@ impl Wake {
     }
 }
 
+/// `pullRequestWatchEndMessage`: the wake for a watched pull request that merged or closed.
+/// `detail` is its detail, or its link's snapshot when the host could not be read.
+pub fn end_message(number: u64, url: &str, detail: &Value) -> Wake {
+    let merged = detail["state"] == "merged";
+    let how = if merged {
+        let by = detail
+            .pointer("/mergedBy/login")
+            .and_then(Value::as_str)
+            .filter(|login| !login.is_empty())
+            .map(|login| format!(" by {login}"))
+            .unwrap_or_default();
+        let sha = detail["mergeCommitSha"]
+            .as_str()
+            .filter(|sha| !sha.is_empty())
+            .map(|sha| format!(" as {}", sha.chars().take(7).collect::<String>()))
+            .unwrap_or_default();
+        let base = detail["baseBranch"].as_str().unwrap_or_default();
+        format!("was merged into {base}{by}{sha}")
+    } else {
+        "was closed without merging".to_owned()
+    };
+    let mut text = format!("Pull request #{number} ({url}) {how}, so Conn stopped watching it.");
+    if !merged {
+        text.push_str(" If it is reopened, call watch_pull_request to watch it again.");
+    }
+    Wake {
+        text,
+        outcome: if merged { "completed" } else { "updated" },
+        summary: format!(
+            "#{number}: {}, stopped watching",
+            if merged { "merged" } else { "closed" }
+        ),
+    }
+}
+
 /// `pullRequestWatchMessage`.
 pub fn message(
     number: u64,

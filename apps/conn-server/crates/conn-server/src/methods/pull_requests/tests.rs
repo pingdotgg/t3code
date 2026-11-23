@@ -1487,6 +1487,15 @@ async fn watched_api(state: Arc<Mutex<Value>>) -> (String, tokio::task::JoinHand
                         "../../../../conn-source-control/src/pull_requests/sample.json"
                     ))
                     .expect("sample");
+                    if now["merged"] == true {
+                        pr["state"] = json!("MERGED");
+                        pr["mergedAt"] = json!("2026-11-20T12:00:00Z");
+                        pr["mergeCommit"] = json!({"oid": "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9"});
+                        pr["mergedBy"] = json!({"__typename": "User", "login": "octocat"});
+                    }
+                    if now["unavailable"] == true {
+                        return Json(json!({"errors": [{"message": "Something went wrong"}]}));
+                    }
                     pr["headRefOid"] = now["head"].clone();
                     pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"] =
                         json!({"nodes": now["contexts"], "pageInfo": {"hasNextPage": false, "endCursor": null}});
@@ -1544,7 +1553,7 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
     };
     shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&watch)]);
     let panel = panel(shell.clone(), &dir, &base);
-    let mut watcher = watches::Watcher::new(panel);
+    let mut watcher = watches::Watcher::new(panel.clone());
 
     // The first read is the baseline: the watch remembers the head, nothing wakes.
     watcher.pass(None).await;
@@ -1601,16 +1610,171 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
         "a quiet pull request is left alone"
     );
 
-    // A merged pull request ends the watch without a wake.
-    {
-        let mut snapshot = shell.snapshot.lock().expect("snapshot");
-        snapshot["threads"][0]["pullRequests"][0]["snapshot"] = json!({"state": "merged"});
-    }
+    // Someone else merged it: one wake that names the merge, and the watch ends. A new loop,
+    // as a quiet pull request is read again only after `QUIET_REREAD_MS`.
+    state.lock().expect("state")["merged"] = json!(true);
+    let mut watcher = watches::Watcher::new(panel.clone());
     watcher.pass(None).await;
-    let ended = shell.syncs.lock().expect("syncs").pop().expect("end sync");
-    assert_eq!(ended["watch"], Value::Null);
-    assert!(ended.get("wake").is_none());
+    let merged = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("merge sync");
+    assert_eq!(merged["watch"], Value::Null);
+    assert_eq!(
+        merged["wake"]["text"],
+        format!(
+            "Pull request #7 (https://github.com/a/b/pull/7) was merged into {} by octocat as 3b2f958, so Conn stopped watching it.",
+            merged_base().as_str().unwrap_or_default()
+        )
+    );
+    assert_eq!(
+        merged["wake"]["notification"],
+        json!({"source": {"kind": "monitor"}, "outcome": "completed",
+            "summary": "#7: merged, stopped watching"})
+    );
+    // The engine cleared the watch: the next sweep sends nothing more.
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&Value::Null)]);
+    watcher.pass(None).await;
+    assert!(shell.syncs.lock().expect("syncs").is_empty());
+
+    // A merged link the host cannot read ends from its snapshot, with the wake.
+    {
+        state.lock().expect("state")["unavailable"] = json!(true);
+        let mut snapshot = shell.snapshot.lock().expect("snapshot");
+        snapshot["threads"] = json!([thread(&woke["watch"])]);
+        snapshot["threads"][0]["pullRequests"][0]["snapshot"] =
+            json!({"state": "merged", "baseBranch": "main"});
+    }
+    let mut cold = watches::Watcher::new(panel.clone());
+    cold.pass(None).await;
+    let from_snapshot = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("snapshot end");
+    assert_eq!(from_snapshot["watch"], Value::Null);
+    assert_eq!(
+        from_snapshot["wake"]["text"],
+        "Pull request #7 (https://github.com/a/b/pull/7) was merged into main, so Conn stopped watching it."
+    );
+    state.lock().expect("state")["unavailable"] = json!(false);
+
+    // The thread's own agent merged it: the read right after its command ends it quietly.
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&woke["watch"])]);
+    let merge = |item: &str, succeeded| watches::AgentEvent::Command {
+        thread_id: "t1".into(),
+        item_id: item.into(),
+        closed: conn_source_control::close_commands::closed_by("gh pr merge 7 --squash")
+            .expect("a close command"),
+        succeeded,
+    };
+    let mut own = watches::Watcher::new(panel.clone());
+    own.agent_event(merge("cmd-1", None)).await;
+    own.agent_event(merge("cmd-1", Some(true))).await;
+    let quiet = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("own merge sync");
+    assert_eq!(quiet["watch"], Value::Null);
+    assert!(quiet.get("wake").is_none(), "{quiet}");
+    // The agent's merge is forgotten once read: a later external end wakes again.
+    own.pass(None).await;
+    assert!(
+        shell
+            .syncs
+            .lock()
+            .expect("syncs")
+            .pop()
+            .is_some_and(|s| s.get("wake").is_some()),
+        "no agent command holds the watch any more"
+    );
+
+    // A merge command that failed ended nothing itself: the merge found after it wakes.
+    let mut failed = watches::Watcher::new(panel);
+    failed.agent_event(merge("cmd-2", Some(false))).await;
+    let woken = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("failed merge sync");
+    assert!(woken.get("wake").is_some(), "{woken}");
     task.abort();
+}
+
+/// The engine's command feed reaches the watch loop as T3's reactor reads it: a merge command
+/// while it runs and when it ends (a failure reported as completed counts as failed), each
+/// once, a run's end, and nothing for other commands or runs still going.
+#[tokio::test]
+async fn agent_merge_commands_reach_the_watch_loop() {
+    let (feed, events) = tokio::sync::mpsc::channel(16);
+    let (tx, mut out) = tokio::sync::mpsc::channel(16);
+    let task = tokio::spawn(watches::agent_events(events, tx));
+    let item = |id: &str, input: &str, status: &str, output: &str| {
+        (
+            "t1".to_owned(),
+            json!({"type": "turn-item.updated", "payload": {"id": id,
+            "type": "command_execution", "input": input, "status": status, "output": output}}),
+        )
+    };
+    for event in [
+        item("ls", "ls -la", "completed", ""),
+        item("m1", "gh pr merge 7 --squash", "running", ""),
+        item("m1", "gh pr merge 7 --squash", "completed", "Merged"),
+        item("m1", "gh pr merge 7 --squash", "completed", "Merged"),
+        item(
+            "m2",
+            "gh pr merge 8",
+            "completed",
+            "not mergeable\n<exited with exit code 1>",
+        ),
+        (
+            "t1".to_owned(),
+            json!({"type": "run.updated", "payload": {"status": "running"}}),
+        ),
+        (
+            "t1".to_owned(),
+            json!({"type": "run.updated", "payload": {"status": "completed"}}),
+        ),
+    ] {
+        feed.send(event).await.expect("feed");
+    }
+    drop(feed);
+    let mut seen = Vec::new();
+    while let Some(event) = out.recv().await {
+        seen.push(format!("{event:?}"));
+    }
+    task.await.expect("feed task");
+    assert_eq!(seen.len(), 4, "{seen:#?}");
+    assert!(
+        seen[0].contains("\"m1\"") && seen[0].contains("succeeded: None"),
+        "{}",
+        seen[0]
+    );
+    assert!(
+        seen[1].contains("\"m1\"") && seen[1].contains("succeeded: Some(true)"),
+        "{}",
+        seen[1]
+    );
+    assert!(
+        seen[2].contains("\"m2\"") && seen[2].contains("succeeded: Some(false)"),
+        "{}",
+        seen[2]
+    );
+    assert!(seen[3].starts_with("RunEnded"), "{}", seen[3]);
+}
+
+fn merged_base() -> Value {
+    let pr: Value = serde_json::from_str(include_str!(
+        "../../../../conn-source-control/src/pull_requests/sample.json"
+    ))
+    .expect("sample");
+    pr["baseRefName"].clone()
 }
 
 /// A stub GitHub for the link sweep. Pull request 7 (`sample.json`, head `feature`) lives in

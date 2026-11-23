@@ -26,6 +26,9 @@
 //   this server knows, and the keys of a `projectSettingsOverrides` entry. settings.rs redacts
 //   and restores exactly these secrets.
 //
+// - crates/conn-source-control/src/close_commands/generated.rs: each host's close command
+//   pattern and the shell-word patterns of `changeRequestsClosedBy`, with T3's own answers for
+//   sample commands and command outputs, which the Rust port's tests compare with.
 // - crates/conn-server/src/model_manifest/generated.rs: where `model-manifest.json` comes from
 //   and its times (apps/server/src/provider/ModelManifest.ts), and the bundled manifest's
 //   `updatedAt`.
@@ -600,6 +603,102 @@ const titlePromptsRs = rustfmt(
   ].join("\n"),
 );
 
+// ---- Change request close commands -------------------------------------------------------
+// `isChangeRequestCloseCommand` and `changeRequestsClosedBy`
+// (apps/server/src/sourceControl/sourceControlDefinitions.ts): each host's close pattern and
+// the shell-word patterns, in Rust syntax, and what T3's own functions answer for a set of
+// commands and outputs, so the Rust port is tested against T3 itself.
+
+const CLOSE_FILE = "apps/server/src/sourceControl/sourceControlDefinitions.ts";
+const closeModule = await importSource(CLOSE_FILE);
+const closeSource = NodeFS.readFileSync(inMonorepo(CLOSE_FILE), "utf8");
+const toolOutput = await importSource("packages/shared/src/toolOutput.ts");
+// JS `\d` and `\w` are ASCII; Rust's are Unicode. Lookaround and backreferences do not port.
+const rustPattern = (source) => {
+  if (/\(\?<?[=!]|\\[1-9]|\\k</.test(source)) throw new Error(`pattern does not port: ${source}`);
+  let out = "";
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === "\\") {
+      const next = source[i + 1];
+      const ascii = { d: "0-9", w: "0-9A-Za-z_" }[next];
+      out += ascii === undefined ? c + next : inClass ? ascii : `[${ascii}]`;
+      i++;
+    } else {
+      if (c === "[") inClass = true;
+      else if (c === "]") inClass = false;
+      out += c;
+    }
+  }
+  return out;
+};
+const constPattern = (name) => {
+  const match = new RegExp(`const ${name} =\\s*/(.+)/([a-z]*);`).exec(closeSource);
+  if (match === null) throw new Error(`${CLOSE_FILE} has no ${name}`);
+  return rustPattern(match[1]);
+};
+const closePatterns = closeModule.sourceControlDefinitions.definitions
+  .flatMap((d) => (d.changeRequestCloseCommand === undefined ? [] : [d.changeRequestCloseCommand]))
+  .map((re) => {
+    if (re.flags.replace(/[gu]/g, "") !== "") throw new Error(`close pattern flags: ${re.flags}`);
+    return rustPattern(re.source);
+  });
+const closeCommandCases = [
+  // sourceControlDefinitions.test.ts
+  "gh pr merge 19 --squash", 'gh pr merge "19" --squash', '/bin/zsh -lc "gh pr merge 19"',
+  'gh pr merge 19 --squash --subject "Release 20"', `/bin/zsh -lc "gh pr merge 19 --subject 'Release 20'"`,
+  "gh pr merge 19 --body 'see https://github.com/o/r/pull/20'", "gh pr merge 19 --body https://github.com/o/r/pull/20",
+  "gh pr merge 19 # then 20", "gh pr merge --squash --match-head-commit 3b2f958 #19",
+  "gh pr close https://github.com/o/r/pull/19 && gh pr merge 20", "glab mr merge https://gitlab.com/o/r/-/merge_requests/7",
+  "sleep 30; cafe pr merge 26271", "az repos pr update --id 19 --status completed",
+  "az repos pr update --id=19 --status=abandoned", "gh pr merge --squash", "gh stack merge",
+  "gh pr merge 19 && gh pr merge --auto",
+  // Other hosts, and commands that close nothing.
+  "tea pr merge 3", "tea pulls close 4", "fj pr m 5", "origin pr close 8", "glab mr accept 2",
+  "cafe stack merge", "gh pr merge #", "gh pr merge '#12'", "ls -la", "gh pr view 19",
+  "gh pr checks 19 --watch", "az repos pr update --id 19 --status active", "ghost pr merge 1",
+];
+const failureCases = [
+  // toolOutput.test.ts
+  "FILE NOT FOUND", "No files found", "ENOENT", "No such file or directory", "CommandNotFoundException",
+  "command not found", "Cannot find path 'a' because it does not exist", "The term 'example' is not recognized",
+  "is not recognized as the name of a cmdlet", "A parameter cannot be found that matches parameter name",
+  "<exited with exit code 2>", "Exited with exit code 1", "exit code: 127", "clean exit first, then ExIt CoDe: 3",
+  "Done", "exit code: 0", "Exited with exit code 0", "cannot find path", "is not recognized", "exit",
+  "not found", "the path cannot be found",
+  // The merge outputs the watch reads.
+  "GraphQL: Pull request is not mergeable\n<exited with exit code 1>",
+  "✓ Squashed and merged pull request #19", "exit code 10", "exit code:   0 then exit code 5",
+];
+const closedByRs = (command) => {
+  if (!closeModule.isChangeRequestCloseCommand(command)) return "None";
+  const closed = closeModule.changeRequestsClosedBy(command);
+  return closed === "any" ? "Some(&[])" : `Some(&[${[...closed].join(", ")}])`;
+};
+const closeCommandsRs = rustfmt(
+  [
+    ...HEADER,
+    "",
+    `//! From \`${CLOSE_FILE}\` and \`packages/shared/src/toolOutput.ts\`.`,
+    "",
+    "/// Each host's `changeRequestCloseCommand`, in the registry's order.",
+    `pub(super) const CLOSE_COMMANDS: &[&str] = &[${closePatterns.map(str).join(", ")}];`,
+    "/// `SHELL_WORD`: a double-quoted, single-quoted or bare shell word.",
+    `pub(super) const SHELL_WORD: &str = ${str(constPattern("SHELL_WORD"))};`,
+    "/// `NAMED_CHANGE_REQUEST`: a word that names one change request by number or URL.",
+    `pub(super) const NAMED_CHANGE_REQUEST: &str = ${str(constPattern("NAMED_CHANGE_REQUEST"))};`,
+    "",
+    "/// T3's answers: `None` for no close command, an empty list for `\"any\"`.",
+    "#[cfg(test)]",
+    `pub(super) const CLOSED_BY_CASES: &[(&str, Option<&[u64]>)] = &[${closeCommandCases.map((c) => `(${str(c)}, ${closedByRs(c)})`).join(", ")}];`,
+    "/// T3's `toolOutputIndicatesFailure` answers.",
+    "#[cfg(test)]",
+    `pub(super) const FAILURE_CASES: &[(&str, bool)] = &[${failureCases.map((c) => `(${str(c)}, ${toolOutput.toolOutputIndicatesFailure(c)})`).join(", ")}];`,
+    "",
+  ].join("\n"),
+);
+
 // ---- Write or check ----------------------------------------------------------------------
 
 const vcsSource = NodeFS.readFileSync(inMonorepo("apps/server/src/vcs/GitVcsDriverCore.ts"), "utf8");
@@ -619,6 +718,7 @@ const gitRulesRs = rustfmt([...HEADER,
 
 const outputs = {
   "crates/conn-vcs/src/generated.rs": gitRulesRs,
+  "crates/conn-source-control/src/close_commands/generated.rs": closeCommandsRs,
   "crates/conn-server/src/scopes/generated.rs": scopesRs,
   "tools/upkeep/http-routes.json": routesJson,
   "crates/conn-contract/src/upstream.rs": upstreamRs,

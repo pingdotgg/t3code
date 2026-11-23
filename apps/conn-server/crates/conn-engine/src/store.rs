@@ -869,6 +869,39 @@ impl Store {
         Ok(rows)
     }
 
+    /// Committed `command_execution` item updates and run updates of every thread after
+    /// `after`, at most `limit`, as `(sequence, thread id, event)`.
+    pub(crate) fn command_events_after(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> StoreResult<Vec<(u64, String, Value)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT seq, thread_id, event FROM events WHERE seq > ?1
+                 AND (type = 'run.updated' OR (type = 'turn-item.updated'
+                   AND json_extract(event, '$.payload.type') = 'command_execution'))
+                 ORDER BY seq LIMIT ?2",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map(params![after as i64, limit as i64], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(err)?
+            .map(|row| {
+                let (seq, thread_id, text) = row.map_err(err)?;
+                Ok((seq, thread_id, parse(text)?))
+            })
+            .collect::<StoreResult<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     /// One page of the whole event log after `after`, oldest first, as
     /// `OrchestrationV2StoredEvent` rows (`sequence`, `commandId`, `event`).
     pub(crate) fn stored_events_after(&self, after: u64, limit: usize) -> StoreResult<Vec<Value>> {
