@@ -115,6 +115,7 @@ export function groupIssues(
       more: EnvironmentId[];
     }
   >();
+  const listed = new Set<string>();
   const needle = query.toLowerCase();
   for (const [environmentId, page] of held) {
     for (const tracker of page.answer.trackers) {
@@ -137,6 +138,9 @@ export function groupIssues(
         !entry.displayKey.toLowerCase().includes(needle)
       )
         continue;
+      // Environments holding the same repository answer the same issue; the first one keeps it.
+      if (listed.has(entry.url)) continue;
+      listed.add(entry.url);
       group.rows.push({ ...entry, environmentId });
     }
     for (const error of page.errors) {
@@ -166,28 +170,29 @@ export function issueFilterScopes(
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
+  // A repository's scope is the same scope on every server. A bound tracker's scope is not: two
+  // accounts, or two servers, may both have an ENG team, so those are deduplicated per server only.
+  const fromRepository = new Set<IssueScopeRef>();
   for (const [environmentId, page] of held) {
     for (const project of projects) {
       if (project.environmentId !== environmentId) continue;
-      const identity = project.repositoryIdentity;
-      const kind = identity?.provider as SourceControlProviderKind | undefined;
-      const scope = sourceControlClients.issueScope(identity);
-      if (!identity || !kind || scope === null) continue;
-      const host = sourceControlClients.changeRequestHost(identity, kind);
-      const tracker = page.answer.trackers.find(
-        (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
-      );
-      if (!tracker?.configured || tracker.capabilities === null) continue;
-      if (
-        scopes.some(
-          (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+      for (const { tracker: kind, host, scope } of sourceControlClients.issueBindings(
+        project.repositoryIdentity,
+      )) {
+        const tracker = page.answer.trackers.find(
+          (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
+        );
+        if (!tracker?.configured || tracker.capabilities === null) continue;
+        if (
+          scopes.some(
+            (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+          )
         )
-      )
-        continue;
-      scopes.push({
-        environmentId,
-        input: { projectId: project.id, tracker: tracker.tracker, host, scope },
-      });
+          continue;
+        const input = { projectId: project.id, tracker: tracker.tracker, host, scope };
+        fromRepository.add(input);
+        scopes.push({ environmentId, input });
+      }
     }
     // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
     // matched or not. Older servers do not, so their rows stand in.
@@ -206,9 +211,12 @@ export function issueFilterScopes(
       );
       if (!tracker?.configured) continue;
       if (!tracker.capabilities?.labels && !tracker.capabilities?.assignees) continue;
+      // An answer names each scope once per account; rows standing in for one repeat.
       if (
         scopes.some(
           (s) =>
+            (fromRepository.has(s.input) ||
+              (page.answer.scopes === undefined && s.environmentId === environmentId)) &&
             s.input.scope.toLowerCase() === input.scope.toLowerCase() &&
             s.input.host?.toLowerCase() === host,
         )

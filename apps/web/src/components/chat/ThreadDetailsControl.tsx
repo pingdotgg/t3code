@@ -1,5 +1,6 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
+import { T, Var } from "gt-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -15,7 +16,7 @@ import {
   THREAD_DETAILS_PANEL_SELECT_LABEL_CLASS,
   THREAD_DETAILS_PANEL_SELECT_ICON_CLASS,
 } from "./threadDetailsPanelStyles";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
@@ -53,8 +54,9 @@ export function ThreadDetailsControl({
     props: mergeProps<"button">(
       {
         type: render ? undefined : "button",
+        // The touch target stays centered within the panel's 32px rows; spilling past them makes scrolling lists overflow.
         className: cn(
-          "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 pointer-coarse:after:min-w-11 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
+          "relative inline-flex shrink-0 cursor-pointer items-center whitespace-nowrap border outline-none transition-[box-shadow,scale] [&:not([aria-haspopup]):not(:disabled):not([aria-disabled=true])]:will-change-[scale] [&:active:not([aria-haspopup])]:scale-[0.97] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background pointer-coarse:after:absolute pointer-coarse:after:top-1/2 pointer-coarse:after:left-1/2 pointer-coarse:after:size-full pointer-coarse:after:min-h-8 pointer-coarse:after:min-w-8 pointer-coarse:after:-translate-x-1/2 pointer-coarse:after:-translate-y-1/2 [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-4 disabled:pointer-events-none disabled:opacity-64 aria-disabled:cursor-not-allowed aria-disabled:opacity-64 [&_svg]:shrink-0",
           parts[part],
           multiline && "h-auto min-h-8 py-1.5 disabled:opacity-100 sm:h-auto",
           tone === "muted" && "text-muted-foreground hover:text-foreground/80",
@@ -105,4 +107,35 @@ export function ThreadDetailsControl({
     );
   }
   return control;
+}
+
+export function ThreadDetailsMoreButton({
+  expanded,
+  remaining,
+  onToggle,
+}: {
+  expanded: boolean;
+  remaining: number;
+  onToggle: () => void;
+}) {
+  const Icon = expanded ? ChevronUpIcon : ChevronDownIcon;
+  return (
+    <ThreadDetailsControl
+      variant="ghost"
+      size="sm"
+      aria-expanded={expanded}
+      onClick={onToggle}
+      tone="muted"
+      className="w-full active:scale-100"
+    >
+      <Icon aria-hidden className="size-4 shrink-0" />
+      {expanded ? (
+        <T>Show less</T>
+      ) : (
+        <T>
+          Show <Var>{remaining}</Var> more
+        </T>
+      )}
+    </ThreadDetailsControl>
+  );
 }

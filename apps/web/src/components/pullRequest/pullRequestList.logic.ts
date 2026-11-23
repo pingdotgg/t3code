@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
@@ -62,9 +63,9 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
-  others: "Others",
+  reviewRequested: msg("Review requested"),
+  authored: msg("Authored"),
+  others: msg("Others"),
 };
 
 function normalize(value: string | null | undefined): string | null {
@@ -586,6 +587,15 @@ export function mergePullRequestLists(
     nextCursors,
     truncatedEnvironments: [...truncatedEnvironments],
   };
+}
+
+/** Project errors do not count: the priority reads cover the same projects and are skipped here. */
+export function pullRequestListAnsweredEmpty(view: {
+  readonly data: MergedPullRequestList | null;
+  readonly isPending: boolean;
+  readonly error: unknown;
+}): boolean {
+  return view.data?.entries.length === 0 && !view.isPending && view.error === null;
 }
 
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>

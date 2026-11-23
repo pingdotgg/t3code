@@ -332,6 +332,8 @@ export interface NodesPullRequest extends Schema.Struct.Type<typeof NodesPullReq
 
 /** The connection type for PullRequest. */
 export const PullRequestConnection = Schema.Struct({
+  /** Information to aid in pagination. */
+  pageInfo: SearchPageInfoPageInfo,
   /** A list of nodes. */
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(NodesPullRequest)))
 })
@@ -485,6 +487,8 @@ export const SourceIssue = Schema.Struct({
   __typename: Schema.Literal("Issue"),
   /** Identifies the issue number. */
   number: Shared.Int,
+  /** The HTTP URL for this issue */
+  url: Shared.URI,
   /** The repository associated with this node. */
   repository: NodesRepositoryRepository
 })
@@ -582,7 +586,7 @@ export const IssueDetail = GraphQL.query("IssueDetail", {
     ],
     selections: [
       { name: "viewer", body: ["{login}"] },
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission issue(number:$", "number", "){...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number repository{nameWithOwner}}}}}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){viewerPermission issue(number:$", "number", "){...IssueRow assignees(first:100){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}labels(first:100){pageInfo{hasNextPage endCursor}nodes{name color}}body viewerCanUpdate viewerCanClose viewerCanReopen...Reactions comments(last:100){totalCount pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}closedByPullRequestsReferences(first:20 includeClosedPrs:true){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}timelineItems(last:100 itemTypes:[CLOSED_EVENT REOPENED_EVENT LABELED_EVENT UNLABELED_EVENT ASSIGNED_EVENT UNASSIGNED_EVENT RENAMED_TITLE_EVENT CROSS_REFERENCED_EVENT]){nodes{__typename...on ClosedEvent{id createdAt actor{__typename login avatarUrl}}...on ReopenedEvent{id createdAt actor{__typename login avatarUrl}}...on LabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on UnlabeledEvent{id createdAt actor{__typename login avatarUrl}label{name}}...on AssignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on UnassignedEvent{id createdAt actor{__typename login avatarUrl}assignee{__typename...on User{login name}...on Bot{login}}}...on RenamedTitleEvent{id createdAt actor{__typename login avatarUrl}currentTitle}...on CrossReferencedEvent{id createdAt actor{__typename login avatarUrl}source{__typename...on PullRequest{number title url state isDraft repository{nameWithOwner}}...on Issue{number url repository{nameWithOwner}}}}}}}}"] }
     ],
     fragments: [
       { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
@@ -662,6 +666,52 @@ export const IssueComments = GraphQL.query("IssueComments", {
 export declare namespace IssueComments {
   export type Variables = typeof IssueComments.variables.Type
   export type Result = typeof IssueComments.result.Type
+}
+
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const IssueLinkMetadataRepositoryIssueIssue = Schema.Struct({
+  /** Identifies the issue number. */
+  number: Shared.Int,
+  /** Identifies the issue title. */
+  title: Schema.String,
+  /** The HTTP URL for this issue */
+  url: Shared.URI
+})
+export interface IssueLinkMetadataRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryIssueIssue.fields> {}
+
+/** A repository contains the content for a project. */
+export const IssueLinkMetadataRepositoryRepository = Schema.Struct({
+  /** Returns a single issue from the current repository by number. */
+  issue: Schema.NullOr(IssueLinkMetadataRepositoryIssueIssue)
+})
+export interface IssueLinkMetadataRepositoryRepository extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryRepository.fields> {}
+
+/** `query IssueLinkMetadata` */
+export const IssueLinkMetadata = GraphQL.query("IssueLinkMetadata", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){number title url}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(IssueLinkMetadataRepositoryRepository)
+  })
+})
+export declare namespace IssueLinkMetadata {
+  export type Variables = typeof IssueLinkMetadata.variables.Type
+  export type Result = typeof IssueLinkMetadata.result.Type
 }
 
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
@@ -980,9 +1030,11 @@ export declare namespace IssueViewer {
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
 export const IssueCollectionsRepositoryIssueIssue = Schema.Struct({
   /** A list of labels associated with the object. */
-  labels: Schema.NullOr(IssueLabelsLabelConnection),
+  labels: Schema.optionalKey(Schema.NullOr(IssueLabelsLabelConnection)),
   /** A list of Users assigned to this object. */
-  assignees: IssueAssigneesUserConnection
+  assignees: Schema.optionalKey(IssueAssigneesUserConnection),
+  /** List of open pull requests referenced from this issue */
+  closedByPullRequestsReferences: Schema.optionalKey(Schema.NullOr(PullRequestConnection))
 })
 export interface IssueCollectionsRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueCollectionsRepositoryIssueIssue.fields> {}
 
@@ -1001,10 +1053,14 @@ export const IssueCollections = GraphQL.query("IssueCollections", {
       { name: "name", body: "String!" },
       { name: "number", body: "Int!" },
       { name: "labelsCursor", body: "String" },
-      { name: "assigneesCursor", body: "String" }
+      { name: "assigneesCursor", body: "String" },
+      { name: "closingPullRequestsCursor", body: "String" },
+      { name: "withLabels", body: "Boolean!" },
+      { name: "withAssignees", body: "Boolean!" },
+      { name: "withClosingPullRequests", body: "Boolean!" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){labels(first:100 after:$", "labelsCursor", "){pageInfo{hasNextPage endCursor}nodes{name color}}assignees(first:100 after:$", "assigneesCursor", "){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){labels(first:100 after:$", "labelsCursor", ")@include(if:$", "withLabels", "){pageInfo{hasNextPage endCursor}nodes{name color}}assignees(first:100 after:$", "assigneesCursor", ")@include(if:$", "withAssignees", "){pageInfo{hasNextPage endCursor}nodes{login name avatarUrl}}closedByPullRequestsReferences(first:100 after:$", "closingPullRequestsCursor", " includeClosedPrs:true)@include(if:$", "withClosingPullRequests", "){pageInfo{hasNextPage endCursor}nodes{number title url state isDraft repository{nameWithOwner}}}}}"] }
     ],
     fragments: []
   },
@@ -1013,7 +1069,11 @@ export const IssueCollections = GraphQL.query("IssueCollections", {
     name: Schema.String,
     number: Shared.Int,
     labelsCursor: Schema.optional(Schema.NullOr(Schema.String)),
-    assigneesCursor: Schema.optional(Schema.NullOr(Schema.String))
+    assigneesCursor: Schema.optional(Schema.NullOr(Schema.String)),
+    closingPullRequestsCursor: Schema.optional(Schema.NullOr(Schema.String)),
+    withLabels: Schema.Boolean,
+    withAssignees: Schema.Boolean,
+    withClosingPullRequests: Schema.Boolean
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */
@@ -1026,4 +1086,4 @@ export declare namespace IssueCollections {
 }
 
 /** Every operation in issues.graphql. */
-export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)
+export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueLinkMetadata, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)

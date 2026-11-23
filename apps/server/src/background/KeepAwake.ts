@@ -1,7 +1,9 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schedule from "effect/Schedule";
@@ -19,9 +21,12 @@ import * as Settings from "../serverSettings.ts";
 const RELEASE_GRACE = Duration.seconds(60);
 
 // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by the calling thread until the script ends.
-const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649)`;
+const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); [Console]::Out.WriteLine()`;
 
-/** Each command holds its inhibitor until it exits, and exits on its own if the server dies. */
+/**
+ * Each command writes a line to stdout once it holds its inhibitor, holds it until it exits, and
+ * exits on its own if the server dies.
+ */
 function inhibitorCommand(
   platform: NodeJS.Platform,
   serverPid: number,
@@ -49,19 +54,24 @@ function inhibitorCommand(
   }
   switch (platform) {
     case "darwin":
-      return { command: "caffeinate", args: ["-i", "-w", String(serverPid)], stdin: "ignore" };
+      return {
+        command: "sh",
+        args: ["-c", 'echo && exec caffeinate -i -w "$0"', String(serverPid)],
+        stdin: "ignore",
+      };
     case "linux":
       return {
         command: "systemd-inhibit",
         args: [
-          "--what=idle:sleep",
+          "--what=sleep",
           "--who=T3 Code",
           "--why=Agents are working",
           "--mode=block",
-          "tail",
-          `--pid=${serverPid}`,
-          "-f",
-          "/dev/null",
+          // systemd-inhibit starts this only after logind grants the lock.
+          "sh",
+          "-c",
+          'echo && exec tail --pid="$0" -f /dev/null',
+          String(serverPid),
         ],
         stdin: "ignore",
       };
@@ -117,8 +127,12 @@ const retryWithBackoff =
 
 class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
   "KeepAwakeInhibitorExited",
-  { exitCode: Schema.Number },
-) {}
+  { exitCode: Schema.Number, stderr: Schema.String },
+) {
+  override get message(): string {
+    return `sleep inhibitor exited with code ${this.exitCode}${this.stderr ? `: ${this.stderr}` : ""}`;
+  }
+}
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -188,29 +202,42 @@ export const layer = Layer.effectDiscard(
       }),
     );
 
-    const holdOnce = spawner
-      .spawn(
+    const holdOnce = Effect.gen(function* () {
+      const child = yield* spawner.spawn(
         ChildProcess.make(command.command, command.args, {
           detached: false,
           shell: false,
           stdin: command.stdin,
-          stdout: "ignore",
-          stderr: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
         }),
-      )
-      .pipe(
-        Effect.tap((child) =>
-          Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
-        ),
-        Effect.tap(() =>
-          Effect.addFinalizer(() => Effect.logInfo("keep-awake released sleep inhibitor")),
-        ),
-        Effect.flatMap((child) => child.exitCode),
-        Effect.flatMap((exitCode) =>
-          Effect.fail(new KeepAwakeInhibitorExited({ exitCode: Number(exitCode) })),
-        ),
-        Effect.scoped,
       );
+      const stderr = yield* child.stderr.pipe(
+        Stream.decodeText(),
+        Stream.mkString,
+        Effect.forkScoped,
+      );
+      const held = yield* Ref.make(false);
+      yield* Effect.addFinalizer(() =>
+        Effect.when(Effect.logInfo("keep-awake released sleep inhibitor"), Ref.get(held)),
+      );
+      yield* child.stdout.pipe(
+        Stream.take(1),
+        Stream.runForEach(() =>
+          Ref.set(held, true).pipe(
+            Effect.andThen(
+              Effect.logInfo("keep-awake holding sleep inhibitor", { pid: Number(child.pid) }),
+            ),
+          ),
+        ),
+        Effect.forkScoped,
+      );
+      const exitCode = yield* child.exitCode;
+      return yield* new KeepAwakeInhibitorExited({
+        exitCode: Number(exitCode),
+        stderr: (yield* Fiber.join(stderr)).trim(),
+      });
+    }).pipe(Effect.scoped);
     const hold = holdOnce.pipe(
       retryWithBackoff("keep-awake sleep inhibitor stopped"),
       Effect.ignore,

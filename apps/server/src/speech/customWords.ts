@@ -194,6 +194,12 @@ export function applySpeechAliases(text: string, words: SpeechCustomWords): stri
   return makeSpeechTextCorrector([], words)(text);
 }
 
+/** Hints first, so they survive the 100-term cap that cloud providers such as xAI enforce. */
+export const speechRecognitionWords = (
+  hints: readonly string[] | undefined,
+  terms: readonly string[],
+): string[] => [...(hints ?? []), ...terms].slice(0, 100);
+
 const normalizeWord = (word: string) => word.replace(/\s+/g, " ").trim();
 
 export function normalizeSpeechCustomWords(words: SpeechCustomWords): SpeechCustomWords {
