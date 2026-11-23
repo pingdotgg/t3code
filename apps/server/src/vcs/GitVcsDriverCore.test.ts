@@ -3483,9 +3483,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             repos.repositories,
           );
           yield* git(cwd, ["update-index", "--no-skip-worktree", ".gitmodules"]);
-          assert.deepStrictEqual((yield* driver.getReviewRepositories({ cwd })).repositories, [
-            repos.repositories[0],
-          ]);
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories.slice(0, 1),
+          );
           yield* git(cwd, ["checkout", "--", ".gitmodules"]);
           yield* git(cwd, [
             "config",
