@@ -420,6 +420,12 @@ each can be loaded further on its own. Agents file new issues in the first team 
 connect another Linear workspace or user, add another account in the same place; each project
 reads its teams through the account you picked them under.
 
+ClickUp works the same way with a personal API token (ClickUp → Settings → Apps), with lists
+in place of teams: pick the lists whose tasks a project should show. A ClickUp task link opens
+in the issue panel, and you can change it there when its list is one the project picked.
+ClickUp has no search, history, or reactions in its API, so the search box filters the loaded
+tasks and the panel shows comments only. Its tags are the labels.
+
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can
 comment, edit the title and description, change labels and assignees, react, and close or

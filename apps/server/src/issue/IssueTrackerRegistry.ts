@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { IssueTrackerKind } from "@t3tools/contracts";
+import * as ClickUpDriver from "@t3tools/issue-tracker-clickup/server/driver";
 import * as LinearDriver from "@t3tools/issue-tracker-linear/server/driver";
 import {
   isStandaloneIssueTracker,
@@ -36,7 +37,7 @@ export function fromTrackers(
 }
 
 /** Trackers that are not a git host's own. Each signs requests with a credential from Settings. */
-const STANDALONE_TRACKERS = [LinearDriver.make];
+const STANDALONE_TRACKERS = [LinearDriver.make, ClickUpDriver.make];
 
 const make = Effect.gen(function* () {
   const drivers = yield* BuiltInDrivers.SourceControlDrivers;

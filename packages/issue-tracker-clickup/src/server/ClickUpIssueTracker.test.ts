@@ -1,0 +1,364 @@
+import { describe, expect, it } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import { HttpClient, HttpClientResponse } from "effect/http";
+import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
+import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
+
+import { parseClickUpIssueUrl } from "../shared/issueUrl.ts";
+import * as ClickUpApi from "./ClickUpApi.ts";
+import * as ClickUpIssueTracker from "./ClickUpIssueTracker.ts";
+
+const user = (id: number, username: string) => ({
+  id,
+  username,
+  email: `${username}@acme.test`,
+  profilePicture: null,
+});
+const JULIUS = user(1, "julius");
+const THEO = user(2, "theo");
+
+const TODO = { status: "to do", type: "open", orderindex: 0 };
+const DOING = { status: "in progress", type: "custom", orderindex: 1 };
+const DONE = { status: "complete", type: "done", orderindex: 2 };
+
+const task = (id: string, overrides: Partial<Record<string, unknown>> = {}) => ({
+  id,
+  custom_id: null,
+  name: `Task ${id}`,
+  url: `https://app.clickup.com/t/${id}`,
+  status: TODO,
+  date_created: "1782864000000",
+  date_updated: "1782950400000",
+  date_closed: null,
+  date_done: null,
+  creator: JULIUS,
+  assignees: [THEO],
+  watchers: [],
+  tags: [{ name: "bug", tag_bg: "#f00" }],
+  list: { id: "900" },
+  markdown_description: "**body**",
+  ...overrides,
+});
+
+const comment = (id: string, date: number) => ({
+  id,
+  comment_text: `comment ${id}`,
+  user: JULIUS,
+  date: String(date),
+});
+
+type Answer = (request: { readonly url: URL; readonly body: unknown }) => unknown;
+
+/** Answers each REST call by `METHOD /path`, the way ClickUp would. */
+function fakeClickUp(answers: Record<string, Answer>, stored: string | null = "pk_stored") {
+  const requests: Array<{
+    readonly method: string;
+    readonly path: string;
+    readonly url: URL;
+    readonly body: unknown;
+    readonly authorization: string | undefined;
+  }> = [];
+  const http = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() => {
+        const url = new URL(request.url);
+        for (const [name, value] of request.urlParams)
+          url.searchParams.append(name, Redacted.isRedacted(value) ? Redacted.value(value) : value);
+        const path = url.pathname.replace(/^\/api\/v2/, "");
+        const body =
+          request.body._tag === "Uint8Array"
+            ? JSON.parse(new TextDecoder().decode(request.body.body))
+            : undefined;
+        requests.push({
+          method: request.method,
+          path,
+          url,
+          body,
+          authorization: request.headers.authorization,
+        });
+        const answer = answers[`${request.method} ${path}`];
+        const answered = answer?.({ url, body });
+        const response =
+          answered instanceof Response
+            ? answered
+            : new Response(JSON.stringify(answer === undefined ? { err: "No route" } : answered), {
+                status: answer === undefined ? 404 : 200,
+                headers: { "content-type": "application/json" },
+              });
+        return HttpClientResponse.fromWeb(request, response);
+      }),
+    ),
+  );
+  const host = Layer.succeed(
+    IssueTrackerHost.IssueTrackerHost,
+    IssueTrackerHost.IssueTrackerHost.of({
+      credentials: { get: () => Effect.succeed(Option.fromNullishOr(stored)) },
+    }),
+  );
+  // Every optional method is implemented here; the type says so for the calls below.
+  const tracker = ClickUpIssueTracker.make.pipe(
+    Effect.map((api) => api as Required<StandaloneIssueTrackerApi>),
+    Effect.provide(ClickUpApi.layer.pipe(Layer.provide(Layer.merge(http, host)))),
+  );
+  return { tracker, requests };
+}
+
+const target = { cwd: "/w/web", host: "app.clickup.com", scope: "900" };
+const listing = {
+  ...target,
+  state: "open",
+  involvement: "all",
+  sort: "updated",
+  limit: 50,
+} as const;
+
+const LIST = { id: "900", name: "Sprint", space: { id: "77" }, statuses: [DONE, TODO, DOING] };
+
+describe("parseClickUpIssueUrl", () => {
+  it("reads a task link and leaves anything else alone", () => {
+    expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/t/86c0abcd"))).toEqual({
+      host: "app.clickup.com",
+      workspace: "clickup",
+      scope: "task",
+      key: "86c0abcd",
+    });
+    expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/t/9015/DEV-12"))).toBeNull();
+    expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/9015/v/li/900"))).toBeNull();
+    expect(parseClickUpIssueUrl(new URL("https://evil.test/t/86c0abcd"))).toBeNull();
+  });
+});
+
+describe("ClickUpIssueTracker", () => {
+  it.effect("signs with the bare token and names every reachable list by where it sits", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /user": () => ({ user: JULIUS }),
+        "GET /team": () => ({ teams: [{ id: "9015", name: "Acme" }] }),
+        "GET /team/9015/space": () => ({ spaces: [{ id: "77", name: "Product" }] }),
+        "GET /space/77/folder": () => ({
+          folders: [{ id: "5", name: "Web", lists: [{ id: "900", name: "Sprint" }] }],
+        }),
+        "GET /space/77/list": () => ({ lists: [{ id: "901", name: "Inbox" }] }),
+      });
+      const api = yield* tracker;
+      const probe = yield* api.probeCredential("pk_new");
+      expect(probe).toEqual({
+        account: "julius",
+        workspace: "clickup",
+        scopes: [
+          { key: "901", name: "Product / Inbox" },
+          { key: "900", name: "Product / Web / Sprint" },
+        ],
+      });
+      expect(new Set(requests.map((request) => request.authorization))).toEqual(
+        new Set(["pk_new"]),
+      );
+    }),
+  );
+
+  it.effect("reports a refused token as unauthenticated and a rate limit with its reset", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeClickUp({
+        "GET /user": () =>
+          new Response(JSON.stringify({ err: "Token invalid", ECODE: "OAUTH_025" }), {
+            status: 401,
+          }),
+        "GET /list/900/task": () =>
+          new Response(JSON.stringify({ err: "Rate limit reached" }), {
+            status: 429,
+            headers: { "x-ratelimit-reset": "4102444800" },
+          }),
+      });
+      const api = yield* tracker;
+      const refused = yield* Effect.flip(api.getViewer(target));
+      expect(refused.reason).toBe("unauthenticated");
+      const limited = yield* Effect.flip(api.listIssues(listing));
+      expect(limited.reason).toBe("rate-limited");
+      expect(limited.retryAt).toBe(4102444800000);
+    }),
+  );
+
+  it.effect("slices ClickUp's hundred-task pages and keeps only open tasks", () =>
+    Effect.gen(function* () {
+      const pages: Array<string | null> = [];
+      const { tracker } = fakeClickUp({
+        "GET /list/900/task": ({ url }) => {
+          pages.push(url.searchParams.get("page"));
+          return {
+            tasks: [
+              task("a", { date_updated: "1782950400003" }),
+              task("b", { date_updated: "1782950400002", status: DONE }),
+              task("c", { date_updated: "1782950400001" }),
+            ],
+            last_page: false,
+          };
+        },
+      });
+      const api = yield* tracker;
+      const first = yield* api.listIssues({ ...listing, limit: 1 });
+      expect(first.items.map((item) => item.key)).toEqual(["a"]);
+      expect(first.nextCursor).toBe("0:1");
+      const second = yield* api.listIssues({ ...listing, limit: 1, cursor: first.nextCursor! });
+      expect(second.items.map((item) => item.key)).toEqual(["c"]);
+      expect(second.nextCursor).toBe("1:0");
+      expect(pages).toEqual(["0", "0"]);
+      expect(first.items[0]).toMatchObject({
+        displayKey: "#a",
+        state: { category: "open", name: "to do" },
+        assignees: [{ login: "theo" }],
+        labels: [{ name: "bug", color: "#f00" }],
+      });
+    }),
+  );
+
+  it.effect("narrows assigned-to-me by the viewer's id", () =>
+    Effect.gen(function* () {
+      const asked: Array<string[]> = [];
+      const { tracker } = fakeClickUp({
+        "GET /user": () => ({ user: THEO }),
+        "GET /list/900/task": ({ url }) => {
+          asked.push(url.searchParams.getAll("assignees[]"));
+          return { tasks: [task("a"), task("b", { assignees: [JULIUS] })], last_page: true };
+        },
+      });
+      const api = yield* tracker;
+      const page = yield* api.listIssues({ ...listing, involvement: "assigned", viewer: "theo" });
+      expect(asked).toEqual([["2"]]);
+      expect(page.items.map((item) => item.key)).toEqual(["a"]);
+      expect(page.nextCursor).toBeNull();
+    }),
+  );
+
+  it.effect("reads a task with its list's workflow and comments oldest first", () =>
+    Effect.gen(function* () {
+      const comments = Array.from({ length: 25 }, (_, index) =>
+        comment(`c${25 - index}`, 1782950400000 + 25 - index),
+      );
+      const { tracker } = fakeClickUp({
+        "GET /task/abc": () => task("abc", { status: DOING }),
+        "GET /task/abc/comment": () => ({ comments }),
+        "GET /list/900": () => LIST,
+        "GET /user": () => ({ user: JULIUS }),
+      });
+      const api = yield* tracker;
+      const detail = yield* api.getIssue({ ...target, key: "abc" });
+      expect(detail.body).toBe("**body**");
+      expect(detail.viewer).toBe("julius");
+      expect(detail.states.map((state) => state.name)).toEqual([
+        "to do",
+        "in progress",
+        "complete",
+      ]);
+      expect(detail.states[2]).toEqual({
+        category: "closed",
+        name: "complete",
+        closeReason: "completed",
+      });
+      expect(detail.comments[0]?.id).toBe("c1");
+      expect(detail.comments.at(-1)?.id).toBe("c25");
+      expect(detail.commentsCursor).toBe("1782950400001:c1");
+    }),
+  );
+
+  it.effect("pages older comments from the oldest one, without repeating it", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc/comment": () => ({
+          comments: [comment("c1", 100), comment("c0", 50)],
+        }),
+      });
+      const api = yield* tracker;
+      const page = yield* api.getComments({ ...target, key: "abc", cursor: "100:c1" });
+      expect(page.comments.map((entry) => entry.id)).toEqual(["c0"]);
+      expect(page.nextCursor).toBeNull();
+      expect(requests[0]?.url.searchParams.get("start")).toBe("100");
+      expect(requests[0]?.url.searchParams.get("start_id")).toBe("c1");
+    }),
+  );
+
+  it.effect("rewrites tags one by one and assignees as a difference", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc"),
+        "GET /list/900": () => LIST,
+        "GET /list/900/member": () => ({ members: [JULIUS, THEO] }),
+        "GET /space/77/tag": () => ({ tags: [{ name: "bug" }, { name: "Feature" }] }),
+        "PUT /task/abc": () => ({}),
+        "POST /task/abc/tag/Feature": () => ({}),
+        "DELETE /task/abc/tag/bug": () => ({}),
+      });
+      const api = yield* tracker;
+      yield* api.update({ ...target, key: "abc", labels: ["feature"], assignees: ["julius"] });
+      const writes = requests.filter((request) => request.method !== "GET");
+      expect(writes.map((request) => `${request.method} ${request.path}`).toSorted()).toEqual([
+        "DELETE /task/abc/tag/bug",
+        "POST /task/abc/tag/Feature",
+        "PUT /task/abc",
+      ]);
+      expect(writes.find((request) => request.method === "PUT")?.body).toEqual({
+        assignees: { add: [1], rem: [2] },
+      });
+    }),
+  );
+
+  it.effect("moves a task only to a status its list has", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc"),
+        "GET /list/900": () => LIST,
+        "PUT /task/abc": () => ({}),
+      });
+      const api = yield* tracker;
+      const refused = yield* Effect.flip(api.setState({ ...target, key: "abc", state: "Shipped" }));
+      expect(refused.detail).toContain("Shipped");
+      yield* api.setState({ ...target, key: "abc", state: "Complete" });
+      expect(requests.find((request) => request.method === "PUT")?.body).toEqual({
+        status: "complete",
+      });
+    }),
+  );
+
+  it.effect("files a task in the list with its tags and members", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /list/900": () => LIST,
+        "GET /list/900/member": () => ({ members: [JULIUS, THEO] }),
+        "GET /space/77/tag": () => ({ tags: [{ name: "bug" }] }),
+        "POST /list/900/task": () => task("new1", { custom_id: "DEV-7" }),
+      });
+      const api = yield* tracker;
+      const created = yield* api.create({
+        ...target,
+        title: "New",
+        body: "Hello",
+        labels: ["BUG"],
+        assignees: ["theo@acme.test"],
+      });
+      expect(created).toEqual({
+        key: "new1",
+        displayKey: "DEV-7",
+        url: "https://app.clickup.com/t/new1",
+      });
+      expect(requests.find((request) => request.method === "POST")?.body).toEqual({
+        name: "New",
+        markdown_content: "Hello",
+        tags: ["bug"],
+        assignees: [2],
+      });
+    }),
+  );
+
+  it.effect("places a task by the list it is in", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeClickUp({
+        "GET /task/abc": () => task("abc", { list: { id: "901" } }),
+      });
+      const api = yield* tracker;
+      expect(yield* api.issueScope({ ...target, scope: "task", key: "abc" })).toBe("901");
+    }),
+  );
+});

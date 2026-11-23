@@ -40,6 +40,7 @@ export function asIssueTrackerAccount(
     Effect.provideService(effect, IssueTrackerAccount, accountId);
   const {
     getIssueLink,
+    issueScope,
     create,
     comment,
     update,
@@ -58,6 +59,7 @@ export function asIssueTrackerAccount(
     getIssue: (input) => as(api.getIssue(input)),
     getComments: (input) => as(api.getComments(input)),
     getIssueLink: getIssueLink && ((input) => as(getIssueLink(input))),
+    issueScope: issueScope && ((input) => as(issueScope(input))),
     create: create && ((input) => as(create(input))),
     comment: comment && ((input) => as(comment(input))),
     update: update && ((input) => as(update(input))),

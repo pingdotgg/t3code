@@ -739,6 +739,56 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect("places an issue whose link names no scope by the scope the tracker reports", () =>
+    Effect.gen(function* () {
+      // Shaped like ClickUp: a task link names no list, so the tracker is asked where it is.
+      const lists = new Map([
+        ["abc", "900"],
+        ["xyz", "901"],
+      ]);
+      const commented: string[] = [];
+      const tracker: StandaloneIssueTrackerApi = {
+        ...fakeStandaloneTracker({
+          issueScope: (input) => Effect.succeed(lists.get(input.key) ?? "none"),
+          getIssue: (input) =>
+            Effect.succeed({ ...issue(input.key), url: `https://tasks.test/t/${input.key}` }),
+          comment: (input) => Effect.sync(() => void commented.push(`${input.scope} ${input.key}`)),
+        }),
+        parseIssueUrl: (url) => {
+          const key = /^\/t\/(\w+)$/.exec(url.pathname)?.[1];
+          return url.host !== "tasks.test" || key === undefined
+            ? null
+            : { host: "linear.app", workspace: "all", scope: "task", key };
+        },
+      };
+      const service = yield* makeService({
+        projects: [project({ id: "web" })],
+        trackers: [tracker],
+        bindings: { web: { tracker: LINEAR, scope: "900" } },
+      });
+
+      expect(yield* service.resolveUrl("https://tasks.test/t/abc")).toMatchObject({
+        scope: "900",
+        writable: true,
+        issue: { scope: "900", writable: true },
+      });
+      expect(yield* service.resolveUrl("https://tasks.test/t/xyz")).toMatchObject({
+        scope: "901",
+        writable: false,
+      });
+
+      const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
+      yield* service.comment({ ...ref, scope: "task", key: "abc", body: "hi" });
+      expect(commented).toEqual(["900 abc"]);
+      // A client naming the bound list does not make a task elsewhere writable.
+      const refused = yield* service
+        .comment({ ...ref, scope: "900", key: "xyz", body: "hi" })
+        .pipe(Effect.result);
+      expect(refused).toMatchObject({ _tag: "Failure", failure: { reason: "read-only" } });
+      expect(commented).toEqual(["900 abc"]);
+    }),
+  );
+
   it.effect("lists a bound project's standalone scopes beside its git host and serves them", () =>
     Effect.gen(function* () {
       const listed: string[] = [];

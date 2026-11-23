@@ -140,6 +140,12 @@ export interface IssueTrackerApi {
     input: IssueTarget,
   ) => Effect.Effect<TrackerIssueLink, IssueTrackerError>;
 
+  /**
+   * The scope the issue is filed under, for a tracker whose keys and links do not name it
+   * (ClickUp's task ids). The service places every keyed call by it, writes included.
+   */
+  readonly issueScope?: (input: IssueTarget) => Effect.Effect<string, IssueTrackerError>;
+
   /** One page of older comments past a cursor `getIssue` or a previous page handed over. */
   readonly getComments: (
     input: IssueTarget & { readonly cursor: string },

@@ -7,7 +7,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveIssueLinkTarget } from "./issueLinks.ts";
+import {
+  isStandaloneIssueLink,
+  mayContainStandaloneIssueLink,
+  resolveIssueLinkTarget,
+} from "./issueLinks.ts";
 
 const project = (id: string, repository: string, origin?: string) =>
   ({
@@ -158,6 +162,38 @@ describe("resolveIssueLinkTarget", () => {
       both("https://linear.app/othercorp/issue/WEB-17"),
       both("https://linear.app/acme/issue/WEB-17"),
     ]).toEqual(["p2", "p1"]);
+  });
+
+  it("reads a ClickUp task link through a project bound to ClickUp, leaving the list to the server", () => {
+    const clickup = IssueTrackerKind.make("clickup");
+    const trackers = {
+      trackers: [
+        {
+          tracker: clickup,
+          displayName: "ClickUp",
+          host: "app.clickup.com",
+          scopeNoun: "list",
+          credential: { label: "Personal API token", helpUrl: null },
+          connected: true,
+          account: "julius",
+          detail: null,
+          workspace: "clickup",
+          scopes: [],
+        },
+      ],
+      bindings: { [ProjectId.make("p2")]: { tracker: clickup, scope: "900" } },
+    };
+    const resolve = (url: string) => resolveIssueLinkTarget({ url, projects, trackers });
+    expect(resolve("https://app.clickup.com/t/86c0abcd")?.ref).toEqual({
+      projectId: "p2",
+      tracker: "clickup",
+      host: "app.clickup.com",
+      scope: "task",
+      key: "86c0abcd",
+    });
+    expect(isStandaloneIssueLink("https://app.clickup.com/t/86c0abcd")).toBe(true);
+    expect(mayContainStandaloneIssueLink("see https://app.clickup.com/t/86c0abcd")).toBe(true);
+    expect(resolve("https://app.clickup.com/t/9015/DEV-12")).toBeNull();
   });
 
   it.each([

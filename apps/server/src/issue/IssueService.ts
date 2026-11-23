@@ -320,13 +320,12 @@ const make = Effect.gen(function* () {
     );
 
   /**
-   * The project whose checkout and credentials serve a reference, and whether the reference is
-   * one of the project's own scopes. A reference naming another scope on the same tracker and
-   * host is served by the project but marked read-only. A project with two trackers serves the
-   * one the reference names.
+   * The project serving a reference, read-only unless the scope is one of its own. A tracker
+   * that reports each issue's scope (`issueScope`) is asked, so a link naming none, or a client
+   * naming the wrong one, cannot misplace a write.
    */
   const requireProject = (
-    ref: IssueScopeRef,
+    ref: IssueScopeRef & { readonly key?: string | undefined },
   ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> =>
     listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
@@ -335,15 +334,28 @@ const make = Effect.gen(function* () {
           (candidate) =>
             candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
         );
-        const scope = ref.scope.trim();
-        const own = onHost.find(
-          (candidate) => candidate.scope.toLowerCase() === scope.toLowerCase(),
-        );
-        const served = own ?? onHost[0];
-        if (served === undefined) {
+        const place = (scope: string) => {
+          const own = onHost.find(
+            (candidate) => candidate.scope.toLowerCase() === scope.toLowerCase(),
+          );
+          const served = own ?? onHost[0];
+          return served === undefined ? null : { ...served, scope, writable: own !== undefined };
+        };
+        const placed = place(ref.scope.trim());
+        if (placed === null) {
           return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
         }
-        return Effect.succeed({ ...served, scope, writable: own !== undefined });
+        const { issueScope } = placed.api;
+        if (ref.key === undefined || issueScope === undefined) return Effect.succeed(placed);
+        return issueScope({
+          cwd: placed.project.workspaceRoot,
+          host: placed.host,
+          scope: placed.scope,
+          key: ref.key,
+        }).pipe(
+          Effect.mapError(toIssueError("scope")),
+          Effect.map((scope) => place(scope) ?? placed),
+        );
       }),
     );
 
@@ -796,9 +808,11 @@ const make = Effect.gen(function* () {
       const preferFirst = (projects: ReadonlyArray<SupportedProject>) =>
         projects.find((project) => project.project.id === preferredProjectId) ?? projects[0];
       const scope = link.scope.toLowerCase();
-      const serve = (candidates: ReadonlyArray<SupportedProject>) => {
+      const serve = (candidates: ReadonlyArray<SupportedProject>, wanted = link.scope) => {
         const own =
-          preferFirst(candidates.filter((project) => project.scope.toLowerCase() === scope)) ??
+          preferFirst(
+            candidates.filter((project) => project.scope.toLowerCase() === wanted.toLowerCase()),
+          ) ??
           preferFirst(
             candidates.filter(
               (project) => project.scope.toLowerCase() === gitHost?.link.scopeAlias,
@@ -808,7 +822,7 @@ const make = Effect.gen(function* () {
         if (lender === undefined) return null;
         const served = {
           ...lender,
-          scope: own === undefined ? link.scope : lender.scope,
+          scope: own === undefined ? wanted : lender.scope,
           writable: own !== undefined,
         };
         const resolved = {
@@ -843,7 +857,8 @@ const make = Effect.gen(function* () {
       }
       let failure: IssueError | null = null;
       for (const accountId of accounts) {
-        const found = serve(onTracker.filter((project) => project.accountId === accountId));
+        const candidates = onTracker.filter((project) => project.accountId === accountId);
+        const found = serve(candidates);
         if (found === null) continue;
         const read = yield* found.lender.api
           .getIssue({
@@ -861,7 +876,20 @@ const make = Effect.gen(function* () {
         const canonicalUrl = parseUrl(read.success.url);
         const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
         if (canonical !== null && canonical.workspace === standalone.link.workspace) {
-          return { ...found.resolved, issue: toDetail(found.served, read.success) };
+          const { issueScope } = found.lender.api;
+          const placed =
+            issueScope === undefined
+              ? found
+              : (serve(
+                  candidates,
+                  yield* issueScope({
+                    cwd: found.lender.project.workspaceRoot,
+                    host: found.lender.host,
+                    scope: link.scope,
+                    key: link.key,
+                  }).pipe(Effect.mapError(toIssueError("resolveUrl"))),
+                ) ?? found);
+          return { ...placed.resolved, issue: toDetail(placed.served, read.success) };
         }
       }
       return yield* (

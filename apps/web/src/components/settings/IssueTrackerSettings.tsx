@@ -23,7 +23,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { issueTrackerEnvironment } from "../../state/issueTrackers";
 import { useProjects, useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { LinearIcon } from "../Icons";
+import { ClickUpIcon, LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
@@ -41,6 +41,7 @@ type TrackerIcon = ElementType<{ className?: string }>;
 /** Web art per tracker kind; the server supplies everything else about a tracker. */
 const TRACKER_ICONS: Partial<Record<string, TrackerIcon>> = {
   linear: LinearIcon,
+  clickup: ClickUpIcon,
 };
 
 /**
