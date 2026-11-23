@@ -1,3 +1,4 @@
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { T, useGT, useMessages } from "gt-react";
@@ -195,6 +196,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   children?: React.ReactNode;
   compact: boolean;
   canOperateThread: boolean;
+  activeContextWindow?: ContextWindowSnapshot | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -257,6 +259,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         hideCompactToggle={props.hideCompactToggle}
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+        contextWindow={props.activeContextWindow ?? null}
       >
         {props.children}
       </ComposerPrimaryActions>

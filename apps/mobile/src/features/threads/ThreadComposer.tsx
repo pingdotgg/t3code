@@ -123,6 +123,7 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import type { ExistingThreadSettingsRouteParams } from "./ThreadSettingsSheet";
+import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -134,6 +135,8 @@ export const THREAD_COMPOSER_BOTTOM_GUTTER = COMPOSER_BOTTOM_GUTTER;
 const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
 
 export interface ThreadComposerProps {
+  /** The thread's context window use, drawn as a ring in the send and stop buttons. */
+  readonly contextWindow?: ContextWindowSnapshot | null;
   readonly isDraft?: boolean;
   readonly canOperateThread: boolean;
   readonly placeholder: string;
@@ -216,6 +219,7 @@ function SendActionButton(props: {
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
   readonly disabled: boolean;
+  readonly contextPercent?: number | null;
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
   const { presentation } = props;
@@ -228,6 +232,7 @@ function SendActionButton(props: {
       icon={presentation.icon}
       variant="primary"
       disabled={props.disabled}
+      contextPercent={props.contextPercent}
       onPress={() => props.onSend()}
     />
   );
@@ -258,6 +263,7 @@ function SendActionButton(props: {
 
 export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps) {
   const gt = useGT();
+  const contextPercent = props.contextWindow?.usedPercentage ?? null;
   const messages = useMessages();
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { themeVariables: materialTheme } = useAppearancePreferences();
@@ -1056,6 +1062,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     icon="stop.fill"
                     variant="danger"
                     disabled={!props.canOperateThread}
+                    contextPercent={contextPercent}
                     onPress={props.onStopThread}
                   />
                 ) : showResumeAction ? (
@@ -1072,6 +1079,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
                     presentation={sendPresentation}
                     disabled={!canSend}
+                    contextPercent={contextPercent}
                     onSend={handleSend}
                   />
                 )}
@@ -1124,6 +1132,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       icon="stop.fill"
                       variant="danger"
                       disabled={!props.canOperateThread}
+                      contextPercent={contextPercent}
                       onPress={props.onStopThread}
                     />
                   ) : showResumeAction && voicePresentation.showsSend ? (
@@ -1140,6 +1149,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       accessibilityLabel={sendBlockedReason ?? sendLabel}
                       presentation={sendPresentation}
                       disabled={!canSend}
+                      contextPercent={contextPercent}
                       onSend={handleSend}
                     />
                   ) : null}

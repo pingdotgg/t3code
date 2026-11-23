@@ -1,5 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PendingThreadRequests } from "@t3tools/client-runtime/state/thread-requests";
+import {
+  deriveLatestContextWindowSnapshot,
+  latestProviderTurnTokenUsage,
+  type ContextWindowSnapshot,
+} from "@t3tools/client-runtime/state/context-window";
 import type { EnvironmentThreadStructure } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThread } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -9,6 +14,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
+import { useMemo } from "react";
 
 import { environmentThreadDetails, useEnvironmentThread } from "./threads";
 import { useThreadSelection } from "./use-thread-selection";
@@ -54,6 +60,23 @@ export function useQuietThreadStructure(
   return useAtomValue(
     ref === null ? EMPTY_THREAD_STRUCTURE_ATOM : environmentThreadDetails.quietThreadAtom(ref),
   );
+}
+
+/** The thread's context window use, derived the same way as the web composer's. */
+export function useThreadContextWindow(ref: ScopedThreadRef | null): ContextWindowSnapshot | null {
+  const structure = useQuietThreadStructure(ref);
+  return useMemo(() => {
+    if (structure === null) return null;
+    const { projection } = structure;
+    const providerThread = projection.providerThreads.find(
+      (thread) => thread.id === projection.thread.activeProviderThreadId,
+    );
+    return deriveLatestContextWindowSnapshot(
+      projection.visibleTurnItems,
+      latestProviderTurnTokenUsage(projection.providerTurns, projection, providerThread),
+      providerThread,
+    );
+  }, [structure]);
 }
 
 export function useSelectedThreadProjection(): EnvironmentThread | null {

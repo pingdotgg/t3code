@@ -18,6 +18,7 @@ import Animated, { FadeIn, useReducedMotion } from "react-native-reanimated";
 import { cn } from "../lib/cn";
 import { AppText as Text } from "./ui/AppText";
 import { SymbolView } from "./ui/AppSymbol";
+import { ComposerContextRing } from "./ComposerContextRing";
 import { useAndroidControlSizing } from "./ui/useAndroidControlSizing";
 
 const COMPOSER_TOOLBAR_GAP = 8;
@@ -290,6 +291,8 @@ export function ComposerActionButton(props: {
   readonly icon: ComponentProps<typeof SymbolView>["name"];
   readonly onPress: () => void;
   readonly variant?: "primary" | "danger";
+  /** Context window used, 0-100, drawn as a ring inside the button; null draws none. */
+  readonly contextPercent?: number | null;
   // Menu injects onLongPress on Android and onTouchStart/onPress on iOS.
   readonly onLongPress?: PressableProps["onLongPress"];
   readonly onTouchStart?: PressableProps["onTouchStart"];
@@ -320,6 +323,19 @@ export function ComposerActionButton(props: {
               : "bg-primary",
         )}
       >
+        {props.contextPercent != null ? (
+          <ComposerContextRing
+            size={circleSize}
+            percent={props.contextPercent}
+            colorClassName={
+              props.variant === "danger"
+                ? "accent-danger-foreground"
+                : props.disabled
+                  ? "accent-foreground"
+                  : "accent-primary-foreground"
+            }
+          />
+        ) : null}
         {/* Fade the icon as one layer: a translucent tint, or opacity on a Tabler icon (which
             copies it onto every path), stacks where the SVG strokes overlap. */}
         <View
