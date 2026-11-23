@@ -151,6 +151,11 @@ impl SidebarTree {
             .is_some_and(|handle| handle.is_focused(window))
     }
 
+    /// Where the row `key` was last painted.
+    pub(crate) fn bounds_of(&self, key: &str) -> Option<Bounds<Pixels>> {
+        self.slots.get(key)?.bounds.get()
+    }
+
     /// Where the open menu of the row `key` goes: its bottom-left corner.
     pub(crate) fn below(&self, key: &str) -> Option<Point<Pixels>> {
         let bounds = self.slots.get(key)?.bounds.get()?;

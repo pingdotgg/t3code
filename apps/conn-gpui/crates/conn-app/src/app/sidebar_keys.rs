@@ -10,8 +10,8 @@ use std::collections::HashSet;
 
 use conn_state::{
     BulkFacts, DISCARD_UNDO_SECS, KeyMods, MenuKey, MenuNavItem, MenuStep, RowClick, RowKey,
-    RowKind, SearchKey, SettleUndoStep, ShellState, THREAD_JUMP_HINT_DELAY_MS, ThreadStep,
-    TreeStep, UNDO_FAILED_NEW_CONTENT, UndoAction, UndoShortcutScene, adjacent_thread,
+    RowKind, SETTLED_MORE_ROW, SearchKey, SettleUndoStep, ShellState, THREAD_JUMP_HINT_DELAY_MS,
+    ThreadStep, TreeStep, UNDO_FAILED_NEW_CONTENT, UndoAction, UndoShortcutScene, adjacent_thread,
     draft_has_content, first_enabled, is_modifier_key, is_undo_key, jump_target, menu_key,
     menu_step, row_click, row_key, row_kind, search_highlight_index, search_key_unless_composing,
     search_step, shows_jump_hints, thread_jump_key, thread_traversal_key, traversal_order,
@@ -24,8 +24,7 @@ use gpui_kit::{
 
 use super::{ConnApp, DiscardedDraft, ThreadUndoKind, UndoEntry};
 use crate::sidebar::thread_list::{
-    SETTLED_SHELF_TOGGLE_KEY, SidebarThreads, current_unix_secs, parse_iso8601_unix_secs,
-    sidebar_threads,
+    SidebarLists, current_unix_secs, parse_iso8601_unix_secs, sidebar_lists,
 };
 use crate::sidebar::thread_menu::{MenuCursor, ThreadMenuAction, ThreadMenuItem};
 
@@ -105,9 +104,7 @@ impl ConnApp {
                     self.sidebar_tree.focus(&target, window, cx);
                     cx.notify();
                 }
-                Some(TreeStep::Toggle(_)) => {
-                    self.toggle_project_collapsed(SETTLED_SHELF_TOGGLE_KEY, cx)
-                }
+                Some(TreeStep::Toggle(_)) => self.toggle_settled_shelf(cx),
                 Some(TreeStep::Stay) | None => {}
             }
         }
@@ -128,9 +125,12 @@ impl ConnApp {
                 self.chat
                     .update(cx, |chat, cx| chat.focus_composer(window, cx));
             }
-            (RowKind::Shelf(_), RowKey::Activate) => {
-                self.toggle_project_collapsed(SETTLED_SHELF_TOGGLE_KEY, cx);
+            // The footer's key is a shelf key too, but it reads the next page and does not close
+            // the shelf.
+            (RowKind::Shelf(_), RowKey::Activate) if row == SETTLED_MORE_ROW => {
+                self.show_more_settled(cx);
             }
+            (RowKind::Shelf(_), RowKey::Activate) => self.toggle_settled_shelf(cx),
             (RowKind::Thread(id), RowKey::Rename) => {
                 let title = self.shell.find_thread(id).map(|t| t.title.clone());
                 if let Some(title) = title
@@ -626,22 +626,27 @@ impl ConnApp {
     }
 
     /// The threads the search lists, in the order the arrow keys walk them: pinned, active,
-    /// then every settled one (`threadSearchResults`).
+    /// every settled one, then those listed for their messages (`threadSearchResults`).
     fn sidebar_search_results(&self, query: &str) -> Vec<String> {
-        let SidebarThreads {
+        let SidebarLists {
             pinned,
             active,
             settled,
-        } = sidebar_threads(
+            messages,
+            ..
+        } = sidebar_lists(
             &self.shell,
             &self.orbit.workspaces,
             self.active_workspace.as_deref(),
             query,
+            &self.sidebar.search.order,
+            None,
         );
         pinned
             .iter()
             .chain(&active)
             .chain(&settled)
+            .chain(&messages)
             .map(|thread| thread.id.clone())
             .collect()
     }
@@ -657,6 +662,9 @@ impl ConnApp {
     ) -> bool {
         let query = self.sidebar_search_query(cx);
         let searching = !query.trim().is_empty();
+        if searching {
+            self.refresh_message_matches(&query);
+        }
         let results = if searching {
             self.sidebar_search_results(&query)
         } else {
@@ -870,6 +878,9 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.click_suppressed() {
+            return;
+        }
         match row_click(key_mods(modifiers)) {
             RowClick::Toggle => {
                 self.thread_selection.toggle(thread_id);
@@ -1022,7 +1033,7 @@ impl ConnApp {
 
     /// The thread whose row is current: the open thread, or the thread it is a subagent of when
     /// the sidebar does not list it (`routeRowThreadKey`). None while a draft is open.
-    fn open_row_thread(&self) -> Option<&str> {
+    pub(super) fn open_row_thread(&self) -> Option<&str> {
         let open = self
             .layout
             .selected_thread_id
@@ -1032,25 +1043,31 @@ impl ConnApp {
     }
 
     /// The threads traversal walks (`orderedThreadKeys`): what the sidebar lists, search aside.
-    fn thread_traversal_ids(&self) -> Vec<String> {
-        let SidebarThreads {
-            pinned,
-            active,
-            settled,
-        } = sidebar_threads(
+    /// The Settled shelf adds the rows it shows, a page of them while it is open.
+    pub(super) fn thread_traversal_ids(&self) -> Vec<String> {
+        let pending = self
+            .sidebar
+            .pending_drop
+            .as_ref()
+            .map(|p| (&p.drop, &p.thread));
+        let SidebarLists { pinned, active, .. } = sidebar_lists(
             &self.shell,
             &self.orbit.workspaces,
             self.active_workspace.as_deref(),
             "",
+            &[],
+            pending,
         );
         fn ids<'a>(threads: &[&'a conn_state::ThreadShell]) -> Vec<&'a str> {
             threads.iter().map(|thread| thread.id.as_str()).collect()
         }
+        let shelf = self.settled_shelf_rows();
+        let shelf: Vec<&str> = shelf.iter().map(String::as_str).collect();
         traversal_order(
             &ids(&pinned),
             &ids(&active),
-            &ids(&settled),
-            self.collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY),
+            &shelf,
+            true,
             self.open_row_thread(),
         )
     }
@@ -1186,7 +1203,7 @@ impl ConnApp {
     }
 
     pub(crate) fn settled_shelf_open_for_test(&self) -> bool {
-        self.collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY)
+        self.sidebar.settled_expanded
     }
 
     /// The label of the row the menu keyboard is on, in the submenu when it is there.

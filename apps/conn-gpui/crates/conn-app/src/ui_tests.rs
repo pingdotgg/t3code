@@ -1972,7 +1972,7 @@ fn the_settled_shelf_expands_before_its_rows_take_the_keyboard(cx: &mut TestAppC
     focus_sidebar_row(cx, window, &app, "thread-settled-1");
     cx.update(|cx| {
         app.update(cx, |app, cx| {
-            app.toggle_project_collapsed(crate::sidebar::thread_list::SETTLED_SHELF_TOGGLE_KEY, cx);
+            app.toggle_settled_shelf(cx);
         });
     });
     let _ = cx.update_window(window, |_, window, cx| {
@@ -2927,4 +2927,375 @@ fn an_open_subagent_keeps_its_parents_row_current_for_the_walk(cx: &mut TestAppC
         order.get(parent + 1).map(String::as_str),
         "⌘⇧] walks on from the parent's row"
     );
+}
+
+/// The kitchen sink with `count` older settled threads, newest first (`Older settled 00`...).
+fn kitchen_sink_with_older_settled(count: usize) -> ShellState {
+    let base = kitchen_sink_shell();
+    let older: Vec<(String, String, String)> = (0..count)
+        .map(|n| {
+            (
+                format!("old-{n:02}"),
+                format!("Older settled {n:02}"),
+                format!("2026-11-10T00:{:02}:00.000Z", 59 - n),
+            )
+        })
+        .collect();
+    let mut threads = base.threads.clone();
+    for (id, title, at) in &older {
+        threads.push(make_thread_shell(ThreadSeedSpec {
+            id,
+            project_id: "proj-parity",
+            title,
+            status: "completed",
+            activity_run_status: None,
+            pinned_at: None,
+            settled_at: Some(at),
+            pending_kind: None,
+        }));
+    }
+    ShellState::from_parts(base.projects.clone(), threads, Vec::new(), Some(100))
+}
+
+#[gpui_kit::test]
+fn the_settled_shelf_shows_ten_rows_and_its_footer_adds_a_page(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_with_older_settled(12), cx);
+            app.toggle_settled_shelf(cx);
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        labelled(cx, window, "Settled (13)"),
+        "the header counts every settled thread"
+    );
+    assert!(labelled(cx, window, "Older settled 08"), "ten rows show");
+    assert!(!labelled(cx, window, "Older settled 09"));
+    assert!(
+        labelled(cx, window, "Show 3 more"),
+        "the footer offers the rest"
+    );
+    assert!(
+        sidebar_rows(cx, &app).contains(&"shelf:settled:more".to_owned()),
+        "and is a row the keyboard reaches"
+    );
+
+    click_row(cx, window, "Show 3 more", MouseButton::Left);
+    assert!(
+        labelled(cx, window, "Older settled 11"),
+        "a page more shows"
+    );
+    assert!(
+        !labelled(cx, window, "Show 3 more"),
+        "and the footer is gone"
+    );
+
+    // Closing the shelf keeps the choice, and drops the rows and the footer.
+    click_row(cx, window, "Settled (13)", MouseButton::Left);
+    assert!(!labelled(cx, window, "Older settled 00"));
+}
+
+#[gpui_kit::test]
+fn enter_on_the_shelf_footer_shows_more_and_does_not_close_the_shelf(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_with_older_settled(12), cx);
+            app.toggle_settled_shelf(cx);
+        });
+    });
+    render_twice(cx, window);
+    focus_sidebar_row(cx, window, &app, "shelf:settled:more");
+    press(cx, window, "enter");
+    assert!(
+        labelled(cx, window, "Older settled 11"),
+        "a page more shows"
+    );
+    assert!(cx.read(|cx| app.read(cx).settled_shelf_open_for_test()));
+}
+
+fn drag_row(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    from: Point<Pixels>,
+    to: Point<Pixels>,
+) {
+    let held = Some(MouseButton::Left);
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(from, None, cx);
+        window.pointer_down(from, MouseButton::Left, cx);
+        // Less than the drag distance is still a press.
+        window.pointer_move(
+            Point {
+                x: from.x,
+                y: from.y + px(3.0),
+            },
+            held,
+            cx,
+        );
+        window.pointer_move(
+            Point {
+                x: from.x,
+                y: from.y + px(12.0),
+            },
+            held,
+            cx,
+        );
+        window.pointer_move(to, held, cx);
+        window.render_frame(cx);
+    });
+}
+
+fn release(cx: &mut TestAppContext, window: AnyWindowHandle, at: Point<Pixels>) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_up(at, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn row_center(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> Point<Pixels> {
+    match cx.update_window(window, |_, window, cx| center_by_label(window, cx, label)) {
+        Ok(at) => at,
+        Err(err) => panic!("failed to locate `{label}`: {err}"),
+    }
+}
+
+#[gpui_kit::test]
+fn dragging_a_row_over_pinned_pins_it_and_over_another_active_row_reorders(
+    cx: &mut TestAppContext,
+) {
+    use conn_state::sidebar_drag::{DropPlan, Section};
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let pinned = row_center(cx, window, "Pinned active thread");
+
+    drag_row(cx, window, failed, pinned);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).held_row_for_test()),
+        Some(("thread-failed".to_owned(), Some(Section::Pinned))),
+        "held over the pinned row it would land in Pinned"
+    );
+    assert!(
+        labelled(cx, window, "Pinned") && labelled(cx, window, "Active"),
+        "both sections show their labels while a row is held"
+    );
+    assert!(labelled(cx, window, "Pin"), "the held row wears the verb");
+    release(cx, window, pinned);
+    assert!(
+        matches!(
+            cx.read(|cx| app.read(cx).last_drop_for_test()),
+            Some(DropPlan::Pin { .. })
+        ),
+        "the drop pins"
+    );
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-selected"),
+        "the click that ends a drag opens nothing"
+    );
+    assert!(cx.read(|cx| app.read(cx).held_row_for_test()).is_none());
+
+    // Dropped on another active row, it takes that row's place among the active rows.
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    let active: Vec<&String> = order
+        .iter()
+        .filter(|id| id.as_str() != "thread-pinned" && id.as_str() != "thread-settled-1")
+        .collect();
+    assert!(active.len() >= 3);
+    let title = |id: &str| match id {
+        "thread-failed" => "Failed thread card",
+        "thread-selected" => "Selected kitchen-sink thread",
+        "thread-waiting" => "Thread awaiting approval",
+        _ => "Unselected background working thread",
+    };
+    let first = row_center(cx, window, title(active[0]));
+    let last = row_center(cx, window, title(active[active.len() - 1]));
+    drag_row(cx, window, first, last);
+    release(cx, window, last);
+    assert!(
+        matches!(
+            cx.read(|cx| app.read(cx).last_drop_for_test()),
+            Some(DropPlan::MoveActive {
+                unpin: false,
+                unsettle: false,
+                ..
+            })
+        ),
+        "the drop reorders the active rows"
+    );
+}
+
+#[gpui_kit::test]
+fn dragging_an_active_row_to_the_settled_header_settles_it_and_escape_cancels(
+    cx: &mut TestAppContext,
+) {
+    use conn_state::sidebar_drag::{DropPlan, Section};
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let header = row_center(cx, window, "Settled (1)");
+
+    drag_row(cx, window, failed, header);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).held_row_for_test()),
+        Some(("thread-failed".to_owned(), Some(Section::Settled)))
+    );
+    assert!(
+        labelled(cx, window, "Settle"),
+        "the held row says what it would do"
+    );
+    press(cx, window, "escape");
+    assert!(
+        cx.read(|cx| app.read(cx).held_row_for_test()).is_none(),
+        "Escape lets go"
+    );
+    release(cx, window, header);
+    assert!(
+        cx.read(|cx| app.read(cx).last_drop_for_test()).is_none(),
+        "and nothing dropped"
+    );
+
+    drag_row(cx, window, failed, header);
+    release(cx, window, header);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).last_drop_for_test()),
+        Some(DropPlan::Settle)
+    );
+}
+
+#[gpui_kit::test]
+fn a_press_that_does_not_move_far_is_a_click_and_a_search_holds_rows_still(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let failed = row_center(cx, window, "Failed thread card");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(failed, None, cx);
+        window.pointer_down(failed, MouseButton::Left, cx);
+        window.pointer_move(
+            Point {
+                x: failed.x,
+                y: failed.y + px(3.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_up(failed, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        open_thread(cx, &app).as_deref(),
+        Some("thread-failed"),
+        "a press that stayed within the drag distance opens the thread"
+    );
+}
+
+#[gpui_kit::test]
+fn the_settle_button_sweeps_the_rows_between_and_applies_them_on_release(cx: &mut TestAppContext) {
+    use crate::app::PressMode;
+    use conn_state::sidebar_drag::SweepAction;
+    let (window, app) = mount_kitchen_sink(cx);
+    cx.update(|cx| app.update(cx, |app, _| app.allow_gestures_offline_for_test()));
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    let active: Vec<String> = order
+        .iter()
+        .filter(|id| id.as_str() != "thread-pinned" && id.as_str() != "thread-settled-1")
+        .cloned()
+        .collect();
+    let title = |id: &str| match id {
+        "thread-failed" => "Failed thread card",
+        "thread-selected" => "Selected kitchen-sink thread",
+        "thread-waiting" => "Thread awaiting approval",
+        _ => "Unselected background working thread",
+    };
+    let top = row_center(cx, window, title(&active[0]));
+    let third = row_center(cx, window, title(&active[2]));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(top, None, cx);
+        app.update(cx, |app, cx| {
+            app.row_pressed(
+                &active[0],
+                top,
+                PressMode::Sweep(SweepAction::Settle),
+                true,
+                cx,
+            );
+        });
+        window.pointer_move(
+            Point {
+                x: top.x,
+                y: top.y + px(12.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_move(third, Some(MouseButton::Left), cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).swept_rows_for_test()),
+        active[..3].to_vec(),
+        "the rows from the button's row to the one under the pointer"
+    );
+    release(cx, window, third);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).last_sweep_for_test()),
+        Some(active[..3].to_vec()),
+        "release applies the sweep"
+    );
+}
+
+fn message_hit(thread_id: &str, snippet: &str) -> conn_contract::OrchestrationThreadSearchMatch {
+    match from_json(json!({
+        "threadId": thread_id,
+        "projectId": "proj-parity",
+        "source": "assistant",
+        "snippet": snippet,
+        "messageCreatedAt": "2026-11-22T10:00:00.000Z",
+    })) {
+        Ok(found) => found,
+        Err(err) => panic!("search match failed to decode: {err}"),
+    }
+}
+
+#[gpui_kit::test]
+fn a_thread_a_message_matches_is_listed_after_the_title_matches_with_the_message(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "zebrafish");
+    assert!(
+        cx.read(|cx| app.read(cx).search_results_for_test(cx))
+            .is_empty(),
+        "no title says it"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.message_matches_for_test(
+                "zebrafish",
+                vec![message_hit(
+                    "thread-failed",
+                    "…the zebrafish migration finished…",
+                )],
+                cx,
+            );
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_results_for_test(cx)),
+        ["thread-failed"],
+        "the thread is listed for its message"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).excerpt_for_test("thread-failed"))
+            .as_deref(),
+        Some("…the zebrafish migration finished…")
+    );
+    assert!(labelled(cx, window, "Failed thread card, conn-gpui"));
 }

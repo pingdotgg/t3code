@@ -33,6 +33,9 @@ use crate::theme::{apply_kit_theme, hsla};
 use gpui_kit::prelude::FluentBuilder as _;
 
 mod sidebar_keys;
+mod sidebar_more;
+
+pub(crate) use self::sidebar_more::PressMode;
 
 actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
 
@@ -148,7 +151,9 @@ pub(crate) struct ConnApp {
     shell: ShellState,
     layout: LayoutState,
     active_workspace: Option<String>,
-    collapsed_projects: HashSet<String>,
+    /// What the thread sidebar remembers and does besides its lists: the Settled shelf, the message
+    /// search, dragging rows and sweeping runs of them.
+    sidebar: sidebar_more::SidebarState,
     focus_handle: FocusHandle,
     theme_id: String,
     connection: Option<Connection>,
@@ -493,6 +498,7 @@ impl ConnApp {
                 if matches!(event, gpui_kit::component::input::InputEvent::Change) {
                     // A new query starts at the top (`onSearchQueryChange`).
                     app.sidebar_search_highlight = None;
+                    app.sidebar_search_changed(cx);
                     cx.notify();
                 }
             },
@@ -527,7 +533,7 @@ impl ConnApp {
             shell,
             layout,
             active_workspace: None,
-            collapsed_projects: HashSet::new(),
+            sidebar: sidebar_more::SidebarState::load(),
             focus_handle: cx.focus_handle(),
             theme_id,
             connection,
@@ -1160,6 +1166,10 @@ impl ConnApp {
             }
             ClientEvent::Shell(item) => {
                 let change = self.shell.apply(item);
+                self.release_settled_drop();
+                if change.snapshot_required || !change.threads_changed.is_empty() {
+                    self.drive_older_pages(cx);
+                }
                 if !change.threads_changed.is_empty() {
                     self.resubscribe_ended_threads();
                 }
@@ -3637,6 +3647,8 @@ impl ConnApp {
         // A selection made under one scope can hold threads the next scope hides.
         self.thread_selection.clear();
         self.sidebar_filter_menu_open = false;
+        // The shelf pages for the projects now in scope.
+        self.drive_older_pages(cx);
         cx.notify();
     }
 
@@ -3719,7 +3731,7 @@ impl ConnApp {
     /// open or a title is being renamed.
     #[must_use]
     pub(crate) fn thread_hover_suppressed(&self) -> bool {
-        self.thread_menu.is_some() || self.renaming_thread_id.is_some()
+        self.thread_menu.is_some() || self.renaming_thread_id.is_some() || self.pointer_captured()
     }
 
     #[cfg(test)]
@@ -3934,10 +3946,25 @@ impl ConnApp {
         co_settling: &HashSet<String>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.settle_thread_reporting(thread_id, settled, co_settling, cx, |_, _, _| {});
+    }
+
+    /// [`Self::settle_thread_along`] that says whether the server took the command, for a drop
+    /// that holds the settle on screen until it does.
+    fn settle_thread_reporting(
+        &mut self,
+        thread_id: String,
+        settled: bool,
+        co_settling: &HashSet<String>,
+        cx: &mut Context<'_, Self>,
+        done: impl FnOnce(&mut Self, bool, &mut Context<'_, Self>) + 'static,
+    ) {
         let Some(connection) = self.connection.clone() else {
+            done(self, false, cx);
             return;
         };
         let Ok(cmd) = crate::commands::settle_thread(&thread_id, settled) else {
+            done(self, false, cx);
             return;
         };
         // The undo restores the thread as it is now (`planThreadUndo("settle", thread)`); a
@@ -3971,9 +3998,13 @@ impl ConnApp {
                         if let Some(plan) = undo_plan {
                             app.offer_thread_undo(thread_id, ThreadUndoKind::Settle, plan, cx);
                         }
+                        done(app, true, cx);
                     });
                 }
-                Err(e) => eprintln!("settle: dispatchCommand failed: {e}"),
+                Err(e) => {
+                    eprintln!("settle: dispatchCommand failed: {e}");
+                    let _ = this.update(cx, |app, cx| done(app, false, cx));
+                }
             },
         )
         .detach();
@@ -4839,18 +4870,6 @@ impl ConnApp {
             }
         })
         .detach();
-    }
-
-    /// Toggles a project group's collapsed state in the thread sidebar.
-    pub(crate) fn toggle_project_collapsed(
-        &mut self,
-        project_id: &str,
-        cx: &mut Context<'_, Self>,
-    ) {
-        if !self.collapsed_projects.remove(project_id) {
-            self.collapsed_projects.insert(project_id.to_owned());
-        }
-        cx.notify();
     }
 
     /// Current layout state.
@@ -6532,6 +6551,40 @@ impl Render for ConnApp {
             .line_height(px(self.geometry.ui_line_height_px))
             .text_color(hsla(self.tokens.foreground));
 
+        // What the sidebar draws that changes the app: a drop the server has shown through ends,
+        // the search ranks what it found, and the shelf starts its scope.
+        self.release_settled_drop();
+        let search_text = self.sidebar_search_query(cx);
+        if !search_text.trim().is_empty() {
+            self.refresh_message_matches(&search_text);
+        }
+        let shelf_scope = self.settled_scope_key();
+        let shelf_visible = self.sidebar.visible_count(&shelf_scope);
+        let shelf_more = self.older_more_state();
+        // A held row shows the lists as they would be with it dropped where it is.
+        let drag_view = self.sidebar.drag.as_ref().map(|drag| {
+            let projection = match &drag.target {
+                Some(target) => conn_state::sidebar_drag::project(
+                    &drag.id,
+                    target,
+                    &drag.pinned,
+                    &drag.active,
+                    &drag.settled,
+                    drag.shelf_open,
+                ),
+                None => conn_state::sidebar_drag::Projection {
+                    pinned: drag.pinned.clone(),
+                    active: drag.active.clone(),
+                    settled: drag.settled.clone(),
+                },
+            };
+            (
+                drag.id.clone(),
+                drag.from,
+                drag.target.as_ref().map(|t| t.section),
+                projection,
+            )
+        });
         let draft_rows = self.sidebar_draft_rows(cx);
         let draft_sidebar = DraftSidebar {
             rows: draft_rows
@@ -6584,8 +6637,40 @@ impl Render for ConnApp {
                     &SidebarMarks {
                         jump_order: &jump_order,
                         selection: &self.thread_selection,
+                        shelf: crate::sidebar::thread_list::ShelfMarks {
+                            expanded: self.sidebar.settled_expanded,
+                            visible_count: shelf_visible,
+                            more: shelf_more,
+                        },
+                        search: crate::sidebar::thread_list::SearchMarks {
+                            order: &self.sidebar.search.order,
+                            excerpts: &self.sidebar.search.excerpts,
+                            matched_query: &self.sidebar.search.matched_query,
+                            pending: self.sidebar.search.pending(),
+                            failed: self.sidebar.search.failed(),
+                        },
+                        pending_drop: self
+                            .sidebar
+                            .pending_drop
+                            .as_ref()
+                            .map(|p| (&p.drop, &p.thread)),
+                        drag: drag_view.as_ref().map(|(held, from, target, projection)| {
+                            crate::sidebar::thread_list::DragMarks {
+                                held,
+                                from: *from,
+                                target: *target,
+                                pinned: &projection.pinned,
+                                active: &projection.active,
+                                settled: &projection.settled,
+                            }
+                        }),
+                        sweep: self.sidebar.sweep.as_ref().map(|sweep| {
+                            crate::sidebar::thread_list::SweepMarks {
+                                keys: &sweep.keys,
+                                action: sweep.action,
+                            }
+                        }),
                     },
-                    &self.collapsed_projects,
                     &self.sidebar_search_input,
                     self.sidebar_search_highlight.as_deref(),
                     self.renaming_thread_id
@@ -6617,6 +6702,60 @@ impl Render for ConnApp {
                 root = root.child(self.render_seam(true, cx));
             }
             root = root.child(self.render_right_panel_column(cx));
+        }
+
+        // A row held or swept (`SidebarPointerSensor`): window-level capture listeners follow the
+        // pointer over any surface, end the gesture on release, and `Escape` cancels it.
+        if self.pointer_captured() {
+            let entity = cx.entity().downgrade();
+            root = root.child(
+                gpui_kit::canvas(
+                    |_, _, _| {},
+                    move |_, (), window, _| {
+                        let move_entity = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &gpui_kit::MouseMoveEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = move_entity.update(cx, |app, cx| {
+                                    if event.pressed_button == Some(gpui_kit::MouseButton::Left) {
+                                        app.sidebar_pointer_moved(event.position, cx);
+                                    } else {
+                                        // The button went up where nothing saw it.
+                                        app.cancel_pointer_gesture(cx);
+                                    }
+                                });
+                            },
+                        );
+                        let up_entity = entity.clone();
+                        window.on_mouse_event(
+                            move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = up_entity.update(cx, |app, cx| {
+                                    app.sidebar_pointer_released(false, cx);
+                                });
+                            },
+                        );
+                        let key_entity = entity.clone();
+                        window.on_key_event(
+                            move |event: &gpui_kit::KeyDownEvent, phase, _window, cx| {
+                                if phase == gpui_kit::DispatchPhase::Capture
+                                    && event.keystroke.key == "escape"
+                                {
+                                    let _ = key_entity.update(cx, |app, cx| {
+                                        app.cancel_pointer_gesture(cx);
+                                    });
+                                }
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            );
         }
 
         // Seam drag-resize (`SidebarRail`): window-level capture listeners follow the pointer

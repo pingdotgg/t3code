@@ -16,13 +16,19 @@
 //!   starts inline rename.
 //! - Every row is a tab stop; the arrow keys move between rows (`tree.rs`, `attachSidebarTree`).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
+use conn_state::sidebar_drag::{
+    self, DropVerb, OptimisticDrop, Section, SweepAction, order_by_preferred,
+};
+use conn_state::thread_search::find_search_token_ranges;
 use conn_state::{
-    LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadSelection, ThreadShell,
-    TreeRow, jump_hint_label, jump_hint_number, search_highlight_index,
+    LayoutState, MoreState, PendingSubagentRequest, ProjectShell, SETTLED_MORE_ROW,
+    SETTLED_SHELF_ROW, ShelfInput, ShelfView, ShellState, ThreadSelection, ThreadShell, TreeRow,
+    jump_hint_label, jump_hint_number, more_label, search_highlight_index, shelf_view, sort_active,
+    sort_pinned,
 };
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::Focusable as _;
@@ -37,7 +43,7 @@ use gpui_kit::{
 };
 
 use crate::a11y::ConnA11yExt as _;
-use crate::app::ConnApp;
+use crate::app::{ConnApp, PressMode};
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
@@ -79,9 +85,6 @@ const META_LINE_HEIGHT_PX: f32 = 16.0;
 /// Left offset inside the sidebar header so the toggle sits at `x = 90px`
 /// (`--desktop-window-controls-inset`) directly right of the traffic lights.
 const SIDEBAR_TOGGLE_LEFT_OFFSET_PX: f32 = MACOS_TRAFFIC_LIGHTS_INSET_PX - WORKSPACE_RAIL_WIDTH_PX;
-/// Sentinel key stored in `collapsed_projects` to toggle the Settled shelf
-/// without requiring a new field on `ConnApp`.
-pub(crate) const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
 
 /// Ties the lifetime of the thread a row is built for to the row, which a closure cannot say.
 fn row_builder<'a, F>(build: F) -> F
@@ -98,6 +101,76 @@ pub(crate) struct SidebarMarks<'a> {
     pub(crate) jump_order: &'a [String],
     /// The threads picked with `⌘`-click and `Shift`-click for a bulk action.
     pub(crate) selection: &'a ThreadSelection,
+    /// The Settled shelf.
+    pub(crate) shelf: ShelfMarks,
+    /// What the server found in the threads' messages.
+    pub(crate) search: SearchMarks<'a>,
+    /// A drop the server has not caught up with.
+    pub(crate) pending_drop: Option<(&'a OptimisticDrop, &'a ThreadShell)>,
+    /// The row held and moved over the list.
+    pub(crate) drag: Option<DragMarks<'a>>,
+    /// The run of rows swept with a Settle or Un-settle button.
+    pub(crate) sweep: Option<SweepMarks<'a>>,
+}
+
+/// A held row (`dragState`): where it came from, where it would land, and the lists as they
+/// would be with it there (`createSidebarSortingStrategy`).
+pub(crate) struct DragMarks<'a> {
+    pub(crate) held: &'a str,
+    pub(crate) from: Section,
+    pub(crate) target: Option<Section>,
+    pub(crate) pinned: &'a [String],
+    pub(crate) active: &'a [String],
+    pub(crate) settled: &'a [String],
+}
+
+/// The rows a sweep covers, and what they will get (`SidebarActionSweep`).
+pub(crate) struct SweepMarks<'a> {
+    pub(crate) keys: &'a [String],
+    pub(crate) action: SweepAction,
+}
+
+/// What a row wears while a drag or sweep is going on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum RowDrag {
+    #[default]
+    None,
+    /// The held row, lifted, with the badge of where it would land.
+    Held(Option<DropVerb>),
+    /// A row the sweep covers.
+    Swept(DropVerb),
+}
+
+/// The Settled shelf's state (`settledShelfExpanded`, `settledVisibleCount`, `olderSettledShelf`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ShelfMarks {
+    pub(crate) expanded: bool,
+    /// Rows the shelf shows when open.
+    pub(crate) visible_count: usize,
+    /// Whether an older page is on its way or failed.
+    pub(crate) more: MoreState,
+}
+
+/// One message hit shown under a result (`ThreadSearchMatchExcerpt`).
+#[derive(Clone, Debug)]
+pub(crate) struct Excerpt {
+    pub(crate) source: conn_contract::OrchestrationThreadSearchSource,
+    pub(crate) snippet: String,
+}
+
+/// The message search of the sidebar box.
+#[derive(Clone, Copy)]
+pub(crate) struct SearchMarks<'a> {
+    /// The threads listed for their messages, in the order the matches were ranked.
+    pub(crate) order: &'a [String],
+    /// The hit of each such thread.
+    pub(crate) excerpts: &'a std::collections::HashMap<String, Excerpt>,
+    /// The query the hits were found for, which lags the box while a search runs.
+    pub(crate) matched_query: &'a str,
+    /// A search is on its way (`threadSearch.isPending`).
+    pub(crate) pending: bool,
+    /// No environment could run the search (`threadSearch.failed`).
+    pub(crate) failed: bool,
 }
 
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
@@ -113,7 +186,6 @@ pub(crate) fn render_thread_sidebar(
     active_workspace: Option<&str>,
     drafts: &DraftSidebar<'_>,
     marks: &SidebarMarks<'_>,
-    collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
     search_highlight: Option<&str>,
     renaming_thread_id: Option<&str>,
@@ -325,11 +397,46 @@ pub(crate) fn render_thread_sidebar(
             renaming_thread_id == Some(thread.id.as_str()),
         )
     };
-    let SidebarThreads {
+    let lists = sidebar_lists(
+        shell,
+        workspaces,
+        active_workspace,
+        &search_query,
+        marks.search.order,
+        marks.pending_drop,
+    );
+    let settled_expanded = marks.shelf.expanded;
+    let shelf = shelf_of(
+        &lists,
+        shell,
+        workspaces,
+        active_workspace,
+        selected_id,
+        settled_expanded,
+        marks.shelf.visible_count,
+    );
+    // A held row shows where it would land: the lists are what they would be with it there.
+    let held_lists = marks.drag.as_ref().filter(|_| !has_query).map(|drag| {
+        let threads = |ids: &[String]| -> Vec<&ThreadShell> {
+            ids.iter().filter_map(|id| shell.find_thread(id)).collect()
+        };
+        (
+            threads(drag.pinned),
+            threads(drag.active),
+            threads(drag.settled),
+        )
+    });
+    let SidebarLists {
         pinned,
         active,
         settled: settled_threads,
-    } = sidebar_threads(shell, workspaces, active_workspace, &search_query);
+        messages,
+        ..
+    } = lists;
+    let (pinned, active) = match &held_lists {
+        Some((held_pinned, held_active, _)) => (held_pinned.clone(), held_active.clone()),
+        None => (pinned, active),
+    };
     // Search lists its results flat, in one list the arrow keys walk (`SidebarSearchResultRow`);
     // the highlighted one is what `Enter` opens.
     let result_ids: Vec<String> = if has_query {
@@ -337,6 +444,7 @@ pub(crate) fn render_thread_sidebar(
             .iter()
             .chain(&active)
             .chain(&settled_threads)
+            .chain(&messages)
             .map(|thread| thread.id.clone())
             .collect()
     } else {
@@ -365,6 +473,8 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            subagent_request: shell.subagent_request(&thread.id),
+            drag: row_drag(marks, &thread.id),
             focus,
             tokens,
         }
@@ -373,11 +483,18 @@ pub(crate) fn render_thread_sidebar(
         // Search swaps the list for slim result rows, which are not tab stops
         // (`SidebarSearchResultRow`, `tabIndex={-1}`): the keyboard stays in the search box and
         // the arrow keys work the highlight. Drafts return when the search clears.
-        let settled_ids: HashSet<&str> = settled_threads.iter().map(|t| t.id.as_str()).collect();
+        let settled_ids: HashSet<&str> = settled_threads
+            .iter()
+            .chain(&messages)
+            .filter(|t| ShellState::is_settled(t))
+            .map(|t| t.id.as_str())
+            .collect();
+        let message_ids: HashSet<&str> = messages.iter().map(|t| t.id.as_str()).collect();
         for (idx, thread) in pinned
             .iter()
             .chain(&active)
             .chain(&settled_threads)
+            .chain(&messages)
             .enumerate()
         {
             let result = SearchResultRow {
@@ -391,6 +508,12 @@ pub(crate) fn render_thread_sidebar(
                 hover_open: hover.open_for == Some(thread.id.as_str()),
                 hover_rect: hover.rect,
                 environment_label: hover.environment_label,
+                // Only a thread listed for its messages shows the message (`searchMatch`).
+                excerpt: message_ids
+                    .contains(thread.id.as_str())
+                    .then(|| marks.search.excerpts.get(&thread.id))
+                    .flatten(),
+                matched_query: marks.search.matched_query,
                 bounds: tree.result_bounds(&thread.id),
                 tokens,
             };
@@ -398,12 +521,36 @@ pub(crate) fn render_thread_sidebar(
         }
     } else {
         thread_rows.extend(render_draft_block(&drafts.rows, tree, tokens, cx));
+        let dragging = marks.drag.as_ref();
+        let held_from = dragging.map(|drag| drag.from);
+        let target = dragging.and_then(|drag| drag.target);
+        // `SidebarDragBoundary`: while a row is held, a label opens above each section.
+        if dragging.is_some() {
+            thread_rows.push(render_drag_boundary(
+                "Pinned",
+                target == Some(Section::Pinned),
+                tokens,
+            ));
+        }
         for (idx, thread) in pinned.iter().enumerate() {
             let focus = tree.row(TreeRow::leaf(thread.id.clone()), cx);
             let row = row_of(thread, idx, focus);
             thread_rows.push(render_thread_card(&row, cx).into_any_element());
         }
-        if !pinned.is_empty() {
+        if dragging.is_some() {
+            thread_rows.push(render_drag_boundary(
+                "Active",
+                target == Some(Section::Active),
+                tokens,
+            ));
+            if sidebar_drag::placeholder_hint(Section::Active, held_from, active.len(), target) {
+                thread_rows.push(render_section_placeholder(
+                    "Active",
+                    target == Some(Section::Active),
+                    tokens,
+                ));
+            }
+        } else if !pinned.is_empty() {
             // `pinned-divider`: a hairline between the Pinned and Active groups.
             thread_rows.push(
                 div()
@@ -424,8 +571,12 @@ pub(crate) fn render_thread_sidebar(
     // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
     // (Conn shows "Settled 0"), pushed to the bottom of the list with `mt-auto`. Search hides it
     // and lists the settled threads that match among the results.
-    let settled_count = settled_threads.len();
-    let settled_expanded = collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY);
+    let settled_count = shelf.count;
+    let shelf_rows: Vec<String> = match &held_lists {
+        // The held row sits in the shelf while it would settle there (`projected`).
+        Some((_, _, held_settled)) => held_settled.iter().map(|t| t.id.clone()).collect(),
+        None => shelf.rows.clone(),
+    };
 
     let no_matches = has_query && result_ids.is_empty();
 
@@ -466,13 +617,30 @@ pub(crate) fn render_thread_sidebar(
                 .text_size(px(geometry.ui_font_size_px))
                 .line_height(px(geometry.ui_line_height_px))
                 .text_color(muted)
-                .child("No threads found"),
+                .child(if marks.search.pending {
+                    "Searching thread messages…"
+                } else if marks.search.failed {
+                    "Couldn't search thread messages"
+                } else {
+                    "No threads found"
+                }),
         );
     }
 
     if !has_query {
         let header_focus = tree.row(TreeRow::group(SETTLED_SHELF_ROW, settled_expanded), cx);
         let header_ring = focus_ring(tokens);
+        // `tone`: `accent` over the drop target, `emphasized` while a row is held.
+        let held_row = marks.drag.is_some();
+        let header_target =
+            marks.drag.as_ref().and_then(|drag| drag.target) == Some(Section::Settled);
+        let muted = if header_target {
+            hsla(tokens.primary)
+        } else if held_row {
+            hsla_alpha(tokens.sidebar_foreground, 0.80)
+        } else {
+            muted
+        };
         let settled_header = div()
             .id("sidebar-settled-footer")
             .a11y_button(
@@ -504,7 +672,7 @@ pub(crate) fn render_thread_sidebar(
             .text_color(muted)
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(|app, _event, _window, cx| {
-                app.toggle_project_collapsed(SETTLED_SHELF_TOGGLE_KEY, cx);
+                app.toggle_settled_shelf(cx);
             }))
             .child(
                 div()
@@ -524,19 +692,40 @@ pub(crate) fn render_thread_sidebar(
 
         list_scroll = list_scroll.child(settled_header);
 
-        // A collapsed shelf still shows the open settled thread (`routeThreadOnly`).
-        let shown: Vec<&ThreadShell> = if settled_expanded {
-            settled_threads
-        } else {
-            settled_threads
-                .into_iter()
-                .filter(|t| selected_id == Some(t.id.as_str()))
-                .collect()
-        };
-        for (idx, thread) in shown.into_iter().enumerate() {
+        if let Some(drag) = &marks.drag
+            && sidebar_drag::placeholder_hint(
+                Section::Settled,
+                Some(drag.from),
+                shelf_rows.len(),
+                drag.target,
+            )
+        {
+            list_scroll = list_scroll.child(render_section_placeholder(
+                "Settled",
+                drag.target == Some(Section::Settled),
+                tokens,
+            ));
+        }
+
+        // A collapsed shelf still shows the open settled thread (`routeThreadOnly`); an open one
+        // shows a page of rows, and `Show more` reads the next (`SETTLED_TAIL_*`).
+        for (idx, id) in shelf_rows.iter().enumerate() {
+            let Some(thread) = shell.find_thread(id) else {
+                continue;
+            };
             let focus = tree.row(TreeRow::child(thread.id.clone(), SETTLED_SHELF_ROW), cx);
             let row = row_of(thread, 100_000 + idx, focus);
             list_scroll = list_scroll.child(render_settled_row(&row, cx));
+        }
+        if shelf.has_more(settled_expanded) {
+            let focus = tree.row(TreeRow::child(SETTLED_MORE_ROW, SETTLED_SHELF_ROW), cx);
+            list_scroll = list_scroll.child(render_show_more(
+                &shelf,
+                marks.shelf.more,
+                focus,
+                tokens,
+                cx,
+            ));
         }
     }
 
@@ -764,18 +953,31 @@ impl RowStatus {
     }
 }
 
-/// Port of `resolveSidebarThreadStatus` plus the unseen-completion `Done` pill
-/// (`hasUnseenCompletion`: the latest run completed after the last visit).
+/// [`resolve_listed_row_status`] for a thread whose subagents ask nothing.
 #[must_use]
 pub(crate) fn resolve_row_status(thread: &ThreadShell) -> Option<RowStatus> {
+    resolve_listed_row_status(thread, None)
+}
+
+/// Port of `resolveSidebarThreadStatus` plus the unseen-completion `Done` pill
+/// (`hasUnseenCompletion`: the latest run completed after the last visit). What a subagent, side
+/// chat or delegated task asks of the user counts as the thread's own request
+/// (`pendingSubagentRequest`).
+#[must_use]
+pub(crate) fn resolve_listed_row_status(
+    thread: &ThreadShell,
+    subagent: Option<PendingSubagentRequest>,
+) -> Option<RowStatus> {
     use conn_contract::OrchestrationV2PendingRuntimeRequestSummaryKind as Kind;
     use conn_contract::OrchestrationV2ShellThreadStatus as Status;
-    if let Some(request) = &thread.pending_runtime_request {
-        match request.kind {
-            Kind::UserInput => return Some(RowStatus::Input),
-            Kind::AuthRefresh => {}
-            _ => return Some(RowStatus::Approval),
-        }
+    let own = thread.pending_runtime_request.as_ref().map(|r| r.kind);
+    if subagent == Some(PendingSubagentRequest::Approval)
+        || own.is_some_and(|kind| !matches!(kind, Kind::UserInput | Kind::AuthRefresh))
+    {
+        return Some(RowStatus::Approval);
+    }
+    if subagent == Some(PendingSubagentRequest::UserInput) || own == Some(Kind::UserInput) {
+        return Some(RowStatus::Input);
     }
     let running_like = matches!(
         thread.status,
@@ -933,12 +1135,30 @@ struct RowCtx<'a> {
     /// This thread's hover flyout is open.
     hover_open: bool,
     environment_label: Option<&'a str>,
+    /// What its subagents, side chats and delegated tasks ask of the user
+    /// (`pendingSubagentRequest`).
+    subagent_request: Option<PendingSubagentRequest>,
+    /// The row is held, or swept over.
+    drag: RowDrag,
     /// What the row needs to take the keyboard.
     focus: RowFocus,
     tokens: &'a Tokens,
 }
 
 impl RowCtx<'_> {
+    /// `bg-sidebar-row-selected`: picked for a bulk action, or covered by a sweep.
+    fn picked_look(&self) -> bool {
+        self.picked || matches!(self.drag, RowDrag::Swept(_))
+    }
+
+    /// The badge the row wears while it is held or swept.
+    fn drop_verb(&self) -> Option<DropVerb> {
+        match self.drag {
+            RowDrag::None | RowDrag::Held(None) => None,
+            RowDrag::Held(Some(verb)) | RowDrag::Swept(verb) => Some(verb),
+        }
+    }
+
     /// The row wears the open thread's look.
     fn lit(&self) -> bool {
         self.selected
@@ -1028,6 +1248,7 @@ fn attach_row_interactions(
     let menu_id = thread.id.clone();
     let hover_id = thread.id.clone();
     let drop_id = thread.id.clone();
+    let press_id = thread.id.clone();
     let drop_look = DropLook::new(ctx.tokens, ctx.lit() || ctx.picked);
     let row = row
         // Files dropped on a row go to that thread (`handleThreadFileDrop`).
@@ -1042,7 +1263,14 @@ fn attach_row_interactions(
         }))
         .on_mouse_down(
             MouseButton::Left,
-            cx.listener(|app, _, _, cx| app.dismiss_thread_hover(cx)),
+            cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
+                app.dismiss_thread_hover(cx);
+                // A press that moves `DRAG_DISTANCE_PX` drags the row (`SidebarPointerSensor`);
+                // `⌘`, `Shift` and `Ctrl` pick rows instead.
+                let m = event.modifiers;
+                let plain = !(m.platform || m.control || m.shift || m.alt);
+                app.row_pressed(&press_id, event.position, PressMode::Drag, plain, cx);
+            }),
         )
         .when(ctx.hover_open, |row| {
             row.child(render_thread_hover_card(
@@ -1109,6 +1337,230 @@ fn attach_row_keyboard(
         .child(measure_row(&ctx.focus))
 }
 
+/// What a row wears for the drag or sweep going on (`dropVerb`, `sweepAction`).
+fn row_drag(marks: &SidebarMarks<'_>, id: &str) -> RowDrag {
+    if let Some(drag) = &marks.drag
+        && drag.held == id
+    {
+        return RowDrag::Held(sidebar_drag::drop_verb(drag.from, drag.target));
+    }
+    if let Some(sweep) = &marks.sweep
+        && sweep.keys.iter().any(|key| key == id)
+    {
+        return RowDrag::Swept(sweep.action.verb());
+    }
+    RowDrag::None
+}
+
+/// `SidebarDragBoundary`: the label a section gets while a row is held, `h-6` with a rule after
+/// it; the section the row would land in shows it in `primary`.
+fn render_drag_boundary(
+    label: &'static str,
+    target: bool,
+    tokens: &Tokens,
+) -> gpui_kit::AnyElement {
+    let (text, rule) = if target {
+        (hsla(tokens.primary), hsla_alpha(tokens.primary, 0.50))
+    } else {
+        (
+            hsla_alpha(tokens.sidebar_foreground, 0.80),
+            hsla_alpha(tokens.sidebar_foreground, 0.25),
+        )
+    };
+    div()
+        .id(SharedString::from(format!("sidebar-drag-boundary-{label}")))
+        .a11y_group(
+            SharedString::from(format!("sidebar.drag.boundary.{}", label.to_lowercase())),
+            label,
+        )
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .w_full()
+        .h(px(conn_state::sidebar_drag::BOUNDARY_LABEL_HEIGHT_PX))
+        .px(px(8.0))
+        .flex_shrink_0()
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_size(px(META_FONT_SIZE_PX))
+                .line_height(px(META_LINE_HEIGHT_PX))
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(text)
+                .child(label),
+        )
+        .child(div().h(px(1.0)).flex_1().bg(rule))
+        .into_any_element()
+}
+
+/// `SidebarSectionPlaceholder`: the dashed `h-9` hint an empty section shows while a row is held.
+fn render_section_placeholder(
+    label: &'static str,
+    target: bool,
+    tokens: &Tokens,
+) -> gpui_kit::AnyElement {
+    let (border, fill, text) = if target {
+        (
+            hsla_alpha(tokens.primary, 0.40),
+            Some(hsla_alpha(tokens.primary, 0.05)),
+            hsla(tokens.primary),
+        )
+    } else {
+        (
+            hsla_alpha(tokens.sidebar_foreground, 0.25),
+            None,
+            hsla_alpha(tokens.sidebar_foreground, 0.80),
+        )
+    };
+    div()
+        .id(SharedString::from(format!("sidebar-placeholder-{label}")))
+        .a11y_group(
+            SharedString::from(format!("sidebar.drag.placeholder.{}", label.to_lowercase())),
+            label,
+        )
+        .flex()
+        .items_center()
+        .justify_center()
+        .w_full()
+        .h(px(SLIM_ROW_HEIGHT_PX))
+        .mx(px(2.0))
+        .flex_shrink_0()
+        .rounded(px(CARD_RADIUS_PX))
+        .border_1()
+        .border_dashed()
+        .border_color(border)
+        .when_some(fill, |el, fill| el.bg(fill))
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .text_color(text)
+        .child(label)
+        .into_any_element()
+}
+
+/// `dropVerbBadge`: where the held row would land, or what a sweep will do to a swept row
+/// (`h-5 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-2xs font-medium`).
+fn render_drop_badge(verb: DropVerb, tokens: &Tokens) -> gpui_kit::AnyElement {
+    let primary = hsla(tokens.primary);
+    let icon = match verb {
+        DropVerb::Pin => "superhero/pin.svg",
+        DropVerb::Unpin => "superhero/unpin.svg",
+        DropVerb::Settle => "superhero/check-circle.svg",
+        DropVerb::Unsettle => "superhero/undo.svg",
+    };
+    div()
+        .id(SharedString::from(format!(
+            "sidebar-drop-badge-{}",
+            verb.label()
+        )))
+        .a11y_group(SharedString::from("sidebar.drop-verb"), verb.label())
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .ml_auto()
+        .h(px(20.0))
+        .px(px(6.0))
+        .flex_shrink_0()
+        .rounded(px(2.0))
+        .border_1()
+        .border_color(hsla_alpha(tokens.primary, 0.40))
+        .bg(hsla_alpha(tokens.primary, 0.10))
+        .text_size(px(10.0))
+        .line_height(px(14.0))
+        .font_weight(gpui_kit::FontWeight::MEDIUM)
+        .text_color(primary)
+        .child(icons::concept(icon, 12.0, primary))
+        .child(verb.label())
+        .into_any_element()
+}
+
+/// The footer of the open Settled shelf: `Show N more`, `Loading`, or the retry for an older page
+/// that failed (`data-sidebar-row="settled:more"`). Its label is the whole of what it does.
+fn render_show_more(
+    shelf: &ShelfView,
+    state: MoreState,
+    focus: RowFocus,
+    tokens: &Tokens,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::AnyElement {
+    let label = more_label(state, shelf.hidden);
+    let muted = hsla(tokens.sidebar_muted_foreground);
+    let fg = hsla(tokens.sidebar_foreground);
+    let hover_bg = hsla(tokens.sidebar_row_hover);
+    let ring = focus_ring(tokens);
+    let loading = state == MoreState::Loading;
+    div()
+        .id("sidebar-settled-more")
+        .a11y_button("sidebar.settled-more", label.clone())
+        .relative()
+        .track_focus(&focus.handle)
+        .focus_visible(move |s| s.shadow(vec![ring]))
+        .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, window, cx| {
+            app.sidebar_row_key(SETTLED_MORE_ROW, event, window, cx);
+        }))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .w_full()
+        .h(px(SLIM_ROW_HEIGHT_PX))
+        .px(px(ROW_HORIZONTAL_INSET_PX))
+        .flex_shrink_0()
+        .rounded(px(ROW_RADIUS_PX))
+        .text_size(px(TITLE_FONT_SIZE_PX))
+        .line_height(px(TITLE_LINE_HEIGHT_PX))
+        .text_color(muted)
+        .when(!loading, |el| {
+            el.cursor_pointer().hover(move |s| s.bg(hover_bg).text_color(fg))
+        })
+        .on_click(cx.listener(|app, _, _, cx| app.show_more_settled(cx)))
+        // Plus means "add", so revealing more uses a chevron.
+        .child(icons::sized(IconName::ChevronDown, 16.0, muted))
+        .child(label)
+        .child(measure_row(&focus))
+        .into_any_element()
+}
+
+/// `ThreadSearchMatchExcerpt`: who wrote the message and the words of the snippet that matched,
+/// on one line under the result's title.
+fn render_excerpt(excerpt: &Excerpt, query: &str, tokens: &Tokens) -> gpui_kit::AnyElement {
+    use conn_contract::OrchestrationThreadSearchSource as Source;
+    let label = conn_state::thread_search::excerpt_label(excerpt.source);
+    let tag_color = match excerpt.source {
+        Source::User => hsla(tokens.info_foreground),
+        Source::Assistant => hsla(tokens.success_foreground),
+    };
+    let prefix = format!("{label} ");
+    let mut highlights: Vec<(std::ops::Range<usize>, gpui_kit::HighlightStyle)> = vec![(
+        0..label.len(),
+        gpui_kit::HighlightStyle {
+            color: Some(tag_color),
+            ..gpui_kit::HighlightStyle::default()
+        },
+    )];
+    for range in find_search_token_ranges(&excerpt.snippet, query) {
+        highlights.push((
+            prefix.len() + range.start..prefix.len() + range.end,
+            gpui_kit::HighlightStyle {
+                color: Some(hsla(tokens.foreground)),
+                font_weight: Some(gpui_kit::FontWeight::SEMIBOLD),
+                ..gpui_kit::HighlightStyle::default()
+            },
+        ));
+    }
+    let text = format!("{prefix}{}", excerpt.snippet);
+    div()
+        .w_full()
+        .min_w_0()
+        .truncate()
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .text_color(hsla_alpha(tokens.muted_foreground, 0.85))
+        .child(gpui_kit::StyledText::new(text).with_highlights(highlights))
+        .into_any_element()
+}
+
 /// `pinIndicator`: a `12px` pin that turns into the `PinOff` "Unpin thread" button on hover.
 fn render_pin_indicator(
     row: &RowCtx<'_>,
@@ -1164,7 +1616,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let muted = hsla(tokens.muted_foreground);
     let hover_bg = hsla(tokens.sidebar_row_hover);
     let active_bg = hsla(tokens.sidebar_row_active);
-    let status = resolve_row_status(thread);
+    let status = resolve_listed_row_status(thread, row.subagent_request);
     let recede = should_recede(status, row.lit());
     let is_pinned = thread.pinned_at.as_ref().is_some_and(Option::is_some);
     let regenerating = thread
@@ -1266,6 +1718,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         line1 = line1.child(render_discard_thread_draft_button(row, &group, cx));
     }
     let settle_id = thread.id.clone();
+    let press_id = thread.id.clone();
     let settle_btn = div()
         .id(("thread-settle-btn", row.row_key))
         .a11y_button(
@@ -1286,16 +1739,33 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .cursor_pointer()
         .text_color(muted)
         .hover(move |s| s.text_color(fg))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
+                cx.stop_propagation();
+                // Dragging on from the button sweeps the rows below or above it.
+                app.row_pressed(
+                    &press_id,
+                    event.position,
+                    PressMode::Sweep(SweepAction::Settle),
+                    true,
+                    cx,
+                );
+            }),
+        )
         .on_click(cx.listener(move |app, _, _, cx| {
             cx.stop_propagation();
-            app.settle_thread(settle_id.clone(), true, cx);
+            if !app.click_suppressed() {
+                app.settle_thread(settle_id.clone(), true, cx);
+            }
         }))
         .conn_tooltip("Settle thread", tokens)
         .child(icons::concept("superhero/check-circle.svg", 14.0, muted));
-    line1 = match &row.jump_hint {
-        Some(label) => line1.child(render_jump_hint(row, label)),
-        None => line1.child(settle_btn),
+    line1 = match (&row.jump_hint, row.drop_verb()) {
+        (_, Some(verb)) => line1.child(render_drop_badge(verb, tokens)),
+        (Some(label), None) => line1.child(render_jump_hint(row, label)),
+        (None, None) if matches!(row.drag, RowDrag::Held(_)) => line1,
+        (None, None) => line1.child(settle_btn),
     };
 
     // Line 2 (`cardMetaLine`: `mt-1 flex min-w-0 items-center gap-1.5 text-secondary-label text-ui`,
@@ -1392,9 +1862,17 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
 
     card = attach_row_keyboard(attach_row_interactions(card, row, cx), row, cx);
 
+    // The held row is lifted: `bg-sidebar-row-active text-sidebar-foreground opacity-100
+    // shadow-lg` over the sidebar fill.
     // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
     // light mode adds `ring-1 ring-inset ring-sidebar-border/70` inside that top border.
-    if row.lit() {
+    if matches!(row.drag, RowDrag::Held(_)) {
+        card = card
+            .bg(active_bg)
+            .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
+            .shadow_lg()
+            .hover(move |s| s.bg(active_bg));
+    } else if row.lit() {
         card = card
             .bg(active_bg)
             .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
@@ -1409,7 +1887,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                     .border_color(hsla_alpha(tokens.sidebar_border, 0.70)),
             );
         }
-    } else if row.picked {
+    } else if row.picked_look() {
         // `isSelected`: `bg-sidebar-row-selected`, with the light ring of the active row.
         let picked_bg = hsla(tokens.sidebar_row_selected);
         card = card
@@ -1504,6 +1982,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let unsent_discard = (row.unsent_draft && row.jump_hint.is_none())
         .then(|| render_discard_thread_draft_button(row, &group, cx));
     let unsettle_id = thread.id.clone();
+    let press_id = thread.id.clone();
     let time_slot = div()
         .relative()
         .flex()
@@ -1543,10 +2022,24 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                 .invisible()
                 .group_hover(group.clone(), |s| s.visible())
                 .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
+                        cx.stop_propagation();
+                        app.row_pressed(
+                            &press_id,
+                            event.position,
+                            PressMode::Sweep(SweepAction::Unsettle),
+                            true,
+                            cx,
+                        );
+                    }),
+                )
                 .on_click(cx.listener(move |app, _, _, cx| {
                     cx.stop_propagation();
-                    app.settle_thread(unsettle_id.clone(), false, cx);
+                    if !app.click_suppressed() {
+                        app.settle_thread(unsettle_id.clone(), false, cx);
+                    }
                 }))
                 .conn_tooltip("Un-settle thread", tokens)
                 .child(icons::concept("superhero/undo.svg", 14.0, muted)),
@@ -1575,12 +2068,20 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .children(row.unsent_draft.then(|| render_unsent_indicator(row)))
         .child(title_el)
         .children(unsent_discard);
-    slim = match &row.jump_hint {
-        Some(label) => slim.child(div().ml_auto().child(render_jump_hint(row, label))),
-        None => slim.child(time_slot),
+    slim = match (&row.jump_hint, row.drop_verb()) {
+        (_, Some(verb)) => slim.child(render_drop_badge(verb, tokens)),
+        (Some(label), None) => slim.child(div().ml_auto().child(render_jump_hint(row, label))),
+        (None, None) if matches!(row.drag, RowDrag::Held(_)) => slim,
+        (None, None) => slim.child(time_slot),
     };
     slim = attach_row_keyboard(attach_row_interactions(slim, row, cx), row, cx);
-    if row.lit() {
+    if matches!(row.drag, RowDrag::Held(_)) {
+        slim = slim
+            .bg(active_bg)
+            .border_color(hsla(tokens.shell_divider_raised))
+            .shadow_lg()
+            .hover(move |s| s.bg(active_bg));
+    } else if row.lit() {
         slim = slim
             .bg(active_bg)
             .border_color(hsla(tokens.shell_divider_raised))
@@ -1590,7 +2091,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                 .border_1()
                 .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
         }
-    } else if row.picked {
+    } else if row.picked_look() {
         let picked_bg = hsla(tokens.sidebar_row_selected);
         slim = slim
             .bg(picked_bg)
@@ -1654,6 +2155,10 @@ struct SearchResultRow<'a> {
     hover_open: bool,
     hover_rect: &'a RowRectCell,
     environment_label: Option<&'a str>,
+    /// The message that put the thread in the results, for a thread listed for its messages.
+    excerpt: Option<&'a Excerpt>,
+    /// The query `excerpt` was found for, which lags the box while a search runs.
+    matched_query: &'a str,
     /// Where the row is painted, to scroll the highlighted result into view.
     bounds: std::rc::Rc<std::cell::Cell<Option<gpui_kit::Bounds<gpui_kit::Pixels>>>>,
     tokens: &'a Tokens,
@@ -1792,8 +2297,27 @@ fn render_search_result_row(
             app.open_thread_row(&thread_id, window, cx);
         }))
         .child(favicon_slot)
-        .child(title)
-        .child(age)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_w_0()
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(10.0))
+                        .min_w_0()
+                        .child(title)
+                        .child(age),
+                )
+                .children(
+                    row.excerpt
+                        .map(|excerpt| render_excerpt(excerpt, row.matched_query, tokens)),
+                ),
+        )
         .child(
             canvas(
                 move |painted, _, _| bounds.set(Some(painted)),
@@ -1947,26 +2471,20 @@ pub(crate) fn project_in_scope(
     }
 }
 
-/// Active thread ids in sidebar order: pinned (`pinOrderKey`) first, then active.
+/// Active thread ids in sidebar order: pinned (`pinOrderKey`) first, then active
+/// (`activeOrderKey`).
 #[must_use]
 pub(crate) fn ordered_active_thread_ids(shell: &ShellState) -> Vec<String> {
-    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
+    let (mut pinned, mut active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
         .top_level_active_threads()
         .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
-    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
+    sort_pinned(&mut pinned);
+    sort_active(&mut active);
     pinned
         .into_iter()
         .chain(active)
         .map(|t| t.id.clone())
         .collect()
-}
-
-/// `pinOrderKey` sort key: pinned threads with a key sort by it; the rest keep shell order.
-fn pin_order_key(thread: &ThreadShell) -> (bool, &str) {
-    match thread.pin_order_key.as_ref().and_then(Option::as_deref) {
-        Some(key) => (false, key),
-        None => (true, ""),
-    }
 }
 
 /// Current Unix time in seconds.
@@ -2071,42 +2589,177 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
 }
 
 /// The threads the sidebar lists for `query`, each group in display order.
-pub(crate) struct SidebarThreads<'a> {
+pub(crate) struct SidebarLists<'a> {
     pub(crate) pinned: Vec<&'a ThreadShell>,
     pub(crate) active: Vec<&'a ThreadShell>,
-    /// Every settled thread, whether the shelf shows it or not.
+    /// Every settled thread the client holds, whether the shelf lists it or not, newest settle
+    /// first.
     pub(crate) settled: Vec<&'a ThreadShell>,
+    /// The settled threads the shelf may list: those at or above its frontier.
+    pub(crate) listed_settled: Vec<&'a ThreadShell>,
+    /// Threads listed only because a message matches the search, in the order it ranked them.
+    pub(crate) messages: Vec<&'a ThreadShell>,
 }
 
+/// A drop the server has not caught up with, and the thread as the drop leaves it.
+pub(crate) type PendingDropRef<'a> = Option<(&'a OptimisticDrop, &'a ThreadShell)>;
+
 /// The pinned, active and settled threads of the open scope that match `query` (every thread
-/// for an empty one). One place decides it, for the list, the search results and traversal.
+/// for an empty one), with a drop in flight held where it landed (`partitionSidebarThreads`).
+/// One place decides it, for the list, the search results and traversal.
 #[must_use]
-pub(crate) fn sidebar_threads<'a>(
+pub(crate) fn sidebar_lists<'a>(
     shell: &'a ShellState,
     workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
     query: &str,
-) -> SidebarThreads<'a> {
-    let listed = |thread: &&ThreadShell| {
+    message_order: &[String],
+    pending: PendingDropRef<'a>,
+) -> SidebarLists<'a> {
+    let in_scope = |thread: &&ThreadShell| {
         project_in_scope(shell, workspaces, active_workspace, &thread.project_id)
-            && thread_matches_search(thread, shell.project(&thread.project_id), query)
     };
-    // Pinned (`pinOrderKey` order) above a subtle divider, then Active.
-    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
+    let title_match = |thread: &&ThreadShell| {
+        thread_matches_search(thread, shell.project(&thread.project_id), query)
+    };
+    let held_out = pending.map(|(drop, _)| drop.id.as_str());
+    let kept = |thread: &&ThreadShell| Some(thread.id.as_str()) != held_out;
+    let (mut pinned, mut active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
         .top_level_active_threads()
-        .filter(listed)
+        .filter(kept)
         .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
-    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
-    let settled = shell
+    let mut settled: Vec<&ThreadShell> = shell
+        .all_settled_threads()
+        .into_iter()
+        .filter(kept)
+        .collect();
+    let mut listed_settled: Vec<&ThreadShell> = shell
         .top_level_settled_threads()
         .into_iter()
-        .filter(listed)
+        .filter(kept)
         .collect();
-    SidebarThreads {
+    if let Some((drop, thread)) = pending {
+        match drop.section {
+            Section::Pinned => pinned.push(thread),
+            Section::Active => active.push(thread),
+            // It settles now, so it is the newest.
+            Section::Settled => {
+                settled.insert(0, thread);
+                listed_settled.insert(0, thread);
+            }
+        }
+    }
+    sort_pinned(&mut pinned);
+    sort_active(&mut active);
+    if let Some((drop, _)) = pending
+        && let Some(order) = &drop.order
+    {
+        let list = match drop.section {
+            Section::Pinned => Some(&mut pinned),
+            Section::Active => Some(&mut active),
+            Section::Settled => None,
+        };
+        if let Some(list) = list {
+            let ids: Vec<String> = list.iter().map(|t| t.id.clone()).collect();
+            let by_id: HashMap<&str, &ThreadShell> =
+                list.iter().map(|t| (t.id.as_str(), *t)).collect();
+            let ordered: Vec<&ThreadShell> = order_by_preferred(&ids, order)
+                .iter()
+                .filter_map(|id| by_id.get(id.as_str()).copied())
+                .collect();
+            *list = ordered;
+        }
+    }
+    let scoped = |list: &mut Vec<&ThreadShell>| list.retain(|t| in_scope(t) && title_match(t));
+    scoped(&mut pinned);
+    scoped(&mut active);
+    scoped(&mut settled);
+    scoped(&mut listed_settled);
+    // Threads a message matches, past those the title already lists.
+    let messages = if message_order.is_empty() {
+        Vec::new()
+    } else {
+        let listed: HashSet<&str> = pinned
+            .iter()
+            .chain(&active)
+            .chain(&settled)
+            .map(|t| t.id.as_str())
+            .collect();
+        let candidates: HashMap<&str, &ThreadShell> = shell
+            .top_level_active_threads()
+            .chain(shell.all_settled_threads())
+            .filter(|t| in_scope(t))
+            .map(|t| (t.id.as_str(), t))
+            .collect();
+        message_order
+            .iter()
+            .filter(|id| !listed.contains(id.as_str()))
+            .filter_map(|id| candidates.get(id.as_str()).copied())
+            .collect()
+    };
+    SidebarLists {
         pinned,
         active,
         settled,
+        listed_settled,
+        messages,
     }
+}
+
+/// The Settled shelf as drawn for `lists`: its rows, the count in its header and what is left to
+/// show (`visibleSettledThreads`, `sidebarSettledCount`).
+#[must_use]
+pub(crate) fn shelf_of(
+    lists: &SidebarLists<'_>,
+    shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
+    active_workspace: Option<&str>,
+    open: Option<&str>,
+    expanded: bool,
+    visible_count: usize,
+) -> ShelfView {
+    let ids = |threads: &[&ThreadShell]| -> Vec<String> {
+        threads.iter().map(|t| t.id.clone()).collect()
+    };
+    let scope: Option<HashSet<String>> = active_workspace.map(|_| {
+        shell
+            .projects
+            .iter()
+            .filter(|p| project_in_scope(shell, workspaces, active_workspace, &p.id))
+            .map(|p| p.id.clone())
+            .collect()
+    });
+    shelf_view(&ShelfInput {
+        listed: &ids(&lists.listed_settled),
+        held: &ids(&lists.settled),
+        unloaded: shell.unloaded_older_settled(scope.as_ref()),
+        open,
+        expanded,
+        visible_count,
+    })
+}
+
+/// [`shelf_of`] for the lists the scope holds with no search.
+#[must_use]
+pub(crate) fn settled_shelf(
+    shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
+    active_workspace: Option<&str>,
+    pending: PendingDropRef<'_>,
+    open: Option<&str>,
+    expanded: bool,
+    visible_count: usize,
+) -> ShelfView {
+    let lists = sidebar_lists(shell, workspaces, active_workspace, "", &[], pending);
+    shelf_of(
+        &lists,
+        shell,
+        workspaces,
+        active_workspace,
+        open,
+        expanded,
+        visible_count,
+    )
 }
 
 /// Matches a thread against the sidebar search query: every whitespace-separated term must appear
@@ -2294,6 +2947,101 @@ mod tests {
         assert_eq!(resolve_row_status(&thread), Some(RowStatus::Approval));
         thread.pending_runtime_request = request(Kind::AuthRefresh);
         assert_ne!(resolve_row_status(&thread), Some(RowStatus::Approval));
+    }
+
+    #[test]
+    fn a_subagents_request_counts_as_the_threads_own_and_the_stronger_one_wins() {
+        use conn_contract::OrchestrationV2PendingRuntimeRequestSummary as Request;
+        use conn_contract::OrchestrationV2PendingRuntimeRequestSummaryKind as Kind;
+        let shell = crate::fixture::demo_shell_state();
+        let mut thread = shell
+            .find_thread("thread-sqlite-wal")
+            .expect("fixture thread")
+            .clone();
+        thread.pending_runtime_request = None;
+        assert_eq!(
+            resolve_listed_row_status(&thread, Some(PendingSubagentRequest::Approval)),
+            Some(RowStatus::Approval)
+        );
+        assert_eq!(
+            resolve_listed_row_status(&thread, Some(PendingSubagentRequest::UserInput)),
+            Some(RowStatus::Input)
+        );
+        // Its own approval is stronger than a question one of its subagents asks.
+        thread.pending_runtime_request = Some(Request {
+            id: "req".to_owned(),
+            kind: Kind::Permission,
+            created_at: "2026-11-21T00:54:00.000Z".to_owned(),
+            blocking: Some(true),
+            user_only: None,
+        });
+        assert_eq!(
+            resolve_listed_row_status(&thread, Some(PendingSubagentRequest::UserInput)),
+            Some(RowStatus::Approval)
+        );
+    }
+
+    #[test]
+    fn a_drop_in_flight_holds_the_thread_where_it_landed_in_every_list() {
+        let shell = crate::fixture::demo_shell_state();
+        let held = shell
+            .top_level_active_threads()
+            .next()
+            .expect("an active thread")
+            .clone();
+        let plain = sidebar_lists(&shell, &[], None, "", &[], None);
+        assert!(plain.active.iter().any(|t| t.id == held.id));
+
+        let mut settled = held.clone();
+        sidebar_drag::apply_drop(
+            &mut settled,
+            Section::Settled,
+            "2026-11-23T10:00:00.000Z",
+            None,
+        );
+        let drop = OptimisticDrop::new(
+            &sidebar_drag::DropPlan::Settle,
+            &held.id,
+            Section::Active,
+            Section::Settled,
+            "2026-11-23T10:00:00.000Z",
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .expect("a settle is a drop");
+        let lists = sidebar_lists(&shell, &[], None, "", &[], Some((&drop, &settled)));
+        assert!(!lists.active.iter().any(|t| t.id == held.id));
+        assert_eq!(
+            lists.settled.first().map(|t| t.id.as_str()),
+            Some(held.id.as_str()),
+            "it is the newest settled thread"
+        );
+        assert_eq!(
+            lists.listed_settled.first().map(|t| t.id.as_str()),
+            Some(held.id.as_str())
+        );
+        let shelf = shelf_of(&lists, &shell, &[], None, None, true, 10);
+        assert_eq!(shelf.rows.first(), Some(&held.id));
+    }
+
+    #[test]
+    fn threads_a_message_matches_follow_the_title_matches_and_leave_out_those_already_listed() {
+        let shell = crate::fixture::demo_shell_state();
+        let mut threads = shell.top_level_active_threads();
+        let by_title = threads.next().expect("a thread").clone();
+        let by_message = threads.next().expect("another thread").clone();
+        let order = vec![by_message.id.clone(), by_title.id.clone()];
+        let lists = sidebar_lists(&shell, &[], None, &by_title.title, &order, None);
+        assert!(lists.active.iter().any(|t| t.id == by_title.id));
+        assert_eq!(
+            lists
+                .messages
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            [by_message.id.as_str()],
+            "the title match is not listed twice, and the message match follows"
+        );
     }
 
     #[test]
