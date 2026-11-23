@@ -1863,6 +1863,7 @@ async fn a_restart_keeps_a_rollback_ahead_of_later_work() {
                 assert!(
                     store
                         .advance_rollback(
+                            "t1",
                             "rb-1",
                             "admitted",
                             "provider_done",

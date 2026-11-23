@@ -55,6 +55,8 @@ pub struct FakeProvider {
     pub applied_selections: Arc<Mutex<Vec<Value>>>,
     /// Rollback targets asked for: `start` or `turn <app run ordinal>`.
     pub rollbacks: Arc<Mutex<Vec<String>>>,
+    /// The native conversation head each turn started from (`""` for none).
+    pub heads: Arc<Mutex<Vec<String>>>,
     /// Forks asked for: `<target thread> <provider turn id or "-">`.
     pub forks: Arc<Mutex<Vec<String>>>,
     /// Native threads loaded again (`resume_thread`): `<native id> <model>`.
@@ -110,6 +112,7 @@ impl FakeProvider {
             opened_policies: Arc::default(),
             applied_selections: Arc::new(Mutex::new(vec![])),
             rollbacks: Arc::new(Mutex::new(vec![])),
+            heads: Arc::default(),
             forks: Arc::new(Mutex::new(vec![])),
             resumes: Arc::new(Mutex::new(vec![])),
             calls: Arc::new(Mutex::new(vec![])),
@@ -228,6 +231,7 @@ struct FakeSession {
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
     rollbacks: Arc<Mutex<Vec<String>>>,
+    heads: Arc<Mutex<Vec<String>>>,
     forks: Arc<Mutex<Vec<String>>>,
     resumes: Arc<Mutex<Vec<String>>>,
     calls: Arc<Mutex<Vec<String>>>,
@@ -340,6 +344,7 @@ impl Provider for FakeProvider {
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
                     rollbacks: self.rollbacks.clone(),
+                    heads: self.heads.clone(),
                     forks: self.forks.clone(),
                     resumes: self.resumes.clone(),
                     calls: self.calls.clone(),
@@ -435,7 +440,14 @@ impl FakeSession {
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
     fn continuation(&self, input: TurnInput) -> BoxFuture<'_, ProviderResult<()>> {
         Box::pin(async move {
-            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+            let provider_thread = conn_contract::to_json(&input.provider_thread);
+            crate::lock(&self.heads).push(
+                provider_thread["nativeConversationHeadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            let provider_thread_id = provider_thread["id"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();
@@ -533,7 +545,14 @@ impl Session for FakeSession {
             return self.continuation(input);
         }
         Box::pin(async move {
-            let provider_thread_id = conn_contract::to_json(&input.provider_thread)["id"]
+            let provider_thread = conn_contract::to_json(&input.provider_thread);
+            crate::lock(&self.heads).push(
+                provider_thread["nativeConversationHeadRef"]["nativeId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            let provider_thread_id = provider_thread["id"]
                 .as_str()
                 .unwrap_or_default()
                 .to_owned();

@@ -330,7 +330,7 @@ fn write_rollback_failure(
     request_id: &str,
     message: &str,
 ) -> StoreResult<()> {
-    tx.settle_rollback(request_id)?;
+    tx.settle_rollback(tid, request_id)?;
     let Some(mut thread) = tx.thread(tid)? else {
         return Ok(());
     };
@@ -563,18 +563,49 @@ impl Inner {
         }
     }
 
+    /// Records the failure and settles the row in one write. That write owns the row's
+    /// settlement (the worker leaves rollback rows alone), so it is tried again, with the
+    /// rollback's backoff, until it lands or the engine is dropped; a restart then goes on by
+    /// the row's phase.
     async fn record_rollback_failure(&self, request: &RollbackRequest, message: &str) {
-        let (tid, request_id, message) = (
-            request.thread_id.clone(),
-            request.command_id.clone(),
-            message.to_owned(),
-        );
-        let written = self
-            .write(move |tx| write_rollback_failure(tx, &tid, &request_id, &message))
-            .await;
-        if let Err(e) = written {
-            eprintln!("conn-engine: could not record a rollback failure: {e}");
+        let mut attempt = 1;
+        loop {
+            let (tid, request_id, message) = (
+                request.thread_id.clone(),
+                request.command_id.clone(),
+                message.to_owned(),
+            );
+            let written = match self.failure_write_fault() {
+                Some(fault) => Err(fault),
+                None => {
+                    self.write(move |tx| write_rollback_failure(tx, &tid, &request_id, &message))
+                        .await
+                }
+            };
+            let Err(e) = written else { return };
+            eprintln!("conn-engine: could not record a rollback failure (attempt {attempt}): {e}");
+            if self
+                .engine_dropped
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+            tokio::time::sleep(retry_delay(attempt)).await;
+            attempt += 1;
         }
+    }
+
+    /// Test hook: an injected failure of the next failure write.
+    fn failure_write_fault(&self) -> Option<String> {
+        #[cfg(test)]
+        {
+            let mut hooks = crate::lock(&self.worker_hooks);
+            if hooks.rollback_result_faults > 0 {
+                hooks.rollback_result_faults -= 1;
+                return Some("injected".into());
+            }
+        }
+        None
     }
 
     async fn try_rollback(
@@ -628,14 +659,14 @@ impl Inner {
             live.touch(self.clock.now_millis());
             // From here a restart cannot tell whether the provider rolled back. Exactly one
             // engine moves the rollback on, once; any other stops before the provider.
-            let id = request.command_id.clone();
+            let (tid, id) = (request.thread_id.clone(), request.command_id.clone());
             let from = if progress.provider_sent {
                 "provider"
             } else {
                 "admitted"
             };
             let moved = self
-                .db(move |store| store.advance_rollback(&id, from, "provider", None))
+                .db(move |store| store.advance_rollback(&tid, &id, from, "provider", None))
                 .await
                 .map_err(RollbackFailure::Failed)?;
             if !moved {
@@ -657,10 +688,14 @@ impl Inner {
                 .await
                 .map_err(|e| RollbackFailure::Failed(e.to_string()))?;
             let row = to_json(&snapshot.provider_thread);
-            let (id, stored) = (request.command_id.clone(), row.clone());
+            let (tid, id, stored) = (
+                request.thread_id.clone(),
+                request.command_id.clone(),
+                row.clone(),
+            );
             let kept = self
                 .db(move |store| {
-                    store.advance_rollback(&id, "provider", "provider_done", Some(&stored))
+                    store.advance_rollback(&tid, &id, "provider", "provider_done", Some(&stored))
                 })
                 .await;
             match kept {
@@ -729,10 +764,15 @@ impl Inner {
             return Err(RollbackFailure::Failed("checkpoints are off".into()));
         }
 
+        // The provider has rolled back, so the live session goes on from there now. The
+        // result commit below frees the thread's lane, and a queued turn may start at once.
+        if let Some((_, Some((live, thread)))) = &progress.provider {
+            live.set_provider_thread(thread.clone());
+        }
         let (tid, command_id) = (request.thread_id.clone(), request.command_id.clone());
         let instance = context.provider_thread["providerInstanceId"].clone();
         self.write(move |tx| {
-            tx.settle_rollback(&command_id)?;
+            tx.settle_rollback(&tid, &command_id)?;
             commit_rollback(
                 tx,
                 &tid,
@@ -744,9 +784,13 @@ impl Inner {
         })
         .await
         .map_err(RollbackFailure::Failed)?;
-        // The live session continues from the rolled-back thread, once the store says so.
-        if let Some((_, Some((live, thread)))) = progress.provider.take() {
-            live.set_provider_thread(thread);
+        #[cfg(test)]
+        {
+            let pause = crate::lock(&self.worker_hooks).rollback_committed.take();
+            if let Some((paused, release)) = pause {
+                let _ = paused.send(());
+                let _ = release.await;
+            }
         }
         Ok(())
     }

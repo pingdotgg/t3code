@@ -223,6 +223,11 @@ WHERE candidate.status = 'pending'
 ORDER BY candidate.id
 LIMIT ?1";
 
+/// The unsettled row of rollback `?2` on thread `?1`. Rows match on the payload's command id:
+/// a rollback the previous build enqueued again at start has no outer `command_id`.
+const ROLLBACK_ROW: &str = "thread_id = ?1 AND effect_type = 'provider-thread.rollback'
+  AND status IN ('pending', 'running') AND json_extract(payload, '$.commandId') = ?2";
+
 impl Tx<'_> {
     /// Whether the run's `provider-turn.start` returned: `Some(true)` when one of its start rows
     /// settled after running, `Some(false)` when it has rows and none did (a start the previous
@@ -242,14 +247,16 @@ impl Tx<'_> {
     }
 
     /// Settles a rollback's row in the write that records its result, so a restart after
-    /// that commit never runs it again.
-    pub(crate) fn settle_rollback(&self, command_id: &str) -> StoreResult<()> {
+    /// that commit never runs it again. Only this write settles a rollback row: the worker
+    /// leaves it alone (`effect_worker.rs`).
+    pub(crate) fn settle_rollback(&self, thread_id: &str, command_id: &str) -> StoreResult<()> {
         self.sql()
             .execute(
-                "UPDATE effect_outbox SET status = 'succeeded', completed_at = ?2, updated_at = ?2
-                 WHERE command_id = ?1 AND effect_type = 'provider-thread.rollback'
-                   AND status IN ('pending', 'running')",
-                params![command_id, self.now()],
+                &format!(
+                    "UPDATE effect_outbox SET status = 'succeeded', completed_at = ?3, updated_at = ?3
+                     WHERE {ROLLBACK_ROW}"
+                ),
+                params![thread_id, command_id, self.now()],
             )
             .map(drop)
             .map_err(err)
@@ -441,21 +448,19 @@ impl Store {
                 Some("injected settlement fault".into()),
             ));
         }
-        let epoch = match self.owner() {
-            None => None,
-            Some(owner) => match owner.epoch() {
-                Some(epoch) => Some(epoch),
-                None => return Ok(false),
-            },
-        };
+        let lease = self.lease();
+        if matches!(lease, Lease::Released) {
+            return Ok(false);
+        }
         let now = self.now_iso();
         let changed = self.raw().execute(
-            "UPDATE effect_outbox
-             SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
-             WHERE id = ?1 AND status = 'running'
-               AND (?5 IS NULL
-                    OR ?5 = (SELECT value FROM meta WHERE key = 'engine_epoch'))",
-            params![id, status.as_str(), now, error, epoch],
+            &format!(
+                "UPDATE effect_outbox
+                 SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
+                 WHERE id = ?1 AND status = 'running' AND {}",
+                lease_guard(5)
+            ),
+            params![id, status.as_str(), now, error, lease.guard()],
         )?;
         Ok(changed == 1)
     }
@@ -535,8 +540,13 @@ impl Store {
         Ok((requeued, cancelled))
     }
 
-    /// Moves rollbacks a build before the outbox kept in `pending_rollbacks` into the outbox,
-    /// as rows it was running, then drops that table.
+    /// Moves the rollbacks an older build kept in `pending_rollbacks` into the outbox, then
+    /// drops that table, in one transaction. That build may have left rows of its own, so each
+    /// journal entry is reconciled with them, matched on the payload's command id:
+    /// - an unsettled row takes the entry's phase, and no second row is written;
+    /// - an entry with no unsettled row becomes a row the previous process was running;
+    /// - an unsettled row with no entry committed its result already (the result cleared the
+    ///   entry), so it settles and never runs again.
     fn migrate_pending_rollbacks(&self) -> StoreResult<()> {
         let conn = self.raw();
         let exists: bool = conn
@@ -550,7 +560,14 @@ impl Store {
             return Ok(());
         }
         let now = self.now_iso();
-        conn.execute(
+        let tx = conn.unchecked_transaction().map_err(err)?;
+        tx.execute_batch(
+            "CREATE TEMP VIEW legacy_rollback_rows AS
+               SELECT id, json_extract(payload, '$.commandId') AS rollback_id FROM effect_outbox
+               WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running');",
+        )
+        .map_err(err)?;
+        tx.execute(
             "INSERT INTO effect_outbox (command_id, thread_id, lane, effect_type, payload, status,
                progress, created_at, updated_at)
              SELECT command_id, thread_id, 'thread', 'provider-thread.rollback',
@@ -564,12 +581,36 @@ impl Store {
                CASE WHEN phase = 'admitted' THEN NULL
                     ELSE json_object('phase', phase, 'snapshot', json(snapshot)) END,
                ?1, ?1
-             FROM pending_rollbacks ORDER BY rowid",
+             FROM pending_rollbacks AS journal
+             WHERE NOT EXISTS (SELECT 1 FROM legacy_rollback_rows
+                               WHERE rollback_id = journal.command_id)
+             ORDER BY rowid",
             [&now],
         )
         .map_err(err)?;
-        conn.execute_batch("DROP TABLE pending_rollbacks")
-            .map_err(err)
+        tx.execute(
+            "UPDATE effect_outbox SET updated_at = ?1,
+               progress = (SELECT CASE WHEN phase = 'admitted' THEN NULL
+                                  ELSE json_object('phase', phase, 'snapshot', json(snapshot)) END
+                           FROM pending_rollbacks
+                           WHERE command_id = json_extract(effect_outbox.payload, '$.commandId'))
+             WHERE id IN (SELECT id FROM legacy_rollback_rows
+                          WHERE rollback_id IN (SELECT command_id FROM pending_rollbacks))",
+            [&now],
+        )
+        .map_err(err)?;
+        tx.execute(
+            "UPDATE effect_outbox
+             SET status = 'succeeded', completed_at = ?1, updated_at = ?1,
+                 last_error = 'Its result was committed before the upgrade.'
+             WHERE id IN (SELECT id FROM legacy_rollback_rows
+                          WHERE rollback_id NOT IN (SELECT command_id FROM pending_rollbacks))",
+            [&now],
+        )
+        .map_err(err)?;
+        tx.execute_batch("DROP VIEW legacy_rollback_rows; DROP TABLE pending_rollbacks;")
+            .map_err(err)?;
+        tx.commit().map_err(err)
     }
 
     /// Moves a rollback's row from phase `from` to `to` (`provider` once the provider rollback
@@ -579,6 +620,7 @@ impl Store {
     /// not contact the provider.
     pub(crate) fn advance_rollback(
         &self,
+        thread_id: &str,
         command_id: &str,
         from: &str,
         to: &str,
@@ -593,13 +635,18 @@ impl Store {
             .execute(
                 &format!(
                     "UPDATE effect_outbox SET progress = ?3
-                     WHERE command_id = ?1 AND effect_type = 'provider-thread.rollback'
-                       AND status IN ('pending', 'running')
-                       AND COALESCE(json_extract(progress, '$.phase'), 'admitted') = ?2
+                     WHERE {ROLLBACK_ROW}
+                       AND COALESCE(json_extract(progress, '$.phase'), 'admitted') = ?5
                        AND {}",
                     lease_guard(4)
                 ),
-                params![command_id, from, progress.to_string(), lease.guard()],
+                params![
+                    thread_id,
+                    command_id,
+                    progress.to_string(),
+                    lease.guard(),
+                    from
+                ],
             )
             .map(|changed| changed == 1)
             .map_err(err)
@@ -610,7 +657,7 @@ impl Store {
         let mut stmt = self
             .raw()
             .prepare(
-                "SELECT command_id, thread_id, progress FROM effect_outbox
+                "SELECT json_extract(payload, '$.commandId'), thread_id, progress FROM effect_outbox
                  WHERE effect_type = 'provider-thread.rollback' AND status IN ('pending', 'running')
                  ORDER BY id",
             )

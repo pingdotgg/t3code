@@ -54,6 +54,13 @@ pub(crate) struct TestHooks {
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::oneshot::Receiver<()>,
     )>,
+    /// Right after a rollback's result commit: sends, then waits (`rollback.rs`).
+    pub(crate) rollback_committed: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+    /// The next rollback failure writes fail (`rollback.rs`).
+    pub(crate) rollback_result_faults: u32,
 }
 
 /// The wait before settlement try `failures + 1`: 100 ms, doubling, at most 30 s (the
@@ -167,6 +174,7 @@ impl Inner {
         }
         #[cfg(test)]
         let effect_type = effect.effect_type();
+        let owns_settlement = matches!(effect, crate::commands::Effect::Rollback(_));
         let outcome = self.clone().run_effect(effect).await;
         #[cfg(test)]
         {
@@ -185,7 +193,11 @@ impl Inner {
                 let _ = release.await;
             }
         }
-        self.settle_ran(id, outcome.err()).await;
+        // A rollback's own result write settles its row (`Tx::settle_rollback`): settling it
+        // here would mark a rollback whose result was never written as done.
+        if !owns_settlement {
+            self.settle_ran(id, outcome.err()).await;
+        }
         self.effects_wake.notify_one();
     }
 

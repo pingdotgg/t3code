@@ -776,6 +776,76 @@ async fn a_turn_sent_during_a_rollback_starts_after_it() {
     );
 }
 
+/// The gate's probe: the rollback's result commit frees the thread's lane, so a queued turn
+/// may start at once. It must start from the rolled-back conversation, never the old head.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_queued_behind_a_rollback_starts_from_the_rolled_back_head() {
+    let db = TempDb::new("rollback-head");
+    let repo = Repo::new("rollback-head");
+    let (engine, provider) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    crate::lock(&engine.inner().worker_hooks).rollback_committed = Some((paused_tx, release_rx));
+    dispatch(
+        &engine,
+        rollback("rb-1", &checkpoint_at(&p, 1), Some(false)),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(5), paused_rx)
+        .await
+        .expect("the rollback committed")
+        .unwrap();
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    until(&engine, |p| p["runs"][2]["status"] == "completed").await;
+    assert_eq!(
+        provider.heads.lock().unwrap().last().map(String::as_str),
+        Some("rolled-back:turn 1")
+    );
+    release_tx.send(()).unwrap();
+}
+
+/// The gate's probe: the write that records a rollback's failure fails once. The rollback's
+/// own result write settles its row, so it tries again and the client hears of the failure;
+/// the worker does not settle the row as if it had succeeded.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_rollback_result_write_is_written_again() {
+    let db = TempDb::new("rollback-result-fault");
+    let repo = Repo::new("rollback-result-fault");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent").with_failing_rollback(),
+        create_worktree_thread(&repo),
+        &["write a.txt one", "write b.txt two"],
+    )
+    .await;
+    crate::lock(&engine.inner().worker_hooks).rollback_result_faults = 1;
+    let p = projection(&engine, "t1").await;
+    dispatch(&engine, rollback("rb-1", &checkpoint_at(&p, 1), None)).await;
+    let p = until(&engine, |p| p["thread"]["rollbackFailure"].is_object()).await;
+    assert_eq!(p["thread"]["rollbackFailure"]["requestId"], "rb-1");
+    let status: String = engine
+        .inner()
+        .db(|store| {
+            store.raw().query_row(
+                "SELECT status FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| row.get(0),
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(status, "succeeded");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn a_failed_provider_rollback_changes_nothing_and_tells_the_client() {
     let db = TempDb::new("rollback-fail");

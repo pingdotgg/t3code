@@ -367,19 +367,19 @@ fn a_replaced_engine_cannot_move_a_rollback_on() {
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
     newer.take_ownership(None).unwrap();
     assert!(
-        !t.1.advance_rollback("rb", "admitted", "provider", None)
+        !t.1.advance_rollback("t1", "rb", "admitted", "provider", None)
             .unwrap()
     );
     assert_eq!(rollback_phase(&newer, "rb"), "admitted");
     // The owner moves it on exactly once; a second move from `admitted` moves nothing.
     assert!(
         newer
-            .advance_rollback("rb", "admitted", "provider", None)
+            .advance_rollback("t1", "rb", "admitted", "provider", None)
             .unwrap()
     );
     assert!(
         !newer
-            .advance_rollback("rb", "admitted", "provider", None)
+            .advance_rollback("t1", "rb", "admitted", "provider", None)
             .unwrap()
     );
     assert_eq!(rollback_phase(&newer, "rb"), "provider");
@@ -455,6 +455,170 @@ fn legacy_pending_rollbacks_move_into_the_outbox() {
             )
             .unwrap();
     assert!(gone);
+}
+
+fn rollback_row(thread: &str, command: &str) -> Effect {
+    Effect::Rollback(crate::rollback::RollbackRequest {
+        thread_id: thread.into(),
+        command_id: command.into(),
+        provider_thread_id: "p".into(),
+        checkpoint_id: "k".into(),
+        scope_id: "s".into(),
+        restore_files: Some(false),
+        resume_snapshot: None,
+    })
+}
+
+/// The previous build's journal, with one entry per `(command, thread, phase, snapshot)`.
+fn legacy_journal(store: &Store, entries: &[(&str, &str, &str, Option<&str>)]) {
+    store
+        .raw()
+        .execute_batch(
+            "CREATE TABLE pending_rollbacks (command_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
+               request TEXT NOT NULL, phase TEXT NOT NULL, snapshot TEXT);",
+        )
+        .unwrap();
+    for (command, thread, phase, snapshot) in entries {
+        store
+            .raw()
+            .execute(
+                "INSERT INTO pending_rollbacks VALUES (?1, ?2,
+                   '{\"providerThreadId\":\"p\",\"checkpointId\":\"k\",\"scopeId\":\"s\",\"restoreFiles\":false}',
+                   ?3, ?4)",
+                rusqlite::params![command, thread, phase, snapshot],
+            )
+            .unwrap();
+    }
+}
+
+fn set_status(store: &Store, command: &str, status: &str) {
+    store
+        .raw()
+        .execute(
+            "UPDATE effect_outbox SET status = ?2 WHERE json_extract(payload, '$.commandId') = ?1",
+            [command, status],
+        )
+        .unwrap();
+}
+
+fn rollback_rows(store: &Store) -> Vec<(String, String)> {
+    store
+        .raw()
+        .prepare(
+            "SELECT json_extract(payload, '$.commandId'), status FROM effect_outbox
+             WHERE effect_type = 'provider-thread.rollback' ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// The gate's probes: a store the previous build (#268) left with outbox rows beside its
+/// journal. Each rollback keeps one row, with the journal's phase:
+/// - a running row whose journal says `provider_done` goes on from the provider's answer,
+///   not from `admitted` (which would send the provider rollback again);
+/// - a row written with no outer `command_id` still settles when its failure is recorded;
+/// - a row whose journal entry is gone committed its result before the upgrade: it settles
+///   and never runs again.
+#[test]
+fn a_migration_reconciles_rows_the_previous_build_left() {
+    let mut t = TempStore::new("legacy-reconcile");
+    enqueue(&mut t.1, &[rollback_row("t1", "rb-done")]);
+    let mut tx = t.1.tx().unwrap();
+    tx.enqueue(None, &[rollback_row("t2", "rb-sent")]).unwrap();
+    tx.commit(None).unwrap();
+    enqueue(&mut t.1, &[rollback_row("t3", "rb-gone")]);
+    set_status(&t.1, "rb-done", "running");
+    set_status(&t.1, "rb-gone", "running");
+    legacy_journal(
+        &t.1,
+        &[
+            ("rb-done", "t1", "provider_done", Some("{\"id\":\"p\"}")),
+            ("rb-sent", "t2", "provider", None),
+            ("rb-new", "t4", "admitted", None),
+        ],
+    );
+    t.1.reconcile_after_process_loss(true).unwrap();
+    assert_eq!(
+        rollback_rows(&t.1),
+        [
+            ("rb-done".to_owned(), "pending".to_owned()),
+            ("rb-sent".to_owned(), "pending".to_owned()),
+            ("rb-gone".to_owned(), "succeeded".to_owned()),
+            ("rb-new".to_owned(), "pending".to_owned()),
+        ]
+    );
+    let phases: Vec<_> =
+        t.1.unsettled_rollbacks()
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.command_id, r.phase))
+            .collect();
+    assert_eq!(
+        phases,
+        [
+            ("rb-done".to_owned(), "provider_done".to_owned()),
+            ("rb-sent".to_owned(), "provider".to_owned()),
+            ("rb-new".to_owned(), "admitted".to_owned()),
+        ]
+    );
+    // The start records `rb-sent`'s failure (`rollback::recover_pending`); that settles it.
+    let tx = t.1.tx().unwrap();
+    tx.settle_rollback("t2", "rb-sent").unwrap();
+    tx.commit(None).unwrap();
+    let mut claimed = t.1.claim_effects(64).unwrap();
+    let ids: Vec<_> = claimed
+        .iter()
+        .map(|c| match &c.effect {
+            Effect::Rollback(r) => r.command_id.clone(),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, ["rb-done", "rb-new"]);
+    let done = claimed.remove(0);
+    let Effect::Rollback(mut request) = done.effect else {
+        unreachable!()
+    };
+    crate::rollback::resume_from(&mut request, done.progress.as_ref());
+    assert_eq!(request.resume_snapshot, Some(json!({"id": "p"})));
+}
+
+/// The gate's probe: the migration is one transaction. When it fails part way, nothing of it
+/// stays, so the next start does not insert the journal's rows twice.
+#[test]
+fn an_interrupted_migration_leaves_nothing() {
+    let mut t = TempStore::new("legacy-atomic");
+    enqueue(&mut t.1, &[rollback_row("boom", "rb-boom")]);
+    legacy_journal(
+        &t.1,
+        &[
+            ("rb-new", "t1", "admitted", None),
+            ("rb-boom", "boom", "provider_done", Some("{\"id\":\"p\"}")),
+        ],
+    );
+    // Fails the migration's update of the existing row, after its insert.
+    t.1.raw()
+        .execute_batch(
+            "CREATE TEMP TRIGGER boom BEFORE UPDATE ON effect_outbox WHEN OLD.thread_id = 'boom'
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+    assert!(t.1.reconcile_after_process_loss(true).is_err());
+    assert_eq!(
+        rollback_rows(&t.1),
+        [("rb-boom".to_owned(), "pending".to_owned())]
+    );
+    t.1.raw().execute_batch("DROP TRIGGER boom").unwrap();
+    t.1.reconcile_after_process_loss(true).unwrap();
+    assert_eq!(
+        rollback_rows(&t.1),
+        [
+            ("rb-boom".to_owned(), "pending".to_owned()),
+            ("rb-new".to_owned(), "pending".to_owned()),
+        ]
+    );
 }
 
 /// `reconcileAfterProcessLoss`: process-bound rows are cancelled whether pending or running;
