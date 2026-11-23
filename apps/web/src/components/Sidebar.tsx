@@ -1612,7 +1612,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       rangeSelectTo(threadKey, orderedThreadKeysRef.current);
       return;
     }
-    if (isTrailingDoubleClick(event.detail)) {
+    // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
+    if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
       return;
     }
     navigateToThread(threadRef);
