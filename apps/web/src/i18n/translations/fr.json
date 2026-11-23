@@ -4773,7 +4773,7 @@
   "bd44c0152ee276c1": "dans {hours} h {minutes} min",
   "888035725b30714f": "dans {minutes} min",
   "c59b3ed93b980b9c": "maintenant",
-  "a4b4e5eb6d313af9": "Réinitialisation {time}",
+  "a4b4e5eb6d313af9": "Réinitialisé {time}",
   "a7bfaa71c8b3030b": "Heure de réinitialisation indisponible ; réessayez manuellement",
   "3441bf9b116d3276": "Ignorer l’avis de limite d’utilisation",
   "2b07985d23563374": "Reprise {time}",
@@ -4792,7 +4792,7 @@
   "be4e6fd5b78a1dfe": "Élément du navigateur, {label}",
   "7e9a77787fb72952": "{kind}, {label}, {title}",
   "0fb5b8ddb668d1bd": "{kind}, {label}",
-  "471d8990db4b2cbe": "Annotation d’aperçu, {label}",
+  "471d8990db4b2cbe": "Annotation de l’aperçu, {label}",
   "7f0f9b1ee42892db": "La sortie n’est plus disponible.",
   "e470bb79fa74a6ae": "Image de sortie de l’outil",
   "e8c80b6d40c0944c": "Résultat de recherche",
@@ -8024,6 +8024,7 @@
   "ea24f015d73520fd": "Supprimer",
   "d6b75f6c2f576a2c": "Supprimer {title}",
   "41935b6ab025a13d": "Échec de l’action sur le fil archivé",
+  "add343fc1f43258e": "{count, plural, one {{count} message} other {{count} messages}}",
   "ab830753e879ac5f": "Rechercher dans les fils archivés",
   "4568f63340b7a586": "Chargement des fils archivés",
   "3ce9741f164fb944": "Impossible de charger les fils archivés",
@@ -8033,16 +8034,6 @@
   "3620df83bbb0ca02": "Depuis son menu dans la barre latérale.",
   "84efb81776b1ced6": "Fils clos",
   "28bd13def6edfb48": "Retiré de Clos.",
-  "add343fc1f43258e": "{count, plural, one {{count} message} other {{count} messages}}",
-  "c05a43ba19ee431f": [
-    "Aucun fil archivé ne correspond à « ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " »."
-  ],
   "128f70c4e9a7e699": [
     "Archivé",
     " ",
@@ -8059,6 +8050,15 @@
       "k": "_gt_time_1",
       "v": "rt"
     }
+  ],
+  "c05a43ba19ee431f": [
+    "Aucun fil archivé ne correspond à « ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " »."
   ],
   "a3e006ea1ddeb9c1": "Address copied",
   "ae85d885630b0e51": "{count, plural, one {{count} portée} other {{count} portées}}",

@@ -4773,7 +4773,7 @@
   "bd44c0152ee276c1": "om {hours} h {minutes} min",
   "888035725b30714f": "om {minutes} min",
   "c59b3ed93b980b9c": "nu",
-  "a4b4e5eb6d313af9": "Återställning {time}",
+  "a4b4e5eb6d313af9": "Återställdes {time}",
   "a7bfaa71c8b3030b": "Återställningstiden är inte tillgänglig; försök igen manuellt",
   "3441bf9b116d3276": "Stäng meddelandet om användningsgräns",
   "2b07985d23563374": "Återupptas {time}",
@@ -4785,7 +4785,7 @@
   "df86826bcb3eb1c3": "Återuppta nu",
   "f89ef34bbf5911ee": "Återuppta vid återställning",
   "847d9f569fae7112": "Kopiera begäran till administratören",
-  "79f13fade1c35ead": "Den här kontexten är inte längre tillgänglig.",
+  "79f13fade1c35ead": "Kontexten är inte längre tillgänglig.",
   "90d2d202109eff30": "Skickar…",
   "11472a9116247cf2": "Videobilaga, {label}, {size}",
   "609e757f18882874": "Filbilaga, {label}, {size}",
@@ -8029,6 +8029,7 @@
   "ea24f015d73520fd": "Ta bort",
   "d6b75f6c2f576a2c": "Ta bort {title}",
   "41935b6ab025a13d": "Åtgärden för den arkiverade tråden misslyckades",
+  "add343fc1f43258e": "{count, plural, one {{count} meddelande} other {{count} meddelanden}}",
   "ab830753e879ac5f": "Sök arkiverade trådar",
   "4568f63340b7a586": "Läser in arkiverade trådar",
   "3ce9741f164fb944": "Kunde inte läsa in arkiverade trådar",
@@ -8038,16 +8039,6 @@
   "3620df83bbb0ca02": "Från dess meny i sidofältet.",
   "84efb81776b1ced6": "Klara trådar",
   "28bd13def6edfb48": "Rensad från Klara.",
-  "add343fc1f43258e": "{count, plural, one {{count} meddelande} other {{count} meddelanden}}",
-  "c05a43ba19ee431f": [
-    "Inga arkiverade trådar matchar ”",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "”."
-  ],
   "128f70c4e9a7e699": [
     "Arkiverad",
     " ",
@@ -8064,6 +8055,15 @@
       "k": "_gt_time_1",
       "v": "rt"
     }
+  ],
+  "c05a43ba19ee431f": [
+    "Inga arkiverade trådar matchar ”",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
   ],
   "a3e006ea1ddeb9c1": "Address copied",
   "ae85d885630b0e51": "{count, plural, one {{count} omfång} other {{count} omfång}}",

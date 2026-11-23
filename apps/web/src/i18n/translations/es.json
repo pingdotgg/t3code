@@ -4772,7 +4772,7 @@
   "bd44c0152ee276c1": "en {hours} h {minutes} min",
   "888035725b30714f": "en {minutes} min",
   "c59b3ed93b980b9c": "ahora",
-  "a4b4e5eb6d313af9": "Restablecimiento {time}",
+  "a4b4e5eb6d313af9": "Se restableció {time}",
   "a7bfaa71c8b3030b": "Hora de restablecimiento no disponible; vuelve a intentarlo manualmente",
   "3441bf9b116d3276": "Descartar el aviso de límite de uso",
   "2b07985d23563374": "Se reanuda {time}",
@@ -8023,6 +8023,7 @@
   "ea24f015d73520fd": "Eliminar",
   "d6b75f6c2f576a2c": "Eliminar {title}",
   "41935b6ab025a13d": "Falló la acción sobre el hilo archivado",
+  "add343fc1f43258e": "{count, plural, one {{count} mensaje} other {{count} mensajes}}",
   "ab830753e879ac5f": "Buscar hilos archivados",
   "4568f63340b7a586": "Cargando hilos archivados",
   "3ce9741f164fb944": "No se pudieron cargar los hilos archivados",
@@ -8032,16 +8033,6 @@
   "3620df83bbb0ca02": "Desde su menú en la barra lateral.",
   "84efb81776b1ced6": "Hilos resueltos",
   "28bd13def6edfb48": "Quitado de Resueltos.",
-  "add343fc1f43258e": "{count, plural, one {{count} mensaje} other {{count} mensajes}}",
-  "c05a43ba19ee431f": [
-    "Ningún hilo archivado coincide con “",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "”."
-  ],
   "128f70c4e9a7e699": [
     "Archivado",
     " ",
@@ -8058,6 +8049,15 @@
       "k": "_gt_time_1",
       "v": "rt"
     }
+  ],
+  "c05a43ba19ee431f": [
+    "Ningún hilo archivado coincide con “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
   ],
   "a3e006ea1ddeb9c1": "Address copied",
   "ae85d885630b0e51": "{count, plural, one {{count} ámbito} other {{count} ámbitos}}",
@@ -13057,7 +13057,7 @@
   "156ec271d49ddd70": "Qué ocurrió",
   "34f59bbbead0b97f": "{names} y {count} más",
   "ac1556f6ce89a5ea": "{count} en paralelo",
-  "e197c4963bacc746": "{count} en ejecución",
+  "e197c4963bacc746": "{count} en curso",
   "f5319ed9e18c0df1": "Te pregunta",
   "882a25e9084ae1b2": "En pausa",
   "9a03d8a9afc60387": "Pasos hasta ahora",
