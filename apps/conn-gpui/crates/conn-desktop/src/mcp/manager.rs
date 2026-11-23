@@ -156,6 +156,11 @@ impl McpSessions {
         self.inner.sessions().contains_key(session_id)
     }
 
+    /// True while any session is live.
+    pub fn has_sessions(&self) -> bool {
+        !self.inner.sessions().is_empty()
+    }
+
     /// Connects `request.server` under `request.session_id`, replacing a session with that id.
     /// Never fails: the response carries `error` or `info`.
     pub async fn connect(&self, request: McpConnectRequest) -> McpConnectResponse {

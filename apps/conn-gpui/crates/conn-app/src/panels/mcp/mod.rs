@@ -26,7 +26,6 @@ use conn_desktop::mcp::{
     McpSessions,
 };
 use conn_theme::Tokens;
-use futures::{SinkExt as _, StreamExt as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState, TextareaState};
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -157,6 +156,9 @@ impl std::fmt::Debug for McpPanel {
 
 impl Drop for McpPanel {
     fn drop(&mut self) {
+        if !self.mcp.has_sessions() {
+            return;
+        }
         let mcp = self.mcp.clone();
         crate::live::RT.spawn(async move {
             mcp.disconnect_all().await;
@@ -178,20 +180,12 @@ fn load_store() -> McpServerStore {
 
 impl McpPanel {
     pub(crate) fn new(tokens: Tokens, window: &mut Window, cx: &mut Context<'_, Self>) -> Self {
-        let (mcp, mut tokio_rx) = McpSessions::new();
-        let (mut bridge_tx, mut bridge_rx) = futures::channel::mpsc::channel::<McpEvent>(256);
-
-        // Drain the bounded Tokio event channel on the Tokio runtime and forward into GPUI.
-        crate::live::RT.spawn(async move {
-            while let Some(event) = tokio_rx.recv().await {
-                if bridge_tx.send(event).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let (mcp, mut events) = McpSessions::new();
 
         let event_task = cx.spawn(async move |this, cx| {
-            while let Some(event) = bridge_rx.next().await {
+            // A Tokio receiver is awaitable from any executor, so no Tokio task has to forward
+            // events: one that did would wake this task from the `conn-client` thread.
+            while let Some(event) = events.recv().await {
                 let updated = this.update(cx, |panel, cx| {
                     panel.handle_event(&event, cx);
                 });
@@ -539,6 +533,9 @@ impl McpPanel {
             session.disconnect();
         }
         cx.notify();
+        if !self.mcp.has_sessions() {
+            return;
+        }
         let mcp = self.mcp.clone();
         crate::live::RT.spawn(async move {
             mcp.disconnect(&session_key).await;
