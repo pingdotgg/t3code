@@ -6,6 +6,7 @@ import * as NodeFS from "node:fs";
 import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -962,22 +963,64 @@ export function npmShimExecutable(
   return isFile(executable) ? executable : undefined;
 }
 
-export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => string | undefined;
+export type XcodeGitLocator = (env: NodeJS.ProcessEnv) => Effect.Effect<string | undefined>;
+
+const XCRUN_MAX_OUTPUT_BYTES = 1024 * 1024;
+const XCRUN_DEADLINE = Duration.seconds(5);
+
+// Stopping it kills xcrun with SIGKILL, which it cannot ignore, and stops reading a stdout
+// that a descendant may still hold open after xcrun exits.
+const runXcrunFindGit = (xcrun: string, env: NodeJS.ProcessEnv) =>
+  Effect.callback<Option.Option<string>>((resume) => {
+    let child: NodeChildProcess.ChildProcess;
+    try {
+      child = NodeChildProcess.spawn(xcrun, ["--find", "git"], {
+        env,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    } catch {
+      resume(Effect.succeedNone);
+      return;
+    }
+    const stop = () => {
+      child.kill("SIGKILL");
+      child.unref();
+      child.stdout?.destroy();
+    };
+    const chunks: Array<Buffer> = [];
+    let bytes = 0;
+    child.stdout?.on("data", (chunk: Buffer) => {
+      bytes += chunk.byteLength;
+      if (bytes > XCRUN_MAX_OUTPUT_BYTES) {
+        stop();
+        resume(Effect.succeedNone);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.once("error", () => resume(Effect.succeedNone));
+    child.once("close", (code) => {
+      const located = Buffer.concat(chunks).toString("utf8").trim();
+      resume(
+        code === 0 && NodePath.isAbsolute(located)
+          ? Effect.succeedSome(located)
+          : Effect.succeedNone,
+      );
+    });
+    return Effect.sync(stop);
+  });
 
 // xcrun honors DEVELOPER_DIR and the `xcode-select` choice, as the shim does.
-function locateXcodeGitWithXcrun(env: NodeJS.ProcessEnv): string | undefined {
-  try {
-    const located = NodeChildProcess.execFileSync("/usr/bin/xcrun", ["--find", "git"], {
-      encoding: "utf8",
-      env,
-      timeout: 5_000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return NodePath.isAbsolute(located) ? located : undefined;
-  } catch {
-    return undefined;
-  }
-}
+// It takes ~15 ms and reruns when the cached answer expires, so it must not block the event loop.
+export const locateXcodeGitWithXcrun = Effect.fn("shell.locateXcodeGitWithXcrun")(function* (
+  env: NodeJS.ProcessEnv,
+  options: { readonly xcrun?: string } = {},
+) {
+  return yield* runXcrunFindGit(options.xcrun ?? "/usr/bin/xcrun", env).pipe(
+    Effect.timeoutOption(XCRUN_DEADLINE),
+    Effect.map((found) => Option.getOrUndefined(Option.flatten(found))),
+  );
+});
 
 export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
   "@t3tools/shared/shell/XcodeGitLocation",
@@ -985,6 +1028,29 @@ export const XcodeGitLocation = Context.Reference<XcodeGitLocator>(
 );
 
 const MACOS_GIT_SHIM = "/usr/bin/git";
+
+// Callers that miss the cache together wait for one xcrun run instead of starting their own.
+const xcodeGitLookups = new WeakMap<
+  Map<string, CommandResolutionCacheEntry>,
+  Map<string, Deferred.Deferred<string | null>>
+>();
+
+const lookupXcodeGit = Effect.fn("shell.lookupXcodeGit")(
+  function* (
+    env: NodeJS.ProcessEnv,
+    resolveExecutable: SpawnExecutableResolver,
+    locateXcodeGit: XcodeGitLocator,
+  ) {
+    const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
+    if (onPath !== MACOS_GIT_SHIM) return null;
+    const located = yield* locateXcodeGit(env);
+    return located !== undefined &&
+      (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
+      ? located
+      : null;
+  },
+  Effect.catchCause(() => Effect.succeed(null)),
+);
 
 /**
  * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
@@ -1003,28 +1069,52 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     resolvePathEnvironmentVariable(env),
     env.DEVELOPER_DIR ?? "",
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
-  // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    const cachedPath = cached.resolvedPath;
-    if (
-      cachedPath === null ||
-      (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
-        undefined
-    ) {
-      return cachedPath ?? "git";
+  const pending = xcodeGitLookups.get(cache) ?? new Map<string, Deferred.Deferred<string | null>>();
+  xcodeGitLookups.set(cache, pending);
+  for (;;) {
+    const nowNanos = yield* Clock.currentTimeNanos;
+    const cached = cache.get(cacheKey);
+    // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
+    if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+      const cachedPath = cached.resolvedPath;
+      if (
+        cachedPath === null ||
+        (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
+          undefined
+      ) {
+        return cachedPath ?? "git";
+      }
     }
+    // Callers join a lookup as soon as it is registered, and the uninterruptible region makes
+    // sure a registered lookup is started. Detached, a caller that stops waiting does not stop it.
+    // A caller whose cached answer was replaced meanwhile checks the new one instead.
+    const lookup = yield* Effect.uninterruptible(
+      Effect.suspend(() => {
+        const existing = pending.get(cacheKey);
+        if (existing !== undefined) return Effect.succeed(existing);
+        if (cache.get(cacheKey) !== cached) return Effect.undefined;
+        const shared = Deferred.makeUnsafe<string | null>();
+        pending.set(cacheKey, shared);
+        return lookupXcodeGit(env, resolveExecutable, locateXcodeGit).pipe(
+          Effect.tap((realGit) =>
+            Effect.sync(() => cacheCommandResolution(cache, cacheKey, realGit, nowNanos)),
+          ),
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (pending.get(cacheKey) === shared) pending.delete(cacheKey);
+            }).pipe(
+              Effect.andThen(
+                Deferred.done(shared, Exit.isSuccess(exit) ? exit : Exit.succeed(null)),
+              ),
+            ),
+          ),
+          Effect.forkDetach,
+          Effect.as(shared),
+        );
+      }),
+    );
+    if (lookup !== undefined) return (yield* Deferred.await(lookup)) ?? "git";
   }
-  const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
-  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
-  const realGit =
-    located !== undefined &&
-    (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
-      ? located
-      : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
-  return realGit ?? "git";
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
