@@ -82,7 +82,7 @@ pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> 
     .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
     .text()
     .await?;
-    let (worktrees, remotes, origin_default) = tokio::join!(
+    let (worktrees, common_dir, remotes, origin_default) = tokio::join!(
         git(
             "GitVcsDriver.listRefs",
             &cwd,
@@ -90,14 +90,34 @@ pub async fn list_refs(input: VcsListRefsInput) -> VcsResult<VcsListRefsResult> 
         )
         .max_stdout(METADATA_MAX_BYTES, OnLimit::Fail)
         .run(),
+        git(
+            "GitVcsDriver.listRefs",
+            &cwd,
+            ["rev-parse", "--git-common-dir"]
+        )
+        .timeout(repo::PROBE_TIMEOUT)
+        .text(),
         repo::remote_names(&cwd),
         repo::remote_default_branch(&cwd, "origin"),
     );
     let worktrees = worktrees
         .map(|o| parse_worktree_branches(&o.stdout_text()))
         .unwrap_or_default();
-    let worktrees: HashMap<String, PathBuf> =
-        worktrees.into_iter().filter(|(_, p)| p.exists()).collect();
+    let common_dir = common_dir.ok().map(|dir| cwd.join(dir.trim()));
+    // Without `core.worktree`, Git lists a separate git dir as the main checkout; it has no
+    // working files to reuse.
+    let worktrees: HashMap<String, PathBuf> = tokio::task::spawn_blocking(move || {
+        let common_dir = common_dir.and_then(|dir| std::fs::canonicalize(dir).ok());
+        worktrees
+            .into_iter()
+            .filter(|(_, path)| {
+                path.exists()
+                    && (common_dir.is_none() || std::fs::canonicalize(path).ok() != common_dir)
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
     let mut remotes = remotes.unwrap_or_default();
     remotes.sort_by_key(|r| std::cmp::Reverse(r.len()));
     let default_branch = origin_default.unwrap_or(None);
