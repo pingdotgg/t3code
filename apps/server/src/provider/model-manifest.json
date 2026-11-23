@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-20T23:50:00Z",
+  "updatedAt": "2026-11-23T19:00:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -141,6 +141,17 @@
     ],
     "claudeAgent": ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     "antigravity": [
+      "gemini-4-neon-xhigh",
+      "gemini-4-neon-high",
+      "gemini-4-neon-medium",
+      "gemini-4-neon-low",
+      "gemini-4-argon-high",
+      "gemini-4-argon-medium",
+      "gemini-4-argon-low",
+      "gemini-4-hydrogen-xhigh",
+      "gemini-4-hydrogen-high",
+      "gemini-4-hydrogen-medium",
+      "gemini-4-hydrogen-low",
       "gemini-4-carbon",
       "gemini-4-argon",
       "gemini-3.8-flash",
@@ -950,10 +961,29 @@
     },
     "antigravity": {
       "defaults": {
-        "chat": "gemini-3.8-flash-high"
+        "chat": "gemini-4-neon-high"
       },
       "profiles": {},
       "models": [
+        { "slug": "gemini-4-neon-xhigh", "name": "Gemini 4 Neon (XHigh)", "status": "current" },
+        { "slug": "gemini-4-neon-high", "name": "Gemini 4 Neon (High)", "status": "current" },
+        { "slug": "gemini-4-neon-medium", "name": "Gemini 4 Neon (Medium)", "status": "current" },
+        { "slug": "gemini-4-neon-low", "name": "Gemini 4 Neon (Low)", "status": "current" },
+        { "slug": "gemini-4-argon-high", "name": "Gemini 4 Argon (High)", "status": "current" },
+        { "slug": "gemini-4-argon-medium", "name": "Gemini 4 Argon (Medium)", "status": "current" },
+        { "slug": "gemini-4-argon-low", "name": "Gemini 4 Argon (Low)", "status": "current" },
+        {
+          "slug": "gemini-4-hydrogen-xhigh",
+          "name": "Gemini 4 Hydrogen (XHigh)",
+          "status": "current"
+        },
+        { "slug": "gemini-4-hydrogen-high", "name": "Gemini 4 Hydrogen (High)", "status": "current" },
+        {
+          "slug": "gemini-4-hydrogen-medium",
+          "name": "Gemini 4 Hydrogen (Medium)",
+          "status": "current"
+        },
+        { "slug": "gemini-4-hydrogen-low", "name": "Gemini 4 Hydrogen (Low)", "status": "current" },
         {
           "slug": "gemini-4-carbon",
           "name": "Gemini 4 Carbon",
