@@ -744,6 +744,21 @@ describe("question answer paths", () => {
         {
           ext: "epub",
           parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><item id="ch1" href="q%3F1.xhtml?x=1"/><item id="ch2" href="chapter%201.xhtml?v=2#sec1"/><itemref idref="ch1"/><itemref idref="ch2"/></package>',
+            "q?1.xhtml": "<html><p>Encoded question mark chapter text.</p></html>",
+            "chapter 1.xhtml": "<html><p>Encoded query and fragment chapter text.</p></html>",
+          },
+          expected: [
+            "Encoded question mark chapter text.",
+            "Encoded query and fragment chapter text.",
+          ],
+          absent: ["[Skipped document part", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
             "META-INF/container.xml":
               '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
             "My Book/book 1.opf":

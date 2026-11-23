@@ -864,7 +864,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         }
         let decoded: string;
         try {
-          decoded = decodeURIComponent(href.split("#")[0]!);
+          decoded = decodeURIComponent(href.split(/[?#]/, 1)[0]!);
         } catch {
           skip(`chapter ${index}`);
           continue;
