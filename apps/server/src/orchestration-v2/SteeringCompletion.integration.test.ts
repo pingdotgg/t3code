@@ -1920,6 +1920,54 @@ it.effect("delivers agent messages queued behind /compact before a later one ste
   }),
 );
 
+// regression: #41268 an agent's explicit queue send held a later automatic send out of the turn
+it.effect("steers an agent's automatic send past its explicitly queued message", () =>
+  Effect.gen(function* () {
+    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "agent-auto-after-explicit-queue",
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const agentMessage = {
+        type: "message.dispatch",
+        attachments: [],
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("thread:orchestrator"),
+      } as const;
+      yield* orchestrator.dispatch({
+        ...agentMessage,
+        commandId: CommandId.make("send-later"),
+        threadId,
+        messageId: MessageId.make("message:later"),
+        text: "later",
+        dispatchMode: { type: "queue_after_active" },
+      });
+      yield* orchestrator.dispatch({
+        ...agentMessage,
+        commandId: CommandId.make("send-now"),
+        threadId,
+        messageId: MessageId.make("message:now"),
+        text: "now",
+        dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+        deliveryIntent: "auto",
+      });
+      yield* worker.drain();
+
+      assert.deepEqual(steered, ["now"]);
+      const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.filter(
+        (run) => run.status === "queued",
+      );
+      assert.deepEqual(
+        queued.map((run) => run.userMessageId),
+        [MessageId.make("message:later")],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // regression: #33454 a steer that restarts a completion wake run left its cohort claimed forever
 const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   harness: Pick<
