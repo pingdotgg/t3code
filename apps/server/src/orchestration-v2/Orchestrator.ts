@@ -7379,8 +7379,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     // The service checked idleness before this command; a run or a delegated result that landed
     // since makes the thread busy, and that turn refreshes the cache anyway.
+    // A restart's queued runs are held, so they will not refresh the cache.
     if (
       command.idleCompaction === "beforeCacheExpires" &&
+      command.restartContinuationOfRunId === undefined &&
       projection.runs.some(
         (run) =>
           run.status === "queued" ||

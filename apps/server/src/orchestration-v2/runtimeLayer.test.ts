@@ -9382,8 +9382,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      const send = (key: string, createdBy: "user" | "agent", start: boolean) =>
+      const send = (
+        key: string,
+        createdBy: "user" | "agent",
+        start: boolean,
+        extra: { idleCompaction?: "beforeCacheExpires"; restartContinuationOfRunId?: RunId } = {},
+      ) =>
         orchestrator.dispatch({
+          ...extra,
           type: "message.dispatch",
           createdBy,
           creationSource: createdBy === "user" ? "web" : "server",
@@ -9598,10 +9604,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* end(" /compact", "cancelled", "", {
         restartContinuationOfRunId: (yield* runFor("cut")).id,
       });
-      yield* send("/compact", "agent", true);
-      yield* end("/compact", "completed", "", {
+      // Queued runs are held, so an idle compaction does not wait for them.
+      yield* send("/compact", "agent", true, {
+        idleCompaction: "beforeCacheExpires",
         restartContinuationOfRunId: (yield* runFor(" /compact")).id,
       });
+      yield* end("/compact", "completed");
       assert.equal(yield* Queue.take(startedRunIds), (yield* runFor("later")).id);
       assert.isTrue((yield* runFor("earlier")).queueHeld);
     }),
