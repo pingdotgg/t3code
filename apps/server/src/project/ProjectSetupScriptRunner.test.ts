@@ -138,7 +138,9 @@ describe("ProjectSetupScriptRunner", () => {
       const { writes } = yield* setup({
         shell: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
       });
-      expect(yield* Queue.take(writes)).toContain("$global:LASTEXITCODE");
+      const submitted = yield* Queue.take(writes);
+      expect(submitted).toContain("$global:LASTEXITCODE");
+      expect(submitted).not.toContain("\x1b[200~");
     }),
   );
 
@@ -197,11 +199,23 @@ describe("ProjectSetupScriptRunner", () => {
     }),
   );
 
+  it.effect("keeps emoji whole when capping a long output line or partial-line buffer", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({ ...event, type: "output", data: `x${"🙂".repeat(250)}\r\n` });
+      yield* emit({ ...event, type: "output", data: `${"🙂".repeat(2_100)}x` });
+      yield* emit({ ...event, type: "output", data: "\r\n" });
+      expect(yield* Queue.takeAll(outputLines)).toEqual([`x${"🙂".repeat(199)}`, "🙂".repeat(200)]);
+    }),
+  );
+
   it.effect("types into a quiet shell that has no line editor", () =>
     Effect.gen(function* () {
-      const { writes } = yield* setup();
+      const { writes } = yield* setup({ command: "printf '%s\\n' 'setup-ready'\n".repeat(120) });
       yield* TestClock.adjust("3 seconds");
-      expect(yield* Queue.take(writes)).toContain("vp i");
+      const submitted = yield* Queue.take(writes);
+      expect(submitted).toContain("setup-ready");
+      expect(submitted).not.toContain("\x1b[200~");
     }),
   );
 
@@ -261,6 +275,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
   const { writes, outputLines, emit, completion } = yield* setup({ command });
   yield* emit({ ...event, type: "output", data: "\x1b[?2004h" });
   const submitted = yield* Queue.take(writes);
+  const shellInput = submitted.replace("\x1b[200~", "").replace("\x1b[201~", "");
   const cwd = yield* HostProcess.WorkingDirectory;
   const env = yield* HostProcess.Environment;
 
@@ -271,7 +286,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
     const handle = yield* spawner.spawn(
       ChildProcess.make(
         "/bin/bash",
-        ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
+        ["--noprofile", "--norc", "-c", shellInput.replaceAll("\r", "\n")],
         {
           cwd,
           env: { PATH: env.PATH },
@@ -292,6 +307,7 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string) {
   yield* emit({ ...event, type: "closed" });
   return {
     submitted,
+    shellInput,
     lines: yield* Queue.clear(outputLines),
     exitCode: (yield* completion).exitCode,
   };
@@ -337,9 +353,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
       assert.deepEqual(result.lines, expected);
       assert.equal(result.exitCode, 0);
       assert.equal(result.submitted.at(-1), "\r");
-      assert.notInclude(result.submitted, "\n");
-      // The runner can write before the shell switches the terminal out of canonical mode.
-      for (const line of result.submitted.slice(0, -1).split("\r")) {
+      assert.isTrue(result.submitted.startsWith(" \x1b[200~"));
+      assert.isTrue(result.submitted.endsWith("\x1b[201~\r"));
+      assert.notInclude(result.submitted.slice(0, -1), "\r");
+      for (const line of result.shellInput.slice(0, -1).split("\n")) {
         assert.isBelow(utf8.encode(line).byteLength, 1_024);
       }
     }),

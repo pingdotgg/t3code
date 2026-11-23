@@ -248,32 +248,35 @@ it.effect("finds no common folder for two Windows drives instead of climbing for
   }).pipe(Effect.provide(NodePath.layerWin32)),
 );
 
-it.live("gives two creations on one branch a folder each", () =>
-  withState((state) =>
-    Effect.gen(function* () {
-      const { fileSystem, path, tmp, repository } = yield* fixture;
-      const api = yield* repository("shop/api");
-      state.workspaceRoot = path.join(tmp, "shop");
-      state.trackedFolders = tracked(api);
+it.live.each([{ projectIsRepository: false }, { projectIsRepository: true }])(
+  "gives two creations on one branch a folder each, project is a repository=$projectIsRepository",
+  ({ projectIsRepository }) =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository } = yield* fixture;
+        const shop = projectIsRepository ? yield* repository("shop") : path.join(tmp, "shop");
+        const api = yield* repository("shop/api");
+        state.workspaceRoot = shop;
+        state.trackedFolders = tracked(api);
 
-      // Git gives the branch to one of them; the other's rollback must leave that one's folder.
-      const exits = yield* Effect.all(
-        [Effect.exit(create("feature")), Effect.exit(create("feature"))],
-        {
-          concurrency: 2,
-        },
-      );
+        // Git gives the branch to one of them; the other's rollback must leave that one's folder.
+        const exits = yield* Effect.all(
+          [Effect.exit(create("feature")), Effect.exit(create("feature"))],
+          {
+            concurrency: 2,
+          },
+        );
 
-      const created = exits.flatMap((exit) =>
-        Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
-      );
-      assert.isAtLeast(created.length, 1);
-      assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
-      for (const taskFolder of created) {
-        assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
-      }
-    }),
-  ),
+        const created = exits.flatMap((exit) =>
+          Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
+        );
+        assert.isAtLeast(created.length, 1);
+        assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
+        for (const taskFolder of created) {
+          assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
+        }
+      }),
+    ),
 );
 
 it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
@@ -343,6 +346,64 @@ it.live("puts a clone the project ignores inside the project's worktree", () =>
         "feature",
       );
       assert.equal(yield* run(taskFolder.root, "status", "--porcelain"), "");
+    }),
+  ),
+);
+
+it.live("creates the task folder when the project's checkout hook already linked a clone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      // Like many projects with vendored clones, a new worktree links them back to the checkout.
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${lib}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+    }),
+  ),
+);
+
+it.live("leaves a hook's link to an empty folder alone", () =>
+  withState((state) =>
+    Effect.gen(function* () {
+      const { fileSystem, path, tmp, run, repository } = yield* fixture;
+      const project = yield* repository("p");
+      yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "vendor/\n");
+      yield* run(project, "add", ".");
+      yield* run(project, "commit", "-m", "ignore vendor");
+      const lib = yield* repository("p/vendor/lib");
+      const target = path.join(tmp, "empty");
+      yield* fileSystem.makeDirectory(target);
+      const hooks = path.join(tmp, "hooks");
+      yield* fileSystem.makeDirectory(hooks);
+      yield* fileSystem.writeFileString(
+        path.join(hooks, "post-checkout"),
+        `#!/bin/sh\nmkdir -p vendor && ln -s "${target}" vendor/lib\n`,
+        { mode: 0o755 },
+      );
+      yield* run(project, "config", "core.hooksPath", hooks);
+      state.workspaceRoot = project;
+      state.trackedFolders = tracked(lib);
+
+      const created = yield* create("feature").pipe(Effect.exit);
+
+      assert.isTrue(Exit.isSuccess(created), String(Exit.isFailure(created) && created.cause));
+      assert.deepStrictEqual(yield* fileSystem.readDirectory(target), []);
     }),
   ),
 );
