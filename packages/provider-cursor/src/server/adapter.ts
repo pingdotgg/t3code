@@ -928,9 +928,11 @@ interface CursorProjectionTarget {
 const MAX_CURSOR_STREAMED_OUTPUT_CHARS = 256 * 1024;
 // After a turn ends, a retryable stream error can make Cursor's SDK resume from
 // an older checkpoint inside the same run. When those resumes save nothing, it
-// ends the run with this error even though the answer was already delivered.
-const CURSOR_RESUME_NO_PROGRESS_MESSAGE =
-  "Agent turn stopped after repeated resume attempts made no progress";
+// ends with either retry limit even though the answer was already delivered.
+const CURSOR_POST_TURN_RETRY_ERRORS = new Set([
+  "Agent turn stopped after repeated resume attempts made no progress",
+  "Connection failed repeatedly",
+]);
 
 interface ActiveCursorToolCall {
   readonly callId: string;
@@ -2690,7 +2692,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
         const isResumeFailureAfterTurnEnded = (context: ActiveCursorTurn, result: RunResult) =>
           context.turnEnded &&
           result.status === "error" &&
-          result.error?.message === CURSOR_RESUME_NO_PROGRESS_MESSAGE;
+          CURSOR_POST_TURN_RETRY_ERRORS.has(result.error?.message ?? "");
 
         const terminalStatus = (
           context: ActiveCursorTurn,
@@ -2903,11 +2905,12 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
             });
           }
           const runtimeInstructions = buildRuntimeInstructions({
+            agentFeedback: mcpServers === undefined ? "off" : (turnInput.agentFeedback ?? "off"),
             harness: "Cursor",
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
           });
-          // Resend only on a new/compacted/rewound conversation or when the model changes.
+          // Resend only on a new/compacted/rewound conversation or when the instructions change.
           const sendRuntimeInstructions = delivered.runtime !== runtimeInstructions;
           const text = sendRuntimeInstructions
             ? userText.length === 0
