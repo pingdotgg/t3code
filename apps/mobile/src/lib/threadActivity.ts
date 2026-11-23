@@ -5,6 +5,7 @@ import type {
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   isLiveSubagentTurnItem,
@@ -21,6 +22,7 @@ import {
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandlessCommandLabel,
   contextCompactionLabel,
   liveThoughtLine,
   toolItemForDisplay,
@@ -300,6 +302,12 @@ export function workEntryRowLabel(
   const presentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (presentation) return presentation.displayName;
   if (entry.command?.trim()) return compactWorkEntryText(commandDisplayText(entry.command));
+  const commandless = commandlessCommandLabel(
+    entry,
+    liveActivityToolStatus(entry.toolLifecycleStatus, false),
+    resolve,
+  );
+  if (commandless) return commandless;
   const action = toolGroupAction(entry);
   const isToolRead = action === "read" && entry.itemType === "dynamic_tool";
   if (action === "code-search" || action === "search") {
@@ -444,6 +452,13 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
+export function isFeedbackRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "feedback_request"
+  );
+}
+
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -492,6 +507,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
+    item.type === "feedback_request" ||
     item.type === "link_request"
   );
 }
@@ -614,6 +630,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "zap";
     case "secret_request":
       return "lock";
+    case "feedback_request":
+      return "message";
     case "link_request":
       return "globe";
   }
@@ -688,6 +706,8 @@ function itemSummary(
       return resolve(msg("Thread created"));
     case "secret_request":
       return item.label;
+    case "feedback_request":
+      return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
     case "dynamic_tool": {
@@ -758,6 +778,8 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "feedback_request":
+      return item.preview.subject;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1548,6 +1570,10 @@ function presentationRestart(
     const firstEntry = runId === null ? undefined : previous.firstEntryByRun.get(runId);
     if (firstEntry !== undefined && firstEntry < restart.entry) return null;
   }
+  // The reused rows hold the live run's fold, which a rebuilt tail would add again.
+  const liveRunId = unsettledRunId(latestRun);
+  const liveRunStart = liveRunId === null ? undefined : previous.firstEntryByRun.get(liveRunId);
+  if (liveRunStart !== undefined && liveRunStart < restart.entry) return null;
   return { ...restart, index };
 }
 
@@ -1931,10 +1957,16 @@ export function deriveThreadFeedPresentation(
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
+  const latestRow = result.at(-1);
+  const replyIsStreaming =
+    latestRow?.type === "message" &&
+    latestRow.message.role === "assistant" &&
+    latestRow.message.streaming;
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
     latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     (activeRunId === null || !compactionCommandRunIds.has(activeRunId)) &&
     !result.some(
       (row) =>
@@ -2424,7 +2456,10 @@ function liveToolActivitySummary(
             ? resolve(msg("Stopped {program}", { program }))
             : resolve(msg("Ran {program}", { program }));
   }
-  return compactWorkEntryText(activity.detail ?? activity.summary);
+  return (
+    commandlessCommandLabel(activity.workEntry, status, resolve) ??
+    compactWorkEntryText(activity.detail ?? activity.summary)
+  );
 }
 
 interface ThreadFeedBuild {
@@ -2478,6 +2513,7 @@ function checkpointSummariesEqual(
       summary.completedAt === other.completedAt &&
       summary.status === other.status &&
       summary.files === other.files &&
+      summary.repositories === other.repositories &&
       summary.assistantMessageId === other.assistantMessageId
     );
   });
@@ -2769,7 +2805,12 @@ export function buildThreadFeed(
   }
   const checkpointByMessageId = new Map(
     (options?.checkpointSummaries ?? [])
-      .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
+      // A plain folder holding repositories never has a ready checkpoint of its own.
+      .filter(
+        (checkpoint) =>
+          (checkpoint.status === "ready" || checkpoint.repositories !== undefined) &&
+          turnHasChanges(checkpoint),
+      )
       .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
   );
   const grouped = groupAdjacentActivities(

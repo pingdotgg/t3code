@@ -1,5 +1,6 @@
 import { AVAILABLE_CONNECTION_STATE } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, type ServerConfig } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -71,9 +72,7 @@ describe("startDesktopUpdateLaunchNotice", () => {
           AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "backoff" as const }),
         ) as unknown as ReturnType<typeof environmentCatalog.stateAtom>,
       );
-    using retryNow = vi
-      .spyOn(environmentCatalog.retryNow, "run")
-      .mockResolvedValue(AsyncResult.success(undefined));
+    using retryNow = vi.spyOn(environmentCatalog.retryNow, "run").mockReturnValue(Effect.void);
     const stop = relaunchWhileRestarting(environmentId);
     try {
       await vi.advanceTimersByTimeAsync(1_000);
