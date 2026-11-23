@@ -2982,6 +2982,9 @@ describe("storage cleanup reports and local file policies", () => {
             outcome: expect.stringMatching(/^(kept|failed)$/),
           }),
         ]);
+        yield* fixture.fs.chmod(stuck, 0o755);
+        expect((yield* fixture.service.runNow).entries).toEqual([]);
+        expect(yield* fixture.fs.exists(adminDir)).toBe(false);
       }),
     ),
   );

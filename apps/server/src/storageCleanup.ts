@@ -1095,6 +1095,31 @@ const make = Effect.gen(function* () {
       });
   });
 
+  // Git marks a registration whose checkout folder is gone as prunable; locked ones never are.
+  const hasPrunableRegistration = Effect.fn("StorageCleanup.hasPrunableRegistration")(
+    function* (repository: string, worktreePath: string) {
+      const listed = yield* git.execute({
+        operation: "StorageCleanup.hasPrunableRegistration",
+        cwd: repository,
+        args: ["worktree", "list", "--porcelain", "-z"],
+      });
+      const parent = yield* fs
+        .realPath(path.dirname(worktreePath))
+        .pipe(Effect.orElseSucceed(() => path.dirname(worktreePath)));
+      const targets = [worktreePath, path.join(parent, path.basename(worktreePath))].map(pathKey);
+      return listed.stdout.split("\0\0").some((record) => {
+        const fields = record.split("\0");
+        const worktree = fields.find((field) => field.startsWith("worktree "));
+        return (
+          worktree !== undefined &&
+          fields.some((field) => field.startsWith("prunable")) &&
+          targets.includes(pathKey(path.resolve(repository, worktree.slice("worktree ".length))))
+        );
+      });
+    },
+    Effect.orElseSucceed(() => false),
+  );
+
   const cleanWorktrees = Effect.fn("StorageCleanup.cleanWorktrees")(function* (
     serverSettings: ServerSettings,
     now: number,
@@ -1338,7 +1363,25 @@ const make = Effect.gen(function* () {
             () => Effect.succeed(false),
           ),
         );
-        if (!exists) return;
+        if (!exists) {
+          // `git worktree remove` can delete the checkout and then fail on its metadata.
+          // Retrying while Git still lists it keeps that failure reported until it is gone.
+          if (
+            taskFolder !== null ||
+            project === undefined ||
+            !group.every((member) => storageCleanupThreadIdle(member, now, serverSettings)) ||
+            !(yield* hasPrunableRegistration(project.workspaceRoot, worktreePath))
+          )
+            return;
+          return yield* withWorkspaceLease(
+            worktreePath,
+            cleanupGit(
+              project.workspaceRoot,
+              ["worktree", "remove", "--", worktreePath],
+              "git worktree remove",
+            ),
+          );
+        }
         if (deleted && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${members.length} threads`);
