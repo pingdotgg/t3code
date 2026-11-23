@@ -6872,8 +6872,8 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  // Devin answers session/cancel with "cancelled" and never sends terminal/kill or terminal/release.
-  it.live("Stop kills the command a Devin turn runs in a client terminal", () =>
+  // The agent answers session/cancel with "cancelled" and never sends terminal/kill or terminal/release.
+  it.live("Stop kills the command a turn runs in a client terminal", () =>
     Effect.gen(function* () {
       type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
       let handler: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;

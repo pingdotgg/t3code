@@ -10775,7 +10775,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           yield* Ref.set(runtimeRestartRequired, true);
                         }
                       }
-                      // Devin answers session/cancel without ending commands in T3's terminals.
+                      // T3 owns client terminals; an agent may answer session/cancel without killing them.
                       if (
                         turnInput.requestRuntimeRestart === true &&
                         clientTerminals !== undefined
