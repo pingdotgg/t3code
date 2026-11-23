@@ -2735,6 +2735,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --sidebar-border: rgb(0 0 0 / 10%);
   --sidebar-stage-fade: var(--sidebar);
   --code-background: color-mix(in srgb, var(--card) 90%, var(--background));
+  --map-canvas-background: color-mix(in srgb, var(--background) 75%, var(--sidebar));
   --code-foreground: var(--foreground);
   --terminal-background: var(--background);
   --terminal-foreground: var(--foreground);
