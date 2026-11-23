@@ -51,17 +51,19 @@ function isLocalRemoteUrl(url: string): boolean {
   return colonIndex === -1 || (slashIndex !== -1 && slashIndex < colonIndex);
 }
 
+// Reads `git config -z` records (`key\nvalue\0`). The configured URL, not the one `url.*.insteadOf`
+// rewrites it to, names the forge: a proxy or mirror rewrite must not change the identity.
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   const remotes = new Map<string, string>();
-  for (const line of stdout.split(/\r?\n/)) {
-    // Git uses a tab before the URL and one space before the direction; both can occur in URLs.
-    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
-    const match = /^(\S+)\t(.+) \((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(line);
-    if (!match) continue;
-    const [, remoteName = "", remoteUrl = "", direction = ""] = match;
+  for (const record of stdout.split("\0")) {
+    const newline = record.indexOf("\n");
+    if (newline === -1) continue;
+    const remoteName = /^remote\.(.+)\.url$/su.exec(record.slice(0, newline))?.[1];
+    const remoteUrl = record.slice(newline + 1);
+    // Git fetches from a remote's first url.
     if (
-      direction !== "fetch" ||
-      remoteName.length === 0 ||
+      remoteName === undefined ||
+      remotes.has(remoteName) ||
       remoteUrl.length === 0 ||
       isLocalRemoteUrl(remoteUrl)
     ) {
@@ -333,7 +335,10 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
       })
       .pipe(Effect.option);
   const [remoteResult, resolvedResult] = yield* Effect.all(
-    [runGit(["remote", "-v"]), runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"])],
+    [
+      runGit(["config", "-z", "--get-regexp", "^remote\\..*\\.url$"]),
+      runGit(["config", "--get-regexp", "^remote\\..*\\.gh-resolved$"]),
+    ],
     { concurrency: "unbounded" },
   );
   if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {

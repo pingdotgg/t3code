@@ -146,7 +146,8 @@ const make = Effect.gen(function* () {
     stack: PullRequestStack | null,
     runId: string,
   ) {
-    // Identity names can be stale; match effective fetch URLs, including insteadOf rewrites.
+    // Identity names can be stale; match the configured fetch URL the resolver records, or the
+    // effective one (after url.*.insteadOf) that identities resolved before it carry.
     const names = yield* git
       .execute({
         operation: "PullRequestReviewGuideService.listRemotes",
@@ -157,16 +158,24 @@ const make = Effect.gen(function* () {
     const remote = yield* Effect.findFirst(
       [locator.remoteName, ...names.filter((name) => name !== locator.remoteName)],
       (name) =>
-        git
-          .execute({
-            operation: "PullRequestReviewGuideService.remoteUrl",
-            cwd: workspaceRoot,
-            args: ["remote", "get-url", "--", name],
-          })
-          .pipe(
-            Effect.map((result) => result.stdout.trim() === locator.remoteUrl),
-            Effect.orElseSucceed(() => false),
-          ),
+        Effect.forEach(
+          [
+            ["config", "--get-all", `remote.${name}.url`],
+            ["remote", "get-url", "--", name],
+          ],
+          (args) =>
+            git
+              .execute({
+                operation: "PullRequestReviewGuideService.remoteUrl",
+                cwd: workspaceRoot,
+                args,
+              })
+              .pipe(
+                Effect.map((result) => result.stdout.split("\n")[0] === locator.remoteUrl),
+                Effect.orElseSucceed(() => false),
+              ),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.map((matches) => matches.includes(true))),
     ).pipe(Effect.map(Option.getOrUndefined));
     if (remote === undefined) {
       return yield* new PullRequestOperationError({
