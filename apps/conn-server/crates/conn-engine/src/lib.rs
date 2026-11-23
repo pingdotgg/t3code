@@ -278,11 +278,20 @@ pub struct ProvisionedWorktree {
     pub branch: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ThreadClose {
     Archived,
     Deleted,
-    Settled,
+    /// A settlement: the thread was not settled before. `settled_at` is the committed
+    /// `settledAt`, which names this settlement.
+    Settled {
+        settled_at: String,
+    },
+    /// A settle of a thread that already was, which keeps its `settledAt`: its terminals close
+    /// again, but the settlement's one-time cleanup (the settle script) does not run again.
+    SettledAgain {
+        settled_at: String,
+    },
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine
