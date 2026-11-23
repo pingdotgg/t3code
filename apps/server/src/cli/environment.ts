@@ -29,6 +29,7 @@ import * as PeerLinks from "../peer/PeerLinks.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { expandHomePath } from "../os-jank.ts";
 import { authLocationFlags, type CliAuthLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 /**
@@ -201,7 +202,7 @@ const readLinkBatch = Effect.fn("environment.readLinkBatch")(function* (from: st
     );
   }
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(from);
+  return yield* fs.readFileString(yield* expandHomePath(from));
 });
 
 const environmentLinkCommand = Command.make("link", {
