@@ -69,8 +69,31 @@ describe("commandProgramName", () => {
     ["source ~/.nvm/nvm.sh && nvm use", "nvm"],
     ["unset DEBUG; node app.js", "node"],
     ["/bin/zsh -lc 'source ~/.nvm/nvm.sh && nvm use'", "nvm"],
+    [
+      'cd /path/to/repo && eval "$(fnm env --shell zsh)" && fnm use 26.13.1 </dev/null && git diff --cached --check && git commit -m "chore" && git push origin feat-branch',
+      "fnm",
+    ],
+    ['eval "$(/opt/homebrew/bin/brew shellenv)" && git status', "git"],
+    ['eval "$(direnv export zsh)" 2>/dev/null && pnpm test', "pnpm"],
+    ['eval "$(pyenv init -)" && eval "$(pyenv virtualenv-init -)" && pytest', "pytest"],
+    ['eval -- "$(mise activate zsh)" && vp test run', "vp"],
+    ['eval "$(opam config env)" && dune build', "dune"],
+    ['eval "$(fnm 2>/dev/null env)" && node app.js', "node"],
+    ["eval `fnm env` && node app.js", "node"],
   ])("skips shell setup commands and uses the next useful program: %s", (command, program) => {
     expect(commandProgramName(command)).toBe(program);
+  });
+
+  it.each([
+    'eval "$(fnm env --shell zsh)"',
+    'eval "git status" && pnpm test',
+    'eval "$(echo git)" && pnpm test',
+    'eval "$(fnm install 22)" && pnpm test',
+    'eval "$(opam config subst package.in)" && pnpm test',
+    'eval "$(fnm env && rm -rf /tmp/foo)" && pnpm test',
+    'eval "$(fnm env); rm -rf /tmp/foo" && pnpm test',
+  ])("does not skip standalone or non-env-setup eval segments: %s", (command) => {
+    expect(commandProgramName(command)).toBeNull();
   });
 
   it.each([
