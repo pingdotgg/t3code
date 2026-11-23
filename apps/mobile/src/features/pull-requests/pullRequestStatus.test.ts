@@ -64,7 +64,7 @@ describe("mobile overview review status", () => {
 
   it("follows the host's review decision over what the reviews alone suggest", () => {
     const approved = review("APPROVED", "2026-10-10T09:00:00Z");
-    // GitLab names its notes as comments, so its approvals reach the reviews only once loaded.
+    // A GitLab approval need not appear among the reviews.
     expect(
       pullRequestReviewSummary({ reviewers: [author], reviewDecision: "approved" }, activity([])),
     ).toMatchObject({ title: "Reviews approved", count: "1 approved" });

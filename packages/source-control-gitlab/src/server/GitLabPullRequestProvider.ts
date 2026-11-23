@@ -415,30 +415,16 @@ export const make = Effect.gen(function* () {
               Effect.map((mergeRequest) => ({
                 url: mergeRequest.url,
                 diffRefs: mergeRequest.diffRefs,
-                createdAt: mergeRequest.createdAt,
               })),
             ),
             null,
           ),
-          listStates({
-            cwd: input.cwd,
-            host: input.host,
-            repository: input.repository,
-            numbers: [input.number],
-          }),
         ],
-        { concurrency: 6 },
+        { concurrency: 5 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(
-          ([
-            notes,
-            commits,
-            discussions,
-            awards,
-            detail,
-            states,
-          ]): ProviderChangeRequestActivity => {
+          ([notes, commits, discussions, awards, detail]): ProviderChangeRequestActivity => {
             const noteUrl = (id: string) => (detail === null ? null : `${detail.url}#note_${id}`);
             const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
@@ -457,55 +443,16 @@ export const make = Effect.gen(function* () {
               url: noteUrl(comment.id),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             });
-            const reviewed = new Set(
-              notes.comments.flatMap((comment) =>
-                comment.kind === "review" && comment.author !== null
-                  ? [comment.author.login.toLowerCase()]
-                  : [],
-              ),
-            );
-            // GitLab says who approves now, not since when. Dated at the newest commit, an
-            // approval that outlived a push stays current and keeps its date as the MR changes.
-            const verdictsAt = [detail?.createdAt, ...commits.map((commit) => commit.committedDate)]
-              .filter((at) => at !== undefined)
-              .reduce<string | null>(
-                (latest, at) =>
-                  latest === null || Date.parse(at) > Date.parse(latest) ? at : latest,
-                null,
-              );
-            const verdicts =
-              verdictsAt === null
-                ? []
-                : (states.get(input.number)?.verdicts ?? []).flatMap((verdict) =>
-                    reviewed.has(verdict.author.login.toLowerCase())
-                      ? []
-                      : [
-                          {
-                            id: `gitlab-${verdict.reviewState === "APPROVED" ? "approval" : "changes-requested"}:${verdict.author.login}`,
-                            kind: "review" as const,
-                            author: withBotFlag(verdict.author),
-                            body: "",
-                            createdAt: verdictsAt,
-                            url: null,
-                            path: null,
-                            reviewState: verdict.reviewState,
-                            reactions: [],
-                          },
-                        ],
-                  );
             return {
               reactions: awards.reactions,
-              comments: [
-                ...notes.comments.map((comment) => ({
-                  ...comment,
-                  ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
-                  ...edited(comment.id),
-                  author: withBotFlag(comment.author),
-                  url: noteUrl(comment.id),
-                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-                })),
-                ...verdicts,
-              ],
+              comments: notes.comments.map((comment) => ({
+                ...comment,
+                ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
+                ...edited(comment.id),
+                author: withBotFlag(comment.author),
+                url: noteUrl(comment.id),
+                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+              })),
               commentCount: notes.comments.length,
               commentsTruncated: notes.truncated || discussions.truncated,
               reviewThreads: discussions.threads.flatMap((thread) =>

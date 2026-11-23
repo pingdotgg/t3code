@@ -561,7 +561,6 @@ describe("optional activity reads", () => {
         editedAtByNoteId: new Map(),
         botLogins: new Set<string>(),
       }),
-    getListStates: () => Effect.succeed(new Map()),
   };
   const context = {
     operation: "execute" as const,
@@ -860,89 +859,6 @@ describe("optional activity reads", () => {
       const activity = yield* provider.getChangeRequestActivity(reference);
       expect(activity.comments.map((entry) => entry.author?.isBot)).toEqual([true, undefined]);
       expect(activity.reviewThreads[0]?.comments[0]?.author?.isBot).toBe(true);
-    }),
-  );
-
-  it.effect("shows who approves now as reviews no older than the newest commit, once each", () =>
-    Effect.gen(function* () {
-      const lev = { login: "lkolesnikov", name: "Lev", avatarUrl: null };
-      const nikolai = { login: "nnikonov", name: "Nikolai", avatarUrl: null };
-      const julius = { login: "julius", name: null, avatarUrl: null };
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
-            ...reads,
-            listNotes: () =>
-              Effect.succeed({
-                comments: [
-                  comment,
-                  {
-                    ...comment,
-                    id: "43",
-                    kind: "review" as const,
-                    author: julius,
-                    reviewState: "APPROVED",
-                  },
-                ],
-                truncated: false,
-              }),
-            // GitLab keeps approvals across a push unless the project resets them.
-            listCommits: () =>
-              Effect.succeed([
-                commit,
-                { ...commit, oid: "def", committedDate: "2026-07-01T12:00:00Z" },
-              ]),
-            getListStates: () =>
-              Effect.succeed(
-                new Map([
-                  [
-                    7,
-                    {
-                      reviewDecision: "changes-requested" as const,
-                      checksState: null,
-                      verdicts: [
-                        { author: nikolai, reviewState: "CHANGES_REQUESTED" as const },
-                        { author: lev, reviewState: "APPROVED" as const },
-                        {
-                          author: { ...julius, login: "Julius" },
-                          reviewState: "APPROVED" as const,
-                        },
-                      ],
-                    },
-                  ],
-                ]),
-              ),
-          }),
-        ),
-      );
-
-      const activity = yield* provider.getChangeRequestActivity(reference);
-      expect(activity.commentCount).toBe(2);
-      expect(activity.comments.filter((entry) => entry.kind === "review")).toEqual([
-        expect.objectContaining({ id: "43", author: julius }),
-        {
-          id: "gitlab-changes-requested:nnikonov",
-          kind: "review",
-          author: nikolai,
-          body: "",
-          createdAt: "2026-07-01T12:00:00Z",
-          url: null,
-          path: null,
-          reviewState: "CHANGES_REQUESTED",
-          reactions: [],
-        },
-        {
-          id: "gitlab-approval:lkolesnikov",
-          kind: "review",
-          author: lev,
-          body: "",
-          createdAt: "2026-07-01T12:00:00Z",
-          url: null,
-          path: null,
-          reviewState: "APPROVED",
-          reactions: [],
-        },
-      ]);
     }),
   );
 });
