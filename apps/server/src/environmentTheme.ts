@@ -10,6 +10,7 @@ import {
   EnvironmentThemeFile,
   EnvironmentThemeId,
   environmentThemeFileHasColors,
+  THEME_BACKDROP_GLSL_MAX_LENGTH,
   THEME_CSS_MAX_LENGTH,
 } from "@t3tools/contracts";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
@@ -56,7 +57,8 @@ const MAX_THEME_FILES = 32;
  * Shared with publishing so it cannot accept files the watcher skips. Fits the longest CSS in any
  * JSON encoding, at up to 6 bytes per character for a `\uXXXX` escape, plus the colors.
  */
-export const MAX_THEME_FILE_BYTES = 6 * THEME_CSS_MAX_LENGTH + 16 * 1024;
+export const MAX_THEME_FILE_BYTES =
+  6 * (THEME_CSS_MAX_LENGTH + THEME_BACKDROP_GLSL_MAX_LENGTH) + 16 * 1024;
 // Clients cache every published theme in localStorage, which holds about 5 MB per origin.
 const MAX_THEME_TOTAL_BYTES = 2 * 1024 * 1024;
 

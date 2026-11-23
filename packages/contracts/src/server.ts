@@ -642,6 +642,26 @@ const EnvironmentThemeColors = Schema.Record(
 );
 
 export const THEME_CSS_MAX_LENGTH = 100_000;
+export const THEME_BACKDROP_GLSL_MAX_LENGTH = 64_000;
+
+export const EnvironmentThemeBackdropShader = Schema.Literals(["nimbus"]);
+export type EnvironmentThemeBackdropShader = typeof EnvironmentThemeBackdropShader.Type;
+
+export const EnvironmentThemeBackdrop = Schema.Struct({
+  /** Built-in animated WebGL shader preset. */
+  shader: Schema.optional(EnvironmentThemeBackdropShader),
+  /** Custom GLSL ES 3.00 fragment shader (receives u_time, u_resolution, u_daylight, u_dark). */
+  glsl: Schema.optional(Schema.String.check(Schema.isMaxLength(THEME_BACKDROP_GLSL_MAX_LENGTH))),
+  /** Target frame rate (1-60, default 30). */
+  fps: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(60)),
+  ),
+  /** Surface tint opacity for translucent panes over the backdrop (0-1, default 0.35). */
+  opacity: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(1)),
+  ),
+});
+export type EnvironmentThemeBackdrop = typeof EnvironmentThemeBackdrop.Type;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
@@ -659,6 +679,8 @@ const environmentThemeFields = {
   ),
   /** Custom styles for web and desktop clients. */
   css: Schema.optional(Schema.String.check(Schema.isMaxLength(THEME_CSS_MAX_LENGTH))),
+  /** Optional full-window animated WebGL shader backdrop for web and desktop clients. */
+  backdrop: Schema.optional(EnvironmentThemeBackdrop),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);
