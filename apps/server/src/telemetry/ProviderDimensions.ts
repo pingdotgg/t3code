@@ -25,8 +25,11 @@ export function providerDimensions(
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
-// Absolute, home-relative, or Windows paths, such as a local GGUF file. Directories can name the user.
-const FILE_PATH = /^(?:[/~]|[A-Za-z]:[\\/])|\\/u;
+// Absolute, home, relative, or Windows paths, such as a local GGUF file. Directories can name the user.
+const FILE_PATH = /^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[\\/])|\\/u;
+
+const fileName = (model: string) =>
+  FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
 
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
@@ -43,6 +46,10 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
  * name. Any other id is reported as is.
  */
 export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: string): string {
+  return fileName(catalogSlug(providers, model) ?? model);
+}
+
+function catalogSlug(providers: ReadonlyArray<ServerProvider>, model: string) {
   const leaf = model.slice(model.lastIndexOf("/") + 1);
   const candidates = [model, leaf, leaf.replace(DATED_SNAPSHOT, "")];
   for (const candidate of candidates) {
@@ -57,7 +64,7 @@ export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: stri
     );
     if (match !== undefined) return match.slug;
   }
-  return FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
+  return undefined;
 }
 
 /** The thread fields agent analytics reads. Ids are used for lookups, never reported. */

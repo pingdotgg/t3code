@@ -27,6 +27,7 @@ import {
 
 const providers = [
   { driver: "codex", models: [{ slug: "gpt-6-sol" }] },
+  { driver: "pi", models: [{ slug: "/Users/jane/models/llama.gguf", aliases: ["pi-local"] }] },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   // Antigravity ships models before the bundled manifest lists them.
   {
@@ -338,6 +339,8 @@ describe("provider usage reporting", () => {
     expect(label("/Users/jane/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
     expect(label("~/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
     expect(label("C:\\Users\\jane\\qwen-coder.gguf")).toBe("qwen-coder.gguf");
+    expect(label("../jane/qwen-coder.gguf")).toBe("qwen-coder.gguf");
+    expect(label("pi-local")).toBe("llama.gguf");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
