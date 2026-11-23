@@ -26,9 +26,28 @@ import {
 } from "./ProviderUsageAnalytics.ts";
 
 const providers = [
-  // Codex lists whatever its configured model provider serves, including private deployments.
-  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
-  { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
+  // Vendor-routed Codex lists OpenAI's catalog, including early-access code names.
+  {
+    driver: "codex",
+    models: [{ slug: "gpt-6-sol" }, { slug: "gpt-6.2-sol" }, { slug: "nova-alpha" }],
+  },
+  // A custom endpoint serves whatever its owner chose, including private deployments.
+  {
+    instanceId: "azure-codex",
+    driver: "codex",
+    auth: { endpoint: "https://acme.example.com" },
+    models: [{ slug: "acme-azure-deployment" }, { slug: "gpt-acme-finetune" }],
+  },
+  {
+    driver: "claudeAgent",
+    models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }, { slug: "claude-opus-6" }],
+  },
+  {
+    instanceId: "claude-gateway",
+    driver: "claudeAgent",
+    auth: { type: "customEndpoint" },
+    models: [{ slug: "claude-ops-internal" }],
+  },
   { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
   // Antigravity ships models before the bundled manifest lists them.
   {
@@ -39,10 +58,21 @@ const providers = [
     ],
   },
 ].map(
-  ({ driver, models }) =>
+  ({
+    instanceId,
+    driver,
+    auth,
+    models,
+  }: {
+    instanceId?: string;
+    driver: string;
+    auth?: Record<string, string>;
+    models: ReadonlyArray<{ slug: string; aliases?: ReadonlyArray<string> }>;
+  }) =>
     ({
-      instanceId: ProviderInstanceId.make(driver),
+      instanceId: ProviderInstanceId.make(instanceId ?? driver),
       driver,
+      auth: { status: "authenticated", ...auth },
       models: models.map((model) => ({ ...model, isCustom: false })),
     }) as unknown as ServerProvider,
 );
@@ -113,7 +143,10 @@ describe("provider usage reporting", () => {
           Layer.mergeAll(
             Layer.mock(AnalyticsService.AnalyticsService)({
               record: (event, properties) =>
-                Effect.sync(() => void recorded.push([event, properties])),
+                Effect.sync(() => {
+                  recorded.push([event, properties]);
+                  return true;
+                }),
             }),
             Layer.mock(ProviderRegistry.ProviderRegistry)({
               getProviders: Effect.succeed(providers),
@@ -333,10 +366,20 @@ describe("provider usage reporting", () => {
     expect(routed("ollama/acme-internal", "secret-variant")).not.toHaveProperty("effort");
   });
 
-  it("reports Antigravity catalog models the bundled manifest does not list", () => {
+  it("reports vendor catalog models the bundled manifest does not list", () => {
     expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
     expect(label("antigravity-default")).toBe("gemini-4-neon");
     expect(label("gemini-4-unlisted")).toBeUndefined();
+    expect(label("gpt-6.2-sol")).toBe("gpt-6.2-sol");
+    expect(label("claude-opus-6")).toBe("claude-opus-6");
+    for (const hidden of [
+      "nova-alpha",
+      "acme-azure-deployment",
+      "gpt-acme-finetune",
+      "claude-ops-internal",
+    ]) {
+      expect(label(hidden)).toBeUndefined();
+    }
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

@@ -114,10 +114,11 @@ export function resolveChatCanvasModel({
     rtl && preview && preview.position !== null && container.width > 0 && container.height > 0
       ? resolvePreviewMiniPlayerFrame({ ...preview, container }).width
       : null;
-  const mirrorPreview = (width: number) =>
+  const mirrorPreview = (width: number, lockWidth = false) =>
     preview && preview.position !== null
       ? {
           ...preview,
+          ...(lockWidth ? { width } : {}),
           position: {
             x: mirrorX(preview.position.x, width),
             y: preview.position.y,
@@ -176,7 +177,7 @@ export function resolveChatCanvasModel({
   ) {
     logicalLayout = resolveChatCanvasLayout({
       container,
-      preview: mirrorPreview(logicalLayout.frame.width),
+      preview: mirrorPreview(logicalLayout.frame.width, true),
       padding: measurements.padding,
       maxChatWidth: measurements.maxChatWidth,
       minChatWidth: measurements.minChatWidth,

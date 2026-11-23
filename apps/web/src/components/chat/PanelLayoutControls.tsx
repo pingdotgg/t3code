@@ -181,13 +181,13 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   );
 });
 
-/** The thread panel toggle on a header whose right side the inline right panel covers. */
+/** The thread panel toggle on a header whose inline-end side the inline right panel covers. */
 export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   return (
     <div
       className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
+        "absolute top-[var(--workspace-controls-top)] end-[var(--workspace-thread-header-end)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -219,8 +219,12 @@ export function WorkspaceTitlebarControls(props: {
     const timing = panel?.getAnimations()[0]?.effect?.getTiming();
     if (!toggle || !panel || !timing) return;
     // The header's toggle was just removed, so slide this one in from where it sat.
-    const headerRight = panel.getBoundingClientRect().left - THREAD_PANEL_HEADER_INSET_PX;
-    const offset = headerRight - toggle.getBoundingClientRect().right;
+    const isRtl = getComputedStyle(toggle).direction === "rtl";
+    const panelRect = panel.getBoundingClientRect();
+    const toggleRect = toggle.getBoundingClientRect();
+    const offset = isRtl
+      ? panelRect.right + THREAD_PANEL_HEADER_INSET_PX - toggleRect.left
+      : panelRect.left - THREAD_PANEL_HEADER_INSET_PX - toggleRect.right;
     const animation = toggle.animate(
       [{ transform: `translateX(${offset}px)` }, { transform: "none" }],
       { ...timing, easing: getComputedStyle(panel).transitionTimingFunction },

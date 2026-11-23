@@ -71,6 +71,23 @@ describe("chat canvas model", () => {
     expect(model.detailsCardMode).toBe("popover");
   });
 
+  it("preserves physical preview x in RTL when composer lift narrows the preview width", () => {
+    const model = resolveChatCanvasModel({
+      measurements: { ...measurements(1600, 900), composerHeight: 650, rtl: true },
+      detailsCardMeasurement: null,
+      threadRef,
+      preview: {
+        key: "browser:one",
+        width: 600,
+        position: { x: 300, y: 12 },
+        source: { width: 1600, height: 900 },
+        lastInteraction: "resize",
+      },
+      detailsCardInlineOpen: false,
+    });
+    expect(model.layout.frame?.x).toBe(300);
+  });
+
   it("ignores a details card measured for another thread", () => {
     const model = resolveChatCanvasModel({
       measurements: measurements(1100, 300),
