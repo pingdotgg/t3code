@@ -15,7 +15,7 @@ sources:
     resource: ../AGENTS.md#pull-requests
     title: Fork merge and local desktop installation workflow
   - id: local-signing-policy
-    resource: ../docs/operations/development.md#local-macos-signing
+    resource: ../docs/operations/00_development.md#local-macos-signing
     title: Private macOS build and permission migration procedure
   - id: local-signing-implementation
     resource: ../scripts/sign-local-macos.ts
@@ -37,7 +37,7 @@ the same bundle ID can overwrite each other's grants.[^local-signing-policy]
 The daily-driver app in `/Applications` links to the signed build from the
 primary checkout. Fast-forward that checkout to the merged fork PR before
 building so the installed app can be reproduced from fork `main`.[^fork-install-policy]
-Use the [local build procedure](../docs/operations/development.md#local-macos-signing). Local signing
+Use the [local build procedure](../docs/operations/00_development.md#local-macos-signing). Local signing
 fails closed and does not change release signing, notarization, passkey provisioning,
 system trust, or the running installation. The private key is imported only into a
 temporary keychain; a native test verifies that changed app contents retain the same

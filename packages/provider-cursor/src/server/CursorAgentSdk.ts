@@ -9,6 +9,7 @@ import type {
   SendOptions,
   SteerAckOutcome,
 } from "@cursor/sdk";
+import * as NodeAsyncHooks from "node:async_hooks";
 import {
   NonNegativeInt,
   type OrchestrationV2ProviderSession,
@@ -18,10 +19,12 @@ import {
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 
 import * as CursorSdk from "./CursorSdk.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -104,6 +107,8 @@ export interface CursorAgentSdkSendInput<Error> {
    * ends, which is often long after the run.
    */
   readonly onBackgroundShell?: (event: CursorBackgroundShellEvent) => Effect.Effect<void>;
+  /** Runs as the SDK enters each slow step of preparing the run, before the run starts. */
+  readonly onStartupPhase?: (phase: string) => Effect.Effect<void>;
 }
 
 interface CursorBackgroundShellRef {
@@ -165,7 +170,17 @@ export interface CursorAgentSdkSession {
    * The open agent keeps its old conversation in memory, so reopen it before the next send.
    */
   readonly rewindAfterRun?: (runId: string) => Effect.Effect<void, CursorAgentSdkRunnerError>;
+  /** False once an out-of-process worker has terminated or started closing; absent on in-process sessions. */
+  readonly isAlive?: () => boolean;
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
+}
+
+export interface CursorAgentSdkTextGenerateInput {
+  readonly prompt: string;
+  readonly apiKey: string;
+  readonly model: NonNullable<AgentOptions["model"]>;
+  readonly cwd: string;
+  readonly stateRoot: string;
 }
 
 export class CursorAgentSdkRunner extends Context.Service<
@@ -175,6 +190,10 @@ export class CursorAgentSdkRunner extends Context.Service<
       input: CursorAgentSdkOpenInput,
     ) => Effect.Effect<CursorAgentSdkSession, CursorAgentSdkRunnerError>;
     readonly assertComplete: Effect.Effect<void, CursorAgentSdkRunnerError>;
+    /** Absent on in-process test doubles; the out-of-process runner provides it. */
+    readonly textGenerate?: (
+      input: CursorAgentSdkTextGenerateInput,
+    ) => Effect.Effect<RunResult, CursorAgentSdkRunnerError>;
   }
 >()("@t3tools/provider-cursor/server/CursorAgentSdk/CursorAgentSdkRunner") {}
 
@@ -414,7 +433,7 @@ export function loggedCursorSendOptions(
   };
 }
 
-function makeCursorAgentSdkProtocolLogger(input: {
+export function makeCursorAgentSdkProtocolLogger(input: {
   readonly nativeEventLogger: ProviderEventLoggers.EventNdjsonLogger | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
@@ -463,6 +482,60 @@ function subscribeShellStreamOutput(listener: (output: CursorShellStreamOutput) 
   };
 }
 
+type CursorLocalStore = NonNullable<NonNullable<AgentOptions["local"]>["store"]>;
+
+interface DisposableCursorLocalStore extends CursorLocalStore {
+  readonly dispose: () => Promise<void>;
+}
+
+function isDisposableCursorLocalStore(value: unknown): value is DisposableCursorLocalStore {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "agents" in value &&
+    "runs" in value &&
+    "checkpoints" in value &&
+    "runEvents" in value &&
+    "dispose" in value &&
+    typeof value.dispose === "function"
+  );
+}
+
+// T3 persists its own event log and never tails SDK run_events; skipping per-delta SQLite
+// run_events writes avoids synchronous BEGIN IMMEDIATE write locks and multi-GB index.db bloat.
+export function withNoopCursorRunEvents(store: CursorLocalStore): CursorLocalStore {
+  if (
+    typeof store !== "object" ||
+    store === null ||
+    typeof store.runEvents?.append !== "function"
+  ) {
+    return store;
+  }
+  let seq = 0;
+  return {
+    agents: store.agents,
+    runs: store.runs,
+    checkpoints: store.checkpoints,
+    runEvents: {
+      append: async (event) => {
+        seq += 1;
+        return {
+          runId: event.runId,
+          seq,
+          offset: String(seq),
+          eventType: event.eventType,
+          payload: event.payload ?? null,
+          payloadRef: event.payloadRef ?? null,
+          idempotencyKey: event.idempotencyKey ?? null,
+          createdAt: 0,
+        };
+      },
+      list: async () => ({ items: [] }),
+      delete: async () => {},
+    },
+  };
+}
+
 interface CursorBackgroundShell {
   readonly conversationId?: unknown;
   readonly command?: unknown;
@@ -478,6 +551,19 @@ interface CursorBackgroundShell {
       }) => void,
     ) => void;
   };
+}
+
+// The SDK names no step while it prepares a run, which can take minutes, so the @cursor/sdk patch
+// calls this hook as it enters each one. The hook is global: async context finds the send.
+const STARTUP_PHASE_HOOK = Symbol.for("@cursor/sdk.startupPhase");
+const startupPhaseListener = new NodeAsyncHooks.AsyncLocalStorage<(phase: string) => void>();
+
+function listeningForStartupPhases<A>(listener: (phase: string) => void, start: () => A): A {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[STARTUP_PHASE_HOOK] ??= (phase: unknown) => {
+    if (typeof phase === "string") startupPhaseListener.getStore()?.(phase);
+  };
+  return startupPhaseListener.run(listener, start);
 }
 
 // The SDK kills an agent's background shells when its run ends and reports their exit to no one.
@@ -548,6 +634,58 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
     },
   );
 
+  // Ref-count one SqliteLocalAgentStore per workspace so concurrent sessions share a single
+  // index.db handle while still disposing handles, page caches, and FDs once the last one closes.
+  interface WorkspaceStoreLease {
+    readonly store: DisposableCursorLocalStore;
+    readonly wrapped: CursorLocalStore;
+    users: number;
+  }
+  const workspaceStores = new Map<string, WorkspaceStoreLease>();
+  const workspaceStoreLock = yield* Semaphore.make(1);
+  const acquireWorkspaceStore = (workspaceRef: string, method: string) =>
+    workspaceStoreLock.withPermits(1)(
+      Effect.suspend(() => {
+        const existing = workspaceStores.get(workspaceRef);
+        if (existing !== undefined) {
+          existing.users += 1;
+          return Effect.succeed(existing);
+        }
+        return Effect.tryPromise({
+          try: async () => {
+            const candidate = await sdk.loadSqlite().SqliteLocalAgentStore.open({ workspaceRef });
+            return isDisposableCursorLocalStore(candidate) ? candidate : undefined;
+          },
+          catch: (cause) => runnerError(cause, method),
+        }).pipe(
+          Effect.map((opened) => {
+            if (opened === undefined) return undefined;
+            const lease: WorkspaceStoreLease = {
+              store: opened,
+              wrapped: withNoopCursorRunEvents(opened),
+              users: 1,
+            };
+            workspaceStores.set(workspaceRef, lease);
+            return lease;
+          }),
+        );
+      }),
+    );
+  const releaseWorkspaceStore = (workspaceRef: string, lease: WorkspaceStoreLease) =>
+    workspaceStoreLock.withPermits(1)(
+      Effect.suspend(() => {
+        lease.users -= 1;
+        if (lease.users > 0) return Effect.void;
+        if (workspaceStores.get(workspaceRef) === lease) {
+          workspaceStores.delete(workspaceRef);
+        }
+        return Effect.tryPromise({
+          try: () => lease.store.dispose(),
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
+      }),
+    );
+
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
       const { Agent, createAgentPlatform } = yield* Effect.try({
@@ -573,59 +711,85 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
       });
 
       // Cursor uses cwd for both execution and store lookup; a moved thread keeps its original store.
-      const storeCwd = input.storeCwd;
-      const storePlatform =
-        input.operation === "resume" &&
-        storeCwd !== undefined &&
-        storeCwd !== input.options.local?.cwd
-          ? yield* Effect.tryPromise({
-              try: () =>
-                createAgentPlatform({
-                  workspaceRef: storeCwd,
-                  ...(input.options.local?.store === undefined
-                    ? {}
-                    : { localStore: input.options.local.store }),
-                }),
-              catch: (cause) => runnerError(cause, "agent.resume"),
-            })
-          : undefined;
-      const agent = yield* Effect.tryPromise({
-        try: () =>
-          input.operation === "create"
-            ? Agent.create(input.options)
-            : storePlatform === undefined
-              ? Agent.resume(input.agentId!, input.options)
-              : storePlatform.resumeAgent(input.agentId!, input.options),
-        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
-      });
-      let shellListener: ((event: CursorBackgroundShellEvent) => void) | undefined;
-
-      yield* log({
-        direction: "incoming",
-        stage: "decoded",
-        payload: {
-          type: "agent.opened",
-          agentId: agent.agentId,
-        },
-      });
-
       const cwd =
         typeof input.options.local?.cwd === "string"
           ? input.options.local.cwd
           : input.options.local?.cwd?.[0];
+      const storeCwd = input.storeCwd;
+      const storeWorkspace =
+        input.operation === "resume" && storeCwd !== undefined ? storeCwd : cwd;
+      const ownedStoreLease =
+        input.options.local?.store === undefined && storeWorkspace !== undefined
+          ? yield* acquireWorkspaceStore(storeWorkspace, `agent.${input.operation}`)
+          : undefined;
+      let storeReleased = false;
+      const disposeOwnedStore =
+        ownedStoreLease === undefined || storeWorkspace === undefined
+          ? Effect.void
+          : Effect.suspend(() => {
+              if (storeReleased) return Effect.void;
+              storeReleased = true;
+              return releaseWorkspaceStore(storeWorkspace, ownedStoreLease);
+            });
+      const effectiveStore =
+        ownedStoreLease === undefined ? input.options.local?.store : ownedStoreLease.wrapped;
+      const effectiveOptions: AgentOptions =
+        effectiveStore === undefined || effectiveStore === input.options.local?.store
+          ? input.options
+          : {
+              ...input.options,
+              local: {
+                ...input.options.local,
+                store: effectiveStore,
+              },
+            };
+
+      const { storePlatform, agent } = yield* Effect.gen(function* () {
+        const resolvedStorePlatform =
+          input.operation === "resume" &&
+          storeCwd !== undefined &&
+          storeCwd !== input.options.local?.cwd
+            ? yield* Effect.tryPromise({
+                try: () =>
+                  createAgentPlatform({
+                    workspaceRef: storeCwd,
+                    ...(effectiveStore === undefined ? {} : { localStore: effectiveStore }),
+                  }),
+                catch: (cause) => runnerError(cause, "agent.resume"),
+              })
+            : undefined;
+        const openedAgent = yield* Effect.tryPromise({
+          try: () =>
+            input.operation === "create"
+              ? Agent.create(effectiveOptions)
+              : resolvedStorePlatform === undefined
+                ? Agent.resume(input.agentId!, effectiveOptions)
+                : resolvedStorePlatform.resumeAgent(input.agentId!, effectiveOptions),
+          catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+        });
+        yield* log({
+          direction: "incoming",
+          stage: "decoded",
+          payload: {
+            type: "agent.opened",
+            agentId: openedAgent.agentId,
+          },
+        });
+        return { storePlatform: resolvedStorePlatform, agent: openedAgent };
+      }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? disposeOwnedStore : Effect.void)));
+      let shellListener: ((event: CursorBackgroundShellEvent) => void) | undefined;
+
       const runOptions = {
         runtime: "local" as const,
         ...(cwd === undefined ? {} : { cwd }),
-        ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
+        ...(effectiveStore === undefined ? {} : { store: effectiveStore }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
       const storeView = async () =>
         storePlatform ??
         (await createAgentPlatform({
           ...(cwd === undefined ? {} : { workspaceRef: cwd }),
-          ...(input.options.local?.store === undefined
-            ? {}
-            : { localStore: input.options.local.store }),
+          ...(effectiveStore === undefined ? {} : { localStore: effectiveStore }),
         }));
 
       return {
@@ -685,26 +849,33 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             return callbackChain;
           };
 
+          const startSdkRun = () => {
+            if (sendInput.summarize === true) return agent.summarize();
+            const options: SendOptions = {
+              ...sendInput.options,
+              onDelta: async ({ update }) => {
+                if (!callbacksReady) {
+                  pendingUpdates.push(update);
+                  return;
+                }
+                await dispatchUpdate(update);
+              },
+            };
+            if (sendInput.resume !== true) return agent.send(sendInput.message, options);
+            if (agent.resume === undefined) {
+              throw new Error("This Cursor SDK agent cannot resume.");
+            }
+            return agent.resume(options);
+          };
+          const onStartupPhase = sendInput.onStartupPhase;
           const startRun = () =>
             Effect.tryPromise({
-              try: () => {
-                if (sendInput.summarize === true) return agent.summarize();
-                const options: SendOptions = {
-                  ...sendInput.options,
-                  onDelta: async ({ update }) => {
-                    if (!callbacksReady) {
-                      pendingUpdates.push(update);
-                      return;
-                    }
-                    await dispatchUpdate(update);
-                  },
-                };
-                if (sendInput.resume !== true) return agent.send(sendInput.message, options);
-                if (agent.resume === undefined) {
-                  throw new Error("This Cursor SDK agent cannot resume.");
-                }
-                return agent.resume(options);
-              },
+              try: () =>
+                onStartupPhase === undefined
+                  ? startSdkRun()
+                  : listeningForStartupPhases((phase) => {
+                      void Effect.runPromiseWith(context)(onStartupPhase(phase));
+                    }, startSdkRun),
               catch: (cause) =>
                 runnerError(cause, sendInput.resume === true ? "run.resume" : "run.start"),
             });
@@ -879,9 +1050,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
                   ? Agent.messages.list(agent.agentId, {
                       runtime: "local",
                       ...(cwd === undefined ? {} : { cwd }),
-                      ...(input.options.local?.store === undefined
-                        ? {}
-                        : { store: input.options.local.store }),
+                      ...(effectiveStore === undefined ? {} : { store: effectiveStore }),
                     })
                   : storePlatform.getAgentMessages(agent.agentId),
               catch: (cause) => runnerError(cause, "agent.messages.list"),
@@ -1010,6 +1179,7 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               catch: (cause) => runnerError(cause, "agent.close"),
             }),
           ),
+          Effect.ensuring(disposeOwnedStore),
         ),
       } satisfies CursorAgentSdkSession;
     }),

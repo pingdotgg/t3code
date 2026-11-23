@@ -307,15 +307,28 @@ describe("AssetAccess", () => {
         "archive.zip",
         "no-extension",
       ]) {
-        for (const directory of [root, outside]) {
+        for (const [directory, draft] of [
+          [root, false],
+          [outside, false],
+          [root, true],
+          [outside, true],
+        ] as const) {
           const filePath = path.join(directory, name);
           yield* fs.writeFileString(filePath, "shared file bytes");
-          const resource = {
-            _tag: "media-file" as const,
-            threadId: ThreadId.make("thread-1"),
-            path: directory === root ? name : filePath,
-            disposition: "attachment" as const,
-          };
+          const requested = directory === root ? name : filePath;
+          const resource = draft
+            ? {
+                _tag: "draft-workspace-file" as const,
+                cwd: root,
+                path: requested,
+                disposition: "attachment" as const,
+              }
+            : {
+                _tag: "media-file" as const,
+                threadId: ThreadId.make("thread-1"),
+                path: requested,
+                disposition: "attachment" as const,
+              };
           const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
           const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
           const separator = suffix.indexOf("/");
@@ -799,6 +812,12 @@ describe("AssetAccess", () => {
         },
         { _tag: "media-file", threadId, path: config.dbPath },
         { _tag: "draft-workspace-file", cwd: config.stateDir, path: "statev2.sqlite" },
+        {
+          _tag: "draft-workspace-file",
+          cwd: config.stateDir,
+          path: "statev2.sqlite",
+          disposition: "attachment",
+        },
       ] as const) {
         const error = yield* issueAssetUrl({ resource }).pipe(Effect.flip);
         expect(error._tag).toBe("AssetWorkspaceAssetNotFoundError");
@@ -1287,8 +1306,16 @@ describe("AssetAccess", () => {
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-revision-" });
       const pages = path.join(root, "pages");
       yield* fileSystem.makeDirectory(pages);
+      // Coarse kernel clocks can stamp two quick same-size writes alike, so each edit gets its own mtime.
+      let editedAt = 1_000;
       const write = (name: string, text: string) =>
-        fileSystem.writeFileString(path.join(pages, name), text);
+        fileSystem
+          .writeFileString(path.join(pages, name), text)
+          .pipe(
+            Effect.andThen(
+              Effect.promise(() => NodeFSP.utimes(path.join(pages, name), ++editedAt, editedAt)),
+            ),
+          );
       yield* write("a.html", '<link rel="stylesheet" href="a.css"><script src="late.js"></script>');
       yield* write("a.css", "body { color: red; }");
       yield* write("b.html", "<h1>b</h1>");

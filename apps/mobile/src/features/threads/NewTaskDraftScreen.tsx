@@ -620,7 +620,7 @@ export function NewTaskDraftScreen(props: {
       !modelSelection ||
       (initialMessageText.length === 0 && draft.attachments.length === 0) ||
       flow.submitting ||
-      (workspaceMode === "worktree" && !selectedBranchName)
+      (workspaceMode === "worktree" && flow.isGitRepo && !selectedBranchName)
     ) {
       return null;
     }
@@ -730,7 +730,8 @@ export function NewTaskDraftScreen(props: {
         ? gt("Wait for the project clone to finish.")
         : flow.submitting
           ? gt("Starting the thread…")
-          : flow.workspaceMode === "worktree" && (!flow.selectedBranchName || !flow.isGitRepoKnown)
+          : flow.workspaceMode === "worktree" &&
+              (!flow.isGitRepoKnown || (flow.isGitRepo && !flow.selectedBranchName))
             ? gt("Choose a base branch before creating a worktree.")
             : null
       : gt("Wait for shared content to finish importing.");
@@ -742,7 +743,9 @@ export function NewTaskDraftScreen(props: {
     void KeyboardController.dismiss({ animated: true });
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
-  const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
+  const openContextPicker = (
+    routeName: "NewTaskBranch" | "NewTaskEnvironment" | "NewTaskRepositories",
+  ) => {
     if (isComposerInteractionLocked) {
       return;
     }
@@ -910,8 +913,11 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
+  const startsNewWorktree = flow.workspaceMode === "worktree";
+  const offersRepositoryChoice =
+    startsNewWorktree && (flow.worktreeRepositoryChoices?.length ?? 0) > 0;
   const workspaceControls = (
-    <View className="flex-row items-center gap-1 px-2">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-2">
       <ComposerInlineControl
         accessibilityHint={
           flow.vcsTerminology.systemName === "Jujutsu"
@@ -923,7 +929,7 @@ export function NewTaskDraftScreen(props: {
               : gt("Switches to the current checkout")
         }
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={isComposerInteractionLocked || !(flow.isGitRepo || flow.tracksGitRepositories)}
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -937,33 +943,56 @@ export function NewTaskDraftScreen(props: {
         showChevron={false}
       />
 
-      <View className="min-w-0 shrink">
-        <ComposerInlineControl
-          accessibilityLabel={
-            flow.vcsTerminology.systemName === "Jujutsu"
-              ? `${flow.workspaceMode === "worktree" ? `Base ${flow.vcsTerminology.refNoun}` : flow.vcsTerminology.refNounTitle}: ${selectedBranchLabel}`
-              : flow.workspaceMode === "worktree"
-                ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
-                : gt("Branch: {branch}", { branch: selectedBranchLabel })
-          }
-          chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
-          icon="arrow.triangle.branch"
-          label={
-            flow.vcsTerminology.systemName === "Jujutsu"
-              ? showBranchLoading
-                ? gt("Loading {refNounPlural}…", {
-                    refNounPlural: flow.vcsTerminology.refNounPlural,
-                  })
+      {offersRepositoryChoice ? (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityHint={gt("Chooses the repositories the new worktree holds")}
+            accessibilityLabel={gt("Repositories in the new worktree: {selection}", {
+              selection: flow.worktreeRepositorySelection.label,
+            })}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder.badge.plus"
+            label={flow.worktreeRepositorySelection.label}
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskRepositories")}
+            {...(flow.worktreeRepositorySelection.needsChoice ? { tone: "warning" as const } : {})}
+          />
+        </View>
+      ) : null}
+      {startsNewWorktree && !flow.isGitRepo ? (
+        <View className="min-h-8 min-w-0 shrink justify-center px-2">
+          <Text className="text-sm text-foreground-muted" numberOfLines={1}>
+            <T>Each repository starts from its own default branch</T>
+          </Text>
+        </View>
+      ) : (
+        <View className="min-w-0 shrink">
+          <ComposerInlineControl
+            accessibilityLabel={
+              flow.vcsTerminology.systemName === "Jujutsu"
+                ? `${startsNewWorktree ? `Base ${flow.vcsTerminology.refNoun}` : flow.vcsTerminology.refNounTitle}: ${selectedBranchLabel}`
+                : startsNewWorktree
+                  ? gt("Base branch: {branch}", { branch: selectedBranchLabel })
+                  : gt("Branch: {branch}", { branch: selectedBranchLabel })
+            }
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked || !flow.isGitRepo}
+            icon="arrow.triangle.branch"
+            label={
+              showBranchLoading
+                ? flow.vcsTerminology.systemName === "Jujutsu"
+                  ? gt("Loading {refNounPlural}…", {
+                      refNounPlural: flow.vcsTerminology.refNounPlural,
+                    })
+                  : gt("Loading branches…")
                 : selectedBranchLabel
-              : showBranchLoading
-                ? gt("Loading branches…")
-                : selectedBranchLabel
-          }
-          maxWidth="100%"
-          onPress={() => openContextPicker("NewTaskBranch")}
-        />
-      </View>
+            }
+            maxWidth="100%"
+            onPress={() => openContextPicker("NewTaskBranch")}
+          />
+        </View>
+      )}
     </View>
   );
 

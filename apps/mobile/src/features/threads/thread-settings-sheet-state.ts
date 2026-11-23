@@ -1,5 +1,5 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import { scoreSearchFields } from "@t3tools/shared/searchRanking";
+import { SEARCH_FAVORITE_SCORE_BOOST, scoreSearchFields } from "@t3tools/shared/searchRanking";
 import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
@@ -33,6 +33,42 @@ export function scoreModelCatalogQuery(input: {
     ],
     input.query,
   );
+}
+
+export function visibleCatalogModels(input: {
+  readonly models: ReadonlyArray<ModelOption>;
+  readonly providerLabel: string;
+  readonly query: string;
+  readonly favoriteKeys: ReadonlySet<string>;
+  readonly favoritesOnly: boolean;
+  readonly showLegacy: boolean;
+  readonly isDisplayed: (model: ModelOption) => boolean;
+}): ReadonlyArray<ModelOption> {
+  const catalogModels =
+    input.showLegacy || input.favoritesOnly || input.query.trim().length > 0
+      ? input.models
+      : input.models.filter(
+          (model) =>
+            !model.isLegacy || input.isDisplayed(model) || input.favoriteKeys.has(model.key),
+        );
+  const favoriteOrderedModels = favoritesFirst(
+    catalogModels.filter((model) => !input.favoritesOnly || input.favoriteKeys.has(model.key)),
+    input.favoriteKeys,
+  );
+  return favoriteOrderedModels
+    .flatMap((model, index) => {
+      const score = scoreModelCatalogQuery({
+        model,
+        providerLabel: input.providerLabel,
+        query: input.query,
+      });
+      if (score === null) return [];
+      const boost =
+        input.query.trim() && input.favoriteKeys.has(model.key) ? SEARCH_FAVORITE_SCORE_BOOST : 0;
+      return [{ model, index, score: score - boost }];
+    })
+    .sort((left, right) => left.score - right.score || left.index - right.index)
+    .map(({ model }) => model);
 }
 
 export function pendingModelAfterPress(input: {

@@ -103,6 +103,8 @@ export type ThreadGitMenuProps = {
   readonly threadId: ThreadId | string;
   readonly currentBranch: string | null;
   readonly hasThread?: boolean;
+  /** The project tracks repositories besides its folder, which then need not be one itself. */
+  readonly tracksRepositories?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
@@ -340,6 +342,8 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
   const model = useThreadGitControlModel(props);
   const gt = useGT();
   const messages = useMessages();
+  // A plain folder that tracks repositories has no branch of its own; its turns still have diffs.
+  const repositoriesOnly = !model.isRepo && props.tracksRepositories === true;
   return {
     title:
       model.vcsTerminology.systemName === "Jujutsu"
@@ -348,37 +352,55 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
     icon: "point.topleft.down.curvedto.point.bottomright.up",
     separateBackground: false,
     items: [
-      {
-        id: "git-status",
-        title: compactMenuBranchLabel(model.currentBranchLabel),
-        icon: "point.topleft.down.curvedto.point.bottomright.up",
-        disabled: true,
-        subtitle: compactMenuStatus(props.gitStatus, messages),
-        onPress: () => {},
-      },
-      {
-        id: "git-quick-action",
-        title: model.quickAction.label,
-        icon: model.quickActionIcon,
-        disabled: model.quickAction.disabled,
-        subtitle: model.quickActionHint ?? undefined,
-        onPress: () => {
-          void model.runQuickAction();
-        },
-      },
+      ...(repositoriesOnly
+        ? // A worktree thread of such a folder still has a branch: its repositories are on it.
+          props.currentBranch === null
+          ? []
+          : [
+              {
+                id: "git-status",
+                title: compactMenuBranchLabel(props.currentBranch),
+                icon: "point.topleft.down.curvedto.point.bottomright.up",
+                disabled: true,
+                subtitle: gt("Repository worktrees"),
+                onPress: () => {},
+              },
+            ]
+        : [
+            {
+              id: "git-status",
+              title: compactMenuBranchLabel(model.currentBranchLabel),
+              icon: "point.topleft.down.curvedto.point.bottomright.up",
+              disabled: true,
+              subtitle: compactMenuStatus(props.gitStatus, messages),
+              onPress: () => {},
+            },
+            {
+              id: "git-quick-action",
+              title: model.quickAction.label,
+              icon: model.quickActionIcon,
+              disabled: model.quickAction.disabled,
+              subtitle: model.quickActionHint ?? undefined,
+              onPress: () => {
+                void model.runQuickAction();
+              },
+            },
+          ]),
       {
         id: "git-review",
         title: gt("Review changes"),
         icon: "text.bubble",
-        disabled: !model.isRepo || props.hasThread === false,
+        disabled: !(model.isRepo || repositoriesOnly) || props.hasThread === false,
         subtitle:
           props.hasThread === false
             ? gt("Available after the first message")
-            : model.vcsTerminology.systemName === "Jujutsu"
-              ? gt("Turn diffs and {workspaceNoun} changes", {
-                  workspaceNoun: model.vcsTerminology.workspaceNoun,
-                })
-              : gt("Turn diffs and worktree changes"),
+            : repositoriesOnly
+              ? gt("Turn diffs")
+              : model.vcsTerminology.systemName === "Jujutsu"
+                ? gt("Turn diffs and {workspaceNoun} changes", {
+                    workspaceNoun: model.vcsTerminology.workspaceNoun,
+                  })
+                : gt("Turn diffs and worktree changes"),
         onPress: model.openReview,
       },
       ...(props.onMergeBack
@@ -400,11 +422,15 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         subtitle:
           props.hasThread === false
             ? gt("Available after the first message")
-            : model.vcsTerminology.systemName === "Jujutsu"
-              ? gt("Commit, files, {refNounPlural}", {
-                  refNounPlural: model.vcsTerminology.refNounPlural,
-                })
-              : gt("Commit, files, branches"),
+            : repositoriesOnly
+              ? gt("Repositories")
+              : props.tracksRepositories === true
+                ? gt("Commit, branches, repositories")
+                : model.vcsTerminology.systemName === "Jujutsu"
+                  ? gt("Commit, files, {refNounPlural}", {
+                      refNounPlural: model.vcsTerminology.refNounPlural,
+                    })
+                  : gt("Commit, files, branches"),
         onPress: model.openGitInspector,
       },
     ],

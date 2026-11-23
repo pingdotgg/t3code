@@ -77,6 +77,7 @@ describeJj("JjCheckpoints capture", () => {
               fileStats: [],
             }),
         });
+        assert.isNull(yield* checkpoints.resolveCleanHead(context.root));
         yield* checkpoints.captureCheckpoint({ cwd: context.root, checkpointRef: baselineRef });
         const publish = commands.find((command) => command.args.includes("update-ref"));
         assert.isTrue(publish?.args.includes("core.fsync=objects,reference"));

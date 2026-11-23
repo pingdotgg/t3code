@@ -111,6 +111,20 @@ describe("the folded web behaviour", () => {
     );
   });
 
+  it.each([true, false])(
+    "pushes existing commits from a clean default branch (has upstream: %s)",
+    (hasUpstream) => {
+      assert.containSubset(
+        resolveQuickAction(
+          status({ refName: "main", isDefaultRef: true, hasUpstream, aheadCount: 1 }),
+          false,
+          true,
+        ),
+        { disabled: false, kind: "run_action", action: "push" },
+      );
+    },
+  );
+
   it("keeps push available while the working tree is dirty", () => {
     const items = buildMenuItems(status({ hasWorkingTreeChanges: true, aheadCount: 1 }), false);
     assert.isFalse(items.find((item) => item.id === "push")?.disabled);

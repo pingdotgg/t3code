@@ -9,6 +9,7 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
   resolveNewTaskWorkspaceLabel,
+  resolveNewTaskWorkspaceSelection,
 } from "./new-task-context-presentation";
 
 describe("new task VCS nouns", () => {
@@ -27,6 +28,76 @@ describe("new task VCS nouns", () => {
         terminology: JJ_VCS_TERMINOLOGY,
       }),
     ).toBe("Current workspace");
+  });
+});
+
+describe("resolveNewTaskWorkspaceSelection", () => {
+  const fallback = { mode: "worktree", branch: null, worktreePath: null } as const;
+
+  it("falls back to the current checkout when a non-git project defaults to worktree", () => {
+    expect(
+      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: false }),
+    ).toEqual({ mode: "local", branch: null, worktreePath: null });
+  });
+
+  it.each(["local", "worktree"] as const)(
+    "clears stale %s selections for non-git projects",
+    (mode) => {
+      expect(
+        resolveNewTaskWorkspaceSelection({
+          selection: {
+            mode,
+            branch: "main",
+            worktreePath: "/old-worktree",
+            startFromOrigin: true,
+            pullRequestReference: "https://github.com/acme/repo/pull/123",
+          },
+          fallback,
+          isGitRepo: false,
+        }),
+      ).toEqual({ mode: "local", branch: null, worktreePath: null });
+    },
+  );
+
+  it("keeps a worktree of tracked repositories for a non-git project folder", () => {
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        selection: {
+          mode: "worktree",
+          branch: "main",
+          worktreePath: null,
+          startFromOrigin: true,
+          repositories: ["/workspace/api"],
+        },
+        fallback,
+        isGitRepo: false,
+        tracksGitRepositories: true,
+      }),
+    ).toEqual({
+      mode: "worktree",
+      branch: null,
+      worktreePath: null,
+      repositories: ["/workspace/api"],
+    });
+    expect(
+      resolveNewTaskWorkspaceSelection({
+        selection: undefined,
+        fallback,
+        isGitRepo: false,
+        tracksGitRepositories: true,
+      }),
+    ).toEqual(fallback);
+  });
+
+  // regression: #21404 use current checkout for non-git projects
+  it("preserves the selection and defaults for git projects", () => {
+    const selection = { mode: "local", branch: "feature", worktreePath: "/worktree" } as const;
+    expect(resolveNewTaskWorkspaceSelection({ selection, fallback, isGitRepo: true })).toBe(
+      selection,
+    );
+    expect(
+      resolveNewTaskWorkspaceSelection({ selection: undefined, fallback, isGitRepo: true }),
+    ).toBe(fallback);
   });
 });
 
