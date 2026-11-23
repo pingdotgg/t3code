@@ -380,18 +380,52 @@ pub fn with_custom_model_added(instance: &InstanceConfig, slug: &str) -> Instanc
     with_raw_custom_models(instance, entries)
 }
 
+fn raw_entry_slug(entry: &Value) -> &str {
+    match entry {
+        Value::String(s) => s.trim(),
+        Value::Object(map) => map
+            .get("slug")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim(),
+        _ => "",
+    }
+}
+
 /// The instance without the custom model `slug`.
 #[must_use]
 pub fn with_custom_model_removed(instance: &InstanceConfig, slug: &str) -> InstanceConfig {
     let entries = raw_custom_models(instance)
         .into_iter()
-        .filter(|entry| {
-            let entry_slug = match entry {
-                Value::String(s) => s.trim(),
-                Value::Object(map) => map.get("slug").and_then(Value::as_str).unwrap_or_default(),
-                _ => "",
-            };
-            entry_slug.trim() != slug
+        .filter(|entry| raw_entry_slug(entry) != slug)
+        .collect();
+    with_raw_custom_models(instance, entries)
+}
+
+/// The custom model `slug` as the instance stores it: a slug, or `{ slug, name, capabilities }`.
+#[must_use]
+pub fn custom_model_raw(instance: &InstanceConfig, slug: &str) -> Option<Value> {
+    raw_custom_models(instance)
+        .into_iter()
+        .find(|entry| raw_entry_slug(entry) == slug)
+}
+
+/// The instance with the custom model `slug` replaced by `entry` (`handleSaveEdit`). Every
+/// other entry stays as written.
+#[must_use]
+pub fn with_custom_model_replaced(
+    instance: &InstanceConfig,
+    slug: &str,
+    entry: Value,
+) -> InstanceConfig {
+    let entries = raw_custom_models(instance)
+        .into_iter()
+        .map(|existing| {
+            if raw_entry_slug(&existing) == slug {
+                entry.clone()
+            } else {
+                existing
+            }
         })
         .collect();
     with_raw_custom_models(instance, entries)
@@ -544,5 +578,15 @@ mod tests {
         let removed = with_custom_model_removed(&added, "y");
         let raw = removed.config.expect("config")["customModels"].clone();
         assert_eq!(raw, json!(["x", "x", " ", "z"]));
+
+        assert_eq!(custom_model_raw(&instance, "y").expect("y")["name"], "Why");
+        assert_eq!(custom_model_raw(&instance, "nope"), None);
+        let renamed =
+            with_custom_model_replaced(&added, "y", json!({ "slug": "y", "name": "Wye" }));
+        assert_eq!(
+            renamed.config.expect("config")["customModels"],
+            json!(["x", { "slug": "y", "name": "Wye" }, "x", " ", "z"]),
+            "only the edited entry changes"
+        );
     }
 }

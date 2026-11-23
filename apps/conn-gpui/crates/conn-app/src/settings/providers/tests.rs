@@ -187,3 +187,47 @@ fn the_projects_page_counts_each_projects_overrides(cx: &mut TestAppContext) {
     assert!(has(cx, window, "Conn: 1 provider set for this project."));
     assert!(has(cx, window, "Conn: Uses the device's providers."));
 }
+
+#[gpui_kit::test]
+fn a_custom_model_opens_its_editor_and_takes_options(cx: &mut TestAppContext) {
+    let (window, view) = mount(cx);
+    cx.update(|cx| {
+        view.update(cx, |view, cx| {
+            view.set_server_config(config(), cx);
+            view.focus_provider("codex".to_owned(), cx);
+        });
+    });
+    assert!(
+        has(cx, window, "Edit my-model"),
+        "a custom row has a pencil"
+    );
+    assert!(!has(cx, window, "Add custom option"), "closed until asked");
+
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.toggle_custom_edit("codex", "my-model", window, cx);
+            view.edit_custom(|d| d.add_preset("reasoningEffort"), window, cx);
+        });
+    })
+    .expect("window");
+    assert!(has(cx, window, "Add custom option"));
+    assert!(
+        has(cx, window, "Add option Speed"),
+        "an option already added is not offered again"
+    );
+    assert!(!has(cx, window, "Add option Reasoning"));
+    assert!(has(cx, window, "Option 1 type Choices"));
+    assert!(has(cx, window, "Add choice to option 1"));
+
+    cx.update_window(window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.edit_custom(|d| d.add_custom_option(), window, cx);
+            view.save_custom_edit(cx);
+        });
+    })
+    .expect("window");
+    assert!(
+        has(cx, window, "Option 2 needs an id."),
+        "a blank option blocks the save and names itself"
+    );
+}

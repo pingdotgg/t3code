@@ -95,6 +95,8 @@ pub(crate) struct ProvidersView {
     project_scope: Option<(String, String)>,
     /// The last `Check` of each secret reference, by slot.
     secret_checks: std::collections::HashMap<String, editor::SecretCheck>,
+    /// The custom model whose editor is open.
+    custom_edit: Option<models::CustomEdit>,
 }
 
 impl ProvidersView {
@@ -135,6 +137,7 @@ impl ProvidersView {
             confirm_remove: None,
             project_scope: None,
             secret_checks: std::collections::HashMap::new(),
+            custom_edit: None,
         }
     }
 
