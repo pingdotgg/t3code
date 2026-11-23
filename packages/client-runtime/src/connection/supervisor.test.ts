@@ -1230,6 +1230,34 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("closes the session while suspended and reconnects when the app returns", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-suspended");
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+
+      // Nothing but the app returning ends the suspension.
+      yield* harness.setNetworkStatus("offline");
+      yield* harness.setNetworkStatus("online");
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("1 minute");
+      expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+
+      yield* harness.wake("application-active-long");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("restarts the retry ladder when a long resume interrupts connection setup", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

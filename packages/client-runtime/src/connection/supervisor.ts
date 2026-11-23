@@ -83,6 +83,7 @@ const BETTER_ROUTE_COOLDOWN_MS = 300_000;
 interface SupervisorIntent {
   readonly desired: boolean;
   readonly network: NetworkStatus;
+  readonly suspended: boolean;
 }
 
 type SupervisorSignal =
@@ -308,6 +309,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const initialIntent: SupervisorIntent = {
     desired: options?.initiallyDesired ?? false,
     network: targetNetwork(yield* connectivity.status),
+    suspended: false,
   };
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
@@ -678,6 +680,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             yield* logManagedRelayAccountChange;
             return false;
           }
+          if (next.reason === "application-suspended") {
+            return false;
+          }
           break;
       }
     }
@@ -690,7 +695,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     next: SupervisorSignal,
     lease: ConnectionDriver.EnvironmentConnectionLease,
   ) {
-    if (next._tag === "DisconnectRequested") {
+    if (
+      next._tag === "DisconnectRequested" ||
+      (next._tag === "Wakeup" && next.reason === "application-suspended")
+    ) {
       return "end" as const;
     }
     if (next._tag === "BetterRouteAvailable") {
@@ -1064,7 +1072,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
     }
     const currentIntent = yield* Ref.get(intent);
-    if (!currentIntent.desired || (currentIntent.network === "offline" && !ignoreOffline)) {
+    if (
+      !currentIntent.desired ||
+      currentIntent.suspended ||
+      (currentIntent.network === "offline" && !ignoreOffline)
+    ) {
       return {
         _tag: "Interrupted",
         established: false,
@@ -1214,6 +1226,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         yield* clearLease;
         yield* setState(availableState(currentIntent, generation));
         yield* waitForSignal;
+        continue;
+      }
+      if (currentIntent.suspended) {
+        resetRetryLadder();
+        yield* clearLease;
+        yield* setState(offlineState(currentIntent, generation, 0, latestFailure));
+        // Returning to the app clears the suspension and reconnects at once.
+        if (yield* waitForSignal) replacing = true;
         continue;
       }
       // The platform's offline report can stay wrong after the network is back,
@@ -1389,6 +1409,13 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           : Effect.void,
       ),
     );
+  const setSuspended = (reason: ConnectionWakeups.ConnectionWakeup) =>
+    reason === "application-suspended" || ConnectionWakeups.isApplicationActiveWakeup(reason)
+      ? Ref.update(intent, (current) => ({
+          ...current,
+          suspended: reason === "application-suspended",
+        }))
+      : Effect.void;
   // A restarted listener may have missed changes while it was down.
   yield* keepRunning(
     "network-listener",
@@ -1404,7 +1431,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         (reason === "network-changed" || reason === "application-active-long"
           ? forgetSilentRoutes
           : Effect.void
-        ).pipe(Effect.andThen(signal({ _tag: "Wakeup", reason }))),
+        ).pipe(
+          Effect.andThen(setSuspended(reason)),
+          Effect.andThen(signal({ _tag: "Wakeup", reason })),
+        ),
       ),
     ),
   );

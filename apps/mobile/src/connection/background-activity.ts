@@ -113,9 +113,9 @@ export const layerReporter = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
-      Effect.forkScoped,
-    );
+    // In the background the app change already reported it, and its connections close soon.
+    yield* Effect.sync(() => {
+      if (appState !== "background") requestReport();
+    }).pipe(Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)), Effect.forkScoped);
   }),
 );
