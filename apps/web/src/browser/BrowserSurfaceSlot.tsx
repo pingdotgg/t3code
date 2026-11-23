@@ -145,6 +145,16 @@ function resolveClipPaths(rect: DOMRect, scale: number, ancestors: readonly Clip
   return { webview, above };
 }
 
+interface AboveWebviewWritten {
+  readonly width: number;
+  readonly height: number;
+  readonly transform: string;
+  readonly clipPath: string;
+  readonly inert: boolean;
+}
+
+const aboveWebviewWritten = new WeakMap<HTMLElement, AboveWebviewWritten>();
+
 function placeAboveWebview(
   layer: HTMLElement,
   placement: BrowserSurfacePlacement,
@@ -152,11 +162,15 @@ function placeAboveWebview(
   width: number,
   height: number,
 ) {
-  layer.style.width = `${width}px`;
-  layer.style.height = `${height}px`;
-  layer.style.transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
-  layer.style.clipPath = clipPath;
-  layer.inert = !placement.interactive;
+  const last = aboveWebviewWritten.get(layer);
+  const transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
+  const inert = !placement.interactive;
+  if (last?.width !== width) layer.style.width = `${width}px`;
+  if (last?.height !== height) layer.style.height = `${height}px`;
+  if (last?.transform !== transform) layer.style.transform = transform;
+  if (last?.clipPath !== clipPath) layer.style.clipPath = clipPath;
+  if (last?.inert !== inert) layer.inert = inert;
+  aboveWebviewWritten.set(layer, { width, height, transform, clipPath, inert });
 }
 
 export function BrowserSurfaceSlot(props: {
@@ -194,7 +208,10 @@ export function BrowserSurfaceSlot(props: {
     let placedAboveClip = "";
     // The webview keeps the slot's own size and follows it on screen with a
     // transform, so a pane sliding or zooming never resizes the page.
-    const update = (phase: BrowserSurfaceSlotPhase) => {
+    const update = (
+      phase: BrowserSurfaceSlotPhase,
+      scheduleWrite?: (write: () => void) => void,
+    ) => {
       const rect = element.getBoundingClientRect();
       const width = Math.max(1, element.offsetWidth);
       const height = Math.max(1, element.offsetHeight);
@@ -244,12 +261,19 @@ export function BrowserSurfaceSlot(props: {
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
       const aboveClipChanged = placedAboveClip !== clips.above;
-      if (ownsSurface && (moved || phase !== "frame")) lease.place(next);
-      if (
-        aboveWebviewRef.current &&
-        (moved || aboveClipChanged || presentationChanged || phase !== "frame")
-      ) {
-        placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height);
+      const shouldPlaceWebview = ownsSurface && (moved || phase !== "frame");
+      const shouldPlaceAbove =
+        aboveWebviewRef.current !== null &&
+        (moved || aboveClipChanged || presentationChanged || phase !== "frame");
+      if (shouldPlaceWebview || shouldPlaceAbove) {
+        const apply = () => {
+          if (shouldPlaceWebview) lease.place(next);
+          if (shouldPlaceAbove && aboveWebviewRef.current) {
+            placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height);
+          }
+        };
+        if (scheduleWrite) scheduleWrite(apply);
+        else apply();
       }
       placed = next;
       placedAboveClip = clips.above;
@@ -289,6 +313,11 @@ export function BrowserSurfaceSlot(props: {
     zIndex,
   ]);
 
+  const attachAboveWebview = (node: HTMLDivElement | null) => {
+    aboveWebviewRef.current = node;
+    if (node) updateRef.current?.("start");
+  };
+
   return (
     <>
       <div ref={attachSurface} className={className} data-browser-surface-slot={tabId} />
@@ -296,7 +325,7 @@ export function BrowserSurfaceSlot(props: {
         ? null
         : createPortal(
             <div
-              ref={aboveWebviewRef}
+              ref={attachAboveWebview}
               onPointerDownCapture={(event) => {
                 // Portaled controls claim pane focus through their slot, as guest presses do.
                 const replay = new PointerEvent("pointerdown", {
