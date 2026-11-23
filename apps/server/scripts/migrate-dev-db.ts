@@ -195,12 +195,19 @@ const ensureNotInUse = Effect.fn("ensureDevDbNotInUse")(function* (databasePath:
   }
 });
 
-const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
-  "queued-runs",
-  "runtime",
-  "subagent-results",
-  "delegated-completions",
-];
+// Every kind startup recovery resumes, so a copied family never starts work by itself. The record
+// fails typecheck when a kind is added and not listed here.
+const RECOVERY_KIND_SET = {
+  "queued-runs": true,
+  runtime: true,
+  "restart-continuations": true,
+  "subagent-results": true,
+  "delegated-completions": true,
+  "unread-steers": true,
+} satisfies Record<ProjectionStore.ProjectionRecoveryKind, true>;
+const RECOVERY_KINDS = Object.keys(
+  RECOVERY_KIND_SET,
+) as ReadonlyArray<ProjectionStore.ProjectionRecoveryKind>;
 
 const CLEARED_TABLES: ReadonlyArray<string> = [
   "scheduled_tasks",

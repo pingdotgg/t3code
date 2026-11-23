@@ -102,6 +102,8 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         ["subagent-parent", "project-kept", "completed", "{}", "2026-08-05"],
         ["subagent-child", "project-kept", "completed", subagentPayload, "2026-08-05"],
         ["deleted-project-thread", "project-deleted", "completed", "{}", "2026-08-05"],
+        // Finished, but startup recovery would deliver its unread steer and start a turn.
+        ["steer-thread", "project-kept", "completed", "{}", "2026-08-09"],
       ] as const;
       for (const [threadId, projectId, runStatus, payload, updatedAt] of threads) {
         yield* sql`INSERT INTO orchestration_v2_projection_threads
@@ -114,6 +116,10 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
           (event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at, actor_kind, payload_json, metadata_json, application_event_version)
           VALUES (${`event-${threadId}`}, 'thread', ${threadId}, 0, 'thread.created', '2026-08-01', 'user', '{}', '{}', 2)`;
       }
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('steer-item', 'steer-thread', 'run-steer-thread', 2, 'user_message', 'pending',
+          '2026-08-09', '{"inputIntent":"steer"}')`;
       // A V1 thread the server already imported must not trip the legacy guard.
       yield* sql`INSERT INTO projection_threads
         (thread_id, project_id, title, model_selection_json, runtime_mode, created_at, updated_at)

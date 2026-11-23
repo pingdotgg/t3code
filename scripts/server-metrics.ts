@@ -480,25 +480,74 @@ interface ServerOptions {
   readonly seed?: string;
 }
 
+/** Transcript text: paths there are words in a conversation, which the server never acts on. */
+const TRANSCRIPT_TABLES = new Set([
+  "orchestration_events",
+  "orchestration_v2_events",
+  "orchestration_v2_projection_messages",
+  "orchestration_v2_projection_turn_items",
+  "projection_thread_messages",
+  "projection_thread_activities",
+  "checkpoint_diff_blobs",
+]);
+const TRANSCRIPT_COLUMNS = new Set(["title", "text", "last_error"]);
+
 /**
- * Copies a seeded database into `baseDir` and points every project at a clone of `checkout` under
- * `reposDir`, so the server's git work runs on real-size repositories and never on the developer's.
- * Thread worktrees and task folders would name the developer's directories, so they are dropped.
+ * Copies a seeded database into `directory` and makes it safe to serve: every path under the
+ * developer's home or a project root is moved under `directory/gone`, which does not exist, and
+ * every project points at a clone of `checkout`, so git runs on real-size trees and never on the
+ * developer's. Fails if a real path survives outside transcript text.
  */
 const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
   seed: string,
   baseDir: string,
-  reposDir: string,
+  directory: string,
   checkout: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
   const database = path.join(baseDir, "userdata/statev2.sqlite");
+  const reposDir = path.join(directory, "repos");
+  const gone = path.join(directory, "gone");
   yield* fs.copyFile(path.join(seed, "userdata/statev2.sqlite"), database);
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const projects = yield* sql<{ project_id: string; deleted: number }>`
-      SELECT project_id, deleted_at IS NOT NULL AS deleted FROM projection_projects`;
+    const projects = yield* sql<{ project_id: string; deleted: number; workspace_root: string }>`
+      SELECT project_id, deleted_at IS NOT NULL AS deleted, workspace_root FROM projection_projects`;
+    const home = environment.HOME ?? environment.USERPROFILE;
+    const real = [
+      ...new Set([
+        ...(home ? [`${home.replace(/[\\/]+$/, "")}/`] : []),
+        ...projects.map((project) => project.workspace_root),
+      ]),
+    ].filter((prefix) => prefix.length > 1);
+    // The run's own directory sits under home too, so it is taken out before a value is judged.
+    const mentionsReal = (column: string, prefix: string) =>
+      sql`instr(replace(CAST(${sql(column)} AS TEXT), ${directory}, ''), ${prefix}) > 0`;
+    const columns: Array<{ table: string; column: string }> = [];
+    for (const { name } of yield* sql<{ name: string; virtual: number }>`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND sql NOT LIKE 'CREATE VIRTUAL%'`) {
+      if (TRANSCRIPT_TABLES.has(name) || name.startsWith("sqlite_") || name.includes("search")) {
+        continue;
+      }
+      for (const column of yield* sql<{ name: string; type: string }>`
+        SELECT name, type FROM pragma_table_info(${name})`) {
+        if (/^(TEXT|)$/i.test(column.type) && !TRANSCRIPT_COLUMNS.has(column.name)) {
+          columns.push({ table: name, column: column.name });
+        }
+      }
+    }
+    // Every occurrence, mid-string too: a prompt or preview inside state JSON can name a path.
+    // Longer prefixes first, so a project root is not cut by the home prefix inside it.
+    const longestFirst = real.toSorted((a, b) => b.length - a.length);
+    for (const { table, column } of columns) {
+      for (const [index, prefix] of longestFirst.entries()) {
+        const moved = prefix.endsWith("/") ? `${gone}/` : `${gone}/root-${index}`;
+        yield* sql`UPDATE ${sql(table)} SET ${sql(column)} = replace(${sql(column)}, ${prefix}, ${moved})
+          WHERE instr(${sql(column)}, ${prefix}) > 0`;
+      }
+    }
     const roots: string[] = [];
     yield* Effect.forEach(
       projects,
@@ -514,6 +563,7 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
         }),
       { concurrency: 4, discard: true },
     );
+    yield* sql`UPDATE projection_projects SET tracked_folders_json = '[]', favicon_path = NULL`;
     yield* sql`UPDATE orchestration_v2_projection_threads
       SET payload_json = json_set(payload_json, '$.worktreePath', json('null'))
       WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL`;
@@ -530,7 +580,22 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
         yield* sql`DELETE FROM ${sql(table)}`;
       }
     }
-    return roots;
+    const left: string[] = [];
+    for (const { table, column } of columns) {
+      for (const prefix of real) {
+        const [found] = yield* sql<{ n: number }>`
+          SELECT COUNT(*) AS n FROM ${sql(table)} WHERE ${mentionsReal(column, prefix)}`;
+        if (Number(found?.n ?? 0) > 0) left.push(`${table}.${column}`);
+      }
+    }
+    if (left.length > 0) {
+      return yield* new MetricsError({
+        message: `the seed still names real paths in ${[...new Set(left)].join(", ")}`,
+      });
+    }
+    const [runs] = yield* sql<{ n: number }>`
+      SELECT COUNT(*) AS n FROM orchestration_v2_projection_runs`;
+    return { roots, runs: Number(runs?.n ?? 0) };
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: database })));
 });
 
@@ -603,15 +668,11 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   const baseDir = path.join(directory, "base");
   // Branch names come from Claude too, so a worktree launch's naming call reaches the fake API.
   yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
-  const roots =
+  const seeded =
     options.seed === undefined
-      ? []
-      : yield* seedBaseDir(
-          options.seed,
-          baseDir,
-          path.join(directory, "repos"),
-          environment.checkout,
-        );
+      ? undefined
+      : yield* seedBaseDir(options.seed, baseDir, directory, environment.checkout);
+  const roots = seeded?.roots ?? [];
   yield* fs.writeFileString(
     path.join(baseDir, "userdata/settings.json"),
     encodeJson({ textGenerationModelSelection: { instanceId: "claudeAgent", model: MODEL } }),
@@ -775,9 +836,35 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   return {
     readyMs,
+    startedAt: started,
     origin: `http://127.0.0.1:${port}`,
     /** The seeded projects' clones; none without a seed. */
     roots,
+    /**
+     * Fails if the server started a run or called the agent API on its own since `since`: a seeded
+     * server must never resume the developer's work.
+     */
+    assertIdle: Effect.fn("serverMetrics.assertIdle")(function* (since: number) {
+      const called = environment.requests.some((request) => request.at >= since);
+      const runs = yield* Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const [row] = yield* sql<{ n: number }>`
+          SELECT COUNT(*) AS n FROM orchestration_v2_projection_runs`;
+        return Number(row?.n ?? 0);
+      }).pipe(
+        Effect.provide(
+          NodeSqliteClient.layer({
+            filename: path.join(baseDir, "userdata/statev2.sqlite"),
+            readonly: true,
+          }),
+        ),
+      );
+      if (called || runs !== (seeded?.runs ?? runs)) {
+        return yield* new MetricsError({
+          message: `the seeded server started work on its own (${runs - (seeded?.runs ?? 0)} new runs, API ${called ? "called" : "idle"})`,
+        });
+      }
+    }),
     measure,
     profile: devtools.profile,
     snapshot: devtools.snapshot,
@@ -1074,6 +1161,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           yield* server.ballast(options.ballastMB);
           yield* Effect.sleep(Duration.seconds(30));
           const rest = yield* server.measure(30);
+          yield* server.assertIdle(server.startedAt);
           const shell = yield* loadShell(server, 5);
           const traffic = yield* gitTraffic(server);
           // The traffic only ends by failing, which then fails the window instead of thinning it.
