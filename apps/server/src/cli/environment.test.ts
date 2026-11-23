@@ -63,6 +63,23 @@ it.effect("links a file of environments, reports each line, and fails when one d
       const link = (from: string) =>
         runCli(["environment", "link", "--from", from, "--access", "auto", "--base-dir", baseDir]);
 
+      const conflict = yield* runCli([
+        "environment",
+        "link",
+        "--from",
+        file,
+        "--url",
+        "http://ignored.invalid",
+        "--access",
+        "auto",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+      expect(conflict).toMatchObject({
+        _tag: "EnvironmentLinkUsageError",
+        detail: "--from takes its addresses and pairing codes from the file.",
+      });
+
       const failed = yield* link(file).pipe(Effect.flip);
       expect(failed).toMatchObject({ _tag: "EnvironmentLinkBatchError", failed: 1, total: 3 });
       const report = (yield* reports).at(-1) ?? "";
