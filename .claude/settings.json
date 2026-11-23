@@ -14,5 +14,6 @@
       "Bash(openssl rsa:*)",
       "Bash(openssl pkcs12:*)"
     ]
-  }
+  },
+  "autoMemoryEnabled": false
 }
