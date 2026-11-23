@@ -44,7 +44,14 @@ const fixture = (
       if (fail) return yield* Effect.die(new Error("upstream failed"));
       return HttpClientResponse.fromWeb(
         request,
-        new Response(stream ?? "frame", { headers: { "set-cookie": "upstream=1" } }),
+        new Response(stream ?? "frame", {
+          headers: {
+            "set-cookie": "upstream=1",
+            "clear-site-data": '"*"',
+            "content-type": "text/html",
+            "content-security-policy": "script-src *",
+          },
+        }),
       );
     }),
   );
@@ -122,6 +129,11 @@ describe("device hub proxy", () => {
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("frame");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("clear-site-data")).toBeNull();
+    // Opened as a page, a hub response gets an opaque origin and no script.
+    expect(response.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(requests).toEqual(["http://hub.test/api/devices"]);
     expect(finalized()).toBe(1);
   });

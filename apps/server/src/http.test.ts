@@ -20,6 +20,7 @@ import { openMediaFile } from "./assets/MediaFile.ts";
 import {
   injectMcpAppCsp,
   injectMcpAppCookieBootstrap,
+  injectMcpAppDocumentBootstrap,
   injectMcpAppThemeBootstrap,
   MCP_APP_MAX_HTML_BYTES,
 } from "@t3tools/shared/mcpApp";
@@ -54,7 +55,9 @@ describe("MCP app asset responses", () => {
               method,
             ),
           );
-          const expected = injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(html));
+          const expected = injectMcpAppDocumentBootstrap(
+            injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(html)),
+          );
           expect(response.status).toBe(200);
           expect(response.headers.get("content-length")).toBe(
             String(new TextEncoder().encode(expected).byteLength),
@@ -842,12 +845,21 @@ describe("video asset byte ranges", () => {
 });
 
 describe("assetResponseHeaders", () => {
-  it("sandboxes SVG assets", () => {
+  it("sandboxes SVG and other XML assets", () => {
     expect(assetResponseHeaders("/attachments/user-image.svg")).toMatchObject({
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
       "X-Content-Type-Options": "nosniff",
     });
     expect(assetResponseHeaders("/attachments/user-image.SVG")).toHaveProperty(
+      "Content-Security-Policy",
+    );
+    for (const name of ["page.xhtml", "page.XHT", "feed.xml", "sheet.xsl", "feed.rss"]) {
+      expect(assetResponseHeaders(`/workspace/${name}`)).toHaveProperty(
+        "Content-Security-Policy",
+        "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      );
+    }
+    expect(assetResponseHeaders("/workspace/photo.png")).not.toHaveProperty(
       "Content-Security-Policy",
     );
   });
