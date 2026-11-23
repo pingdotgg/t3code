@@ -1360,6 +1360,7 @@
   "1c79d42e902ff431": "Wiederholen",
   "b1687c7b2b91e569": "{name} öffnen",
   "2ffc366d6a7f88db": "{name} entfernen",
+  "ff43c1538698d479": "Eingefügtes Bild wird vorbereitet",
   "c04cd8ec791956cb": "Die lokale Datei ist nicht verfügbar. Hänge sie erneut an.",
   "68883cb3342998e5": "Verbinde dich erneut mit der Umgebung und versuche es noch einmal.",
   "43f6af4554b019cf": "Anhang konnte nicht geöffnet werden",
@@ -5508,5 +5509,7 @@
   "ad208e3e32c85029": "Alle ausblenden",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
-  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt."
+  "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
+  "99d51127f573296b": "Weiteres Konto",
+  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer."
 }

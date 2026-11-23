@@ -2509,7 +2509,11 @@ describe("UsageService", () => {
       );
       const summary = yield* service.readSummary(WINDOW);
       const sourcesFor = (provider: "opencode" | "antigravity") =>
-        summary.sources.filter((source) => source.fingerprint.provider === provider);
+        summary.sources.filter(
+          (source) =>
+            source.fingerprint.provider === provider &&
+            !source.fingerprint.resolvedHomePath.endsWith("antigravity-acp"),
+        );
       assert.strictEqual(sourcesFor("opencode").length, 1);
       assert.strictEqual(sourcesFor("antigravity").length, 1);
       assert.strictEqual(
@@ -2591,6 +2595,61 @@ describe("UsageService", () => {
           outputTokens,
         );
       }
+    }),
+  );
+
+  it.effect("reads Antigravity history from the default instance's T3-managed profile", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const prefix = "usage-service-antigravity-default-profile-test";
+      const stateDir = NodePath.join(home, prefix, "userdata");
+      const conversations = NodePath.join(
+        stateDir,
+        "providers",
+        "antigravity",
+        // sha256("antigravity"), the default instance's profile key.
+        "ac0a3dfd6dddb20962cecff6ee5fe65e19d3923be20e52c5ab52ff877f7e4c32",
+        "antigravity-acp",
+        "conversations",
+      );
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(conversations, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(NodePath.join(conversations, "profile.db"));
+        try {
+          db.exec("CREATE TABLE steps (idx INTEGER, metadata BLOB)");
+          // Step protobuf: 100 input tokens, 7 output tokens, and 2026-08-01T10:00Z.
+          const metadata = new Uint8Array([
+            0x4a,
+            4,
+            0x10,
+            100,
+            0x18,
+            7,
+            ...Buffer.from("420608a087b7d306", "hex"),
+          ]);
+          db.prepare("INSERT INTO steps VALUES (?, ?)").run(0, metadata);
+        } finally {
+          db.close();
+        }
+      });
+      yield* Effect.gen(function* () {
+        assert.strictEqual((yield* ServerConfig.ServerConfig).stateDir, stateDir);
+        const service = yield* UsageService.make;
+        const summary = yield* service.readSummary(WINDOW);
+        const root = yield* Effect.promise(() => NodeFSP.realpath(conversations));
+        assert.include(
+          summary.sources
+            .filter((source) => source.fingerprint.provider === "antigravity")
+            .map((source) => source.fingerprint.resolvedHomePath),
+          root,
+        );
+        assert.strictEqual(
+          summary.buckets
+            .filter((bucket) => bucket.provider === "antigravity" && bucket.sourcePath === root)
+            .reduce((sum, bucket) => sum + bucket.totals.outputTokens, 0),
+          7,
+        );
+      }).pipe(Effect.provide(layerService({ prefix, home, settings })));
     }),
   );
 

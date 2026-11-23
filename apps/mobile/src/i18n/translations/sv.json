@@ -1360,6 +1360,7 @@
   "1c79d42e902ff431": "Försök igen",
   "b1687c7b2b91e569": "Öppna {name}",
   "2ffc366d6a7f88db": "Ta bort {name}",
+  "ff43c1538698d479": "Förbereder inklistrad bild",
   "c04cd8ec791956cb": "Den lokala filen är inte tillgänglig. Bifoga den igen.",
   "68883cb3342998e5": "Återanslut till miljön och försök igen.",
   "43f6af4554b019cf": "Kunde inte öppna bilagan",
@@ -5508,5 +5509,7 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "99d51127f573296b": "Ett konto till",
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare."
 }

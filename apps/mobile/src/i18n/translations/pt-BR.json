@@ -1360,6 +1360,7 @@
   "1c79d42e902ff431": "Tentar novamente",
   "b1687c7b2b91e569": "Abrir {name}",
   "2ffc366d6a7f88db": "Remover {name}",
+  "ff43c1538698d479": "Preparando a imagem colada",
   "c04cd8ec791956cb": "O arquivo local não está disponível. Anexe-o novamente.",
   "68883cb3342998e5": "Reconecte-se ao ambiente e tente novamente.",
   "43f6af4554b019cf": "Não foi possível abrir o anexo",
@@ -5502,5 +5503,7 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "99d51127f573296b": "Outra conta",
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
 }

@@ -1360,6 +1360,7 @@
   "1c79d42e902ff431": "Réessayer",
   "b1687c7b2b91e569": "Ouvrir {name}",
   "2ffc366d6a7f88db": "Retirer {name}",
+  "ff43c1538698d479": "Préparation de l’image collée",
   "c04cd8ec791956cb": "Le fichier local n’est pas disponible. Joignez-le à nouveau.",
   "68883cb3342998e5": "Reconnectez-vous à l’environnement et réessayez.",
   "43f6af4554b019cf": "Impossible d’ouvrir la pièce jointe",
@@ -5502,5 +5503,7 @@
   "ad208e3e32c85029": "Tout masquer",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
-  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours."
+  "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
+  "99d51127f573296b": "Autre compte",
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}."
 }
