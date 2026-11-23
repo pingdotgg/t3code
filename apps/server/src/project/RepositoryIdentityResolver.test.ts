@@ -136,8 +136,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
-      yield* git(cwd, ["config", "url.https://proxy.example/.insteadOf", "git@github.com:"]);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/T3Tools/t3code.git"]);
+      yield* git(cwd, ["config", "url.https://proxy.example/.insteadOf", "https://github.com/"]);
       yield* git(cwd, ["config", "remote.origin.gh-resolved", "base"]);
       const remotes = yield* git(cwd, ["remote", "-v"]);
       expect(remotes.stdout).toContain("https://proxy.example/T3Tools/t3code.git (fetch)");
@@ -151,8 +151,21 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.locator).toEqual({
         source: "git-remote",
         remoteName: "origin",
-        remoteUrl: "git@github.com:T3Tools/t3code.git",
+        remoteUrl: "https://github.com/T3Tools/t3code.git",
       });
+
+      const shorthandCwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-instead-of-shorthand-test-",
+      });
+      yield* git(shorthandCwd, ["init"]);
+      yield* git(shorthandCwd, ["remote", "add", "origin", "gh:T3Tools/t3code.git"]);
+      yield* git(shorthandCwd, ["config", "url.https://github.com/.insteadOf", "gh:"]);
+
+      const shorthandIdentity = yield* resolver.resolve(shorthandCwd);
+
+      expect(shorthandIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(shorthandIdentity?.provider).toBe("github");
+      expect(shorthandIdentity?.locator.remoteUrl).toBe("https://github.com/T3Tools/t3code.git");
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
