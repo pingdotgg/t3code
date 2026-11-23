@@ -665,7 +665,7 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform === "darwin") {
-    // `open -R` reports missing paths through its exit status.
+    // `open -R` reports targets Finder cannot reveal only through its exit status.
     return {
       editor: "file-manager",
       target,
@@ -958,7 +958,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
     {
       command: spawnCommand.command,
       args: spawnCommand.args,
-      ...(launch.waitForExit ? { waitForExit: true } : {}),
+      waitForExit: launch.waitForExit ?? false,
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
