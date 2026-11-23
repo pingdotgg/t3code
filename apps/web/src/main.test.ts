@@ -8,7 +8,7 @@ vi.mock("react-dom/client", () => ({ default: { createRoot: () => ({ render: () 
 // Boots the entry in a fresh page that shares the tab's sessionStorage, as a reload does.
 async function bootMain(
   { sessionStorage = new Map<string, string>(), anyHover = true },
-  interact: (page: EventTarget) => void,
+  interact: (page: EventTarget, setAnyHover: (matches: boolean) => void) => void,
 ) {
   vi.resetModules();
   const reload = vi.fn().mockName("location.reload");
@@ -20,10 +20,17 @@ async function bootMain(
     },
     location: { reload },
     matchMedia: (query: string) => ({
-      matches: anyHover && query.endsWith("hover: hover)"),
-      addEventListener: () => {},
+      get matches() {
+        return anyHover && query.endsWith("hover: hover)");
+      },
+      addEventListener: (type: string, listener: () => void) =>
+        page.addEventListener(type, listener),
     }),
   });
+  const setAnyHover = (matches: boolean) => {
+    anyHover = matches;
+    page.dispatchEvent(new Event("change"));
+  };
   const root = {
     attributes: new Set<string>(),
     toggleAttribute: (name: string, force: boolean) =>
@@ -34,7 +41,7 @@ async function bootMain(
   try {
     const { boot } = await import("./bootstrap");
     await boot;
-    interact(page);
+    interact(page, setAnyHover);
     return { reload, root };
   } finally {
     vi.unstubAllGlobals();
@@ -62,13 +69,16 @@ it.each([
     marked: false,
   },
   { anyHover: true, input: "pointermove:touch", marked: true },
+  { anyHover: true, input: "pointermove:touch any-hover:none pointermove:mouse", marked: true },
+  { anyHover: true, input: "pointermove:mouse any-hover:none pointermove:touch", marked: false },
 ])(
   "hover markers are $marked with any-hover $anyHover after $input",
   async ({ anyHover, input, marked }) => {
-    const { root } = await bootMain({ anyHover }, (page) => {
+    const { root } = await bootMain({ anyHover }, (page, setAnyHover) => {
       for (const event of input.split(" ")) {
         const [type = "", pointerType] = event.split(":");
-        page.dispatchEvent(Object.assign(new Event(type), { pointerType }));
+        if (type === "any-hover") setAnyHover(false);
+        else page.dispatchEvent(Object.assign(new Event(type), { pointerType }));
       }
     });
 
