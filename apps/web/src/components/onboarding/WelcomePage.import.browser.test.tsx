@@ -710,7 +710,7 @@ it("checks an agent again once its install command finishes, then replaces it wi
       { ...readyClaude, status: "error", auth: { status: "unauthenticated" } },
     ]),
   );
-  expect(button("Sign in").disabled).toBe(true);
+  await vi.waitFor(() => expect(button("Sign in").disabled).toBe(true));
   // The shell stays open at its prompt after the install, so only the command exits.
   await act(async () => appAtomRegistry.set(runningTerminalIds, []));
   expect(state.refreshProviders).toHaveBeenCalledWith(recheck);
