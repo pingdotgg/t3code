@@ -216,7 +216,12 @@ function TerminalHeader(props: {
 
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
-const TERMINAL_ACCESSORY_HEIGHT = 52;
+const TERMINAL_ACCESSORY_VERTICAL_PADDING = 4;
+const TERMINAL_ACCESSORY_BORDER_WIDTH = 1;
+const TERMINAL_ACCESSORY_HEIGHT =
+  (Platform.OS === "android" ? 48 : 44) +
+  TERMINAL_ACCESSORY_VERTICAL_PADDING * 2 +
+  TERMINAL_ACCESSORY_BORDER_WIDTH;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
 class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardReadError>()(
@@ -1040,7 +1045,7 @@ function ThreadTerminal(props: {
                     KeyboardController.dismiss();
                     requestCapture();
                   }}
-                  className="px-4 pt-2"
+                  className="min-h-[44px] justify-center px-4 pt-2"
                   style={{
                     paddingBottom:
                       8 +
@@ -1067,7 +1072,11 @@ function ThreadTerminal(props: {
                       minHeight: TERMINAL_ACCESSORY_HEIGHT,
                     }}
                   >
-                    <ComposerToolbarRow paddingBottom={4} paddingHorizontal={8} paddingTop={4}>
+                    <ComposerToolbarRow
+                      paddingBottom={TERMINAL_ACCESSORY_VERTICAL_PADDING}
+                      paddingHorizontal={8}
+                      paddingTop={TERMINAL_ACCESSORY_VERTICAL_PADDING}
+                    >
                       <ComposerToolbarScroller
                         contentPaddingRight={2}
                         fadeOpaque={terminalTheme.background}
