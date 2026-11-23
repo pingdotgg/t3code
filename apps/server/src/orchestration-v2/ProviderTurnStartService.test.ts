@@ -177,6 +177,7 @@ function startWithMissingWorktree(
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread: () => Effect.succeed({ status: "no-script" }),
         }),
+        Layer.mock(ThreadWorktreeRestore)({ takeRecreated: () => Effect.undefined }),
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -339,7 +340,7 @@ const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
 effectIt.effect("restores a missing worktree before a send only under the workspace lease", () =>
   Effect.gen(function* () {
     const worktreePath = `${managedWorktreesDir}/project/feature-restore`;
-    const { restore } = yield* ThreadWorktreeRestore;
+    const { restore, takeRecreated } = yield* ThreadWorktreeRestore;
     yield* withWorkspaceLease(
       worktreePath,
       Effect.gen(function* () {
@@ -354,6 +355,10 @@ effectIt.effect("restores a missing worktree before a send only under the worksp
       }),
     ).pipe(Effect.flatMap(Fiber.join));
     expect(restoreLeaseCreateWorktree).toHaveBeenCalledTimes(1);
+    // Turn start finds the checkout present, so it runs setup from this hand-over, once.
+    const threadId = ThreadId.make("thread_send_restore_lease");
+    expect(yield* takeRecreated(threadId)).toMatchObject({ worktreePath });
+    expect(yield* takeRecreated(threadId)).toBeUndefined();
   }).pipe(Effect.provide(layerRestoreLeaseTest)),
 );
 
@@ -480,6 +485,7 @@ function makeLocalCommandHarness(input: {
   readonly gitWorkflow?: GitWorkflow.GitWorkflowService["Service"];
   readonly fileSystem?: FileSystem.FileSystem;
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
+  readonly recreatedBeforeDispatch?: boolean;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly createdBy?: "agent" | "system";
@@ -1341,6 +1347,7 @@ function makeLocalCommandHarness(input: {
       projection.runs.find((candidate) => candidate.id === id),
     ),
   );
+  const recreatedBeforeDispatch = { pending: input.recreatedBeforeDispatch === true };
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -1362,6 +1369,19 @@ function makeLocalCommandHarness(input: {
         Layer.mock(TurnItemPositionStore.TurnItemPositionStoreV2)({}),
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread: input.runSetup ?? (() => Effect.succeed({ status: "no-script" })),
+        }),
+        Layer.mock(ThreadWorktreeRestore)({
+          takeRecreated: () =>
+            Effect.sync(() => {
+              if (!recreatedBeforeDispatch.pending || input.worktreePath === undefined) return;
+              recreatedBeforeDispatch.pending = false;
+              return {
+                project: {
+                  workspaceRoot: input.workspaceRoot ?? "/tmp/native-account-project",
+                } as never,
+                worktreePath: input.worktreePath,
+              };
+            }),
         }),
         layerWorktreeLocation(input.worktreesDir),
         layerNoTaskFolders,
@@ -2159,6 +2179,30 @@ effectIt.effect.each([
         },
       ]);
     }
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+effectIt.effect("runs setup for a worktree a send recreated before dispatch", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreesDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-sent-setup-" });
+    const worktreePath = path.join(worktreesDir, "project", "restore");
+    yield* fileSystem.makeDirectory(path.join(worktreePath, ".git"), { recursive: true });
+    const runSetup = vi.fn(() => Effect.succeed({ status: "no-script" as const }));
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      worktreesDir,
+      worktreePath,
+      fileSystem,
+      failReadsAfterRunning: true,
+      recreatedBeforeDispatch: true,
+      runSetup,
+    });
+    yield* harness.start;
+    expect(harness.createWorktree).not.toHaveBeenCalled();
+    expect(runSetup).toHaveBeenCalledWith(expect.objectContaining({ worktreePath }));
+    expect(harness.open).toHaveBeenCalledTimes(1);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
