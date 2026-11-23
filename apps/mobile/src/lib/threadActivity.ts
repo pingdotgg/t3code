@@ -273,6 +273,8 @@ type ThreadFeedEntryContent =
       readonly label?: string;
       /** Shown instead of "Thinking" while the provider has not started a turn. */
       readonly providerStartingLabel?: string;
+      /** The starting provider's driver, whose logo replaces the thinking icon. */
+      readonly providerStartingDriver?: string;
     };
 
 export interface ThreadFeedLatestRun {
@@ -283,6 +285,7 @@ export interface ThreadFeedLatestRun {
   readonly turnEnded?: boolean;
   readonly providerStartingLabel?: string;
   readonly providerStartingLabelMsg?: string;
+  readonly providerStarting?: { readonly driver: string };
 }
 
 /** Long Android headers can ANR despite one-line display; cap labels only, preserving expanded and copied text. */
@@ -455,6 +458,13 @@ export function isSecretRequestActivityGroup(entry: ThreadFeedActivityGroup): bo
   );
 }
 
+export function isFeedbackRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
+  return (
+    entry.activities.length === 1 &&
+    entry.activities[0]?.projectedItem.item.type === "feedback_request"
+  );
+}
+
 export function isLinkRequestActivityGroup(entry: ThreadFeedActivityGroup): boolean {
   return (
     entry.activities.length === 1 && entry.activities[0]?.projectedItem.item.type === "link_request"
@@ -503,6 +513,7 @@ function itemIsProminent(item: OrchestrationV2TurnItem): boolean {
     item.type === "system_notice" ||
     item.type === "proposed_plan" ||
     item.type === "secret_request" ||
+    item.type === "feedback_request" ||
     item.type === "link_request"
   );
 }
@@ -625,6 +636,8 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
       return "zap";
     case "secret_request":
       return "lock";
+    case "feedback_request":
+      return "message";
     case "link_request":
       return "globe";
   }
@@ -699,6 +712,8 @@ function itemSummary(
       return resolve(msg("Thread created"));
     case "secret_request":
       return item.label;
+    case "feedback_request":
+      return resolve(msg("Feedback for the T3 team"));
     case "link_request":
       return resolve(msg("Link {target}", { target: linkRequestTargetName(item, resolve) }));
     case "dynamic_tool": {
@@ -769,6 +784,8 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
     case "secret_request":
     case "link_request":
       return item.reason || null;
+    case "feedback_request":
+      return item.preview.subject;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1487,7 +1504,8 @@ function latestRunsEqual(left: ThreadFeedLatestRun | null, right: ThreadFeedLate
       left.completedAt === right.completedAt &&
       left.turnEnded === right.turnEnded &&
       left.providerStartingLabel === right.providerStartingLabel &&
-      left.providerStartingLabelMsg === right.providerStartingLabelMsg)
+      left.providerStartingLabelMsg === right.providerStartingLabelMsg &&
+      left.providerStarting?.driver === right.providerStarting?.driver)
   );
 }
 
@@ -1946,10 +1964,16 @@ export function deriveThreadFeedPresentation(
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
+  const latestRow = result.at(-1);
+  const replyIsStreaming =
+    latestRow?.type === "message" &&
+    latestRow.message.role === "assistant" &&
+    latestRow.message.streaming;
   if (
     isWorking &&
     activeWorkStartedAt !== null &&
     latestRun?.turnEnded !== true &&
+    !replyIsStreaming &&
     (activeRunId === null || !compactionCommandRunIds.has(activeRunId)) &&
     !result.some(
       (row) =>
@@ -1973,6 +1997,7 @@ export function deriveThreadFeedPresentation(
         latestRun?.providerStartingLabelMsg === undefined
           ? latestRun?.providerStartingLabel
           : resolve(latestRun.providerStartingLabelMsg),
+        latestRun?.providerStarting?.driver,
       ),
     );
   }
@@ -2119,12 +2144,14 @@ function thinkingRow(
   runId: RunId | null,
   label: string | null,
   providerStartingLabel: string | undefined,
+  providerStartingDriver: string | undefined,
 ) {
   if (
     cachedThinkingRow?.createdAt !== createdAt ||
     cachedThinkingRow.runId !== runId ||
     (cachedThinkingRow.label ?? null) !== label ||
-    cachedThinkingRow.providerStartingLabel !== providerStartingLabel
+    cachedThinkingRow.providerStartingLabel !== providerStartingLabel ||
+    cachedThinkingRow.providerStartingDriver !== providerStartingDriver
   ) {
     cachedThinkingRow = {
       type: "thinking",
@@ -2133,6 +2160,9 @@ function thinkingRow(
       runId,
       ...(label === null ? {} : { label }),
       ...(providerStartingLabel === undefined ? {} : { providerStartingLabel }),
+      ...(providerStartingLabel === undefined || providerStartingDriver === undefined
+        ? {}
+        : { providerStartingDriver }),
     };
   }
   return cachedThinkingRow;

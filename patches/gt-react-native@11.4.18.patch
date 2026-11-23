@@ -1,0 +1,129 @@
+diff --git a/dist/commonjs/condition-store/NativeConditionStore.js b/dist/commonjs/condition-store/NativeConditionStore.js
+index 83349e43d9cad0c02a5d076a56c66d7d26943206..ac31f5e92bdd3b9f1e3346e6800887bc85d934d3 100644
+--- a/dist/commonjs/condition-store/NativeConditionStore.js
++++ b/dist/commonjs/condition-store/NativeConditionStore.js
+@@ -11,20 +11,21 @@ let _generaltranslation_react_core_pure = require("@generaltranslation/react-cor
+ */
+ var NativeConditionStore = class {
+ 	customReload;
++	locale;
+ 	constructor(config) {
+ 		this.customReload = config._reload ?? (() => void 0);
+-		this.updateLocale(config.locale ?? require_utils_getLocale.getLocale());
++		this.locale = require_utils_resolveLocale.resolveLocale(config.locale ?? require_utils_getLocale.getLocale());
++		require_utils_nativeStore.nativeStoreSet(getLocaleStoreKey(), this.locale);
+ 		const region = require_utils_getInitialNativeConditions.getInitialRegion({ region: config.region });
+ 		if (region !== void 0) this.updateRegion(region);
+ 		this.updateEnableI18n(require_utils_getInitialNativeConditions.getInitialEnableI18n({ enableI18n: config.enableI18n }));
+ 	}
+ 	getLocale = () => {
+-		return require_utils_getLocale.getLocale();
++		return this.locale;
+ 	};
+ 	setLocale = (locale) => {
+-		const nextLocale = require_utils_resolveLocale.resolveLocale(locale);
+-		require_utils_nativeStore.nativeStoreSet(getLocaleStoreKey(), nextLocale);
+-		this.reload({ locale: nextLocale });
++		this.updateLocale(locale);
++		this.reload({ locale: this.locale });
+ 	};
+ 	getRegion = () => {
+ 		return require_utils_nativeStore.nativeStoreGet(getRegionStoreKey()) || void 0;
+@@ -41,7 +42,8 @@ var NativeConditionStore = class {
+ 		this.reload({ enableI18n });
+ 	};
+ 	updateLocale = (locale) => {
+-		require_utils_nativeStore.nativeStoreSet(getLocaleStoreKey(), require_utils_resolveLocale.resolveLocale(locale));
++		this.locale = require_utils_resolveLocale.resolveLocale(locale);
++		require_utils_nativeStore.nativeStoreSet(getLocaleStoreKey(), this.locale);
+ 	};
+ 	updateRegion = (region) => {
+ 		require_utils_nativeStore.nativeStoreSet(getRegionStoreKey(), region ?? "");
+diff --git a/dist/module/condition-store/NativeConditionStore.js b/dist/module/condition-store/NativeConditionStore.js
+index aeadfee50fb03ee827b9326486eb39ef46b0921c..3d08229ee6acd065c868a14a8647343e37286121 100644
+--- a/dist/module/condition-store/NativeConditionStore.js
++++ b/dist/module/condition-store/NativeConditionStore.js
+@@ -9,20 +9,21 @@ import { getI18nConfig } from "@generaltranslation/react-core/pure";
+ */
+ var NativeConditionStore = class {
+ 	customReload;
++	locale;
+ 	constructor(config) {
+ 		this.customReload = config._reload ?? (() => void 0);
+-		this.updateLocale(config.locale ?? getLocale());
++		this.locale = resolveLocale(config.locale ?? getLocale());
++		nativeStoreSet(getLocaleStoreKey(), this.locale);
+ 		const region = getInitialRegion({ region: config.region });
+ 		if (region !== void 0) this.updateRegion(region);
+ 		this.updateEnableI18n(getInitialEnableI18n({ enableI18n: config.enableI18n }));
+ 	}
+ 	getLocale = () => {
+-		return getLocale();
++		return this.locale;
+ 	};
+ 	setLocale = (locale) => {
+-		const nextLocale = resolveLocale(locale);
+-		nativeStoreSet(getLocaleStoreKey(), nextLocale);
+-		this.reload({ locale: nextLocale });
++		this.updateLocale(locale);
++		this.reload({ locale: this.locale });
+ 	};
+ 	getRegion = () => {
+ 		return nativeStoreGet(getRegionStoreKey()) || void 0;
+@@ -39,7 +40,8 @@ var NativeConditionStore = class {
+ 		this.reload({ enableI18n });
+ 	};
+ 	updateLocale = (locale) => {
+-		nativeStoreSet(getLocaleStoreKey(), resolveLocale(locale));
++		this.locale = resolveLocale(locale);
++		nativeStoreSet(getLocaleStoreKey(), this.locale);
+ 	};
+ 	updateRegion = (region) => {
+ 		nativeStoreSet(getRegionStoreKey(), region ?? "");
+diff --git a/src/condition-store/NativeConditionStore.ts b/src/condition-store/NativeConditionStore.ts
+index 3f300ed703db4d35e2118bbfe01430f370201f9e..18c3af21acaf3e6b4c7de2b8341c6847f8de1b73 100644
+--- a/src/condition-store/NativeConditionStore.ts
++++ b/src/condition-store/NativeConditionStore.ts
+@@ -29,11 +29,14 @@ export type ReloadType = (state: NativeConditionStoreState) => void;
+  */
+ export class NativeConditionStore implements WritableConditionStoreInterface {
+   private customReload: ReloadType;
++  private locale: string;
+ 
+   constructor(config: NativeConditionStoreParams) {
+     this.customReload = config._reload ?? (() => undefined);
+ 
+-    this.updateLocale(config.locale ?? getLocale());
++    // Android's void TurboModule setter writes asynchronously.
++    this.locale = resolveLocale(config.locale ?? getLocale());
++    nativeStoreSet(getLocaleStoreKey(), this.locale);
+     const region = getInitialRegion({
+       region: config.region,
+     });
+@@ -48,13 +51,12 @@ export class NativeConditionStore implements WritableConditionStoreInterface {
+   }
+ 
+   getLocale = (): string => {
+-    return getLocale();
++    return this.locale;
+   };
+ 
+   setLocale = (locale: LocaleCandidates): void => {
+-    const nextLocale = resolveLocale(locale);
+-    nativeStoreSet(getLocaleStoreKey(), nextLocale);
+-    this.reload({ locale: nextLocale });
++    this.updateLocale(locale);
++    this.reload({ locale: this.locale });
+   };
+ 
+   getRegion = (): string | undefined => {
+@@ -76,7 +78,8 @@ export class NativeConditionStore implements WritableConditionStoreInterface {
+   };
+ 
+   updateLocale = (locale: LocaleCandidates): void => {
+-    nativeStoreSet(getLocaleStoreKey(), resolveLocale(locale));
++    this.locale = resolveLocale(locale);
++    nativeStoreSet(getLocaleStoreKey(), this.locale);
+   };
+ 
+   updateRegion = (region: string | undefined): void => {
