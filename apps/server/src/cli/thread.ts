@@ -197,6 +197,15 @@ const toolFailureDetail = (result: typeof ToolResult.Type) => {
   });
 };
 
+/** JSON-RPC's invalid params: the arguments failed the tool's schema. */
+const INVALID_PARAMS = -32602;
+const rpcErrorDetail = (error: { readonly code: number; readonly message: string }) => {
+  const message = error.message.replaceAll(/\s*\n\s*/g, " ");
+  return error.code === INVALID_PARAMS
+    ? `The server refused the arguments: ${message}`
+    : `The server refused the request: ${message}`;
+};
+
 const makeThreadTools = (session: McpToolSession, origin: string) => {
   const unexpected = (tool: string) =>
     new ThreadToolFailedError({
@@ -214,10 +223,13 @@ const makeThreadTools = (session: McpToolSession, origin: string) => {
     > {
       const raw = yield* session.call(tool, args).pipe(
         Effect.mapError((cause) =>
-          // Effect's MCP server words an unknown or hidden tool exactly this way.
-          cause.rpcError?.code === -32602 && cause.rpcError.message === `Tool '${tool}' not found`
-            ? new ThreadToolMissingError({ tool })
-            : new ThreadServerUnreachableError({ origin, cause }),
+          cause.rpcError === undefined
+            ? new ThreadServerUnreachableError({ origin, cause })
+            : // Effect's MCP server words an unknown or hidden tool exactly this way.
+              cause.rpcError.code === -32602 &&
+                cause.rpcError.message === `Tool '${tool}' not found`
+              ? new ThreadToolMissingError({ tool })
+              : new ThreadToolFailedError({ tool, detail: rpcErrorDetail(cause.rpcError) }),
         ),
       );
       const result = yield* decodeToolResult(raw).pipe(Effect.mapError(() => unexpected(tool)));
