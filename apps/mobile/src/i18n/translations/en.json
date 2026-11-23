@@ -1307,6 +1307,8 @@
   "23eed587f1bef1a6": "Grok, Composer, and Auto use this allowance.",
   "d2becdc27390c92c": "Other Models",
   "3abbefc7732635ff": "Usage allowance for third-party models such as Claude, GPT, and Gemini.",
+  "c7566c908e14be09": "Spend",
+  "ae693772acb75c75": "Spending this billing cycle against your {provider} spend limit.",
   "7d72af75b2812d60": "{provider} on {environment}",
   "bb34eaf6ddc55a72": "This account has no subscription limits.",
   "42a2622893a6bced": "Could not read limits.",
