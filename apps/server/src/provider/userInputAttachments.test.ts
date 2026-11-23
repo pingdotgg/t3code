@@ -744,6 +744,17 @@ describe("question answer paths", () => {
         {
           ext: "epub",
           parts: {
+            "META-INF/container.xml": '<container><rootfile full-path="book.opf"/></container>',
+            "book.opf":
+              '<package><item id="ch1" href="q%3F1.xhtml?x=1#sec1"/><itemref idref="ch1"/></package>',
+            "q?1.xhtml": "<html><p>Encoded question mark chapter text.</p></html>",
+          },
+          expected: ["Encoded question mark chapter text."],
+          absent: ["[Skipped document part", "[Extracted text truncated"],
+        },
+        {
+          ext: "epub",
+          parts: {
             "META-INF/container.xml":
               '<container><rootfile full-path="My%20Book/book%201.opf"/></container>',
             "My Book/book 1.opf":
@@ -998,6 +1009,27 @@ describe("question answer paths", () => {
             "0.25 [Excel numFmtId=9; date system 1900]",
             "45293 [Excel numFmtId=164; format=yyyy-mm-dd; date system 1900]",
           ],
+        },
+        {
+          ext: "xlsx",
+          bounded: true,
+          parts: {
+            "_rels/.rels":
+              '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="docs/book.xml"/></Relationships>',
+            "docs/book.xml": '<workbook><sheets><sheet name="Data" r:id="a"/></sheets></workbook>',
+            "docs/_rels/book.xml.rels":
+              '<Relationships><Relationship Id="a" Target="sheets/data.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="strings.xml"/></Relationships>',
+            "docs/strings.xml": "<sst><si><t>Harbor</t></si></sst>",
+            "docs/styles.xml":
+              '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="164"/></cellXfs></styleSheet>',
+            "docs/sheets/data.xml":
+              '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"><v>45293</v></c></row></sheetData></worksheet>',
+          },
+          expected: [
+            "## Sheet: Data",
+            "Harbor\t45293 [Excel numFmtId=164; format=yyyy-mm-dd; date system 1900]",
+          ],
+          absent: ["[Skipped document part"],
         },
         {
           ext: "xlsx",
