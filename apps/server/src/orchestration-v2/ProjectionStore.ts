@@ -3461,6 +3461,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                         )
                       )
                       AND json_extract(item.payload_json, '$.inputIntent') = 'queued_turn'
+                      AND (run.status = 'queued' OR json_extract(run.payload_json, '$.startedAt') IS NULL)
                     )
                     AND (
                       ${window.requiredRunId ?? null} IS NULL
@@ -7374,7 +7375,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const [hidingRuns, superseded] = yield* Effect.all([
         sql<{ id: RunId; status: OrchestrationV2Run["status"] }>`
           SELECT run_id AS id, status FROM orchestration_v2_projection_runs
-          WHERE thread_id = ${threadId} AND status IN ('rolled_back', 'queued', 'cancelled')`,
+          WHERE thread_id = ${threadId}
+            AND (status IN ('rolled_back', 'queued')
+              OR (status = 'cancelled' AND json_extract(payload_json, '$.startedAt') IS NULL))`,
         sql<{ runId: RunId; rootNodeId: NodeId; status: "superseded" }>`
           SELECT run_id AS runId, root_node_id AS rootNodeId, status
           FROM orchestration_v2_projection_run_attempts
@@ -7396,8 +7399,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         })),
       });
       // Only these runs can hide rows: every row of a rolled-back run, the queued turn of a
-      // queued or cancelled run, and the stop result of a replaced attempt. So the hidden rows
-      // are found without reading the thread.
+      // queued run or a cancelled one that never started, and the stop result of a replaced attempt.
+      // So the hidden rows are found without reading the thread.
       const stoppedRuns = new Set(stopRequests.map((row) => row.run_id));
       const runsWithStatus = (...statuses: ReadonlyArray<OrchestrationV2Run["status"]>) =>
         hidingRuns.flatMap((run) => (statuses.includes(run.status) ? [String(run.id)] : []));
@@ -8672,6 +8675,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND held.type = 'user_message'
                 AND json_valid(held.payload_json)
                 AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+                -- A started run delivered its queued input; only held rows load the run's payload.
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runs AS started
+                  WHERE started.run_id = held.run_id
+                    AND started.status <> 'queued'
+                    AND json_extract(started.payload_json, '$.startedAt') IS NOT NULL
+                )
             )
             ELSE 0
           END AS item_count
@@ -8692,6 +8702,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND held.type = 'user_message'
                 AND json_valid(held.payload_json)
                 AND json_extract(held.payload_json, '$.inputIntent') = 'queued_turn'
+                -- A started run delivered its queued input; only held rows load the run's payload.
+                AND NOT EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_runs AS started
+                  WHERE started.run_id = held.run_id
+                    AND started.status <> 'queued'
+                    AND json_extract(started.payload_json, '$.startedAt') IS NOT NULL
+                )
             ) END)
             FROM orchestration_v2_projection_runs r
               INDEXED BY orchestration_v2_projection_runs_hidden_items_idx
