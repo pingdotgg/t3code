@@ -3,6 +3,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -99,25 +100,33 @@ function spawn(args, env, log) {
     // Its own process group, so stopping it ends the dev runner's children too.
     detached: true,
   });
-  children.push({
+  const handle = {
     kill: (s) => {
       try {
         process.kill(-child.pid, s);
       } catch {}
     },
-  });
+  };
+  children.push(handle);
+  child.stopGroup = () =>
+    new Promise((resolve) => {
+      if (child.exitCode !== null) return resolve();
+      child.once("exit", () => resolve());
+      handle.kill("SIGTERM");
+    });
   return child;
 }
 
 /**
  * Starts a dev server on `home` (and the web client when `web` is set). Resolves when it listens,
- * with its origin, the web origin and the startup pairing URL.
+ * with its origin, the web origin, the startup pairing URL, and `stop()`. Pass the previous
+ * `port` to restart a server where saved routes expect it.
  */
 export async function startEnvironment(
   home,
-  { host = "127.0.0.1", web = false, allowedOrigins = [], env = {} } = {},
+  { host = "127.0.0.1", port, web = false, allowedOrigins = [], env = {} } = {},
 ) {
-  const serverPort = await freePort();
+  const serverPort = port ?? (await freePort());
   const webPort = web ? await freePort() : await freePort();
   const webOrigin = `http://127.0.0.1:${webPort}`;
   const token = NodeCrypto.randomUUID().replaceAll("-", "").repeat(2);
@@ -173,8 +182,9 @@ export async function startEnvironment(
       reject(new Error(`server on ${home} exited ${code}; see ${log}`)),
     );
   });
+  const processes = [server];
   if (web) {
-    spawn(runner("dev:web", ["--", "--host", "127.0.0.1"]), baseEnv, log);
+    processes.push(spawn(runner("dev:web", ["--", "--host", "127.0.0.1"]), baseEnv, log));
     for (let i = 0; ; i++) {
       try {
         if ((await fetch(`${webOrigin}/.well-known/t3/environment`)).ok) break;
@@ -183,11 +193,14 @@ export async function startEnvironment(
       await new Promise((r) => setTimeout(r, 500));
     }
   }
-  const origin = `http://127.0.0.1:${serverPort}`;
+  const reachableHost = host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host;
+  const origin = `http://${reachableHost.includes(":") ? `[${reachableHost}]` : reachableHost}:${serverPort}`;
   const descriptor = await (await fetch(`${origin}/.well-known/t3/environment`)).json();
   return {
     home,
     origin,
+    descriptor,
+    stop: () => Promise.all(processes.map((p) => p.stopGroup())),
     serverPort,
     webOrigin,
     pairingUrl,
@@ -210,26 +223,32 @@ export function cli(home, args) {
   );
 }
 
-/** A git repository under `home` registered as a project. Returns { projectId, workspace }. */
-export async function createProject(environment, title, files = { "README.md": "" }) {
+/**
+ * A folder under `home` registered as a project. Returns { projectId, workspace }. The folder is
+ * one git repository, or with `repos` (folders relative to it) a plain folder holding those.
+ */
+export async function createProject(
+  environment,
+  title,
+  files = { "README.md": "" },
+  { repos = ["."] } = {},
+) {
   const workspace = NodePath.join(environment.home, "workspaces", title);
   for (const [file, content] of Object.entries(files)) {
     NodeFS.mkdirSync(NodePath.dirname(NodePath.join(workspace, file)), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(workspace, file), content);
   }
-  const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd: workspace });
-  git("init", "--quiet", "--initial-branch=main");
-  git("add", "--all");
-  git(
-    "-c",
-    "user.name=Staging",
-    "-c",
-    "user.email=staging@example.invalid",
-    "commit",
-    "--quiet",
-    "-m",
-    "Initial commit",
-  );
+  for (const repo of repos) {
+    const cwd = NodePath.join(workspace, repo);
+    NodeFS.mkdirSync(cwd, { recursive: true });
+    const git = (...args) => NodeChildProcess.execFileSync("git", args, { cwd });
+    git("init", "--quiet", "--initial-branch=main");
+    // A fictional author, so commits made on camera work and never carry a real name.
+    git("config", "user.name", "Dana Reyes");
+    git("config", "user.email", "dana@example.com");
+    git("add", "--all");
+    git("commit", "--quiet", "--allow-empty", "-m", "Initial commit");
+  }
   const bearer = cli(environment.home, [
     "auth",
     "session",
@@ -258,7 +277,7 @@ export async function createProject(environment, title, files = { "README.md": "
 }
 
 /** A Playwright page at the size beats are frozen at, dark, with production branding. */
-export async function openBrowser({ width = 1440, height = 720 } = {}) {
+export async function openBrowser({ width = 1440, height = 720, args = [] } = {}) {
   const { createRequire } = await import("node:module");
   const { chromium } = createRequire(NodePath.join(REPO, "scripts/package.json"))(
     "playwright-core",
@@ -266,7 +285,7 @@ export async function openBrowser({ width = 1440, height = 720 } = {}) {
   const { findChrome } = await import("./chrome.mjs");
   const browser = await chromium.launch({
     executablePath: findChrome(chromium),
-    args: ["--no-sandbox"],
+    args: ["--no-sandbox", ...args],
   });
   const context = await browser.newContext({ viewport: { width, height }, colorScheme: "dark" });
   await context.addInitScript(() => {
@@ -280,4 +299,57 @@ export async function openBrowser({ width = 1440, height = 720 } = {}) {
   });
   const page = await context.newPage();
   return { browser, context, page };
+}
+
+/**
+ * Writes link rows straight into a stopped server's database, as if `t3 environment link` had
+ * made them. The server must have started once (migrations). The map probes each row's URLs
+ * live: a row is "reachable" only while something there answers as that environment.
+ * Rows: { environmentId, label, urls, access = "full-access", lastError = null }.
+ */
+export async function insertPeerLinks(home, rows) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(NodePath.join(home, "userdata/statev2.sqlite"));
+  const now = Date.now();
+  const insert = db.prepare(
+    `INSERT OR REPLACE INTO peer_environment_links
+      (environment_id, secret_name, label, urls_json, access, linked_at, expires_at, last_reached_at, last_error, fenced)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 1)`,
+  );
+  for (const row of rows) {
+    insert.run(
+      row.environmentId,
+      `peer-link:${row.environmentId}`,
+      row.label,
+      JSON.stringify(row.urls),
+      row.access ?? "full-access",
+      new Date(now - 86_400_000).toISOString(),
+      new Date(now + 60 * 86_400_000).toISOString(),
+      row.lastError ?? null,
+    );
+  }
+  db.close();
+}
+
+/**
+ * Answers the descriptor probe for machines that only need to look alive: one port per
+ * machine, each serving `template` (a real server's descriptor) under that machine's id and
+ * label. Returns the URL for each machine, by environment id.
+ */
+export async function serveDescriptors(template, machines) {
+  const urls = {};
+  for (const machine of machines) {
+    const body = JSON.stringify({
+      ...template,
+      environmentId: machine.environmentId,
+      label: machine.label,
+    });
+    const server = NodeHttp.createServer((req, res) =>
+      res.writeHead(200, { "content-type": "application/json" }).end(body),
+    );
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    children.push({ kill: () => server.close() });
+    urls[machine.environmentId] = `http://127.0.0.1:${server.address().port}`;
+  }
+  return urls;
 }

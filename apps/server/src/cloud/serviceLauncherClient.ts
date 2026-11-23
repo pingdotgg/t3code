@@ -163,9 +163,21 @@ export const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint
       (environment["HOME"] ? path.join(environment["HOME"], ".local", "bin") : undefined);
     const candidates = new Set<string>();
     if (installBinDir !== undefined) candidates.add(path.join(installBinDir, "t3"));
-    for (const directory of (environment["PATH"] ?? "").split(":")) {
-      if (directory.length === 0) continue;
-      const candidate = path.join(directory, "t3");
+    const searchPath = environment["PATH"] ?? "";
+    const cwd = yield* HostProcess.WorkingDirectory;
+    for (const directory of searchPath.split(":")) {
+      // Like the shell, an empty entry of a nonempty PATH is the working directory.
+      if (directory.length === 0 && searchPath.length === 0) continue;
+      const candidate = path.join(directory || cwd, "t3");
+      if (directory.length === 0) {
+        // The shell passes over a working-directory entry it cannot run and keeps searching.
+        const info = yield* fs.stat(candidate).pipe(Effect.option);
+        if (Option.isNone(info) || info.value.type !== "File" || (info.value.mode & 0o111) === 0) {
+          continue;
+        }
+        candidates.add(candidate);
+        break;
+      }
       if (
         yield* fs.exists(candidate).pipe(
           Effect.catch((cause) =>

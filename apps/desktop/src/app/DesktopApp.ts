@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -174,6 +175,31 @@ const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
 );
 
 // Spawns the local backend as soon as the protocol, IPC, and legacy storage that every window needs exist.
+/**
+ * The server reads T3CODE_FEATURE_FLAGS once at start, from the value cached at the last
+ * discovery. When the login shell now sets different flags, restart it so they apply.
+ */
+const restartOnFeatureFlagChange = Effect.fn("desktop.restartOnFeatureFlagChange")(function* (
+  backend: DesktopBackendManager.DesktopBackendInstance,
+) {
+  const state = yield* DesktopState.DesktopState;
+  const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
+  let startedWith = (yield* HostProcess.Environment).T3CODE_FEATURE_FLAGS;
+  yield* shellEnvironment.updates.pipe(
+    Stream.filter((snapshot) => snapshot.discovered),
+    Stream.runForEach(
+      Effect.fnUntraced(function* (snapshot) {
+        const flags = snapshot.environment.T3CODE_FEATURE_FLAGS ?? undefined;
+        if (flags === startedWith || (yield* Ref.get(state.quitting))) return;
+        startedWith = flags;
+        yield* logBootstrapInfo("restarting backend for changed T3CODE_FEATURE_FLAGS");
+        yield* backend.stop();
+        yield* backend.start;
+      }),
+    ),
+  );
+});
+
 const startLocalBackend = Effect.gen(function* () {
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -209,6 +235,7 @@ const startLocalBackend = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
+  yield* DesktopBackendPool.recoverLocalBackend;
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
@@ -269,6 +296,7 @@ const startLocalBackend = Effect.gen(function* () {
   }
   yield* primaryBackend.start;
   yield* logBootstrapInfo("bootstrap backend start requested");
+  yield* Effect.forkScoped(restartOnFeatureFlagChange(primaryBackend));
   // The renderer asks for this token first; minting it at readiness saves a round trip.
   yield* Effect.forkScoped(
     (yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth).getBearerToken.pipe(

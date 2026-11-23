@@ -332,6 +332,23 @@ it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
       assert.deepStrictEqual(result.rows, [{ count: BigInt(1) }])
     }))
 
+  it.effect("fails rows it cannot decode and keeps the connection usable", () =>
+    Effect.gen(function*() {
+      const connection = yield* makeConnection()
+      const pid = connection.queryValues("SELECT pg_backend_pid()")
+      const before = yield* pid
+      // `point` has no codec: `(0,0)` is sixteen NUL bytes and `(1,2)` is invalid UTF-8.
+      for (const point of ["(0,0)", "(1,2)"]) {
+        const error = yield* connection.query(`SELECT '${point}'::point AS location`).pipe(
+          Effect.andThen((result) => Effect.die(`${point} decoded as ${JSON.stringify(result.rows)}`)),
+          Effect.flip
+        )
+        assert.instanceOf(error.reason.cause, PgTypes.CodecError)
+        assert.include((error.reason.cause as PgTypes.CodecError).message, "location")
+      }
+      assert.deepStrictEqual(yield* pid, before)
+    }))
+
   it.effect("binds untyped strings and integers beyond int4", () =>
     Effect.gen(function*() {
       const connection = yield* makeConnection()
@@ -554,6 +571,27 @@ it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
       if (exits[2]._tag === "Success") assert.deepStrictEqual(exits[2].value.rows, [{ third: 3 }])
     }))
 
+  it.effect("isolates a pipelined query whose rows cannot be decoded", () =>
+    Effect.gen(function*() {
+      const connection = yield* makeConnection({ multiplex: true })
+      const exits = yield* Effect.all([
+        Effect.exit(connection.query("SELECT $1::int4 AS first", [1])),
+        Effect.exit(connection.query("SELECT point(n, n) AS location FROM generate_series(0, 2) AS n")),
+        Effect.exit(connection.query("SELECT $1::int4 AS third", [3]))
+      ], { concurrency: "unbounded" })
+
+      assert.strictEqual(exits[0]._tag, "Success")
+      assert.strictEqual(exits[1]._tag, "Failure")
+      assert.strictEqual(exits[2]._tag, "Success")
+      if (exits[0]._tag === "Success") assert.deepStrictEqual(exits[0].value.rows, [{ first: 1 }])
+      if (exits[1]._tag === "Failure") {
+        const error = Cause.squash(exits[1].cause) as SqlError
+        assert.instanceOf(error.reason.cause, PgTypes.CodecError)
+        assert.include((error.reason.cause as PgTypes.CodecError).message, "location")
+      }
+      if (exits[2]._tag === "Success") assert.deepStrictEqual(exits[2].value.rows, [{ third: 3 }])
+    }))
+
   it.effect("drains an interrupted pipelined query without cancelling its neighbors", () =>
     Effect.gen(function*() {
       const connection = yield* makeConnection({ multiplex: true })
@@ -637,6 +675,22 @@ it.layer(PgContainer.layer, { timeout: "30 seconds" })("PgConnection", (it) => {
       const results = yield* Fiber.join(queried)
       results.forEach((result, index) => assert.deepStrictEqual(result.rows, [{ n: index }]))
       assert.deepStrictEqual((yield* connection.query("SELECT 1 AS ok")).rows, [{ ok: 1 }])
+    }))
+
+  it.effect("fails a stream whose rows cannot be decoded and keeps the connection usable", () =>
+    Effect.gen(function*() {
+      const connection = yield* makeConnection()
+      const pid = connection.queryValues("SELECT pg_backend_pid()")
+      const before = yield* pid
+      const error = yield* Stream.runCollect(
+        connection.stream("SELECT point(n, n) AS location FROM generate_series(0, 2) AS n")
+      ).pipe(
+        Effect.andThen((rows) => Effect.die(`stream decoded as ${JSON.stringify(Array.from(rows))}`)),
+        Effect.flip
+      )
+      assert.instanceOf(error.reason.cause, PgTypes.CodecError)
+      assert.include((error.reason.cause as PgTypes.CodecError).message, "location")
+      assert.deepStrictEqual(yield* pid, before)
     }))
 
   it.effect("fails work through a released pin without touching the next owner's session", () =>

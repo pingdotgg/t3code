@@ -74,7 +74,7 @@ import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
 
 import {
@@ -349,7 +349,6 @@ interface ThreadState {
   goalRevision: number;
   goalFresh: boolean;
   goalRefreshing: boolean;
-  readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
   model: ModelRef | undefined;
   /** Locally ended but possibly live; consume its next execution end without settling a new turn. */
@@ -401,7 +400,7 @@ type TurnTerminal =
 type Rule = Permission.Rule;
 type RulesPolicy = Pick<
   ProviderAdapter.ProviderAdapterV2RuntimePolicy,
-  "runtimeMode" | "interactionMode"
+  "runtimeMode" | "interactionMode" | "workspace"
 >;
 type NativeForm = EventOf<"form.created">["data"]["form"];
 
@@ -458,6 +457,15 @@ const sessionRules = (
         rule("shell", "ask"),
         rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
         rule("external_directory", "ask"),
+        // The thread's other folders count as workspace; `edit` still decides whether writes ask.
+        // A glob character in the path would allow sibling folders, so such a root keeps asking.
+        ...(policy.workspace?.extraRoots ?? [])
+          .filter((root) => !/[*?]/.test(root))
+          .map((root): Rule => ({
+            action: "external_directory",
+            resource: `${root.replace(/\/$/, "")}/*`,
+            effect: "allow",
+          })),
       ]),
   ...grants,
   // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
@@ -755,7 +763,7 @@ const modelRef = (
 ) => {
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(selection.model);
   if (parsed === null) return undefined;
-  const selected = getModelSelectionStringOptionValue(selection, "variant");
+  const selected = OpenCodeRuntime.openCodeVariant(selection);
   const variant =
     selected === undefined || listedVariants === undefined || listedVariants.has(selected)
       ? selected
@@ -768,6 +776,7 @@ const modelRef = (
 };
 const malformedModel = (model: string) =>
   `OpenCode model '${model}' must use provider/model format`;
+// OpenCode 2 reports a session created without a variant as variant "default".
 const sameModel = (left: ModelRef, right: ModelRef | undefined) =>
   left.providerID === right?.providerID &&
   left.id === right?.id &&
@@ -924,7 +933,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       goalRevision: 0,
       goalFresh: false,
       goalRefreshing: false,
-      providerTurns: new Map(),
       active: undefined,
       model: undefined,
       unsettled: false,
@@ -1625,20 +1633,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return ids.length === 0 ? {} : { retainedRuntimeRequestIds: ids };
     };
 
-    const emitProviderTurn = (
-      state: ThreadState,
-      turn: ActiveTurn,
-      providerTurn: OrchestrationV2ProviderTurn,
-    ) => {
-      state.providerTurns.set(String(providerTurn.id), providerTurn);
-      return emit({
+    const emitProviderTurn = (turn: ActiveTurn, providerTurn: OrchestrationV2ProviderTurn) =>
+      emit({
         type: "provider_turn.updated",
         driver,
         threadId: turn.input.threadId,
         providerTurn,
         ...(providerTurn.completedAt === null ? {} : retainedRequestsOf(turn)),
       });
-    };
 
     const makeTurn = (
       owner: TurnOwner,
@@ -2279,7 +2281,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           completedAt: null,
         },
       });
-      yield* emitProviderTurn(child, turn, providerTurn);
+      yield* emitProviderTurn(turn, providerTurn);
       const prompt = subagent.prompt;
       subagent.prompt = undefined;
       if (prompt !== undefined && prompt.length > 0) {
@@ -2391,7 +2393,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       const window = windowOf(turn.input.runtimePolicy.cwd, turn.input.modelSelection.model);
       const lastStep = turn.lastStep;
-      yield* emitProviderTurn(state, turn, {
+      yield* emitProviderTurn(turn, {
         ...turn.providerTurn,
         status: terminal.status,
         completedAt,
@@ -4311,7 +4313,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ];
       });
       const lastUser = history.findLast((message) => message.type === "user")?.id;
-      const state = threads.get(sessionId);
       return {
         providerThread: {
           ...providerThread,
@@ -4320,7 +4321,6 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           status: "idle" as const,
           updatedAt: snapshotAt,
         },
-        providerTurns: state === undefined ? [] : [...state.providerTurns.values()],
         messages,
         runtimeRequests: [],
       };
@@ -4419,7 +4419,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
       }
       const instructions = [
-        buildRuntimeInstructions({ harness: "OpenCode", model: turnInput.modelSelection.model }),
+        buildRuntimeInstructions({
+          agentFeedback: mcpAvailable ? (turnInput.agentFeedback ?? "off") : "off",
+          harness: "OpenCode",
+          model: turnInput.modelSelection.model,
+          runtimePolicy: turnInput.runtimePolicy,
+        }),
         t3OrchestrationSystemPrompt(mcpAvailable, mcpSession?.capabilities?.has("device") === true),
         mcpAvailable
           ? "To wait for a background shell you started (tests, a build), call `t3_background_wait` with its shell ID before you end your turn. Do not mark work you leave running, or PRs."
@@ -4476,7 +4481,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       state.active = turn;
       state.sessionScopedBackground = false;
-      yield* emitProviderTurn(state, turn, providerTurn);
+      yield* emitProviderTurn(turn, providerTurn);
       state.providerThread = {
         ...state.providerThread,
         status: "active",
@@ -4712,7 +4717,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (commands.some((entry) => entry.name === command.name)) {
           // session.command neither accepts nor returns our ID; record the preceding history boundary.
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
-          yield* markBefore(sessionId, newest.data[0]?.id ?? null);
+          const before = newest.data[0]?.id ?? null;
+          yield* markBefore(sessionId, before);
           if (!sending()) return;
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
             // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
@@ -4725,7 +4731,44 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             );
             return yield* finishControl;
           }
-          return yield* client.session.command({ sessionID, ...command }).pipe(Effect.asVoid);
+          yield* client.session.command({ sessionID, ...command });
+          // A command that never prompts the model starts no execution, so no event ends its turn.
+          const idle = () => state.active === turn && !busy.has(sessionId);
+          if (!idle()) return;
+          const active = yield* client.session
+            .active()
+            .pipe(Effect.timeout(ACTIVE_CHECK_TIMEOUT), Effect.option);
+          if (active._tag === "None") {
+            return yield* Effect.logWarning("Could not check whether an OpenCode command started.");
+          }
+          if (sessionId in active.value) return;
+          // An execution that already ended left history behind; its events may still trail this reply.
+          const ran = yield* OpenCode2Client.paginate(
+            { sessionID, order: "desc" as const, limit: 1 },
+            client.message.list,
+          ).pipe(
+            Stream.takeWhile((message) => message.id !== before),
+            Stream.filter(
+              (message) =>
+                message.type === "user" || message.type === "assistant" || message.type === "idle",
+            ),
+            Stream.runHead,
+            Effect.timeout(ACTIVE_CHECK_TIMEOUT),
+            Effect.option,
+          );
+          if (ran._tag === "None") {
+            return yield* Effect.logWarning("Could not check whether an OpenCode command ran.");
+          }
+          if (ran.value._tag === "Some") return;
+          return yield* lock.withPermit(
+            Effect.suspend(() =>
+              idle()
+                ? endExecution(state, turn, {
+                    status: turn.interrupted ? "interrupted" : "completed",
+                  })
+                : Effect.void,
+            ),
+          );
         }
       }
       const mentions = skillMentions(text);
@@ -5406,22 +5449,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (boundary !== null) {
             yield* rollBackTo(sessionId, SessionMessage.ID.make(boundary));
           }
-          const keptOrdinal = target.type === "provider_turn" ? target.providerTurn.ordinal : 0;
-          const loaded = threads.get(sessionId);
-          for (const [id, turn] of loaded?.providerTurns ?? []) {
-            if (turn.ordinal > keptOrdinal) loaded?.providerTurns.delete(id);
-          }
-          const snapshot = yield* snapshotOf(providerThread, sessionId);
-          const kept = new Map(
-            rollbackInput.providerThreadTurns
-              .filter(
-                (turn) =>
-                  turn.providerThreadId === providerThread.id && turn.ordinal <= keptOrdinal,
-              )
-              .map((turn) => [turn.id, turn] as const),
-          );
-          for (const turn of snapshot.providerTurns) kept.set(turn.id, turn);
-          return { ...snapshot, providerTurns: [...kept.values()] };
+          return yield* snapshotOf(providerThread, sessionId);
         },
         (effect, rollbackInput) =>
           effect.pipe(

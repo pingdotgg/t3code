@@ -5,11 +5,16 @@ import {
   offersLinkedEnvironments,
 } from "@t3tools/client-runtime/link-request";
 import { linkBackOffer, type LinkBackOffer } from "@t3tools/client-runtime/link-batch";
-import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
+import {
+  createPeerLinkEnvironmentAtoms,
+  linkThroughRoutes,
+} from "@t3tools/client-runtime/state/peerLinks";
 import { AuthAccessReadScope, AuthAccessWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent } from "react";
 
+import { useNowMinute } from "../hooks/useNowMinute";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { environmentAtomList, environmentIdsKey } from "./environmentAtomList";
 import { useEnvironmentIdentities, useEnvironments } from "./environments";
@@ -96,6 +101,36 @@ export function useLinkableMachines(environmentId: EnvironmentId, enabled: boole
     threadEnvironmentId: environmentId,
     links: links.data?.links ?? [],
     connect: discovery.environments,
+  });
+}
+
+/**
+ * The machines `sourceId` can link to through another environment's full-access link, by
+ * environment id. Reads those environments' links only while `enabled`: listing them asks every
+ * linked machine whether it answers.
+ */
+export function useLinkThroughRoutes(sourceId: EnvironmentId, enabled: boolean) {
+  const { environments } = useEnvironments();
+  const writable = useEnvironmentsWithScope(environments, AuthAccessWriteScope);
+  const nowMinute = useNowMinute();
+  const hosts = environments
+    .filter(
+      (environment) =>
+        enabled &&
+        environment.environmentId !== sourceId &&
+        environment.connection.phase === "connected" &&
+        offersLinkedEnvironments(environment.serverConfig) &&
+        writable.has(environment.environmentId),
+    )
+    .map((environment) => environment.environmentId);
+  const lists = useAtomValue(peerLinkListsAtom(environmentIdsKey(hosts)));
+  return linkThroughRoutes({
+    sourceEnvironmentId: sourceId,
+    hosts: hosts.map((environmentId, index) => {
+      const list = lists[index];
+      return { environmentId, links: list?._tag === "Success" ? list.value.links : [] };
+    }),
+    now: DateTime.makeUnsafe(nowMinute),
   });
 }
 

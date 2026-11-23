@@ -1,6 +1,7 @@
 import {
   CommandId,
   type RunId,
+  idleCompactionOf,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -91,7 +92,9 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
+  SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
+  subagentStopNotice,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
@@ -152,6 +155,7 @@ const TASK_WAKE_EVENTS = [
   { thread: "child", eventType: "runtime-request.updated" },
 ] as const;
 const SECRET_REQUEST_POLL_INTERVAL_MS = 500;
+const MAX_LISTED_TASKS = 10;
 const DEFAULT_THREAD_LIST_LIMIT = 10;
 const DEFAULT_THREAD_READ_LIMIT = 10;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
@@ -732,15 +736,26 @@ function pageIncludesTerminalTaskResult(input: {
   const result = subagentResultForRun(input.target, run);
   if (result.messageId === null && result.turnItemId === null) return false;
 
-  return input.items.some((item) => {
-    if (item.sourceThreadId !== input.target.thread.id) return false;
-    const matchesResult =
-      (result.turnItemId !== null && item.itemId === result.turnItemId) ||
-      (result.messageId !== null &&
-        item.type === "assistant_message" &&
-        item.messageId === result.messageId);
-    return matchesResult && item.text !== null && !item.textTruncated;
-  });
+  const onPage = (matches: (item: OrchestratorMcpThreadTimelineItem) => boolean) =>
+    input.items.some(
+      (item) =>
+        item.sourceThreadId === input.target.thread.id &&
+        matches(item) &&
+        item.text !== null &&
+        !item.textTruncated,
+    );
+  // The result ends with the stop reason, so the page shows it only when it has both.
+  const notice = subagentStopNotice(input.target, run);
+  return (
+    onPage(
+      (item) =>
+        (result.turnItemId !== null && item.itemId === result.turnItemId) ||
+        (result.messageId !== null &&
+          item.type === "assistant_message" &&
+          item.messageId === result.messageId),
+    ) &&
+    (notice === undefined || onPage((item) => item.itemId === notice.id))
+  );
 }
 
 function latestTerminalResultRun(
@@ -1166,6 +1181,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Created thread ${item.targetThreadId} with ${item.targetProviderInstanceId} (${item.targetModel}).`;
     case "secret_request":
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
+    case "feedback_request":
+      return `Asked the user to approve a ${item.preview.kind} report about ${item.preview.subject} for the T3 team: ${item.feedbackStatus}.`;
     case "link_request":
       return item.linkStatus === "linked"
         ? `Linked ${item.linkedLabel ?? item.url ?? "an environment"} (${item.linkedAccess}).`
@@ -1214,7 +1231,8 @@ function timelineItem(input: {
     ...(input.row.item.type === "subagent" ? { subagentId: input.row.item.subagentId } : {}),
     runId: input.row.item.runId,
     messageId,
-    createdBy: message?.createdBy ?? null,
+    createdBy:
+      message === undefined ? null : idleCompactionOf(message) ? "system" : message.createdBy,
     creationSource: message?.creationSource ?? null,
     ...(message?.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
     type: input.row.item.type,
@@ -1792,6 +1810,33 @@ const make = Effect.gen(function* () {
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined ? random.uuidV4() : Effect.succeed(clientRequestId);
 
+  const taskNotFound = Effect.fn("OrchestratorMcpService.taskNotFound")(function* (
+    scope: McpThreadInvocationScope,
+    taskId: NodeId,
+  ): Effect.fn.Return<never, OrchestratorMcpFailure> {
+    const { subagents } = yield* loadThreadRecords(scope.thread.threadId, ["subagents"], {
+      omitSettledSubagents: true,
+    });
+    const open = subagents.filter(
+      (task) =>
+        task.origin === "app_owned" &&
+        (task.childThreadId !== null || task.remoteChild !== undefined),
+    );
+    const listed = open
+      .slice(0, MAX_LISTED_TASKS)
+      .map((task) => (task.title ? `${task.id} (${task.title})` : task.id))
+      .join(", ");
+    const more =
+      open.length > MAX_LISTED_TASKS ? `, and ${open.length - MAX_LISTED_TASKS} more` : "";
+    return yield* failure(
+      "task_not_found",
+      `No delegated task with id ${taskId} exists on thread ${scope.thread.threadId}. ` +
+        (open.length === 0
+          ? "This thread has no open delegated tasks."
+          : `Open delegated tasks on this thread: ${listed}${more}.`),
+    );
+  });
+
   const readTask = Effect.fn("OrchestratorMcpService.readTask")(function* (
     scope: McpThreadInvocationScope,
     taskId: NodeId,
@@ -1807,10 +1852,7 @@ const make = Effect.gen(function* () {
         candidate.threadId === scope.thread.threadId,
     );
     if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
-      return yield* failure(
-        "task_not_found",
-        `Delegated task ${taskId} does not belong to thread ${scope.thread.threadId}.`,
-      );
+      return yield* taskNotFound(scope, taskId);
     }
     if (task.childThreadId === null) {
       return yield* readRemoteTask(scope, task, waitTimedOut, acknowledgeTerminal);
@@ -1874,7 +1916,7 @@ const make = Effect.gen(function* () {
         messageRoles: ["assistant"],
         messageRunIds: resultRunIds,
         turnItemRunIds: resultRunIds,
-        turnItemTypes: ["assistant_message", "error", "system_notice"],
+        turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
       })
       .pipe(Effect.mapError(threadManagementFailure));
     const childProjection = {
@@ -2483,6 +2525,7 @@ const make = Effect.gen(function* () {
             : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
+          requireExisting: true,
           title: input.title ?? existing.title,
           prompt: input.prompt ?? existing.prompt,
           enabled: input.enabled ?? existing.enabled,
@@ -2993,10 +3036,7 @@ const make = Effect.gen(function* () {
             task.remoteChild !== undefined,
         );
         if (remoteTask === undefined) {
-          return yield* failure(
-            "task_not_found",
-            `Delegated task ${input.taskId} does not belong to thread ${scope.thread.threadId}.`,
-          );
+          return yield* taskNotFound(scope, input.taskId);
         }
         return yield* remoteDelegation.cancel(scope, remoteTask, input);
       }
@@ -3285,6 +3325,7 @@ const make = Effect.gen(function* () {
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
+                  ...(request.title?.trim() ? { titleRenamed: true } : {}),
                   modelSelection: target.modelSelection,
                   runtimeMode,
                   interactionMode,
@@ -3510,10 +3551,7 @@ const make = Effect.gen(function* () {
       const view = input.view ?? "messages";
       const limit = input.limit ?? DEFAULT_THREAD_READ_LIMIT;
       const maxChars = input.maxCharsPerItem ?? DEFAULT_THREAD_ITEM_MAX_CHARS;
-      // Client callers (the CLI, older linked environments) page forward from a cursorless read.
-      const newestFirst =
-        input.beforePosition !== undefined ||
-        (input.afterPosition === undefined && scope.thread !== undefined);
+      const newestFirst = input.beforePosition !== undefined || input.afterPosition === undefined;
       const timeline = yield* threadManagement
         .getTimelinePage(input.threadId, {
           ...(input.afterPosition === undefined ? {} : { afterPosition: input.afterPosition }),
@@ -3550,8 +3588,8 @@ const make = Effect.gen(function* () {
         shell,
         yield* Clock.currentTimeMillis,
         input.afterPosition === undefined &&
-          input.beforePosition === undefined &&
-          input.itemId === undefined,
+          input.itemId === undefined &&
+          (input.beforePosition === undefined || input.beforePosition >= timeline.totalItems),
       );
       const recentRuns = target.runs
         .toSorted((left, right) => right.ordinal - left.ordinal)
@@ -3597,7 +3635,7 @@ const make = Effect.gen(function* () {
               messageRoles: ["assistant"],
               messageRunIds: resultRunIds,
               turnItemRunIds: resultRunIds,
-              turnItemTypes: ["assistant_message", "error"],
+              turnItemTypes: SUBAGENT_RESULT_TURN_ITEM_TYPES,
             })
             .pipe(Effect.mapError(threadManagementFailure));
           if (
@@ -3698,7 +3736,11 @@ const make = Effect.gen(function* () {
         })
         .pipe(Effect.mapError(threadManagementFailure));
       const status = result.run === null ? "idle" : runOutcome(result.run);
-      const taskId = result.run?.delegatedTaskId;
+      // A task's first run carries no task id; the child's untagged runs continue that task
+      // until it has a result.
+      const taskId =
+        result.run?.delegatedTaskId ??
+        (target.thread.forkedFrom?.type === "node" ? target.thread.forkedFrom.nodeId : undefined);
       const ownedTask =
         result.timedOut &&
         status !== "waiting" &&
@@ -3710,7 +3752,8 @@ const make = Effect.gen(function* () {
             task.origin === "app_owned" &&
             task.threadId === parent.thread.id &&
             task.childThreadId === input.threadId &&
-            task.completionDelivery?.state !== "disposed",
+            task.completionDelivery?.state !== "disposed" &&
+            (result.run?.delegatedTaskId !== undefined || task.result === null),
         );
       // A child waiting on a question or approval needs an answer, not a wake.
       const childRequests = ownedTask
@@ -3719,7 +3762,10 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
         : [];
       const wakesCaller =
-        ownedTask && !childRequests.some((request) => request.status === "pending");
+        ownedTask &&
+        !childRequests.some(
+          (request) => request.status === "pending" && request.responseCapability.type === "live",
+        );
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
