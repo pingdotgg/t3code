@@ -266,3 +266,24 @@ it("opens a linked machine's thread directly once this client is connected to it
   await expect.element(screen.getByText("Fix the build")).toBeVisible();
   await expect.element(screen.getByRole("button")).not.toBeInTheDocument();
 });
+
+it("names the thread it is written in without a link that goes nowhere", async () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  registry.set(
+    reply,
+    AsyncResult.success({ here: { title: "Plan the release", projectId: null } }),
+  );
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <MarkdownThreadLink
+        environmentId={HERE.environmentId}
+        threadRef={HERE}
+        link={{ environmentId: HERE.environmentId, threadId: HERE.threadId }}
+        label={null}
+      />
+    </RegistryContext>,
+  );
+  await expect.element(screen.getByText("Plan the release")).toBeVisible();
+  await expect.element(screen.getByRole("link")).not.toBeInTheDocument();
+});
