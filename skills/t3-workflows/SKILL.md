@@ -92,6 +92,7 @@ Schema.Record(Schema.String, Schema.Number); // two arguments, not an object
 | `returns`     | No       | `Schema` of the body's return value. If omitted, any JSON value (or `undefined`) is accepted.                                                                                               |
 | `triggers`    | No       | Array of triggers that start runs automatically.                                                                                                                                            |
 | `resumeAfter` | No       | Durations to wait before auto-resuming a paused run. Defaults to `["5 minutes", "20 minutes", "80 minutes"]`. The server checks about every 15 seconds, so shorter waits act as 15 seconds. |
+| `asks`        | No       | The kinds of question it asks, each with a label: `{ feature: "Feature wanted?" }`. An `ask` names one as its `kind`; a kind not listed here fails the file when it loads.                  |
 | `onEnd`       | No       | `(payload, { id, outcome, reason }) => Effect`: cleanup hook run once when the run ends.                                                                                                    |
 
 The body is `Effect.fn(function* (payload, run) { … })`, where `run.id` is the run's id. Use `yield*` on every primitive.
@@ -133,12 +134,13 @@ Call these directly in the workflow body with `yield*`. Every named primitive st
 | `step.try(name, { returns, retry? }, effect)`                  | Same as `step`, but returns failure as data instead of pausing.                                                                            | `{ outcome: "done", value }` or `{ outcome: "failed", reason }`                                   |
 | `agent(name, { brief, project? \| thread?, returns?, … })`     | Runs an agent in a thread. Failure pauses the run for a person.                                                                            | `{ value, thread }` (`value` matches `returns`, or last reply string)                             |
 | `agent.try(name, { brief, project? \| thread?, returns?, … })` | Same as `agent`, but returns failure as data instead of pausing.                                                                           | `{ outcome: "done", value, thread }` or `{ outcome: "failed", reason, thread? }`                  |
-| `ask(name, { title, choices, data?, timeout? })`               | Puts a multiple-choice question to a person.                                                                                               | `Option<{ choice, reason? }>` (`None` on timeout)                                                 |
+| `ask(name, { title, choices, kind?, data?, timeout? })`        | Puts a multiple-choice question to a person. `kind` is one of the workflow's `asks`, which people filter their questions by.               | `Option<{ choice, reason? }>` (`None` on timeout)                                                 |
 | `wait(name, { returns, timeout?, channel? })`                  | Sleeps until signalled by `{ runId, wait }` or `{ workflow, channel }`.                                                                    | `Option<A>` (`None` on timeout)                                                                   |
 | `pullRequests.wait(name, pr, { until, timeout? })`             | Sleeps until PR checks settle, or the PR merges or closes.                                                                                 | `Option<PullRequestStanding>` (`None` on timeout)                                                 |
 | `sleep(name, duration)`                                        | Durable sleep across restarts (e.g. `"1 hour"`, `"2 days"`).                                                                               | `void`                                                                                            |
 | `invoke(name, workflow, payload, { key? })`                    | Runs another workflow as a child run and waits for it to end.                                                                              | `{ outcome: "completed", value }` or `{ outcome: "stopped" \| "skipped" \| "cancelled", reason }` |
 | `title(text)`                                                  | Sets the run's display title in lists (cut to 200 characters). Takes no step name.                                                         | `void`                                                                                            |
+| `tags(["pr", "backlog"])`                                      | Tags the run, replacing earlier tags, for `t3 workflow list --tag` and `runs({ tag })`. Takes no step name.                                | `void`                                                                                            |
 | `stop(reason)`                                                 | Ends the run on purpose as `stopped` (not a failure). Body only: inside a `step` it fails the step and pauses the run, and so does `skip`. | `never`                                                                                           |
 | `skip(reason)`                                                 | Ends the run as `skipped`, which run lists leave out unless asked (`runs()` includes them).                                                | `never`                                                                                           |
 
@@ -205,12 +207,12 @@ workflow(
 );
 ```
 
-| Call                                        | Where            | Behavior                                                                                                                                                                                                                                                                                             |
-| ------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invoke(name, workflow, payload, { key? })` | Body             | Starts a child run and waits for it (including while it is paused). Listed and resumed independently; cancelling the parent cancels the child. Pass the definition `workflow(…)` returned, not its name. `key` names the child run; one already started under that key by something else is refused. |
-| `start(workflow, payload, { key })`         | `step` / `onEnd` | Fire-and-forget. Returns `{ runId }`. Same `key` returns the same run. Use for fan-out.                                                                                                                                                                                                              |
-| `runs({ workflow?, status?, keyPrefix? })`  | `step` / `onEnd` | Lists up to 500 matching runs (skipped runs included), newest first: `{ id, workflow, key, title, status, detail, startedAt, endedAt }`. `workflow` is a definition or its name.                                                                                                                     |
-| `cancel(runId, reason)`                     | `step` / `onEnd` | Cancels another run (stops agents, withdraws questions, cancels invoked children, runs `onEnd`). Cannot cancel self—use `stop`.                                                                                                                                                                      |
+| Call                                                    | Where            | Behavior                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invoke(name, workflow, payload, { key? })`             | Body             | Starts a child run and waits for it (including while it is paused). Listed and resumed independently; cancelling the parent cancels the child. Pass the definition `workflow(…)` returned, not its name. `key` names the child run; one already started under that key by something else is refused. |
+| `start(workflow, payload, { key })`                     | `step` / `onEnd` | Fire-and-forget. Returns `{ runId }`. Same `key` returns the same run. Use for fan-out.                                                                                                                                                                                                              |
+| `runs({ workflow?, status?, keyPrefix?, kind?, tag? })` | `step` / `onEnd` | Lists up to 500 matching runs (skipped runs included), newest first: `{ id, workflow, key, title, status, detail, tags, startedAt, endedAt }`. `workflow` is a definition or its name; `tag` is one of the run's `tags`; `kind` matches runs with an open question of that kind.                     |
+| `cancel(runId, reason)`                                 | `step` / `onEnd` | Cancels another run (stops agents, withdraws questions, cancels invoked children, runs `onEnd`). Cannot cancel self—use `stop`.                                                                                                                                                                      |
 
 End subject keys with a separator (e.g. `issue/412/`), so `runs({ workflow: fix, keyPrefix: "issue/412/" })` does not match `issue/4120`.
 
@@ -322,7 +324,7 @@ Start any workflow manually with `t3 workflow start <name> --input '<json>' --ke
 ## Rules you must not break
 
 1. **The body is replayed from the top.** After every wait or restart, the body runs again and completed primitives return their stored values. Put all side effects, I/O, clock reads, randomness, and `store`/API reads inside `step` or `agent`. Code between calls must be deterministic given `payload` and earlier results.
-2. **Names are journal keys.** Every named primitive (`step`, `agent`, `ask`, `wait`, `sleep`, `invoke`, `pullRequests.wait`) must have a unique name within the run, across all kinds. Loops need distinct names (``step(`check-${i}`, …)``). Never name a body step `"onEnd"` (reserved for cleanup). `invoke("x", …)` also takes `x/start`, and `title(…)` takes `title/0`, `title/1`, ….
+2. **Names are journal keys.** Every named primitive (`step`, `agent`, `ask`, `wait`, `sleep`, `invoke`, `pullRequests.wait`) must have a unique name within the run, across all kinds. Loops need distinct names (``step(`check-${i}`, …)``). Never name a body step `"onEnd"` (reserved for cleanup). `invoke("x", …)` also takes `x/start`, `title(…)` takes `title/0`, `title/1`, …, and `tags(…)` takes `tags/0`, `tags/1`, ….
 3. **Bump `version` when changing a live workflow.** Do not reorder, rename, or change the stored schema of steps in a version that still has unfinished runs. Register the updated body under a higher `version` and keep the old version in the file until its runs finish. Runs started by the CLI, a trigger or a webhook use the highest version; `start` and `invoke` run the version of the definition you pass them, so point callers at the new definition when you bump. Keys still deduplicate across versions.
 4. **Never import `effect`, and take every `T3` name you use.** The globals are `T3`, `Effect`, `Schema`, `Option`, `Duration` and `Schedule`; `step`, `daily`, `WebhookRequest` and the rest come from `const { … } = T3;` at the top of the file, and one left out of that line is a `ReferenceError`. Shared helpers go in a subfolder (dotfiles and folders are ignored by the loader), and changing an imported helper requires a server restart.
 5. **Payloads and step results must fit their `Schema`.** Everything journaled is serialized as JSON; a value that fails encoding fails the step.
@@ -334,11 +336,11 @@ If an edited file fails to load, its last good version keeps running and the ser
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
-t3 workflow list [--status paused]
+t3 workflow list [--status paused] [--tag <tag>]
 t3 workflow show <run> [--json]
 t3 workflow resume <run>
 t3 workflow cancel <run> [--reason '<why>']
-t3 workflow questions
+t3 workflow questions [--kind <kind>]
 t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait approve-upgrade
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
 t3 workflow hooks

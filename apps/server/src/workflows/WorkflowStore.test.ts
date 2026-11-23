@@ -10,6 +10,7 @@ import type * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/112_WorkflowRunTags.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -21,7 +22,9 @@ const withStore = <A, E>(
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-store-" });
     const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-    const migrated = Layer.effectDiscard(WorkflowsMigration);
+    const migrated = Layer.effectDiscard(
+      Effect.andThen(WorkflowsMigration, WorkflowRunTagsMigration),
+    );
     return yield* Effect.provide(
       use,
       WorkflowStore.layer.pipe(

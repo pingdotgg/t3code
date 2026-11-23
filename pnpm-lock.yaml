@@ -939,6 +939,9 @@ importers:
       '@t3tools/source-control-tanstack-source':
         specifier: workspace:*
         version: link:../../packages/source-control-tanstack-source
+      acorn:
+        specifier: 8.16.0
+        version: 8.16.0
       character-entities:
         specifier: 2.0.2
         version: 2.0.2

@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import { undeclaredKind } from "./askKinds.ts";
 import { checkOptions } from "./options.ts";
 import { stepReferences } from "./runReferences.ts";
 import {
@@ -14,6 +15,7 @@ import {
   type InRun,
   journaled,
   jsonSchemaOf,
+  RunContext,
   type StepFailed,
   text,
   waitAs,
@@ -408,13 +410,14 @@ export const agent = Object.assign(orPause, {
 /**
  * A question a person answers with one of `choices`; `None` when the timeout passes first. The run
  * holds nothing while it waits. `data` is the same facts as the title, for whatever lays the
- * question out.
+ * question out. `kind` is one of the kinds the workflow declares in `asks`, which lists filter by.
  */
 export const ask = <const Choices extends ReadonlyArray<string>>(
   name: string,
   options: {
     readonly title: string;
     readonly choices: Choices;
+    readonly kind?: string;
     readonly data?: Schema.Json;
     readonly timeout?: Parameters<typeof waitAs>[2]["timeout"];
   },
@@ -423,8 +426,18 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
   never,
   InRun
 > =>
-  Effect.suspend(() => {
-    checkOptions(`ask("${name}")`, options, ["title", "choices", "data", "timeout"]);
+  Effect.flatMap(RunContext, (run) => {
+    checkOptions(`ask("${name}")`, options, ["title", "choices", "kind", "data", "timeout"]);
+    const kind = options.kind;
+    if (kind !== undefined) {
+      // The kinds written in the body were checked when the file loaded. This is for the others:
+      // one worked out here, or asked by a helper the body calls.
+      const problem =
+        typeof kind === "string"
+          ? undeclaredKind(run.workflow, run.asks, kind, name)
+          : `ask("${name}")'s kind is the name of one of the workflow's \`asks\`, as text.`;
+      if (problem !== undefined) throw new Error(problem);
+    }
     return Effect.orDie(
       waitAs("ask", name, {
         returns: Schema.Struct({
@@ -435,6 +448,7 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
         request: {
           title: options.title,
           choices: [...options.choices],
+          ...(kind === undefined ? {} : { kind }),
           ...(options.data === undefined ? {} : { data: options.data }),
         },
       }),

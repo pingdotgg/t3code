@@ -32,6 +32,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { askedKindProblem } from "./askKinds.ts";
 import { engineTag, text, type WorkflowDefinition } from "./workflow.ts";
 import type * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
@@ -86,7 +87,9 @@ const isDefinition = (value: unknown): value is WorkflowDefinition =>
   typeof (value as WorkflowDefinition).body === "function" &&
   // The engine walks these at start, and a file can export an object that only looks like one.
   Array.isArray((value as WorkflowDefinition).triggers) &&
-  Array.isArray((value as WorkflowDefinition).resumeAfter);
+  Array.isArray((value as WorkflowDefinition).resumeAfter) &&
+  typeof (value as WorkflowDefinition).asks === "object" &&
+  (value as WorkflowDefinition).asks !== null;
 
 // The API is handed to a file as globals, which the whole process shares, so files load one at
 // a time. A load that was given up on still runs, so `T3.workflow` registers with the load whose
@@ -191,10 +194,13 @@ export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(func
   const path = yield* Path.Path;
   const file = path.resolve(module);
   const url = NodeURL.pathToFileURL(file).href + (load === 0 ? "" : `?${load}`);
+  let source = "";
   const definitions = yield* Effect.tryPromise({
     try: () => {
       const evaluation: Evaluation = { registered: [], open: true };
       forget(file);
+      // Read in the same tick the import starts, so this is the text that is about to run.
+      source = NodeFS.readFileSync(file, "utf8");
       return within(evaluate(url, evaluation), deadlineMs).finally(() => {
         evaluation.open = false;
         forget(file);
@@ -213,6 +219,11 @@ export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(func
       module,
       cause: "Something it exports is not a workflow. Export only what `T3.workflow` returned.",
     });
+  }
+  // Now, while the file loads: a misspelt kind would otherwise wait for a run to reach its ask.
+  const misasked = askedKindProblem(source, definitions);
+  if (misasked !== undefined) {
+    return yield* new WorkflowDefinitionsLoadError({ module, cause: misasked });
   }
   return definitions;
 });

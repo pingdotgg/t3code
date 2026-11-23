@@ -474,4 +474,56 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
+
+  it("narrows what needs you to one kind of question, with the rest under Other", async () => {
+    localStorage.removeItem("t3code:workflows:question-kind");
+    const asked = (runId: string, kind?: string): WorkflowQuestion => ({
+      ...question,
+      runId,
+      ...(kind === undefined ? {} : { kind }),
+    });
+    setup({
+      workflows: [
+        {
+          name: "release",
+          version: 1,
+          triggers: [],
+          asks: [
+            { kind: "feature", label: "Feature wanted?" },
+            { kind: "intended", label: "Bug or intended?" },
+          ],
+        },
+      ],
+      runs: [
+        run({ runId: "dark", title: "Dark mode", status: "waiting" }),
+        run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+        run({ runId: "plain", title: "Release 1.4", status: "waiting" }),
+      ],
+      questions: [asked("dark", "feature"), asked("sticky", "intended"), asked("plain")],
+    });
+    await using _desktop = await desktop();
+    await using screen = await render(page());
+
+    const runs = screen.getByRole("navigation", { name: "Workflow runs" });
+    await expect
+      .element(screen.getByText("Feature wanted? 1 · Bug or intended? 1 · Other 1"))
+      .toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Sticky header/ })).toBeVisible();
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Feature wanted? 1" }).click();
+    await expect.element(runs.getByRole("button", { name: /Dark mode/ })).toBeVisible();
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(runs.getByRole("button", { name: /Release 1\.4/ }))
+      .not.toBeInTheDocument();
+
+    await screen.getByRole("combobox", { name: "Kind of question" }).click();
+    await screen.getByRole("option", { name: "Other 1" }).click();
+    await expect.element(runs.getByRole("button", { name: /Release 1\.4/ })).toBeVisible();
+    await expect.element(runs.getByRole("button", { name: /Dark mode/ })).not.toBeInTheDocument();
+    localStorage.removeItem("t3code:workflows:question-kind");
+  });
 });

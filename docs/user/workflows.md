@@ -46,11 +46,11 @@ Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and res
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
-t3 workflow list [--status paused]
+t3 workflow list [--status paused] [--tag <tag>]
 t3 workflow show <run>
 t3 workflow resume <run>
 t3 workflow cancel <run> [--reason '<why>']
-t3 workflow questions
+t3 workflow questions [--kind <kind>]
 t3 workflow signal '{"choice":"yes"}' --run <run> --wait <name>
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
 t3 workflow hooks
@@ -59,6 +59,35 @@ t3 workflow store set <key> '<json>'
 ```
 
 Every start needs a `--key`: starting twice with the same key returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. A signal for a question that is no longer open is kept for a later wait rather than refused, so check `t3 workflow questions` first. Use `store` to read or change state kept between runs.
+
+## Kinds of question and tags
+
+A workflow that asks more than one kind of question can name the kinds, so you can answer one kind at a time. List them in the workflow's options with the label to show, and give each `ask` its `kind`:
+
+```ts
+const { workflow, ask, tags, Issue } = T3;
+
+workflow(
+  "triage",
+  {
+    version: 1,
+    payload: Issue,
+    asks: { feature: "Feature wanted?", intended: "Bug or intended?" },
+  },
+  Effect.fn(function* (issue) {
+    yield* tags(["backlog"]);
+    yield* ask("wanted", {
+      kind: "feature",
+      title: `Build ${issue.title}?`,
+      choices: ["Yes", "No"],
+    });
+  }),
+);
+```
+
+Under **Needs you**, a picker then shows each kind with how many questions of it are open, and **Other** for questions asked without a kind; your pick is remembered on that device. `t3 workflow questions --kind feature` lists the same from the CLI. An `ask` whose kind is not in the workflow's own `asks` stops the file from loading, with the workflow and the kind named; a kind that is only worked out while a run is under way pauses that run instead.
+
+`tags([...])` labels a run for `t3 workflow list --tag backlog`, whether or not it waits on anyone.
 
 ## Triggers
 

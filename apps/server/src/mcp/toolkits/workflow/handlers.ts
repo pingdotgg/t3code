@@ -23,7 +23,13 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") {
-          return { questions: yield* workflows.questions.pipe(Effect.mapError(refused)) };
+          const questions = yield* workflows.questions.pipe(Effect.mapError(refused));
+          return {
+            questions:
+              input.kind === undefined
+                ? questions
+                : questions.filter((question) => question.kind === input.kind),
+          };
         }
         if (input.action === "store") {
           return {
@@ -33,7 +39,10 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         if (input.action === "list") {
           return {
             runs: yield* workflows
-              .list(input.status === undefined ? {} : { status: input.status })
+              .list({
+                ...(input.status === undefined ? {} : { status: input.status }),
+                ...(input.tag === undefined ? {} : { tag: input.tag }),
+              })
               .pipe(Effect.mapError(refused)),
           };
         }

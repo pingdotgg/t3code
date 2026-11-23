@@ -3,10 +3,13 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowChip,
+  workflowQuestionKinds,
+  workflowRunAsksKind,
   workflowRunLists,
   workflowRunNow,
   workflowRunState,
   type WorkflowListTab,
+  type WorkflowQuestionKind,
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
@@ -17,18 +20,21 @@ import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
 import { msg, useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { useEnvironments } from "../../state/environments";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const TABS = [
   {
@@ -113,6 +119,8 @@ function EnvironmentRuns(props: {
   readonly label: string | null;
   readonly snapshot: WorkflowRunsSnapshot;
   readonly tab: WorkflowListTab;
+  /** The kind of question to narrow Needs you to; null for every run in it. */
+  readonly kind: string | null;
 }) {
   const navigation = useNavigation();
   const gt = useGT();
@@ -120,9 +128,11 @@ function EnvironmentRuns(props: {
   const [showSkipped, setShowSkipped] = useState(false);
   const { snapshot, tab } = props;
   const visible = listedWorkflowRuns(snapshot.runs, showSkipped);
-  const listed = workflowRunLists(
+  const inTab = workflowRunLists(
     groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions),
   )[tab];
+  const kind = tab === "needs-you" ? props.kind : null;
+  const listed = kind === null ? inTab : inTab.filter((node) => workflowRunAsksKind(node, kind));
   return (
     <View>
       {props.label === null ? null : (
@@ -167,6 +177,33 @@ function EnvironmentRuns(props: {
 
 const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"];
 
+/** The kinds of question open across the environments, a kind two of them ask counted once. */
+function questionKindsAcross(
+  snapshots: ReadonlyArray<WorkflowRunsSnapshot>,
+): ReadonlyArray<WorkflowQuestionKind> {
+  const merged = new Map<string, WorkflowQuestionKind>();
+  for (const snapshot of snapshots) {
+    const needsYou = workflowRunLists(
+      groupWorkflowRuns(
+        snapshot.workflows,
+        listedWorkflowRuns(snapshot.runs, false).runs,
+        snapshot.questions,
+      ),
+    )["needs-you"];
+    for (const kind of workflowQuestionKinds(snapshot.workflows, needsYou)) {
+      const known = merged.get(kind.kind);
+      merged.set(
+        kind.kind,
+        known === undefined ? kind : { ...known, count: known.count + kind.count },
+      );
+    }
+  }
+  // The questions of no kind go last, whichever environment they were met in.
+  return [...merged.values()].sort(
+    (left, right) => Number(left.label === null) - Number(right.label === null),
+  );
+}
+
 /** The Workflows tab: what waits on you first, in every environment this device is connected to. */
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
@@ -179,6 +216,8 @@ export function WorkflowsScreen() {
       JSON.stringify(environments.map((environment) => environment.environmentId)),
     ),
   );
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   if (isReady && environments.length === 0) {
     return (
       <EmptyState
@@ -211,6 +250,13 @@ export function WorkflowsScreen() {
       ),
     ) ?? "all";
   const shown = tab ?? opening;
+  const kinds =
+    shown === "needs-you" ? questionKindsAcross(withRuns.map(({ snapshot }) => snapshot)) : [];
+  const pickedKind = AsyncResult.isSuccess(preferences)
+    ? preferences.value.workflowQuestionKind
+    : undefined;
+  // A kind picked earlier with nothing open now filters nothing, and is back when it has some.
+  const kind = kinds.find((candidate) => candidate.kind === pickedKind)?.kind ?? null;
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -248,6 +294,30 @@ export function WorkflowsScreen() {
               role="tab"
             />
           </View>
+          {kinds.length === 0 ? null : (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerClassName="gap-2 px-5 pb-2"
+            >
+              <Chip
+                label={gt("All kinds", { $context: "filter, every kind of workflow question" })}
+                selected={kind === null}
+                onPress={() => void savePreferences({ workflowQuestionKind: undefined })}
+              />
+              {kinds.map((candidate) => (
+                <Chip
+                  key={candidate.kind}
+                  label={`${
+                    candidate.label ??
+                    gt("Other", { $context: "workflow questions that have no kind" })
+                  } ${candidate.count}`}
+                  selected={kind === candidate.kind}
+                  onPress={() => void savePreferences({ workflowQuestionKind: candidate.kind })}
+                />
+              ))}
+            </ScrollView>
+          )}
           {withRuns.map(({ environment, snapshot }) => (
             <EnvironmentRuns
               key={environment.environmentId}
@@ -255,6 +325,7 @@ export function WorkflowsScreen() {
               label={environments.length > 1 ? environment.label : null}
               snapshot={snapshot}
               tab={shown}
+              kind={kind}
             />
           ))}
         </>

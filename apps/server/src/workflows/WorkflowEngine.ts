@@ -168,6 +168,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
+    // Left out of a run with none: most have none, and every run is sent on every change.
+    ...(row.tags_json === "[]"
+      ? {}
+      : { tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string> }),
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -726,13 +730,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     Effect.forEach(
       waits.filter((wait) => wait.request_json !== null),
       (wait) =>
-        Effect.map(store.latestThread(wait.run_id), (thread) => ({
-          runId: wait.run_id,
-          name: wait.name,
-          request: WorkflowStore.jsonValue(wait.request_json ?? "null"),
-          askedAt: wait.opened_at,
-          thread,
-        })),
+        Effect.map(store.latestThread(wait.run_id), (thread) => {
+          const request = WorkflowStore.jsonValue(wait.request_json ?? "null");
+          const kind =
+            request !== null && typeof request === "object" && !Array.isArray(request)
+              ? (request as { readonly kind?: unknown }).kind
+              : undefined;
+          return {
+            runId: wait.run_id,
+            name: wait.name,
+            request,
+            ...(typeof kind === "string" ? { kind } : {}),
+            askedAt: wait.opened_at,
+            thread,
+          };
+        }),
     ),
   );
   const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -754,7 +766,18 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const found = latest(name);
       return found === undefined
         ? []
-        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+        : [
+            {
+              name,
+              version: found[0].version,
+              triggers: found[0].triggers.map(triggerText),
+              ...(Object.keys(found[0].asks).length === 0
+                ? {}
+                : {
+                    asks: Object.entries(found[0].asks).map(([kind, label]) => ({ kind, label })),
+                  }),
+            },
+          ];
     },
   );
   const snapshot = Effect.all({
@@ -948,6 +971,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         title: row.title,
         status: row.status,
         detail: row.detail,
+        tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
@@ -994,7 +1018,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
-      return (yield* store.runs(filter?.status)).map(toRun);
+      const rows =
+        filter?.tag === undefined
+          ? yield* store.runs(filter?.status)
+          : yield* store.runsWhere({ status: filter.status, tag: filter.tag });
+      return rows.map(toRun);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {
       // Subscribed before the first look, so a change in between is not missed.

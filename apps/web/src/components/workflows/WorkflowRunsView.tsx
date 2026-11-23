@@ -1,8 +1,10 @@
 import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import { useState, type ReactNode } from "react";
 
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -25,6 +27,8 @@ import {
   defaultWorkflowRunId,
   groupWorkflowRuns,
   listedWorkflowRuns,
+  workflowQuestionKinds,
+  workflowRunAsksKind,
   workflowRunLists,
   workflowRunNow,
   workflowTriggerLine,
@@ -35,6 +39,9 @@ import {
 
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
 const EVERY_WORKFLOW = "";
+// Never a kind: the questions of no kind are filtered by the empty kind.
+const EVERY_KIND = "*";
+const QUESTION_KIND_KEY = "t3code:workflows:question-kind";
 const TABS: ReadonlyArray<{ readonly value: WorkflowListTab; readonly label: string }> = [
   {
     value: "needs-you",
@@ -96,6 +103,7 @@ export function WorkflowRunsView({
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const [pickedTab, setPickedTab] = useState<WorkflowListTab | null>(null);
   const [workflow, setWorkflow] = useState(EVERY_WORKFLOW);
+  const [pickedKind, setPickedKind] = useLocalStorage(QUESTION_KIND_KEY, EVERY_KIND, Schema.String);
   const gt = useGT();
   const m = useMessages();
   const [showSkipped, setShowSkipped] = useState(false);
@@ -218,9 +226,16 @@ export function WorkflowRunsView({
   const tab =
     pickedTab ??
     (selectedRunId === null || holds(opening) ? opening : holds("running") ? "running" : "all");
-  const listed = lists[tab].filter(
+  const ofWorkflow = lists[tab].filter(
     (node) => section === null || workflowRunInvolves(node, section.name),
   );
+  const kinds = tab === "needs-you" ? workflowQuestionKinds(snapshot.workflows, ofWorkflow) : [];
+  // A kind picked earlier with nothing open now filters nothing, and is back when it has some.
+  const kind = kinds.some((candidate) => candidate.kind === pickedKind) ? pickedKind : EVERY_KIND;
+  const kindLabel = (candidate: (typeof kinds)[number]) =>
+    candidate.label ?? gt("Other", { $context: "workflow questions that have no kind" });
+  const listed =
+    kind === EVERY_KIND ? ofWorkflow : ofWorkflow.filter((node) => workflowRunAsksKind(node, kind));
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}
@@ -279,6 +294,44 @@ export function WorkflowRunsView({
                 </SelectPopup>
               </Select>
             ) : null}
+            {kinds.length === 0 ? null : (
+              <Select value={kind} onValueChange={(value) => setPickedKind(value ?? EVERY_KIND)}>
+                <SelectTrigger
+                  size="sm"
+                  aria-label={gt("Kind of question", {
+                    $context: "picker that filters workflow runs by the kind of question they ask",
+                  })}
+                >
+                  <SelectValue>
+                    {kind === EVERY_KIND
+                      ? gt("All kinds")
+                      : kinds
+                          .filter((candidate) => candidate.kind === kind)
+                          .map((candidate) => `${kindLabel(candidate)} ${candidate.count}`)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={EVERY_KIND}>
+                    <T>All kinds</T>
+                  </SelectItem>
+                  {kinds.map((candidate) => (
+                    <SelectItem key={candidate.kind} value={candidate.kind}>
+                      <span className="flex w-full items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate">{kindLabel(candidate)}</span>
+                        <span className="text-muted-foreground tabular-nums">
+                          {candidate.count}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            )}
+            {kinds.length === 0 || kind !== EVERY_KIND ? null : (
+              <p className="px-1 text-xs text-muted-foreground">
+                {kinds.map((candidate) => `${kindLabel(candidate)} ${candidate.count}`).join(" · ")}
+              </p>
+            )}
             {section === null ? null : (
               <p className="px-1 text-xs text-muted-foreground">
                 {workflowTriggerLine(section, m)}

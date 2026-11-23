@@ -39,6 +39,8 @@ export interface RunRow {
   readonly version: number | bigint;
   readonly engine_tag: string;
   readonly title: string;
+  /** The run's tags, as a JSON list of text. */
+  readonly tags_json: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
@@ -185,6 +187,8 @@ export class WorkflowStore extends Context.Service<
       result: Schema.Json,
     ) => Effect.Effect<boolean>;
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
+    /** The run's tags from now on, in place of any it had. */
+    readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -347,6 +351,10 @@ export class WorkflowStore extends Context.Service<
       readonly workflow?: string | undefined;
       readonly status?: WorkflowRunStatus | undefined;
       readonly keyPrefix?: string | undefined;
+      /** Runs with an open question of this kind. */
+      readonly kind?: string | undefined;
+      /** Runs tagged with this. */
+      readonly tag?: string | undefined;
     }) => Effect.Effect<ReadonlyArray<RunRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -566,6 +574,12 @@ export const make = Effect.gen(function* () {
       yield* write(
         runId,
         sql`UPDATE workflow_runs SET title = ${title.slice(0, 200)} WHERE run_id = ${runId}`,
+      );
+    }),
+    runTags: Effect.fn("WorkflowStore.runTags")(function* (runId, tags) {
+      yield* write(
+        runId,
+        sql`UPDATE workflow_runs SET tags_json = ${jsonText([...tags])} WHERE run_id = ${runId}`,
       );
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {
@@ -991,10 +1005,20 @@ export const make = Effect.gen(function* () {
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {
       const prefix = filter.keyPrefix ?? null;
+      const kind = filter.kind ?? null;
+      const tag = filter.tag ?? null;
       // A range, not LIKE, which would read `%` and `_` in a key as patterns.
       return yield* sql<RunRow>`
-        SELECT * FROM workflow_runs
+        SELECT * FROM workflow_runs r
         WHERE (${filter.workflow ?? null} IS NULL OR workflow = ${filter.workflow ?? null})
+          AND (${tag} IS NULL OR EXISTS (
+            SELECT 1 FROM json_each(r.tags_json) WHERE json_each.value = ${tag}
+          ))
+          AND (${kind} IS NULL OR EXISTS (
+            SELECT 1 FROM workflow_waits w
+            WHERE w.run_id = r.run_id AND w.signalled_at IS NULL AND w.request_json IS NOT NULL
+              AND json_extract(w.request_json, '$.kind') = ${kind}
+          ))
           AND (${filter.status ?? null} IS NULL OR status = ${filter.status ?? null})
           AND (${prefix} IS NULL OR (
             idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix ?? ""}\u{10FFFF}`}
