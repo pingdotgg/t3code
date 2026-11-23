@@ -15,7 +15,7 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, testFileDiffAtom, pagedDiffAtom, patchDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string, addition = "after()") =>
     [
@@ -71,6 +71,9 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
       }),
     ),
     pagedDiffAtom,
+    patchDiffAtom: Atom.family((patch: string) =>
+      Atom.make(AsyncResult.success({ patch, truncated: false, nextCursor: null })),
+    ),
   };
 });
 
@@ -82,6 +85,7 @@ const mocks = vi.hoisted(() => ({
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
+  patch: null as string | null,
 }));
 
 function deliverViewedPaths(paths: ReadonlySet<string> | null) {
@@ -92,6 +96,12 @@ function deliverViewedPaths(paths: ReadonlySet<string> | null) {
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
   useAtomCommand: (() => vi.fn()) as never,
+}));
+vi.mock(import("../chat/ChatMarkdownMedia"), async (original) => ({
+  ...(await original()),
+  ChatMarkdownAssetImage: (({ alt, resource }: { alt: string; resource: { url: string } }) => (
+    <img alt={alt} data-url={resource.url} />
+  )) as never,
 }));
 vi.mock(import("./usePullRequestFilesViewed"), async () => {
   const { useSyncExternalStore } = await import("react");
@@ -127,6 +137,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (mocks.patch !== null) return patchDiffAtom(mocks.patch);
         if (mocks.paged) return pagedDiffAtom(mocks.shortPages)(input.cursor ?? "first");
         return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
@@ -201,6 +212,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
+  mocks.patch = null;
 }
 
 const tab = (
@@ -741,4 +753,47 @@ it("hands panel focus from the loading diff to the diff once the diff workers st
   await vi.waitFor(() =>
     expect(document.activeElement).toBe(container.querySelector(".diff-render-surface")),
   );
+});
+
+it("previews a Git LFS image instead of its pointer text", async () => {
+  setup({ paged: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _settings = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  mocks.patch = [
+    "diff --git a/art.png b/art.png",
+    "new file mode 100644",
+    "index 0000000..2222222",
+    "--- /dev/null",
+    "+++ b/art.png",
+    "@@ -0,0 +1,3 @@",
+    "+version https://git-lfs.github.com/spec/v1",
+    `+oid sha256:${"a".repeat(64)}`,
+    "+size 166",
+    "",
+  ].join("\n");
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{ ...detail, headSha: "0123456789abcdef0123456789abcdef01234567" }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />,
+    { container },
+  );
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+
+  // An LFS-tracked image arrives as a text patch of its pointer, not as an image with no patch.
+  await expect
+    .element(screen.getByText("version https://git-lfs.github.com/spec/v1"), { timeout: 5000 })
+    .not.toBeInTheDocument();
+  await expect.element(screen.getByAltText("art.png")).toBeInTheDocument();
 });
