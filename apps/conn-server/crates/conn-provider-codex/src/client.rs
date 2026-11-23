@@ -105,6 +105,9 @@ struct State {
     loaded: HashMap<String, u64>,
     /// At most [`UNROUTED_KEPT`] frames, oldest first, with the native thread they name.
     unrouted: VecDeque<(String, Inbound)>,
+    /// Closed sessions that wait for their subagents, by session id: the process generation
+    /// they wait on and their inbox. That process's exit ends them. At most one per session.
+    detached: HashMap<String, (u64, mpsc::Sender<SessionMsg>)>,
 }
 
 pub struct AppServer {
@@ -176,6 +179,14 @@ impl AppServer {
             state
                 .routes
                 .retain(|thread, r| !r.same_channel(&inbox) || keep.contains(thread));
+            if !keep.is_empty()
+                && !state.sessions.is_empty()
+                && let Some(generation) = state.live.as_ref().map(|l| l.generation)
+            {
+                state
+                    .detached
+                    .insert(session_id.to_owned(), (generation, inbox));
+            }
         }
         if state.sessions.is_empty() {
             state.live.take().map(|live| live.process)
@@ -212,26 +223,55 @@ impl AppServer {
         self.lock().sessions.len()
     }
 
-    pub fn route(&self, native_thread_id: &str, inbox: mpsc::Sender<SessionMsg>) {
+    /// Routes `native_thread_id` to `inbox`; returns the route it replaced.
+    pub fn route(
+        &self,
+        native_thread_id: &str,
+        inbox: mpsc::Sender<SessionMsg>,
+    ) -> Option<mpsc::Sender<SessionMsg>> {
         self.lock()
             .routes
-            .insert(native_thread_id.to_owned(), inbox);
+            .insert(native_thread_id.to_owned(), inbox)
+    }
+
+    /// Undoes [`Self::route`] while `native_thread_id` still leads to `inbox`: `previous` goes
+    /// back, or the route goes.
+    pub fn restore_route(
+        &self,
+        native_thread_id: &str,
+        inbox: &mpsc::Sender<SessionMsg>,
+        previous: Option<mpsc::Sender<SessionMsg>>,
+    ) {
+        let mut state = self.lock();
+        if !state
+            .routes
+            .get(native_thread_id)
+            .is_some_and(|r| r.same_channel(inbox))
+        {
+            return;
+        }
+        match previous {
+            Some(previous) => {
+                state.routes.insert(native_thread_id.to_owned(), previous);
+            }
+            None => {
+                state.routes.remove(native_thread_id);
+            }
+        }
+    }
+
+    /// A closed session stopped waiting for its subagents.
+    pub fn forget_detached(&self, session_id: &str) {
+        self.lock().detached.remove(session_id);
     }
 
     pub fn unroute(&self, native_thread_id: &str) {
         self.lock().routes.remove(native_thread_id);
     }
 
-    /// Removes the route of `native_thread_id` while it still leads to `inbox`.
-    pub fn unroute_from(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) {
-        let mut state = self.lock();
-        if state
-            .routes
-            .get(native_thread_id)
-            .is_some_and(|r| r.same_channel(inbox))
-        {
-            state.routes.remove(native_thread_id);
-        }
+    /// Removes every route that leads to `inbox`.
+    pub fn unroute_inbox(&self, inbox: &mpsc::Sender<SessionMsg>) {
+        self.lock().routes.retain(|_, r| !r.same_channel(inbox));
     }
 
     /// The running process's generation, starting and initializing one when none runs.
@@ -547,24 +587,27 @@ impl AppServer {
             state.pending.clear();
             let mut inboxes: Vec<mpsc::Sender<SessionMsg>> =
                 state.sessions.values().cloned().collect();
-            // A closed session that still waits on its subagents holds only routes; the exit
-            // ends them, and its routes go.
-            let state = &mut *state;
-            let sessions = &state.sessions;
-            let lingering: Vec<mpsc::Sender<SessionMsg>> = state
-                .routes
-                .values()
-                .filter(|r| !sessions.values().any(|s| s.same_channel(r)))
-                .cloned()
+            // Closed sessions that wait on this process's subagents end with it, whatever
+            // their routes say now.
+            let ended: Vec<String> = state
+                .detached
+                .iter()
+                .filter(|(_, (g, _))| *g == generation)
+                .map(|(id, _)| id.clone())
                 .collect();
-            state
-                .routes
-                .retain(|_, r| sessions.values().any(|s| s.same_channel(r)));
-            for inbox in lingering {
-                if !inboxes.iter().any(|i| i.same_channel(&inbox)) {
+            for id in ended {
+                if let Some((_, inbox)) = state.detached.remove(&id)
+                    && !inboxes.iter().any(|i| i.same_channel(&inbox))
+                {
                     inboxes.push(inbox);
                 }
             }
+            // Their child routes go with the process.
+            let state = &mut *state;
+            let sessions = &state.sessions;
+            state
+                .routes
+                .retain(|_, r| sessions.values().any(|s| s.same_channel(r)));
             inboxes
         };
         let detail = format!(

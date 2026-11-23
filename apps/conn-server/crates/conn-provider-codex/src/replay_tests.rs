@@ -877,7 +877,8 @@ fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
 }
 
 /// A close on an app-server that keeps serving other sessions ends the root turn but not a
-/// subagent's: the child may still run there. A close that stops the process ends both.
+/// subagent's: the child may still run there, and the root's terminal waits for it. A close
+/// that stops the process ends both.
 #[test]
 fn a_shared_close_leaves_a_running_subagent_open() {
     for shared in [true, false] {
@@ -924,10 +925,17 @@ fn a_shared_close_leaves_a_running_subagent_open() {
             e["type"] == "provider_turn.updated"
                 && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "ct"
         });
-        let root_ended = events
+        let root_ended = events.iter().any(|e| {
+            e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "tu"
+                && e["providerTurn"]["status"] == "interrupted"
+        });
+        assert!(root_ended, "shared={shared}: {events:?}");
+        // An interrupted root's terminal waits for its running child (`emitOrDeferRootTerminal`).
+        let terminal = events
             .iter()
             .any(|e| e["type"] == "turn.terminal" && e["status"] == "interrupted");
-        assert!(root_ended, "shared={shared}: {events:?}");
+        assert_eq!(terminal, !shared, "shared={shared}: {events:?}");
         assert_eq!(
             ended("node.updated") || child_turn_ended,
             !shared,

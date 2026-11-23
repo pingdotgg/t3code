@@ -81,6 +81,9 @@ pub struct FakeProvider {
     /// The event sender of the last session closed on a shared process, which may still
     /// report what that process runs for it. Dropping it ends the session's events.
     pub after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
+    /// The last opened session's event sender, held weakly so a test can send a provider event
+    /// without keeping the session's events open.
+    pub last_events: Arc<Mutex<Option<mpsc::WeakSender<ProviderEvent>>>>,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
@@ -125,6 +128,7 @@ impl FakeProvider {
             close_delay: std::time::Duration::ZERO,
             closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
             after_close: Arc::default(),
+            last_events: Arc::default(),
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
@@ -295,6 +299,7 @@ impl Provider for FakeProvider {
             crate::lock(&self.opened_policies).push(conn_contract::to_json(&input.runtime_policy));
             *crate::lock(&self.mcp_servers) = input.mcp_servers.clone();
             let (tx, mut rx) = mpsc::channel(64);
+            *crate::lock(&self.last_events) = Some(tx.downgrade());
             if let Some(exit) = self.process_exit.clone() {
                 // Events pass through a task that stops, and drops the engine's end, on exit.
                 let (out, forwarded) = mpsc::channel(64);
@@ -410,6 +415,7 @@ fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> Provider
         failure: failure.map(|f| from_json(f).expect("failure")),
         retry: None,
         thread_disposition: ThreadDisposition::Reusable,
+        child_turns_continue: false,
     })
 }
 

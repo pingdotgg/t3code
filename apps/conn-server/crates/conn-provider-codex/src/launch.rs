@@ -30,6 +30,9 @@ pub const CLIENT_VERSION: &str = conn_contract::T3_SERVER_VERSION;
 /// T3's `CODEX_STOP_CONFIRM_TIMEOUT_MS`.
 pub const STOP_CONFIRM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// How often a closed session's silent subagent is checked with Codex.
+pub const CHILD_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The Codex instance's settings that shape a launch (`CodexSettings` in contracts).
 #[derive(Clone, Debug)]
 pub struct CodexConfig {
@@ -51,6 +54,9 @@ pub struct CodexConfig {
     /// How long the session waits for the answer to a `turn/start` that Stop abandoned after
     /// it was written (the request's own limit, 60 s). Tests shorten it.
     pub abandoned_start_timeout: std::time::Duration,
+    /// After a close on a shared app-server, how often a subagent that sends nothing is
+    /// checked with Codex (`thread/read`). Tests shorten it.
+    pub child_check_interval: std::time::Duration,
     /// Whether the status probe runs (`checkCodexProviderStatus`). Checks turn it off, so no
     /// check runs this machine's `codex`; the entry then stays T3's pending one.
     pub status_probe: bool,
@@ -69,6 +75,7 @@ impl Default for CodexConfig {
             attachments_dir: None,
             stop_confirm_timeout: STOP_CONFIRM_TIMEOUT,
             abandoned_start_timeout: crate::client::REQUEST_TIMEOUT,
+            child_check_interval: CHILD_CHECK_INTERVAL,
             status_probe: true,
             status_cwd: None,
         }

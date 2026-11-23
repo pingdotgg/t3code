@@ -865,6 +865,10 @@ pub struct TurnTerminal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<ProviderRetry>,
     pub thread_disposition: ThreadDisposition,
+    /// A failed root whose native children keep running: they settle without it, so the
+    /// run's end leaves them open (`childTurnsContinue`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub child_turns_continue: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1136,6 +1140,7 @@ mod tests {
                     failure: None,
                     retry: None,
                     thread_disposition: ThreadDisposition::Reusable,
+                    child_turns_continue: false,
                 }))
                 .await
                 .map_err(|_| ProviderError::SessionStopped)

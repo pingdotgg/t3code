@@ -34,6 +34,9 @@ const PLAN_FLUSH_INTERVAL: Duration = Duration::from_millis(400);
 const CHILD_METADATA_TIMEOUT: Duration = Duration::from_secs(5);
 /// T3's wait on a late child's `turn/interrupt`.
 const CHILD_INTERRUPT_TIMEOUT: Duration = Duration::from_secs(10);
+/// How many times a closed session's silent subagent is checked with Codex before it ends
+/// interrupted: an hour at the default interval.
+const MAX_CHILD_CHECKS: u32 = 60;
 
 pub struct CodexSession {
     id: ProviderSessionId,
@@ -73,6 +76,8 @@ struct Inner {
     stop_confirm_timeout: Duration,
     /// `CodexConfig::abandoned_start_timeout`.
     abandoned_start_timeout: Duration,
+    /// `CodexConfig::child_check_interval`.
+    child_check_interval: Duration,
     /// The model and working folder the session opened with: TS resumes a thread for a
     /// rollback, and forks one, with the session's own selection and policy.
     open_model: Option<String>,
@@ -95,9 +100,9 @@ struct State {
     /// Passed to each `thread/start` and `thread/resume` (`set_mcp_servers`).
     mcp_servers: Vec<McpServer>,
     closed: bool,
-    /// After a close on a shared app-server: the subagent threads whose frames still come
-    /// here, and the session itself, held until they end (`Inner::settle_closed`).
-    lingering: Option<(Vec<String>, Arc<Inner>)>,
+    /// After a close on a shared app-server: the session itself, held while its subagents may
+    /// still report (`Inner::settle_closed`, bounded by `watch_children`).
+    lingering: Option<Arc<Inner>>,
     /// `close` has delivered its own events; from here on the session only waits.
     released: bool,
     /// The run whose start Stop abandoned (`abandon_turn_start`); one is enough, as a stale id
@@ -269,6 +274,7 @@ impl CodexSession {
             attachments_dir: config.attachments_dir.clone(),
             stop_confirm_timeout: config.stop_confirm_timeout,
             abandoned_start_timeout: config.abandoned_start_timeout,
+            child_check_interval: config.child_check_interval,
             open_model: open.0,
             open_cwd: open.1,
             server,
@@ -301,29 +307,31 @@ impl Inner {
 
     /// After a close: while subagent turns that may outlive it are open, the session keeps
     /// itself, its routes and its events; once none is open, it lets go of all three.
-    fn settle_closed(self: &Arc<Self>, kept: Vec<String>) {
-        let (unroute, held) = {
+    fn settle_closed(self: &Arc<Self>) {
+        let (done, held, watch) = {
             let mut state = self.lock();
             if !state.released {
                 return;
             }
             if state.mapper.open_child_threads().is_empty() {
                 state.events = None;
-                let held = state.lingering.take();
-                let mut threads = kept;
-                if let Some((more, _)) = &held {
-                    threads.extend(more.iter().cloned());
-                }
-                (threads, held)
+                (true, state.lingering.take(), false)
+            } else if state.lingering.is_none() {
+                state.lingering = Some(Arc::clone(self));
+                (false, None, true)
             } else {
-                if state.lingering.is_none() {
-                    state.lingering = Some((kept, Arc::clone(self)));
-                }
-                (Vec::new(), None)
+                (false, None, false)
             }
         };
-        for thread in unroute {
-            self.server.unroute_from(&thread, &self.inbox);
+        if done {
+            self.server.unroute_inbox(&self.inbox);
+            self.server.forget_detached(&self.id);
+        }
+        if watch {
+            tokio::spawn(watch_children(
+                Arc::downgrade(self),
+                self.child_check_interval,
+            ));
         }
         drop(held);
     }
@@ -505,7 +513,7 @@ impl Inner {
         model: Option<&str>,
         force: bool,
     ) -> ProviderResult<Value> {
-        self.server.route(native, self.inbox.clone());
+        let previous = self.server.route(native, self.inbox.clone());
         if !force && self.server.is_loaded(native) {
             let generation = self.server.generation();
             if let Some(thread) = &mut self.lock().thread {
@@ -521,14 +529,22 @@ impl Inner {
             Err(CallError::Rpc(e))
                 if e.message.contains("is archived") || e.message.contains("codex unarchive") =>
             {
-                self.server
+                match self
+                    .server
                     .request("thread/unarchive", json!({ "threadId": native }))
                     .await
-                    .map_err(call_failed("resume_thread"))?;
-                self.server.request("thread/resume", params).await
+                {
+                    Ok(_) => self.server.request("thread/resume", params).await,
+                    Err(e) => Err(e),
+                }
             }
             other => other,
         };
+        // A refused resume takes nothing over: the thread's frames keep going where they went
+        // (another session may still wait on them).
+        if result.is_err() {
+            self.server.restore_route(native, &self.inbox, previous);
+        }
         let result = result.map_err(|e| match &e {
             // `isCodexActiveWriterError`.
             CallError::Rpc(rpc)
@@ -594,7 +610,90 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
             }
         };
         inner.deliver(outs).await;
-        inner.settle_closed(Vec::new());
+        inner.settle_closed();
+    }
+}
+
+/// After a close on a shared app-server, the closed session's subagents may go silent. Every
+/// `interval`, each open one is checked with Codex (`thread/read` with turns): a turn Codex
+/// reports ended ends here with its status, and a thread Codex does not know ends interrupted.
+/// After [`MAX_CHILD_CHECKS`] checks, what is still open ends interrupted, so the session's
+/// state never outlives that bound.
+async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
+    for check in 1..=MAX_CHILD_CHECKS {
+        tokio::time::sleep(interval).await;
+        let Some(strong) = inner.upgrade() else {
+            return;
+        };
+        if strong.lock().lingering.is_none() {
+            return;
+        }
+        let threads = strong.lock().mapper.open_child_threads();
+        let mut outs = Vec::new();
+        for thread in threads {
+            let read = strong
+                .server
+                .request(
+                    "thread/read",
+                    json!({"threadId": thread, "includeTurns": true}),
+                )
+                .await;
+            let ended = |status: &Value| match status.as_str() {
+                Some("completed") => Some("completed"),
+                Some("interrupted") => Some("interrupted"),
+                Some("failed") => Some("failed"),
+                _ => None,
+            };
+            let mut state = strong.lock();
+            let open: Vec<String> = state
+                .mapper
+                .open_child_turns()
+                .into_iter()
+                .filter(|(t, _)| *t == thread)
+                .map(|(_, turn)| turn)
+                .collect();
+            match &read {
+                Ok(answer) => {
+                    let turns = answer["thread"]["turns"].as_array();
+                    let status_of = |id: &str| {
+                        turns
+                            .into_iter()
+                            .flatten()
+                            .find(|t| t["id"] == id)
+                            .and_then(|t| ended(&t["status"]))
+                    };
+                    for turn in &open {
+                        if let Some(status) = status_of(turn) {
+                            outs.extend(state.mapper.end_turn(turn, status));
+                        }
+                    }
+                    // Announced, no turn here: its latest turn on Codex says how it ended.
+                    if open.is_empty()
+                        && let Some(status) = turns
+                            .and_then(|t| t.last())
+                            .and_then(|t| ended(&t["status"]))
+                    {
+                        outs.extend(state.mapper.end_idle_child(&thread, status));
+                    }
+                }
+                Err(CallError::Rpc(_)) => {
+                    for turn in &open {
+                        outs.extend(state.mapper.end_turn(turn, "interrupted"));
+                    }
+                    outs.extend(state.mapper.end_idle_child(&thread, "interrupted"));
+                }
+                // The process is gone or slow: its exit ends them, or the next check decides.
+                Err(_) => {}
+            }
+            if check == MAX_CHILD_CHECKS {
+                for turn in &open {
+                    outs.extend(state.mapper.end_turn(turn, "interrupted"));
+                }
+                outs.extend(state.mapper.end_idle_child(&thread, "interrupted"));
+            }
+        }
+        strong.deliver(outs).await;
+        strong.settle_closed();
     }
 }
 
@@ -1477,7 +1576,7 @@ impl Session for CodexSession {
             let outs = inner.lock().mapper.on_close(shared);
             inner.deliver(outs).await;
             inner.lock().released = true;
-            inner.settle_closed(kept);
+            inner.settle_closed();
             if shared {
                 Closed::RuntimeShared
             } else {
@@ -1510,6 +1609,35 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*'th1'*) mcp_loaded=1; emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th1\"}}}" ;;
     *'"method":"mcpServer/resource/read"'*) emit "{\"id\":$id,\"result\":{\"contents\":[{\"uri\":\"ui://stub\",\"text\":\"<h1>Stub</h1>\",\"mimeType\":\"text/html;profile=mcp-app\"}]}}" ;;
     *'"method":"config/read"'*) emit "{\"id\":$id,\"result\":{\"config\":{}}}" ;;
+    *'"method":"turn/start"'*'late first turn'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch1","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":3}}}' ;;
+    *'"method":"turn/start"'*'failed parent'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch1","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch1","turn":{"id":"ct","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"failed","completedAt":3}}}' ;;
+    *'"method":"turn/start"'*'root interrupt first'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch1","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch1","turn":{"id":"ct","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"interrupted","completedAt":3}}}' ;;
+    *'"method":"turn/start"'*'silent child'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch3","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch3","turn":{"id":"ct3","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":3}}}' ;;
+    *'"method":"test/startAndFinishChild"'*)
+      emit "{\"id\":$id,\"result\":{}}"
+      emit '{"method":"turn/started","params":{"threadId":"ch1","turn":{"id":"ct","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"ch1","turn":{"id":"ct","status":"completed","completedAt":4}}}' ;;
+    *'"method":"thread/read"'*'"includeTurns":true'*'ch3'*)
+      emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"ch3\",\"model\":\"gpt-6-luna\",\"turns\":[{\"id\":\"ct3\",\"status\":\"completed\",\"completedAt\":9}]}}}" ;;
+    *'"method":"thread/read"'*'ch3'*)
+      emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"ch3\",\"model\":\"gpt-6-luna\"}}}" ;;
+    *'"method":"thread/resume"'*'ch1'*)
+      emit "{\"id\":$id,\"error\":{\"code\":-32600,\"message\":\"thread ch1 already has an active writer\"}}" ;;
     *'"method":"turn/start"'*'spawn child'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
       emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch1","agentPath":"/root/helper"}}}'
@@ -1783,8 +1911,153 @@ done
         .expect("both cases finished within 30 s");
     }
 
+    /// [`shared_pair_until`] up to the root's `turn.terminal`.
+    async fn shared_pair(
+        provider: &CodexProvider,
+        text: &str,
+    ) -> (
+        Box<dyn Session>,
+        mpsc::Receiver<ProviderEvent>,
+        Box<dyn Session>,
+        Vec<Value>,
+    ) {
+        shared_pair_until(provider, text, |e| e["type"] == "turn.terminal").await
+    }
+
+    async fn rest(events: &mut mpsc::Receiver<ProviderEvent>) -> Vec<Value> {
+        let mut rest = Vec::new();
+        while let Some(event) = events.recv().await {
+            rest.push(serde_json::to_value(event).unwrap());
+        }
+        rest
+    }
+
+    /// The child's turn `native` ended with `status`: its provider turn and its subagent node.
+    fn assert_child_ended(events: &[Value], native: &str, status: &str) {
+        assert!(
+            events.iter().any(|e| e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == native
+                && e["providerTurn"]["status"] == status),
+            "{native} {status}: {events:?}"
+        );
+        assert!(
+            events.iter().any(|e| e["type"] == "node.updated"
+                && e["node"]["kind"] == "subagent"
+                && e["node"]["status"] == status),
+            "{native} {status}: {events:?}"
+        );
+    }
+
     async fn shared_close_child_end(finish: bool) {
         let provider = provider();
+        let (session, mut events, other, root) = shared_pair(&provider, "spawn child").await;
+        assert_eq!(root.last().unwrap()["status"], "completed");
+        assert_eq!(session.close().await, Closed::RuntimeShared);
+        if finish {
+            provider
+                .server
+                .request("test/finishChild", json!({}))
+                .await
+                .unwrap();
+        } else {
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        }
+        let rest = rest(&mut events).await;
+        assert_child_ended(
+            &rest,
+            "ct",
+            if finish { "completed" } else { "interrupted" },
+        );
+        if finish {
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        }
+    }
+
+    /// Codex may announce a subagent before its first `turn/started`. A shared close in that
+    /// gap keeps the announced child's route, so its later turn and end still arrive.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_shared_close_keeps_a_child_announced_before_its_first_turn() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider();
+            let (session, mut events, other, _) = shared_pair(&provider, "late first turn").await;
+            assert_eq!(session.close().await, Closed::RuntimeShared);
+            provider
+                .server
+                .request("test/startAndFinishChild", json!({}))
+                .await
+                .unwrap();
+            let rest = rest(&mut events).await;
+            assert_child_ended(&rest, "ct", "completed");
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        })
+        .await
+        .expect("finished within 30 s");
+    }
+
+    /// `emitOrDeferRootTerminal`: a root that fails while a descendant still runs settles
+    /// without it (`childTurnsContinue`); the child keeps working. Ports T3's "handles a late
+    /// native child after the capacity retry failed" assertion.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_root_with_a_running_child_says_the_child_continues() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider();
+            let (session, _events, other, root) = shared_pair(&provider, "failed parent").await;
+            let terminal = root.last().unwrap();
+            assert_eq!(terminal["status"], "failed");
+            assert_eq!(terminal["childTurnsContinue"], true, "{terminal}");
+            session.close().await;
+            other.close().await;
+        })
+        .await
+        .expect("finished within 30 s");
+    }
+
+    /// `emitOrDeferRootTerminal`: Stop interrupts the whole lineage, so an interrupted root's
+    /// terminal waits until its descendants settle. Ports T3's "handles a late native child
+    /// after the capacity retry interrupted" (no terminal until the child ends).
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_interrupted_root_ends_after_its_running_child() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider();
+            let (session, mut events, other, _) =
+                shared_pair_until(&provider, "root interrupt first", |e| {
+                    e["type"] == "provider_turn.updated"
+                        && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "tu5"
+                        && e["providerTurn"]["status"] == "interrupted"
+                })
+                .await;
+            provider
+                .server
+                .request("test/finishChild", json!({}))
+                .await
+                .unwrap();
+            let seen = until(&mut events, "turn.terminal").await;
+            assert_eq!(seen.last().unwrap()["status"], "interrupted");
+            assert!(
+                seen.iter()
+                    .any(|e| e["type"] == "subagent.updated"
+                        && e["subagent"]["status"] == "completed"),
+                "the child ends before the root: {seen:?}"
+            );
+            session.close().await;
+            other.close().await;
+        })
+        .await
+        .expect("finished within 30 s");
+    }
+
+    /// Two sessions on one fake app-server: `s1` (thread `t1`) runs a turn with `text` and
+    /// reads its events up to the first that `stop` takes; `s2` only keeps the process shared.
+    async fn shared_pair_until(
+        provider: &CodexProvider,
+        text: &str,
+        stop: impl Fn(&Value) -> bool,
+    ) -> (
+        Box<dyn Session>,
+        mpsc::Receiver<ProviderEvent>,
+        Box<dyn Session>,
+        Vec<Value>,
+    ) {
         let open = |thread: &str, id: &str| {
             provider.open_session(OpenSessionInput {
                 thread_id: thread.into(),
@@ -1814,42 +2087,71 @@ done
             })
             .await
             .unwrap();
-        session
-            .start_turn(turn(&thread, 5, "spawn child"))
-            .await
-            .unwrap();
-        let root = until(&mut events, "turn.terminal").await;
-        assert_eq!(root.last().unwrap()["status"], "completed");
-        assert_eq!(session.close().await, Closed::RuntimeShared);
-        if finish {
-            provider
-                .server
-                .request("test/finishChild", json!({}))
+        session.start_turn(turn(&thread, 5, text)).await.unwrap();
+        let mut seen = Vec::new();
+        loop {
+            let event = serde_json::to_value(events.recv().await.expect("events ended")).unwrap();
+            let done = stop(&event);
+            seen.push(event);
+            if done {
+                return (session, events, other, seen);
+            }
+        }
+    }
+
+    /// Another session's refused resume of the lingering child leaves its route alone, and the
+    /// closed session still ends with the process.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_refused_resume_keeps_the_closed_sessions_route() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider();
+            let (session, mut events, other, root) = shared_pair(&provider, "spawn child").await;
+            assert_eq!(session.close().await, Closed::RuntimeShared);
+            drop(session);
+            let child = root
+                .iter()
+                .find_map(|e| {
+                    let row = &e["providerThread"];
+                    (row["nativeThreadRef"]["nativeId"] == "ch1")
+                        .then(|| from_json(row.clone()).unwrap())
+                })
+                .expect("the child's provider thread");
+            let attempt = other
+                .resume_thread(ResumeThreadInput {
+                    provider_thread: child,
+                    thread_id: None,
+                    model_selection: None,
+                    runtime_policy: None,
+                })
+                .await;
+            assert!(attempt.is_err(), "the fake refuses the resume");
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+            let rest = tokio::time::timeout(Duration::from_secs(5), rest(&mut events))
                 .await
-                .unwrap();
-        } else {
+                .expect("the closed session's events end with the process");
+            assert_child_ended(&rest, "ct", "interrupted");
+        })
+        .await
+        .expect("finished within 30 s");
+    }
+
+    /// A child that goes silent after a shared close is checked with Codex: one whose turn
+    /// Codex reports ended ends here too, and the closed session lets go.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_silent_child_is_reconciled_with_codex() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider_with(CodexConfig {
+                child_check_interval: Duration::from_millis(100),
+                ..CodexConfig::default()
+            });
+            let (session, mut events, other, _) = shared_pair(&provider, "silent child").await;
+            assert_eq!(session.close().await, Closed::RuntimeShared);
+            let rest = rest(&mut events).await;
+            assert_child_ended(&rest, "ct3", "completed");
             assert_eq!(other.close().await, Closed::RuntimeStopped);
-        }
-        let mut rest = Vec::new();
-        while let Some(event) = events.recv().await {
-            rest.push(serde_json::to_value(event).unwrap());
-        }
-        let status = if finish { "completed" } else { "interrupted" };
-        assert!(
-            rest.iter().any(|e| e["type"] == "provider_turn.updated"
-                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "ct"
-                && e["providerTurn"]["status"] == status),
-            "finish={finish}: {rest:?}"
-        );
-        assert!(
-            rest.iter().any(|e| e["type"] == "node.updated"
-                && e["node"]["kind"] == "subagent"
-                && e["node"]["status"] == status),
-            "finish={finish}: {rest:?}"
-        );
-        if finish {
-            assert_eq!(other.close().await, Closed::RuntimeStopped);
-        }
+        })
+        .await
+        .expect("finished within 30 s");
     }
 
     #[tokio::test(flavor = "current_thread")]

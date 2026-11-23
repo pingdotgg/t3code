@@ -1002,6 +1002,149 @@ async fn a_confirmed_stop_ends_the_runs_native_subagents() {
     );
 }
 
+/// A Stop after the subagent's record settled still settles the open work the run's child
+/// link leads to: its item and the child's runless root turn and item (T3 keeps
+/// `linkedChildThreadIds` for the run's lifetime). Ports the `stopped` case of T3's "ends a
+/// subagent that outlived its root when the provider stream fails": the record keeps its
+/// result.
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_after_the_record_settled_ends_the_childs_open_work() {
+    let db = TempDb::new("orphans-stop-settled");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine
+        .inner()
+        .write(|tx| {
+            let mut row = tx.entity("t1", "subagents", "node:native")?.unwrap();
+            row["status"] = json!("completed");
+            tx.append(crate::store::Draft::new("t1", "subagent.updated", row))?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:native").await,
+        "completed",
+        "a settled record keeps its result"
+    );
+    for (thread, kind, id) in [
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+        ("child", "turnItems", "item:child-cmd"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "interrupted",
+            "{kind} {id}"
+        );
+    }
+    // Each row settles once.
+    let events = engine
+        .inner()
+        .db(|store| store.thread_events_after("child", 0, 10_000))
+        .await
+        .unwrap();
+    let ends = events
+        .iter()
+        .filter(|(_, e)| {
+            e["payload"]["id"] == "node:child-root" && e["payload"]["status"] == "interrupted"
+        })
+        .count();
+    assert_eq!(ends, 1);
+}
+
+/// A failed root whose native children still run (`childTurnsContinue`) leaves them running:
+/// they settle without it (`RunExecutionService` skips the cascade).
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_root_whose_children_continue_leaves_them_running() {
+    let db = TempDb::new("orphans-failed-continue");
+    let (engine, provider) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    let events = provider
+        .last_events
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(tokio::sync::mpsc::WeakSender::upgrade)
+        .expect("the session's events");
+    events
+        .send(
+            from_json(
+                json!({"type": "turn.terminal", "providerThreadId": provider_thread,
+                "providerTurnId": "turn:run:t1:1", "runOrdinal": 1, "status": "failed",
+                "failure": null, "threadDisposition": "reusable", "childTurnsContinue": true}),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    drop(events);
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "failed");
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "running",
+            "{kind} {id}"
+        );
+    }
+}
+
+/// A Stop the provider confirmed before a close keeps its status: the close stores the
+/// terminals already received before it detaches the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_keeps_a_stop_the_provider_already_confirmed() {
+    let db = TempDb::new("close-after-stop");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let inner = engine.inner();
+    tokio::join!(biased;
+        inner.clone().interrupt("t1".to_owned(), "run:t1:1".to_owned()),
+        inner.close_session("t1")
+    );
+    assert_eq!(
+        row_status(&engine, "t1", "runs", "run:t1:1").await,
+        "interrupted"
+    );
+}
+
 /// A clean stop leaves them open for the next start, which cancels them.
 #[tokio::test(flavor = "current_thread")]
 async fn a_shutdown_leaves_native_subagents_for_the_next_start() {

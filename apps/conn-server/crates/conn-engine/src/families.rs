@@ -754,8 +754,9 @@ pub(crate) fn end_orphaned_native_subagents(
 }
 
 /// `cascadeTerminalizeRunOwnedSubagents`: a run that ends interrupted, failed or cancelled
-/// ends its open provider-native subagents with it: record, node, item, and their child's
-/// runless root turns.
+/// ends its provider-native subagents' open work with it: an open record, its node and item,
+/// and its child's runless root turns. A record that already settled keeps its result, but its
+/// child link still leads to open work (T3 keeps `linkedChildThreadIds` for the run).
 pub(crate) fn end_run_native_subagents(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -764,8 +765,13 @@ pub(crate) fn end_run_native_subagents(
 ) -> StoreResult<()> {
     let now = tx.now().to_owned();
     for row in tx.entities_where(thread_id, "subagents", "runId", run_id)? {
-        if row["origin"] == "provider_native" && work_active(&row) {
+        if row["origin"] != "provider_native" {
+            continue;
+        }
+        if work_active(&row) {
             end_native_subagent(tx, thread_id, row, status, &now)?;
+        } else {
+            end_subagent_work(tx, thread_id, &row, status, &now)?;
         }
     }
     Ok(())
@@ -782,7 +788,7 @@ fn end_native_subagent(
 ) -> StoreResult<()> {
     let id = row["id"].as_str().unwrap_or_default().to_owned();
     let run = row["runId"].as_str().map(str::to_owned);
-    let child = row["childThreadId"].as_str().map(str::to_owned);
+    let work = row.clone();
     row["status"] = json!(status);
     row["completedAt"] = json!(now);
     row["updatedAt"] = json!(now);
@@ -791,6 +797,21 @@ fn end_native_subagent(
             .run(run.as_deref())
             .node(Some(&id)),
     )?;
+    end_subagent_work(tx, thread_id, &work, status, now)
+}
+
+/// A subagent's open work: its node, its item, and its child's runless root turns. Only open
+/// rows change, so each settles once.
+fn end_subagent_work(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    row: &Value,
+    status: &str,
+    now: &str,
+) -> StoreResult<()> {
+    let id = row["id"].as_str().unwrap_or_default().to_owned();
+    let run = row["runId"].as_str().map(str::to_owned);
+    let child = row["childThreadId"].as_str().map(str::to_owned);
     if let Some(mut node) = tx.entity(thread_id, "nodes", &id)?.filter(work_active) {
         node["status"] = json!(status);
         node["completedAt"] = json!(now);

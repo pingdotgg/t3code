@@ -61,6 +61,9 @@ pub(crate) struct LiveThread {
 /// oldest-found entry is revoked. Far above the threads one container runs.
 pub(crate) const MAX_KEPT_TOOLS: usize = 1024;
 
+/// How long a close waits for the pump to store what the provider already reported.
+const CLOSE_DRAIN_LIMIT: Duration = Duration::from_secs(5);
+
 /// A closed session's agent tools, kept while the shared process that holds them runs.
 pub(crate) struct KeptTools {
     /// The provider instance whose process holds them.
@@ -329,10 +332,14 @@ impl Inner {
         let Some(live) = self.live_thread(thread_id) else {
             return;
         };
+        self.stored(&live).await;
+    }
+
+    /// Waits until `live`'s pump stored the events already sent.
+    async fn stored(&self, live: &LiveThread) {
         let (done, stored) = oneshot::channel();
         lock(&live.stored_waiters).push(done);
         live.stored_wanted.notify_one();
-        drop(live);
         // A pump that ended drops the sender.
         let _ = stored.await;
     }
@@ -1365,7 +1372,7 @@ impl Inner {
                 }
                 _ => None,
             };
-            if matches!(translated, Translated::Terminal(..)) {
+            if matches!(translated, Translated::Terminal { .. }) {
                 self.command_output.finish_thread(&thread_id);
             }
             match translated {
@@ -1421,13 +1428,18 @@ impl Inner {
                     self.request_continuation(&thread_id, detail, notification, delivery)
                         .await;
                 }
-                Translated::Terminal(status, failure, broken) => {
+                Translated::Terminal {
+                    status,
+                    failure,
+                    broken,
+                    end,
+                } => {
                     // The root run's messages are closed; none of its text is flushed later.
                     streaming.forget_thread(&thread_id);
                     reserved.retain(|(tid, _)| *tid != thread_id);
                     if let Some(run_id) = run_id {
                         live.take_active();
-                        self.end_run(&thread_id, &run_id, status, failure, RunEnd::Settled)
+                        self.end_run(&thread_id, &run_id, status, failure, end)
                             .await;
                         if broken {
                             self.mark_thread_broken(&thread_id, &run_id).await;
@@ -2177,12 +2189,18 @@ impl Inner {
     /// shared process (Codex's `app-server`) still runs, its MCP client may still use them,
     /// so they are kept for the thread's next session.
     pub(crate) async fn close_session(self: &Arc<Self>, thread_id: &str) {
+        // What the provider reported before the close is stored first: a Stop it already
+        // confirmed keeps its status. Bounded, so a pump that cannot go on never holds it.
+        if let Some(live) = self.live_thread(thread_id) {
+            let _ = tokio::time::timeout(CLOSE_DRAIN_LIMIT, self.stored(&live)).await;
+        }
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             let released_at = self.now_ms();
             self.command_output.finish_thread(thread_id);
             // The run is detached before the close, so a root turn the close ends (Codex on
-            // a shared `app-server`) does not end it as if the provider stopped it.
+            // a shared `app-server`) does not end it as if the provider stopped it. The close
+            // fails only a run still active here.
             let detached = live.take_active();
             let closed = live.session.close().await;
             let instance = self
@@ -2351,8 +2369,15 @@ enum Translated {
     Ignore,
     Event(Draft),
     ProviderTurn(ProviderTurnId, Draft),
-    /// The status, the failure, and whether the native thread is broken.
-    Terminal(&'static str, Option<Value>, bool),
+    /// The run's turn ended.
+    Terminal {
+        status: &'static str,
+        failure: Option<Value>,
+        /// The native thread cannot take another turn.
+        broken: bool,
+        /// `Detached` when the run's native children keep working without it.
+        end: RunEnd,
+    },
     /// A provider-made thread (a subagent's child): created once, never overwritten.
     CreateThread(Value),
     /// A steer was taken or dropped: the user message's turn item follows.
@@ -2519,11 +2544,18 @@ fn translate(thread_id: &str, active: Option<&ActiveRun>, event: ProviderEvent) 
                 }
                 _ => None,
             };
-            Translated::Terminal(
+            Translated::Terminal {
                 status,
                 failure,
-                terminal.thread_disposition == ThreadDisposition::Broken,
-            )
+                broken: terminal.thread_disposition == ThreadDisposition::Broken,
+                // A failed root whose native children keep working settles without them
+                // (`childTurnsContinue`).
+                end: if terminal.status == TurnStatus::Failed && terminal.child_turns_continue {
+                    RunEnd::Detached
+                } else {
+                    RunEnd::Settled
+                },
+            }
         }
         ProviderEvent::AppThreadCreated { app_thread, .. } => {
             Translated::CreateThread(to_json(&app_thread))
