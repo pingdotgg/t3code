@@ -2091,10 +2091,15 @@ describe("VcsStatusBroadcaster", () => {
         state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "repro" };
         yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
         yield* Deferred.await(failed);
-        const failedCalls = state.localStatusCalls;
 
         // Removing index.lock moves no HEAD, and no remote poll runs for this subscriber.
         state.failLocalStatus = false;
+        // A subscriber joining before the retry must not get the cached pre-checkout branch.
+        const joined = yield* broadcaster
+          .streamStatus({ cwd: "/repo", includeRemote: false })
+          .pipe(Stream.take(1), Stream.runCollect);
+        assert.strictEqual(joined[0]?._tag === "snapshot" && joined[0].local.refName, "repro");
+        const failedCalls = state.localStatusCalls;
         yield* TestClock.adjust(Duration.seconds(30));
         yield* Deferred.await(checkedOut);
         assert.strictEqual(state.localStatusCalls, failedCalls + 1);

@@ -1099,6 +1099,8 @@ export const make = Effect.gen(function* () {
   const publishCheckedOutRef = Effect.fn("VcsStatusBroadcaster.publishCheckedOutRef")(function* (
     cwd: string,
   ) {
+    // The cache still holds the old branch until the reconcile read lands, which can fail and retry.
+    branchConfirmedUnder.delete(cwd);
     if (!detailedSubscribers.has(cwd)) return yield* refreshBranchStatusCore(cwd);
     const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
     yield* publishBranch(cwd, { refName, isRepo }, observation);
