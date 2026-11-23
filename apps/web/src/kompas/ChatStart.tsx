@@ -1,7 +1,7 @@
 import { dueCardCount, waitingForUser } from "@t3tools/client-runtime/state/kompas";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
-import { Plural, T, useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { useState } from "react";
 
 import { Button } from "../components/ui/button";
@@ -65,16 +65,19 @@ export function ChatStartExtras(props: { readonly draftId: DraftId | null }) {
         </div>
       )}
       {due === 0 && waiting === undefined ? null : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {due === 0 ? null : (
             <Panel>
               <p className="text-muted-foreground text-sm">
                 <T>For today</T>
               </p>
               <p className="mt-1 font-semibold text-lg">
-                <T>
-                  <Plural n={due} one="1 card to review" other={`${due} cards to review`} />
-                </T>
+                {gt(
+                  "{count, plural, one {{count} card to review} other {{count} cards to review}}",
+                  {
+                    count: due,
+                  },
+                )}
               </p>
               <p className="mt-1 truncate text-muted-foreground text-sm">
                 {decks
@@ -94,13 +97,10 @@ export function ChatStartExtras(props: { readonly draftId: DraftId | null }) {
             <Panel>
               <p className="truncate text-muted-foreground text-sm">{waiting.workstream.title}</p>
               <p className="mt-1 font-semibold text-lg">
-                <T>
-                  <Plural
-                    n={waiting.count}
-                    one="1 thing is waiting for you"
-                    other={`${waiting.count} things are waiting for you`}
-                  />
-                </T>
+                {gt(
+                  "{count, plural, one {{count} thing is waiting for you} other {{count} things are waiting for you}}",
+                  { count: waiting.count },
+                )}
               </p>
               <div className="mt-3">
                 <Button

@@ -1,7 +1,7 @@
 import { dueCardCount, dueInLabel } from "@t3tools/client-runtime/state/kompas";
 import type { Card, Deck, ReviewRating } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { Plural, T, useGT, useLocale, Var } from "gt-react";
+import { T, useGT, useLocale } from "gt-react";
 import { DownloadIcon, PencilIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -144,9 +144,10 @@ function StudySession(props: {
               <T>All done for now</T>
             </h2>
             <p className="mt-2 text-muted-foreground">
-              <T>
-                <Plural n={done} one="You reviewed 1 card." other={`You reviewed ${done} cards.`} />
-              </T>
+              {gt(
+                "{count, plural, one {You reviewed {count} card.} other {You reviewed {count} cards.}}",
+                { count: done },
+              )}
             </p>
             <div className="mt-4">
               <Button onClick={props.onClose}>
@@ -412,9 +413,7 @@ function DeckList({ kompas }: { readonly kompas: Kompas }) {
             <T>New deck</T>
           </Button>
           <Button disabled={due === 0} onClick={() => study("all")}>
-            <T>
-              Review <Var>{due}</Var>
-            </T>
+            {gt("Review {count}", { count: due })}
           </Button>
         </div>
       }
@@ -472,9 +471,7 @@ function DeckList({ kompas }: { readonly kompas: Kompas }) {
                 </p>
               </div>
               <Button disabled={deck.dueCount === 0} onClick={() => study(deck.id)}>
-                <T>
-                  Review <Var>{deck.dueCount}</Var>
-                </T>
+                {gt("Review {count}", { count: deck.dueCount })}
               </Button>
               <Button
                 size="icon"

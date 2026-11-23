@@ -2,9 +2,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { waitingForUser } from "@t3tools/client-runtime/state/kompas";
 import type { ModelSelection, Workstream, WorkstreamLibraryItem } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT } from "gt-react";
 import { BookOpenIcon, FileTextIcon, NotebookPenIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { type ComponentProps, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -247,9 +247,7 @@ export function WorkstreamsPage() {
                   <h2 className="min-w-0 truncate font-semibold text-base">{workstream.title}</h2>
                   {waiting === 0 ? null : (
                     <Badge variant="warning">
-                      <T>
-                        Waiting for you: <Var>{waiting}</Var>
-                      </T>
+                      {gt("Waiting for you: {count}", { count: waiting })}
                     </Badge>
                   )}
                 </div>
@@ -563,8 +561,7 @@ function WorkstreamSettings(props: { readonly kompas: Kompas; readonly workstrea
 
 const PANEL_TABS = ["overview", "library", "memory", "settings"] as const;
 
-/** Beside a project's conversation: what it needs from the user, its materials and its memory. */
-export function WorkstreamPanel(props: {
+function WorkstreamTabs(props: {
   readonly kompas: Kompas;
   readonly workstream: Workstream;
   readonly threadId: string;
@@ -579,10 +576,7 @@ export function WorkstreamPanel(props: {
     settings: gt("Settings"),
   };
   return (
-    <aside
-      aria-label={gt("Project")}
-      className="flex w-80 shrink-0 flex-col border-border border-l bg-background max-lg:hidden"
-    >
+    <>
       <div className="flex h-[var(--workspace-topbar-height)] shrink-0 items-center overflow-x-auto px-3">
         <ToggleGroup
           size="sm"
@@ -615,6 +609,38 @@ export function WorkstreamPanel(props: {
           <WorkstreamSettings key={workstream.id} kompas={kompas} workstream={workstream} />
         )}
       </div>
+    </>
+  );
+}
+
+/** Beside a project's conversation: what it needs from the user, its materials and its memory. */
+export function WorkstreamPanel(props: ComponentProps<typeof WorkstreamTabs>) {
+  const gt = useGT();
+  return (
+    <aside
+      aria-label={gt("Project")}
+      className="flex w-80 shrink-0 flex-col border-border border-l bg-background max-lg:hidden"
+    >
+      <WorkstreamTabs {...props} />
     </aside>
+  );
+}
+
+/** The panel over the conversation, for windows with no room beside it. */
+export function WorkstreamPanelDialog(
+  props: ComponentProps<typeof WorkstreamTabs> & { readonly onClose: () => void },
+) {
+  const { onClose, ...panel } = props;
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogPopup className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{panel.workstream.title}</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <WorkstreamTabs {...panel} />
+        </DialogPanel>
+      </DialogPopup>
+    </Dialog>
   );
 }

@@ -164,7 +164,7 @@ export interface Preferences {
   readonly followUpBehavior?: FollowUpBehavior;
   /** The hour of the daily study reminder; null or unset means none. */
   readonly studyReminderHour?: number | null;
-  /** The client `language` setting: a locale code or "system". Unset means English. */
+  /** The client `language` setting: a locale code or "system". Unset means "system". */
   readonly language?: string;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;

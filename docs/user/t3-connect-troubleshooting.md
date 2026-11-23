@@ -167,6 +167,6 @@ If none of this helps, open an issue on
 - The output of `t3 connect status` on the host.
 - The trace ID, if one is shown.
 - If the tunnel dropped earlier, the host's tunnel log, `relay-client.ndjson`
-  in the logs folder (`~/.t3/userdata/logs` by default). It records when the
+  in the logs folder (`~/.kompas/userdata/logs` by default). It records when the
   tunnel connected, warned, exited, and restarted, with the tunnel token
   removed.

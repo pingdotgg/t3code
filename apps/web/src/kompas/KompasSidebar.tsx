@@ -11,13 +11,14 @@ import {
   ArrowLeftIcon,
   BookOpenIcon,
   FolderIcon,
+  LayoutListIcon,
   LightbulbIcon,
   MessageCircleIcon,
   PlugIcon,
   PlusIcon,
   SettingsIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -38,7 +39,8 @@ import { cn } from "../lib/utils";
 import { useVisibleThreadShells } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useModelName } from "./ModelField";
-import { useKompas, useStartConversation, useWorkstreamOf } from "./state";
+import { type Kompas, useKompas, useStartConversation, useWorkstreamOf } from "./state";
+import { WorkstreamPanelDialog } from "./Workstreams";
 
 const RECENT_CONVERSATIONS = 40;
 
@@ -125,12 +127,14 @@ function useWorkstreamStateLabel() {
 }
 
 function ProjectSidebar(props: {
+  readonly kompas: Kompas;
   readonly environmentId: Parameters<typeof scopeThreadRef>[0];
   readonly workstream: Workstream;
   readonly activeThreadId: string;
   readonly onNavigate: () => void;
 }) {
   const { workstream } = props;
+  const [panelOpen, setPanelOpen] = useState(false);
   const modelName = useModelName(props.environmentId);
   const stateLabel = useWorkstreamStateLabel();
   const gt = useGT();
@@ -160,7 +164,21 @@ function ProjectSidebar(props: {
           >
             {gt("Coordinator")}
           </ThreadLink>
+          <SidebarMenuItem className="lg:hidden">
+            <SidebarMenuButton onClick={() => setPanelOpen(true)}>
+              <LayoutListIcon />
+              <span>{gt("Overview")}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
+        {panelOpen ? (
+          <WorkstreamPanelDialog
+            kompas={props.kompas}
+            workstream={workstream}
+            threadId={props.activeThreadId}
+            onClose={() => setPanelOpen(false)}
+          />
+        ) : null}
         {WORKSTREAM_STATES.map((state) => {
           const threads = workstream.threads.filter((thread) => thread.state === state);
           if (threads.length === 0) return null;
@@ -343,6 +361,7 @@ export function KompasSidebar() {
         </SidebarContent>
       ) : (
         <ProjectSidebar
+          kompas={kompas}
           environmentId={kompas.environmentId}
           workstream={project.workstream}
           activeThreadId={activeThreadId ?? ""}

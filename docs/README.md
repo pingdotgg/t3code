@@ -15,6 +15,7 @@
 - [Voice input](./user/voice-input.md)
 - [Text generation models](./user/text-generation.md)
 - [SnapShots](./user/snap-shot.md)
+- [Conversations and study](./user/conversations.md)
 - [Visual replies](./user/html-renders.md)
 - [Import browser sessions](./user/browser-import.md)
 - [Use T3 Code as your default browser](./user/default-browser.md)
@@ -72,3 +73,4 @@ anything.
 - [03 · Release](./operations/03_release.md)
 - [04 · Observability](./operations/04_observability.md)
 - [05 · Relay observability](./operations/05_relay-observability.md)
+- [06 · Building and updating Kompas](./operations/06_kompas.md)

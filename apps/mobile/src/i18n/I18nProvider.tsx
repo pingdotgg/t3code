@@ -1,4 +1,4 @@
-import { resolveLocaleSelection } from "@t3tools/client-runtime/locales";
+import { resolveLocaleSelection, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { GTProvider, initializeGT, useLocale } from "gt-react-native";
@@ -27,6 +27,7 @@ const CATALOGS: Readonly<Record<string, () => unknown>> = {
   ja: () => require("./translations/ja.json"),
   ko: () => require("./translations/ko.json"),
   ru: () => require("./translations/ru.json"),
+  pl: () => require("./translations/pl.json"),
   sv: () => require("./translations/sv.json"),
 };
 
@@ -57,7 +58,7 @@ function readSystemLocales(): ReadonlyArray<string> {
 export function useLanguagePreference(): string {
   const preferences = useAtomValue(mobilePreferencesAtom);
   return AsyncResult.isSuccess(preferences)
-    ? (preferences.value.language ?? DEFAULT_LOCALE)
+    ? (preferences.value.language ?? SYSTEM_LANGUAGE)
     : DEFAULT_LOCALE;
 }
 

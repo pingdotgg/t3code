@@ -68,6 +68,13 @@ import {
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { KompasToolkit } from "../../apps/server/src/mcp/toolkits/kompas/tools.ts";
+import {
+  CHAT_PROMPT,
+  MEMORY_PROMPT,
+  SESSION_SEARCH_PROMPT,
+} from "../../apps/server/src/kompas/profilePrompts.ts";
+import { profileAllowsTool } from "../../apps/server/src/kompas/profileTools.ts";
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
 import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
@@ -352,6 +359,8 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /** A chat-mode conversation rather than a coding thread. */
+    conversation: Schema.optional(Schema.Boolean),
     /** false: the project is on no forge T3 reads, so T3 hides its forge tools. */
     forge: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
@@ -512,6 +521,7 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   DeviceToolkit,
   HtmlToolkit,
   MessageToolkit,
+  KompasToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -585,15 +595,22 @@ const forgeToolNames = new Set(
 /** T3's text for an arm: `raw` drops the PR linking block that names T3's PR tools. */
 const forArm = (value: string, arm: Arm | undefined) =>
   arm === "raw" ? value.replace(`\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`, "") : value;
+const CONVERSATION_PROMPT = [CHAT_PROMPT, MEMORY_PROMPT, SESSION_SEARCH_PROMPT].join("\n");
 const visibleT3Tools = (options: {
   readonly subagent?: boolean;
   readonly links?: boolean;
   readonly forge?: boolean;
   readonly agentFeedback?: Contracts.AgentFeedbackMode;
   readonly arm?: Arm;
+  readonly conversation?: boolean;
 }) =>
   t3Tools.filter(
     (tool) =>
+      profileAllowsTool(
+        options.conversation === true ? "chat" : "developer",
+        tool.name.slice(T3_PREFIX.length),
+        true,
+      ) &&
       !(options.arm === "raw" && forgeToolNames.has(tool.name)) &&
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
       ((options.agentFeedback ?? "off") !== "off" || !hiddenWhileFeedbackOff.has(tool.name)) &&
@@ -729,6 +746,8 @@ export const buildBase = (
     /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
     readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
+    /** A chat-mode conversation: T3's text is the chat profile's, and so are its tools. */
+    readonly conversation?: boolean;
   },
 ) => {
   const t3 = visibleT3Tools(options);
@@ -754,10 +773,12 @@ export const buildBase = (
   const { model } = options;
   const append = options.nativeSubagent
     ? ""
-    : forArm(
-        t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
-        options.arm,
-      );
+    : options.conversation === true
+      ? CONVERSATION_PROMPT
+      : forArm(
+          t3SystemAppend(model, options.deviceAccess, options.browserAccess, options.agentFeedback),
+          options.arm,
+        );
   const modelLine = `You are powered by the model named ${MODELS[model]}. The exact model ID is ${model}.`;
   const joined = systemTexts.join("\n");
   // The capture's home directory names its user. Cases use `/home/user` paths instead.
@@ -830,6 +851,8 @@ const buildCodexBase = (
     /** The Agent feedback mode: on, T3 lists its tools and its text includes the mode's line. */
     readonly agentFeedback?: Contracts.AgentFeedbackMode;
     readonly arm?: Arm;
+    /** A chat-mode conversation: T3's text is the chat profile's, and so are its tools. */
+    readonly conversation?: boolean;
   },
 ): Base => {
   const t3 = visibleT3Tools(options);
@@ -872,9 +895,11 @@ const buildCodexBase = (
     { browser: options.browserAccess ?? true, device: options.deviceAccess ?? true },
   );
   input.push(
-    ...Object.entries(context).map(([key, entry]) =>
-      message(`<${key}>${forArm(entry.value, options.arm)}</${key}>`),
-    ),
+    ...(options.conversation === true
+      ? [message(CONVERSATION_PROMPT)]
+      : Object.entries(context).map(([key, entry]) =>
+          message(`<${key}>${forArm(entry.value, options.arm)}</${key}>`),
+        )),
   );
   const nativeTools = input
     .flatMap((item) =>
@@ -3292,6 +3317,7 @@ const main = Effect.gen(function* () {
     links: boolean,
     forge: boolean,
     agentFeedback: Contracts.AgentFeedbackMode = "off",
+    conversation = false,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -3306,6 +3332,7 @@ const main = Effect.gen(function* () {
               deviceAccess,
               browserAccess,
               agentFeedback,
+              conversation,
               arm: flags.arm,
             }),
           ),
@@ -3322,6 +3349,7 @@ const main = Effect.gen(function* () {
               deviceAccess,
               browserAccess,
               agentFeedback,
+              conversation,
               arm: flags.arm,
             });
             return role === "native-subagent"
@@ -3333,20 +3361,15 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}`;
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}:${setup.world?.agentFeedback ?? "off"}:${setup.conversation === true}`;
   const base = yield* buildFor("top", true, true, false, true);
-  const bases = new Map<string, Base>([["top:true:true:false:true:off", base]]);
+  const bases = new Map<string, Base>([["top:true:true:false:true:off:false", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links, forge, feedback] = key.split(":") as [
-      McpToolUseCase["setup"]["role"],
-      string,
-      string,
-      string,
-      string,
-      string,
-    ];
+    const [role = "top", device, browser, links, forge, feedback, conversation] = key.split(
+      ":",
+    ) as [McpToolUseCase["setup"]["role"], string, string, string, string, string, string];
     bases.set(
       key,
       yield* buildFor(
@@ -3356,6 +3379,7 @@ const main = Effect.gen(function* () {
         links === "true",
         forge === "true",
         feedback as Contracts.AgentFeedbackMode,
+        conversation === "true",
       ),
     );
   }

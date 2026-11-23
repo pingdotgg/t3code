@@ -18,6 +18,7 @@ const CATALOGS: Readonly<Record<string, () => Promise<{ readonly default: Catalo
   ko: () => import("./translations/ko.json", { with: { type: "json" } }),
   "pt-BR": () => import("./translations/pt-BR.json", { with: { type: "json" } }),
   ru: () => import("./translations/ru.json", { with: { type: "json" } }),
+  pl: () => import("./translations/pl.json", { with: { type: "json" } }),
   sv: () => import("./translations/sv.json", { with: { type: "json" } }),
   zh: () => import("./translations/zh.json", { with: { type: "json" } }),
 };

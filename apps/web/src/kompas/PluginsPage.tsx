@@ -1,6 +1,6 @@
 import { PLUGIN_CATALOG } from "@t3tools/client-runtime/state/kompas";
 import type { Plugin, PluginState, PluginTransport } from "@t3tools/contracts";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT } from "gt-react";
 import { PlugIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 
@@ -451,9 +451,7 @@ function PluginsContent(props: {
                     variant="link"
                     render={<a href={entry.docs} target="_blank" rel="noreferrer" />}
                   >
-                    <T>
-                      About <Var>{entry.brand}</Var>
-                    </T>
+                    {gt("About {name}", { name: entry.brand })}
                   </Button>
                 </div>
               </Panel>

@@ -4,7 +4,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import * as FileSystem from "expo-file-system";
 import * as Haptics from "expo-haptics";
 import * as Sharing from "expo-sharing";
-import { T, useGT, useLocale, Var } from "gt-react-native";
+import { T, useGT, useLocale } from "gt-react-native";
 import { useState } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
 import { GestureDetector, usePanGesture } from "react-native-gesture-handler";
@@ -475,11 +475,7 @@ export function DeckScreen({ route }: StaticScreenProps<{ readonly deckId: strin
     <KompasPage title={deck?.title ?? gt("Deck")}>
       {(kompas) =>
         deck === undefined ? (
-          <Text className="text-foreground-muted">
-            <T>
-              This deck was <Var>{gt("deleted")}</Var>.
-            </T>
-          </Text>
+          <Text className="text-foreground-muted">{gt("This deck was deleted.")}</Text>
         ) : (
           <DeckBody kompas={kompas} deck={deck} />
         )
