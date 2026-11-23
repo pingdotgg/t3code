@@ -15,11 +15,22 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 
 // CORTEX_STEP_TYPE_ERROR_MESSAGE in the native trajectory.
 const ERROR_STEP_TYPE = 17;
+// CORTEX_STEP_TYPE_PLANNER_RESPONSE: the model answered within this turn.
+const PLANNER_RESPONSE_STEP_TYPE = 15;
 // The harness error text leads the payload; a Go stack trace follows it.
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
-const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
+// Status is a gRPC code, or an HTTP status line such as "502 Bad Gateway". A message
+// stops at the next error, so each start scans its own span and the match stays linear.
+const API_ERROR =
+  /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
+// Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
+const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// Claude rejects a saved thinking block without a valid signature. It sits in the native
+// history, so every later prompt to that session fails the same way.
+const INVALID_THINKING_SIGNATURE =
+  /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
 const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
 const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
@@ -40,6 +51,7 @@ const NATIVE_SESSION_ID = /^[\w-]+$/;
 interface LastStep {
   readonly type: number;
   readonly payload: Uint8Array | null;
+  readonly reachedModel: boolean;
 }
 
 class AntigravitySessionLogError extends Schema.TaggedError<AntigravitySessionLogError>()(
@@ -86,15 +98,23 @@ const lastStepAfter =
       )
       .get(MAX_ERROR_PAYLOAD_BYTES, index);
     if (typeof row?.type !== "number") return undefined;
-    return { type: row.type, payload: row.payload instanceof Uint8Array ? row.payload : null };
+    const reachedModel =
+      database
+        .prepare("SELECT 1 FROM steps WHERE idx > ? AND step_type = ? LIMIT 1")
+        .get(index, PLANNER_RESPONSE_STEP_TYPE) !== undefined;
+    return {
+      type: row.type,
+      payload: row.payload instanceof Uint8Array ? row.payload : null,
+      reachedModel,
+    };
   };
 
-function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
+function resetAtFrom(text: string, now: DateTime.Utc | undefined): string | undefined {
   // makeProviderFailure drops a timestamp that does not parse, so fall back to the delay.
   const timestamp = RESET_TIMESTAMP.exec(text)?.[1];
   if (timestamp !== undefined && Option.isSome(DateTime.make(timestamp))) return timestamp;
   const delay = RESET_DELAY.exec(text)?.[1] ?? RETRY_DELAY.exec(text)?.[1];
-  if (delay === undefined) return undefined;
+  if (delay === undefined || now === undefined) return undefined;
   let delayMs = 0;
   for (const [, amount, unit] of delay.matchAll(GO_DURATION_PART)) {
     delayMs += Number(amount) * (GO_DURATION_UNIT_MS[unit!] ?? 0);
@@ -102,11 +122,23 @@ function resetAtFrom(text: string, now: DateTime.Utc): string | undefined {
   return delayMs > 0 ? DateTime.formatIso(DateTime.add(now, { milliseconds: delayMs })) : undefined;
 }
 
+// Reorders STATUS_ERROR's groups to API_ERROR's: HTTP status, message, status name.
+function statusError(text: string) {
+  const match = STATUS_ERROR.exec(text);
+  return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
+}
+
 function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
-  now: DateTime.Utc,
-): OrchestrationV2ProviderFailure | undefined {
+  now: DateTime.Utc | undefined,
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+      readonly resumeWith?: string;
+    }
+  | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -114,31 +146,54 @@ function turnFailure(
   // The agent maps only the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
-  const apiError = API_ERROR.exec(text);
+  const apiError = API_ERROR.exec(text) ?? statusError(text);
+  const reusable = (failure: OrchestrationV2ProviderFailure) =>
+    ({ failure, threadDisposition: "reusable" }) as const;
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return makeProviderFailure({
-      class: "usage_limit",
-      message: "You have reached your Antigravity quota for this period.",
-      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-      retryable: true,
-      resetAt: resetAtFrom(text, now) ?? null,
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+        retryable: true,
+        resetAt: resetAtFrom(text, now) ?? null,
+      }),
+    );
+  }
+  if (INVALID_THINKING_SIGNATURE.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
   }
   if (apiError === null) {
-    return makeProviderFailure({
-      class: "provider_error",
-      message: "Antigravity stopped this turn because of an error.",
-    });
+    return reusable(
+      makeProviderFailure({
+        class: "provider_error",
+        message: "Antigravity stopped this turn because of an error.",
+      }),
+    );
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return makeProviderFailure({
+  // A 404 before the model answered is an unknown or unentitled model; after, a transient edge error.
+  const transientNotFound = httpStatus === "404" && step?.reachedModel === true;
+  const failure = makeProviderFailure({
     class: rateLimited ? "usage_limit" : "provider_error",
     message: message!.trim(),
     code: status ?? null,
-    retryable: rateLimited || Number(httpStatus) >= 500,
+    retryable: rateLimited || transientNotFound || Number(httpStatus) >= 500,
     resetAt: resetAtFrom(text, now) ?? null,
   });
+  return transientNotFound
+    ? { failure, threadDisposition: "reusable", resumeWith: "continue" }
+    : reusable(failure);
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -193,6 +248,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   }
   return Effect.fn("AntigravityTurnOutcome.check")(function* (
     result: EffectAcpSchema.PromptResponse,
+    options?: { readonly retired?: boolean },
   ) {
     // The same file as before the prompt, or one this prompt created, still unlinked.
     const after = yield* Effect.tryPromise({
@@ -211,6 +267,8 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnFailure(result.stopReason, step, yield* DateTime.now);
+    // A retired prompt's check runs long after the error, so a relative delay has no anchor.
+    const now = options?.retired === true ? undefined : yield* DateTime.now;
+    return turnFailure(result.stopReason, step, now);
   });
 });

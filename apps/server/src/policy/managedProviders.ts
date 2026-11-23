@@ -162,29 +162,30 @@ export const providerHostEnvironment = (
   environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv => {
   if (summary === undefined) return environment;
-  const allowed = (name: string | symbol) =>
-    typeof name !== "string" ||
-    !LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase());
-  return new Proxy(
-    {},
-    {
-      get: (_, name) => (allowed(name) ? Reflect.get(environment, name) : undefined),
-      has: (_, name) => allowed(name) && Reflect.has(environment, name),
-      ownKeys: () => Reflect.ownKeys(environment).filter(allowed),
-      getOwnPropertyDescriptor: (_, name) =>
-        allowed(name) && Reflect.has(environment, name)
-          ? {
-              configurable: true,
-              enumerable: true,
-              value: Reflect.get(environment, name),
-              writable: false,
-            }
-          : undefined,
-      set: () => false,
-      deleteProperty: () => false,
-      defineProperty: () => false,
-    },
-  );
+  const next = { ...environment };
+  for (const name of Object.keys(next)) {
+    if (LAUNCH_OVERRIDE_VARIABLES.some((override) => override === name.toUpperCase())) {
+      delete next[name];
+    }
+  }
+  // Drivers keep this object, so PATH reads through to the host for a refresh after launch to reach them.
+  const pathKeys = Object.keys(next).filter((name) => name.toUpperCase() === "PATH");
+  if (pathKeys.length > 0) {
+    for (const name of pathKeys) delete next[name];
+    Object.defineProperty(next, "PATH", {
+      enumerable: true,
+      configurable: true,
+      get: () => environment.PATH ?? environment.Path ?? environment.path,
+      set: (value) =>
+        Object.defineProperty(next, "PATH", {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        }),
+    });
+  }
+  return next;
 };
 
 /** Each driver's home variable, and the settings that rewrite it at launch. */

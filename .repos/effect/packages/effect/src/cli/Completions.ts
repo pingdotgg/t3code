@@ -56,6 +56,11 @@ export interface FlagDescriptor {
    */
   readonly optionalValue?: boolean | undefined
   /**
+   * Whether the flag can be given more than once, so completion keeps offering
+   * it after it is used.
+   */
+  readonly repeatable?: boolean | undefined
+  /**
    * Long name that sets a boolean flag to `false`. Defaults to `no-<name>`;
    * `false` means the flag has no negated form.
    */

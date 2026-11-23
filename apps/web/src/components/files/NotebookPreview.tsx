@@ -1,8 +1,9 @@
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
-import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import { Button } from "~/components/ui/button";
 import ReadOnlySourcePreview from "./ReadOnlySourcePreview";
 import DocumentPages from "./DocumentPages";
@@ -10,24 +11,7 @@ import { FileSurfaceNotice } from "./fileSurfaceChrome";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
 
 // Saved notebooks must not load URLs or turn authored links into app actions.
-function inertNotebookMarkdown() {
-  function clean(nodes: RootContent[]): RootContent[] {
-    return nodes.flatMap((node): RootContent[] => {
-      if (node.type === "html" || node.type === "definition") return [];
-      if (node.type === "image" || node.type === "imageReference")
-        return [{ type: "text", value: node.alt ?? "" }];
-      if (node.type === "link" || node.type === "linkReference") return clean(node.children);
-      if (node.type === "inlineCode") return [{ type: "text", value: node.value }];
-      if (node.type === "code" && node.lang === "mermaid") return [{ ...node, lang: "text" }];
-      if ("children" in node) node.children = clean(node.children) as typeof node.children;
-      return [node];
-    });
-  }
-  return (tree: Root) => {
-    tree.children = clean(tree.children) as Root["children"];
-  };
-}
-const NOTEBOOK_PLUGINS = [inertNotebookMarkdown];
+const NOTEBOOK_MARKDOWN: MarkdownExtensions = { inert: true };
 
 function NotebookSource(props: { readonly name: string; readonly text: string }) {
   const [height, setHeight] = useState(Math.min(360, props.text.split("\n").length * 20 + 16));
@@ -45,6 +29,8 @@ export default function NotebookPreview(props: {
   readonly notebook: Extract<OfficeWorkerResult, { type: "notebook" }>;
   readonly sizeBytes?: number | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [visible, setVisible] = useState(20);
   const scroll = useRef<HTMLDivElement>(null);
   const [outputView, setOutputView] = useState(() => ({
@@ -61,36 +47,42 @@ export default function NotebookPreview(props: {
   useEffect(() => {
     const root = scroll.current;
     if (!root || !outputCount) return;
-    const candidates = new Map<Element, string>();
-    let active: Element[] = [];
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting)
-            candidates.set(entry.target, (entry.target as HTMLElement).dataset.notebookOutput!);
-          else candidates.delete(entry.target);
-        }
-        // Bound browsing contexts even when a cell contains hundreds of tiny HTML outputs.
-        const next = [...candidates.keys()].slice(0, 16);
-        const measured = active
-          .filter((node) => !next.includes(node))
-          .map(
-            (node) =>
-              [
-                (node as HTMLElement).dataset.notebookOutput!,
-                node.getBoundingClientRect().height,
-              ] as const,
-          );
-        active = next;
-        setOutputView((old) => ({
-          mounted: new Set(next.map((node) => candidates.get(node)!)),
-          heights: new Map([...old.heights, ...measured]),
-        }));
-      },
-      { root, rootMargin: "160px" },
-    );
-    for (const node of root.querySelectorAll("[data-notebook-output]")) observer.observe(node);
-    return () => observer.disconnect();
+    const inView = new Set<Element>();
+    const nearby = new Set<Element>();
+    let active = new Set<Element>();
+    const outputKey = (node: Element) => node.getAttribute("data-notebook-output")!;
+    const track = (candidates: Set<Element>) => (entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) candidates.add(entry.target);
+        else candidates.delete(entry.target);
+      }
+      // Mount every visible output. Only preload while the total is below 16.
+      const next = new Set(inView);
+      for (const node of nearby) {
+        if (next.size >= 16) break;
+        next.add(node);
+      }
+      const departing = [...active].filter((node) => !next.has(node));
+      if (active.size === next.size && departing.length === 0) return;
+      const measured = departing
+        .map((node) => [outputKey(node), node.clientHeight] as const)
+        .filter(([, height]) => height > 0);
+      active = next;
+      setOutputView((old) => ({
+        mounted: new Set(Array.from(next, outputKey)),
+        heights: new Map([...old.heights, ...measured]),
+      }));
+    };
+    const viewportObserver = new IntersectionObserver(track(inView), { root });
+    const preloadObserver = new IntersectionObserver(track(nearby), { root, rootMargin: "160px" });
+    for (const node of root.querySelectorAll("[data-notebook-output]")) {
+      viewportObserver.observe(node);
+      preloadObserver.observe(node);
+    }
+    return () => {
+      viewportObserver.disconnect();
+      preloadObserver.disconnect();
+    };
   }, [outputCount]);
   return (
     <>
@@ -98,18 +90,24 @@ export default function NotebookPreview(props: {
         className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.notebook.cells.length.toLocaleString()} cells · {props.notebook.language}
+        {gt("{count, plural, one {{formatted} cell} other {{formatted} cells}}", {
+          count: props.notebook.cells.length,
+          formatted: props.notebook.cells.length.toLocaleString(),
+        })}{" "}
+        · {props.notebook.language}
         {props.sizeBytes !== undefined
-          ? ` · ${props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}`
+          ? ` · ${props.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(props.sizeBytes, messages)}`
           : ""}
       </div>
-      <FileSurfaceNotice>Saved outputs only. Code is never executed.</FileSurfaceNotice>
+      <FileSurfaceNotice>
+        <T>Saved outputs only. Code is never executed.</T>
+      </FileSurfaceNotice>
       <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
           {props.notebook.cells.slice(0, visible).map((cell, index) => (
             <section
               key={index}
-              aria-label={`Cell ${index + 1}`}
+              aria-label={gt("Cell {number}", { number: String(index + 1) })}
               className="min-w-0 overflow-hidden rounded-md border border-border/60"
             >
               <div className="border-b border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
@@ -120,7 +118,7 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                   cwd={undefined}
                   parseRawHtml={false}
-                  extraRemarkPlugins={NOTEBOOK_PLUGINS}
+                  extensions={NOTEBOOK_MARKDOWN}
                   className="px-4 py-3"
                 />
               ) : cell.source.trim() ? (
@@ -129,50 +127,56 @@ export default function NotebookPreview(props: {
                   text={cell.source}
                 />
               ) : null}
-              {cell.outputs.map((output, outputIndex) => (
-                <div
-                  key={outputIndex}
-                  data-notebook-output={
-                    output.kind === "html" ? `${index}-${outputIndex}` : undefined
-                  }
-                  className="border-t border-border/60"
-                  style={{
-                    minHeight:
-                      output.kind !== "html" || outputView.mounted.has(`${index}-${outputIndex}`)
-                        ? undefined
-                        : (outputView.heights.get(`${index}-${outputIndex}`) ?? 80),
-                  }}
-                >
-                  {output.kind === "html" ? (
-                    !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
-                      <DocumentPages
-                        html={output.text}
-                        name={`Cell ${index + 1} HTML output`}
-                        output
+              {cell.outputs.map((output, outputIndex) => {
+                const key = `${index}-${outputIndex}`;
+                const mounted = outputView.mounted.has(key);
+                const estimatedHeight = outputView.heights.get(key) ?? 80;
+                return (
+                  <div
+                    key={outputIndex}
+                    data-notebook-output={output.kind === "html" ? key : undefined}
+                    className="box-content border-t border-border/60"
+                    style={{
+                      minHeight: output.kind === "html" && !mounted ? estimatedHeight : undefined,
+                    }}
+                  >
+                    {output.kind === "html" ? (
+                      mounted ? (
+                        <DocumentPages
+                          html={output.text}
+                          name={gt("Cell {number} HTML output", { number: String(index + 1) })}
+                          output
+                          estimatedOutputHeight={estimatedHeight}
+                        />
+                      ) : null
+                    ) : output.kind === "image" ? (
+                      <img
+                        src={output.text}
+                        alt={gt("Cell {number} output", { number: String(index + 1) })}
+                        loading="lazy"
+                        className="max-h-96 max-w-full p-4 object-contain"
                       />
-                    )
-                  ) : output.kind === "image" ? (
-                    <img
-                      src={output.text}
-                      alt={`Cell ${index + 1} output`}
-                      loading="lazy"
-                      className="max-h-96 max-w-full p-4 object-contain"
-                    />
-                  ) : (
-                    <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
-                      {output.text}
-                    </pre>
-                  )}
-                </div>
-              ))}
+                    ) : (
+                      <pre className="overflow-x-auto p-4 text-xs whitespace-pre-wrap break-words">
+                        {output.text}
+                      </pre>
+                    )}
+                  </div>
+                );
+              })}
             </section>
           ))}
           {props.notebook.cells.length === 0 ? (
-            <p className="text-sm text-muted-foreground">This notebook is empty.</p>
+            <p className="text-sm text-muted-foreground">
+              <T>This notebook is empty.</T>
+            </p>
           ) : null}
           {visible < props.notebook.cells.length ? (
             <Button variant="outline" size="sm" onClick={() => setVisible((count) => count + 20)}>
-              Show more cells ({props.notebook.cells.length - visible} remaining)
+              {gt(
+                "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
+                { count: props.notebook.cells.length - visible },
+              )}
             </Button>
           ) : null}
         </div>
