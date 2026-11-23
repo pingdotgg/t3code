@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   ensureTailscaleServe,
+  MacosTailscaledPrefs,
   parseTailscaleExitNode,
   parseTailscaleServeRootHolders,
   parseTailscaleServeRoutesTo,
@@ -377,6 +378,7 @@ describe("tailscale", () => {
             return queried === "100.64.1.2" ? ["desktop.tail.ts.net."] : [];
           }),
         ),
+        Effect.provideService(MacosTailscaledPrefs, Effect.succeed(null)),
         Effect.provideService(HostProcess.Platform, "darwin"),
         Effect.provide(layer),
       );
@@ -395,7 +397,21 @@ describe("tailscale", () => {
         tailnetIpv4Addresses: [],
         httpsServeEnabled: null,
       });
+      // The Tailscale apps have no tailscaled socket; the open-source daemon answers on it.
       assert.isFalse(yield* onMac(readPassiveTailscaleSshEnabled));
+      for (const [prefs, enabled] of [
+        ['{"RunSSH":true,"WantRunning":true}', true],
+        ['{"RunSSH":true,"WantRunning":false}', false],
+      ] as const) {
+        assert.equal(
+          yield* onMac(
+            readPassiveTailscaleSshEnabled.pipe(
+              Effect.provideService(MacosTailscaledPrefs, Effect.succeed(prefs)),
+            ),
+          ),
+          enabled,
+        );
+      }
       assert.equal(cliStarts, 0);
 
       const elsewhere = yield* readPassiveTailscaleStatus(interfaces).pipe(Effect.provide(layer));

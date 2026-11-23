@@ -4,7 +4,7 @@ import type * as NodeOS from "node:os";
 import { it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { TailnetReverseLookup } from "@t3tools/tailscale";
+import { MacosTailscaledPrefs, TailnetReverseLookup } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -183,7 +183,10 @@ describe("RemoteOpenTargets", () => {
       const onSpawn = () => {
         cliStarts += 1;
       };
-      const resolveOnMac = (sshd: { readonly ipv4: boolean; readonly tailnet?: boolean }) =>
+      const resolveOnMac = (
+        sshd: { readonly ipv4: boolean; readonly tailnet?: boolean },
+        tailscaledPrefs: string | null = null,
+      ) =>
         resolveTargets({
           sshd: { ipv6: false, ...sshd },
           tailscale: { ...TAILSCALE_SSH, onSpawn },
@@ -194,6 +197,7 @@ describe("RemoteOpenTargets", () => {
           Effect.provideService(TailnetReverseLookup, () =>
             Effect.succeed(["bb-1.tail1234.ts.net."]),
           ),
+          Effect.provideService(MacosTailscaledPrefs, Effect.succeed(tailscaledPrefs)),
         );
       const tailnetTarget = {
         kind: "tailscale",
@@ -206,8 +210,11 @@ describe("RemoteOpenTargets", () => {
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
       expect(yield* resolveOnMac({ ipv4: false, tailnet: true })).toEqual([tailnetTarget]);
-      // No sshd anywhere: the SSH preference is not read either.
+      // No sshd anywhere: the Tailscale apps cannot serve SSH, the open-source tailscaled can.
       expect(yield* resolveOnMac({ ipv4: false })).toEqual([]);
+      expect(yield* resolveOnMac({ ipv4: false }, TAILSCALE_SSH.prefs.stdout)).toEqual([
+        tailnetTarget,
+      ]);
       expect(cliStarts).toBe(0);
     }),
   );

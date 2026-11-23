@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - tailscaled answers on a unix socket, which HttpClient cannot address.
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -11,6 +12,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as NodeDnsPromises from "node:dns/promises";
+import * as NodeHttp from "node:http";
 
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 /**
@@ -30,6 +32,9 @@ const TAILSCALE_KILL_GRACE = Duration.millis(500);
 /** Tailscale's own resolver. It answers on every connected node, whatever the system DNS is. */
 const TAILNET_RESOLVER_ADDRESS = "100.100.100.100";
 const TAILNET_REVERSE_LOOKUP_TIMEOUT_MS = 1_000;
+/** Where the open-source tailscaled serves its local API on macOS. The Tailscale apps have no such socket. */
+const MACOS_TAILSCALED_SOCKET = "/var/run/tailscaled.socket";
+const TAILSCALED_PREFS_TIMEOUT_MS = 1_000;
 const TAILSCALE_SERVE_TIMEOUT = Duration.seconds(10);
 const TAILSCALE_PROBE_TIMEOUT = Duration.millis(2_500);
 
@@ -474,12 +479,48 @@ export const readTailscaleSshEnabled = readTailscaleOutput("debug", ["debug", "p
   Effect.flatMap(parseTailscaleSshEnabled),
 );
 
+/** The preferences JSON tailscaled serves on its macOS socket; null when nothing answers there. */
+export const MacosTailscaledPrefs = Context.Reference<Effect.Effect<string | null>>(
+  "@t3tools/tailscale/MacosTailscaledPrefs",
+  {
+    defaultValue: () =>
+      Effect.callback<string | null>((resume) => {
+        const request = NodeHttp.get(
+          {
+            socketPath: MACOS_TAILSCALED_SOCKET,
+            host: "local-tailscaled.sock",
+            path: "/localapi/v0/prefs",
+            timeout: TAILSCALED_PREFS_TIMEOUT_MS,
+          },
+          (response) => {
+            const chunks: Array<Buffer> = [];
+            response.on("data", (chunk: Buffer) => chunks.push(chunk));
+            response.once("error", () => resume(Effect.succeed(null)));
+            response.once("end", () =>
+              resume(
+                Effect.succeed(
+                  response.statusCode === 200 ? Buffer.concat(chunks).toString("utf8") : null,
+                ),
+              ),
+            );
+          },
+        );
+        request.once("timeout", () => request.destroy());
+        request.once("error", () => resume(Effect.succeed(null)));
+        return Effect.sync(() => request.destroy());
+      }),
+  },
+);
+
 /**
- * The macOS Tailscale apps cannot run an SSH server, and the tailscaled build
- * that can reports it only through the CLI, so passive discovery on macOS says no.
+ * The macOS Tailscale apps cannot run an SSH server; only the open-source
+ * tailscaled can. Its socket answers what `tailscale debug prefs` prints, so
+ * macOS reads the preference there and never starts the app's CLI.
  */
 export const readPassiveTailscaleSshEnabled = Effect.gen(function* () {
-  return (yield* HostProcess.Platform) === "darwin" ? false : yield* readTailscaleSshEnabled;
+  if ((yield* HostProcess.Platform) !== "darwin") return yield* readTailscaleSshEnabled;
+  const prefs = yield* yield* MacosTailscaledPrefs;
+  return prefs === null ? false : yield* parseTailscaleSshEnabled(prefs);
 });
 
 export function buildTailscaleHttpsBaseUrl(input: {
