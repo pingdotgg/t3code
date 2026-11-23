@@ -912,11 +912,10 @@ impl Composer {
         &self.catalog
     }
 
-    /// Re-derives the catalog for the project. An unset model follows the catalog's default.
+    /// Re-reads the catalog. An unset model follows the catalog's default.
     fn refresh_catalog(&mut self, cx: &mut Context<'_, Self>) {
-        let catalog = self.config.catalog_for_project(self.project_id.as_deref());
-        if catalog != self.catalog {
-            self.catalog = catalog;
+        if self.config.catalog() != &self.catalog {
+            self.catalog = self.config.catalog().clone();
         }
         if (self.selected_instance_id.is_none() || self.selected_model == "Default model")
             && let Some(default_opt) = self.catalog.default_model().cloned()

@@ -8,8 +8,8 @@
 //! `provider.auth.*` calls), Runtime and Environment sections; `editor.rs` holds the settings
 //! writes.
 //!
-//! A project scope (`?project=` in Conn, picked on Settings → Projects) turns each switch into
-//! that project's own override (`projectSettingsOverrides`), shown next to the device setting.
+//! Settings are flat (`docs/scope.md` §2 #13): each switch is the environment's, with no
+//! per-project override.
 //!
 //! Drift from Conn: a sign-in terminal shows its output as plain text with a one-line input, since
 //! there is no terminal emulator for a remote stream.
@@ -91,8 +91,6 @@ pub(crate) struct ProvidersView {
     write: editor::WriteState,
     /// The instance whose removal or reset waits for a second click.
     confirm_remove: Option<String>,
-    /// `(project id, title)` whose switches this page edits, or `None` for the device.
-    project_scope: Option<(String, String)>,
     /// The custom model whose editor is open.
     custom_edit: Option<models::CustomEdit>,
 }
@@ -133,20 +131,8 @@ impl ProvidersView {
             adding: None,
             write: editor::WriteState::default(),
             confirm_remove: None,
-            project_scope: None,
             custom_edit: None,
         }
-    }
-
-    /// Edits `project`'s own provider switches, or with `None` the device's.
-    pub(crate) fn set_project_scope(
-        &mut self,
-        project: Option<(String, String)>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        self.project_scope = project;
-        self.confirm_remove = None;
-        cx.notify();
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
@@ -180,7 +166,6 @@ impl ProvidersView {
 
     /// `Open provider setup`: open the editor, with its Account row, of `instance_id`.
     pub(crate) fn focus_provider(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
-        self.project_scope = None;
         self.select(Some(instance_id), cx);
     }
 
@@ -845,16 +830,6 @@ impl ProvidersView {
     }
 }
 
-/// An outlined settings button. `on_click` is `None` while it is disabled.
-pub(crate) fn settings_button(
-    tokens: &Tokens,
-    ax_id: String,
-    label: &str,
-    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
-) -> AnyElement {
-    styled_button(tokens, ax_id, label, label, false, on_click)
-}
-
 pub(crate) fn styled_button(
     tokens: &Tokens,
     ax_id: String,
@@ -947,20 +922,6 @@ impl Render for ProvidersView {
             &geometry,
         );
         let mut rows = vec![header];
-        if let Some((_, title)) = self.project_scope.clone() {
-            rows.push(settings_row(
-                &format!("Project: {title}"),
-                Some("Switches here turn a provider on or off for this project only. The device setting applies everywhere else."),
-                self.button(
-                    "settings.providers.scope.clear".to_owned(),
-                    "Show device settings",
-                    false,
-                    Some(cx.listener(|view, _, _, cx| view.set_project_scope(None, cx))),
-                ),
-                &tokens,
-                &geometry,
-            ));
-        }
         match config.settings() {
             None => {
                 rows.push(self.note_row(

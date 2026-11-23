@@ -1,8 +1,8 @@
 //! The provider instance editor behind Settings → Providers (`ProviderSettingsPanel.tsx`,
 //! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`).
 //!
-//! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation`, a
-//! project override or a model preference (`conn_state::provider_settings`,
+//! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation` or a
+//! model preference (`conn_state::provider_settings`,
 //! `conn_state::model_preferences`). Writes go out one at a time, in order. The inputs commit
 //! on Enter and on blur, like Conn's `DraftInput`, and follow the settings the server sends back.
 //!
@@ -213,37 +213,18 @@ impl ProvidersView {
         self.write_settings(request, cx);
     }
 
-    /// The enable switch: the machine-wide setting, or the project's own in a project scope.
+    /// The enable switch.
     pub(super) fn set_enabled(
         &mut self,
         instance_id: &str,
         enabled: bool,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some((project, _)) = self.project_scope.clone() {
-            self.write_override(instance_id, &project, Some(enabled), cx);
-            return;
-        }
         self.update_instance(
             instance_id,
             |instance| settings_logic::with_enabled(instance, enabled),
             cx,
         );
-    }
-
-    /// Sets (`Some`) or inherits again (`None`) a project's switch for `instance_id`.
-    pub(super) fn write_override(
-        &mut self,
-        instance_id: &str,
-        project_id: &str,
-        value: Option<bool>,
-        cx: &mut Context<'_, Self>,
-    ) {
-        let Some(settings) = self.settings() else {
-            return;
-        };
-        let request = settings_logic::override_patch(settings, &[project_id], instance_id, value);
-        self.write_settings(request, cx);
     }
 
     pub(super) fn remove_instance(&mut self, instance_id: &str, cx: &mut Context<'_, Self>) {
@@ -913,18 +894,7 @@ impl ProvidersView {
             .explicit
             .clone()
             .unwrap_or_else(|| settings_logic::blank_instance(&row.driver));
-        let device_enabled = settings_logic::resolve_instance_enabled(&instance);
-        let scope = self.project_scope.clone();
-        let project_value = scope.as_ref().and_then(|(project, _)| {
-            self.settings()
-                .and_then(|s| settings_logic::project_override(s, project, &id))
-        });
-        let enabled = match (&scope, self.settings()) {
-            (Some((project, _)), Some(settings)) => {
-                settings_logic::resolve_project_instance_enabled(settings, Some(project), &id)
-            }
-            _ => device_enabled,
-        };
+        let enabled = settings_logic::resolve_instance_enabled(&instance);
         let def = settings_logic::driver_def(&row.driver);
         let name = settings_logic::instance_label(&instance);
         let (key, headline, detail) = match group {
@@ -984,20 +954,10 @@ impl ProvidersView {
                 format!("Remove the {name} provider instance?")
             }
         } else {
-            let mut text = match detail {
+            match detail {
                 Some(detail) => format!("{headline} \u{b7} {detail}"),
                 None => headline,
-            };
-            // `ProjectOverrideInheritance`: the project's own value wins over the device's.
-            if let Some(value) = project_value {
-                let on_off = |on: bool| if on { "On" } else { "Off" };
-                text.push_str(&format!(
-                    " \u{b7} Project: {} \u{b7} Device: {}",
-                    on_off(value),
-                    on_off(device_enabled)
-                ));
             }
-            text
         };
 
         let mut trailing = div().flex().flex_row().items_center().gap(px(8.0));
@@ -1036,18 +996,6 @@ impl ProvidersView {
                     }
                 },
             );
-            if let (Some(_), Some((project, _))) = (project_value, &scope) {
-                let reset_id = id.clone();
-                let project = project.clone();
-                trailing = trailing.child(self.button(
-                    format!("settings.providers.{id}.project-reset"),
-                    "Use device setting",
-                    false,
-                    Some(cx.listener(move |view, _, _, cx| {
-                        view.write_override(&reset_id, &project, None, cx);
-                    })),
-                ));
-            }
             let select_id = id.clone();
             let refresh_id = id.clone();
             let remove_id = id.clone();
@@ -1077,7 +1025,7 @@ impl ProvidersView {
                         })
                     }),
                 ));
-            if (!row.is_default || row.is_dirty) && scope.is_none() {
+            if !row.is_default || row.is_dirty {
                 trailing = trailing.child(self.button(
                     format!("settings.providers.{id}.remove"),
                     if row.is_default { "Reset" } else { "Delete" },

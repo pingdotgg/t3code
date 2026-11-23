@@ -202,7 +202,6 @@ pub(crate) struct SettingsModal {
     scheduled_tasks: Entity<ScheduledTasksView>,
     providers: Entity<providers::ProvidersView>,
     projects: Entity<projects::ProjectsView>,
-    _projects_sub: Subscription,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -316,18 +315,6 @@ impl SettingsModal {
 
         let projects_tokens = tokens.clone();
         let projects = cx.new(|_| projects::ProjectsView::new(projects_tokens, geometry, projects));
-        let projects_sub = cx.subscribe(
-            &projects,
-            |this, _, event: &projects::ProjectsEvent, cx| match event {
-                projects::ProjectsEvent::OpenProviders(id, title) => {
-                    let scope = Some((id.clone(), title.clone()));
-                    this.providers
-                        .update(cx, |view, cx| view.set_project_scope(scope, cx));
-                    this.select_page(SettingsPage::Providers, cx);
-                }
-            },
-        );
-
         Self {
             tokens,
             geometry,
@@ -350,7 +337,6 @@ impl SettingsModal {
             scheduled_tasks,
             providers,
             projects,
-            _projects_sub: projects_sub,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -362,9 +348,6 @@ impl SettingsModal {
         config: std::sync::Arc<conn_state::providers::ServerConfigState>,
         cx: &mut Context<'_, Self>,
     ) {
-        self.projects.update(cx, |view, cx| {
-            view.set_server_config(std::sync::Arc::clone(&config), cx);
-        });
         self.providers
             .update(cx, |view, cx| view.set_server_config(config, cx));
     }

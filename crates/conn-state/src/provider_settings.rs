@@ -2,13 +2,12 @@
 //! change them (`ProviderSettingsPanel.tsx`, `ProviderInstanceCard.tsx`,
 //! `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`, `contracts/src/settings.ts`).
 //!
-//! Pure and GPUI-free. Every write is a `server.updateSettings` payload: a
-//! `providerInstanceMutation` (`create`, `upsert`, `remove`) or a `projectSettingsOverrides`
-//! patch, built here so the iOS app sends the same bytes.
+//! Pure and GPUI-free. Every write is a `server.updateSettings` payload with a
+//! `providerInstanceMutation` (`create`, `upsert`, `remove`), built here so the iOS app sends the
+//! same bytes. Settings are flat (`docs/scope.md` §2 #13): no per-project provider switches.
 
 use conn_contract::{
-    ProjectProviderInstanceOverride, ServerProvidersItemItem, ServerSettings,
-    ServerSettingsProjectSettingsOverridesValue,
+    ServerProvidersItemItem, ServerSettings,
     ServerSettingsProviderInstancesValue as InstanceConfig,
     ServerSettingsProviderInstancesValueEnvironmentItem as EnvironmentVariable,
 };
@@ -416,21 +415,10 @@ pub fn unconfigured_default_enabled(instance_id: &str) -> bool {
     matches!(instance_id, "codex" | "claudeAgent")
 }
 
-/// `resolveProjectProviderInstanceEnabled`: the project's `providerInstances[id].enabled`
-/// override when set, else the machine-wide value. `project_id` of `None` is the machine value.
+/// Whether `instance_id` is on in `settings`: its entry's setting, else the unconfigured
+/// default.
 #[must_use]
-pub fn resolve_project_instance_enabled(
-    settings: &ServerSettings,
-    project_id: Option<&str>,
-    instance_id: &str,
-) -> bool {
-    let overridden = project_id
-        .and_then(|project| settings.project_settings_overrides.as_ref()?.get(project))
-        .and_then(|overrides| overrides.provider_instances.as_ref()?.get(instance_id))
-        .and_then(|instance| instance.enabled);
-    if let Some(enabled) = overridden {
-        return enabled;
-    }
+pub fn settings_instance_enabled(settings: &ServerSettings, instance_id: &str) -> bool {
     match settings
         .provider_instances
         .as_ref()
@@ -765,56 +753,6 @@ pub fn reset_turns_off(instance: &InstanceConfig) -> bool {
         && !resolve_instance_enabled(&blank_instance(&instance.driver))
 }
 
-/// `buildProviderInstanceOverridePatch`: `settings.projectSettingsOverrides` entries with
-/// `instance_id`'s `enabled` set (`Some`) or inherited again (`None`) for each project. An entry
-/// left empty becomes `null`, which deletes it.
-#[must_use]
-pub fn override_patch(
-    settings: &ServerSettings,
-    project_ids: &[&str],
-    instance_id: &str,
-    value: Option<bool>,
-) -> Value {
-    let mut patch = Map::new();
-    for project in project_ids {
-        let current = settings
-            .project_settings_overrides
-            .as_ref()
-            .and_then(|all| all.get(*project));
-        let mut instances: std::collections::BTreeMap<String, ProjectProviderInstanceOverride> =
-            current
-                .and_then(|entry| entry.provider_instances.clone())
-                .unwrap_or_default();
-        let mut instance = instances
-            .remove(instance_id)
-            .unwrap_or(ProjectProviderInstanceOverride { enabled: None });
-        instance.enabled = value;
-        if instance.enabled.is_some() {
-            instances.insert(instance_id.to_owned(), instance);
-        }
-        let mut entry = current
-            .and_then(|entry| serde_json::to_value(entry).ok())
-            .and_then(|value| match value {
-                Value::Object(map) => Some(map),
-                _ => None,
-            })
-            .unwrap_or_default();
-        entry.remove("providerInstances");
-        let rest_is_empty = entry.is_empty();
-        let next = if rest_is_empty && instances.is_empty() {
-            Value::Null
-        } else {
-            entry.insert(
-                "providerInstances".to_owned(),
-                serde_json::to_value(&instances).unwrap_or(Value::Null),
-            );
-            Value::Object(entry)
-        };
-        patch.insert((*project).to_owned(), next);
-    }
-    json!({ "patch": { "projectSettingsOverrides": Value::Object(patch) } })
-}
-
 /// `validateInstanceId`.
 ///
 /// # Errors
@@ -915,32 +853,6 @@ pub fn new_instance(
     }
 }
 
-/// A project's own `enabled` for `instance_id`, or `None` when it follows the machine.
-#[must_use]
-pub fn project_override(
-    settings: &ServerSettings,
-    project_id: &str,
-    instance_id: &str,
-) -> Option<bool> {
-    project_overrides(settings, project_id)?
-        .provider_instances
-        .as_ref()?
-        .get(instance_id)?
-        .enabled
-}
-
-/// One project's overrides, for callers that only read them.
-#[must_use]
-pub fn project_overrides<'a>(
-    settings: &'a ServerSettings,
-    project_id: &str,
-) -> Option<&'a ServerSettingsProjectSettingsOverridesValue> {
-    settings
-        .project_settings_overrides
-        .as_ref()?
-        .get(project_id)
-}
-
 // --- text generation ----------------------------------------------------------------------
 
 /// `DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection`.
@@ -1030,38 +942,21 @@ mod tests {
     }
 
     #[test]
-    fn a_project_override_beats_the_machine_setting_either_way() {
+    fn an_instance_is_on_by_its_entry_else_by_the_unconfigured_default() {
         let settings = settings(&json!({
             "providerInstances": {
                 "codex": { "driver": "codex" },
                 "grok": { "driver": "grok", "enabled": true },
             },
-            "projectSettingsOverrides": {
-                "p1": { "providerInstances": { "codex": { "enabled": false }, "pi": { "enabled": true } } },
-            },
         }));
-        assert!(resolve_project_instance_enabled(&settings, None, "codex"));
-        assert!(!resolve_project_instance_enabled(
-            &settings,
-            Some("p1"),
-            "codex"
-        ));
-        assert!(resolve_project_instance_enabled(
-            &settings,
-            Some("p2"),
-            "codex"
-        ));
+        assert!(settings_instance_enabled(&settings, "codex"));
+        assert!(!settings_instance_enabled(&settings, "pi"));
+        assert!(settings_instance_enabled(&settings, "grok"));
         assert!(
-            resolve_project_instance_enabled(&settings, Some("p1"), "pi"),
-            "turned on for the project only"
-        );
-        assert!(!resolve_project_instance_enabled(&settings, None, "pi"));
-        assert!(resolve_project_instance_enabled(&settings, None, "grok"));
-        assert!(
-            resolve_project_instance_enabled(&settings, None, "claudeAgent"),
+            settings_instance_enabled(&settings, "claudeAgent"),
             "no entry: only Codex and Claude run"
         );
-        assert!(!resolve_project_instance_enabled(&settings, None, "kiro"));
+        assert!(!settings_instance_enabled(&settings, "kiro"));
     }
 
     #[test]
@@ -1196,27 +1091,6 @@ mod tests {
     }
 
     #[test]
-    fn override_patches_set_inherit_and_delete_entries() {
-        let settings = settings(&json!({
-            "projectSettingsOverrides": {
-                "p1": { "providerInstances": { "codex": { "enabled": false } } },
-                "p2": { "providerInstances": { "codex": { "enabled": true } }, "defaultAutoPull": true },
-            },
-        }));
-        let patch = override_patch(&settings, &["p1", "p2", "p3"], "codex", None);
-        let entries = &patch["patch"]["projectSettingsOverrides"];
-        assert_eq!(entries["p1"], Value::Null, "nothing left: delete the entry");
-        assert_eq!(entries["p2"]["defaultAutoPull"], true);
-        assert_eq!(entries["p2"]["providerInstances"], json!({}));
-        assert_eq!(entries["p3"], Value::Null);
-        let set = override_patch(&settings, &["p3"], "codex", Some(false));
-        assert_eq!(
-            set["patch"]["projectSettingsOverrides"]["p3"],
-            json!({ "providerInstances": { "codex": { "enabled": false } } })
-        );
-    }
-
-    #[test]
     fn instance_ids_are_derived_and_validated_like_the_add_dialog() {
         assert_eq!(derive_available_instance_id("codex", "Codex", &[]), "codex");
         assert_eq!(
@@ -1309,15 +1183,5 @@ mod tests {
 
     fn settings_with_missing_selection() -> ServerSettings {
         settings(&json!({}))
-    }
-
-    #[test]
-    fn project_override_reads_the_projects_own_value() {
-        let settings = settings(&json!({
-            "projectSettingsOverrides": { "p1": { "providerInstances": { "codex": { "enabled": false } } } },
-        }));
-        assert_eq!(project_override(&settings, "p1", "codex"), Some(false));
-        assert_eq!(project_override(&settings, "p1", "grok"), None);
-        assert_eq!(project_override(&settings, "p2", "codex"), None);
     }
 }

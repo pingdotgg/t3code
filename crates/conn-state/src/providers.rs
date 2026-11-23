@@ -1815,12 +1815,10 @@ impl ServerConfigState {
         self.settings.as_ref()
     }
 
-    /// The catalog with each instance enabled as `project_id` sees it
-    /// (`providerInstanceEntriesFor` -> `applyProviderInstanceSettings`): a project's override,
-    /// else the machine setting. A server that sends no `providerInstances` keeps the flags
-    /// of its snapshot. The environment's model preferences apply.
-    #[must_use]
-    pub fn catalog_for_project(&self, project_id: Option<&str>) -> ModelCatalog {
+    /// The catalog with each instance enabled as the settings say
+    /// (`applyProviderInstanceSettings`). A server that sends no `providerInstances` keeps the
+    /// flags of its snapshot. The environment's model preferences apply.
+    fn build_catalog(&self) -> ModelCatalog {
         let items: Vec<Option<ServerProvidersItemItem>> = self
             .providers
             .iter()
@@ -1831,9 +1829,8 @@ impl ServerConfigState {
                     .as_ref()
                     .filter(|settings| settings.provider_instances.is_some())
                 {
-                    provider.enabled = crate::provider_settings::resolve_project_instance_enabled(
+                    provider.enabled = crate::provider_settings::settings_instance_enabled(
                         settings,
-                        project_id,
                         &provider.instance_id,
                     );
                 }
@@ -1910,7 +1907,7 @@ impl ServerConfigState {
         self.settings = Some(config.settings.clone());
         let mut change = self.set_providers(config.providers.iter().flatten().cloned().collect());
         if settings_changed && !change.providers_changed {
-            self.catalog = self.catalog_for_project(None);
+            self.catalog = self.build_catalog();
         }
         change.settings_changed = settings_changed;
         change.config_changed = config_changed;
@@ -1926,7 +1923,7 @@ impl ServerConfigState {
             return ServerConfigChange::default();
         }
         self.providers = next;
-        self.catalog = self.catalog_for_project(None);
+        self.catalog = self.build_catalog();
         ServerConfigChange {
             providers_changed: true,
             ..ServerConfigChange::default()
@@ -1939,7 +1936,7 @@ impl ServerConfigState {
             return ServerConfigChange::default();
         }
         self.settings = Some(settings);
-        self.catalog = self.catalog_for_project(None);
+        self.catalog = self.build_catalog();
         ServerConfigChange {
             settings_changed: true,
             ..ServerConfigChange::default()
@@ -2357,35 +2354,6 @@ mod live_tests {
             anything.setup_instance.as_deref(),
             Some("antigravity"),
             "else the first instance with a setup path"
-        );
-    }
-
-    #[test]
-    fn a_project_override_switches_an_instance_off_for_that_project() {
-        let mut state = loaded();
-        let mut settings = snapshot_json()["config"]["settings"].clone();
-        settings["projectSettingsOverrides"] = json!({
-            "p1": { "providerInstances": { "codex": { "enabled": false } } }
-        });
-        state.apply(event(json!({
-            "version": 1, "type": "settingsUpdated", "payload": { "settings": settings }
-        })));
-        let ready = |catalog: &ModelCatalog| -> Vec<String> {
-            catalog
-                .providers
-                .iter()
-                .filter(|g| g.ready)
-                .map(|g| g.instance_id.clone())
-                .collect()
-        };
-        assert_eq!(ready(state.catalog()), ["codex", "claudeAgent"]);
-        assert_eq!(
-            ready(&state.catalog_for_project(Some("p1"))),
-            ["claudeAgent"]
-        );
-        assert_eq!(
-            ready(&state.catalog_for_project(Some("p2"))),
-            ["codex", "claudeAgent"]
         );
     }
 

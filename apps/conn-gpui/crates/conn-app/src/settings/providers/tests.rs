@@ -1,6 +1,5 @@
-//! Headless renders of Settings → Providers and Projects with model preferences and a project
-//! scope, so a duplicate AccessKit id or a render
-//! panic fails here before it reaches the live app.
+//! Headless renders of Settings → Providers with model preferences, so a duplicate AccessKit id
+//! or a render panic fails here before it reaches the live app.
 
 use std::sync::Arc;
 
@@ -14,8 +13,6 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use super::{ProvidersInit, ProvidersView};
-use crate::settings::ScheduledTaskProjectOption;
-use crate::settings::projects::ProjectsView;
 use crate::theme::apply_kit_theme;
 
 fn config() -> Arc<ServerConfigState> {
@@ -38,8 +35,6 @@ fn config() -> Arc<ServerConfigState> {
         },
         "claudeAgent": { "driver": "claudeAgent", "environment": [{ "name": "B", "value": "2" }] },
     });
-    config["settings"]["projectSettingsOverrides"] =
-        json!({ "p1": { "providerInstances": { "codex": { "enabled": false } } } });
     let mut state = ServerConfigState::new();
     state.apply(serde_json::from_value(snapshot).expect("snapshot event"));
     Arc::new(state)
@@ -94,7 +89,7 @@ fn has(cx: &mut TestAppContext, window: AnyWindowHandle, label: &str) -> bool {
 }
 
 #[gpui_kit::test]
-fn the_editor_renders_models_and_a_project_scope(cx: &mut TestAppContext) {
+fn the_editor_renders_models_and_variables(cx: &mut TestAppContext) {
     let (window, view) = mount(cx);
     cx.update(|cx| {
         view.update(cx, |view, cx| {
@@ -115,46 +110,6 @@ fn the_editor_renders_models_and_a_project_scope(cx: &mut TestAppContext) {
         });
     });
     assert!(has(cx, window, "Add variable"));
-
-    cx.update(|cx| {
-        view.update(cx, |view, cx| {
-            view.set_project_scope(Some(("p1".to_owned(), "Conn".to_owned())), cx);
-        });
-    });
-    assert!(has(cx, window, "Show device settings"));
-    assert!(
-        has(cx, window, "Use device setting"),
-        "codex has a project override"
-    );
-}
-
-#[gpui_kit::test]
-fn the_projects_page_counts_each_projects_overrides(cx: &mut TestAppContext) {
-    let window = cx.update(|cx| {
-        let tokens = init(cx);
-        let projects = vec![
-            ScheduledTaskProjectOption {
-                id: "p1".to_owned(),
-                name: "Conn".to_owned(),
-            },
-            ScheduledTaskProjectOption {
-                id: "p2".to_owned(),
-                name: "Conn".to_owned(),
-            },
-        ];
-        gpui_kit::open_window(tall_window(), cx, |window, cx| {
-            window.activate_window();
-            cx.new(|cx| {
-                let mut view = ProjectsView::new(tokens, ShellGeometry::default(), projects);
-                view.set_server_config(config(), cx);
-                view
-            })
-        })
-        .expect("window opens")
-    });
-    let (window, _) = window;
-    assert!(has(cx, window, "Conn: 1 provider set for this project."));
-    assert!(has(cx, window, "Conn: Uses the device's providers."));
 }
 
 #[gpui_kit::test]
