@@ -402,7 +402,7 @@ function WorkspacePdfSaveAction(props: {
           .finally(() => setSaving(false));
       }}
     >
-      <DownloadIcon className="size-3.5" />
+      {saving ? <Spinner aria-hidden /> : <DownloadIcon className="size-3.5" />}
     </FileSurfaceAction>
   );
 }
