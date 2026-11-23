@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -562,27 +563,40 @@ const isActivatingPlugins = (error: unknown): boolean =>
     ? isActivatingPlugins(error.cause)
     : isServiceUnavailable(error) && error.service === "plugin";
 
-/** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
+/** A cold server can list a partial catalog; agreeing reads held for `steadyMillis` reduce that startup race. */
 const settleOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
   first?: ReadonlyArray<OpenCode2Model>,
+  steadyMillis = 0,
 ) =>
   Effect.suspend(() => {
-    let previous = first && first.length > 0 ? catalogFingerprint(first) : undefined;
-    return (first ? Effect.delay(list, "250 millis") : list).pipe(
-      Effect.repeat({
-        until: (models) => {
-          const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
-          const settled = fingerprint !== undefined && fingerprint === previous;
-          previous = fingerprint;
-          return settled;
-        },
-        schedule: Schedule.spaced("250 millis"),
-      }),
-    );
+    let previous: string | undefined;
+    let steadySince = 0;
+    const settled = (models: ReadonlyArray<OpenCode2Model>, now: number) => {
+      const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+      if (fingerprint === undefined || fingerprint !== previous) {
+        previous = fingerprint;
+        steadySince = now;
+        return false;
+      }
+      return now - steadySince >= steadyMillis;
+    };
+    const read = Effect.zip(list, Clock.currentTimeMillis);
+    return Effect.gen(function* () {
+      if (first) settled(first, yield* Clock.currentTimeMillis);
+      return yield* (first ? Effect.delay(read, "250 millis") : read).pipe(
+        Effect.repeat({
+          until: ([models, now]) => settled(models, now),
+          schedule: Schedule.spaced("250 millis"),
+        }),
+        Effect.map(([models]) => models),
+      );
+    });
   });
 
 const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
+// A fresh OpenCode 2.3 server lists a stable built-in snapshot for up to ~3s before its live catalog.
+const OPENCODE_2_STARTUP_CATALOG_STEADY_MS = 3_000;
 
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
@@ -607,7 +621,11 @@ export const makeOpenCode2ModelLoader = <E>(
         Effect.flatMap((first) =>
           Option.isNone(first)
             ? Effect.succeedNone
-            : settleOpenCode2Catalog(tracked, first.value).pipe(
+            : settleOpenCode2Catalog(
+                tracked,
+                first.value,
+                OPENCODE_2_STARTUP_CATALOG_STEADY_MS,
+              ).pipe(
                 Effect.timeoutOption(
                   resolveProviderProbeTimeoutMs(
                     "opencode",
