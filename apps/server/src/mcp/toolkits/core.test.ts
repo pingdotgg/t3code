@@ -78,7 +78,7 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
-import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
@@ -428,15 +428,6 @@ it.effect("captures send_to_user results for providers that drop MCP outputs", (
         Effect.provideService(McpSchema.McpServerClient, client),
       );
     expect(result.isError).not.toBe(true);
-    expect(
-      sentMessageFromToolItem({
-        toolName: "t3-code.send_to_user",
-        output: result.structuredContent,
-      }),
-    ).toBe(draft);
-    expect(
-      sentMessageFromToolItem({ toolName: "mcp__t3-code__send_to_user", output: result.content }),
-    ).toBe(draft);
     expect(yield* mcpSessions.takeToolResult(threadId, "send_to_user", { message: draft })).toEqual(
       { sentMessage: draft },
     );

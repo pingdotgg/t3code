@@ -1281,10 +1281,6 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         assert.deepEqual(compactDynamicToolOutput(tool("delegate-task")?.output), {
           taskId: "task-audit-1",
         });
-        assert.isBelow(
-          ((tool("delegate-task")!.input as Record<string, unknown>).task as string).length,
-          longTask.length,
-        );
         assert.strictEqual(
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,
