@@ -14,6 +14,8 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -1173,22 +1175,31 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
-  it.effect("does not complete a waiting run whose Stop request has no result yet", () =>
+  // Stop recorded on a waiting run: `turn` is the provider turn it was sent to, with when its attempt
+  // ended relative to the request; none means it reached no provider turn.
+  const captureWithStopRequest = (name: string, turn?: { readonly endedAfterStop: boolean }) =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
-      const sideChatThreadId = ThreadId.make("thread:checkpoint-capture-stop-request");
-      const sideChatRunId = RunId.make("run:checkpoint-capture-stop-request");
-      const sideChatScopeId = CheckpointScopeId.make("scope:checkpoint-capture-stop-request");
-      const sideChatRootNodeId = NodeId.make("node:checkpoint-capture-stop-request-root");
+      const sideChatThreadId = ThreadId.make(`thread:checkpoint-capture-stop-request-${name}`);
+      const sideChatRunId = RunId.make(`run:checkpoint-capture-stop-request-${name}`);
+      const sideChatScopeId = CheckpointScopeId.make(
+        `scope:checkpoint-capture-stop-request-${name}`,
+      );
+      const sideChatRootNodeId = NodeId.make(`node:checkpoint-capture-stop-request-${name}-root`);
       const sideChatProviderThreadId = ProviderThreadId.make(
-        "provider-thread:checkpoint-capture-stop-request",
+        `provider-thread:checkpoint-capture-stop-request-${name}`,
+      );
+      const stoppedAt = DateTime.add(now, { seconds: 1 });
+      const attemptId = RunAttemptId.make(`attempt:checkpoint-capture-stop-request-${name}`);
+      const providerTurnId = ProviderTurnId.make(
+        `provider-turn:checkpoint-capture-stop-request-${name}`,
       );
       const event = { threadId: sideChatThreadId, occurredAt: now };
       const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:thread"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:thread`),
           type: "thread.created",
           payload: {
             createdBy: "user",
@@ -1221,7 +1232,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:provider-thread"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:provider-thread`),
           type: "provider-thread.updated",
           driver,
           providerInstanceId,
@@ -1245,7 +1256,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:run"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:run`),
           type: "run.updated",
           runId: sideChatRunId,
           payload: {
@@ -1255,9 +1266,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             providerInstanceId,
             modelSelection,
             providerThreadId: sideChatProviderThreadId,
-            userMessageId: MessageId.make("message:checkpoint-capture-stop-request"),
+            userMessageId: MessageId.make(`message:checkpoint-capture-stop-request-${name}`),
             rootNodeId: sideChatRootNodeId,
-            activeAttemptId: null,
+            activeAttemptId: turn === undefined ? null : attemptId,
             status: "waiting",
             requestedAt: now,
             startedAt: now,
@@ -1268,7 +1279,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:node"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:node`),
           type: "node.updated",
           runId: sideChatRunId,
           nodeId: sideChatRootNodeId,
@@ -1292,7 +1303,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:scope"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:scope`),
           type: "checkpoint-scope.created",
           runId: sideChatRunId,
           nodeId: sideChatRootNodeId,
@@ -1310,30 +1321,57 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             createdAt: now,
           },
         },
+        ...(turn === undefined
+          ? []
+          : [
+              {
+                ...event,
+                id: EventId.make(`event:checkpoint-capture-stop-request-${name}:attempt`),
+                type: "run-attempt.updated" as const,
+                runId: sideChatRunId,
+                nodeId: sideChatRootNodeId,
+                providerInstanceId,
+                payload: {
+                  id: attemptId,
+                  runId: sideChatRunId,
+                  attemptOrdinal: 1,
+                  rootNodeId: sideChatRootNodeId,
+                  providerInstanceId,
+                  providerThreadId: sideChatProviderThreadId,
+                  providerTurnId,
+                  reason: "initial" as const,
+                  status: "completed" as const,
+                  startedAt: now,
+                  completedAt: turn.endedAfterStop ? DateTime.add(stoppedAt, { seconds: 1 }) : now,
+                },
+              },
+            ]),
         // Stop committed its request while the provider's completed terminal was finalizing.
         {
           ...event,
-          id: EventId.make("event:checkpoint-capture-stop-request:interrupt-request"),
+          id: EventId.make(`event:checkpoint-capture-stop-request-${name}:interrupt-request`),
           type: "turn-item.updated",
           runId: sideChatRunId,
           nodeId: sideChatRootNodeId,
           providerInstanceId,
           payload: {
-            id: TurnItemId.make("turn-item:checkpoint-capture-stop-request:interrupt-request"),
+            id: TurnItemId.make(
+              `turn-item:checkpoint-capture-stop-request-${name}:interrupt-request`,
+            ),
             type: "run_interrupt_request",
             threadId: sideChatThreadId,
             runId: sideChatRunId,
             nodeId: sideChatRootNodeId,
             providerThreadId: sideChatProviderThreadId,
-            providerTurnId: null,
+            providerTurnId: turn === undefined ? null : providerTurnId,
             nativeItemRef: null,
             parentItemId: null,
             ordinal: 1,
             status: "completed",
             title: "Interrupt requested",
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
+            startedAt: stoppedAt,
+            completedAt: stoppedAt,
+            updatedAt: stoppedAt,
             message: "Stopped by user",
           },
         },
@@ -1377,15 +1415,38 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         }),
       ).pipe(Effect.provide(layerCapture));
 
-      const { checkpoints, runs } = yield* projectionStore.getThreadRecords(sideChatThreadId, [
-        "runs",
-        "checkpoints",
-      ]);
-      assert.equal(runs[0]?.status, "interrupted");
+      const { checkpoints, runs, turnItems } = yield* projectionStore.getThreadRecords(
+        sideChatThreadId,
+        ["runs", "checkpoints", "turnItems"],
+      );
       assert.notEqual(
         checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId),
         undefined,
       );
+      return {
+        status: runs[0]?.status,
+        answered: turnItems.some((item) => item.type === "run_interrupt_result"),
+      };
+    });
+
+  it.effect("does not complete a waiting run whose Stop request has no result yet", () =>
+    Effect.gen(function* () {
+      const outcome = yield* captureWithStopRequest("unreached");
+      assert.deepEqual(outcome, { status: "interrupted", answered: true });
+    }),
+  );
+
+  it.effect("ends interrupted a run whose turn completed after Stop reached it", () =>
+    Effect.gen(function* () {
+      const outcome = yield* captureWithStopRequest("live", { endedAfterStop: true });
+      assert.deepEqual(outcome, { status: "interrupted", answered: true });
+    }),
+  );
+
+  it.effect("completes a run whose turn ended before Stop was sent to its background work", () =>
+    Effect.gen(function* () {
+      const outcome = yield* captureWithStopRequest("background", { endedAfterStop: false });
+      assert.deepEqual(outcome, { status: "completed", answered: false });
     }),
   );
 

@@ -260,19 +260,24 @@ export const layer: Layer.Layer<
           if (currentRun.status !== "waiting" && !stoppedNow) {
             return;
           }
-          // A Stop that reached no provider turn only recorded its request; only capture can end the
-          // run stopped. One delivered to a provider turn (its background work) defers to that turn.
-          const { turnItems: stopItems } = stoppedNow
-            ? { turnItems: [] }
-            : yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
+          // An unanswered Stop ends the run stopped when it reached no provider turn, or reached the
+          // turn before it ended. One sent after the turn ended only stops its background work.
+          const { turnItems: stopItems, attempts } = stoppedNow
+            ? { turnItems: [], attempts: [] }
+            : yield* projections.getThreadRecords(input.threadId, ["turnItems", "attempts"], {
                 turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
                 turnItemRunIds: [run.id],
+                attemptIds: currentRun.activeAttemptId === null ? [] : [currentRun.activeAttemptId],
               });
           const stopRequest = stopItems.some((item) => item.type === "run_interrupt_result")
             ? undefined
             : stopItems.find((item) => item.type === "run_interrupt_request");
+          const attemptEndedAt = attempts[0]?.completedAt ?? null;
           const stopRequested =
-            stopRequest?.type === "run_interrupt_request" && stopRequest.providerTurnId === null;
+            stopRequest?.type === "run_interrupt_request" &&
+            (stopRequest.providerTurnId === null ||
+              (attemptEndedAt !== null &&
+                DateTime.isLessThan(stopRequest.startedAt, attemptEndedAt)));
           const finalStatus = stopRequested ? ("interrupted" as const) : ("completed" as const);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
