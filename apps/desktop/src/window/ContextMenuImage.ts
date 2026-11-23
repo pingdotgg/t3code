@@ -6,13 +6,15 @@ const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 export async function copyContextMenuImage(
   contents: Electron.WebContents,
   params: Electron.ContextMenuParams,
+  platform: NodeJS.Platform,
 ): Promise<void> {
   const frame = params.frame;
   if (contents.isDestroyed() || !frame || frame.isDestroyed()) return;
-  if (frame !== contents.mainFrame) return copyFetchedImage(contents, frame, params.srcURL);
+  if (frame !== contents.mainFrame)
+    return copyFetchedImage(contents, frame, params.srcURL, platform);
   // copyImageAt re-encodes the decoded bitmap, dropping PNG metadata; keep it for unfetchable URLs.
   try {
-    await copyFetchedImage(contents, frame, params.srcURL);
+    await copyFetchedImage(contents, frame, params.srcURL, platform);
   } catch {
     if (!contents.isDestroyed() && !frame.isDestroyed()) contents.copyImageAt(params.x, params.y);
   }
@@ -22,6 +24,7 @@ async function copyFetchedImage(
   contents: Electron.WebContents,
   frame: Electron.WebFrameMain,
   srcURL: string,
+  platform: NodeJS.Platform,
 ): Promise<void> {
   const url = new URL(srcURL);
   if (
@@ -105,9 +108,15 @@ async function copyFetchedImage(
   }
   if (png.byteLength > MAX_IMAGE_BYTES) throw new Error("PNG exceeded the size limit");
   if (contents.isDestroyed() || frame.isDestroyed()) return;
+  // Electron re-encodes "image/png" items; the raw format keeps the bytes, but that name is the
+  // native PNG format only on Linux.
+  const format =
+    png === bytes && platform === "linux"
+      ? 'electron application/osclipboard;format="image/png"'
+      : "image/png";
   await Electron.clipboard.write([
     new Electron.ClipboardItem({
-      "image/png": new Blob([Uint8Array.from(png)], { type: "image/png" }),
+      [format]: new Blob([Uint8Array.from(png)], { type: "image/png" }),
     }),
   ]);
 }

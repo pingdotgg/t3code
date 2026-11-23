@@ -40,10 +40,11 @@ const sourcePng = Buffer.from(
   "base64",
 );
 
-const copyImage = (overrides: Partial<typeof params> = {}) =>
+const copyImage = (overrides: Partial<typeof params> = {}, platform: NodeJS.Platform = "linux") =>
   copyContextMenuImage(
     contents as unknown as Electron.WebContents,
     { ...params, ...overrides } as unknown as Electron.ContextMenuParams,
+    platform,
   );
 
 beforeEach(() => {
@@ -74,26 +75,36 @@ it.each(["https://example.com/image.png", `data:image/png;base64,${sourcePng.toS
     }
     expect(contents.copyImageAt).not.toHaveBeenCalled();
     expect(native.createFromBuffer).toHaveBeenCalledWith(sourcePng);
-    const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
+    const blob = Object.values(native.write.mock.calls[0]?.[0][0].blobs ?? {})[0] as Blob;
     expect(blob.type).toBe("image/png");
     expect(Buffer.from(await blob.arrayBuffer())).toEqual(sourcePng);
   },
 );
 
+const RAW_PNG = 'electron application/osclipboard;format="image/png"';
+
 it.each([
-  ["a thread image", mainFrame],
-  ["an iframe image", frame],
-])("copies %s's original PNG bytes, text chunks included", async (_, sourceFrame) => {
-  const pngWithText = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFnRFWHR0ZXN0AE1FVEFEQVRBLVNVUlZJVkVEVdlUSAAAABxpVFh0bm90ZQAAAGVuAG5vdGUASVRYVC1TVVJWSVZFRL93xmsAAABfSURBVHicldK7EcAgDANQ4UHCGszCgMziNZgEitzlOMf440ZS8ToXLHDtCB9x7W2OBACQMvRG3NDXgobOETEktmskcI0CbKMDw1zBzVhANQ74Gx8IEwKnKfwkfrvNsQHXGy9egI5mXQAAAABJRU5ErkJggg==",
-    "base64",
-  );
-  native.fetch.mockResolvedValue(new Response(Uint8Array.from(pngWithText)));
-  await copyImage({ frame: sourceFrame, srcURL: "http://127.0.0.1:3773/api/assets/token" });
-  expect(contents.copyImageAt).not.toHaveBeenCalled();
-  const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
-  expect(Buffer.from(await blob.arrayBuffer())).toEqual(pngWithText);
-});
+  ["linux", "a thread image", mainFrame, RAW_PNG],
+  ["linux", "an iframe image", frame, RAW_PNG],
+  ["darwin", "a thread image", mainFrame, "image/png"],
+] as const)(
+  "on %s, copies %s's original PNG bytes, text chunks included",
+  async (platform, _, sourceFrame, format) => {
+    const pngWithText = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFnRFWHR0ZXN0AE1FVEFEQVRBLVNVUlZJVkVEVdlUSAAAABxpVFh0bm90ZQAAAGVuAG5vdGUASVRYVC1TVVJWSVZFRL93xmsAAABfSURBVHicldK7EcAgDANQ4UHCGszCgMziNZgEitzlOMf440ZS8ToXLHDtCB9x7W2OBACQMvRG3NDXgobOETEktmskcI0CbKMDw1zBzVhANQ74Gx8IEwKnKfwkfrvNsQHXGy9egI5mXQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    native.fetch.mockResolvedValue(new Response(Uint8Array.from(pngWithText)));
+    await copyImage(
+      { frame: sourceFrame, srcURL: "http://127.0.0.1:3773/api/assets/token" },
+      platform,
+    );
+    expect(contents.copyImageAt).not.toHaveBeenCalled();
+    const blobs = native.write.mock.calls[0]?.[0][0].blobs as Record<string, Blob>;
+    expect(Object.keys(blobs)).toEqual([format]);
+    expect(Buffer.from(await blobs[format]!.arrayBuffer())).toEqual(pngWithText);
+  },
+);
 
 it("falls back to Chromium's copy for a thread image it cannot fetch", async () => {
   await copyImage({ frame: mainFrame, srcURL: "blob:https://example.com/image" });
