@@ -305,6 +305,15 @@ it.layer(layerTest)("ThreadSearch", (it) => {
             plan.map((row) => row.detail).join("\n"),
           );
         }
+        // A cancelled run can hold tens of thousands of items; scanning them per hit took 50 s.
+        assert.isTrue(
+          plan.some(
+            (row) =>
+              row.detail.includes("orchestration_v2_projection_turn_items_message_ordinal_idx") &&
+              row.detail.includes("<expr>=?"),
+          ),
+          plan.map((row) => row.detail).join("\n"),
+        );
       }
     }),
   );
