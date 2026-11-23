@@ -87,6 +87,26 @@ describe("ssh auth", () => {
     ),
   );
 
+  // OpenSSH before 8.4 (Windows 10's built-in 7.7p1) ignores SSH_ASKPASS_REQUIRE and only
+  // runs the askpass helper when DISPLAY is set; without it ssh waits on a console forever.
+  it.effect("sets DISPLAY for the askpass helper on Windows so pre-8.4 OpenSSH uses it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ssh-askpass-test-" });
+      const env = yield* buildSshChildEnvironment({
+        authSecret: "super-secret",
+        interactiveAuth: true,
+        askpassDirectory: directory,
+        baseEnv: {},
+      });
+
+      assert.equal(env.SSH_ASKPASS, `${directory}\\ssh-askpass.cmd`);
+      assert.equal(env.DISPLAY, "t3code");
+    }).pipe(
+      Effect.provide(Layer.merge(NodeServices.layer, Layer.succeed(HostProcess.Platform, "win32"))),
+    ),
+  );
+
   it.effect("reuses the default askpass directory across interactive commands", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
