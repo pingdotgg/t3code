@@ -415,7 +415,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value(),
+    history: session.history.value() + unfinishedSequenceReplay(session),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -1394,7 +1394,32 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
 const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
-function sanitizeTerminalHistoryChunk(
+// Clients keep this much output and drop a sequence their trim cuts through, so none of them
+// could replay a longer string or CSI whole.
+const MAX_HELD_SEQUENCE_LENGTH = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
+// ESC and four intermediates: libghostty ignores every intermediate past the fourth.
+const MAX_HELD_ESCAPE_LENGTH = 5;
+// Leads the held text of a string or CSI that outgrew its limit and stays out of history. Only its
+// introducer is still held, with a final ESC or high surrogate that may begin its end. Other held
+// text starts with ESC.
+const OVERSIZED_SEQUENCE = "\u0018";
+// Stands in for the ESC of an oversized sequence, which ended any string history left open.
+const STRING_TERMINATOR = "\u001b\\";
+
+// Longer held text is cut to its introducer in a snapshot, so it cannot push history out of the
+// client's budget or add its size to every resync.
+const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
+
+// History leaves out the sequence the terminal is still inside. A client that starts from a
+// snapshot needs it, or it prints the rest of the sequence as text.
+function unfinishedSequenceReplay(session: TerminalSessionState): string {
+  const held = session.pendingHistoryControlSequence;
+  if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
+  if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
+  return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
+}
+
+export function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
   data: string,
 ): { visibleText: string; pendingControlSequence: string } {
@@ -1402,9 +1427,12 @@ function sanitizeTerminalHistoryChunk(
     return { visibleText: data, pendingControlSequence: "" };
   }
 
-  const input = `${pendingControlSequence}${data}`;
-  // Only the pending prefix's final ESC can begin a terminator split across chunks.
-  const pendingScanStart = Math.max(0, pendingControlSequence.length - 1);
+  const resumesOversized = pendingControlSequence.startsWith(OVERSIZED_SEQUENCE);
+  const held = resumesOversized ? pendingControlSequence.slice(1) : pendingControlSequence;
+  const input = `${held}${data}`;
+  // Only the held text's final code unit, an ESC or a high surrogate, can begin an end split
+  // across chunks.
+  const pendingScanStart = Math.max(0, held.length - 1);
   let visibleText = "";
   let index = 0;
   // Set when a C1 code point began the sequence at `index`: the ESC form that stands in for it.
@@ -1421,6 +1449,7 @@ function sanitizeTerminalHistoryChunk(
       // Empty for a sequence the input introduces itself, which starts with ESC at `index`.
       const prefix = c1Introducer;
       c1Introducer = "";
+      const oversized = resumesOversized && index === 0;
       const contentStart = prefix.length > 0 ? index : index + 2;
       const nextCodePoint = (prefix || input).charCodeAt(prefix.length > 0 ? 1 : index + 1);
       if (Number.isNaN(nextCodePoint)) {
@@ -1428,19 +1457,21 @@ function sanitizeTerminalHistoryChunk(
       }
 
       if (nextCodePoint === 0x5b) {
-        let cursor = contentStart;
+        // A held CSI has not ended, so only its last code unit is scanned again.
+        let cursor = index === 0 ? Math.max(contentStart, pendingScanStart) : contentStart;
         // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
         // print in ground state. None join the parameters; only executed ones survive a strip.
-        let body = "";
-        let executedControls = "";
+        const executedControls = () =>
+          input.slice(contentStart, cursor).replace(/[^\x00-\x0f]+/g, "");
         while (cursor < input.length) {
           const cursorCodePoint = input.charCodeAt(cursor);
           const cancelled = isControlSequenceCancel(cursorCodePoint);
           if (cancelled || isCsiFinalByte(cursorCodePoint)) {
-            if (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? "")) {
+            const body = input.slice(contentStart, cursor).replace(/[^\x20-\x7e]+/g, "");
+            if (!oversized && (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? ""))) {
               append(prefix + input.slice(index, cursor + 1));
             } else {
-              append(executedControls);
+              append(executedControls());
             }
             index = cursor + 1;
             break;
@@ -1452,10 +1483,10 @@ function sanitizeTerminalHistoryChunk(
             if (c1) {
               // The CSI ends here undispatched, so it is kept only when the terminal is back in
               // ground with nothing to answer.
-              if (c1.next.length === 0 && !c1.query) {
+              if (!oversized && c1.next.length === 0 && !c1.query) {
                 append(prefix + input.slice(index, end));
               } else {
-                append(executedControls + c1.safe);
+                append(executedControls() + c1.safe);
               }
               c1Introducer = c1.next;
               index = end;
@@ -1466,19 +1497,24 @@ function sanitizeTerminalHistoryChunk(
           }
           // An ESC abandons the CSI and starts the next sequence, which may be stripped.
           if (cursorCodePoint === 0x1b) {
-            append(executedControls);
+            append(executedControls());
             index = cursor;
             break;
-          }
-          if (cursorCodePoint < 0x10) {
-            executedControls += input[cursor];
-          } else if (cursorCodePoint >= 0x20 && cursorCodePoint !== 0x7f) {
-            body += input[cursor];
           }
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          const unfinished = prefix + input.slice(index);
+          if (oversized || unfinished.length > MAX_HELD_SEQUENCE_LENGTH) {
+            // The terminal has run these controls already, so history takes them as they come.
+            append((oversized ? "" : STRING_TERMINATOR) + executedControls());
+            const endStart = /[\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
+            return {
+              visibleText,
+              pendingControlSequence: `${OVERSIZED_SEQUENCE}\u001b[${endStart}`,
+            };
+          }
+          return { visibleText, pendingControlSequence: unfinished };
         }
         continue;
       }
@@ -1495,7 +1531,16 @@ function sanitizeTerminalHistoryChunk(
           nextCodePoint === 0x5d,
         );
         if (stringEnd === null) {
-          return { visibleText, pendingControlSequence: prefix + input.slice(index) };
+          const unfinished = prefix + input.slice(index);
+          if (oversized || unfinished.length > MAX_HELD_SEQUENCE_LENGTH) {
+            append(oversized ? "" : STRING_TERMINATOR);
+            const endStart = /[\u001b\ud800-\udbff]$/.exec(unfinished)?.[0] ?? "";
+            return {
+              visibleText,
+              pendingControlSequence: OVERSIZED_SEQUENCE + unfinished.slice(0, 2) + endStart,
+            };
+          }
+          return { visibleText, pendingControlSequence: unfinished };
         }
         const { end, c1 } = stringEnd;
         const content = stripStringTerminator(
@@ -1505,6 +1550,7 @@ function sanitizeTerminalHistoryChunk(
         // has its own terminator. Without one, the query ends at the next ESC, which history may
         // strip, so ST would not replay the same and the query stays.
         if (
+          !oversized &&
           nextCodePoint === 0x5d &&
           isOscPaletteQuery(content) &&
           /[\x07\x18\x1a]$|\x1b\\$/.test(input.slice(index, end))
@@ -1514,6 +1560,7 @@ function sanitizeTerminalHistoryChunk(
           continue;
         }
         const strip =
+          oversized ||
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
         if (c1 === undefined || (!strip && c1.effect.next.length === 0 && !c1.effect.query)) {
@@ -1532,7 +1579,10 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return {
+          visibleText,
+          pendingControlSequence: input.slice(index, index + MAX_HELD_ESCAPE_LENGTH),
+        };
       }
       // ESC Z (DECID) is the legacy primary device attributes query.
       if (nextCodePoint !== 0x5a) {
