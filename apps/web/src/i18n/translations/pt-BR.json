@@ -4787,7 +4787,7 @@
   "bd44c0152ee276c1": "em {hours} h {minutes} min",
   "888035725b30714f": "em {minutes} min",
   "c59b3ed93b980b9c": "agora",
-  "a4b4e5eb6d313af9": "Redefinição {time}",
+  "a4b4e5eb6d313af9": "Renovado {time}",
   "a7bfaa71c8b3030b": "Horário de renovação indisponível; tente novamente manualmente",
   "3441bf9b116d3276": "Dispensar aviso de limite de uso",
   "2b07985d23563374": "Retoma {time}",
@@ -4801,8 +4801,8 @@
   "847d9f569fae7112": "Copiar pedido para o administrador",
   "79f13fade1c35ead": "Este contexto não está mais disponível.",
   "90d2d202109eff30": "Enviando…",
-  "11472a9116247cf2": "Anexo de vídeo, {label}, {size}",
-  "609e757f18882874": "Anexo de arquivo, {label}, {size}",
+  "11472a9116247cf2": "Vídeo anexado, {label}, {size}",
+  "609e757f18882874": "Arquivo anexado, {label}, {size}",
   "be4e6fd5b78a1dfe": "Elemento do navegador, {label}",
   "7e9a77787fb72952": "{kind}, {label}, {title}",
   "0fb5b8ddb668d1bd": "{kind}, {label}",
@@ -8037,6 +8037,7 @@
   "ea24f015d73520fd": "Excluir",
   "d6b75f6c2f576a2c": "Excluir {title}",
   "41935b6ab025a13d": "Falha na ação da thread arquivada",
+  "add343fc1f43258e": "{count, plural, one {{count} mensagem} other {{count} mensagens}}",
   "ab830753e879ac5f": "Pesquisar threads arquivadas",
   "4568f63340b7a586": "Carregando as threads arquivadas",
   "3ce9741f164fb944": "Não foi possível carregar as threads arquivadas",
@@ -8046,16 +8047,6 @@
   "3620df83bbb0ca02": "Pelo menu dela na barra lateral.",
   "84efb81776b1ced6": "Threads concluídas",
   "28bd13def6edfb48": "Removida de Concluídas.",
-  "add343fc1f43258e": "{count, plural, one {{count} mensagem} other {{count} mensagens}}",
-  "c05a43ba19ee431f": [
-    "Nenhuma thread arquivada corresponde a “",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    "”."
-  ],
   "128f70c4e9a7e699": [
     "Arquivada",
     " ",
@@ -8072,6 +8063,15 @@
       "k": "_gt_time_1",
       "v": "rt"
     }
+  ],
+  "c05a43ba19ee431f": [
+    "Nenhuma thread arquivada corresponde a “",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "”."
   ],
   "a3e006ea1ddeb9c1": "Address copied",
   "ae85d885630b0e51": "{count, plural, one {{count} escopo} other {{count} escopos}}",

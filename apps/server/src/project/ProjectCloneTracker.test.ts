@@ -183,6 +183,25 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("clamps a long failure without splitting a surrogate pair", () => {
+    const harness = makeHarness({
+      clone: () =>
+        Effect.fail(
+          new SourceControlRepositoryError({
+            operation: "cloneRepository",
+            provider: SourceControlProviderKind.make("unknown"),
+            detail: `${"e".repeat(998)}\u{1F680}tail`,
+          }),
+        ),
+    });
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.error).toBe(`${"e".repeat(998)}…`);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
   it.effect("cancel interrupts the clone and removes the partial checkout", () => {
     const harness = makeHarness({ clone: () => Effect.never });
     return Effect.gen(function* () {
