@@ -58,8 +58,9 @@ pub use crate::discard_undo::{
     DISCARD_UNDO_SECS, DiscardNotice, DiscardUndo, SettleUndoStep, SettledThreadFacts,
     UNDO_FAILED_NEW_CONTENT, UNDO_FAILED_SETTLE, UNDO_SHORTCUT_LABEL, UndoAction,
     UndoShortcutScene, discard_short_summary, discard_summary, is_modifier_key, is_undo_key,
-    notice_short_summary, notice_summary, notice_undone_summary, plan_settle_undo,
-    undo_button_label, undo_label, undo_shortcut_applies, undone_summary,
+    notice_short_summary, notice_summary, notice_undone_summary, plan_archive_undo,
+    plan_settle_undo, plan_snooze_undo, plan_unpin_undo, undo_button_label, undo_failure_text,
+    undo_label, undo_shortcut_applies, undone_summary,
 };
 pub use crate::drafts::{
     ProjectDraftSlots, Retarget, keeps_displaced_draft, persists_across_restart, project_draft_key,
@@ -77,11 +78,14 @@ pub use crate::sidebar::{
     sidebar_draft_row, sidebar_draft_rows, threads_with_unsent_input,
 };
 pub use crate::sidebar_nav::{
-    FocusedRow, KeyMods, MenuKey, MenuNavItem, MenuStep, RowKey, RowKind, SETTLED_SHELF_ROW,
-    SearchKey, ThreadStep, TreeKey, TreeRow, TreeStep, adjacent_thread, draft_tree_key,
-    first_enabled, focused_row, is_menu_key, menu_key, menu_step, restore_target, row_key,
-    row_kind, search_highlight_index, search_key, search_step, thread_traversal_key,
-    traversal_order, tree_key, tree_step,
+    BulkAction, BulkEntry, BulkFacts, FocusedRow, KeyMods, MenuKey, MenuNavItem, MenuStep,
+    RowClick, RowKey, RowKind, SETTLED_SHELF_ROW, SearchKey, THREAD_JUMP_COUNT,
+    THREAD_JUMP_HINT_DELAY_MS, ThreadSelection, ThreadStep, TreeKey, TreeRow, TreeStep,
+    adjacent_thread, bulk_menu, draft_tree_key, first_enabled, focused_row, is_menu_key,
+    jump_hint_label, jump_hint_number, jump_target, menu_key, menu_step, next_after_settle,
+    restore_target, row_click, row_key, row_kind, search_highlight_index, search_key,
+    search_key_unless_composing, search_step, shows_jump_hints, thread_jump_key,
+    thread_traversal_key, traversal_order, tree_key, tree_step,
 };
 pub use crate::thread::{
     EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,

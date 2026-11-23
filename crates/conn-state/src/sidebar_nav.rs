@@ -488,9 +488,526 @@ pub fn adjacent_thread<'a>(
     .map(String::as_str)
 }
 
+/// How many threads `⌘1`..`⌘9` reach (`THREAD_JUMP_KEYBINDING_COMMANDS`).
+pub const THREAD_JUMP_COUNT: usize = 9;
+
+/// How long `⌘` is held before the numbers show on the rows (`THREAD_JUMP_HINT_SHOW_DELAY_MS`).
+pub const THREAD_JUMP_HINT_DELAY_MS: u64 = 200;
+
+/// The place `⌘1`..`⌘9` jump to, counting from 0 (`thread.jump.1`..`thread.jump.9`, Conn's
+/// `mod+1`..`mod+9`). Any other modifier leaves the key alone.
+#[must_use]
+pub fn thread_jump_key(key: &str, mods: KeyMods) -> Option<usize> {
+    if !(mods.platform && !mods.shift && !mods.alt && !mods.control) {
+        return None;
+    }
+    let mut chars = key.chars();
+    let digit = chars.next()?.to_digit(10)?;
+    if chars.next().is_some() || digit == 0 {
+        return None;
+    }
+    Some(usize::try_from(digit).ok()? - 1)
+}
+
+/// The thread `⌘1`..`⌘9` open: the one at that place of the order traversal walks
+/// (`orderedThreadKeys[jumpIndex]`).
+#[must_use]
+pub fn jump_target(ids: &[String], index: usize) -> Option<&str> {
+    if index >= THREAD_JUMP_COUNT {
+        return None;
+    }
+    ids.get(index).map(String::as_str)
+}
+
+/// The number the jump hint on `thread`'s row shows, from 1 (`jumpLabelByKey`): only the first
+/// nine threads of the order have one.
+#[must_use]
+pub fn jump_hint_number(ids: &[String], thread: &str) -> Option<usize> {
+    ids.iter()
+        .take(THREAD_JUMP_COUNT)
+        .position(|id| id == thread)
+        .map(|at| at + 1)
+}
+
+/// Whether the modifiers held are the jump shortcut's, so the hints may show
+/// (`shouldShowThreadJumpHintsForModifiers`).
+#[must_use]
+pub fn shows_jump_hints(mods: KeyMods) -> bool {
+    mods.platform && !mods.shift && !mods.alt && !mods.control
+}
+
+/// The hint on a row (`⌘3`): the jump shortcut's label.
+#[must_use]
+pub fn jump_hint_label(number: usize) -> String {
+    format!("⌘{number}")
+}
+
+/// [`search_key`] for a search box that may be composing text with an input method: a key typed
+/// during composition belongs to the input method (`isComposing`), so the results do not see it.
+#[must_use]
+pub fn search_key_unless_composing(
+    key: &str,
+    searching: bool,
+    results: usize,
+    composing: bool,
+) -> Option<SearchKey> {
+    if composing {
+        return None;
+    }
+    search_key(key, searching, results)
+}
+
+/// What a click on a thread row does (`handleThreadClick`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowClick {
+    /// Open the thread.
+    Open,
+    /// `⌘`-click: add the row to the selection or take it out.
+    Toggle,
+    /// `Shift`-click: select every row between the anchor and this one.
+    Range,
+}
+
+/// The click a press with `mods` is. `⌘` wins over `Shift`.
+#[must_use]
+pub fn row_click(mods: KeyMods) -> RowClick {
+    if mods.platform {
+        RowClick::Toggle
+    } else if mods.shift {
+        RowClick::Range
+    } else {
+        RowClick::Open
+    }
+}
+
+/// The threads picked for a bulk action (`useThreadSelectionStore`), in the order they were
+/// picked, and the one a `Shift`-click counts from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThreadSelection {
+    keys: Vec<String>,
+    anchor: Option<String>,
+}
+
+impl ThreadSelection {
+    /// Whether nothing is selected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// Whether `key` is selected.
+    #[must_use]
+    pub fn contains(&self, key: &str) -> bool {
+        self.keys.iter().any(|selected| selected == key)
+    }
+
+    /// The selected threads, in the order they were picked.
+    #[must_use]
+    pub fn keys(&self) -> &[String] {
+        &self.keys
+    }
+
+    /// `toggleThread`: a thread that joins becomes the anchor; one that leaves keeps the old one.
+    pub fn toggle(&mut self, key: &str) {
+        if let Some(at) = self.keys.iter().position(|selected| selected == key) {
+            self.keys.remove(at);
+        } else {
+            self.keys.push(key.to_owned());
+            self.anchor = Some(key.to_owned());
+        }
+    }
+
+    /// `rangeSelectTo`: every thread of `order` from the anchor to `key` joins. With no anchor, or
+    /// one that `order` does not list, only `key` joins and becomes the anchor.
+    pub fn range_select_to(&mut self, key: &str, order: &[String]) {
+        let span = self.anchor.as_deref().and_then(|anchor| {
+            let from = order.iter().position(|id| id == anchor)?;
+            let to = order.iter().position(|id| id == key)?;
+            Some(from.min(to)..=from.max(to))
+        });
+        match span {
+            Some(span) => {
+                for id in &order[span] {
+                    if !self.contains(id) {
+                        self.keys.push(id.clone());
+                    }
+                }
+            }
+            None => {
+                if !self.contains(key) {
+                    self.keys.push(key.to_owned());
+                }
+                self.anchor = Some(key.to_owned());
+            }
+        }
+    }
+
+    /// `setAnchor`: opening a thread makes it the place a `Shift`-click counts from.
+    pub fn set_anchor(&mut self, key: &str) {
+        self.anchor = Some(key.to_owned());
+    }
+
+    /// `clearSelection`. Returns whether the selection or its anchor changed.
+    pub fn clear(&mut self) -> bool {
+        let changed = !self.keys.is_empty() || self.anchor.is_some();
+        self.keys.clear();
+        self.anchor = None;
+        changed
+    }
+
+    /// `removeFromSelection`: a deleted thread leaves, and takes the anchor with it.
+    pub fn remove(&mut self, gone: &[String]) {
+        self.keys.retain(|key| !gone.contains(key));
+        if self
+            .anchor
+            .as_ref()
+            .is_some_and(|anchor| gone.contains(anchor))
+        {
+            self.anchor = None;
+        }
+    }
+
+    /// The selected threads that are still listed, in the order they were picked.
+    #[must_use]
+    pub fn listed(&self, order: &[String]) -> Vec<String> {
+        self.keys
+            .iter()
+            .filter(|key| order.contains(key))
+            .cloned()
+            .collect()
+    }
+}
+
+/// What a bulk action does to every selected thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BulkAction {
+    Unpin,
+    Settle,
+    RegenerateTitles,
+    MarkUnread,
+    Delete,
+}
+
+/// What the threads picked for a bulk menu are like.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BulkFacts {
+    /// Threads selected.
+    pub selected: usize,
+    /// Of them, pinned.
+    pub pinned: usize,
+    /// Of them, not settled yet.
+    pub settling: usize,
+    /// Of them, having a title regenerated right now.
+    pub regenerating: usize,
+}
+
+/// One row of the bulk menu.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BulkEntry {
+    pub action: BulkAction,
+    pub label: String,
+    pub disabled: bool,
+    pub destructive: bool,
+}
+
+/// The menu a right-click on a selected row opens (`handleMultiSelectContextMenu`):
+/// `Unpin (N)` when any is pinned, `Settle (N)`, `Regenerate titles (N)`, `Mark unread (N)` and a
+/// destructive `Delete (N)`. `Settle` counts the whole selection and is off when every thread is
+/// settled already. Snooze is left out with the rest of Snooze (`docs/scope.md` #9).
+#[must_use]
+pub fn bulk_menu(facts: BulkFacts) -> Vec<BulkEntry> {
+    let entry = |action, label: String, disabled, destructive| BulkEntry {
+        action,
+        label,
+        disabled,
+        destructive,
+    };
+    let count = facts.selected;
+    let mut items = Vec::with_capacity(5);
+    if facts.pinned > 0 {
+        items.push(entry(
+            BulkAction::Unpin,
+            format!("Unpin ({})", facts.pinned),
+            false,
+            false,
+        ));
+    }
+    items.push(entry(
+        BulkAction::Settle,
+        format!("Settle ({count})"),
+        facts.settling == 0,
+        false,
+    ));
+    let actionable = count.saturating_sub(facts.regenerating);
+    if count > 0 {
+        items.push(if actionable == 0 {
+            entry(
+                BulkAction::RegenerateTitles,
+                format!("Regenerating… ({count})"),
+                true,
+                false,
+            )
+        } else {
+            entry(
+                BulkAction::RegenerateTitles,
+                format!("Regenerate titles ({actionable})"),
+                false,
+                false,
+            )
+        });
+    }
+    items.push(entry(
+        BulkAction::MarkUnread,
+        format!("Mark unread ({count})"),
+        false,
+        false,
+    ));
+    items.push(entry(
+        BulkAction::Delete,
+        format!("Delete ({count})"),
+        false,
+        true,
+    ));
+    items
+}
+
+/// The thread a settle of the open thread moves on to (`planForwardNavigation`): the next listed
+/// thread after it, wrapping, that is neither settled nor settling along with it. None when no
+/// thread is left, and a new thread starts instead.
+#[must_use]
+pub fn next_after_settle<'a>(
+    order: &'a [String],
+    open: &str,
+    is_parked: impl Fn(&str) -> bool,
+) -> Option<&'a str> {
+    let at = order.iter().position(|id| id == open)?;
+    order[at + 1..]
+        .iter()
+        .chain(&order[..at])
+        .map(String::as_str)
+        .find(|id| !is_parked(id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn command() -> KeyMods {
+        KeyMods {
+            platform: true,
+            ..KeyMods::default()
+        }
+    }
+
+    #[test]
+    fn command_digits_jump_and_nothing_else_does() {
+        assert_eq!(thread_jump_key("1", command()), Some(0));
+        assert_eq!(thread_jump_key("9", command()), Some(8));
+        assert_eq!(thread_jump_key("0", command()), None, "there is no ⌘0 jump");
+        assert_eq!(thread_jump_key("a", command()), None);
+        assert_eq!(thread_jump_key("12", command()), None);
+        assert_eq!(thread_jump_key("1", KeyMods::default()), None, "a digit");
+        for other in [
+            KeyMods {
+                shift: true,
+                ..command()
+            },
+            KeyMods {
+                alt: true,
+                ..command()
+            },
+            KeyMods {
+                control: true,
+                ..command()
+            },
+        ] {
+            assert_eq!(thread_jump_key("1", other), None, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_jump_lands_on_the_place_in_the_traversal_order_and_misses_past_the_end() {
+        let order = ids(&["a", "b", "c"]);
+        assert_eq!(jump_target(&order, 0), Some("a"));
+        assert_eq!(jump_target(&order, 2), Some("c"));
+        assert_eq!(jump_target(&order, 3), None, "no fourth thread");
+        let long: Vec<String> = (0..12).map(|n| format!("t{n}")).collect();
+        assert_eq!(jump_target(&long, 8), Some("t8"));
+        assert_eq!(jump_target(&long, 9), None, "only nine places are bound");
+    }
+
+    #[test]
+    fn only_the_first_nine_threads_carry_a_hint() {
+        let long: Vec<String> = (0..12).map(|n| format!("t{n}")).collect();
+        assert_eq!(jump_hint_number(&long, "t0"), Some(1));
+        assert_eq!(jump_hint_number(&long, "t8"), Some(9));
+        assert_eq!(jump_hint_number(&long, "t9"), None);
+        assert_eq!(jump_hint_number(&long, "gone"), None);
+        assert_eq!(jump_hint_label(3), "⌘3");
+        assert!(shows_jump_hints(command()));
+        assert!(!shows_jump_hints(KeyMods::default()));
+        assert!(
+            !shows_jump_hints(KeyMods {
+                shift: true,
+                ..command()
+            }),
+            "⌘⇧ is another shortcut"
+        );
+    }
+
+    #[test]
+    fn a_search_key_typed_while_composing_belongs_to_the_input_method() {
+        assert_eq!(
+            search_key_unless_composing("enter", true, 3, true),
+            None,
+            "Enter commits the composition, it does not open a result"
+        );
+        assert_eq!(search_key_unless_composing("escape", true, 0, true), None);
+        assert_eq!(
+            search_key_unless_composing("enter", true, 3, false),
+            Some(SearchKey::Open)
+        );
+        assert_eq!(
+            search_key_unless_composing("escape", true, 0, false),
+            Some(SearchKey::Clear)
+        );
+    }
+
+    #[test]
+    fn command_toggles_shift_ranges_and_command_wins() {
+        assert_eq!(row_click(KeyMods::default()), RowClick::Open);
+        assert_eq!(row_click(command()), RowClick::Toggle);
+        assert_eq!(
+            row_click(KeyMods {
+                shift: true,
+                ..KeyMods::default()
+            }),
+            RowClick::Range
+        );
+        assert_eq!(
+            row_click(KeyMods {
+                shift: true,
+                ..command()
+            }),
+            RowClick::Toggle
+        );
+    }
+
+    #[test]
+    fn toggling_picks_and_unpicks_and_a_range_runs_from_the_anchor() {
+        let order = ids(&["a", "b", "c", "d", "e"]);
+        let mut selection = ThreadSelection::default();
+        assert!(selection.is_empty());
+        selection.toggle("b");
+        selection.toggle("d");
+        assert_eq!(
+            selection.keys(),
+            ["b", "d"],
+            "in the order they were picked"
+        );
+        selection.toggle("d");
+        assert!(!selection.contains("d"));
+        // A thread that leaves keeps the anchor it was (`toggleThread`), so `d` still anchors.
+        selection.range_select_to("e", &order);
+        assert_eq!(selection.keys(), ["b", "d", "e"]);
+        selection.range_select_to("a", &order);
+        assert_eq!(
+            selection.listed(&order),
+            ["b", "d", "e", "a", "c"],
+            "a range backwards adds the rows above the anchor, none twice"
+        );
+    }
+
+    #[test]
+    fn a_range_with_no_anchor_picks_one_thread_and_anchors_on_it() {
+        let order = ids(&["a", "b", "c"]);
+        let mut selection = ThreadSelection::default();
+        selection.range_select_to("b", &order);
+        assert_eq!(selection.keys(), ["b"]);
+        selection.range_select_to("c", &order);
+        assert_eq!(selection.keys(), ["b", "c"]);
+        let mut lost = ThreadSelection::default();
+        lost.set_anchor("gone");
+        lost.range_select_to("c", &order);
+        assert_eq!(lost.keys(), ["c"], "an anchor the list lost is replaced");
+    }
+
+    #[test]
+    fn clearing_and_removing_end_the_selection_and_the_anchor() {
+        let order = ids(&["a", "b", "c"]);
+        let mut selection = ThreadSelection::default();
+        assert!(!selection.clear(), "nothing to clear");
+        selection.set_anchor("a");
+        assert!(selection.clear(), "an anchor alone is cleared too");
+        selection.toggle("a");
+        selection.toggle("b");
+        selection.remove(&ids(&["b"]));
+        assert_eq!(selection.keys(), ["a"]);
+        selection.range_select_to("c", &order);
+        assert_eq!(
+            selection.keys(),
+            ["a", "c"],
+            "the removed thread was the anchor, so the range is only the thread clicked"
+        );
+        assert_eq!(selection.listed(&ids(&["c"])), ["c"], "only listed threads");
+        assert!(selection.clear());
+        assert!(selection.is_empty());
+    }
+
+    #[test]
+    fn the_bulk_menu_counts_what_each_action_reaches() {
+        let menu = bulk_menu(BulkFacts {
+            selected: 4,
+            pinned: 2,
+            settling: 3,
+            regenerating: 1,
+        });
+        let labels: Vec<&str> = menu.iter().map(|entry| entry.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "Unpin (2)",
+                "Settle (4)",
+                "Regenerate titles (3)",
+                "Mark unread (4)",
+                "Delete (4)"
+            ]
+        );
+        assert!(menu.iter().all(|entry| !entry.disabled));
+        assert!(menu.last().is_some_and(|entry| entry.destructive));
+    }
+
+    #[test]
+    fn the_bulk_menu_leaves_out_or_disables_what_does_not_apply() {
+        let menu = bulk_menu(BulkFacts {
+            selected: 2,
+            pinned: 0,
+            settling: 0,
+            regenerating: 2,
+        });
+        let find = |action| menu.iter().find(|entry| entry.action == action);
+        assert!(find(BulkAction::Unpin).is_none(), "nothing is pinned");
+        let settle = find(BulkAction::Settle);
+        assert!(settle.is_some_and(|entry| entry.disabled && entry.label == "Settle (2)"));
+        let regenerate = find(BulkAction::RegenerateTitles);
+        assert!(
+            regenerate.is_some_and(|entry| entry.disabled && entry.label == "Regenerating… (2)")
+        );
+    }
+
+    #[test]
+    fn a_settle_moves_on_to_the_next_thread_that_stays_put() {
+        let order = ids(&["a", "b", "c", "d"]);
+        let parked = |id: &str| matches!(id, "c" | "d");
+        assert_eq!(next_after_settle(&order, "b", parked), Some("a"), "wraps");
+        assert_eq!(next_after_settle(&order, "a", parked), Some("b"));
+        assert_eq!(
+            next_after_settle(&order, "a", |_| true),
+            None,
+            "every other thread is settling too"
+        );
+        assert_eq!(next_after_settle(&order, "gone", |_| false), None);
+    }
 
     fn rows() -> Vec<TreeRow> {
         vec![

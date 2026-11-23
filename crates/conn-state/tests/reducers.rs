@@ -1060,6 +1060,15 @@ fn shell_partitions_settled_and_subagent_threads_and_finds_archived() {
         "settled and subagent threads must be excluded from top_level_active_threads"
     );
 
+    assert_eq!(
+        state.listed_ancestor("t-sub"),
+        Some("t-active"),
+        "an open subagent keeps its parent's row current"
+    );
+    assert_eq!(state.listed_ancestor("t-active"), Some("t-active"));
+    assert_eq!(state.listed_ancestor("t-settled"), Some("t-settled"));
+    assert_eq!(state.listed_ancestor("gone"), None);
+
     let settled_ids: Vec<&str> = state
         .top_level_settled_threads()
         .into_iter()

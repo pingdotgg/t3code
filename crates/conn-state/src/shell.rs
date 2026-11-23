@@ -216,6 +216,27 @@ impl ShellState {
         thread.lineage.parent_thread_id.is_some()
     }
 
+    /// The thread whose sidebar row stands for `thread_id` (`resolveListedAncestorThreadRef`):
+    /// itself when the sidebar lists it, else its nearest ancestor it lists, so a subagent that
+    /// is open keeps its parent's row current. A parent the shell does not know ends the climb.
+    #[must_use]
+    pub fn listed_ancestor<'a>(&'a self, thread_id: &str) -> Option<&'a str> {
+        let mut thread = self.find_thread(thread_id)?;
+        // A lineage is a chain; the bound only ends one that loops.
+        for _ in 0..64 {
+            let Some(parent) = thread
+                .lineage
+                .parent_thread_id
+                .as_deref()
+                .and_then(|id| self.find_thread(id))
+            else {
+                break;
+            };
+            thread = parent;
+        }
+        Some(thread.id.as_str())
+    }
+
     /// Returns `true` when `thread` belongs in the Settled shelf (`settledAt` or `archivedAt` set).
     #[must_use]
     pub fn is_settled(thread: &ThreadShell) -> bool {

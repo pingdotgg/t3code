@@ -57,6 +57,8 @@ fn settle_undo_command(
             }
             commands::snooze_thread(thread_id, snoozed_until)
         }
+        SettleUndoStep::Unsnooze => commands::unsnooze_thread(thread_id),
+        SettleUndoStep::Unarchive => commands::archive_thread(thread_id, false),
     })
 }
 
