@@ -89,9 +89,39 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
 }
 
 const WHEEL_EASE_MS = 40;
-const wheelChases = new WeakMap<HTMLElement, { target: number; time: number; position: number }>();
+interface WheelChase {
+  target: number;
+  time: number;
+  position: number;
+  max: number;
+}
+const wheelChases = new Map<HTMLElement, WheelChase>();
+let wheelChaseFrame: number | null = null;
 let reducedMotion: MediaQueryList | null = null;
 const wheelStream = { last: Number.NEGATIVE_INFINITY, direct: false };
+
+function stepWheelChases(time: number): void {
+  wheelChaseFrame = null;
+  const updates: { element: HTMLElement; state: WheelChase; next: number }[] = [];
+  for (const [element, state] of wheelChases) {
+    if (!element.isConnected || Math.abs(element.scrollLeft - state.position) > 1) {
+      wheelChases.delete(element);
+      continue;
+    }
+    state.target = Math.min(state.target, state.max);
+    const next = wheelChaseStep(state.position, state.target, Math.max(0, time - state.time));
+    state.time = Math.max(time, state.time);
+    state.position = next;
+    updates.push({ element, state, next });
+  }
+  for (const { element, state, next } of updates) {
+    element.scrollLeft = next;
+    if (next === state.target) wheelChases.delete(element);
+  }
+  if (wheelChases.size > 0) {
+    wheelChaseFrame = requestAnimationFrame(stepWheelChases);
+  }
+}
 
 function wholeTicks(ticks: number): boolean {
   return Math.round(ticks) !== 0 && Math.abs(ticks - Math.round(ticks)) < 0.05;
@@ -146,39 +176,27 @@ export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta
   reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
   const chase = wheelChases.get(element);
   const direct = !easesWheel(event);
+  const clampedMax = Math.max(0, max);
   if (direct || reducedMotion.matches) {
     element.scrollLeft = position + delta;
     if (reducedMotion.matches) {
       wheelChases.delete(element);
     } else if (chase) {
       chase.position = element.scrollLeft;
-      chase.target = Math.min(Math.max(chase.target + delta, 0), Math.max(0, max));
+      chase.max = clampedMax;
+      chase.target = Math.min(Math.max(chase.target + delta, 0), clampedMax);
     }
     return Math.min(Math.max(position + delta, 0), max) !== position;
   }
   const target = wheelScrollTarget(position, chase?.target, delta, max);
   if (chase) {
+    chase.max = clampedMax;
     chase.target = target;
     return true;
   }
   if (target === position) return false;
-  const state = { target, time: performance.now(), position };
-  wheelChases.set(element, state);
-  const step = (time: number) => {
-    if (wheelChases.get(element) !== state) return;
-    if (!element.isConnected || Math.abs(element.scrollLeft - state.position) > 1) {
-      wheelChases.delete(element);
-      return;
-    }
-    state.target = Math.min(state.target, element.scrollWidth - element.clientWidth);
-    const next = wheelChaseStep(state.position, state.target, Math.max(0, time - state.time));
-    state.time = Math.max(time, state.time);
-    state.position = next;
-    element.scrollLeft = next;
-    if (next === state.target) wheelChases.delete(element);
-    else requestAnimationFrame(step);
-  };
-  requestAnimationFrame(step);
+  wheelChases.set(element, { target, time: performance.now(), position, max: clampedMax });
+  wheelChaseFrame ??= requestAnimationFrame(stepWheelChases);
   return true;
 }
 
