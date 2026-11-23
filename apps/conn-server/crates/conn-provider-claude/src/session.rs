@@ -1433,6 +1433,7 @@ impl ClaudeSession {
                 .unwrap_or_default();
             let unseen = state.app_context.unseen(&native, &input.app_context, false);
             let (content, offered) = with_app_context(content, &unseen);
+            // A refused start ends the turn, which drops this offer with it.
             state.app_context.offered = offered.then(|| (native, offer_of(&input.app_context)));
             (outs, query, uuid, content)
         };
@@ -1956,7 +1957,7 @@ impl Session for ClaudeSession {
             let text = catalog::prompt_text(&input.message.text, effort.as_deref());
             let content = self.content(&text, &input.message.attachments).await;
             let uuid = SystemEnv.uuid();
-            let (query, outs, content) = {
+            let (query, outs, content, before) = {
                 let mut state = self.inner.lock();
                 let query = state
                     .live
@@ -1977,10 +1978,17 @@ impl Session for ClaudeSession {
                     .unwrap_or_default();
                 let unseen = state.app_context.unseen(&native, &input.app_context, true);
                 let (content, offered) = with_app_context(content, &unseen);
-                if offered {
-                    state.app_context.offered = Some((native, offer_of(&input.app_context)));
-                }
-                (query, outs, content)
+                // Recorded as it goes out, so a turn that ends before the SDK answers still
+                // counts it; a refusal puts back what the turn had offered before.
+                let before = offered
+                    .then(|| {
+                        state
+                            .app_context
+                            .offered
+                            .replace((native, offer_of(&input.app_context)))
+                    })
+                    .map(|before| (before, state.mapper.active_turn_id().map(str::to_owned)));
+                (query, outs, content, before)
             };
             self.inner.deliver(Some(&query), outs).await;
             let offered = query
@@ -1990,7 +1998,15 @@ impl Session for ClaudeSession {
                 )
                 .await;
             if offered.is_err() {
-                let outs = self.inner.lock().mapper.steer_failed(&uuid);
+                let outs = {
+                    let mut state = self.inner.lock();
+                    if let Some((before, turn)) = before
+                        && state.mapper.active_turn_id() == turn.as_deref()
+                    {
+                        state.app_context.offered = before;
+                    }
+                    state.mapper.steer_failed(&uuid)
+                };
                 self.inner.deliver(None, outs).await;
                 return Err(ProviderError::SessionStopped);
             }

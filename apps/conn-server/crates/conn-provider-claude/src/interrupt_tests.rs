@@ -33,6 +33,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       fs.appendFileSync(LOG + ".inputs", `${JSON.stringify(cmd.message)}\n`);
+      // A full prompt queue: the SDK refuses the message.
+      if (JSON.stringify(cmd.message).includes("refuse me")) {
+        write({ ch: "reply", id: cmd.id, ok: false, error: { message: "prompt queue is full" } });
+        break;
+      }
       reply(cmd.id, null);
       if (["workflow", "workflow-background"].includes(cmd.message.message.content)) {
         write({ch:"sdk", t:"msg", ...sessions.get(cmd.sessionId), m:{type:"system",subtype:"task_started",task_id:"wf1",tool_use_id:"run1",task_type:"local_workflow",workflow_name:"Review",description:"Review",prompt:"workflow()"}});
@@ -973,5 +978,21 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
         .await
         .unwrap();
     assert_eq!(last_input()["message"]["content"], "again");
+    // A steer the SDK refused offered nothing: its retry carries the note again.
+    assert!(
+        session
+            .steer_turn(steer("refuse me", "Created Jira issue PROJ-46"))
+            .await
+            .is_err()
+    );
+    session
+        .steer_turn(steer("retry", "Created Jira issue PROJ-46"))
+        .await
+        .unwrap();
+    assert!(
+        last_input().to_string().contains("PROJ-46"),
+        "{}",
+        last_input()
+    );
     session.close().await;
 }
