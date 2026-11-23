@@ -48,6 +48,7 @@ const serviceLayer = (
   timeZone: string,
   threadLaunch: Partial<ThreadLaunchService.ThreadLaunchService["Service"]> = {},
   webhookOrigin?: Effect.Effect<{ readonly relayHookBaseUrl: string | null }>,
+  threadManagement: Partial<ThreadManagementService.ThreadManagementService["Service"]> = {},
 ) =>
   ScheduledTaskService.layer.pipe(
     Layer.provideMerge(
@@ -64,14 +65,20 @@ const serviceLayer = (
           namedProjectsRoot: "/projects",
           isScratchProject: () => Effect.succeed(false),
         }),
-        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(ThreadManagementService.ThreadManagementService)(threadManagement),
         Layer.mock(SecretRequests.SecretRequests)({}),
       ),
     ),
   );
 
-const task = (id: string, schedule: unknown, workspaceStrategy: unknown = { type: "root" }) =>
+const task = (
+  id: string,
+  schedule: unknown,
+  workspaceStrategy: unknown = { type: "root" },
+  threadId?: string,
+) =>
   decodeUpsertInput({
+    ...(threadId === undefined ? {} : { threadId }),
     id,
     title: id,
     prompt: "Check the overnight deploys.",
@@ -285,6 +292,51 @@ it.effect("a run that completes across a zone switch schedules its next run in t
           },
           webhookOrigin,
         ),
+      ),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a scheduled run postponed by a zone switch during its queue check does not fire", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(
+        yield* task(
+          "scheduled-task:bound",
+          { type: "fixed_time", timeOfDay: "09:00" },
+          { type: "root" },
+          "thread-bound",
+        ),
+      );
+      // 09:00 Denver: the scheduler re-reads the task, then pauses in the thread queue check.
+      yield* TestClock.setTime(Date.parse("2026-07-01T15:00:00.000Z"));
+      yield* TestClock.adjust("6 seconds");
+      yield* Deferred.await(entered);
+      yield* switchZone("Asia/Tokyo");
+      yield* Deferred.succeed(release, undefined);
+      yield* TestClock.adjust("1 second");
+      const [listed] = (yield* service.list()).tasks;
+      expect(listed?.lastRunStatus).toBe("never");
+      expect(listed?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
+    }).pipe(
+      Effect.provide(
+        serviceLayer("America/Denver", {}, undefined, {
+          getThreadShell: () =>
+            Effect.succeed({
+              projectId: "project-time-zone",
+              archivedAt: null,
+              deletedAt: null,
+            } as never),
+          getThreadRecords: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as({ runs: [], messages: [] } as never),
+            ),
+        }),
       ),
     );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),

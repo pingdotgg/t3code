@@ -508,6 +508,7 @@ export const layer = Layer.effect(
       ),
     );
     // Held in memory so writes read it inside their SQLite transaction without file reads.
+    // Unreadable settings fall back to this machine's zone for new runs until a settings event.
     const zoneRef = yield* Ref.make(
       Result.isSuccess(configuredZone) ? configuredZone.success : DateTime.zoneMakeLocal(),
     );
@@ -515,6 +516,16 @@ export const layer = Layer.effect(
     const localNow = currentZone.pipe(
       Effect.flatMap((zone) => DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone))),
     );
+    // Writes that compute a next run read the zone under SQLite's writer lock, so they order
+    // with a zone switch's reconciliation and never store a run in the zone it replaced.
+    const inScheduleZone = <A, E, R>(
+      at: DateTime.DateTime,
+      write: (now: DateTime.Zoned) => Effect.Effect<A, E, R>,
+    ) =>
+      currentZone.pipe(
+        Effect.flatMap((zone) => write(DateTime.setZone(at, zone))),
+        sql.withTransaction,
+      );
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
@@ -797,7 +808,13 @@ export const layer = Layer.effect(
           ),
         );
 
-    const markRunning = (id: ScheduledTaskId, startedAtIso: string, webhookDeliveryId?: string) =>
+    /** With `occurrence`, claims only that due run and reports whether it still was. */
+    const markRunning = (
+      id: ScheduledTaskId,
+      startedAtIso: string,
+      webhookDeliveryId?: string,
+      occurrence?: string | null,
+    ) =>
       sql<{ task_id: string }>`
         UPDATE scheduled_tasks
         SET updated_at = ${startedAtIso},
@@ -806,13 +823,16 @@ export const layer = Layer.effect(
             last_run_status = 'running',
             last_run_error = NULL
         WHERE task_id = ${id}
+          ${occurrence === undefined ? sql`` : sql`AND enabled = 1 AND next_run_at IS ${occurrence}`}
         RETURNING task_id
       `.pipe(
         Effect.mapError((cause) =>
           taskError("Could not mark schedule task as running.", { taskId: id, cause }),
         ),
         Effect.flatMap((rows) =>
-          rows.length > 0 ? Effect.void : taskError("Schedule task not found.", { taskId: id }),
+          rows.length > 0 || occurrence !== undefined
+            ? Effect.succeed(rows.length > 0)
+            : taskError("Schedule task not found.", { taskId: id }),
         ),
       );
 
@@ -856,18 +876,21 @@ export const layer = Layer.effect(
         const reread = yield* Effect.result(findTask(task.id));
         if (Result.isSuccess(reread) && reread.success === null) return;
         const source = Result.isSuccess(reread) && reread.success !== null ? reread.success : task;
-        yield* sql`
-          UPDATE scheduled_tasks
-          SET last_run_status = 'failed',
-              last_run_error = ${message},
-              next_run_at = ${nextRunAfterRun({ ...source, lastRunAt: startedAtIso }, now)},
-              updated_at = ${iso(now)},
-              run_count = run_count + CASE WHEN EXISTS (
-                SELECT 1 FROM scheduled_task_webhook_pending
-                WHERE delivery_id = ${pendingDeliveryId ?? null} AND state = 'running'
-              ) THEN 0 ELSE 1 END
-          WHERE task_id = ${task.id} AND last_run_status = 'running'
-        `;
+        yield* inScheduleZone(
+          now,
+          (zonedNow) => sql`
+            UPDATE scheduled_tasks
+            SET last_run_status = 'failed',
+                last_run_error = ${message},
+                next_run_at = ${nextRunAfterRun({ ...source, lastRunAt: startedAtIso }, zonedNow)},
+                updated_at = ${iso(zonedNow)},
+                run_count = run_count + CASE WHEN EXISTS (
+                  SELECT 1 FROM scheduled_task_webhook_pending
+                  WHERE delivery_id = ${pendingDeliveryId ?? null} AND state = 'running'
+                ) THEN 0 ELSE 1 END
+            WHERE task_id = ${task.id} AND last_run_status = 'running'
+          `,
+        );
         yield* notifyChanged;
       },
       (effect, task, _startedAtIso, _message, _pendingDeliveryId) =>
@@ -1074,8 +1097,17 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
-        if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
-        else
+        if (webhook === undefined) {
+          // A scheduled run claims only the occurrence checked above: a zone switch or edit
+          // during the queue check may have moved it.
+          const claimed = yield* markRunning(
+            active.id,
+            startedAtIso,
+            undefined,
+            trigger === "scheduled" ? active.nextRunAt : undefined,
+          );
+          if (!claimed) return { task: active, threadId: null, dispatchFailed: false };
+        } else
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
@@ -1299,18 +1331,13 @@ export const layer = Layer.effect(
       reason = "missed",
       runError?: string,
     ) {
-      const next = nextRunAt(task, now);
-      yield* Effect.logInfo("Skipping schedule task run", {
-        taskId: task.id,
-        reason,
-        missedRunAt: task.nextRunAt,
-        rescheduledTo: next,
-      });
       // `task` can be a stale batch snapshot; a run or edit since then already moved the row on.
-      const updated = yield* sql`
+      const { next, updated } = yield* inScheduleZone(now, (zonedNow) => {
+        const next = nextRunAt(task, zonedNow);
+        return sql`
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
-            updated_at = ${iso(now)}
+            updated_at = ${iso(zonedNow)}
             ${
               runError === undefined
                 ? sql``
@@ -1325,11 +1352,18 @@ export const layer = Layer.effect(
           AND next_run_at IS ${task.nextRunAt}
           AND last_run_at IS ${task.lastRunAt}
         RETURNING task_id
-      `.pipe(
+      `.pipe(Effect.map((updated) => ({ next, updated })));
+      }).pipe(
         Effect.mapError((cause) =>
           taskError("Could not reschedule missed schedule task run.", { taskId: task.id, cause }),
         ),
       );
+      yield* Effect.logInfo("Skipping schedule task run", {
+        taskId: task.id,
+        reason,
+        missedRunAt: task.nextRunAt,
+        rescheduledTo: next,
+      });
       if (updated.length > 0) yield* notifyChanged;
     });
 
@@ -1759,17 +1793,19 @@ export const layer = Layer.effect(
         now,
         input.id,
       );
-      const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, now);
       // RETURNING so a task deleted between the load and this UPDATE is a
       // visible not-found error, not a false success.
-      const updated = yield* sql<{ task_id: string }>`
+      const { next, updated } = yield* inScheduleZone(now, (zonedNow) => {
+        const next = nextRunAt({ enabled: input.enabled, schedule: existing.schedule }, zonedNow);
+        return sql<{ task_id: string }>`
           UPDATE scheduled_tasks
           SET enabled = ${input.enabled ? 1 : 0},
               next_run_at = ${next},
-              updated_at = ${iso(now)}
+              updated_at = ${iso(zonedNow)}
           WHERE task_id = ${input.id}
           RETURNING task_id
-        `.pipe(
+        `.pipe(Effect.map((updated) => ({ next, updated })));
+      }).pipe(
         Effect.mapError((cause) =>
           taskError("Could not update schedule task.", { taskId: input.id, cause }),
         ),
