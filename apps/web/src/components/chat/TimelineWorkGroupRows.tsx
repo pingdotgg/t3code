@@ -113,6 +113,7 @@ import { presentSlashCommand } from "./timelineSlashCommands";
 import { commandRunsTests } from "@t3tools/shared/toolOutput";
 import { DiffStatBlocks } from "./DiffStatLabel";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { ProviderStartingIcon } from "./ProviderStartingIcon";
 
 export const WorkGroupSection = memo(function WorkGroupSection({
   anchorKey,
@@ -411,6 +412,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     backgroundWorktreeSetup,
     pendingRequest,
     providerStartingLabel,
+    providerStarting,
     worktreeSetupCardOwnsHeader,
   } = use(TimelineRowActivityCtx);
   const window = row.window;
@@ -453,7 +455,18 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
     </span>
   ) : providerStartingLabel ? (
     // Until the provider opens a turn, the run is still launching it.
-    providerStartingLabel
+    providerStarting ? (
+      <span className="inline-flex items-center gap-1.5">
+        <ProviderStartingIcon
+          environmentId={ctx.activeThreadEnvironmentId}
+          instanceId={providerStarting.instanceId}
+          driver={providerStarting.driver}
+        />
+        <span>{providerStartingLabel}</span>
+      </span>
+    ) : (
+      providerStartingLabel
+    )
   ) : row.createdAt ? (
     <T>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -548,8 +561,13 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
-  const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    liveAnswerPreview,
+    providerStartingLabel,
+    providerStarting,
+  } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
@@ -563,6 +581,15 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
         gt("Thinking")
       }
       iconName="brain"
+      iconNode={
+        providerStarting === null ? undefined : (
+          <ProviderStartingIcon
+            environmentId={ctx.activeThreadEnvironmentId ?? null}
+            instanceId={providerStarting.instanceId}
+            driver={providerStarting.driver}
+          />
+        )
+      }
       active={live}
     />
   );
@@ -602,12 +629,15 @@ function LiveWorkToggle({
 function LiveActivityRow({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   active = false,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
+  /** Replaces the named icon. */
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
@@ -622,13 +652,20 @@ function LiveActivityRow({
       <LiveActivityContent
         label={label}
         iconName={iconName}
+        iconNode={iconNode}
         toolIcon={toolIcon}
         failed={failed}
         announceFailure={failed}
       />
       {animated ? (
         <ActivityShimmerOverlay>
-          <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
+          <LiveActivityContent
+            label={label}
+            iconName={iconName}
+            iconNode={iconNode}
+            toolIcon={toolIcon}
+            highlighted
+          />
         </ActivityShimmerOverlay>
       ) : null}
     </div>
@@ -638,6 +675,7 @@ function LiveActivityRow({
 function LiveActivityContent({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   announceFailure = false,
@@ -645,6 +683,7 @@ function LiveActivityContent({
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   announceFailure?: boolean;
@@ -670,12 +709,16 @@ function LiveActivityContent({
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? gt("Tool call failed") : undefined}
           >
-            <ToolActivityIconView
-              icon={toolIcon}
-              fallbackName={iconName}
-              className="block size-3.5 shrink-0 stroke-2"
-              muted={!highlighted}
-            />
+            {iconNode ? (
+              <span className={cn("flex", !highlighted && "opacity-70")}>{iconNode}</span>
+            ) : (
+              <ToolActivityIconView
+                icon={toolIcon}
+                fallbackName={iconName}
+                className="block size-3.5 shrink-0 stroke-2"
+                muted={!highlighted}
+              />
+            )}
           </span>
         ) : null
       }

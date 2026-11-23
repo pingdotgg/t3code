@@ -11,6 +11,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { Tooltip, TooltipPopup, TooltipTrigger, useTooltipScrollTracker } from "./tooltip";
 
@@ -79,6 +80,8 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
   const [api] = useState<SharedTooltipApi>(() => ({
     show(anchor, content, immediate) {
       clearTimer();
+      // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
+      if (!current.current) flushSync(() => commit({ ...content, anchor, open: false }));
       const open = current.current?.open === true;
       const reopen = performance.now() - lastClosedAt.current < REOPEN_WINDOW_MS;
       if (immediate || open || reopen) {

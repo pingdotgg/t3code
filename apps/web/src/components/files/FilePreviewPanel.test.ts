@@ -296,6 +296,14 @@ Third}`;
       if (mac.type !== "document") throw new Error("Expected document");
       expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
     }
+    for (const [rtf, expected] of [
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+    ] as const) {
+      const decoded = openRtf(bytes(rtf));
+      if (decoded.type !== "document") throw new Error("Expected document");
+      expect(decoded.pages[0]!.html).toBe(expected);
+    }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
     );
