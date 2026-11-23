@@ -984,6 +984,11 @@ impl Composer {
         }
     }
 
+    /// True while the model picker is open (its search field owns `⌘Z`).
+    pub(super) fn model_picker_is_open(&self) -> bool {
+        self.model_picker_open
+    }
+
     /// True while any composer popup, menu, or drawer is open.
     fn any_overlay_open(&self) -> bool {
         self.model_picker_open

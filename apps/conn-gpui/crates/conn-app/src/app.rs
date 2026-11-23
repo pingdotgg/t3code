@@ -19,16 +19,19 @@ use crate::header::details_card::{
 };
 use crate::header::{ChatHeaderProps, render_chat_header};
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
-use crate::sidebar::drafts::{DraftRowView, DraftSidebar};
+use crate::sidebar::drafts::{DraftRowView, DraftSidebar, UndoNotice};
 use crate::sidebar::hover_card_state::ThreadHoverState;
 use crate::sidebar::rail::render_workspace_rail;
 use crate::sidebar::thread_list::{ThreadHoverView, render_thread_sidebar};
 use crate::sidebar::thread_menu::{
-    DraftMenuState, ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState,
+    DraftMenuState, MenuCursor, ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState,
     build_draft_action_menu_items, build_thread_action_menu_items, render_thread_action_menu,
 };
+use crate::sidebar::tree::SidebarTree;
 use crate::theme::{apply_kit_theme, hsla};
 use gpui_kit::prelude::FluentBuilder as _;
+
+mod sidebar_keys;
 
 actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
 
@@ -65,9 +68,6 @@ enum DiscardedDraft {
         content: DraftContent,
     },
 }
-
-/// How long `Undo` stays on offer after a draft is discarded.
-const DISCARD_UNDO_SECS: u64 = 10;
 
 /// `orchestration.launchThread` `workspaceStrategy` for a draft.
 fn draft_workspace_strategy(draft: &DraftThreadState) -> serde_json::Value {
@@ -118,9 +118,26 @@ pub(crate) struct ConnApp {
     /// The new-thread drafts behind the open one, and which draft each project opens. Their text
     /// and attachments wait in the composer's draft store, under the draft's id.
     drafts: DraftBook,
-    /// The last discarded draft, until its `Undo` expires.
-    discarded_draft: Option<DiscardedDraft>,
-    discarded_draft_generation: u64,
+    /// The discarded drafts `Undo` and `⌘Z` bring back, until their notice expires.
+    discards: conn_state::DiscardUndo<DiscardedDraft>,
+    /// Why the last undo could not put the input back, until its notice expires.
+    discard_failure: Option<&'static str>,
+    discard_failure_generation: u64,
+    /// The notice's `Undo` button.
+    undo_focus: FocusHandle,
+    /// The thread sidebar's rows the keyboard can reach.
+    sidebar_tree: SidebarTree,
+    /// The open thread or draft menu takes the keyboard while it is open.
+    thread_menu_focus: FocusHandle,
+    thread_menu_focus_pending: bool,
+    /// What had the keyboard when the menu opened; it gets it back when the menu closes.
+    thread_menu_return_focus: Option<FocusHandle>,
+    /// The closed menu has handed the keyboard back, and it has not landed yet.
+    thread_menu_returning: bool,
+    /// Sees keystrokes before key bindings do (`intercept_keystroke`).
+    _keystroke_interceptor: gpui_kit::Subscription,
+    /// The interceptor used the keystroke being dispatched; the root's key handler skips it.
+    keystroke_consumed: bool,
     /// Where drafts are kept across restarts; `None` keeps them in memory only.
     drafts_path: Option<std::path::PathBuf>,
     /// The drafts file as last written, so an unchanged state is not written again.
@@ -432,6 +449,10 @@ impl ConnApp {
             active_server_id: initial_orbit_server_id,
             ..Default::default()
         };
+        let this = cx.entity().downgrade();
+        let keystroke_interceptor = cx.intercept_keystrokes(move |event, window, cx| {
+            let _ = this.update(cx, |app, cx| app.intercept_keystroke(event, window, cx));
+        });
         let mut app = Self {
             tokens,
             geometry: ShellGeometry::default(),
@@ -452,8 +473,17 @@ impl ConnApp {
             scratch_workspace_root: None,
             scratch_project_id: None,
             drafts: DraftBook::default(),
-            discarded_draft: None,
-            discarded_draft_generation: 0,
+            discards: conn_state::DiscardUndo::default(),
+            discard_failure: None,
+            discard_failure_generation: 0,
+            undo_focus: cx.focus_handle().tab_index(0).tab_stop(true),
+            sidebar_tree: SidebarTree::new(),
+            thread_menu_focus: cx.focus_handle(),
+            thread_menu_focus_pending: false,
+            thread_menu_return_focus: None,
+            thread_menu_returning: false,
+            _keystroke_interceptor: keystroke_interceptor,
+            keystroke_consumed: false,
             drafts_path: crate::drafts::drafts_file_path(),
             saved_drafts_json: None,
             responding_approvals: HashSet::new(),
@@ -1505,7 +1535,16 @@ impl ConnApp {
     /// Discards a draft (`discardComposerDraft`): its text, attachments and project slot go, and
     /// `Undo` brings them back for a while. Discarding the open draft falls back to the most
     /// recent active thread.
-    pub(crate) fn discard_draft_row(&mut self, draft_id: &str, cx: &mut Context<'_, Self>) {
+    pub(crate) fn discard_draft_row(
+        &mut self,
+        draft_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        // The keyboard may be on the row or its `x`, both about to go; the sidebar hands it to
+        // the row that takes the place.
+        self.sidebar_tree
+            .take_focus(&conn_state::draft_tree_key(draft_id), window, cx);
         let was_open = self.draft.as_ref().is_some_and(|d| d.draft_id == draft_id);
         let session = if was_open {
             self.draft.take()
@@ -1558,10 +1597,17 @@ impl ConnApp {
 
     /// The `X` on a started thread's row: clears the unsent input in its composer and offers
     /// `Undo` (`discardComposerDraft` on a thread target).
-    pub(crate) fn discard_thread_draft_row(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+    pub(crate) fn discard_thread_draft_row(
+        &mut self,
+        thread_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.layout.selected_thread_id.as_deref() == Some(thread_id) && self.draft.is_none() {
             return;
         }
+        // The `x` leaves with the pen mark; the keyboard goes to the row.
+        self.sidebar_tree.take_focus(thread_id, window, cx);
         let content = self
             .chat
             .update(cx, |chat, cx| chat.discard_thread_draft(thread_id, cx));
@@ -1574,60 +1620,6 @@ impl ConnApp {
                 cx,
             );
         }
-        self.settle_drafts(cx);
-        cx.notify();
-    }
-
-    /// Keeps a discarded draft for `Undo`, replacing any earlier one, and expires it later.
-    fn offer_draft_undo(&mut self, discarded: DiscardedDraft, cx: &mut Context<'_, Self>) {
-        self.discarded_draft = Some(discarded);
-        self.discarded_draft_generation = self.discarded_draft_generation.wrapping_add(1);
-        let generation = self.discarded_draft_generation;
-        cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::from_secs(DISCARD_UNDO_SECS))
-                .await;
-            let _ = this.update(cx, |app, cx| {
-                if app.discarded_draft_generation == generation
-                    && app.discarded_draft.take().is_some()
-                {
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
-    }
-
-    /// `Undo` on the discard notice: the draft, its text and its project slot come back as a
-    /// parked draft. A project that opened another draft meanwhile keeps that one.
-    pub(crate) fn undo_discard_draft(&mut self, cx: &mut Context<'_, Self>) {
-        let (session, content, project_key) = match self.discarded_draft.take() {
-            Some(DiscardedDraft::New {
-                session,
-                content,
-                project_key,
-            }) => (session, content, project_key),
-            Some(DiscardedDraft::Thread { thread_id, content }) => {
-                self.chat.update(cx, |chat, cx| {
-                    chat.restore_thread_draft(&thread_id, content, cx)
-                });
-                self.settle_drafts(cx);
-                cx.notify();
-                return;
-            }
-            None => return,
-        };
-        if let Some(content) = content {
-            self.chat.update(cx, |chat, cx| {
-                chat.restore_draft(&session.draft_id, content, cx)
-            });
-        }
-        if let Some(project_key) = project_key
-            && self.drafts.slot_is_free(&project_key)
-        {
-            self.drafts.map(&project_key, &session.draft_id);
-        }
-        self.drafts.park(session);
         self.settle_drafts(cx);
         cx.notify();
     }
@@ -1672,11 +1664,13 @@ impl ConnApp {
         self.thread_details.copy_menu = None;
         self.thread_hover.dismiss();
         self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        self.thread_menu_focus_pending = true;
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id: draft_id,
             draft: true,
             position,
             copy_open: false,
+            cursor: MenuCursor::default(),
         });
         cx.notify();
     }
@@ -1721,7 +1715,7 @@ impl ConnApp {
             }
             // The menu may outlive the send: a launching draft is not discarded.
             ThreadMenuAction::DiscardDraft if !draft.launching => {
-                self.discard_draft_row(&draft_id, cx);
+                self.discard_draft_row(&draft_id, window, cx);
             }
             _ => {}
         }
@@ -3888,6 +3882,17 @@ impl ConnApp {
         cmd: Result<conn_contract::OrchestrationV2Command, serde_json::Error>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.dispatch_thread_command_then(what, cmd, cx, |_, _| {});
+    }
+
+    /// Like [`Self::dispatch_thread_command`], and runs `done` once the server took the command.
+    fn dispatch_thread_command_then(
+        &self,
+        what: &'static str,
+        cmd: Result<conn_contract::OrchestrationV2Command, serde_json::Error>,
+        cx: &mut Context<'_, Self>,
+        done: impl FnOnce(&mut Self, &mut Context<'_, Self>) + 'static,
+    ) {
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -3898,11 +3903,14 @@ impl ConnApp {
                 return;
             }
         };
-        cx.spawn(async move |_, _| {
-            if let Err(e) = connection.dispatch_command(cmd).await {
-                eprintln!("{what}: dispatchCommand failed: {e}");
-            }
-        })
+        cx.spawn(
+            async move |this, cx| match connection.dispatch_command(cmd).await {
+                Ok(_) => {
+                    let _ = this.update(cx, done);
+                }
+                Err(e) => eprintln!("{what}: dispatchCommand failed: {e}"),
+            },
+        )
         .detach();
     }
 
@@ -3926,11 +3934,13 @@ impl ConnApp {
         self.thread_details.copy_menu = None;
         self.thread_hover.dismiss();
         self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        self.thread_menu_focus_pending = true;
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id,
             draft: false,
             position,
             copy_open: false,
+            cursor: MenuCursor::default(),
         });
         cx.notify();
     }
@@ -4121,10 +4131,13 @@ impl ConnApp {
                 if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
                     app.navigate_forward_from(&thread_id, cx);
                 }
-                app.dispatch_thread_command(
+                // The thread's unsent input goes with it (`clearComposerDraftForThread`).
+                let deleted = thread_id.clone();
+                app.dispatch_thread_command_then(
                     "delete thread",
                     crate::commands::delete_thread(&thread_id),
                     cx,
+                    move |app, cx| app.forget_thread_draft(&deleted, cx),
                 );
             });
         })
@@ -4743,9 +4756,12 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) -> bool {
         let chat_hidden = self.layout.right_panel_open && self.right_panel_maximized;
-        let idle = window
-            .focused(cx)
-            .is_none_or(|focused| focused == self.focus_handle);
+        // A sidebar row focused by the pointer is as idle as the page body; one focused by keys
+        // keeps its keys (`[data-sidebar-row]:focus-visible`).
+        let idle = window.focused(cx).is_none_or(|focused| {
+            focused == self.focus_handle
+                || (!window.last_input_was_keyboard() && self.sidebar_tree.owns(&focused))
+        });
         if chat_hidden || !idle {
             return false;
         }
@@ -6188,6 +6204,8 @@ pub(crate) fn start_frame_log(cx: &mut App) {
 impl Render for ConnApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sync_thread_menu_focus(window, cx);
+        self.sync_undo_notice_focus(window, cx);
         let viewport = window.viewport_size();
         let viewport_w = f32::from(viewport.width);
         let viewport_h = f32::from(viewport.height);
@@ -6197,6 +6215,9 @@ impl Render for ConnApp {
             .track_focus(&self.focus_handle)
             .capture_key_down(
                 cx.listener(|app, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    if std::mem::take(&mut app.keystroke_consumed) {
+                        return;
+                    }
                     if std::env::var_os("CONN_GPUI_FRAME_LOG").is_some() {
                         eprintln!(
                             "key: {:?} {:?}",
@@ -6210,7 +6231,7 @@ impl Render for ConnApp {
                     if app.pick_question_option_from_idle_focus(event, window, cx) {
                         return;
                     }
-                    if event.keystroke.key == "escape" && app.dismiss_shell_popovers(cx) {
+                    if event.keystroke.key == "escape" && app.escape_shell_popovers(cx) {
                         cx.stop_propagation();
                     }
                 }),
@@ -6283,9 +6304,17 @@ impl Render for ConnApp {
                     project: self.shell.project(&row.project_id),
                 })
                 .collect(),
-            undo_available: self.discarded_draft.is_some(),
+            undo: self
+                .discard_failure
+                .map(UndoNotice::Failed)
+                .or_else(|| self.discards.notice().map(UndoNotice::Discarded)),
+            undo_focus: &self.undo_focus,
             unsent_threads: self.sidebar_unsent_threads(cx),
         };
+        let hover_open_for = self
+            .thread_hover
+            .open_for()
+            .filter(|_| !self.thread_hover_suppressed());
         if self.layout.sidebar_open {
             root = root
                 .child(render_workspace_rail(
@@ -6310,15 +6339,14 @@ impl Render for ConnApp {
                     &self.rename_input,
                     self.sidebar_filter_menu_open,
                     &ThreadHoverView {
-                        open_for: self
-                            .thread_hover
-                            .open_for()
-                            .filter(|_| !self.thread_hover_suppressed()),
+                        open_for: hover_open_for,
                         environment_label: self.server_label.as_deref(),
                         rect: self.thread_hover.row_rect(),
                     },
+                    &mut self.sidebar_tree,
                     &self.tokens,
                     &self.geometry,
+                    window,
                     cx,
                 ))
                 .child(self.render_seam(false, cx));
@@ -6395,6 +6423,7 @@ impl Render for ConnApp {
                 &items,
                 &anchor,
                 viewport,
+                &self.thread_menu_focus,
                 &self.tokens,
                 cx,
             ));

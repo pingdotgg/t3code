@@ -5,24 +5,25 @@
 //! Click reopens the draft, `x` discards it, right-click opens its menu. A hairline closes the
 //! block.
 
-use std::cell::Cell;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 use conn_state::{
-    DraftRowKey, ProjectShell, SidebarDraftRow, draft_row_key, draft_row_label, is_activation_key,
+    DiscardNotice, ProjectShell, SidebarDraftRow, TreeRow, discard_short_summary, discard_summary,
+    draft_row_label, draft_tree_key, is_activation_key, undo_label,
 };
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::{
-    Context, InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, canvas, div, point, px,
+    Context, FocusHandle, InteractiveElement as _, IntoElement as _, MouseButton,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, canvas, div,
+    px,
 };
 
 use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
+use crate::sidebar::tree::{RowFocus, SidebarTree, focus_ring};
 use crate::sidebar::{render_project_favicon, render_project_monogram};
 use crate::theme::{hsla, hsla_alpha};
 
@@ -42,10 +43,21 @@ const PREVIEW_LINE_PX: f32 = 20.0;
 /// What the sidebar shows for drafts.
 pub(crate) struct DraftSidebar<'a> {
     pub(crate) rows: Vec<DraftRowView<'a>>,
-    /// A discarded draft can still be brought back.
-    pub(crate) undo_available: bool,
+    /// The notice for a discard that can still be brought back.
+    pub(crate) undo: Option<UndoNotice>,
+    /// The notice's `Undo` button.
+    pub(crate) undo_focus: &'a FocusHandle,
     /// Started threads whose composer holds unsent input (their rows carry the pen mark).
     pub(crate) unsent_threads: HashSet<String>,
+}
+
+/// What the undo notice at the foot of the sidebar says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndoNotice {
+    /// Discards that `⌘Z` or the button bring back.
+    Discarded(DiscardNotice),
+    /// An undo that could not put the input back.
+    Failed(&'static str),
 }
 
 /// One draft row with the project it targets.
@@ -58,6 +70,7 @@ pub(crate) struct DraftRowView<'a> {
 #[must_use]
 pub(crate) fn render_draft_block(
     rows: &[DraftRowView<'_>],
+    tree: &mut SidebarTree,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> Vec<gpui_kit::AnyElement> {
@@ -66,7 +79,10 @@ pub(crate) fn render_draft_block(
     }
     let mut elements: Vec<gpui_kit::AnyElement> = rows
         .iter()
-        .map(|view| render_draft_row(view, tokens, cx).into_any_element())
+        .map(|view| {
+            let focus = tree.row(TreeRow::leaf(draft_tree_key(&view.row.draft_id)), cx);
+            render_draft_row(view, &focus, tokens, cx).into_any_element()
+        })
         .collect();
     elements.push(
         div()
@@ -81,6 +97,7 @@ pub(crate) fn render_draft_block(
 
 fn render_draft_row(
     view: &DraftRowView<'_>,
+    focus: &RowFocus,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Div {
@@ -123,33 +140,26 @@ fn render_draft_row(
         .tab_index(0)
         .hover(move |s| s.bg(button_hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, _, cx| {
+        .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, window, cx| {
             // Keys on the button belong to the button, not to the row around it.
             if is_activation_key(&event.keystroke.key) {
                 cx.stop_propagation();
-                app.discard_draft_row(&discard_key_id, cx);
+                app.discard_draft_row(&discard_key_id, window, cx);
             }
         }))
-        .on_click(cx.listener(move |app, _, _, cx| {
+        .on_click(cx.listener(move |app, _, window, cx| {
             cx.stop_propagation();
-            app.discard_draft_row(&discard_id, cx);
+            app.discard_draft_row(&discard_id, window, cx);
         }))
         .conn_tooltip("Discard draft", tokens)
         .child(icons::concept("superhero/close.svg", 12.0, muted));
 
     let open_id = row.draft_id.clone();
-    let key_id = row.draft_id.clone();
+    let key = draft_tree_key(&row.draft_id);
     let menu_id = row.draft_id.clone();
     // Where the row was last painted, for a menu opened from the keyboard.
-    let below_row: Rc<Cell<Option<gpui_kit::Point<gpui_kit::Pixels>>>> = Rc::default();
-    let measured = Rc::clone(&below_row);
-    let ring = gpui_kit::BoxShadow {
-        color: hsla(tokens.ring),
-        offset: point(px(0.0), px(0.0)),
-        blur_radius: px(0.0),
-        spread_radius: px(2.0),
-        inset: true,
-    };
+    let measured = std::rc::Rc::clone(&focus.bounds);
+    let ring = focus_ring(tokens);
     let mut card = div()
         .id(SharedString::from(format!(
             "sidebar-draft-row-{}",
@@ -163,24 +173,12 @@ fn render_draft_row(
         .aria_selected(row.active)
         .group(group)
         .relative()
-        // `role="button" tabIndex={0}` with `focus-visible:ring-2 ring-inset`.
-        .tab_index(0)
+        // `role="button" tabIndex={0}` with `focus-visible:ring-2 ring-inset`; the tree's keys
+        // move between rows, `Enter` / `Space` reopen the draft, the menu keys open its menu.
+        .track_focus(&focus.handle)
         .focus_visible(move |s| s.shadow(vec![ring]))
         .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, window, cx| {
-            let keystroke = &event.keystroke;
-            match draft_row_key(&keystroke.key, keystroke.modifiers.shift) {
-                Some(DraftRowKey::Open) => {
-                    cx.stop_propagation();
-                    app.open_draft(&key_id, Some(window), cx);
-                }
-                Some(DraftRowKey::Menu) => {
-                    cx.stop_propagation();
-                    if let Some(position) = below_row.get() {
-                        app.open_draft_menu(key_id.clone(), position, cx);
-                    }
-                }
-                None => {}
-            }
+            app.sidebar_row_key(&key, event, window, cx);
         }))
         .flex()
         .flex_col()
@@ -256,9 +254,7 @@ fn render_draft_row(
             .child(preview)
             .child(
                 canvas(
-                    move |bounds, _, _| {
-                        measured.set(Some(point(bounds.left(), bounds.bottom())));
-                    },
+                    move |bounds, _, _| measured.set(Some(bounds)),
                     |_, _, _, _| {},
                 )
                 .absolute()
@@ -268,20 +264,30 @@ fn render_draft_row(
     )
 }
 
-/// `Discarded 1 draft` with its `Undo` button (`showThreadUndoNotice`), at the foot of the
-/// sidebar card.
+/// The undo notice (`SidebarThreadUndoNotice`): `Discarded,` with a `⌘Z to undo` button, at the
+/// foot of the sidebar card. After an undo that failed it says why instead.
 #[must_use]
 pub(crate) fn render_draft_undo_notice(
+    notice: UndoNotice,
+    focus: &FocusHandle,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::AnyElement {
     let muted = hsla(tokens.sidebar_muted_foreground);
     let fg = hsla(tokens.foreground);
     let hover_bg = hsla(tokens.sidebar_row_hover);
-    div()
+    let ring = focus_ring(tokens);
+    let (summary, spoken) = match notice {
+        UndoNotice::Discarded(discarded) => (
+            discard_short_summary(discarded.count),
+            format!("{}, {}", discard_summary(discarded.count), undo_label()),
+        ),
+        UndoNotice::Failed(reason) => (reason.to_owned(), reason.to_owned()),
+    };
+    let row = div()
         .id("sidebar-draft-undo-notice")
         .test_support()
-        .a11y_group("sidebar.draft-undo", "Discarded 1 draft")
+        .a11y_group("sidebar.draft-undo", spoken)
         .flex()
         .flex_row()
         .items_center()
@@ -296,28 +302,33 @@ pub(crate) fn render_draft_undo_notice(
         .border_color(hsla_alpha(tokens.sidebar_border, 0.70))
         .text_size(px(PROJECT_FONT_PX))
         .text_color(muted)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .truncate()
-                .child("Discarded 1 draft"),
-        )
-        .child(
-            div()
-                .id("sidebar-draft-undo")
-                .test_support()
-                .a11y_button("sidebar.draft-undo.button", "Undo discard")
-                .flex_shrink_0()
-                .px(px(6.0))
-                .py(px(2.0))
-                .rounded(px(4.0))
-                .cursor_pointer()
-                .font_weight(gpui_kit::FontWeight::MEDIUM)
-                .text_color(fg)
-                .hover(move |s| s.bg(hover_bg))
-                .on_click(cx.listener(|app, _, _, cx| app.undo_discard_draft(cx)))
-                .child("Undo"),
-        )
-        .into_any_element()
+        .child(div().flex_1().min_w_0().truncate().child(summary));
+    if matches!(notice, UndoNotice::Failed(_)) {
+        return row.into_any_element();
+    }
+    row.child(
+        div()
+            .id("sidebar-draft-undo")
+            .test_support()
+            .a11y_button("sidebar.draft-undo.button", "Undo discard")
+            .track_focus(focus)
+            .focus_visible(move |s| s.shadow(vec![ring]))
+            .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
+                if is_activation_key(&event.keystroke.key) {
+                    cx.stop_propagation();
+                    app.undo_discard_draft(cx);
+                }
+            }))
+            .flex_shrink_0()
+            .px(px(6.0))
+            .py(px(2.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .font_weight(gpui_kit::FontWeight::MEDIUM)
+            .text_color(fg)
+            .hover(move |s| s.bg(hover_bg))
+            .on_click(cx.listener(|app, _, _, cx| app.undo_discard_draft(cx)))
+            .child(undo_label()),
+    )
+    .into_any_element()
 }

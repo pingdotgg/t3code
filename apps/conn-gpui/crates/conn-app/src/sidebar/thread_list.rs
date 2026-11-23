@@ -14,12 +14,13 @@
 //!     collapsed shelf still shows the open settled thread (`routeThreadOnly`).
 //! - Right-click on any row opens the Thread Actions menu (`thread_menu.rs`); double-click
 //!   starts inline rename.
+//! - Every row is a tab stop; the arrow keys move between rows (`tree.rs`, `attachSidebarTree`).
 
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
-use conn_state::{LayoutState, ProjectShell, ShellState, ThreadShell};
+use conn_state::{LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadShell, TreeRow};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
@@ -27,8 +28,8 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Entity, InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, deferred, div,
-    px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, WindowControlArea, canvas,
+    deferred, div, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
@@ -39,6 +40,7 @@ use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH
 use crate::sidebar::drafts::{DraftSidebar, render_draft_block, render_draft_undo_notice};
 use crate::sidebar::hover_card::render_thread_hover_card;
 use crate::sidebar::hover_card_state::RowRectCell;
+use crate::sidebar::tree::{RowFocus, SidebarTree, focus_ring};
 use crate::sidebar::{render_project_favicon, render_project_monogram};
 use crate::theme::{hsla, hsla_alpha};
 
@@ -75,7 +77,7 @@ const META_LINE_HEIGHT_PX: f32 = 16.0;
 const SIDEBAR_TOGGLE_LEFT_OFFSET_PX: f32 = MACOS_TRAFFIC_LIGHTS_INSET_PX - WORKSPACE_RAIL_WIDTH_PX;
 /// Sentinel key stored in `collapsed_projects` to toggle the Settled shelf
 /// without requiring a new field on `ConnApp`.
-const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
+pub(crate) const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
 
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
 #[expect(
@@ -95,10 +97,13 @@ pub(crate) fn render_thread_sidebar(
     rename_input: &Entity<InputState>,
     filter_menu_open: bool,
     hover: &ThreadHoverView<'_>,
+    tree: &mut SidebarTree,
     tokens: &Tokens,
     geometry: &ShellGeometry,
+    window: &mut Window,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    tree.begin();
     let fg = hsla(tokens.sidebar_foreground);
     let muted = hsla(tokens.sidebar_muted_foreground);
     let search_icon_color = hsla_alpha(tokens.sidebar_muted_foreground, 0.85);
@@ -294,7 +299,7 @@ pub(crate) fn render_thread_sidebar(
         Vec::with_capacity(pinned.len() + active.len() + drafts.rows.len() + 2);
     // Search lists threads only; drafts return when it clears (`SidebarDraftBlock`).
     if !has_query {
-        thread_rows.extend(render_draft_block(&drafts.rows, tokens, cx));
+        thread_rows.extend(render_draft_block(&drafts.rows, tree, tokens, cx));
     }
     for (idx, thread) in pinned.iter().enumerate() {
         let row_key = idx;
@@ -312,6 +317,7 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx).into_any_element());
@@ -343,6 +349,7 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx).into_any_element());
@@ -366,6 +373,7 @@ pub(crate) fn render_thread_sidebar(
     let mut list_scroll = div()
         .id("sidebar-thread-scroll")
         .a11y(gpui_kit::Role::List, "sidebar.thread-list", "Threads")
+        .track_scroll(tree.scroll())
         .flex()
         .flex_col()
         .flex_1()
@@ -391,6 +399,8 @@ pub(crate) fn render_thread_sidebar(
     }
 
     {
+        let header_focus = tree.row(TreeRow::group(SETTLED_SHELF_ROW, settled_expanded), cx);
+        let header_ring = focus_ring(tokens);
         let settled_header = div()
             .id("sidebar-settled-footer")
             .a11y_button(
@@ -398,6 +408,14 @@ pub(crate) fn render_thread_sidebar(
                 format!("Settled ({settled_count})"),
             )
             .aria_expanded(settled_expanded)
+            .relative()
+            .track_focus(&header_focus.handle)
+            .focus_visible(move |s| s.shadow(vec![header_ring]))
+            .on_key_down(
+                cx.listener(|app, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    app.sidebar_row_key(SETTLED_SHELF_ROW, event, window, cx);
+                }),
+            )
             .flex()
             .flex_row()
             .items_center()
@@ -429,7 +447,8 @@ pub(crate) fn render_thread_sidebar(
                     .font_weight(gpui_kit::FontWeight::NORMAL)
                     .child(settled_count.to_string()),
             )
-            .child(icons::caret(settled_expanded, muted));
+            .child(icons::caret(settled_expanded, muted))
+            .child(measure_row(&header_focus));
 
         list_scroll = list_scroll.child(settled_header);
 
@@ -458,10 +477,17 @@ pub(crate) fn render_thread_sidebar(
                 hover_open: hover.open_for == Some(thread.id.as_str()),
                 hover_rect: hover.rect,
                 environment_label: hover.environment_label,
+                focus: tree.row(TreeRow::child(thread.id.clone(), SETTLED_SHELF_ROW), cx),
                 tokens,
             };
             list_scroll = list_scroll.child(render_settled_row(&row, cx));
         }
+    }
+
+    // The row that had the keyboard may be gone (a settled thread under a collapsed shelf, a
+    // discarded draft); the keyboard goes to the row that took its place.
+    if let Some(target) = tree.finish(window) {
+        window.defer(cx, move |window, cx| window.focus(&target, cx));
     }
 
     // Inset panel card: joins the chat card on its right seam divider.
@@ -477,8 +503,8 @@ pub(crate) fn render_thread_sidebar(
     .child(list_scroll)
     .children(
         drafts
-            .undo_available
-            .then(|| render_draft_undo_notice(tokens, cx)),
+            .undo
+            .map(|notice| render_draft_undo_notice(notice, drafts.undo_focus, tokens, cx)),
     );
 
     div()
@@ -843,6 +869,8 @@ struct RowCtx<'a> {
     /// This thread's hover flyout is open.
     hover_open: bool,
     environment_label: Option<&'a str>,
+    /// What the row needs to take the keyboard.
+    focus: RowFocus,
     tokens: &'a Tokens,
 }
 
@@ -930,6 +958,39 @@ fn attach_row_interactions(
             app.open_thread_menu(menu_id.clone(), event.position, cx);
         }),
     )
+}
+
+/// Records where a row is painted, for a menu opened below it and for scrolling it into view.
+fn measure_row(focus: &RowFocus) -> gpui_kit::AnyElement {
+    let bounds = std::rc::Rc::clone(&focus.bounds);
+    canvas(
+        move |painted, _, _| bounds.set(Some(painted)),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
+}
+
+/// The row takes the keyboard (`tabIndex={0}`, an inset ring while focused by keys), and its
+/// keys move between rows, open it, rename it or open its menu (`attachSidebarTree`).
+fn attach_row_keyboard(
+    row_el: gpui_kit::Stateful<gpui_kit::Div>,
+    ctx: &RowCtx<'_>,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let key = ctx.thread.id.clone();
+    let ring = focus_ring(ctx.tokens);
+    row_el
+        .relative()
+        .track_focus(&ctx.focus.handle)
+        .focus_visible(move |s| s.shadow(vec![ring]))
+        .on_key_down(
+            cx.listener(move |app, event: &gpui_kit::KeyDownEvent, window, cx| {
+                app.sidebar_row_key(&key, event, window, cx);
+            }),
+        )
+        .child(measure_row(&ctx.focus))
 }
 
 /// `pinIndicator`: a `12px` pin that turns into the `PinOff` "Unpin thread" button on hover.
@@ -1209,7 +1270,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(line1)
         .child(line2);
 
-    card = attach_row_interactions(card, row, cx);
+    card = attach_row_keyboard(attach_row_interactions(card, row, cx), row, cx);
 
     // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
     // light mode adds `ring-1 ring-inset ring-sidebar-border/70` inside that top border.
@@ -1379,7 +1440,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(title_el)
         .children(unsent_discard)
         .child(time_slot);
-    slim = attach_row_interactions(slim, row, cx);
+    slim = attach_row_keyboard(attach_row_interactions(slim, row, cx), row, cx);
     if row.selected {
         slim = slim
             .bg(active_bg)
@@ -1468,15 +1529,15 @@ fn render_discard_thread_draft_button(
         .focus_visible(|s| s.opacity(1.0))
         .tab_index(0)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, _, cx| {
+        .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, window, cx| {
             if conn_state::is_activation_key(&event.keystroke.key) {
                 cx.stop_propagation();
-                app.discard_thread_draft_row(&key_thread_id, cx);
+                app.discard_thread_draft_row(&key_thread_id, window, cx);
             }
         }))
-        .on_click(cx.listener(move |app, _, _, cx| {
+        .on_click(cx.listener(move |app, _, window, cx| {
             cx.stop_propagation();
-            app.discard_thread_draft_row(&thread_id, cx);
+            app.discard_thread_draft_row(&thread_id, window, cx);
         }))
         .conn_tooltip("Discard draft", tokens)
         .child(icons::concept("superhero/close.svg", 12.0, muted))
