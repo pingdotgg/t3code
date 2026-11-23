@@ -5457,7 +5457,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           "session.tool.success",
           {
             ...script,
-            content: [{ type: "text", text: "done" }],
+            // The script also returns the message in a JSON-string envelope, which must not show twice.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ content: JSON.stringify({ sentMessage: message }) }),
+              },
+            ],
             metadata: {
               toolCalls: [
                 { tool: `${server}.send_to_user`, status: "completed", input: { message } },

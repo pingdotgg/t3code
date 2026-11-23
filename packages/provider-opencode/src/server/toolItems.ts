@@ -232,8 +232,15 @@ function stripSentMessageFromValue(value: unknown, seen: ReadonlySet<string>, de
       changed = true;
       continue;
     }
-    const stripped =
-      key === "structuredContent" || key === "result" || key === "content"
+    const isEnvelopeKey = key === "structuredContent" || key === "result" || key === "content";
+    // compactDynamicToolOutput decodes JSON strings under these keys, so suppression must too.
+    const strippedText =
+      isEnvelopeKey && typeof entry === "string"
+        ? stripSentMessageFromJsonText(entry, seen, depth + 1)
+        : undefined;
+    const stripped = strippedText?.changed
+      ? strippedText.text
+      : isEnvelopeKey
         ? stripSentMessageFromValue(entry, seen, depth)
         : entry;
     if (stripped !== entry) changed = true;
