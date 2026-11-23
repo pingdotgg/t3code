@@ -2215,7 +2215,7 @@ function LargeFileActions(props: {
         }}
       >
         <DownloadIcon aria-hidden />
-        {saving ? <T>Preparing file…</T> : <T>Save file</T>}
+        {saving ? gt("Preparing file…") : gt("Save file")}
       </MenuItem>
     </>
   );
