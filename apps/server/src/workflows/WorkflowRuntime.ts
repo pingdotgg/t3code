@@ -304,7 +304,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const outer = yield* Scope.Scope;
   const services = yield* Effect.context<R | Path.Path>();
 
-  // One reload at a time, and callers during one wait for the engine that comes out of it.
+  // One reload at a time, and callers while the next engine builds wait for it.
   const lock = yield* Semaphore.make(1);
   let ready = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
   let engineScope: Scope.Closeable | undefined;
@@ -369,11 +369,15 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
 
   const boot = Effect.fn("WorkflowRuntime.boot")(
     function* (definitions: ReadonlyArray<WorkflowDefinition>) {
-      const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
-      ready = next;
       const previous = running;
+      // Callers keep the old engine while it waits on its in-flight steps. The cluster keeps a
+      // run started meanwhile for the next engine to take up.
       if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
       engineScope = undefined;
+      const next = (yield* Deferred.isDone(ready))
+        ? Deferred.makeUnsafe<Workflows.Workflows["Service"]>()
+        : ready;
+      ready = next;
       running = [];
       if (definitions.length === 0 && !imported && !(yield* kept)) {
         yield* Deferred.succeed(next, Workflows.disabled);
