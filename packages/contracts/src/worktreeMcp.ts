@@ -1,12 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { GitRefName, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Uses the managed worktree folder; handoff detaches the provider, ending this turn and resuming there next run. */
 export const WorktreeMcpHandoffInput = Schema.Struct({
-  branch: TrimmedNonEmptyString,
+  branch: GitRefName,
   baseRef: Schema.optional(
-    TrimmedNonEmptyString.annotate({
+    GitRefName.annotate({
       description: "Default: checked-out branch.",
     }),
   ),
@@ -65,8 +65,8 @@ export type WorktreeMcpContinuationStatus = typeof WorktreeMcpContinuationStatus
 
 export const WorktreeMcpHandoffResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
-  branch: TrimmedNonEmptyString,
-  baseRef: TrimmedNonEmptyString,
+  branch: GitRefName,
+  baseRef: GitRefName,
   startedFromOrigin: Schema.Boolean,
   setupScript: WorktreeMcpSetupScriptStatus,
   continuation: WorktreeMcpContinuationStatus,
@@ -81,7 +81,7 @@ export const WorktreeMcpStatusResult = Schema.Struct({
     description:
       "The bound folder is gone. The next turn recreates it; `t3_worktree_release` drops the binding instead.",
   }),
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   projectWorkspaceRoot: TrimmedNonEmptyString,
   defaultStartFromOrigin: Schema.Boolean.annotate({
     description: "`startFromOrigin` default for `t3_worktree_handoff`.",
@@ -105,7 +105,7 @@ export type WorktreeMcpReleaseInput = typeof WorktreeMcpReleaseInput.Type;
 
 export const WorktreeMcpReleaseResult = Schema.Struct({
   worktreePath: TrimmedNonEmptyString,
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   removal: Schema.Literals(["scheduled", "already-gone", "kept-shared"]),
   note: Schema.String,
 });

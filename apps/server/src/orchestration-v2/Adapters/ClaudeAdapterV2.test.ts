@@ -62,6 +62,8 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -116,7 +118,10 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { AGENT_FEEDBACK_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+import {
+  makeProviderFailure,
+  PROVIDER_RETRY_BUDGET_MS,
+} from "@t3tools/provider-core/server/failure";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
@@ -16756,6 +16761,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("releases the silence watch once Claude answers each request", () =>
+    Effect.gen(function* () {
+      // Counts pending sleeps of the silence budget: each one holds the whole turn context.
+      const clock = yield* Clock.Clock;
+      let pendingWatches = 0;
+      const countingClock: Clock.Clock = {
+        currentTimeMillisUnsafe: () => clock.currentTimeMillisUnsafe(),
+        currentTimeMillis: clock.currentTimeMillis,
+        currentTimeNanosUnsafe: () => clock.currentTimeNanosUnsafe(),
+        currentTimeNanos: clock.currentTimeNanos,
+        monotonicTimeNanosUnsafe: () => clock.monotonicTimeNanosUnsafe(),
+        monotonicTimeNanos: clock.monotonicTimeNanos,
+        sleep: (duration) =>
+          Duration.toMillis(duration) === PROVIDER_RETRY_BUDGET_MS
+            ? Effect.suspend(() => {
+                pendingWatches += 1;
+                return clock.sleep(duration);
+              }).pipe(Effect.ensuring(Effect.sync(() => (pendingWatches -= 1))))
+            : clock.sleep(duration),
+      };
+      yield* Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-silence-watch-released"),
+            text: "start again",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "command_lifecycle",
+            command_uuid: harness.promptUuid(0),
+            state: "started",
+            uuid: "00000000-0000-4000-8000-0000000007a0",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (let index = 1; index <= 5; index++) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: "requesting",
+              uuid: `00000000-0000-4000-8000-0000000007a${index}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "stream_event",
+              event: { type: "message_start", message: { id: `msg_watch_${index}` } },
+              parent_tool_use_id: null,
+              session_id: WAKE_NATIVE_SESSION,
+              uuid: `00000000-0000-4000-8000-0000000007b${index}`,
+            }),
+          );
+        }
+        assert.strictEqual(pendingWatches, 0, "answered requests left silence watches running");
+      }).pipe(Effect.provideService(Clock.Clock, countingClock));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   // regression: #17531 a mod that holds a tool behind a focused pane must fail the turn, not hang it
