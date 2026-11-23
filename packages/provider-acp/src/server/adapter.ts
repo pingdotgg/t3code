@@ -1719,8 +1719,10 @@ interface ActiveAcpTurn {
   readonly claimedToolResults: Map<string, unknown>;
   /** T3 MCP toolCallIds that have already drained a recorded result from McpProviderSessions. */
   readonly drainedToolResultIds: Set<string>;
-  /** T3 MCP toolCallIds that have already attempted input-only recovery or reached terminal failure. */
-  readonly attemptedInputRecoveryIds: Set<string>;
+  /** T3 MCP toolCallIds that reached terminal failure and must never do input-only recovery. */
+  readonly blockedInputRecoveryIds: Set<string>;
+  /** `${toolCallId}\0${inputHash}` keys already tried for input-only recovery, allowing later updates with new arguments. */
+  readonly attemptedInputRecoveryKeys: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -4833,7 +4835,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? { ...(output as Record<string, unknown>), isError: true }
                           : { isError: true, content: [{ type: "text", text: String(output) }] };
               }
-              context.attemptedInputRecoveryIds.add(toolCall.toolCallId);
+              context.blockedInputRecoveryIds.add(toolCall.toolCallId);
               context.claimedToolResults.set(toolCall.toolCallId, output);
               context.tools.set(toolCall.toolCallId, {
                 ...toolCall,
@@ -4855,7 +4857,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               } else {
                 const reportedError = compactT3McpToolOutput(resolvedT3Tool, output);
-                context.attemptedInputRecoveryIds.add(toolCall.toolCallId);
+                context.blockedInputRecoveryIds.add(toolCall.toolCallId);
                 if (
                   !context.drainedToolResultIds.has(toolCall.toolCallId) &&
                   (reportedError !== undefined ||
@@ -4914,12 +4916,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               } else {
                 let recoveredOutput = claimedOutput;
+                const lookupKey = `${toolCall.toolCallId}\0${inputHash ?? McpProviderSessions.hashToolInput(input)}`;
                 if (
                   recoveredOutput === undefined &&
                   projectedStatus === undefined &&
-                  !context.attemptedInputRecoveryIds.has(toolCall.toolCallId)
+                  !context.blockedInputRecoveryIds.has(toolCall.toolCallId) &&
+                  !context.attemptedInputRecoveryKeys.has(lookupKey)
                 ) {
-                  context.attemptedInputRecoveryIds.add(toolCall.toolCallId);
+                  context.attemptedInputRecoveryKeys.add(lookupKey);
                   recoveredOutput = yield* mcpSessions.takeToolResult(
                     context.input.threadId,
                     resolvedT3Tool,
@@ -9812,7 +9816,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               tools: new Map(),
               claimedToolResults: new Map(),
               drainedToolResultIds: new Set(),
-              attemptedInputRecoveryIds: new Set(),
+              blockedInputRecoveryIds: new Set(),
+              attemptedInputRecoveryKeys: new Set(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),

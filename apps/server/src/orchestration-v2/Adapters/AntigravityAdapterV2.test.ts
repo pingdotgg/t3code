@@ -1162,6 +1162,17 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     });
                     yield* updateTool("send-late-error-sibling", "completed");
 
+                    // Empty-input completion that misses still recovers once a later completion brings arguments.
+                    yield* startTool("send-late-args", "send_to_user", {});
+                    yield* recordSend("Ready after late args");
+                    yield* updateTool("send-late-args", "completed");
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: "send-late-args",
+                      status: "completed",
+                      rawInput: { message: "Ready after late args" },
+                    });
+
                     // Oversized (>8k) delegate_task input matches via pre-truncation digest, and
                     // preview_recording_stop recovers its recording id.
                     yield* startTool("delegate-task", "delegate_task", {
@@ -1272,7 +1283,14 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         }
         assert.strictEqual(sentMessageFromToolItem(tool("send-late")!), lateText);
         assert.strictEqual(sentMessageFromToolItem(tool("send-late-unpublished")!), undefined);
-        assert.strictEqual(tool("send-late-error-sibling")?.output, undefined);
+        const lateErrorSibling = tool("send-late-error-sibling");
+        assert.isDefined(lateErrorSibling);
+        assert.strictEqual(lateErrorSibling.status, "completed");
+        assert.strictEqual(lateErrorSibling.output, undefined);
+        assert.strictEqual(
+          sentMessageFromToolItem(tool("send-late-args")!),
+          "Ready after late args",
+        );
         assert.strictEqual(sentMessageFromToolItem(tool("send-unfinished")!), undefined);
         assert.strictEqual(
           sentMessageFromToolItem(toolIn(turn2Events, "turn2-leaked-check")!),

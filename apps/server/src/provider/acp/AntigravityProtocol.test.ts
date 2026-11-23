@@ -760,6 +760,27 @@ describe("Antigravity served reads", () => {
       ((toolCall.data.rawInput as Record<string, unknown>).task as string).length,
     ).toBeLessThan(longTask.length);
 
+    // Exhausting the 64k payload budget across multiple fields must still keep the pre-truncation digest.
+    const budgetExhaustingInput = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`field${index}`, "x".repeat(9_000)]),
+    );
+    const multiFieldNormalized = normalizeAntigravitySessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_t3_multi_field",
+        title: "Run mcp_t3-code_delegate_task",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { ...budgetExhaustingInput, toolSummary: "Delegate multi-field" },
+      },
+    });
+    expect(
+      normalizeAntigravityToolCall(parseToolUpdate(multiFieldNormalized).toolCall).data[
+        ACP_MCP_INPUT_HASH_META_KEY
+      ],
+    ).toBe(hashToolInput(budgetExhaustingInput));
+
     const foreignEvent = parseToolUpdate({
       sessionId: "session-1",
       update: {

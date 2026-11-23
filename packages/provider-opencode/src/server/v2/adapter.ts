@@ -1482,8 +1482,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ? "failed"
           : status;
       yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
+      const mcpOwnerThreadId = rootOf(state).providerThread.appThreadId ?? turn.input.threadId;
       const mcpServerName =
-        status === "running" ? undefined : yield* mcpServerNameFor(turn.input.threadId);
+        status === "running" ? undefined : yield* mcpServerNameFor(mcpOwnerThreadId);
       const nestedSentMessages: Array<{
         readonly messageId: string;
         readonly sentMessage: string;
@@ -1497,11 +1498,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           const messageId = `${nativeId}:${SEND_TO_USER_TOOL_NAME}:${index}`;
           const existing = turn.takenSentMessages.get(messageId);
           if (existing !== undefined) {
-            if (existing !== null) seenSentMessages.add(existing);
+            if (existing !== null) {
+              seenSentMessages.add(existing);
+              nestedSentMessages.push({ messageId, sentMessage: existing });
+            }
             continue;
           }
           const recovered = yield* mcpSessions.takeToolResult(
-            turn.input.threadId,
+            mcpOwnerThreadId,
             SEND_TO_USER_TOOL_NAME,
             input,
           );
@@ -1546,7 +1550,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
         if (turn.takenPages.has(pageId)) continue;
         turn.takenPages.add(pageId);
-        const page = yield* mcpSessions.takeHtmlRender(turn.input.threadId, input);
+        const page = yield* mcpSessions.takeHtmlRender(mcpOwnerThreadId, input);
         if (page === undefined || page.attachmentId === returnedPage?.attachmentId) continue;
         yield* emitNode(state, turn, pageId, "tool_call", "completed", startedAt, updatedAt);
         yield* emit({

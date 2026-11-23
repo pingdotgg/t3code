@@ -195,12 +195,24 @@ function stripSentMessageFromValue(value: unknown, seen: ReadonlySet<string>): u
   if (record.type === "text" && typeof record.text === "string") {
     const strippedText = stripSentMessageFromJsonText(record.text, seen);
     if (strippedText.changed) {
-      return strippedText.text === undefined ? undefined : { ...record, text: strippedText.text };
+      if (strippedText.text !== undefined) {
+        return Object.fromEntries(
+          Object.entries(record).map(([key, entry]) => [
+            key,
+            key === "text" ? strippedText.text : entry,
+          ]),
+        );
+      }
+      const hasSiblings = Object.keys(record).some((key) => key !== "type" && key !== "text");
+      if (!hasSiblings) return undefined;
+      return Object.fromEntries(
+        Object.entries(record).map(([key, entry]) => [key, key === "text" ? "" : entry]),
+      );
     }
     return value;
   }
   let changed = false;
-  const next: Record<string, unknown> = {};
+  const entries: Array<readonly [string, unknown]> = [];
   for (const [key, entry] of Object.entries(record)) {
     if (key === "sentMessage" && typeof entry === "string" && seen.has(entry)) {
       changed = true;
@@ -212,11 +224,11 @@ function stripSentMessageFromValue(value: unknown, seen: ReadonlySet<string>): u
         : entry;
     if (stripped !== entry) changed = true;
     if (stripped !== undefined) {
-      next[key] = stripped;
+      entries.push([key, stripped]);
     }
   }
   if (!changed) return value;
-  return Object.keys(next).length === 0 ? undefined : next;
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
 }
 
 /** Remove a duplicate returned sentMessage from Code Mode text output while preserving other fields/images. */
