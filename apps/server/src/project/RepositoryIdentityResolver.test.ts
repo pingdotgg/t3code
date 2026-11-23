@@ -128,6 +128,47 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
+  it.effect("keys a remote by its configured URL when insteadOf rewrites it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-instead-of-test-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/T3Tools/t3code.git"]);
+      yield* git(cwd, ["config", "url.https://proxy.example/.insteadOf", "https://github.com/"]);
+      yield* git(cwd, ["config", "remote.origin.gh-resolved", "base"]);
+      const remotes = yield* git(cwd, ["remote", "-v"]);
+      expect(remotes.stdout).toContain("https://proxy.example/T3Tools/t3code.git (fetch)");
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.provider).toBe("github");
+      expect(identity?.displayName).toBe("T3Tools/t3code");
+      expect(identity?.locator).toEqual({
+        source: "git-remote",
+        remoteName: "origin",
+        remoteUrl: "https://github.com/T3Tools/t3code.git",
+      });
+
+      const shorthandCwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-instead-of-shorthand-test-",
+      });
+      yield* git(shorthandCwd, ["init"]);
+      yield* git(shorthandCwd, ["remote", "add", "origin", "gh:T3Tools/t3code.git"]);
+      yield* git(shorthandCwd, ["config", "url.https://github.com/.insteadOf", "gh:"]);
+
+      const shorthandIdentity = yield* resolver.resolve(shorthandCwd);
+
+      expect(shorthandIdentity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(shorthandIdentity?.provider).toBe("github");
+      expect(shorthandIdentity?.locator.remoteUrl).toBe("https://github.com/T3Tools/t3code.git");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("keeps a literal .git in an Azure DevOps repository name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
