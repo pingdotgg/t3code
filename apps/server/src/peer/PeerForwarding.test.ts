@@ -8,19 +8,23 @@ import {
   type OrchestrationV2ThreadShell,
   type SourceControlCloneRepositoryInput,
   ProjectId,
+  OrchestratorMcpFailure,
   ProviderInstanceId,
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as TestClock from "effect/testing/TestClock";
 import { McpSchema, McpServer } from "effect/ai";
 
 import * as ServerConfig from "../config.ts";
+import type { ProjectionTimelinePageOptions } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadSearch from "../orchestration-v2/ThreadSearch.ts";
@@ -53,6 +57,7 @@ const boxRun = RunId.make("run:box-auto");
 interface Seen {
   readonly sends: ReadonlyArray<ThreadManagement.ThreadManagementSendInput>;
   readonly waits: ReadonlyArray<ThreadManagement.ThreadManagementWaitInput>;
+  readonly reads: ReadonlyArray<ProjectionTimelinePageOptions>;
   readonly launches: ReadonlyArray<ThreadLaunch.ThreadLaunchInput>;
   readonly projects: ReadonlyArray<ProjectService.ProjectCreateInput>;
   readonly clones: ReadonlyArray<SourceControlCloneRepositoryInput>;
@@ -62,6 +67,7 @@ interface Seen {
 const nothingSeen: Seen = {
   sends: [],
   waits: [],
+  reads: [],
   launches: [],
   projects: [],
   clones: [],
@@ -83,18 +89,35 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
   );
   const users = { ...liveThreadShell(usersThread, { runtimeMode: "auto" }), projectId: boxProject };
   const run = (status: OrchestrationV2Run["status"]) =>
-    ({ id: boxRun, status }) as unknown as OrchestrationV2Run;
+    ({
+      id: boxRun,
+      ordinal: 1,
+      status,
+      modelSelection: base.modelSelection,
+      requestedAt: base.createdAt,
+      startedAt: null,
+      completedAt: null,
+    }) as unknown as OrchestrationV2Run;
   const shellOf = (threadId: ThreadId): Effect.Effect<OrchestrationV2ThreadShell | null> =>
     threadId === boxThread ? linked : Effect.succeed(threadId === usersThread ? users : null);
   const projectionOf = (threadId: ThreadId) =>
     shellOf(threadId).pipe(
-      Effect.map((thread) => ({ thread, runs: [run("running")], runtimeRequests: [] }) as never),
+      Effect.map(
+        (thread) =>
+          ({ thread, runs: [run("running")], runtimeRequests: [], providerTurns: [] }) as never,
+      ),
     );
   return Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: shellOf,
     getProjectThreadRecords: (input) => projectionOf(input.threadId),
     getThreadRecords: (threadId) => projectionOf(threadId),
+    getRunCount: () => Effect.succeed(1),
+    getTimelinePage: (_threadId, options) =>
+      Ref.update(seen, (current) => ({ ...current, reads: [...current.reads, options] })).pipe(
+        Effect.as({ items: [], totalItems: 0, hasMore: false, hasEarlier: false }),
+      ),
     listProjectThreads: () => linked.pipe(Effect.map((shell) => [shell] as never)),
+    getShellSnapshot: () => linked.pipe(Effect.map((shell) => ({ threads: [shell] }) as never)),
     sendToThread: (input) =>
       Ref.update(seen, (current) => ({ ...current, sends: [...current.sends, input] })).pipe(
         Effect.as({ run: run("running"), delivery: "started" } as never),
@@ -132,12 +155,8 @@ const boxThreads = (seen: Ref.Ref<Seen>, linkSession: Ref.Ref<string>) => {
         stops: [...current.stops, `delegated-tasks.stop ${input.threadId}`],
       })),
     waitForThread: (input) =>
-      Ref.updateAndGet(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
-        Effect.map(({ waits }) => ({
-          threadId: input.threadId,
-          run: run(waits.length < 3 ? "running" : "completed"),
-          timedOut: waits.length < 3,
-        })),
+      Ref.update(seen, (current) => ({ ...current, waits: [...current.waits, input] })).pipe(
+        Effect.as({ threadId: input.threadId, run: run("completed"), timedOut: false }),
       ),
   });
 };
@@ -475,15 +494,8 @@ it.effect("keeps a forwarded wait short and its retries scoped to the caller", (
         status: "completed",
         timedOut: false,
       });
-      // Three pieces of at most 50 s each, the later ones pinned to the run
-      // the first one found.
-      expect(
-        (yield* Ref.get(seen)).waits.map(({ timeoutMs, runId }) => [timeoutMs, runId]),
-      ).toEqual([
-        [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, undefined],
-        [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, boxRun],
-        [PeerForwarding.FORWARDED_WAIT_CHUNK_MS, boxRun],
-      ]);
+      // One capped piece, so the caller's MCP request returns before its client times out.
+      expect((yield* Ref.get(seen)).waits.map(({ timeoutMs }) => timeoutMs)).toEqual([45_000]);
 
       const send = (caller: string, clientRequestId: string) =>
         a.call(caller, "t3_thread_send", {
@@ -601,7 +613,11 @@ it.effect("brings a repository to a linked environment, only through full access
           environmentId: box.environmentId,
           ...args,
         });
-        expect(failureOf(refused), name).toMatchObject({ code: "capability_denied" });
+        const failure = failureOf(refused);
+        expect(failure, name).toMatchObject({ code: "capability_denied" });
+        // The agent's thread is full access; what holds it is the link's access.
+        expect(failure.message, name).toContain("linked environment");
+        expect(failure.message, name).not.toContain("calling thread");
       }
       expect((yield* Ref.get(seen)).clones).toHaveLength(1);
       expect((yield* Ref.get(seen)).projects).toHaveLength(1);
@@ -631,6 +647,15 @@ it.effect("runs any tool that takes a linked environment there", () =>
       });
       expect(archived.isError).toBe(false);
       expect((yield* Ref.get(seen)).stops).toEqual([`thread.archive ${boxThread}`]);
+      // A cursorless read from an agent here gets the newest page there, as it does locally.
+      const read = yield* a.call("thread:laptop-full", "t3_thread_read", {
+        environmentId: box.environmentId,
+        threadId: boxThread,
+      });
+      expect(read.isError).toBe(false);
+      expect((yield* Ref.get(seen)).reads).toEqual([
+        { beforePosition: Number.MAX_SAFE_INTEGER, limit: 10, view: "messages" },
+      ]);
 
       // This environment's own id keeps the call here.
       const own = yield* a.call("thread:laptop-full", "t3_thread_configure", {
@@ -714,4 +739,86 @@ it.effect("refuses what a linked environment cannot take before anything leaves"
       expect(yield* Ref.get(b.bearers)).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("refuses a launch there above the link's access, naming the link", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const seen = yield* Ref.make<Seen>(nothingSeen);
+      const linkSession = yield* Ref.make("");
+      const b = yield* serveBox(seen, linkSession);
+      const a = yield* makeLaptop;
+      yield* linkTo(a.links, b, "auto");
+      yield* Ref.set(linkSession, (yield* b.linkedSessions)[0]!.sessionId);
+
+      // A full-access agent here asks for more than the link allows there.
+      const launchAboveLink = a.call("thread:laptop-full", "t3_thread_launch", {
+        environmentId: box.environmentId,
+        projectId: boxProject,
+        title: "Run the suite there",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        message: "Run the suite.",
+        runtimeMode: "full-access",
+      });
+      const { message } = failureOf(yield* launchAboveLink);
+      expect(message).toContain('"Box"');
+      expect(message).toContain("auto");
+      expect(message).toContain("full-access");
+      expect(message).not.toContain("parent mode");
+      expect((yield* Ref.get(seen)).launches).toEqual([]);
+
+      // Once the link has expired, that is what the agent needs to hear.
+      yield* TestClock.adjust(Duration.days(31));
+      expect(failureOf(yield* launchAboveLink).message).toContain("expired");
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+const refusedRead = (message: string) =>
+  new OrchestratorMcpFailure({ code: "invalid_request", message });
+const beforePositionRefusal = refusedRead(
+  `Invalid parameters for tool 't3_thread_read': Unknown argument "beforePosition". Accepted arguments: limit, view.`,
+);
+
+it("recognizes only a validation refusal of beforePosition", () => {
+  const cases: Array<[OrchestratorMcpFailure, boolean]> = [
+    [beforePositionRefusal, true],
+    [
+      refusedRead(
+        `Invalid parameters for tool 't3_thread_read': Unknown arguments "runLimit", "beforePosition". Accepted arguments: limit.`,
+      ),
+      true,
+    ],
+    [refusedRead(`Invalid parameters for tool 't3_thread_read': Unknown argument "limit".`), false],
+    // A thread id can carry the same words; only the refusal's code and prefix count.
+    [
+      new OrchestratorMcpFailure({
+        code: "thread_not_found",
+        message: `Thread Unknown argument "beforePosition". Accepted arguments: x. is no longer available.`,
+      }),
+      false,
+    ],
+  ];
+  for (const [failure, expected] of cases) {
+    expect(PeerForwarding.refusesBeforePosition(failure)).toBe(expected);
+  }
+});
+
+it.effect("retries a newest-page read without its cursor when the peer refuses the cursor", () =>
+  Effect.gen(function* () {
+    const sent: Array<unknown> = [];
+    const olderPeer = (args: unknown): Effect.Effect<string, OrchestratorMcpFailure> => {
+      sent.push(args);
+      return "beforePosition" in (args as object)
+        ? Effect.fail(beforePositionRefusal)
+        : Effect.succeed("forward page");
+    };
+    const params = { threadId: "thread:box-auto", limit: 35 };
+    const newest = { ...params, beforePosition: Number.MAX_SAFE_INTEGER };
+
+    const page = yield* PeerForwarding.readNewestOrRetry(olderPeer, newest, params);
+
+    expect(page).toBe("forward page");
+    expect(sent).toEqual([newest, params]);
+  }),
 );

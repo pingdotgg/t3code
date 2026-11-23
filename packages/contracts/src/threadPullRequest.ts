@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  GitRefName,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -37,8 +38,8 @@ export type ThreadPullRequestLinkSource = typeof ThreadPullRequestLinkSource.Typ
 export const ThreadPullRequestSnapshot = Schema.Struct({
   state: PullRequestState,
   title: TrimmedNonEmptyString,
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
+  baseBranch: GitRefName,
   isDraft: Schema.Boolean,
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
@@ -51,12 +52,13 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   reviewDecision: Schema.optional(Schema.NullOr(PullRequestReviewDecision)),
   checksState: Schema.optional(Schema.NullOr(PullRequestChecksState)),
   mergeability: Schema.optional(PullRequestMergeability),
+  rebaseRequired: Schema.optional(Schema.Boolean),
 });
 export type ThreadPullRequestSnapshot = typeof ThreadPullRequestSnapshot.Type;
 
 export const ThreadPullRequestStackLayer = Schema.Struct({
   number: PositiveInt,
-  headBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
   state: PullRequestState,
 });
 export type ThreadPullRequestStackLayer = typeof ThreadPullRequestStackLayer.Type;
@@ -67,7 +69,7 @@ export const ThreadPullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(ThreadPullRequestStackLayer),
 });
 export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;
@@ -87,7 +89,10 @@ export const ThreadPullRequestWatch = Schema.Struct({
   passedChecks: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
-  /** Checks still pending when required ones passed early, owed one wake once all settle. */
+  /**
+   * Marks one wake owed once every check has finished: the checks still pending when the required
+   * ones passed early, or the failed ones while a failure keeps the required ones from passing.
+   */
   owedChecks: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   /** Approval holds keyed by workflow run URL, or check name when no run URL is known. */
   awaitingApproval: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
@@ -97,15 +102,34 @@ export const ThreadPullRequestWatch = Schema.Struct({
   /** Reported remarks at remarksThrough, so late arrivals at that timestamp still count. */
   remarkIds: Schema.Array(TrimmedNonEmptyString),
   conflicting: Schema.Boolean,
+  rebaseRequired: Schema.optional(Schema.Boolean),
+  /** Last removal seen; null after an empty read, absent before the first read. */
+  mergeQueueRemovalId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   /** Consecutive comment-only wakes; limited to prevent bot loops. */
   wakes: NonNegativeInt,
+  /**
+   * What is already on the pull request is recorded, not reported: conflicts on the first read, and
+   * checks on the first read that can be trusted to show them (one with a head and a full check read).
+   */
+  awaitingBaseline: Schema.optional(Schema.Literals(["all", "checks"])),
   /**
    * When the head was first read without any check, until a check shows up or the agent is told
    * none did. Null once either happened; absent on watches saved before it existed.
    */
   checksAwaitedSince: Schema.optional(Schema.NullOr(IsoDateTime)),
+  /**
+   * Whether the host was still running checks on the head at the last read. Only then does the
+   * watch keep its thread waiting; absent on watches not read since it existed.
+   */
+  checksPending: Schema.optional(Schema.Boolean),
+  /** How long the watch holds its thread. Absent means until every check finished. */
+  until: Schema.optional(Schema.Literal("merged")),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
+
+/** `merged` also ends when the PR closes or the agent unwatches it. */
+export const PullRequestWatchUntil = Schema.Literals(["checks", "merged"]);
+export type PullRequestWatchUntil = typeof PullRequestWatchUntil.Type;
 
 export const ThreadPullRequestLink = Schema.Struct({
   ...ThreadPullRequestKey.fields,
