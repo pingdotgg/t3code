@@ -7,7 +7,7 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
 } from "@t3tools/contracts";
-import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import { fileBasename, normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -108,7 +108,7 @@ export const make = Effect.gen(function* () {
   ) {
     const known = yield* listed(environment, path);
     if (known !== undefined) return known;
-    const title = path.split("/").findLast((part) => part.length > 0) ?? path;
+    const title = fileBasename(path);
     const created = yield* call(
       environment,
       "t3_project_create",
