@@ -446,6 +446,54 @@ describe("CursorAdapterV2", () => {
       answers: [],
     },
     {
+      reason: "no failure when the connection fails after the turn ended",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: null,
+    },
+    {
+      reason: "a connection failure before the turn ends",
+      updates: [
+        { type: "text-delta", text: "Working." },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "provider_error", message: "Connection failed repeatedly" },
+    },
+    {
+      reason: "a connection failure during a continuation after the turn ended",
+      updates: [
+        { type: "text-delta", text: "Done." },
+        { type: "turn-ended" },
+        { type: "step-started", stepId: 2 },
+      ] satisfies ReadonlyArray<InteractionUpdate>,
+      wait: Effect.succeed({
+        id: "native-cursor-run",
+        requestId: "native-request",
+        status: "error" as const,
+        error: { message: "Connection failed repeatedly" },
+        model: { id: "claude-fable-5" },
+        durationMs: 1,
+      }),
+      failure: { class: "provider_error", message: "Connection failed repeatedly" },
+    },
+    {
       reason: "the token usage Cursor reported",
       // Cursor's inputTokens already include cache reads and writes.
       updates: [
@@ -2533,6 +2581,8 @@ describe("CursorAdapterV2", () => {
                 send: (input) =>
                   Effect.gen(function* () {
                     report = input.onBackgroundShell!;
+                    yield* input.onStartupPhase!("plugins");
+                    yield* input.onStartupPhase!("plugins");
                     for (const id of ["6", "7", "8"]) {
                       yield* report({
                         ...shell(id),
@@ -2627,6 +2677,15 @@ describe("CursorAdapterV2", () => {
         const events = yield* runtime.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runCollect,
+        );
+        // The phase the SDK reported while starting is published once and cleared when the run starts.
+        assert.deepEqual(
+          events.flatMap((event) =>
+            event.type === "provider_session.updated"
+              ? [event.providerSession.startupPhase ?? null]
+              : [],
+          ),
+          ["plugins", null],
         );
         const listed = (
           update: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
