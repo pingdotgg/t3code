@@ -71,7 +71,8 @@ class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("Cod
   }
 }
 const METADATA_READ_BYTES = 8 * 1024;
-const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
+// The first record with a cwd can be a prompt carrying pasted images.
+const MAX_TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
