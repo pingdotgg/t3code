@@ -9608,6 +9608,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             }),
             { commitSha: head, remoteRefName: `origin/${branch}` },
           );
+
+          yield* git(cwd, ["checkout", "-b", branch]);
+          yield* git(cwd, ["branch", "--set-upstream-to", `origin/${branch}`]);
+          const status = yield* driver.statusDetails(cwd);
+          assert.equal(status.branch, branch);
+          assert.equal(status.upstreamRef, `origin/${branch}`);
         }
       }),
     );
