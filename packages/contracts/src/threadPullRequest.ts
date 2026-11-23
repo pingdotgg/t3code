@@ -69,7 +69,7 @@ export const ThreadPullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(ThreadPullRequestStackLayer),
 });
 export type ThreadPullRequestStack = typeof ThreadPullRequestStack.Type;

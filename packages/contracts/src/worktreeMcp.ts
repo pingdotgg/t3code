@@ -6,7 +6,7 @@ import { GitRefName, TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const WorktreeMcpHandoffInput = Schema.Struct({
   branch: GitRefName,
   baseRef: Schema.optional(
-    TrimmedNonEmptyString.annotate({
+    GitRefName.annotate({
       description: "Default: checked-out branch.",
     }),
   ),

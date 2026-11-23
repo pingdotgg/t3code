@@ -8,6 +8,7 @@ import {
   VcsCreateWorktreeInput,
   VcsRef,
 } from "./git.ts";
+import { WorktreeMcpHandoffInput } from "./worktreeMcp.ts";
 import { PullRequestDiffFileContentsInput } from "./pullRequest.ts";
 import { ReviewDiffFileContentsInput } from "./review.ts";
 
@@ -15,6 +16,7 @@ const encodeVcsRef = Schema.encodeUnknownSync(VcsRef);
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
 const encodeCreateWorktreeInput = Schema.encodeUnknownSync(VcsCreateWorktreeInput);
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
+const decodeWorktreeHandoffInput = Schema.decodeUnknownSync(WorktreeMcpHandoffInput);
 const decodeGitCommandError = Schema.decodeUnknownSync(Schema.toCodecJson(GitCommandError));
 const decodePreparePullRequestThreadResult = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadResult,
@@ -124,6 +126,9 @@ describe("Git ref names", () => {
       const input = { cwd: "/repo", refName: name, newRefName: name, baseRefName: name };
       const wireInput = encodeCreateWorktreeInput({ ...input, path: null });
       expect(decodeCreateWorktreeInput(wireInput)).toMatchObject(input);
+
+      const handoff = { branch: name, baseRef: name, startFromOrigin: true };
+      expect(decodeWorktreeHandoffInput(handoff)).toEqual(handoff);
     },
   );
 

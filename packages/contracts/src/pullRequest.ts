@@ -353,7 +353,7 @@ export const PullRequestStackMembership = Schema.Struct({
   number: PositiveInt,
   position: PositiveInt,
   size: PositiveInt,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
 });
 export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
 
@@ -552,7 +552,7 @@ export const PullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(
     Schema.Struct({
       number: PositiveInt,

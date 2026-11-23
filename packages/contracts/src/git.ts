@@ -431,8 +431,8 @@ export class GitPullRequestMaterializationError extends Schema.TaggedError<GitPu
     cwd: TrimmedNonEmptyStringSchema,
     pullRequestNumber: PositiveInt,
     headRepository: Schema.NullOr(TrimmedNonEmptyStringSchema),
-    headBranch: TrimmedNonEmptyStringSchema,
-    localBranch: TrimmedNonEmptyStringSchema,
+    headBranch: GitRefName,
+    localBranch: GitRefName,
     cause: Schema.Defect(),
   },
 ) {
