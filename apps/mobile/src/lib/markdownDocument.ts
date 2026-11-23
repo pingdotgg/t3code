@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import {
   absoluteFilePathMatches,
@@ -498,9 +499,37 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
   return applyMarkdownEdits(markdown, edits);
 }
 
+const ALERT_MARKER_HARD_BREAK = /\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?: {2,}|\\)\r?\n/i;
+
+// md4c reads an alert marker only when `]` ends its line, so a hard break after it becomes a line ending.
+function markdownWithAlertMarkerBreaks(markdown: string): string {
+  if (!ALERT_MARKER_HARD_BREAK.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  const visit = (node: MarkdownNode) => {
+    const paragraph = node.type === "blockquote" ? node.children[0] : undefined;
+    const [text, br] = paragraph?.type === "paragraph" ? paragraph.children : [];
+    const start = text?.position?.end.offset;
+    const end = br?.position?.end.offset;
+    if (
+      text?.type === "text" &&
+      GITHUB_ALERT_MARKER.exec(text.value)?.[0] === text.value &&
+      br?.type === "break" &&
+      start !== undefined &&
+      end !== undefined
+    ) {
+      edits.push({ start, end, content: /\r\n$/.test(markdown.slice(start, end)) ? "\r\n" : "\n" });
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(parser.parse(markdown));
+  return applyMarkdownEdits(markdown, edits);
+}
+
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  return markdownWithWindowsPathDestinations(
+    markdownWithHtml(markdownWithAlertMarkerBreaks(markdown)),
+  );
 }
 
 export function parseMarkdownDocument(markdown: string): Root {

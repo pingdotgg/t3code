@@ -160,6 +160,21 @@ describe("HTML in native Markdown", () => {
     ).toBe(String.raw`Before \![escaped](<https://x.test>) \\\![even](<mailto:a@b>)`);
   });
 
+  it("renders an alert whose marker line ends in a hard line break", async () => {
+    for (const markdown of ["> [!NOTE]\n> Body", "> [!NOTE]  \n> Body", "> [!NOTE]\\\n> Body"]) {
+      const native = await parseMarkdown(
+        markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX),
+      );
+      expect(native.children).toEqual([
+        {
+          type: "Admonition",
+          attributes: { admonitionType: "note" },
+          children: [{ type: "Paragraph", children: [{ type: "Text", content: "Body" }] }],
+        },
+      ]);
+    }
+  });
+
   it("converts separated HTML without changing code examples or an unfinished tag", () => {
     const literal = '`<br>`\n\n```html\n<img src="literal.png">\n```\n\n<broken';
     expect(markdownWithHtml(literal)).toBe(literal);
