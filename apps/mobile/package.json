@@ -68,7 +68,6 @@
     "@material/material-color-utilities": "0.3.0",
     "@pierre/diffs": "catalog:",
     "@pierre/highlights": "catalog:",
-    "@react-native-ai/apple": "0.12.0",
     "@react-native-menu/menu": "^2.0.0",
     "@react-navigation/elements": "2.9.45",
     "@react-navigation/native": "7.5.1",
