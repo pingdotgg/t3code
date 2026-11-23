@@ -1540,16 +1540,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("session.interrupt", { interrupted: true }),
         event("session.execution.interrupted", { sessionID: SESSION }),
       ]);
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
       const watch = yield* watchBackgroundTurn(runtime);
       yield* runtime.startTurn(withLineage(thread));
       yield* watch.attached;
+      // The child's nested T3 MCP results live under the root thread and outlive its turn.
+      const childResult = { message: "Child note" };
+      yield* mcpSessions.recordToolResult(threadId, "send_to_user", childResult, {
+        sentMessage: childResult.message,
+      });
       yield* runtime.interruptTurn({
         providerThread: thread,
         providerTurnId: yield* providerTurnId,
       });
       assert.equal((yield* watch.terminal)?.status, "interrupted");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
-    }),
+      assert.deepEqual(yield* mcpSessions.takeToolResult(threadId, "send_to_user", childResult), {
+        sentMessage: childResult.message,
+      });
+    }).pipe(Effect.scoped),
   );
 
   it.effect("stops background subagents on a user Stop", () =>

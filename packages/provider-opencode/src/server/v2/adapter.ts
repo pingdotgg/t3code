@@ -2491,7 +2491,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
-      yield* mcpSessions.clearToolResults(turn.input.threadId);
+      // Background children recover their nested results under the root thread after it settles.
+      if (!runningCalls(state).some((call) => call.background)) {
+        yield* mcpSessions.clearToolResults(turn.input.threadId);
+      }
       state.providerThread = {
         ...state.providerThread,
         status: threadDisposition === "broken" ? "error" : "idle",
