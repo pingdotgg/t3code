@@ -60,7 +60,7 @@ describe("issueListTargets", () => {
 });
 
 describe("issueFilterProjects", () => {
-  it("keeps every project, scratch ones too, as its own choice", () => {
+  it("keeps a scratch project as its own choice next to its repository", () => {
     const environmentId = EnvironmentId.make("env");
     const project = (id: string, isScratch = false) =>
       ({
@@ -75,10 +75,15 @@ describe("issueFilterProjects", () => {
       [project("main"), project("worktree"), project("scratch", true)],
       new Map([[environmentId, "laptop"]]),
     );
-    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["main", "t3code · laptop · /work/main"],
-      ["scratch", "t3code · laptop · /work/scratch"],
-      ["worktree", "t3code · laptop · /work/worktree"],
+    expect(choices.map((choice) => [choice.title, choice.members])).toEqual([
+      [
+        "t3code · laptop · /work/main",
+        [
+          [environmentId, "main"],
+          [environmentId, "worktree"],
+        ],
+      ],
+      ["t3code · laptop · /work/scratch", [[environmentId, "scratch"]]],
     ]);
   });
 
@@ -102,5 +107,11 @@ describe("issueFilterProjects", () => {
       ]),
     );
     expect(choices.map((choice) => choice.title)).toEqual(["pingdotgg/t3code"]);
+    // Unchecking it hides every copy.
+    expect(choices[0]?.members).toEqual([
+      [laptop, "main"],
+      [laptop, "worktree"],
+      [vps, "remote"],
+    ]);
   });
 });

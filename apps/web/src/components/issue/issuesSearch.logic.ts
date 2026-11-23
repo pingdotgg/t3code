@@ -53,22 +53,36 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
+/** The same key as `pullRequestProjectKey`. */
+const projectKey = (project: { readonly id: ProjectId; readonly environmentId: EnvironmentId }) =>
+  JSON.stringify([project.environmentId, project.id]);
+
 /**
- * One choice per project: projects on one repository can read different Linear teams. Scratch
- * projects stay, since Settings can bind one to a Linear team.
+ * One choice per repository, across environments and checkouts, since each of them lists the
+ * repository's issues; `members` are the projects it hides. Scratch projects and projects without
+ * a repository stay their own choice: Settings can bind each to its own Linear team.
  */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-) =>
-  pullRequestFilterProjects(
-    projects.map((project) => ({ ...project, repositoryIdentity: null })),
-    environmentLabels,
-  );
-
-/** The same key as `pullRequestProjectKey`. */
-const projectKey = (project: { readonly id: ProjectId; readonly environmentId: EnvironmentId }) =>
-  JSON.stringify([project.environmentId, project.id]);
+) => {
+  const choices = new Map<
+    string,
+    EnvironmentProject & { readonly members: Array<readonly [EnvironmentId, ProjectId]> }
+  >();
+  for (const project of projects) {
+    const repository = project.isScratch
+      ? undefined
+      : project.repositoryIdentity?.canonicalKey?.toLowerCase();
+    const key = repository ? JSON.stringify(["repository", repository]) : projectKey(project);
+    const pair = [project.environmentId, project.id] as const;
+    const choice = choices.get(key);
+    if (choice) choice.members.push(pair);
+    // A merged choice is shown as its first project; no other choice shares its repository.
+    else choices.set(key, { ...project, repositoryIdentity: null, members: [pair] });
+  }
+  return pullRequestFilterProjects([...choices.values()], environmentLabels);
+};
 
 export const issueProjectKeys = (pairs: IssuesSearch["hideProjects"]): ReadonlySet<string> =>
   new Set((pairs ?? []).map((pair) => JSON.stringify(pair)));

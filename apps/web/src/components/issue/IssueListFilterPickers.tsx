@@ -52,7 +52,7 @@ export function IssueFiltersMenu(props: {
   onLabels: (labels: ReadonlyArray<string>) => void;
   assignee: string | undefined;
   onAssignee: (assignee: string | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<ProjectChoice>;
   hiddenProjects: ReadonlySet<string>;
   onHiddenProjects: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
 }) {
@@ -65,6 +65,11 @@ export function IssueFiltersMenu(props: {
     props.assignee,
     ...props.labels,
   ].filter(Boolean).length;
+  const listed = new Set(props.projects.flatMap(memberKeys));
+  const hiddenCount =
+    props.projects.filter((project) =>
+      memberKeys(project).every((key) => props.hiddenProjects.has(key)),
+    ).length + [...props.hiddenProjects].filter((key) => !listed.has(key)).length;
   // Read when the menu opens, not with every listing: one request per scope.
   const scopes = open ? props.scopes : [];
   return (
@@ -99,9 +104,9 @@ export function IssueFiltersMenu(props: {
               <FolderGit2Icon aria-hidden className="size-3.5" />
               <span className="flex-1">{gt("Projects")}</span>
               <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-                {props.hiddenProjects.size === 0
+                {hiddenCount === 0
                   ? gt("All projects")
-                  : gt("{hidden} hidden", { hidden: props.hiddenProjects.size })}
+                  : gt("{hidden} hidden", { hidden: hiddenCount })}
               </span>
             </MenuSubTrigger>
             <MenuSubPopup>
@@ -153,8 +158,15 @@ export function IssueFiltersMenu(props: {
   );
 }
 
+type ProjectChoice = ProjectFaviconProject & {
+  readonly id: ProjectId;
+  readonly members: ReadonlyArray<readonly [EnvironmentId, ProjectId]>;
+};
+
+const memberKeys = (choice: ProjectChoice) => choice.members.map((pair) => JSON.stringify(pair));
+
 function ProjectChoices(props: {
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<ProjectChoice>;
   hidden: ReadonlySet<string>;
   onChange: (hidden: ReadonlyArray<readonly [EnvironmentId, ProjectId]>) => void;
 }) {
@@ -179,9 +191,7 @@ function ProjectChoices(props: {
       <MenuCheckboxItem
         checked={allShown}
         onCheckedChange={(shown) =>
-          props.onChange(
-            shown ? [] : pairsOf(props.projects.map((project) => pullRequestProjectKey(project))),
-          )
+          props.onChange(shown ? [] : pairsOf(props.projects.flatMap(memberKeys)))
         }
       >
         <span className="flex min-w-0 items-center gap-2">
@@ -192,15 +202,17 @@ function ProjectChoices(props: {
       <MenuSeparator />
       {visible.length === 0 ? <MenuItem disabled>{gt("No matching projects.")}</MenuItem> : null}
       {visible.map((project) => {
-        const key = pullRequestProjectKey(project);
+        const keys = memberKeys(project);
         return (
           <MenuCheckboxItem
-            key={key}
-            checked={!props.hidden.has(key)}
+            key={pullRequestProjectKey(project)}
+            checked={!keys.every((key) => props.hidden.has(key))}
             onCheckedChange={(shown) => {
               const next = new Set(props.hidden);
-              if (shown) next.delete(key);
-              else next.add(key);
+              for (const key of keys) {
+                if (shown) next.delete(key);
+                else next.add(key);
+              }
               props.onChange(pairsOf(next));
             }}
           >
