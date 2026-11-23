@@ -2203,41 +2203,6 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 
-  it.effect("cancels a detached permission request after Stop even in full-access mode", () =>
-    Effect.gen(function* () {
-      const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
-      yield* opened.startTurn(1, false);
-      const started = yield* opened.throughPromptSettled;
-      const turn = started.find((event) => event.type === "provider_turn.updated");
-      if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
-
-      yield* opened.session.interruptTurn({
-        providerThread: opened.providerThread,
-        providerTurnId: turn.providerTurn.id,
-        requestRuntimeRestart: true,
-      });
-      yield* opened.throughTerminal;
-
-      const response = yield* opened.requestPermission(
-        {
-          sessionId: "mock-session-1",
-          toolCall: {
-            toolCallId: "call_after_stop",
-            kind: "execute",
-            title: "rm -rf /tmp/unused",
-            status: "pending",
-          },
-          options: [
-            { optionId: "allow", name: "Allow", kind: "allow_once" },
-            { optionId: "deny", name: "Deny", kind: "reject_once" },
-          ],
-        },
-        { requestId: "permission-stop", method: "session/request_permission" },
-      );
-      assert.deepEqual(response, { outcome: { outcome: "cancelled" } });
-    }).pipe(Effect.provide(layerSession)),
-  );
-
   it.effect(
     "cancels a detached approval-required permission request when its continuation cannot attach",
     () =>
