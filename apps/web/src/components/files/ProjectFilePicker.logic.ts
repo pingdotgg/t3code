@@ -19,12 +19,23 @@ function findMatchIndices(value: string, query: string): number[] | null {
   if (!query) return [];
 
   const normalizedValue = value.toLowerCase();
+  // Lowercasing lengthens İ (to i̇) and shortens nothing, so only a longer result needs mapping back.
+  const sourceSpans: Array<readonly [number, number]> = [];
+  if (normalizedValue.length !== value.length) {
+    let sourceOffset = 0;
+    for (const char of value) {
+      const span = [sourceOffset, sourceOffset + char.length] as const;
+      for (let n = char.toLowerCase().length; n > 0; n -= 1) sourceSpans.push(span);
+      sourceOffset = span[1];
+    }
+  }
   const indices: number[] = [];
   let queryIndex = 0;
 
   for (let valueIndex = 0; valueIndex < normalizedValue.length; valueIndex += 1) {
     if (normalizedValue[valueIndex] !== query[queryIndex]) continue;
-    indices.push(valueIndex);
+    const [start, end] = sourceSpans[valueIndex] ?? [valueIndex, valueIndex + 1];
+    for (let i = Math.max(start, (indices.at(-1) ?? -1) + 1); i < end; i += 1) indices.push(i);
     queryIndex += 1;
     if (queryIndex === query.length) return indices;
   }

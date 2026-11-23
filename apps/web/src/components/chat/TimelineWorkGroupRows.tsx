@@ -49,6 +49,7 @@ import {
   type TimelineWorkEntry,
   type TimelineRow,
 } from "./timelineRowContext";
+import { ProviderStartingIcon } from "./ProviderStartingIcon";
 import { TimelineRowTimestamp, ActivityShimmerOverlay } from "./TimelineRowParts";
 import {
   failedToolIconClassName,
@@ -451,8 +452,13 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
   const m = useMessages();
-  const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
-    use(TimelineRowActivityCtx);
+  const {
+    isCompacting,
+    isPreparingWorktree,
+    liveAnswerPreview,
+    providerStartingLabel,
+    providerStarting,
+  } = use(TimelineRowActivityCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
   const live = ctx.pendingApprovals.size === 0;
@@ -465,6 +471,15 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
         gt("Thinking")
       }
       iconName="brain"
+      iconNode={
+        providerStarting === null ? undefined : (
+          <ProviderStartingIcon
+            environmentId={ctx.activeThreadEnvironmentId ?? null}
+            instanceId={providerStarting.instanceId}
+            driver={providerStarting.driver}
+          />
+        )
+      }
       active={live}
       shimmer={live}
     />
@@ -504,6 +519,7 @@ function LiveWorkToggle({
 function LiveActivityRow({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   active = false,
@@ -511,6 +527,8 @@ function LiveActivityRow({
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
+  /** Replaces the named icon. */
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   active?: boolean;
@@ -526,6 +544,7 @@ function LiveActivityRow({
       <LiveActivityContent
         label={label}
         iconName={iconName}
+        iconNode={iconNode}
         toolIcon={toolIcon}
         failed={failed}
         announceFailure={failed}
@@ -533,7 +552,13 @@ function LiveActivityRow({
       />
       {showShimmer ? (
         <ActivityShimmerOverlay>
-          <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
+          <LiveActivityContent
+            label={label}
+            iconName={iconName}
+            iconNode={iconNode}
+            toolIcon={toolIcon}
+            highlighted
+          />
         </ActivityShimmerOverlay>
       ) : null}
     </div>
@@ -543,6 +568,7 @@ function LiveActivityRow({
 function LiveActivityContent({
   label,
   iconName,
+  iconNode,
   toolIcon,
   failed = false,
   announceFailure = false,
@@ -551,6 +577,7 @@ function LiveActivityContent({
 }: {
   label: ReactNode;
   iconName: WorkEntryIconName | undefined;
+  iconNode?: ReactNode;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean;
   announceFailure?: boolean;
@@ -577,12 +604,16 @@ function LiveActivityContent({
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? gt("Tool call failed") : undefined}
           >
-            <ToolActivityIconView
-              icon={toolIcon}
-              fallbackName={iconName}
-              className="block size-3.5 shrink-0 stroke-2"
-              muted={!highlighted}
-            />
+            {iconNode ? (
+              <span className={cn("flex", !highlighted && "opacity-70")}>{iconNode}</span>
+            ) : (
+              <ToolActivityIconView
+                icon={toolIcon}
+                fallbackName={iconName}
+                className="block size-3.5 shrink-0 stroke-2"
+                muted={!highlighted}
+              />
+            )}
           </span>
         ) : null
       }
