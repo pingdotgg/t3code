@@ -19,6 +19,7 @@ pub mod model_preferences;
 pub mod provider_auth;
 pub mod provider_settings;
 pub mod providers;
+pub mod secret_providers;
 mod scheduled;
 mod shell;
 mod sidebar;

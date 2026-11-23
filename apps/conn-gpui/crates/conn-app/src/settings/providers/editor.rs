@@ -24,6 +24,7 @@ use conn_state::provider_settings::{
     InstanceRow, SecretRef, SecretSource,
 };
 use conn_state::providers::ProviderGroup;
+use conn_state::secret_providers;
 use gpui_kit::Focusable as _;
 use gpui_kit::component::Colorize as _;
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
@@ -51,6 +52,19 @@ pub(super) enum Commit {
     Variables,
     Reference(Slot),
     CustomModel,
+}
+
+/// What `Check` found for a reference (`SecretCheckButton`): the reference it asked about
+/// (`provider` and `reference`), so a later edit shows no stale result.
+pub(super) struct SecretCheck {
+    secret: SecretRef,
+    state: CheckState,
+}
+
+enum CheckState {
+    Checking,
+    Resolved,
+    Failed(String),
 }
 
 /// A value that may read from a secret provider instead.
@@ -453,6 +467,44 @@ impl ProvidersView {
                 .find(|row| row.key == key)
                 .map(|row| &mut row.secret),
         }
+    }
+
+    /// `Check`: asks the server to resolve the saved reference, so a typo shows here and not
+    /// when a provider starts.
+    fn check_secret(&mut self, slot: Slot, cx: &mut Context<'_, Self>) {
+        let (Some(secret), Some(connection)) = (self.saved_secret(slot), self.connection.clone())
+        else {
+            return;
+        };
+        let key = format!("{slot:?}");
+        self.secret_checks.insert(
+            key.clone(),
+            SecretCheck {
+                secret: secret.clone(),
+                state: CheckState::Checking,
+            },
+        );
+        cx.notify();
+        let payload = secret_providers::check_request(&secret.provider, &secret.reference);
+        cx.spawn(async move |this, cx| {
+            let result = connection
+                .call_json("server.checkSecretSource", payload)
+                .await;
+            let state = match result.map(|value| secret_providers::check_outcome(&value)) {
+                Ok(Ok(())) => CheckState::Resolved,
+                Ok(Err(detail)) => CheckState::Failed(detail),
+                Err(_) => CheckState::Failed("Could not reach the server".to_owned()),
+            };
+            let _ = this.update(cx, |view, cx| {
+                if let Some(check) = view.secret_checks.get_mut(&key)
+                    && check.secret == secret
+                {
+                    check.state = state;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Picks the typed value (`None`) or a secret provider for `slot`. Back to Value drops a
@@ -1514,6 +1566,70 @@ impl ProvidersView {
             .into_any_element()
     }
 
+    /// The `Check` button of a saved reference and what the last check found
+    /// (`SecretCheckButton`). Only where the server serves `server.checkSecretSource`.
+    fn check_row(
+        &self,
+        ax: &str,
+        slot: Slot,
+        input: &SecretInput,
+        saved: Option<&SecretRef>,
+        slot_name: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> Option<AnyElement> {
+        let saved = saved?;
+        if !self.config.supports_secret_source_check()
+            || input.rejected.is_some()
+            || input.source.as_deref() != Some(saved.provider.as_str())
+        {
+            return None;
+        }
+        let state = self
+            .secret_checks
+            .get(&format!("{slot:?}"))
+            .filter(|check| &check.secret == saved)
+            .map(|check| &check.state);
+        let (label, ax_label, running) = match state {
+            None => ("Check".to_owned(), format!("Check {slot_name}"), false),
+            Some(CheckState::Checking) => (
+                "Checking...".to_owned(),
+                format!("Checking {slot_name}"),
+                true,
+            ),
+            Some(CheckState::Resolved) => (
+                "Resolved".to_owned(),
+                format!("{slot_name} resolved"),
+                false,
+            ),
+            Some(CheckState::Failed(detail)) => (
+                "Failed".to_owned(),
+                format!("{slot_name} failed: {detail}"),
+                false,
+            ),
+        };
+        let mut column = div().flex().flex_col().items_end().gap(px(4.0));
+        column = column.child(self.labelled_button(
+            format!("{ax}.check"),
+            &label,
+            &ax_label,
+            false,
+            (!running).then(|| cx.listener(move |view, _, _, cx| view.check_secret(slot, cx))),
+        ));
+        if let Some(CheckState::Failed(detail)) = state {
+            column = column.child(
+                div()
+                    .id(SharedString::from(format!("{ax}.check-error")))
+                    .a11y_group(format!("{ax}.check-error"), detail.clone())
+                    .max_w(px(260.0))
+                    .text_size(px(12.0))
+                    .text_color(hsla(self.tokens.destructive))
+                    .child(detail.clone())
+                    .test_support(),
+            );
+        }
+        Some(column.into_any_element())
+    }
+
     /// The source picker and value of one secret slot (`SecretSourceInput`). `value` is the
     /// typed-value control, shown while the source is Value.
     #[expect(
@@ -1579,12 +1695,14 @@ impl ProvidersView {
                 })),
             ));
         }
+        let check = self.check_row(ax, slot, input, saved, &slot_name, cx);
         let body = if input.source.is_some() {
             div()
                 .flex()
                 .flex_col()
                 .gap(px(4.0))
                 .child(self.input_box(&input.reference))
+                .when_some(check, |el, check| el.child(check))
                 .when_some(input.rejected, |el, message| {
                     el.child(
                         div()

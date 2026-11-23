@@ -93,6 +93,8 @@ pub(crate) struct ProvidersView {
     confirm_remove: Option<String>,
     /// `(project id, title)` whose switches this page edits, or `None` for the device.
     project_scope: Option<(String, String)>,
+    /// The last `Check` of each secret reference, by slot.
+    secret_checks: std::collections::HashMap<String, editor::SecretCheck>,
 }
 
 impl ProvidersView {
@@ -132,6 +134,7 @@ impl ProvidersView {
             write: editor::WriteState::default(),
             confirm_remove: None,
             project_scope: None,
+            secret_checks: std::collections::HashMap::new(),
         }
     }
 
@@ -852,7 +855,7 @@ pub(crate) fn settings_button(
     styled_button(tokens, ax_id, label, label, false, on_click)
 }
 
-fn styled_button(
+pub(crate) fn styled_button(
     tokens: &Tokens,
     ax_id: String,
     label: &str,

@@ -127,6 +127,10 @@ fn the_editor_renders_models_secrets_locks_and_a_project_scope(cx: &mut TestAppC
         "the secret source picker"
     );
     assert!(
+        has(cx, window, "Check TOKEN"),
+        "a saved reference offers Check where the server serves it"
+    );
+    assert!(
         has(cx, window, "Managed by Acme."),
         "binaryPath is the policy's"
     );

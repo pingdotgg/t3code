@@ -15,6 +15,7 @@ pub(crate) mod controls;
 pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
+pub(crate) mod secrets;
 
 use conn_client::{Connection, ConnectionStatus};
 use conn_theme::{Appearance, Rgba, ShellGeometry, Tokens};
@@ -58,16 +59,18 @@ pub(crate) enum SettingsPage {
     Appearance,
     Connections,
     Providers,
+    Secrets,
     Projects,
     ScheduledTasks,
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 7] = [
+const ALL_PAGES: [SettingsPage; 8] = [
     SettingsPage::General,
     SettingsPage::Appearance,
     SettingsPage::Connections,
     SettingsPage::Providers,
+    SettingsPage::Secrets,
     SettingsPage::Projects,
     SettingsPage::ScheduledTasks,
     SettingsPage::Keyboard,
@@ -80,9 +83,18 @@ impl SettingsPage {
             Self::Appearance => "Appearance",
             Self::Connections => "Connections",
             Self::Providers => "Providers",
+            Self::Secrets => "Secrets",
             Self::Projects => "Projects",
             Self::ScheduledTasks => "Scheduled tasks",
             Self::Keyboard => "Keyboard",
+        }
+    }
+
+    /// A superheroicons glyph where `IconName` has none that fits.
+    fn concept_icon(self) -> Option<&'static str> {
+        match self {
+            Self::Secrets => Some("superhero/key.svg"),
+            _ => None,
         }
     }
 
@@ -92,6 +104,7 @@ impl SettingsPage {
             Self::Appearance => IconName::Palette,
             Self::Connections => IconName::Plug,
             Self::Providers => IconName::Bot,
+            Self::Secrets => IconName::Settings,
             Self::Projects => IconName::Folder,
             Self::ScheduledTasks => IconName::Clock,
             Self::Keyboard => IconName::Keyboard,
@@ -201,6 +214,7 @@ pub(crate) struct SettingsModal {
     operator_saved_notice: Option<String>,
     scheduled_tasks: Entity<ScheduledTasksView>,
     providers: Entity<providers::ProvidersView>,
+    secrets: Entity<secrets::SecretsView>,
     projects: Entity<projects::ProjectsView>,
     _projects_sub: Subscription,
     focus_handle: FocusHandle,
@@ -266,10 +280,12 @@ impl SettingsModal {
                 .default_value(operator_url)
         });
         let provider_connection = live_connection.clone();
+        let secrets_connection = live_connection.clone();
         let provider_environment = connection
             .server_label
             .clone()
             .unwrap_or_else(|| "this environment".to_owned());
+        let secrets_environment = provider_environment.clone();
         let initial_server_url = connection.server_url.clone().unwrap_or_default();
         let direct_server_url_input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -314,6 +330,15 @@ impl SettingsModal {
             )
         });
 
+        let secrets = cx.new(|_| {
+            secrets::SecretsView::new(secrets::SecretsInit {
+                tokens: tokens.clone(),
+                geometry,
+                connection: secrets_connection,
+                environment_label: secrets_environment,
+            })
+        });
+
         let projects_tokens = tokens.clone();
         let projects = cx.new(|_| projects::ProjectsView::new(projects_tokens, geometry, projects));
         let projects_sub = cx.subscribe(
@@ -349,6 +374,7 @@ impl SettingsModal {
             operator_saved_notice: None,
             scheduled_tasks,
             providers,
+            secrets,
             projects,
             _projects_sub: projects_sub,
             focus_handle,
@@ -363,6 +389,9 @@ impl SettingsModal {
         cx: &mut Context<'_, Self>,
     ) {
         self.projects.update(cx, |view, cx| {
+            view.set_server_config(std::sync::Arc::clone(&config), cx);
+        });
+        self.secrets.update(cx, |view, cx| {
             view.set_server_config(std::sync::Arc::clone(&config), cx);
         });
         self.providers
@@ -393,6 +422,11 @@ impl SettingsModal {
                 .clone()
                 .unwrap_or_else(|| "this environment".to_owned());
             let provider_connection = live_connection.clone();
+            let secrets_connection = provider_connection.clone();
+            let secrets_environment = environment.clone();
+            self.secrets.update(cx, |view, cx| {
+                view.set_connection(secrets_connection, secrets_environment, cx);
+            });
             self.providers.update(cx, |view, cx| {
                 view.set_connection(provider_connection, environment, cx);
             });
@@ -424,6 +458,8 @@ impl SettingsModal {
             view.set_tokens(tokens.clone(), cx);
         });
         self.projects
+            .update(cx, |view, cx| view.set_tokens(tokens.clone(), cx));
+        self.secrets
             .update(cx, |view, cx| view.set_tokens(tokens.clone(), cx));
         self.providers
             .update(cx, |view, cx| view.set_tokens(tokens, cx));
@@ -585,7 +621,12 @@ impl SettingsModal {
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     this.select_page(page, cx);
                 }))
-                .child(icons::chrome(page.icon(), icon_color))
+                .child(match page.concept_icon() {
+                    Some(path) => {
+                        icons::concept(path, icons::CHROME_ICON_PX, icon_color).into_any_element()
+                    }
+                    None => icons::chrome(page.icon(), icon_color).into_any_element(),
+                })
                 .child(div().flex_1().truncate().child(page.label()));
 
             if active {
@@ -687,6 +728,7 @@ impl SettingsModal {
                 SettingsPage::Appearance => self.render_appearance_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Providers => self.providers.clone().into_any_element(),
+                SettingsPage::Secrets => self.secrets.clone().into_any_element(),
                 SettingsPage::Projects => self.projects.clone().into_any_element(),
                 SettingsPage::ScheduledTasks => self.scheduled_tasks.clone().into_any_element(),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
