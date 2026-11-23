@@ -2683,3 +2683,53 @@ code {
 .messages-timeline-scroll:focus-visible {
   outline: none;
 }
+
+/* Full-window animated WebGL theme backdrop: float all workspace panes above the canvas
+   and make the sidebar + conversation chrome translucent so the shader runs behind everything. */
+html[data-theme-backdrop="active"],
+html[data-theme-backdrop="active"] body {
+  background-color: #040404 !important;
+}
+
+html[data-theme-backdrop="active"] #root > :not([data-theme-backdrop-canvas]) {
+  position: relative;
+  z-index: 1;
+}
+
+html[data-theme-backdrop="active"] [data-slot="sidebar-wrapper"],
+html[data-theme-backdrop="active"] main[data-slot="sidebar-inset"],
+html[data-theme-backdrop="active"] [data-workspace-area="conversation"],
+html[data-theme-backdrop="active"] .messages-timeline-scroll {
+  background: transparent !important;
+}
+
+html[data-theme-backdrop="active"] [data-slot="sidebar"],
+html[data-theme-backdrop="active"] [data-slot="sidebar-inner"] {
+  background-color: color-mix(
+    in srgb,
+    var(--sidebar) calc(var(--theme-backdrop-surface-opacity, 0.35) * 100%),
+    transparent
+  ) !important;
+}
+
+html[data-theme-backdrop="active"] [data-chat-header] {
+  background-color: color-mix(
+    in srgb,
+    var(--toolbar, var(--background)) calc(var(--theme-backdrop-surface-opacity, 0.35) * 100%),
+    transparent
+  ) !important;
+}
+
+html[data-theme-backdrop="active"] [data-slot="composer-host"] {
+  background-color: color-mix(in srgb, var(--card, #0a0a0a) 72%, transparent) !important;
+  backdrop-filter: blur(8px);
+}
+
+html[data-theme-backdrop="active"] [data-user-message-bubble] {
+  background-color: color-mix(in srgb, var(--card, #0f0f0f) 74%, transparent) !important;
+  backdrop-filter: blur(6px);
+}
+
+html[data-theme-backdrop="active"] .chat-markdown-codeblock {
+  background-color: color-mix(in srgb, var(--code-background, #080808) 82%, transparent) !important;
+}

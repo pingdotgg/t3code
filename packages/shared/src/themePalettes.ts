@@ -94,6 +94,13 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+export type ThemeBackdropShader = "nimbus";
+export type ThemeBackdrop = Readonly<{
+  shader?: ThemeBackdropShader | undefined;
+  glsl?: string | undefined;
+  fps?: number | undefined;
+  opacity?: number | undefined;
+}>;
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
@@ -105,6 +112,8 @@ export type ThemeDefinition = Readonly<{
   managed?: boolean;
   /** Custom styles for web and desktop. */
   css?: string;
+  /** Optional full-window animated WebGL shader backdrop for web and desktop. */
+  backdrop?: ThemeBackdrop;
 }>;
 
 export const T3_CODE_LIGHT_THEME_COLORS: ThemeColors = {

@@ -1,5 +1,9 @@
 import { pipe } from "effect/Function";
-import { THEME_CSS_MAX_LENGTH, type EnvironmentTheme } from "@t3tools/contracts";
+import {
+  THEME_BACKDROP_GLSL_MAX_LENGTH,
+  THEME_CSS_MAX_LENGTH,
+  type EnvironmentTheme,
+} from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -19,6 +23,7 @@ import {
   RESERVED_THEME_IDS,
   THEME_COLOR_ROLES,
   type ThemeAppearance,
+  type ThemeBackdrop,
   type ThemeColorRole,
   type ThemeColors,
   type ThemeDefinition,
@@ -32,12 +37,20 @@ import {
 
 import { m } from "./i18n/messages";
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
+import { applyThemeBackdrop } from "./themeBackdrop";
 import { applyThemeBackground } from "./themeBackground";
 import { applyThemeCss } from "./themeCss";
 import { themeServerEnvironmentThemesAtom } from "./state/server";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
-export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
+export type {
+  ThemeAppearance,
+  ThemeBackdrop,
+  ThemeColorRole,
+  ThemeColors,
+  ThemeDefinition,
+  ThemeVariants,
+};
 
 const T3_CHAT_THEME_ID = "t3-chat" as const;
 const GROVE_THEME_ID = "grove" as const;
@@ -130,6 +143,35 @@ function isThemeCss(value: unknown): value is string {
   return typeof value === "string" && value.length <= THEME_CSS_MAX_LENGTH;
 }
 
+function parseThemeBackdrop(value: unknown): ThemeBackdrop | undefined {
+  if (!isRecord(value)) return undefined;
+  const shader = value.shader === "nimbus" ? "nimbus" : undefined;
+  const glsl =
+    typeof value.glsl === "string" &&
+    value.glsl.trim().length > 0 &&
+    value.glsl.length <= THEME_BACKDROP_GLSL_MAX_LENGTH
+      ? value.glsl
+      : undefined;
+  if (shader === undefined && glsl === undefined) return undefined;
+  const fps =
+    typeof value.fps === "number" && Number.isFinite(value.fps) && value.fps >= 1 && value.fps <= 60
+      ? value.fps
+      : undefined;
+  const opacity =
+    typeof value.opacity === "number" &&
+    Number.isFinite(value.opacity) &&
+    value.opacity >= 0 &&
+    value.opacity <= 1
+      ? value.opacity
+      : undefined;
+  return {
+    ...(shader !== undefined ? { shader } : {}),
+    ...(glsl !== undefined ? { glsl } : {}),
+    ...(fps !== undefined ? { fps } : {}),
+    ...(opacity !== undefined ? { opacity } : {}),
+  };
+}
+
 function parseThemeCollection(value: unknown): ThemeCollection | undefined {
   return isRecord(value) &&
     typeof value.id === "string" &&
@@ -185,6 +227,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
   const variants = parseStoredThemeVariants(value.variants, value.appearance);
   if (value.variants !== undefined && variants === null) return null;
   const collection = parseThemeCollection(value.collection);
+  const backdrop = parseThemeBackdrop(value.backdrop);
 
   return {
     id: value.id,
@@ -195,6 +238,7 @@ function parseStoredTheme(value: unknown): ThemeDefinition | null {
     ...(collection ? { collection } : {}),
     ...(value.managed === true ? { managed: true } : {}),
     ...(isThemeCss(value.css) && value.css.length > 0 ? { css: value.css } : {}),
+    ...(backdrop ? { backdrop } : {}),
   };
 }
 
@@ -299,6 +343,7 @@ function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefinition {
       ? { managed: true }
       : {}),
     ...(theme.css ? { css: theme.css } : {}),
+    ...(theme.backdrop ? { backdrop: theme.backdrop } : {}),
   };
 }
 
@@ -1750,6 +1795,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const palette = getThemeDefinition(theme);
   applyThemeCss(palette?.css);
   applyThemeBackground(palette?.id);
+  applyThemeBackdrop(palette?.backdrop);
 
   if (palette) {
     root.dataset.themeId = palette.id;
