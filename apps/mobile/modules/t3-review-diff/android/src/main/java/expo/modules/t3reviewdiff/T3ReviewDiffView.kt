@@ -766,7 +766,7 @@ private class DiffCanvasView(context: Context) : View(context) {
         rowHitAt(event.y)?.let { hit ->
           val target = if (
             hit.row.kind == "file" &&
-            drawing.fileHeaderCheckboxRect(
+            drawing.fileHeaderCheckboxHitRect(
               hit.top,
               hit.bottom,
               width,
@@ -1314,12 +1314,13 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
+      // Source files hide the change bar (width 0); the selection marker still needs to show.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
         0f,
         top.toFloat(),
-        style.changeBarWidthPx,
+        maxOf(style.changeBarWidthPx, 4f * density),
         bottom.toFloat()
       )
     }
@@ -1329,9 +1330,10 @@ private class DiffCanvasView(context: Context) : View(context) {
     val firstLineBottom = top + lines.firstHeight(style.rowHeightPx.toInt())
     drawScrollableCode(canvas, top, bottom) { codeX ->
       drawing.configureCodePaint(theme.text, 0, style)
-      drawing.drawWordDiffRanges(canvas, row, codeX, top, firstLineBottom, lines)
       val baseline = lines.baseline(top, firstLineBottom, textPaint)
-      drawing.drawCode(canvas, row, tokensByRowId[row.id], codeX, baseline, style, lines)
+      val tokens = tokensByRowId[row.id]
+      drawing.drawWordDiffRanges(canvas, row, tokens, codeX, top, firstLineBottom, lines, style)
+      drawing.drawCode(canvas, row, tokens, codeX, baseline, style, lines)
     }
 
     drawLineNumber(canvas, row, top, firstLineBottom)
