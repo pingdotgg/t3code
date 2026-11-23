@@ -75,6 +75,12 @@ describe("Antigravity process environment", () => {
       agy_cli_disable_auto_update: "0",
       BROWSER: "open-real-browser",
       browser: "another-real-browser",
+      PAGER: "less -R",
+      pager: "more",
+      GH_PAGER: "less",
+      gh_pager: "less -R",
+      GIT_PAGER: "less",
+      GIT_TERMINAL_PROMPT: "1",
       PYTHONUNBUFFERED: "0",
       ELECTRON_RUN_AS_NODE: "0",
       CHROME_CRASHPAD_PIPE_NAME: "\\\\.\\pipe\\crashpad_50144_ZUJNJELFHHXPBIRT",
@@ -104,6 +110,10 @@ describe("Antigravity process environment", () => {
         AGY_ACP_FORCE_FILE_STORAGE: "1",
         AGY_CLI_DISABLE_AUTO_UPDATE: "1",
         BROWSER: profile.browserCommand,
+        PAGER: "cat",
+        GH_PAGER: "cat",
+        GIT_PAGER: "cat",
+        GIT_TERMINAL_PROMPT: "0",
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
         TMPDIR: profile.tempDirectory,
@@ -600,6 +610,46 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       expect(directoryEnv?.SSL_CERT_DIR).toBe("/custom/certs");
       expect(directoryEnv?.SSL_CERT_FILE).toBeUndefined();
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
+    "links /bin/zsh ahead of Nix zsh on macOS and guards nix-darwin /etc/zshenv",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        const profile = yield* prepareAntigravityProfile({
+          profileDirectory: path.join(directory, "profile"),
+          userHome: path.join(directory, "home"),
+          runtimeExecutablePath: process.execPath,
+          platform: "darwin",
+          baseEnv: { PATH: "/etc/profiles/per-user/dev/bin:/usr/bin:/bin" },
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            exists: (candidate) =>
+              candidate === "/bin/zsh" ? Effect.succeed(true) : fs.exists(candidate),
+          }),
+        );
+        expect(profile.shellBinDirectory).toBe(path.join(profile.acpDirectory, "bin"));
+        expect(yield* fs.readLink(path.join(profile.acpDirectory, "bin", "zsh"))).toBe("/bin/zsh");
+
+        const env = buildAntigravityAcpSpawnInput({
+          installation: { executablePath: "/usr/bin/agy" },
+          profile,
+          cwd: directory,
+          baseEnv: { PATH: "/etc/profiles/per-user/dev/bin:/usr/bin:/bin" },
+        }).env;
+        expect(env?.PATH).toBe(
+          `${path.join(profile.acpDirectory, "bin")}:/etc/profiles/per-user/dev/bin:/usr/bin:/bin`,
+        );
+        expect(env?.__NIX_DARWIN_SET_ENVIRONMENT_DONE).toBe("1");
+        expect(env?.GH_PAGER).toBe("cat");
+        expect(env?.PAGER).toBe("cat");
+        expect(env?.GIT_PAGER).toBe("cat");
+        expect(env?.GIT_TERMINAL_PROMPT).toBe("0");
+      }),
   );
 
   it.effect("runs the browser helper with installed Node in standalone builds", () =>

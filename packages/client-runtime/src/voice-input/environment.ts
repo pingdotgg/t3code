@@ -10,6 +10,7 @@ import type {
   SettingsSecretValue,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
+  SpeechReadAloudMode,
   SpeechTranscriptionOptions,
   SpeechPostProcessingOptions,
 } from "@t3tools/contracts";
@@ -330,4 +331,20 @@ export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, model
     method: "POST",
     path: (urls) => urls.removeModel(),
     run: ({ client, headers }) => client.removeModel({ headers, payload: { modelId } }),
+  });
+
+export const synthesizeEnvironmentSpeech = (
+  prepared: PreparedConnection,
+  text: string,
+  mode: SpeechReadAloudMode,
+  canSend?: () => boolean,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (urls) => urls.synthesize(),
+    ...(canSend ? { canSend } : {}),
+    timeoutMs: INFERENCE_OR_DOWNLOAD_TIMEOUT_MS,
+    run: ({ client, headers }) => client.synthesize({ headers, payload: { text, mode } }),
   });

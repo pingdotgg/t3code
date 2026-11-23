@@ -364,3 +364,12 @@ export const SpeechStreamEvent = Schema.Union([
   Schema.Struct({ type: Schema.Literal("error"), message: Schema.String }),
 ]);
 export type SpeechStreamEvent = typeof SpeechStreamEvent.Type;
+
+export const SpeechReadAloudMode = Schema.Literals(["summary", "full"]);
+export type SpeechReadAloudMode = typeof SpeechReadAloudMode.Type;
+
+export const EnvironmentSpeechSynthesizeRequest = Schema.Struct({
+  text: Schema.String.check(Schema.isMaxLength(200_000)),
+  mode: SpeechReadAloudMode,
+});
+export type EnvironmentSpeechSynthesizeRequest = typeof EnvironmentSpeechSynthesizeRequest.Type;

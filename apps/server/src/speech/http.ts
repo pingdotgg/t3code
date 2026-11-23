@@ -246,6 +246,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
               ),
             );
         }),
+      )
+      .handle(
+        "synthesize",
+        Effect.fn("environment.voice.synthesize")(function* (args) {
+          yield* guard(args.endpoint.name);
+          if (args.payload.text.trim().length === 0)
+            return yield* failEnvironmentInvalidRequest("invalid_command");
+          return yield* postProcessing.synthesize(args.payload).pipe(mapSpeechError);
+        }),
       );
   }),
 ).pipe(Layer.provide(bodyLimit), Layer.provide(SpeechPostProcessing.layer));

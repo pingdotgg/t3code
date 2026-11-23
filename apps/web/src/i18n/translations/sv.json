@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Omgång {turn} · {what}",
   "dfdaa6255a416140": "Översikt över {turns, plural, one {{turns} senaste omgång} other {{turns} senaste omgångar}}, {textTurns, plural, =0 {ingen meddelandetext} one {meddelandetext från den senaste omgången} other {meddelandetext från de senaste {textTurns} omgångarna}}{truncated, select, yes {, förkortad för att få plats} other {}}",
+  "260c6b45f52d2f27": "Lägger till texten i dina meddelanden och agentens svar under {textTurns, plural, one {den senaste omgången} other {de senaste {textTurns} omgångarna}}.",
   "afac52a5cc2dc801": "Det gick inte att skicka ditt svar. Försök igen.",
   "79d776428f4d0650": "Filen kunde inte läsas in. Återanslut och försök igen.",
   "3ea34cbb1ca5ba9b": "Förhandsvisningen avbröts.",
@@ -2733,9 +2734,9 @@
   "db7b3a938c45e56c": "Uppdateringen {version} är redo att laddas ned",
   "9a951140b69ba740": "Laddar ned uppdatering ({percent} %)",
   "7fdece033260e9fb": "Laddar ned uppdatering",
+  "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "09ef51903e99e876": "Uppdateringen har laddats ned. Klicka för att starta om och installera.",
   "d62631cab06d2b80": "Uppdateringen {version} har laddats ned. Klicka för att starta om och installera.",
-  "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "78a04e0e625c0990": "Uppdateringen misslyckades",
   "c24de5eb69373a55": "Den här {build}-versionen ignorerar {track}-versioner. Granska uppdateringsspåret i Inställningar för att slutföra bytet.",
   "b02ae45a6109c93b": "Uppdaterad",
@@ -3078,6 +3079,10 @@
   "4094c385ce0a6493": "Kunde inte starta röstinmatning",
   "47e93194d837912b": "Apple Speech stöder inte det här språket.",
   "f9bebb0ec6c93680": "Apple Speech är inte tillgängligt på den här Macen.",
+  "fa06565b3576fdae": "Response summary",
+  "fcc72724c26e3087": "Full response",
+  "2361c8287401c2b3": "Could not read response aloud.",
+  "b01aa606db310b1a": "Could not play synthesized speech.",
   "14ff185a0153700e": "Ingen modell matchar ditt språk. Välj en modell eller ändra språket i röstinställningarna.",
   "ff4cf071e91f7617": "Kunde inte läsa in transkriberingsmodeller. Kontrollera anslutningen och försök igen.",
   "8fc9dbbfebef2a39": "Röstinmatning är inte tillgänglig",
@@ -3638,7 +3643,6 @@
   "4e0710d19dfc2e7e": "Skicka den här rapporten till T3-teamet?",
   "87d0ae0723ba75d1": "Det här är allt som lämnar din dator. Inget skickas förrän du trycker på Skicka.",
   "bf19826f81484328": "Ta med konversationen",
-  "260c6b45f52d2f27": "Lägger till texten i dina meddelanden och agentens svar under {textTurns, plural, one {den senaste omgången} other {de senaste {textTurns} omgångarna}}.",
   "ddb7e6f8ce99e657": "Bara den som kan köra agenter på den här datorn kan skicka eller avböja rapporten.",
   "03c1eb603c112f47": "Skicka inte",
   "653405e4ed498d9f": "Skicka",
@@ -4405,9 +4409,14 @@
   "991cc9fb37606c91": "(tomt svar)",
   "36e4b8d2db087296": "Forka från det här svaret",
   "c92a0bab54261695": "Svara på det här svaret",
+  "154bec57dbece73c": "Stop reading",
+  "14ed6325d92638e8": "Read response",
   "405a3e88ee6e62b3": "Den här omgångens ändringar i det här repot kan inte listas.",
   "f6958f38dc87c712": "Forka från det här svaret",
   "72f8e14b1246d224": "Svara på det här svaret",
+  "41dacf2a84a045ac": "Stop reading",
+  "fae3f399c502e87b": "Read summary",
+  "ca2631a2759df692": "Read full text",
   "01d7728e893c281d": "Hoppa till meddelande: {text}",
   "e5428a0daffa236c": "Användarmeddelande",
   "d18107d06a0eb562": "Föregående omgång",
@@ -8762,9 +8771,13 @@
   "ed83b25c71c98a20": "Välj en eller flera {scope} i {tracker} för varje projekt. Deras ärenden listas bredvid repots egna, och agenter skapar nya ärenden i det första om de inte ombeds välja ett annat.",
   "19c2d5e81ff8f89a": "{scope} i {tracker} för {project}",
   "68e061510b765772": "Inte kopplad",
+  "99d51127f573296b": "Ett konto till",
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "99963c0142e17f00": "För det nya {tracker}-kontot.",
   "a2d95d39d3398bda": "Autentiseringsuppgiften avvisades",
   "9eae463720500113": "Lagras på servern.",
   "b6e27ab2537ef874": "Skapa en",
+  "6d8e4ebc889bace9": "Lägg till konto",
   "13ef526271b0f5d4": "Rensa alla villkor",
   "d1938a629f039515": "Ta bort villkor",
   "84a605b241ce65b7": "Ta bort gruppen och dess villkor",
@@ -12611,6 +12624,16 @@
   "156ff7b625287a1e": "Dölj överhoppade",
   "69b985b97ab45e6b": "Visa överhoppade ({count})",
   "2400254d362de84d": "Läser in arbetsflödeskörningar…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "En arbetsflödesfil har ett problem."
+    },
+    " ",
+    "Den senaste versionen som gick att läsa in körs vidare."
+  ],
+  "ed8ce6ebc73dc12d": "Öppna filen",
   "145e1f7503ba3b2c": [
     "Den här miljön har ingen körning med den länken.",
     " ",
@@ -12636,16 +12659,6 @@
       "c": "Läs guiden"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "En arbetsflödesfil har ett problem."
-    },
-    " ",
-    "Den senaste versionen som gick att läsa in körs vidare."
-  ],
-  "ed8ce6ebc73dc12d": "Öppna filen",
   "5d8d278ff828102d": "Alla arbetsflöden",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transkript",
@@ -12789,9 +12802,5 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
-  "99d51127f573296b": "Ett konto till",
-  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
-  "99963c0142e17f00": "För det nya {tracker}-kontot.",
-  "6d8e4ebc889bace9": "Lägg till konto"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
 }

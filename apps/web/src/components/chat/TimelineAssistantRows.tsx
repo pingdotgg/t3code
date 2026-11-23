@@ -3,13 +3,21 @@ import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { T, useGT, useMessages } from "gt-react";
-import { memo, use, useState } from "react";
+import { memo, use, useState, useSyncExternalStore } from "react";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
 import ChatMarkdown from "../ChatMarkdown";
-import { GitForkIcon, ReplyIcon } from "lucide-react";
+import { FileTextIcon, GitForkIcon, ReplyIcon, SquareIcon, Volume2Icon } from "lucide-react";
 import { captureAssistantMessageOpening } from "~/lib/assistantTextSelection";
 import { responseContextRecord } from "~/lib/composerContextRecords";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
+import {
+  getReadAloudSnapshot,
+  startReadAloud,
+  stopReadAloud,
+  subscribeReadAloud,
+} from "~/speech/readAloudPlayer";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
@@ -255,6 +263,11 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      <AssistantReadAloudButton
+        message={message}
+        showCopyButton={showCopyButton}
+        streaming={copyStreaming}
+      />
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
@@ -358,6 +371,108 @@ function AssistantCopyButton({
   }
 
   return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+function AssistantReadAloudButton({
+  message,
+  showCopyButton,
+  streaming,
+}: {
+  message: ChatMessage;
+  showCopyButton: boolean;
+  streaming: boolean;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const gt = useGT();
+  const snapshot = useSyncExternalStore(
+    subscribeReadAloud,
+    getReadAloudSnapshot,
+    getReadAloudSnapshot,
+  );
+  const copyState = resolveAssistantMessageCopyState({
+    text: message.text ?? null,
+    showCopyButton,
+    streaming,
+  });
+
+  if (!copyState.visible || !copyState.text) {
+    return null;
+  }
+
+  const text = copyState.text;
+  const environmentId = ctx.threadRef?.environmentId ?? ctx.activeThreadEnvironmentId;
+  const isActive = snapshot.activeMessageId === message.id && snapshot.phase !== "idle";
+
+  if (isActive) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost-muted"
+              onClick={stopReadAloud}
+              aria-label={gt("Stop reading")}
+            />
+          }
+        >
+          {snapshot.phase === "loading" ? (
+            <Spinner size="xs" />
+          ) : (
+            <SquareIcon className="size-3 text-primary" />
+          )}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          <T>Stop reading</T>
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button type="button" size="xs" variant="ghost-muted" aria-label={gt("Read response")} />
+        }
+      >
+        <Volume2Icon className="size-3" />
+      </MenuTrigger>
+      <MenuPopup align="start" side="top" width="content">
+        <MenuItem
+          onClick={() =>
+            startReadAloud({
+              messageId: message.id,
+              environmentId,
+              text,
+              mode: "summary",
+            })
+          }
+        >
+          <FileTextIcon />
+          <MenuItemLabel>
+            <T>Read summary</T>
+          </MenuItemLabel>
+        </MenuItem>
+        <MenuItem
+          onClick={() =>
+            startReadAloud({
+              messageId: message.id,
+              environmentId,
+              text,
+              mode: "full",
+            })
+          }
+        >
+          <Volume2Icon />
+          <MenuItemLabel>
+            <T>Read full text</T>
+          </MenuItemLabel>
+        </MenuItem>
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 export function ProposedPlanTimelineRow({

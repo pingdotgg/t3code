@@ -69,6 +69,7 @@ import {
   EnvironmentSpeechPostProcessingRequest,
   EnvironmentSpeechPostProcessingResult,
   EnvironmentSpeechStatus,
+  EnvironmentSpeechSynthesizeRequest,
   EnvironmentSpeechTranscriptionResult,
 } from "./speech.ts";
 import { PeerLinkClientPairingCredential, PeerLinkClientPairingRequest } from "./peerLink.ts";
@@ -990,6 +991,14 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       payload: EnvironmentSpeechPostProcessingRequest,
       success: EnvironmentSpeechPostProcessingResult,
       error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("synthesize", "/api/voice/synthesize", {
+      headers: OptionalBearerHeaders,
+      payload: EnvironmentSpeechSynthesizeRequest,
+      success: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array({ contentType: "audio/wav" })),
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}
 

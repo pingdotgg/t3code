@@ -75,6 +75,10 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_FORCE_FILE_STORAGE",
   "AGY_CLI_DISABLE_AUTO_UPDATE",
   "BROWSER",
+  "PAGER",
+  "GH_PAGER",
+  "GIT_PAGER",
+  "GIT_TERMINAL_PROMPT",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
   // An inherited pipe whose owner exited makes Electron-as-Node print Crashpad errors to stderr.
@@ -89,6 +93,7 @@ export interface AntigravityProfile {
   readonly tempDirectory: string;
   readonly browserCommand: string;
   readonly caBundlePath?: string;
+  readonly shellBinDirectory?: string;
 }
 
 export interface AntigravityAuthConfig {
@@ -232,10 +237,26 @@ function antigravityEnvironment(
     ...(auth.authMethod === "oauth-personal"
       ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || "127.0.0.1 0 127.0.0.1 0" }
       : {}),
+    ...(profile.platform === "darwin"
+      ? {
+          __NIX_DARWIN_SET_ENVIRONMENT_DONE: baseEnv.__NIX_DARWIN_SET_ENVIRONMENT_DONE || "1",
+        }
+      : {}),
+    ...(profile.shellBinDirectory !== undefined
+      ? {
+          PATH: environment.PATH
+            ? `${profile.shellBinDirectory}:${environment.PATH}`
+            : profile.shellBinDirectory,
+        }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
     AGY_CLI_DISABLE_AUTO_UPDATE: "1",
     BROWSER: profile.browserCommand,
+    PAGER: "cat",
+    GH_PAGER: "cat",
+    GIT_PAGER: "cat",
+    GIT_TERMINAL_PROMPT: "0",
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
     ...(profile.platform === "win32"
@@ -470,6 +491,10 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     tempDirectory,
     browserCommand,
     ...(caBundlePath === undefined ? {} : { caBundlePath }),
+    ...(platform === "darwin" &&
+    (yield* fs.exists("/bin/zsh").pipe(Effect.orElseSucceed(() => false)))
+      ? { shellBinDirectory: path.join(acpDirectory, "bin") }
+      : {}),
   };
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
@@ -511,7 +536,12 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
+  for (const directory of [
+    geminiHome,
+    acpDirectory,
+    tempDirectory,
+    ...(profile.shellBinDirectory === undefined ? [] : [profile.shellBinDirectory]),
+  ]) {
     yield* fs
       .makeDirectory(directory, { recursive: true, mode: 0o700 })
       .pipe(
@@ -528,6 +558,14 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
           ),
         );
     }
+  }
+  if (profile.shellBinDirectory !== undefined) {
+    const zshLink = path.join(profile.shellBinDirectory, "zsh");
+    yield* fs.remove(zshLink, { force: true }).pipe(Effect.orElseSucceed(() => undefined));
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.symlink("/bin/zsh", zshLink, "file"),
+      catch: () => authSupportError("The Antigravity profile shell link could not be created."),
+    });
   }
   yield* fs
     .writeFileString(path.join(acpDirectory, "settings.json"), antigravityProfileSettings(auth))

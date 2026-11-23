@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agente",
   "bfe1a60f3f9c60fb": "Turno {turn} · {what}",
   "dfdaa6255a416140": "Resumen de {turns, plural, one {{turns} turno reciente} other {{turns} turnos recientes}}, {textTurns, plural, =0 {sin texto de mensajes} one {con el texto de los mensajes del último turno} other {con el texto de los mensajes de los últimos {textTurns} turnos}}{truncated, select, yes {, acortado para ajustarse} other {}}",
+  "260c6b45f52d2f27": "Añade el texto de tus mensajes y de las respuestas del agente en {textTurns, plural, one {el último turno} other {los últimos {textTurns} turnos}}.",
   "afac52a5cc2dc801": "No se pudo enviar tu respuesta. Inténtalo de nuevo.",
   "79d776428f4d0650": "No se pudo cargar el archivo. Vuelve a conectarte e inténtalo de nuevo.",
   "3ea34cbb1ca5ba9b": "Vista previa cancelada.",
@@ -2733,9 +2734,9 @@
   "db7b3a938c45e56c": "Actualización {version} lista para descargar",
   "9a951140b69ba740": "Descargando actualización ({percent} %)",
   "7fdece033260e9fb": "Descargando actualización",
+  "52e1d4a487c0cf4b": "Falló la instalación de {version}. Haz clic para reintentarlo.",
   "09ef51903e99e876": "Actualización descargada. Haz clic para reiniciar e instalar.",
   "d62631cab06d2b80": "Actualización {version} descargada. Haz clic para reiniciar e instalar.",
-  "52e1d4a487c0cf4b": "Falló la instalación de {version}. Haz clic para reintentarlo.",
   "78a04e0e625c0990": "Falló la actualización",
   "c24de5eb69373a55": "Esta compilación {build} ignora las versiones {track}. Revisa el canal de actualizaciones en Ajustes para terminar el cambio.",
   "b02ae45a6109c93b": "Actualizado",
@@ -3078,6 +3079,10 @@
   "4094c385ce0a6493": "No se pudo iniciar la entrada de voz",
   "47e93194d837912b": "Apple Speech no admite este idioma.",
   "f9bebb0ec6c93680": "Apple Speech no está disponible en este Mac.",
+  "fa06565b3576fdae": "Response summary",
+  "fcc72724c26e3087": "Full response",
+  "2361c8287401c2b3": "Could not read response aloud.",
+  "b01aa606db310b1a": "Could not play synthesized speech.",
   "14ff185a0153700e": "Ningún modelo coincide con tu idioma. Elige un modelo o cambia el idioma en los ajustes de Voz.",
   "ff4cf071e91f7617": "No se pudieron cargar los modelos de transcripción. Comprueba la conexión y vuelve a intentarlo.",
   "8fc9dbbfebef2a39": "La entrada de voz no está disponible",
@@ -3638,7 +3643,6 @@
   "4e0710d19dfc2e7e": "¿Enviar este informe al equipo de T3?",
   "87d0ae0723ba75d1": "Esto es todo lo que sale de tu máquina. No se envía nada hasta que pulses Enviar.",
   "bf19826f81484328": "Incluir la conversación",
-  "260c6b45f52d2f27": "Añade el texto de tus mensajes y de las respuestas del agente en {textTurns, plural, one {el último turno} other {los últimos {textTurns} turnos}}.",
   "ddb7e6f8ce99e657": "Solo quien pueda ejecutar agentes en esta máquina puede enviarlo o rechazarlo.",
   "03c1eb603c112f47": "No enviar",
   "653405e4ed498d9f": "Enviar",
@@ -4404,9 +4408,14 @@
   "991cc9fb37606c91": "(respuesta vacía)",
   "36e4b8d2db087296": "Bifurcar desde esta respuesta",
   "c92a0bab54261695": "Responder a esta respuesta",
+  "154bec57dbece73c": "Stop reading",
+  "14ed6325d92638e8": "Read response",
   "405a3e88ee6e62b3": "No se pueden listar los cambios de este turno en este repositorio.",
   "f6958f38dc87c712": "Bifurcar desde esta respuesta",
   "72f8e14b1246d224": "Responder a esta respuesta",
+  "41dacf2a84a045ac": "Stop reading",
+  "fae3f399c502e87b": "Read summary",
+  "ca2631a2759df692": "Read full text",
   "01d7728e893c281d": "Ir al mensaje: {text}",
   "e5428a0daffa236c": "Mensaje del usuario",
   "d18107d06a0eb562": "Turno anterior",
@@ -8754,9 +8763,13 @@
   "ed83b25c71c98a20": "Elige uno o más {scope}s de {tracker} para cada proyecto. Sus issues aparecen junto a las del repositorio, y los agentes crean issues nuevas en el primero, salvo que se les pida otro.",
   "19c2d5e81ff8f89a": "{scope} de {tracker} para {project}",
   "68e061510b765772": "Sin vincular",
+  "99d51127f573296b": "Otra cuenta",
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
   "a2d95d39d3398bda": "Credencial rechazada",
   "9eae463720500113": "Guardado en el servidor.",
   "b6e27ab2537ef874": "Crear uno",
+  "6d8e4ebc889bace9": "Añadir cuenta",
   "13ef526271b0f5d4": "Borrar todas las condiciones",
   "d1938a629f039515": "Quitar condición",
   "84a605b241ce65b7": "Quitar grupo y sus condiciones",
@@ -12598,6 +12611,16 @@
   "156ff7b625287a1e": "Ocultar omitidos",
   "69b985b97ab45e6b": "Mostrar {count} omitidos",
   "2400254d362de84d": "Cargando ejecuciones de flujos de trabajo…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Un archivo de flujo de trabajo tiene un problema."
+    },
+    " ",
+    "Sigue en ejecución la última versión que sí cargó."
+  ],
+  "ed8ce6ebc73dc12d": "Abrir el archivo",
   "145e1f7503ba3b2c": [
     "Este entorno no tiene ninguna ejecución con ese enlace.",
     " ",
@@ -12623,16 +12646,6 @@
       "c": "Leer la guía"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "Un archivo de flujo de trabajo tiene un problema."
-    },
-    " ",
-    "Sigue en ejecución la última versión que sí cargó."
-  ],
-  "ed8ce6ebc73dc12d": "Abrir el archivo",
   "5d8d278ff828102d": "Todos los flujos de trabajo",
   "39459da07479f482": "Agente",
   "7741243632056b81": "{step} · transcripción",
@@ -12777,9 +12790,5 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
-  "99d51127f573296b": "Otra cuenta",
-  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
-  "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
 }

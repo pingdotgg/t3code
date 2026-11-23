@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Tour {turn} · {what}",
   "dfdaa6255a416140": "Résumé de {turns, plural, one {{turns} tour récent} other {{turns} tours récents}}, {textTurns, plural, =0 {sans texte des messages} one {avec le texte des messages du dernier tour} other {avec le texte des messages des {textTurns} derniers tours}}{truncated, select, yes {, raccourci pour tenir dans la limite} other {}}",
+  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
   "afac52a5cc2dc801": "Impossible d'envoyer votre réponse. Réessayez.",
   "79d776428f4d0650": "Le fichier n’a pas pu être chargé. Reconnectez-vous et réessayez.",
   "3ea34cbb1ca5ba9b": "Aperçu annulé.",
@@ -2733,9 +2734,9 @@
   "db7b3a938c45e56c": "Mise à jour {version} prête à être téléchargée",
   "9a951140b69ba740": "Téléchargement de la mise à jour ({percent} %)",
   "7fdece033260e9fb": "Téléchargement de la mise à jour",
+  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "09ef51903e99e876": "Mise à jour téléchargée. Cliquez pour redémarrer et l’installer.",
   "d62631cab06d2b80": "Mise à jour {version} téléchargée. Cliquez pour redémarrer et l’installer.",
-  "52e1d4a487c0cf4b": "Échec de l’installation de {version}. Cliquez pour réessayer.",
   "78a04e0e625c0990": "Échec de la mise à jour",
   "c24de5eb69373a55": "Cette version {build} ignore les versions {track}. Vérifiez le canal de mise à jour dans les Réglages pour terminer le changement.",
   "b02ae45a6109c93b": "À jour",
@@ -3078,6 +3079,10 @@
   "4094c385ce0a6493": "Impossible de démarrer la saisie vocale",
   "47e93194d837912b": "Apple Speech ne prend pas en charge cette langue.",
   "f9bebb0ec6c93680": "Apple Speech n’est pas disponible sur ce Mac.",
+  "fa06565b3576fdae": "Response summary",
+  "fcc72724c26e3087": "Full response",
+  "2361c8287401c2b3": "Could not read response aloud.",
+  "b01aa606db310b1a": "Could not play synthesized speech.",
   "14ff185a0153700e": "Aucun modèle ne correspond à votre langue. Choisissez un modèle ou changez de langue dans les paramètres Voix.",
   "ff4cf071e91f7617": "Impossible de charger les modèles de transcription. Vérifiez la connexion et réessayez.",
   "8fc9dbbfebef2a39": "La saisie vocale n’est pas disponible",
@@ -3638,7 +3643,6 @@
   "4e0710d19dfc2e7e": "Envoyer ce rapport à l'équipe T3 ?",
   "87d0ae0723ba75d1": "Voici tout ce qui quitte votre machine. Rien n'est envoyé tant que vous ne cliquez pas sur Envoyer.",
   "bf19826f81484328": "Inclure la conversation",
-  "260c6b45f52d2f27": "Ajoute le texte de vos messages et des réponses de l'agent dans {textTurns, plural, one {le dernier tour} other {les {textTurns} derniers tours}}.",
   "ddb7e6f8ce99e657": "Seule une personne autorisée à exécuter des agents sur cette machine peut l'envoyer ou le refuser.",
   "03c1eb603c112f47": "Ne pas envoyer",
   "653405e4ed498d9f": "Envoyer",
@@ -4405,9 +4409,14 @@
   "991cc9fb37606c91": "(réponse vide)",
   "36e4b8d2db087296": "Créer un fork depuis cette réponse",
   "c92a0bab54261695": "Répondre à cette réponse",
+  "154bec57dbece73c": "Stop reading",
+  "14ed6325d92638e8": "Read response",
   "405a3e88ee6e62b3": "Impossible de lister les modifications de ce tour dans ce dépôt.",
   "f6958f38dc87c712": "Créer un fork depuis cette réponse",
   "72f8e14b1246d224": "Répondre à cette réponse",
+  "41dacf2a84a045ac": "Stop reading",
+  "fae3f399c502e87b": "Read summary",
+  "ca2631a2759df692": "Read full text",
   "01d7728e893c281d": "Aller au message : {text}",
   "e5428a0daffa236c": "Message de l’utilisateur",
   "d18107d06a0eb562": "Tour précédent",
@@ -8755,9 +8764,13 @@
   "ed83b25c71c98a20": "Choisissez un ou plusieurs {scope}s {tracker} pour chaque projet. Leurs tickets s'affichent à côté de ceux du dépôt, et les agents créent les nouveaux tickets dans le premier, sauf si vous leur indiquez une autre destination.",
   "19c2d5e81ff8f89a": "{scope} {tracker} pour {project}",
   "68e061510b765772": "Non lié",
+  "99d51127f573296b": "Autre compte",
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
   "a2d95d39d3398bda": "Identifiant refusé",
   "9eae463720500113": "Stocké sur le serveur.",
   "b6e27ab2537ef874": "En créer un",
+  "6d8e4ebc889bace9": "Ajouter un compte",
   "13ef526271b0f5d4": "Effacer toutes les conditions",
   "d1938a629f039515": "Supprimer la condition",
   "84a605b241ce65b7": "Supprimer le groupe et ses conditions",
@@ -12603,6 +12616,16 @@
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "Un fichier de workflow présente un problème."
+    },
+    " ",
+    "La dernière version valide continue de s’exécuter."
+  ],
+  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "145e1f7503ba3b2c": [
     "Cet environnement n’a aucune exécution avec ce lien.",
     " ",
@@ -12628,16 +12651,6 @@
       "c": "Lire le guide"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "Un fichier de workflow présente un problème."
-    },
-    " ",
-    "La dernière version valide continue de s’exécuter."
-  ],
-  "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transcription",
@@ -12782,9 +12795,5 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
-  "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
-  "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
 }

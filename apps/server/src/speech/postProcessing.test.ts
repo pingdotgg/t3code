@@ -79,3 +79,53 @@ it.effect("cleanup pinned to a provider that cannot generate text uses the text 
     );
   }),
 );
+
+it.effect("synthesizes full cleaned markdown and summarizes long replies in summary mode", () =>
+  Effect.gen(function* () {
+    const synthesized = yield* Ref.make<string[]>([]);
+    const fakeWav = new Uint8Array([82, 73, 70, 70]);
+    const layer = Layer.effect(
+      SpeechPostProcessing.SpeechPostProcessing,
+      SpeechPostProcessing.make((text) =>
+        Ref.update(synthesized, (previous) => [...previous, text]).pipe(Effect.as(fakeWav)),
+      ),
+    ).pipe(
+      Layer.provide(
+        Layer.succeed(TextGeneration.TextGeneration, {
+          generateTranscriptionPostProcessing: () =>
+            Effect.succeed({ transcription: "Short spoken summary." }),
+        } as unknown as TextGeneration.TextGeneration["Service"]),
+      ),
+      Layer.provide(
+        Layer.succeed(ProviderRegistry.ProviderRegistry, {
+          getProviders: Effect.succeed([]),
+        } as unknown as ProviderRegistry.ProviderRegistry["Service"]),
+      ),
+      Layer.provide(
+        ServerSettings.layerTest({
+          textGenerationModelSelection: textGenerationSelection,
+        }),
+      ),
+      Layer.provide(NodeServices.layer),
+    );
+    yield* Effect.gen(function* () {
+      const postProcessing = yield* SpeechPostProcessing.SpeechPostProcessing;
+      const fullResult = yield* postProcessing.synthesize({
+        text: "### Heading\nHere is [a link](https://example.com) and:\n```ts\nconst x = 1;\n```",
+        mode: "full",
+      });
+      assert.deepStrictEqual(fullResult, fakeWav);
+      const longReply = `${"This is a detailed explanation of the architectural change. ".repeat(8)}\n\`\`\`ts\nexport const value = 42;\n\`\`\``;
+      const summaryResult = yield* postProcessing.synthesize({
+        text: longReply,
+        mode: "summary",
+      });
+      assert.deepStrictEqual(summaryResult, fakeWav);
+    }).pipe(Effect.provide(layer));
+    const calls = yield* Ref.get(synthesized);
+    assert.deepStrictEqual(calls, [
+      "Heading Here is a link and: Code block omitted.",
+      "Short spoken summary.",
+    ]);
+  }),
+);
