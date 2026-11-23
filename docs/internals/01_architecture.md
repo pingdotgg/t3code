@@ -11,14 +11,14 @@ but its renderer follows the same boundary.
   and project files.
 - **Client runtime (`packages/client-runtime`).** Owns shared connection management and domain
   state across web, desktop, and mobile so reconnect and multi-environment behavior do not diverge.
-  Clients supply platform services and UI. See [connection runtime](./09.connection-runtime.md) and
-  [remote environments](./05.remote.md).
+  Clients supply platform services and UI. See [connection runtime](./09_connection-runtime.md) and
+  [remote environments](./05_remote.md).
 - **Contracts (`packages/contracts`).** The typed wire boundary between independently versioned
   clients and servers. Subscriptions send only the state a client needs. Authentication of a socket
-  does not authorize every method on it; see [environment auth](./04.environment-auth.md).
+  does not authorize every method on it; see [environment auth](./04_environment-auth.md).
 - **Providers (`packages/provider-*`).** Provider-specific protocols and quirks stay behind an
   adapter. Orchestration and clients read capabilities, never provider names. See
-  [providers](./03.providers.md).
+  [providers](./03_providers.md).
 
 ## Settings ownership
 
@@ -65,5 +65,5 @@ Native modules never load on the Electron main process startup path. Native capa
 crash or stall (such as accessibility or window-capture helpers) run in isolated child processes or
 workers with deadlines, never as top-level imports in main.
 
-See the [glossary](./00.glossary.md) for shared terms and the
-[development runbook](../operations/development.md) for setup and checks.
+See the [glossary](./00_glossary.md) for shared terms and the
+[development runbook](../operations/00_development.md) for setup and checks.

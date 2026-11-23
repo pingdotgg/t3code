@@ -1,7 +1,7 @@
 # Glossary
 
 Shared vocabulary across T3 Code. Architecture and lifecycle constraints belong in the
-[architecture](./01.architecture.md).
+[architecture](./01_architecture.md).
 
 ## Workspace and conversation
 

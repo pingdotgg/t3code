@@ -68,4 +68,4 @@ through `/api/preview/tunnel` on the environment's own origin:
   it; a server discovered already running must survive client disconnect.
 - Remote servers outlive client releases. Clients negotiate features via advertised capabilities
   rather than assuming version parity. Process replacement uses the
-  [update protocol](./07.server-updates.md).
+  [update protocol](./07_server-updates.md).

@@ -2,7 +2,7 @@
 
 Home and thread routes share the [root native stack](../../apps/mobile/src/Stack.tsx) so UIKit
 animates headers within one navigation controller; the iPad sidebar has its own stack. See
-[Mobile layout](./11.mobile-layout.md) for how the stack maps to columns, sheets, and panes.
+[Mobile layout](./11_mobile-layout.md) for how the stack maps to columns, sheets, and panes.
 
 ## Selecting versus drilling in
 

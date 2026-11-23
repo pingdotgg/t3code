@@ -11,13 +11,13 @@ traces. Opt-in offline holding stores raw webhook requests in a per-link Durable
 ([`HookInboxObject.ts`](../../infra/relay/src/hooks/HookInboxObject.ts)) rather than Queues or
 Postgres because held requests need per-link ordering, retry timing, and larger payload limits.
 
-Deployment and Clerk configuration live in the [Connect setup runbook](../operations/connect-setup.md).
+Deployment and Clerk configuration live in the [Connect setup runbook](../operations/02_connect-setup.md).
 
 ## The relay is a trusted broker
 
 - **DPoP-bound bootstrap minting.** For a linked user, the relay asks the environment to mint a
   one-time bootstrap credential bound to the client's DPoP key. The client redeems it directly with
-  the environment for an [environment session](./04.environment-auth.md). The relay never sees session
+  the environment for an [environment session](./04_environment-auth.md). The relay never sees session
   tokens, and a bootstrap credential is useless without the client's proof key.
 - **Mutual authentication.** The environment accepts only bounded, replay-guarded relay proofs for
   its own identity, linked user, and operation; the relay verifies signed environment responses

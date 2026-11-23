@@ -12,7 +12,7 @@ Threshold monitors in [`infra/relay/src/monitoring.ts`](../../infra/relay/src/mo
 - **Environments unreachable:** Check Cloudflare Tunnel status and recent relay deploys before blaming hosts.
 - **Push delivery failing:** Inspect `relay.apns_deliveries.process_signed_job` or `relay.fcm.process` errors—an expired APNs key or FCM service account fails every job.
 - **Traffic dropped:** Check `https://relay.t3.codes/health` first.
-- **Tunnel cleanup stopped / deletions failing:** Check `relay.managed_endpoint_reaper.sweep` spans and Cloudflare API errors. To pause cleanup during an incident, set `RELAY_TUNNEL_CLEANUP_MODE=off` and redeploy the relay (see [Managed tunnel cleanup rollout](./release.md#managed-tunnel-cleanup-rollout)).
+- **Tunnel cleanup stopped / deletions failing:** Check `relay.managed_endpoint_reaper.sweep` spans and Cloudflare API errors. To pause cleanup during an incident, set `RELAY_TUNNEL_CLEANUP_MODE=off` and redeploy the relay (see [Managed tunnel cleanup rollout](./03_release.md#managed-tunnel-cleanup-rollout)).
 
 ## Mobile crashes and errors
 

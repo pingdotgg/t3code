@@ -1,7 +1,7 @@
 # Environment authentication
 
 The environment issues its own sessions and enforces their capabilities. Cloud identity and relay
-credentials belong to a separate trust boundary, described in [T3 Connect](./06.t3-connect.md). A relay
+credentials belong to a separate trust boundary, described in [T3 Connect](./06_t3-connect.md). A relay
 token is never an environment login. See [SECURITY.md](../../SECURITY.md) for the overall threat
 model.
 
@@ -42,7 +42,7 @@ model.
   registration so unauthenticated callers cannot grow server state. Users grant read-only access or
   a runtime-mode ceiling rather than raw scopes. Every non-`/mcp` HTTP and WebSocket route rejects
   `mcp-client` sessions (except the read-only thread relay and client-pairing routes restricted to
-  [peer links](./05.remote.md#peer-links)). Every MCP tool must statically declare its access level in
+  [peer links](./05_remote.md#peer-links)). Every MCP tool must statically declare its access level in
   [`McpToolAccess.ts`](../../apps/server/src/mcp/McpToolAccess.ts), and thread-only tools must still
   refuse outside callers in handlers—hiding from tool listings is only discovery.
 - **Peer-link client pairing.** Only a full-access peer link may mint a one-time client pairing on
@@ -53,7 +53,7 @@ model.
 ### Reusable dev credential
 
 Web development servers can accept a fixed `T3CODE_DEV_AUTH_TOKEN` across worktrees and ports on one
-hostname (see the [development runbook](../operations/development.md#reusable-dev-credential)). It
+hostname (see the [development runbook](../operations/00_development.md#reusable-dev-credential)). It
 grants administrative access and is ignored by desktop and non-development servers.
 
 Each environment hashes the value into its own database record and keeps independent SQLite state,

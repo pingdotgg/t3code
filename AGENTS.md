@@ -43,7 +43,7 @@ Of note: Most T3 Code contributions will come from T3 Code itself, often control
 ## Terminology
 
 - **you** = the agent reading this file. **we / us / maintainers** = Theo, Julius, and the people building T3 Code. **user** = person driving coding agents in T3 Code. **agent** = coding agent running inside T3 Code.
-- Domain terms (environment, project, thread, turn, provider, checkpoint, etc.): [00.glossary.md](docs/internals/00.glossary.md).
+- Domain terms (environment, project, thread, turn, provider, checkpoint, etc.): [00_glossary.md](docs/internals/00_glossary.md).
 
 ## The three ways to hurt yourself
 
@@ -62,12 +62,12 @@ The most common defect in this repo is a change that works on the path you teste
 - **Contracts.** Wire changes go in `packages/contracts` so server, web, mobile, and desktop follow.
 - **Reverse states.** Every way in needs a way out and a way to see it (snooze/unsnooze, close/reopen). A one-way door is a bug.
 - **Connection modes.** Local, remote/relay, and tunnel; multi-device and multi-environment.
-- **Languages.** Translate user-facing copy in `apps/{web,mobile}/src/i18n/translations` (`vp run i18n:generate` / `vp run i18n:check`) and `apps/marketing/src/i18n`. See [14.i18n.md](docs/internals/14.i18n.md).
+- **Languages.** Translate user-facing copy in `apps/{web,mobile}/src/i18n/translations` (`vp run i18n:generate` / `vp run i18n:check`) and `apps/marketing/src/i18n`. See [14_i18n.md](docs/internals/14_i18n.md).
 - **Docs.** Check whether the change makes existing guidance inaccurate. Follow [Documentation](#documentation).
 
 ## Dev servers and test data
 
-See [development.md](docs/operations/development.md) for setup, ports, seeding (`vp run migrate-dev-db`), and [reusable dev auth](docs/operations/development.md#reusable-dev-credential). Agent-specific rules:
+See [00_development.md](docs/operations/00_development.md) for setup, ports, seeding (`vp run migrate-dev-db`), and [reusable dev auth](docs/operations/00_development.md#reusable-dev-credential). Agent-specific rules:
 
 - **Worktree setup:** Wait while `.t3/setup-running` names a live PID; do not run `vp i` concurrently. If no `.t3/setup-*` marker exists, run `vp i` yourself.
 - **Process lifecycle:** Start dev servers, Metro, and builds from your own shell so they exit with your session—never detach with `systemd-run`, `nohup`, `setsid`, or `tmux` unless asked. Stop background tasks with your harness's own stop (`vp` does not forward SIGTERM to child Vite/server processes).
@@ -79,7 +79,7 @@ See [development.md](docs/operations/development.md) for setup, ports, seeding (
 
 - Before you push, run `vp run check:changed`. **Do not run repo-wide checks** (`vp check`, `vp run -r test`, `vp run -r typecheck`) unless asked—CI owns the full suite.
 - Iterate with `vp test run <files>` (add `-t "<name>"` for large files) and `vp run typecheck` (`effect-tsgo tsrs --noEmit`). Run `node -e` snippets from the owning package (`effect` does not resolve from repo root).
-- Follow [15.testing.md](docs/internals/15.testing.md) for what to test, bug-fix proof, draining async work (no sleeps/polling), web browser tests (`await using screen = await render(...)`), and real-app [Scenarios](docs/internals/15.testing.md#scenarios) (`vp run scenarios:prove`).
+- Follow [15_testing.md](docs/internals/15_testing.md) for what to test, bug-fix proof, draining async work (no sleeps/polling), web browser tests (`await using screen = await render(...)`), and real-app [Scenarios](docs/internals/15_testing.md#scenarios) (`vp run scenarios:prove`).
 - Give user-visible frontend changes one integrated pass in a real client: `test-t3-app` for web, `test-t3-mobile` for mobile (primary agent only; subagents do not launch dev servers). Inspect the rendered result and walk the flow as a user using the feature—checking layout, visual hierarchy, and ergonomics—and fix anything rough until you are satisfied before handing back. Use the free `Replay (dev)` provider unless the change depends on a real provider (then pick its cheapest model, e.g. Haiku or Luna). On mobile, run `vp run mobile:install <ios|android> [device-id]` before Metro rather than rebuilding from scratch.
 
 ## Evals
@@ -89,7 +89,7 @@ See [development.md](docs/operations/development.md) for setup, ports, seeding (
 ## Pull requests
 
 - Never make a PR unless the developer explicitly asks you to do so.
-- `origin` is not always GitHub. Check `git remote get-url origin` before your first forge command and use that forge's CLI and skill. See [Forge mirror](docs/operations/development.md#forge-mirror-optional).
+- `origin` is not always GitHub. Check `git remote get-url origin` before your first forge command and use that forge's CLI and skill. See [Forge mirror](docs/operations/00_development.md#forge-mirror-optional).
 - Conventional commit titles, plain language: `fix(web): new threads no longer spike CPU`.
 - Body: the problem in a sentence or two, then how you fixed it. End with the model and harness that did the work.
 - UI changes need before/after images; motion or timing needs a short video. Upload PR evidence to GitHub—never commit PR-only screenshots or assets.
@@ -114,7 +114,7 @@ Most code changes do not need an internal documentation change. Agents can read 
 
 ## Where code lives
 
-- `apps/server` - WebSocket, event-sourced orchestration (`Orchestrator` → `EventSink` → `EffectWorker`), providers, checkpointing. Read [02.effect-services.md](docs/internals/02.effect-services.md) and `.repos/effect/LLMS.md`.
+- `apps/server` - WebSocket, event-sourced orchestration (`Orchestrator` → `EventSink` → `EffectWorker`), providers, checkpointing. Read [02_effect-services.md](docs/internals/02_effect-services.md) and `.repos/effect/LLMS.md`.
 - `apps/web` - React/Vite UI. `apps/desktop` wraps it; `apps/mobile` is React Native; `apps/marketing` is the site.
 - `packages/contracts` - Effect/Schema wire contracts plus small derived helpers. No heavy runtime logic.
 - `packages/shared` - shared runtime utils, subpath exports, no barrel.
@@ -127,28 +127,28 @@ Read the matching doc before changing code in that area; code review enforces th
 
 | Area                                       | Read first                                                                                                                                                                                        |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Architecture & orchestration               | [00.glossary.md](docs/internals/00.glossary.md), [01.architecture.md](docs/internals/01.architecture.md)                                                                                          |
-| Server Effect services & errors            | [02.effect-services.md](docs/internals/02.effect-services.md)                                                                                                                                     |
-| Providers & ACP                            | [03.providers.md](docs/internals/03.providers.md)                                                                                                                                                 |
-| Auth, MCP, guest links, assets, security   | [04.environment-auth.md](docs/internals/04.environment-auth.md), [SECURITY.md](SECURITY.md)                                                                                                       |
-| Remote routes, peer links, previews        | [05.remote.md](docs/internals/05.remote.md)                                                                                                                                                       |
-| T3 Connect & relay                         | [06.t3-connect.md](docs/internals/06.t3-connect.md)                                                                                                                                               |
-| Server updates & crash recovery            | [07.server-updates.md](docs/internals/07.server-updates.md)                                                                                                                                       |
-| Telemetry & analytics                      | [08.product-analytics.md](docs/internals/08.product-analytics.md)                                                                                                                                 |
-| Client connection & sync runtime           | [09.connection-runtime.md](docs/internals/09.connection-runtime.md)                                                                                                                               |
-| Web UI primitives, styles & React Compiler | [10.web-ui.md](docs/internals/10.web-ui.md)                                                                                                                                                       |
-| Mobile layout, navigation & dev lifecycle  | [11.mobile-layout.md](docs/internals/11.mobile-layout.md), [12.mobile-navigation.md](docs/internals/12.mobile-navigation.md), [13.mobile-development.md](docs/internals/13.mobile-development.md) |
-| Translations & UI copy                     | [14.i18n.md](docs/internals/14.i18n.md)                                                                                                                                                           |
-| Writing & reviewing tests                  | [15.testing.md](docs/internals/15.testing.md)                                                                                                                                                     |
-| Wire budgets, server metrics & perf        | [16.performance-regressions.md](docs/internals/16.performance-regressions.md)                                                                                                                     |
-| Repo & package scripts                     | [17.scripts.md](docs/internals/17.scripts.md)                                                                                                                                                     |
+| Architecture & orchestration               | [00_glossary.md](docs/internals/00_glossary.md), [01_architecture.md](docs/internals/01_architecture.md)                                                                                          |
+| Server Effect services & errors            | [02_effect-services.md](docs/internals/02_effect-services.md)                                                                                                                                     |
+| Providers & ACP                            | [03_providers.md](docs/internals/03_providers.md)                                                                                                                                                 |
+| Auth, MCP, guest links, assets, security   | [04_environment-auth.md](docs/internals/04_environment-auth.md), [SECURITY.md](SECURITY.md)                                                                                                       |
+| Remote routes, peer links, previews        | [05_remote.md](docs/internals/05_remote.md)                                                                                                                                                       |
+| T3 Connect & relay                         | [06_t3-connect.md](docs/internals/06_t3-connect.md)                                                                                                                                               |
+| Server updates & crash recovery            | [07_server-updates.md](docs/internals/07_server-updates.md)                                                                                                                                       |
+| Telemetry & analytics                      | [08_product-analytics.md](docs/internals/08_product-analytics.md)                                                                                                                                 |
+| Client connection & sync runtime           | [09_connection-runtime.md](docs/internals/09_connection-runtime.md)                                                                                                                               |
+| Web UI primitives, styles & React Compiler | [10_web-ui.md](docs/internals/10_web-ui.md)                                                                                                                                                       |
+| Mobile layout, navigation & dev lifecycle  | [11_mobile-layout.md](docs/internals/11_mobile-layout.md), [12_mobile-navigation.md](docs/internals/12_mobile-navigation.md), [13_mobile-development.md](docs/internals/13_mobile-development.md) |
+| Translations & UI copy                     | [14_i18n.md](docs/internals/14_i18n.md)                                                                                                                                                           |
+| Writing & reviewing tests                  | [15_testing.md](docs/internals/15_testing.md)                                                                                                                                                     |
+| Wire budgets, server metrics & perf        | [16_performance-regressions.md](docs/internals/16_performance-regressions.md)                                                                                                                     |
+| Repo & package scripts                     | [17_scripts.md](docs/internals/17_scripts.md)                                                                                                                                                     |
 
 ## Taste
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
 - Client mutations use `createEnvironmentRpcCommand`, declare protected methods in `CLIENT_GUARDED_RPC_SCOPES`, and gate UI with `permissionAtom` (server stays authoritative). Keep raw RPC clients inside `rpc/`.
-- Server features are Effect services using `Effect.fn("Service.operation")` with thin transport handlers; see [02.effect-services.md](docs/internals/02.effect-services.md).
-- `apps/web/src/components/ui` exports own their look (`shadcn/no-restyle` enforces this); see [10.web-ui.md](docs/internals/10.web-ui.md).
+- Server features are Effect services using `Effect.fn("Service.operation")` with thin transport handlers; see [02_effect-services.md](docs/internals/02_effect-services.md).
+- `apps/web/src/components/ui` exports own their look (`shadcn/no-restyle` enforces this); see [10_web-ui.md](docs/internals/10_web-ui.md).
 - Inferred types over annotations. `any` is the enemy.
 - Default to no comment. Write one only for a constraint, external quirk, or invariant the code can't show (1–4 lines max; `t3code/no-low-value-comments` enforces this).
 - React effects are only for synchronizing with external systems. Derive in render and act in handlers; any remaining effect states its reason via `// oxlint-disable-next-line t3code/no-unreasoned-state-sync -- <why>`.

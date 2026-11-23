@@ -22,7 +22,7 @@ vp i
 vp run dev
 ```
 
-Open the pairing URL printed by the dev runner (the bare origin does not authenticate a new browser). Prefer a container? See [Dev container](./devcontainer.md).
+Open the pairing URL printed by the dev runner (the bare origin does not authenticate a new browser). Prefer a container? See [Dev container](./01_devcontainer.md).
 
 ## Forge mirror (optional)
 
@@ -58,7 +58,7 @@ openssl rand -hex 32
 # Add to .env: T3CODE_DEV_AUTH_TOKEN=<value>
 ```
 
-Restart `vp run dev --share` and open its printed pairing URL once per browser profile. Never commit or publish the token or startup URLs. Desktop and non-dev servers ignore it; see [environment auth](../internals/04.environment-auth.md#reusable-dev-credential).
+Restart `vp run dev --share` and open its printed pairing URL once per browser profile. Never commit or publish the token or startup URLs. Desktop and non-dev servers ignore it; see [environment auth](../internals/04_environment-auth.md#reusable-dev-credential).
 
 ## Checks
 
@@ -111,4 +111,4 @@ Install Rust, Python 3, and Visual Studio Build Tools (**Desktop development wit
 rustup target add x86_64-pc-windows-msvc   # or aarch64-pc-windows-msvc
 ```
 
-WSL support also requires passing the Linux CLI archive via `--wsl-runtime`; see [release runbook](./release.md#windows-payload-topology-and-update-validation). For signing and macOS passkeys, see [release](./release.md) and [Connect setup](./connect-setup.md#desktop-passkeys).
+WSL support also requires passing the Linux CLI archive via `--wsl-runtime`; see [release runbook](./03_release.md#windows-payload-topology-and-update-validation). For signing and macOS passkeys, see [release](./03_release.md) and [Connect setup](./02_connect-setup.md#desktop-passkeys).
