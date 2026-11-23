@@ -207,7 +207,10 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
-    Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
+    Layer.mock(PullRequestService.PullRequestService)({
+      addressedProject: () => Effect.succeed(project ?? undefined),
+      ...options.pullRequests,
+    }),
     Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
@@ -413,6 +416,18 @@ describe("pull request toolkit handlers", () => {
       expect(yield* Ref.get(harness.commands)).toMatchObject([
         { type: "thread.pull-request.link", number: 123, url: supplied },
       ]);
+    }),
+  );
+
+  it.effect("says when repository is not owner/repo on a known host", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ project: makeProject() });
+      const error = yield* harness
+        .call("link_pull_request", { repository: "github.com/org/repo", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestRepositoryInvalidError" });
+      expect(error.message).toContain("owner/repo");
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
