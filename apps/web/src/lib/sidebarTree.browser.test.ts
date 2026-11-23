@@ -163,6 +163,111 @@ describe("sidebar keyboard navigation", () => {
     expect(tree.root.scrollTop).toBe(0);
   });
 
+  it("restores focus at the former row index when both the focused row and its parent disappear", async () => {
+    using tree = setup();
+    tree.row("first");
+    const parent = tree.row("project");
+    const focused = tree.row("thread", "project");
+    tree.row("next");
+    const atFormerIndex = tree.row("former-index");
+    tree.row("last");
+    tree.install();
+    focused.focus();
+
+    parent.remove();
+    focused.remove();
+
+    await vi.waitFor(() => expect(document.activeElement).toBe(atFormerIndex));
+  });
+
+  it("reuses row positions across focus changes until the DOM changes", () => {
+    using tree = setup();
+    const first = tree.row("first");
+    const second = tree.row("second");
+    const third = tree.row("third");
+    tree.install();
+    using queryRows = vi.spyOn(tree.root, "querySelectorAll");
+
+    first.focus();
+    queryRows.mockClear();
+    second.focus();
+    third.focus();
+    expect(document.activeElement).toBe(third);
+    expect(queryRows).not.toHaveBeenCalled();
+
+    const added = tree.row("added");
+    added.focus();
+    expect(document.activeElement).toBe(added);
+    expect(queryRows).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes the remembered index after rows insert above the focused row before removal", async () => {
+    using tree = setup();
+    const parent = tree.row("parent");
+    const target = tree.row("target", "parent");
+    const afterTarget = tree.row("after-target");
+    tree.install();
+
+    target.focus();
+    expect(document.activeElement).toBe(target);
+
+    // First mutation: insert two rows above the focused row while it stays mounted and focused.
+    const insertedA = document.createElement("button");
+    insertedA.dataset.sidebarRow = "inserted-a";
+    const insertedB = document.createElement("button");
+    insertedB.dataset.sidebarRow = "inserted-b";
+    tree.root.prepend(insertedA, insertedB);
+    await Promise.resolve();
+    expect(document.activeElement).toBe(target);
+
+    // Second mutation: remove both the focused row and its parent; focus should land at the updated index.
+    parent.remove();
+    target.remove();
+    await vi.waitFor(() => expect(document.activeElement).toBe(afterTarget));
+  });
+
+  it("ignores non-row content updates inside a row without rescanning the sidebar", async () => {
+    using tree = setup();
+    const first = tree.row("first");
+    const second = tree.row("second");
+    tree.install();
+    first.focus();
+    expect(document.activeElement).toBe(first);
+
+    using queryRows = vi.spyOn(tree.root, "querySelectorAll");
+    queryRows.mockClear();
+
+    const icon = document.createElement("span");
+    icon.textContent = "status";
+    second.append(icon);
+    await Promise.resolve();
+    expect(queryRows).not.toHaveBeenCalled();
+
+    // Removing the non-row descendant also avoids a full sidebar scan.
+    icon.remove();
+    await Promise.resolve();
+    expect(queryRows).not.toHaveBeenCalled();
+  });
+
+  it("restores row focus when an inline rename input unmounts so ArrowDown continues navigating", async () => {
+    using tree = setup();
+    const first = tree.row("first");
+    const second = tree.row("second");
+    tree.install();
+
+    const input = document.createElement("input");
+    first.append(input);
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    // Cancelling rename removes the focused input while leaving the row mounted.
+    input.remove();
+    await vi.waitFor(() => expect(document.activeElement).toBe(first));
+
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(second);
+  });
+
   it("does not pull focus back after a click outside the rows", async () => {
     using tree = setup();
     const first = tree.row("first");

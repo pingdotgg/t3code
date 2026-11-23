@@ -86,6 +86,7 @@ import {
   clearBackgroundDraftSubmissionByRef,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
+  resolveComposerDraftKey,
   resolveDraftPromotionNavigationTarget,
   restoreFailedDraftThread,
   subscribeDraftThreadPromotion,
@@ -222,6 +223,100 @@ function draftFor(threadId: ThreadId, environmentId: EnvironmentId = LEGACY_TEST
 function draftByKey(key: string) {
   return useComposerDraftStore.getState().draftsByThreadKey[key] ?? undefined;
 }
+
+describe("composer draft thread lookup", () => {
+  const projectRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("lookup-project"));
+
+  beforeEach(resetComposerDraftStore);
+
+  it("tracks replaced and removed draft sessions while preserving direct composer drafts", () => {
+    const store = useComposerDraftStore.getState();
+    const draftId = DraftId.make("first-draft");
+    const duplicateId = DraftId.make("second-draft");
+    const threadId = ThreadId.make("draft-thread");
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    const remoteRef = scopeThreadRef(OTHER_TEST_ENVIRONMENT_ID, threadId);
+    const serverRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("server-thread"));
+
+    store.setPrompt(threadRef, "direct composer draft");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setProjectDraftThreadId(
+      scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("other-lookup-project")),
+      duplicateId,
+      { threadId },
+    );
+
+    expect(store.getDraftIdByRef(threadRef)).toBe(draftId);
+    expect(store.getDraftThreadByRef(threadRef)).toBe(store.getDraftSession(draftId));
+    expect(store.getDraftIdByRef(remoteRef)).toBeNull();
+    expect(store.getDraftThreadByRef(serverRef)).toBeNull();
+    expect(resolveComposerDraftKey(useComposerDraftStore.getState(), serverRef)).toBe(
+      scopedThreadKey(serverRef),
+    );
+    expect(resolveComposerDraftKey(useComposerDraftStore.getState(), threadRef)).toBe(
+      scopedThreadKey(threadRef),
+    );
+
+    store.setDraftThreadContext(draftId, {
+      projectRef: scopeProjectRef(OTHER_TEST_ENVIRONMENT_ID, projectRef.projectId),
+    });
+    expect(store.getDraftIdByRef(threadRef)).toBe(duplicateId);
+    expect(store.getDraftIdByRef(remoteRef)).toBe(draftId);
+    expect(resolveComposerDraftKey(useComposerDraftStore.getState(), remoteRef)).toBe(draftId);
+
+    store.clearDraftThread(draftId);
+    expect(store.getDraftIdByRef(remoteRef)).toBeNull();
+    expect(resolveComposerDraftKey(useComposerDraftStore.getState(), remoteRef)).toBe(
+      scopedThreadKey(remoteRef),
+    );
+  });
+
+  it("does not enumerate the same draft session record again for other thread lookups", () => {
+    const store = useComposerDraftStore.getState();
+    const draftId = DraftId.make("indexed-draft");
+    const threadId = ThreadId.make("indexed-thread");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+
+    const { draftThreadsByThreadKey } = useComposerDraftStore.getState();
+    const ownKeys = vi.fn(Reflect.ownKeys);
+    const state = {
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: new Proxy(draftThreadsByThreadKey, {
+        ownKeys,
+      }) as typeof draftThreadsByThreadKey,
+    };
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+    expect(resolveComposerDraftKey(state, threadRef)).toBe(draftId);
+    for (let index = 0; index < 32; index++) {
+      const serverRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make(`server-${index}`));
+      expect(resolveComposerDraftKey(state, serverRef)).toBe(scopedThreadKey(serverRef));
+      expect(resolveComposerDraftKey(state, threadRef)).toBe(draftId);
+    }
+    expect(ownKeys).toHaveBeenCalledOnce();
+  });
+
+  it("distinguishes draft refs that serialize to the same scoped key", () => {
+    const store = useComposerDraftStore.getState();
+    const firstRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("nested:thread"));
+    const secondRef = scopeThreadRef(
+      EnvironmentId.make(`${TEST_ENVIRONMENT_ID}:nested`),
+      ThreadId.make("thread"),
+    );
+    const firstDraftId = DraftId.make("first-scoped-draft");
+    const secondDraftId = DraftId.make("second-scoped-draft");
+    store.setProjectDraftThreadId(projectRef, firstDraftId, { threadId: firstRef.threadId });
+    store.setProjectDraftThreadId(
+      scopeProjectRef(secondRef.environmentId, projectRef.projectId),
+      secondDraftId,
+      { threadId: secondRef.threadId },
+    );
+
+    expect(scopedThreadKey(firstRef)).toBe(scopedThreadKey(secondRef));
+    expect(store.getDraftIdByRef(firstRef)).toBe(firstDraftId);
+    expect(store.getDraftIdByRef(secondRef)).toBe(secondDraftId);
+  });
+});
 
 describe("composerDraftStore addImages", () => {
   const threadId = ThreadId.make("thread-dedupe");

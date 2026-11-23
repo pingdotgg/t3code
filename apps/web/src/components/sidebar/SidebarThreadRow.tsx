@@ -61,12 +61,15 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  cloneElement,
   memo,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -127,6 +130,7 @@ import { InlineButton } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { Menu, MenuItem, MenuItemDetail, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { useSharedTooltip, withSharedTooltip } from "../ui/shared-tooltip";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { ActivityShimmerOverlay } from "../chat/TimelineRowParts";
 import { observeVisibleAnimation } from "~/lib/visibleAnimation";
@@ -253,6 +257,77 @@ function SidebarProviderStack(props: {
   );
 }
 
+function isRowTooltipTarget(row: HTMLElement, target: EventTarget | null): boolean {
+  if (!(target instanceof Element) || !row.contains(target)) return false;
+  const control = target.closest('[data-slot="tooltip-trigger"], button, a[href], [role="button"]');
+  return control === null || control === row || !row.contains(control);
+}
+
+function SidebarRowTooltip({
+  children: trigger,
+  renderDetails,
+  disabled,
+}: {
+  children: ReactElement<{
+    render: ReactElement<ComponentProps<"div"> | ComponentProps<"button">>;
+    children: ReactNode;
+  }>;
+  renderDetails: () => ReactNode;
+  disabled: boolean;
+}) {
+  const tooltip = useSharedTooltip({
+    render: renderDetails,
+    contentKey: renderDetails,
+    disabled,
+    side: "right",
+    align: "start",
+    sideOffset: 4,
+    variant: "glass",
+    popupClassName: "max-w-80 text-left whitespace-normal",
+  });
+  if (!tooltip) {
+    return (
+      <Tooltip disabled={disabled}>
+        {trigger}
+        <ThreadHoverCardPopup side="right" align="start" sideOffset={4}>
+          {renderDetails()}
+        </ThreadHoverCardPopup>
+      </Tooltip>
+    );
+  }
+
+  const { render, children } = trigger.props;
+  return withSharedTooltip(
+    cloneElement(render, {
+      onPointerOver: (event: ReactPointerEvent<HTMLElement>) => {
+        const row = event.currentTarget;
+        if (
+          event.pointerType === "touch" ||
+          !(event.relatedTarget instanceof Node) ||
+          !row.contains(event.relatedTarget)
+        ) {
+          return;
+        }
+        // Moving between a nested control and the row surface does not fire pointerenter on the row.
+        const wasOnRow = isRowTooltipTarget(row, event.relatedTarget);
+        const isOnRow = isRowTooltipTarget(row, event.target);
+        if (isOnRow && !wasOnRow) tooltip.onPointerEnter(event);
+        else if (wasOnRow && !isOnRow) tooltip.onPointerDown(event);
+      },
+    }),
+    {
+      ...tooltip,
+      onPointerEnter: (event) => {
+        if (isRowTooltipTarget(event.currentTarget, event.target)) tooltip.onPointerEnter(event);
+      },
+      onFocus: (event) => {
+        if (event.target === event.currentTarget) tooltip.onFocus(event);
+      },
+    },
+    children,
+  );
+}
+
 function SidebarThreadTooltip({
   thread,
   project,
@@ -294,112 +369,107 @@ function SidebarThreadTooltip({
   const gt = useGT();
   const m = useMessages();
   return (
-    <ThreadHoverCardPopup side="right" align="start" sideOffset={4}>
-      <ThreadHoverCard
-        title={thread.title}
-        footer={
-          supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
-            <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-              <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
-            </div>
-          ) : null
-        }
-      >
-        {projectDisplayName ? (
-          <div className="flex min-w-0 items-center gap-2">
-            {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
-            <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
+    <ThreadHoverCard
+      title={thread.title}
+      footer={
+        supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
+          <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
+            <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} maxItems={8} />
           </div>
-        ) : null}
-        {environmentLabel ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <EnvironmentMachineIcon
-              kind={environmentMachine}
-              className="size-3 shrink-0 stroke-muted-foreground"
-            />
-            <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+        ) : null
+      }
+    >
+      {projectDisplayName ? (
+        <div className="flex min-w-0 items-center gap-2">
+          {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
+          <div className="min-w-0 truncate text-foreground/75">{projectDisplayName}</div>
+        </div>
+      ) : null}
+      {environmentLabel ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <EnvironmentMachineIcon
+            kind={environmentMachine}
+            className="size-3 shrink-0 stroke-muted-foreground"
+          />
+          <div className="min-w-0 truncate text-foreground/75">{environmentLabel}</div>
+        </div>
+      ) : null}
+      {thread.branch ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
+          <MiddleTruncate value={thread.branch} className="flex" />
+        </div>
+      ) : null}
+      {worktreePath ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <FolderGit2Icon className="size-3 shrink-0 stroke-muted-foreground" />
+          <MiddleTruncate value={formatWorktreePathForDisplay(worktreePath)} className="flex" />
+        </div>
+      ) : null}
+      {branchMismatch ? (
+        <div className="flex min-w-0 items-start gap-2 text-warning">
+          <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+          <div className="min-w-0 flex-1 wrap-break-word">
+            <T>You're currently checked out on another branch.</T>
           </div>
-        ) : null}
-        {thread.branch ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <GitBranchIcon className="size-3 shrink-0 stroke-muted-foreground" />
-            <MiddleTruncate value={thread.branch} className="flex" />
+        </div>
+      ) : null}
+      {driverKind ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <ProviderInstanceIcon
+            driverKind={driverKind}
+            displayName={
+              providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
+            }
+            accentColor={providerEntry?.accentColor}
+            acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
+            showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
+            badgeContent="none"
+            badgeClassName="h-2 min-w-2 px-0"
+            iconClassName="size-3 shrink-0 opacity-60"
+          />
+          <div className="min-w-0 truncate text-foreground/75">
+            {showInstanceBadge && providerEntry
+              ? `${modelLabel} · ${providerEntry.displayName}`
+              : modelLabel}
           </div>
-        ) : null}
-        {worktreePath ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <FolderGit2Icon className="size-3 shrink-0 stroke-muted-foreground" />
-            <MiddleTruncate value={formatWorktreePathForDisplay(worktreePath)} className="flex" />
+        </div>
+      ) : null}
+      {previousProviderNames.length > 0 ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
+          <div className="min-w-0 truncate text-foreground/75">
+            <T>
+              Handed off from <Var>{previousProviderNames.join(", ")}</Var>
+            </T>
           </div>
-        ) : null}
-        {branchMismatch ? (
-          <div className="flex min-w-0 items-start gap-2 text-warning">
-            <CircleAlertIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
-            <div className="min-w-0 flex-1 wrap-break-word">
-              <T>You're currently checked out on another branch.</T>
-            </div>
+        </div>
+      ) : null}
+      {terminalStatus ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <TerminalIcon aria-hidden className={cn("size-3 shrink-0", terminalStatus.colorClass)} />
+          <div className="min-w-0 truncate text-foreground/75">
+            {terminalProcessLabel(terminalProcessCount, m)}
           </div>
-        ) : null}
-        {driverKind ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <ProviderInstanceIcon
-              driverKind={driverKind}
-              displayName={
-                providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
-              }
-              accentColor={providerEntry?.accentColor}
-              acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
-              acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
-              showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
-              badgeContent="none"
-              badgeClassName="h-2 min-w-2 px-0"
-              iconClassName="size-3 shrink-0 opacity-60"
-            />
-            <div className="min-w-0 truncate text-foreground/75">
-              {showInstanceBadge && providerEntry
-                ? `${modelLabel} · ${providerEntry.displayName}`
-                : modelLabel}
-            </div>
+        </div>
+      ) : null}
+      {thread.runtime?.lastError ? (
+        <div
+          className={cn(
+            "flex min-w-0 items-center gap-2",
+            thread.runtime.lastErrorClass === "usage_limit" ? "text-warning" : "text-error",
+          )}
+        >
+          <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
+          <div className="min-w-0 truncate">
+            {thread.runtime.lastErrorClass === "usage_limit"
+              ? gt("Usage limit reached")
+              : gt("Error occurred")}
           </div>
-        ) : null}
-        {previousProviderNames.length > 0 ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <ArrowRightLeftIcon className="size-3 shrink-0 stroke-muted-foreground" />
-            <div className="min-w-0 truncate text-foreground/75">
-              <T>
-                Handed off from <Var>{previousProviderNames.join(", ")}</Var>
-              </T>
-            </div>
-          </div>
-        ) : null}
-        {terminalStatus ? (
-          <div className="flex min-w-0 items-center gap-2">
-            <TerminalIcon
-              aria-hidden
-              className={cn("size-3 shrink-0", terminalStatus.colorClass)}
-            />
-            <div className="min-w-0 truncate text-foreground/75">
-              {terminalProcessLabel(terminalProcessCount, m)}
-            </div>
-          </div>
-        ) : null}
-        {thread.runtime?.lastError ? (
-          <div
-            className={cn(
-              "flex min-w-0 items-center gap-2",
-              thread.runtime.lastErrorClass === "usage_limit" ? "text-warning" : "text-error",
-            )}
-          >
-            <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
-            <div className="min-w-0 truncate">
-              {thread.runtime.lastErrorClass === "usage_limit"
-                ? gt("Usage limit reached")
-                : gt("Error occurred")}
-            </div>
-          </div>
-        ) : null}
-      </ThreadHoverCard>
-    </ThreadHoverCardPopup>
+        </div>
+      ) : null}
+    </ThreadHoverCard>
   );
 }
 
@@ -869,7 +939,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
     : thread.modelSelection.model;
 
-  const detailsTooltip = (
+  const renderDetails = () => (
     <SidebarThreadTooltip
       thread={checkoutThread}
       project={props.project}
@@ -1324,7 +1394,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={isRenaming || sortable?.isDragging}>
+        <SidebarRowTooltip
+          disabled={isRenaming || sortable?.isDragging === true}
+          renderDetails={renderDetails}
+        >
           <TooltipTrigger
             render={
               <div
@@ -1511,8 +1584,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             </div>
             {multiline ? metaLine : null}
           </TooltipTrigger>
-          {detailsTooltip}
-        </Tooltip>
+        </SidebarRowTooltip>
       </li>
     );
   }
@@ -1530,7 +1602,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging}>
+      <SidebarRowTooltip
+        disabled={isRenaming || snoozeMenuOpen || sortable?.isDragging === true}
+        renderDetails={renderDetails}
+      >
         <TooltipTrigger
           render={
             <div
@@ -1563,7 +1638,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
-                label for the wider row controls. */}
+                  label for the wider row controls. */}
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
@@ -1625,8 +1700,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         >
                           <TopStatusIcon icon={topStatus.icon} className="size-4" />
                           {/* Not a live region: a collapsed sidebar is inert, so
-                            BackgroundThreadAnnouncer and the open thread's
-                            timeline speak status changes instead. */}
+                              BackgroundThreadAnnouncer and the open thread's
+                              timeline speak status changes instead. */}
                           {topStatus.label}
                           {status === "preparing" || status === "working" ? (
                             <span aria-hidden>
@@ -1726,8 +1801,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {metaLine}
           </div>
         </TooltipTrigger>
-        {detailsTooltip}
-      </Tooltip>
+      </SidebarRowTooltip>
     </li>
   );
 });
@@ -1781,7 +1855,11 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
   });
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   // Results only drag out as chat context; the row keeps its own listbox attributes.
-  const { listeners: dragListeners, setNodeRef: setDragNodeRef } = useDraggable({
+  const {
+    listeners: dragListeners,
+    setNodeRef: setDragNodeRef,
+    isDragging,
+  } = useDraggable({
     id: scopedThreadKey(threadRef),
   });
   const { leaseLiveStatus, rowRef: leaseRowRef } = useSidebarRowSubscriptionLease(
@@ -1849,7 +1927,26 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
       className="list-none"
       {...fileDropHandlers}
     >
-      <Tooltip>
+      <SidebarRowTooltip
+        disabled={isDragging}
+        renderDetails={() => (
+          <SidebarThreadTooltip
+            thread={checkoutThread}
+            project={props.project}
+            projectDisplayName={props.projectDisplayName}
+            environmentLabel={props.environmentLabel}
+            environmentMachine={props.environmentMachine}
+            providerEntry={providerEntry}
+            providerEntryByInstanceId={props.providerEntryByInstanceId}
+            showInstanceBadge={showInstanceBadge}
+            modelInstanceId={modelInstanceId}
+            modelLabel={modelLabel}
+            branchMismatch={branchMismatch}
+            terminalStatus={terminalStatus}
+            terminalProcessCount={runningTerminalIds.length}
+          />
+        )}
+      >
         <TooltipTrigger
           render={
             <button
@@ -1947,22 +2044,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
             ) : null}
           </span>
         </TooltipTrigger>
-        <SidebarThreadTooltip
-          thread={checkoutThread}
-          project={props.project}
-          projectDisplayName={props.projectDisplayName}
-          environmentLabel={props.environmentLabel}
-          environmentMachine={props.environmentMachine}
-          providerEntry={providerEntry}
-          providerEntryByInstanceId={props.providerEntryByInstanceId}
-          showInstanceBadge={showInstanceBadge}
-          modelInstanceId={modelInstanceId}
-          modelLabel={modelLabel}
-          branchMismatch={branchMismatch}
-          terminalStatus={terminalStatus}
-          terminalProcessCount={runningTerminalIds.length}
-        />
-      </Tooltip>
+      </SidebarRowTooltip>
     </li>
   );
 });
