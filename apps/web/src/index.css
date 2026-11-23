@@ -2070,9 +2070,11 @@ code {
 }
 
 /* Triple-click selection stops at block-level boxes, flex items included, so file chips in
-   prose stay inline-level down to the icon and label. */
+   prose stay inline-level down to the icon and label. Chromium also stops it at
+   draggable="true" (desktop native file drags) unless user-select is set back to text. */
 .chat-markdown-file-link {
   display: inline-block;
+  user-select: text;
   overflow-x: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
