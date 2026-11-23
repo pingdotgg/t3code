@@ -12,6 +12,7 @@
 //! - [`LayoutState`]: sidebar, right panel, and tab layout.
 
 mod annotations;
+pub mod conn_tools;
 pub mod custom_model_editor;
 mod discard_undo;
 mod drafts;

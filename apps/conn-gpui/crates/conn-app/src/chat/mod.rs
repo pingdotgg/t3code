@@ -2411,7 +2411,8 @@ impl ChatView {
                     ..
                 } => {
                     let rel_title = self.relative_title(title);
-                    let ax_label = tool_ax_label(kind, &rel_title, *status);
+                    let shown_title = icons::tool_display_title(kind, &rel_title).into_owned();
+                    let ax_label = tool_ax_label(kind, &shown_title, *status);
                     let failed = matches!(status, ItemStatus::Failed);
                     // Conn `latestToolKeepsActivityLive`: active when running OR succeeded during
                     // an active turn (so shimmer stays alive between consecutive tool calls).
@@ -2427,9 +2428,9 @@ impl ChatView {
                         (icon_muted, muted)
                     };
                     let label_el: AnyElement = if shimmer {
-                        shimmer_text(&rel_title, muted, bright_fg).into_any_element()
+                        shimmer_text(&shown_title, muted, bright_fg).into_any_element()
                     } else {
-                        rel_title.into_any_element()
+                        shown_title.into_any_element()
                     };
                     col = col.child(
                         div()
@@ -2708,10 +2709,11 @@ impl ChatView {
             ItemStatus::Failed => (hsla(self.tokens.destructive), hsla(self.tokens.destructive)),
             ItemStatus::Running | ItemStatus::Completed => (muted_icon(&self.tokens), muted),
         };
+        let shown_title = icons::tool_display_title(kind, title);
         let title_el: AnyElement = if matches!(status, ItemStatus::Running) {
-            shimmer_text(title, muted, bright_fg).into_any_element()
+            shimmer_text(&shown_title, muted, bright_fg).into_any_element()
         } else {
-            title.to_owned().into_any_element()
+            shown_title.to_string().into_any_element()
         };
 
         let leading: AnyElement = match status {
@@ -2724,7 +2726,7 @@ impl ChatView {
         };
 
         let ax_id = format!("timeline.work.{id}");
-        let ax_label = tool_ax_label(kind, title, status);
+        let ax_label = tool_ax_label(kind, &shown_title, status);
         // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
         let mut line = div()
             .id(SharedString::from(format!("tool-{id}")))
