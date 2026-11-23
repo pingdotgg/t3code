@@ -1,13 +1,18 @@
 //! The provider instance editor behind Settings → Providers (`ProviderSettingsPanel.tsx`,
-//! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`).
+//! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`,
+//! `SecretSourceInput.tsx`, `ManagedPolicy.tsx`).
 //!
-//! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation`
-//! (`conn_state::provider_settings`). The inputs commit on Enter and on blur, like Conn's
-//! `DraftInput`, and follow the settings the server sends back.
+//! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation`, a
+//! project override or a model preference (`conn_state::provider_settings`,
+//! `conn_state::model_preferences`). Writes go out one at a time, in order. The inputs commit
+//! on Enter and on blur, like Conn's `DraftInput`, and follow the settings the server sends back.
 //!
-//! Not ported: the Models section (hidden models, favorites, order), the managed-policy locks,
-//! secret-provider references for environment values, the Codex managed runtime and the ACP
-//! Registry search of Add provider.
+//! Drift from Conn: the accent color is gpui-component's `ColorPicker` (palette, HSL sliders
+//! and hex) instead of a saturation plane, and it saves when its popover closes. Not ported:
+//! the Codex managed runtime and the managed token broker (Conn Server providers sign in
+//! through the Orbit AI router), and the ACP Registry, which the Conn Server does not serve.
+
+use std::collections::VecDeque;
 
 use conn_contract::{
     ServerSettings, ServerSettingsProviderInstancesValue as InstanceConfig,
@@ -15,53 +20,102 @@ use conn_contract::{
 };
 use conn_state::provider_auth::{ProviderSummary, StatusKey};
 use conn_state::provider_settings::{
-    self as settings_logic, Control, DRIVERS, DriverDef, EnvField, FieldDef, InstanceRow,
+    self as settings_logic, Control, DRIVERS, DriverDef, EnvField, FieldDef, InstanceLocks,
+    InstanceRow, SecretRef, SecretSource,
 };
 use conn_state::providers::ProviderGroup;
 use gpui_kit::Focusable as _;
+use gpui_kit::component::Colorize as _;
+use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, SharedString, Styled as _, Subscription, Window, div, px,
+    AnyElement, AppContext as _, Context, Entity, FontWeight, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement as _, SharedString, Styled as _, Subscription, TestSupportExt as _,
+    Window, div, px,
 };
 use serde_json::Value;
 
 use super::{ProvidersView, settings_row, settings_section};
 use crate::a11y::ConnA11yExt as _;
+use crate::panels::chrome::ConnTooltipExt as _;
 use crate::settings::controls::pill_switch;
 use crate::theme::hsla;
 
 /// What an input commits.
-#[derive(Clone, Debug)]
-enum Commit {
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Commit {
     DisplayName,
-    Accent,
     Field(&'static str),
     EnvField(&'static str),
     Variables,
+    Reference(Slot),
+    CustomModel,
+}
+
+/// A value that may read from a secret provider instead.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Slot {
+    Field(&'static str),
+    EnvField(&'static str),
+    Variable(u64),
+}
+
+/// The source picker of one secret value (`SecretSourceInput`): the typed value (`None`) or
+/// a secret provider, and the reference typed for it.
+pub(super) struct SecretInput {
+    source: Option<String>,
+    reference: Entity<InputState>,
+    /// The message under a reference the provider does not read.
+    rejected: Option<&'static str>,
+}
+
+/// A driver config field.
+struct FieldRow {
+    def: &'static FieldDef,
+    input: Option<Entity<InputState>>,
+    /// Only secret fields can read from a secret provider.
+    secret: Option<SecretInput>,
+}
+
+/// A variable a driver asks for by name.
+struct EnvFieldRow {
+    def: &'static EnvField,
+    input: Entity<InputState>,
+    secret: SecretInput,
 }
 
 /// An environment variable row of the generic Environment section.
 struct VariableRow {
+    key: u64,
     name: Entity<InputState>,
     value: Entity<InputState>,
     sensitive: bool,
     /// What the server sent, kept while the value input stays empty: a saved secret never
     /// shows, and leaving it empty keeps it.
     original: Option<EnvironmentVariable>,
+    secret: SecretInput,
+    /// The reference the variable reads from, as saved or just committed.
+    secret_ref: Option<SecretRef>,
 }
 
 /// The inputs of the instance being edited.
 pub(super) struct Editor {
-    instance_id: String,
+    pub(super) instance_id: String,
     display_name: Entity<InputState>,
-    accent: Entity<InputState>,
-    fields: Vec<(&'static FieldDef, Option<Entity<InputState>>)>,
-    env_fields: Vec<(&'static EnvField, Entity<InputState>)>,
+    accent: Entity<ColorPickerState>,
+    /// A color dragged in the open picker, saved when it closes.
+    accent_pending: Option<String>,
+    fields: Vec<FieldRow>,
+    env_fields: Vec<EnvFieldRow>,
     variables: Vec<VariableRow>,
     /// The settings' variables the rows were built from.
     variables_stamp: String,
+    next_key: u64,
+    pub(super) model_filter: Entity<InputState>,
+    pub(super) custom_model: Entity<InputState>,
+    pub(super) adding_custom_model: bool,
+    pub(super) custom_model_error: Option<&'static str>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -69,16 +123,17 @@ pub(super) struct Editor {
 pub(super) struct AddForm {
     driver: String,
     label: Entity<InputState>,
-    accent: Entity<InputState>,
+    accent: Entity<ColorPickerState>,
     instance_id: Entity<InputState>,
     error: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
-/// A settings write in flight, or why the last one failed.
+/// Settings writes waiting their turn, and why the last one failed.
 #[derive(Default)]
 pub(super) struct WriteState {
     pending: bool,
+    queue: VecDeque<Value>,
     error: Option<String>,
 }
 
@@ -86,13 +141,35 @@ fn variables_stamp(variables: &[EnvironmentVariable]) -> String {
     serde_json::to_string(variables).unwrap_or_default()
 }
 
+/// `#rrggbb` of a picked color, opaque.
+fn accent_hex(color: Hsla) -> String {
+    Hsla { a: 1.0, ..color }.to_hex().to_ascii_lowercase()
+}
+
+fn accent_color(hex: Option<&str>) -> Option<Hsla> {
+    conn_state::providers::normalize_accent_color(hex).and_then(|hex| Hsla::parse_hex(&hex).ok())
+}
+
 impl ProvidersView {
     fn settings(&self) -> Option<&ServerSettings> {
         self.config.settings()
     }
 
+    pub(super) fn secret_sources(&self) -> Vec<SecretSource> {
+        self.settings()
+            .map(settings_logic::secret_sources)
+            .unwrap_or_default()
+    }
+
+    pub(super) fn locks(&self, driver: &str) -> Option<InstanceLocks> {
+        settings_logic::managed_instance_locks(self.config.managed_policy(), driver)
+    }
+
     /// The row and instance being edited, as the server's settings have them.
-    fn current_instance(&self, instance_id: &str) -> Option<(InstanceRow, InstanceConfig)> {
+    pub(super) fn current_instance(
+        &self,
+        instance_id: &str,
+    ) -> Option<(InstanceRow, InstanceConfig)> {
         let settings = self.settings()?;
         let show_cursor = self.config.provider("cursor").is_some();
         let row = settings_logic::instance_rows(settings, show_cursor, Some(instance_id))
@@ -107,14 +184,24 @@ impl ProvidersView {
 
     // --- writes -------------------------------------------------------------------------
 
-    /// Sends one `server.updateSettings` request. The settings stream brings the result.
+    /// Queues one `server.updateSettings` request. The settings stream brings the result.
     pub(super) fn write_settings(&mut self, request: Value, cx: &mut Context<'_, Self>) {
-        let Some(connection) = self.connection.clone() else {
+        if self.connection.is_none() {
             return;
-        };
+        }
+        self.write.queue.push_back(request);
+        self.send_next_write(cx);
+    }
+
+    fn send_next_write(&mut self, cx: &mut Context<'_, Self>) {
         if self.write.pending {
             return;
         }
+        let (Some(connection), Some(request)) =
+            (self.connection.clone(), self.write.queue.pop_front())
+        else {
+            return;
+        };
         self.write.pending = true;
         self.write.error = None;
         cx.notify();
@@ -128,14 +215,16 @@ impl ProvidersView {
                         conn_client::commands::format_client_error(&err)
                     ));
                 }
+                view.send_next_write(cx);
                 cx.notify();
             });
         })
         .detach();
     }
 
-    /// Applies `edit` to the instance and saves it when it changed.
-    fn update_instance(
+    /// Applies `edit` to the instance and saves it when it changed. Turning off the instance
+    /// text generation runs on also resets that selection (`updateInstance`).
+    pub(super) fn update_instance(
         &mut self,
         instance_id: &str,
         edit: impl FnOnce(&InstanceConfig) -> InstanceConfig,
@@ -148,10 +237,30 @@ impl ProvidersView {
         if next == current && row.explicit.is_some() {
             return;
         }
-        self.write_settings(settings_logic::upsert_request(instance_id, &next), cx);
+        let Some(settings) = self.settings() else {
+            return;
+        };
+        let request = settings_logic::update_instance_request(
+            settings,
+            self.config.providers(),
+            instance_id,
+            &current,
+            &next,
+        );
+        self.write_settings(request, cx);
     }
 
-    fn set_enabled(&mut self, instance_id: &str, enabled: bool, cx: &mut Context<'_, Self>) {
+    /// The enable switch: the machine-wide setting, or the project's own in a project scope.
+    pub(super) fn set_enabled(
+        &mut self,
+        instance_id: &str,
+        enabled: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some((project, _)) = self.project_scope.clone() {
+            self.write_override(instance_id, &project, Some(enabled), cx);
+            return;
+        }
         self.update_instance(
             instance_id,
             |instance| settings_logic::with_enabled(instance, enabled),
@@ -159,7 +268,22 @@ impl ProvidersView {
         );
     }
 
-    fn remove_instance(&mut self, instance_id: &str, cx: &mut Context<'_, Self>) {
+    /// Sets (`Some`) or inherits again (`None`) a project's switch for `instance_id`.
+    pub(super) fn write_override(
+        &mut self,
+        instance_id: &str,
+        project_id: &str,
+        value: Option<bool>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(settings) = self.settings() else {
+            return;
+        };
+        let request = settings_logic::override_patch(settings, &[project_id], instance_id, value);
+        self.write_settings(request, cx);
+    }
+
+    pub(super) fn remove_instance(&mut self, instance_id: &str, cx: &mut Context<'_, Self>) {
         self.confirm_remove = None;
         if self.selected.as_deref() == Some(instance_id) {
             self.select(None, cx);
@@ -167,11 +291,14 @@ impl ProvidersView {
         self.write_settings(settings_logic::remove_request(instance_id), cx);
     }
 
-    fn commit(&mut self, what: &Commit, cx: &mut Context<'_, Self>) {
+    fn commit(&mut self, what: Commit, window: &mut Window, cx: &mut Context<'_, Self>) {
         let Some(editor) = &self.editor else {
             return;
         };
         let instance_id = editor.instance_id.clone();
+        let locks = self
+            .current_instance(&instance_id)
+            .and_then(|(row, _)| self.locks(&row.driver));
         match what {
             Commit::DisplayName => {
                 let name = editor.display_name.read(cx).value().to_string();
@@ -181,28 +308,20 @@ impl ProvidersView {
                     cx,
                 );
             }
-            Commit::Accent => {
-                let color = editor.accent.read(cx).value().trim().to_owned();
-                if !color.is_empty()
-                    && conn_state::providers::normalize_accent_color(Some(&color)).is_none()
-                {
-                    self.write.error = Some("Use a color like #2563eb.".to_owned());
-                    cx.notify();
-                    return;
-                }
-                self.update_instance(
-                    &instance_id,
-                    |instance| settings_logic::with_accent_color(instance, &color),
-                    cx,
-                );
-            }
             Commit::Field(key) => {
-                let Some((field, Some(input))) = editor.fields.iter().find(|(f, _)| f.key == *key)
+                let Some(FieldRow {
+                    def,
+                    input: Some(input),
+                    ..
+                }) = editor.fields.iter().find(|f| f.def.key == key)
                 else {
                     return;
                 };
+                if locks.as_ref().is_some_and(|l| l.locks_config(key)) {
+                    return;
+                }
                 let value = input.read(cx).value().to_string();
-                let field = *field;
+                let field = *def;
                 // A saved secret never shows, so an empty box keeps it.
                 if field.secret && value.is_empty() {
                     return;
@@ -214,12 +333,13 @@ impl ProvidersView {
                 );
             }
             Commit::EnvField(name) => {
-                let Some((field, input)) = editor.env_fields.iter().find(|(f, _)| f.name == *name)
-                else {
+                let Some(row) = editor.env_fields.iter().find(|f| f.def.name == name) else {
                     return;
                 };
-                let value = input.read(cx).value().to_string();
-                let name = field.name;
+                if locks.as_ref().is_some_and(|l| l.locks_variable(name)) {
+                    return;
+                }
+                let value = row.input.read(cx).value().to_string();
                 if value.is_empty() {
                     return;
                 }
@@ -229,50 +349,238 @@ impl ProvidersView {
                     cx,
                 );
             }
-            Commit::Variables => {
-                let rows: Vec<EnvironmentVariable> = editor
-                    .variables
+            Commit::Variables => self.commit_variables(&instance_id, locks.as_ref(), cx),
+            Commit::Reference(slot) => self.commit_reference(slot, cx),
+            Commit::CustomModel => self.add_custom_model(window, cx),
+        }
+    }
+
+    fn commit_variables(
+        &mut self,
+        instance_id: &str,
+        locks: Option<&InstanceLocks>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        if locks.is_some_and(|l| l.whole_environment) {
+            return;
+        }
+        let rows: Vec<EnvironmentVariable> = editor
+            .variables
+            .iter()
+            .map(|row| {
+                let name = row.name.read(cx).value().trim().to_owned();
+                let value = row.value.read(cx).value().to_string();
+                if let Some(secret) = &row.secret_ref {
+                    return settings_logic::secret_variable(&name, secret);
+                }
+                match &row.original {
+                    Some(original) if value.is_empty() => EnvironmentVariable {
+                        name,
+                        sensitive: Some(row.sensitive),
+                        ..original.clone()
+                    },
+                    _ => settings_logic::variable(&name, &value, row.sensitive),
+                }
+            })
+            // A row named like a pinned variable is the policy's, never the user's.
+            .filter(|variable| !locks.is_some_and(|l| l.locks_variable(&variable.name)))
+            .collect();
+        let driver = settings_logic::driver_def(
+            &self
+                .current_instance(instance_id)
+                .map(|(row, _)| row.driver)
+                .unwrap_or_default(),
+        );
+        self.update_instance(
+            instance_id,
+            |instance| {
+                let kept: Vec<EnvironmentVariable> = instance
+                    .environment
                     .iter()
-                    .map(|row| {
-                        let name = row.name.read(cx).value().trim().to_owned();
-                        let value = row.value.read(cx).value().to_string();
-                        match &row.original {
-                            Some(original) if value.is_empty() => EnvironmentVariable {
-                                name,
-                                sensitive: Some(row.sensitive),
-                                ..original.clone()
-                            },
-                            _ => settings_logic::variable(&name, &value, row.sensitive),
-                        }
+                    .flatten()
+                    .filter(|variable| {
+                        driver.is_some_and(|def| {
+                            def.env_fields.iter().any(|f| f.name == variable.name)
+                        }) || locks.is_some_and(|l| l.locks_variable(&variable.name))
                     })
+                    .cloned()
                     .collect();
-                let driver = settings_logic::driver_def(
-                    &self
-                        .current_instance(&instance_id)
-                        .map(|(row, _)| row.driver)
-                        .unwrap_or_default(),
+                settings_logic::with_environment(instance, kept.into_iter().chain(rows).collect())
+            },
+            cx,
+        );
+    }
+
+    // --- secret references ----------------------------------------------------------------
+
+    /// The reference `slot` reads from, as saved.
+    fn saved_secret(&self, slot: Slot) -> Option<SecretRef> {
+        let editor = self.editor.as_ref()?;
+        let (_, instance) = self.current_instance(&editor.instance_id)?;
+        match slot {
+            Slot::Field(key) => settings_logic::config_secret_reference(&instance, key),
+            Slot::EnvField(name) => settings_logic::environment_variable(&instance, name)
+                .and_then(settings_logic::variable_secret),
+            Slot::Variable(key) => editor
+                .variables
+                .iter()
+                .find(|row| row.key == key)?
+                .secret_ref
+                .clone(),
+        }
+    }
+
+    fn secret_input_mut(&mut self, slot: Slot) -> Option<&mut SecretInput> {
+        let editor = self.editor.as_mut()?;
+        match slot {
+            Slot::Field(key) => editor
+                .fields
+                .iter_mut()
+                .find(|row| row.def.key == key)?
+                .secret
+                .as_mut(),
+            Slot::EnvField(name) => editor
+                .env_fields
+                .iter_mut()
+                .find(|row| row.def.name == name)
+                .map(|row| &mut row.secret),
+            Slot::Variable(key) => editor
+                .variables
+                .iter_mut()
+                .find(|row| row.key == key)
+                .map(|row| &mut row.secret),
+        }
+    }
+
+    /// Picks the typed value (`None`) or a secret provider for `slot`. Back to Value drops a
+    /// saved reference; a provider applies once a reference for it is committed.
+    pub(super) fn pick_secret_source(
+        &mut self,
+        slot: Slot,
+        source: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let saved = self.saved_secret(slot);
+        let Some(input) = self.secret_input_mut(slot) else {
+            return;
+        };
+        input.source.clone_from(&source);
+        input.rejected = None;
+        let reference = input.reference.clone();
+        match source {
+            None => {
+                if saved.is_some() {
+                    self.write_secret(slot, None, cx);
+                }
+            }
+            Some(provider) => {
+                let text = saved
+                    .filter(|s| s.provider == provider)
+                    .map(|s| s.reference)
+                    .unwrap_or_default();
+                reference.update(cx, |state, cx| {
+                    state.set_value(text, window, cx);
+                    state.focus(window, cx);
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    fn commit_reference(&mut self, slot: Slot, cx: &mut Context<'_, Self>) {
+        let saved = self.saved_secret(slot);
+        let sources = self.secret_sources();
+        let Some(input) = self.secret_input_mut(slot) else {
+            return;
+        };
+        let Some(provider) = input.source.clone() else {
+            return;
+        };
+        let text = input.reference.read(cx).value().trim().to_owned();
+        if text.is_empty() {
+            input.rejected = None;
+            if saved.as_ref().is_some_and(|s| s.provider == provider) {
+                self.write_secret(slot, None, cx);
+            }
+            cx.notify();
+            return;
+        }
+        let kind = sources
+            .iter()
+            .find(|s| s.id == provider)
+            .map_or("", |s| s.kind.as_str());
+        if !settings_logic::is_valid_secret_reference(kind, &text) {
+            input.rejected = Some(settings_logic::invalid_secret_reference_message(kind));
+            cx.notify();
+            return;
+        }
+        input.rejected = None;
+        let secret = SecretRef {
+            provider,
+            reference: text,
+        };
+        if saved.as_ref() != Some(&secret) {
+            self.write_secret(slot, Some(secret), cx);
+        }
+        cx.notify();
+    }
+
+    /// Saves `slot` reading from `secret`, or with `None` without its reference.
+    fn write_secret(&mut self, slot: Slot, secret: Option<SecretRef>, cx: &mut Context<'_, Self>) {
+        let Some(editor) = &mut self.editor else {
+            return;
+        };
+        let instance_id = editor.instance_id.clone();
+        match slot {
+            Slot::Field(key) => {
+                let Some(def) = editor
+                    .fields
+                    .iter()
+                    .find(|row| row.def.key == key)
+                    .map(|r| r.def)
+                else {
+                    return;
+                };
+                self.update_instance(
+                    &instance_id,
+                    |instance| match &secret {
+                        Some(secret) => {
+                            settings_logic::with_config_secret_reference(instance, key, secret)
+                        }
+                        None => settings_logic::with_config_field(instance, def, ""),
+                    },
+                    cx,
                 );
+            }
+            Slot::EnvField(name) => {
                 self.update_instance(
                     &instance_id,
                     |instance| {
-                        let dedicated: Vec<EnvironmentVariable> = instance
-                            .environment
-                            .iter()
-                            .flatten()
-                            .filter(|variable| {
-                                driver.is_some_and(|def| {
-                                    def.env_fields.iter().any(|f| f.name == variable.name)
-                                })
-                            })
-                            .cloned()
-                            .collect();
-                        settings_logic::with_environment(
+                        settings_logic::with_environment_field_secret(
                             instance,
-                            dedicated.into_iter().chain(rows).collect(),
+                            name,
+                            secret.as_ref(),
                         )
                     },
                     cx,
                 );
+            }
+            Slot::Variable(key) => {
+                if let Some(row) = editor.variables.iter_mut().find(|row| row.key == key) {
+                    if secret.is_none() {
+                        // Conn keeps the row as a plain, empty value.
+                        row.original = None;
+                    }
+                    row.secret_ref = secret;
+                }
+                let locks = self
+                    .current_instance(&instance_id)
+                    .and_then(|(row, _)| self.locks(&row.driver));
+                self.commit_variables(&instance_id, locks.as_ref(), cx);
             }
         }
     }
@@ -301,14 +609,100 @@ impl ProvidersView {
                 .default_value(text)
                 .masked(masked)
         });
-        subscriptions.push(
-            cx.subscribe(&input, move |view, _, event: &InputEvent, cx| {
+        subscriptions.push(cx.subscribe_in(
+            &input,
+            window,
+            move |view, _, event: &InputEvent, window, cx| {
                 if matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
-                    view.commit(&commit, cx);
+                    view.commit(commit, window, cx);
                 }
-            }),
-        );
+            },
+        ));
         input
+    }
+
+    fn secret_input(
+        &mut self,
+        saved: Option<&SecretRef>,
+        placeholder: &str,
+        slot: Slot,
+        subscriptions: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> SecretInput {
+        let reference = self.text_input(
+            saved.map_or("", |s| s.reference.as_str()),
+            placeholder,
+            false,
+            Commit::Reference(slot),
+            subscriptions,
+            window,
+            cx,
+        );
+        SecretInput {
+            source: saved.map(|s| s.provider.clone()),
+            reference,
+            rejected: None,
+        }
+    }
+
+    fn accent_picker(
+        &mut self,
+        hex: Option<&str>,
+        for_editor: bool,
+        subscriptions: &mut Vec<Subscription>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> Entity<ColorPickerState> {
+        let initial = accent_color(hex);
+        let picker = cx.new(|cx| {
+            let state = ColorPickerState::new(window, cx);
+            match initial {
+                Some(color) => state.default_value(color),
+                None => state,
+            }
+        });
+        if for_editor {
+            subscriptions.push(cx.subscribe(
+                &picker,
+                |view, state, event: &ColorPickerEvent, cx| {
+                    let ColorPickerEvent::Change(color) = event;
+                    let hex = color.map(accent_hex).unwrap_or_default();
+                    if state.read(cx).is_open() {
+                        // A drag saves once, when the picker closes.
+                        if let Some(editor) = &mut view.editor {
+                            editor.accent_pending = Some(hex);
+                        }
+                    } else {
+                        view.commit_accent(&hex, cx);
+                    }
+                },
+            ));
+            subscriptions.push(cx.observe(&picker, |view, state, cx| {
+                if state.read(cx).is_open() {
+                    return;
+                }
+                if let Some(hex) = view.editor.as_mut().and_then(|e| e.accent_pending.take()) {
+                    view.commit_accent(&hex, cx);
+                }
+            }));
+        } else {
+            subscriptions.push(cx.subscribe(&picker, |_, _, _: &ColorPickerEvent, cx| cx.notify()));
+        }
+        picker
+    }
+
+    pub(super) fn commit_accent(&mut self, hex: &str, cx: &mut Context<'_, Self>) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let instance_id = editor.instance_id.clone();
+        let hex = hex.to_owned();
+        self.update_instance(
+            &instance_id,
+            |instance| settings_logic::with_accent_color(instance, &hex),
+            cx,
+        );
     }
 
     /// Builds the inputs of the selected instance, or follows the settings the server sent.
@@ -342,11 +736,9 @@ impl ProvidersView {
             window,
             cx,
         );
-        let accent = self.text_input(
-            instance.accent_color.as_deref().unwrap_or_default(),
-            "#rrggbb",
-            false,
-            Commit::Accent,
+        let accent = self.accent_picker(
+            instance.accent_color.as_deref(),
+            true,
             &mut subs,
             window,
             cx,
@@ -379,12 +771,27 @@ impl ProvidersView {
                     ))
                 }
             };
-            fields.push((field, input));
+            let secret = field.secret.then(|| {
+                let saved = settings_logic::config_secret_reference(&instance, field.key);
+                self.secret_input(
+                    saved.as_ref(),
+                    "op://vault/item/field",
+                    Slot::Field(field.key),
+                    &mut subs,
+                    window,
+                    cx,
+                )
+            });
+            fields.push(FieldRow {
+                def: field,
+                input,
+                secret,
+            });
         }
         let mut env_fields = Vec::new();
         for field in def.map_or(&[][..], |def| def.env_fields) {
-            let saved = settings_logic::environment_variable(&instance, field.name).is_some();
-            let placeholder = if saved {
+            let variable = settings_logic::environment_variable(&instance, field.name);
+            let placeholder = if variable.is_some() {
                 "Saved. Type to replace"
             } else {
                 field.placeholder
@@ -398,17 +805,62 @@ impl ProvidersView {
                 window,
                 cx,
             );
-            env_fields.push((field, input));
+            let saved = variable.and_then(settings_logic::variable_secret);
+            let secret = self.secret_input(
+                saved.as_ref(),
+                "op://vault/item/field",
+                Slot::EnvField(field.name),
+                &mut subs,
+                window,
+                cx,
+            );
+            env_fields.push(EnvFieldRow {
+                def: field,
+                input,
+                secret,
+            });
         }
-        let variables = self.build_variable_rows(&instance, def, &mut subs, window, cx);
+        let mut next_key = 0;
+        let variables =
+            self.build_variable_rows(&instance, def, &mut next_key, &mut subs, window, cx);
+        let model_filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter models"));
+        subs.push(cx.subscribe(&model_filter, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        }));
+        // Adds on Enter or Add only: leaving the field for Cancel must not save it.
+        let placeholder = custom_model_placeholder(&row.driver);
+        let custom_model = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+        subs.push(cx.subscribe_in(
+            &custom_model,
+            window,
+            |view, _, event: &InputEvent, window, cx| match event {
+                InputEvent::PressEnter { .. } => view.commit(Commit::CustomModel, window, cx),
+                InputEvent::Change => {
+                    if let Some(editor) = &mut view.editor
+                        && editor.custom_model_error.take().is_some()
+                    {
+                        cx.notify();
+                    }
+                }
+                _ => {}
+            },
+        ));
         self.editor = Some(Editor {
             instance_id: selected,
             display_name,
             accent,
+            accent_pending: None,
             fields,
             env_fields,
             variables,
             variables_stamp: stamp,
+            next_key,
+            model_filter,
+            custom_model,
+            adding_custom_model: false,
+            custom_model_error: None,
             _subscriptions: subs,
         });
     }
@@ -417,6 +869,7 @@ impl ProvidersView {
         &mut self,
         instance: &InstanceConfig,
         def: Option<&'static DriverDef>,
+        next_key: &mut u64,
         subs: &mut Vec<Subscription>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
@@ -428,8 +881,10 @@ impl ProvidersView {
         variables
             .into_iter()
             .map(|variable| {
-                let saved_secret =
-                    variable.value_redacted == Some(true) || variable.secret.is_some();
+                let key = *next_key;
+                *next_key += 1;
+                let secret_ref = settings_logic::variable_secret(&variable);
+                let saved_secret = variable.value_redacted == Some(true) || secret_ref.is_some();
                 let shown = if variable.sensitive == Some(true) || saved_secret {
                     String::new()
                 } else {
@@ -459,11 +914,22 @@ impl ProvidersView {
                     window,
                     cx,
                 );
+                let secret = self.secret_input(
+                    secret_ref.as_ref(),
+                    "op://vault/item/field",
+                    Slot::Variable(key),
+                    subs,
+                    window,
+                    cx,
+                );
                 VariableRow {
+                    key,
                     name,
                     value,
                     sensitive,
                     original: Some(variable),
+                    secret,
+                    secret_ref,
                 }
             })
             .collect()
@@ -494,33 +960,84 @@ impl ProvidersView {
             instance.display_name.as_deref().unwrap_or_default(),
             cx,
         );
-        sync(
-            &editor.accent,
-            instance.accent_color.as_deref().unwrap_or_default(),
-            cx,
-        );
-        for (field, input) in &editor.fields {
-            if let Some(input) = input
-                && !field.secret
+        for row in &editor.fields {
+            if let Some(input) = &row.input
+                && !row.def.secret
             {
                 sync(
                     input,
-                    &settings_logic::config_string(instance, field.key),
+                    &settings_logic::config_string(instance, row.def.key),
                     cx,
                 );
             }
         }
+        let accent = editor.accent.clone();
+        let accent_idle = editor.accent_pending.is_none() && !accent.read(cx).is_open();
+        let saved_accent = accent_color(instance.accent_color.as_deref());
+        if accent_idle && accent.read(cx).value() != saved_accent {
+            accent.update(cx, |state, cx| match saved_accent {
+                Some(color) => state.set_value(color, window, cx),
+                None => state.clear_value(window, cx),
+            });
+        }
+        // A saved reference shows as saved; a provider picked but not committed stays picked.
+        let saved: Vec<(Slot, Option<SecretRef>)> = editor
+            .fields
+            .iter()
+            .filter(|row| row.secret.is_some())
+            .map(|row| {
+                (
+                    Slot::Field(row.def.key),
+                    settings_logic::config_secret_reference(instance, row.def.key),
+                )
+            })
+            .chain(editor.env_fields.iter().map(|row| {
+                (
+                    Slot::EnvField(row.def.name),
+                    settings_logic::environment_variable(instance, row.def.name)
+                        .and_then(settings_logic::variable_secret),
+                )
+            }))
+            .collect();
+        for (slot, saved) in saved {
+            let Some(saved) = saved else {
+                continue;
+            };
+            let Some(input) = self.secret_input_mut(slot) else {
+                continue;
+            };
+            let reference = input.reference.clone();
+            if input.rejected.is_some() || reference.read(cx).focus_handle(cx).is_focused(window) {
+                continue;
+            }
+            input.source = Some(saved.provider.clone());
+            if reference.read(cx).value() != saved.reference.as_str() {
+                reference.update(cx, |state, cx| state.set_value(saved.reference, window, cx));
+            }
+        }
+        let Some(editor) = &self.editor else {
+            return;
+        };
         if editor.variables_stamp != stamp {
             let any_focused = editor.variables.iter().any(|row| {
                 row.name.read(cx).focus_handle(cx).is_focused(window)
                     || row.value.read(cx).focus_handle(cx).is_focused(window)
+                    || row
+                        .secret
+                        .reference
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
             });
             if !any_focused {
                 let mut subs = Vec::new();
-                let rows = self.build_variable_rows(instance, def, &mut subs, window, cx);
+                let mut next_key = editor.next_key;
+                let rows =
+                    self.build_variable_rows(instance, def, &mut next_key, &mut subs, window, cx);
                 if let Some(editor) = &mut self.editor {
                     editor.variables = rows;
                     editor.variables_stamp = stamp.to_owned();
+                    editor.next_key = next_key;
                     editor._subscriptions.extend(subs);
                 }
             }
@@ -529,14 +1046,27 @@ impl ProvidersView {
 
     fn add_variable(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         let mut subs = Vec::new();
+        let key = self.editor.as_ref().map_or(0, |e| e.next_key);
         let name = self.text_input("", "NAME", false, Commit::Variables, &mut subs, window, cx);
         let value = self.text_input("", "value", false, Commit::Variables, &mut subs, window, cx);
+        let secret = self.secret_input(
+            None,
+            "op://vault/item/field",
+            Slot::Variable(key),
+            &mut subs,
+            window,
+            cx,
+        );
         if let Some(editor) = &mut self.editor {
+            editor.next_key = key + 1;
             editor.variables.push(VariableRow {
+                key,
                 name: name.clone(),
                 value,
                 sensitive: false,
                 original: None,
+                secret,
+                secret_ref: None,
             });
             editor._subscriptions.extend(subs);
         }
@@ -544,23 +1074,26 @@ impl ProvidersView {
         cx.notify();
     }
 
-    fn remove_variable(&mut self, index: usize, cx: &mut Context<'_, Self>) {
-        if let Some(editor) = &mut self.editor
-            && index < editor.variables.len()
-        {
-            editor.variables.remove(index);
+    fn remove_variable(&mut self, key: u64, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(editor) = &mut self.editor {
+            editor.variables.retain(|row| row.key != key);
         }
-        self.commit(&Commit::Variables, cx);
+        self.commit(Commit::Variables, window, cx);
         cx.notify();
     }
 
-    fn toggle_variable_sensitive(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+    fn toggle_variable_sensitive(
+        &mut self,
+        key: u64,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if let Some(editor) = &mut self.editor
-            && let Some(row) = editor.variables.get_mut(index)
+            && let Some(row) = editor.variables.iter_mut().find(|row| row.key == key)
         {
             row.sensitive = !row.sensitive;
         }
-        self.commit(&Commit::Variables, cx);
+        self.commit(Commit::Variables, window, cx);
         cx.notify();
     }
 
@@ -606,13 +1139,28 @@ impl ProvidersView {
 
     // --- Add provider -------------------------------------------------------------------
 
+    /// The drivers Add provider offers: those the policy allows, without the ACP Registry.
+    fn addable_drivers(&self) -> Vec<&'static DriverDef> {
+        let policy = self.config.managed_policy();
+        DRIVERS
+            .iter()
+            .filter(|def| {
+                def.kind != "acpRegistry"
+                    && settings_logic::is_managed_driver_allowed(policy, def.kind)
+            })
+            .collect()
+    }
+
     pub(super) fn open_add_form(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let driver = "codex".to_owned();
+        let Some(first) = self.addable_drivers().first().copied() else {
+            return;
+        };
+        let driver = first.kind.to_owned();
         let mut subs = Vec::new();
-        let label = cx.new(|cx| InputState::new(window, cx).placeholder("Codex"));
-        let accent = cx.new(|cx| InputState::new(window, cx).placeholder("#rrggbb"));
-        let instance_id = cx.new(|cx| InputState::new(window, cx).placeholder("codex"));
-        for input in [&label, &accent, &instance_id] {
+        let label = cx.new(|cx| InputState::new(window, cx).placeholder(first.label));
+        let accent = self.accent_picker(None, false, &mut subs, window, cx);
+        let instance_id = cx.new(|cx| InputState::new(window, cx).placeholder(first.kind));
+        for input in [&label, &instance_id] {
             subs.push(cx.subscribe(input, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
@@ -646,13 +1194,15 @@ impl ProvidersView {
     }
 
     fn existing_instance_ids(&self) -> Vec<String> {
-        let mut ids: Vec<String> = self
-            .config
-            .catalog()
-            .instances
-            .iter()
-            .map(|info| info.instance_id.clone())
-            .collect();
+        // Codex and Claude run before they are configured, so their ids are taken.
+        let mut ids: Vec<String> = vec!["codex".to_owned(), "claudeAgent".to_owned()];
+        ids.extend(
+            self.config
+                .catalog()
+                .instances
+                .iter()
+                .map(|info| info.instance_id.clone()),
+        );
         if let Some(settings) = self.settings() {
             ids.extend(
                 settings
@@ -679,16 +1229,12 @@ impl ProvidersView {
             cx.notify();
             return;
         }
-        let accent = form.accent.read(cx).value().trim().to_owned();
-        if !accent.is_empty()
-            && conn_state::providers::normalize_accent_color(Some(&accent)).is_none()
-        {
-            if let Some(form) = &mut self.adding {
-                form.error = Some("Use a color like #2563eb.".to_owned());
-            }
-            cx.notify();
-            return;
-        }
+        let accent = form
+            .accent
+            .read(cx)
+            .value()
+            .map(accent_hex)
+            .unwrap_or_default();
         let instance = settings_logic::new_instance(
             &form.driver,
             form.label.read(cx).value().as_ref(),
@@ -719,7 +1265,18 @@ impl ProvidersView {
             .explicit
             .clone()
             .unwrap_or_else(|| settings_logic::blank_instance(&row.driver));
-        let enabled = settings_logic::resolve_instance_enabled(&instance);
+        let device_enabled = settings_logic::resolve_instance_enabled(&instance);
+        let scope = self.project_scope.clone();
+        let project_value = scope.as_ref().and_then(|(project, _)| {
+            self.settings()
+                .and_then(|s| settings_logic::project_override(s, project, &id))
+        });
+        let enabled = match (&scope, self.settings()) {
+            (Some((project, _)), Some(settings)) => {
+                settings_logic::resolve_project_instance_enabled(settings, Some(project), &id)
+            }
+            _ => device_enabled,
+        };
         let def = settings_logic::driver_def(&row.driver);
         let name = settings_logic::instance_label(&instance);
         let (key, headline, detail) = match group {
@@ -732,6 +1289,12 @@ impl ProvidersView {
         let selected = self.selected.as_deref() == Some(id.as_str());
         let refreshing = self.refreshing.contains(&id);
         let confirming = self.confirm_remove.as_deref() == Some(id.as_str());
+        // The policy refuses switching it on; switching it off stays the user's call.
+        let denial = settings_logic::managed_enable_denial(
+            self.config.managed_policy(),
+            &row.driver,
+            enabled,
+        );
 
         let title = div()
             .flex()
@@ -779,10 +1342,20 @@ impl ProvidersView {
                 format!("Remove the {name} provider instance?")
             }
         } else {
-            match detail {
+            let mut text = match detail {
                 Some(detail) => format!("{headline} \u{b7} {detail}"),
                 None => headline,
+            };
+            // `ProjectOverrideInheritance`: the project's own value wins over the device's.
+            if let Some(value) = project_value {
+                let on_off = |on: bool| if on { "On" } else { "Off" };
+                text.push_str(&format!(
+                    " \u{b7} Project: {} \u{b7} Device: {}",
+                    on_off(value),
+                    on_off(device_enabled)
+                ));
             }
+            text
         };
 
         let mut trailing = div().flex().flex_row().items_center().gap(px(8.0));
@@ -814,13 +1387,41 @@ impl ProvidersView {
                 tokens,
                 {
                     let handle = cx.entity().downgrade();
+                    let denied = denial.is_some();
                     move |_, cx| {
+                        if denied {
+                            return;
+                        }
                         if let Some(view) = handle.upgrade() {
                             view.update(cx, |view, cx| view.set_enabled(&toggle_id, !enabled, cx));
                         }
                     }
                 },
             );
+            let switch = match &denial {
+                Some(reason) => div()
+                    .id(SharedString::from(format!(
+                        "settings.providers.{id}.managed"
+                    )))
+                    .a11y_group(format!("settings.providers.{id}.managed"), reason.clone())
+                    .conn_tooltip(reason.clone(), tokens)
+                    .opacity(0.5)
+                    .child(switch)
+                    .into_any_element(),
+                None => switch.into_any_element(),
+            };
+            if let (Some(_), Some((project, _))) = (project_value, &scope) {
+                let reset_id = id.clone();
+                let project = project.clone();
+                trailing = trailing.child(self.button(
+                    format!("settings.providers.{id}.project-reset"),
+                    "Use device setting",
+                    false,
+                    Some(cx.listener(move |view, _, _, cx| {
+                        view.write_override(&reset_id, &project, None, cx);
+                    })),
+                ));
+            }
             let select_id = id.clone();
             let refresh_id = id.clone();
             let remove_id = id.clone();
@@ -850,7 +1451,7 @@ impl ProvidersView {
                         })
                     }),
                 ));
-            if !row.is_default || row.is_dirty {
+            if (!row.is_default || row.is_dirty) && scope.is_none() {
                 trailing = trailing.child(self.button(
                     format!("settings.providers.{id}.remove"),
                     if row.is_default { "Reset" } else { "Delete" },
@@ -894,10 +1495,118 @@ impl ProvidersView {
             .into_any_element()
     }
 
-    fn input_box(&self, input: &Entity<InputState>) -> AnyElement {
+    pub(super) fn input_box(&self, input: &Entity<InputState>) -> AnyElement {
         div()
             .w(px(260.0))
             .child(Input::new(input))
+            .into_any_element()
+    }
+
+    /// `ManagedControl`: a control the policy owns, shown as its reason.
+    fn managed_note(&self, ax_id: String, reason: &str) -> AnyElement {
+        div()
+            .id(SharedString::from(ax_id.clone()))
+            .a11y_group(ax_id, reason.to_owned())
+            .max_w(px(260.0))
+            .opacity(0.7)
+            .child(self.muted_line(reason.to_owned()))
+            .test_support()
+            .into_any_element()
+    }
+
+    /// The source picker and value of one secret slot (`SecretSourceInput`). `value` is the
+    /// typed-value control, shown while the source is Value.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a secret slot needs its ids, its state, its typed-value control and the sources"
+    )]
+    fn secret_control(
+        &self,
+        ax: &str,
+        slot: Slot,
+        input: &SecretInput,
+        saved: Option<&SecretRef>,
+        value: AnyElement,
+        sources: &[SecretSource],
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let saved_provider = saved.map(|s| s.provider.clone());
+        if sources.is_empty() && input.source.is_none() && saved_provider.is_none() {
+            return value;
+        }
+        let slot_name = match slot {
+            Slot::Field(key) => key.to_owned(),
+            Slot::EnvField(name) => name.to_owned(),
+            Slot::Variable(key) => self
+                .editor
+                .as_ref()
+                .and_then(|e| e.variables.iter().find(|row| row.key == key))
+                .map(|row| row.name.read(cx).value().to_string())
+                .filter(|name| !name.trim().is_empty())
+                .unwrap_or_else(|| "this variable".to_owned()),
+        };
+        let mut choices: Vec<(Option<String>, String)> = vec![(None, "Value".to_owned())];
+        choices.extend(
+            sources
+                .iter()
+                .map(|s| (Some(s.id.clone()), s.label.clone())),
+        );
+        // A source no longer configured stays listed while the value points at it.
+        for missing in [input.source.clone(), saved_provider].into_iter().flatten() {
+            if !choices
+                .iter()
+                .any(|(id, _)| id.as_deref() == Some(missing.as_str()))
+            {
+                choices.push((Some(missing.clone()), missing));
+            }
+        }
+        let mut picker = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_end()
+            .gap(px(4.0));
+        for (source, label) in choices {
+            let selected = input.source == source;
+            let suffix = source.as_deref().unwrap_or("value").to_owned();
+            picker = picker.child(self.labelled_button(
+                format!("{ax}.source.{suffix}"),
+                &label,
+                &format!("{label}: source of {slot_name}"),
+                selected,
+                Some(cx.listener(move |view, _, window, cx| {
+                    view.pick_secret_source(slot, source.clone(), window, cx);
+                })),
+            ));
+        }
+        let body = if input.source.is_some() {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.0))
+                .child(self.input_box(&input.reference))
+                .when_some(input.rejected, |el, message| {
+                    el.child(
+                        div()
+                            .id(SharedString::from(format!("{ax}.reference-error")))
+                            .a11y_group(format!("{ax}.reference-error"), message)
+                            .max_w(px(260.0))
+                            .text_size(px(12.0))
+                            .text_color(hsla(self.tokens.destructive))
+                            .child(message),
+                    )
+                })
+                .into_any_element()
+        } else {
+            value
+        };
+        div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(6.0))
+            .child(picker)
+            .child(body)
             .into_any_element()
     }
 
@@ -918,6 +1627,8 @@ impl ProvidersView {
         let geometry = self.geometry;
         let name = settings_logic::instance_label(&instance);
         let enabled = settings_logic::resolve_instance_enabled(&instance);
+        let locks = self.locks(&row.driver);
+        let sources = self.secret_sources();
         let ax = |suffix: &str| format!("settings.providers.{selected}.{suffix}");
         let mut sections = Vec::new();
 
@@ -944,6 +1655,7 @@ impl ProvidersView {
             &geometry,
         ));
         if let Some(editor) = &self.editor {
+            let has_accent = instance.accent_color.is_some();
             identity.push(settings_row(
                 "Display name",
                 None,
@@ -952,7 +1664,24 @@ impl ProvidersView {
                     .flex_row()
                     .items_center()
                     .gap(px(8.0))
-                    .child(div().w(px(96.0)).child(Input::new(&editor.accent)))
+                    .child(
+                        div()
+                            .id(SharedString::from(ax("accent")))
+                            .a11y_group(ax("accent"), format!("Accent color for {name}"))
+                            .child(
+                                ColorPicker::new(&editor.accent)
+                                    .accessibility_label(format!("Accent color for {name}")),
+                            )
+                            .test_support(),
+                    )
+                    .when(has_accent, |el| {
+                        el.child(self.button(
+                            ax("accent.clear"),
+                            "Clear color",
+                            false,
+                            Some(cx.listener(|view, _, _, cx| view.commit_accent("", cx))),
+                        ))
+                    })
                     .child(self.input_box(&editor.display_name))
                     .into_any_element(),
                 &tokens,
@@ -987,7 +1716,11 @@ impl ProvidersView {
                             false,
                             (!self.write.pending).then(|| {
                                 cx.listener(move |view, _, _, cx| {
-                                    view.set_enabled(&enable_id, true, cx)
+                                    view.update_instance(
+                                        &enable_id,
+                                        |i| settings_logic::with_enabled(i, true),
+                                        cx,
+                                    );
                                 })
                             }),
                         ))
@@ -1015,20 +1748,24 @@ impl ProvidersView {
             ));
         }
         if let Some(editor) = &self.editor {
-            for (field, input) in &editor.env_fields {
-                let saved = settings_logic::environment_variable(&instance, field.name).is_some();
-                let clear_id = selected.clone();
+            for field_row in &editor.env_fields {
+                let field = field_row.def;
                 let name = field.name;
-                setup.push(settings_row(
-                    field.label,
-                    Some(field.description),
-                    div()
+                let variable = settings_logic::environment_variable(&instance, name);
+                let saved = variable.is_some();
+                let saved_secret = variable.and_then(settings_logic::variable_secret);
+                let control = if let Some(locks) = locks.as_ref().filter(|l| l.locks_variable(name))
+                {
+                    self.managed_note(ax(&format!("env.{name}.managed")), &locks.reason)
+                } else {
+                    let clear_id = selected.clone();
+                    let value = div()
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap(px(6.0))
-                        .child(self.input_box(input))
-                        .when(saved, |el| {
+                        .child(self.input_box(&field_row.input))
+                        .when(saved && saved_secret.is_none(), |el| {
                             el.child(self.button(
                                 ax(&format!("env.{name}.clear")),
                                 "Clear",
@@ -1038,7 +1775,21 @@ impl ProvidersView {
                                 })),
                             ))
                         })
-                        .into_any_element(),
+                        .into_any_element();
+                    self.secret_control(
+                        &ax(&format!("env.{name}")),
+                        Slot::EnvField(name),
+                        &field_row.secret,
+                        saved_secret.as_ref(),
+                        value,
+                        &sources,
+                        cx,
+                    )
+                };
+                setup.push(settings_row(
+                    field.label,
+                    Some(field.description),
+                    control,
                     &tokens,
                     &geometry,
                 ));
@@ -1053,61 +1804,81 @@ impl ProvidersView {
             && !editor.fields.is_empty()
         {
             let mut runtime = Vec::new();
-            for (field, input) in &editor.fields {
-                let field: &'static FieldDef = field;
-                let control = match (field.control, input) {
-                    (Control::Select(options), _) => {
-                        let current = settings_logic::config_string(&instance, field.key);
-                        let current = if current.is_empty() {
-                            options.first().map_or("", |(value, _)| *value).to_owned()
-                        } else {
-                            current
-                        };
-                        let mut group = div()
-                            .flex()
-                            .flex_row()
-                            .flex_wrap()
-                            .justify_end()
-                            .gap(px(6.0));
-                        for (value, label) in options {
-                            let option_id = selected.clone();
-                            let value: &'static str = value;
-                            group = group.child(self.button(
-                                ax(&format!("field.{}.{value}", field.key)),
-                                label,
-                                current == value,
-                                (!self.write.pending).then(|| {
-                                    cx.listener(move |view, _, _, cx| {
-                                        view.pick_option(&option_id, field, value, cx);
-                                    })
-                                }),
-                            ));
+            for field_row in &editor.fields {
+                let field: &'static FieldDef = field_row.def;
+                let control = if let Some(locks) =
+                    locks.as_ref().filter(|l| l.locks_config(field.key))
+                {
+                    self.managed_note(ax(&format!("field.{}.managed", field.key)), &locks.reason)
+                } else {
+                    match (field.control, &field_row.input) {
+                        (Control::Select(options), _) => {
+                            let current = settings_logic::config_string(&instance, field.key);
+                            let current = if current.is_empty() {
+                                options.first().map_or("", |(value, _)| *value).to_owned()
+                            } else {
+                                current
+                            };
+                            let mut group = div()
+                                .flex()
+                                .flex_row()
+                                .flex_wrap()
+                                .justify_end()
+                                .gap(px(6.0));
+                            for (value, label) in options {
+                                let option_id = selected.clone();
+                                let value: &'static str = value;
+                                group = group.child(self.button(
+                                    ax(&format!("field.{}.{value}", field.key)),
+                                    label,
+                                    current == value,
+                                    (!self.write.pending).then(|| {
+                                        cx.listener(move |view, _, _, cx| {
+                                            view.pick_option(&option_id, field, value, cx);
+                                        })
+                                    }),
+                                ));
+                            }
+                            group.into_any_element()
                         }
-                        group.into_any_element()
+                        (_, Some(input)) => {
+                            let saved_secret =
+                                settings_logic::config_secret_reference(&instance, field.key);
+                            let saved = field.secret
+                                && settings_logic::config_secret_saved(&instance, field.key);
+                            let clear_id = selected.clone();
+                            let value = div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.0))
+                                .child(self.input_box(input))
+                                .when(saved && saved_secret.is_none(), |el| {
+                                    el.child(self.button(
+                                        ax(&format!("field.{}.clear", field.key)),
+                                        "Clear",
+                                        false,
+                                        Some(cx.listener(move |view, _, _, cx| {
+                                            view.clear_secret(&clear_id, field, cx);
+                                        })),
+                                    ))
+                                })
+                                .into_any_element();
+                            match &field_row.secret {
+                                Some(secret) => self.secret_control(
+                                    &ax(&format!("field.{}", field.key)),
+                                    Slot::Field(field.key),
+                                    secret,
+                                    saved_secret.as_ref(),
+                                    value,
+                                    &sources,
+                                    cx,
+                                ),
+                                None => value,
+                            }
+                        }
+                        _ => div().into_any_element(),
                     }
-                    (_, Some(input)) => {
-                        let saved = field.secret
-                            && settings_logic::config_secret_saved(&instance, field.key);
-                        let clear_id = selected.clone();
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(6.0))
-                            .child(self.input_box(input))
-                            .when(saved, |el| {
-                                el.child(self.button(
-                                    ax(&format!("field.{}.clear", field.key)),
-                                    "Clear",
-                                    false,
-                                    Some(cx.listener(move |view, _, _, cx| {
-                                        view.clear_secret(&clear_id, field, cx);
-                                    })),
-                                ))
-                            })
-                            .into_any_element()
-                    }
-                    _ => div().into_any_element(),
                 };
                 let description = (!field.description.is_empty()).then_some(field.description);
                 runtime.push(settings_row(
@@ -1125,56 +1896,115 @@ impl ProvidersView {
         // Environment: free-form variables.
         if let Some(editor) = &self.editor {
             let mut rows = Vec::new();
-            for (index, variable) in editor.variables.iter().enumerate() {
-                rows.push(
-                    div()
-                        .id(SharedString::from(ax(&format!("var.{index}"))))
-                        .a11y_group(ax(&format!("var.{index}")), "Environment variable")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .px(px(14.0))
-                        .py(px(10.0))
-                        .child(div().w(px(180.0)).child(Input::new(&variable.name)))
-                        .child(div().flex_1().min_w_0().child(Input::new(&variable.value)))
-                        .child(self.button(
-                            ax(&format!("var.{index}.sensitive")),
-                            if variable.sensitive {
-                                "Sensitive"
-                            } else {
-                                "Plain text"
-                            },
-                            variable.sensitive,
-                            Some(cx.listener(move |view, _, _, cx| {
-                                view.toggle_variable_sensitive(index, cx)
-                            })),
-                        ))
-                        .child(self.button(
-                            ax(&format!("var.{index}.remove")),
-                            "Remove",
-                            false,
-                            Some(
-                                cx.listener(move |view, _, _, cx| view.remove_variable(index, cx)),
-                            ),
-                        ))
-                        .into_any_element(),
-                );
+            let whole = locks.as_ref().filter(|l| l.whole_environment);
+            if let Some(locks) = whole {
+                rows.push(self.note_row(locks.reason.clone(), false, &ax("environment.managed")));
             }
-            rows.push(settings_row(
-                "Variables",
-                Some("API keys, base URLs, and other per-instance CLI settings. Sensitive values are stored separately and never returned to the app."),
-                self.button(
-                    ax("var.add"),
-                    "Add variable",
-                    false,
-                    Some(cx.listener(|view, _, window, cx| view.add_variable(window, cx))),
-                ),
-                &tokens,
-                &geometry,
-            ));
+            // Variables a policy pins show by name only (`ProviderEnvironmentSection`).
+            if let Some(locks) = locks.as_ref().filter(|l| !l.whole_environment) {
+                for name in &locks.environment_names {
+                    if def_has_env_field(&row.driver, name) {
+                        continue;
+                    }
+                    rows.push(settings_row(
+                        name,
+                        Some(&locks.reason),
+                        div().into_any_element(),
+                        &tokens,
+                        &geometry,
+                    ));
+                }
+            }
+            for variable in &editor.variables {
+                let key = variable.key;
+                let name = variable.name.read(cx).value().to_string();
+                if let Some(locks) = whole {
+                    // Under a runtime-mode ceiling every variable is the administrator's.
+                    rows.push(settings_row(
+                        &name,
+                        Some(&locks.reason),
+                        div().into_any_element(),
+                        &tokens,
+                        &geometry,
+                    ));
+                    continue;
+                }
+                if locks.as_ref().is_some_and(|l| l.locks_variable(&name)) {
+                    continue;
+                }
+                let vax = ax(&format!("var.{key}"));
+                let value = div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(&variable.value))
+                    .into_any_element();
+                let value = self.secret_control(
+                    &vax,
+                    Slot::Variable(key),
+                    &variable.secret,
+                    variable.secret_ref.as_ref(),
+                    value,
+                    &sources,
+                    cx,
+                );
+                let line = div()
+                    .id(SharedString::from(vax.clone()))
+                    .a11y_group(vax.clone(), "Environment variable")
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap(px(8.0))
+                    .px(px(14.0))
+                    .py(px(10.0))
+                    .child(div().w(px(180.0)).child(Input::new(&variable.name)))
+                    .child(div().flex_1().min_w_0().child(value))
+                    .child(self.button(
+                        format!("{vax}.sensitive"),
+                        if variable.sensitive {
+                            "Sensitive"
+                        } else {
+                            "Plain text"
+                        },
+                        variable.sensitive,
+                        (variable.secret.source.is_none()).then(|| {
+                            cx.listener(move |view, _, window, cx| {
+                                view.toggle_variable_sensitive(key, window, cx)
+                            })
+                        }),
+                    ))
+                    .child(self.button(
+                        format!("{vax}.remove"),
+                        "Remove",
+                        false,
+                        Some(cx.listener(move |view, _, window, cx| {
+                            view.remove_variable(key, window, cx)
+                        })),
+                    ));
+                rows.push(line.into_any_element());
+            }
+            if whole.is_none() {
+                rows.push(settings_row(
+                    "Variables",
+                    Some("API keys, base URLs, and other per-instance CLI settings. Sensitive values are stored separately and never returned to the app."),
+                    self.button(
+                        ax("var.add"),
+                        "Add variable",
+                        false,
+                        Some(cx.listener(|view, _, window, cx| view.add_variable(window, cx))),
+                    ),
+                    &tokens,
+                    &geometry,
+                ));
+            }
             sections
                 .push(settings_section("Environment", rows, &tokens, &geometry).into_any_element());
+        }
+
+        // Models: favorites, hidden models, order and custom models.
+        if settings_logic::driver_def(&row.driver).is_some()
+            && let Some(models) = self.models_section(&selected, &row.driver, &instance, group, cx)
+        {
+            sections.push(models);
         }
         sections
     }
@@ -1189,7 +2019,7 @@ impl ProvidersView {
         let existing: Vec<&str> = existing.iter().map(String::as_str).collect();
         let id_error = settings_logic::validate_instance_id(&id, &existing).err();
         let mut drivers = div().flex().flex_row().flex_wrap().gap(px(6.0));
-        for def in DRIVERS.iter().filter(|def| def.kind != "acpRegistry") {
+        for def in self.addable_drivers() {
             let kind = def.kind;
             drivers = drivers.child(self.button(
                 format!("settings.providers.add.driver.{kind}"),
@@ -1226,8 +2056,12 @@ impl ProvidersView {
             ),
             settings_row(
                 "Accent color",
-                Some("Optional, #rrggbb."),
-                self.input_box(&form.accent),
+                Some("Optional. Tells accounts of one provider apart."),
+                div()
+                    .id("settings.providers.add.accent")
+                    .a11y_group("settings.providers.add.accent", "Accent color")
+                    .child(ColorPicker::new(&form.accent).accessibility_label("Accent color"))
+                    .into_any_element(),
                 &tokens,
                 &geometry,
             ),
@@ -1283,5 +2117,22 @@ impl ProvidersView {
             .error
             .clone()
             .map(|message| self.note_row(message, true, "settings.providers.write-error"))
+    }
+}
+
+fn def_has_env_field(driver: &str, name: &str) -> bool {
+    settings_logic::driver_def(driver)
+        .is_some_and(|def| def.env_fields.iter().any(|f| f.name == name))
+}
+
+/// `CUSTOM_MODEL_PLACEHOLDER_BY_KIND`.
+fn custom_model_placeholder(driver: &str) -> &'static str {
+    match driver {
+        "codex" => "gpt-6.7-codex-ultra-preview",
+        "claudeAgent" => "claude-sonnet-5",
+        "cursor" => "claude-sonnet-4-6",
+        "opencode" => "openai/gpt-5",
+        "pi" => "anthropic/claude-sonnet-5",
+        _ => "model-slug",
     }
 }

@@ -41,9 +41,11 @@ const ICON_QUEUE: &str = "superhero/list-add.svg";
 /// Superheroicons 16/solid paths used by the model picker.
 pub(super) const ICON_SEARCH: &str = "superhero/search.svg";
 pub(super) const ICON_CHECK: &str = "superhero/check.svg";
+const ICON_STAR: &str = "superhero/star.svg";
 
 pub(crate) use conn_state::providers::{
-    ColumnControls, ModelCatalog, ModelOption, ModelOptionDescriptor, OptionMap, ProviderGroup,
+    ColumnControls, FAVORITES_TAB, ModelCatalog, ModelOption, ModelOptionDescriptor, OptionMap,
+    ProviderGroup,
 };
 
 /// Parameters for rendering the docked model picker popup.
@@ -80,7 +82,9 @@ pub(super) fn render_model_picker(
     let muted = hsla(tokens.muted_foreground);
 
     let is_searching = !view.query.trim().is_empty();
-    let show_sidebar = !is_searching && view.catalog.picker_providers().count() > 1;
+    // The rail always offers Favorites (`showFavorites`), so one provider still gets a rail.
+    let show_sidebar = !is_searching && view.catalog.picker_providers().count() > 0;
+    let favorites_tab = view.selected_provider == Some(FAVORITES_TAB);
     let effective_provider = view
         .selected_provider
         .or(view.active_instance_id)
@@ -122,6 +126,41 @@ pub(super) fn render_model_picker(
             .border_r_1()
             .border_color(glass_divider)
             .bg(hsla_alpha(tokens.muted, 0.30));
+
+        let star_color = if favorites_tab { fg } else { muted };
+        let mut favorites_btn = div()
+            .id("model-picker-provider-favorites")
+            .a11y_tab(
+                "composer.model-picker.provider.favorites",
+                "Favorites",
+                favorites_tab,
+            )
+            .conn_tooltip("Favorites", tokens)
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w_full()
+            .h(px(36.0))
+            .rounded(px(6.0))
+            .cursor_pointer()
+            .hover(move |s| s.bg(highlight_bg))
+            .on_click(cx.listener(|composer, _, _, cx| {
+                composer.select_picker_provider(FAVORITES_TAB.to_owned(), cx);
+            }))
+            .child(icons::icon(ICON_STAR, 18.0, star_color));
+        if favorites_tab {
+            favorites_btn = favorites_btn.child(
+                div()
+                    .absolute()
+                    .right(px(0.0))
+                    .w(px(3.0))
+                    .h(px(20.0))
+                    .rounded_full()
+                    .bg(hsla(tokens.primary)),
+            );
+        }
+        rail = rail.child(favorites_btn);
 
         for provider in view.catalog.picker_providers() {
             let is_selected = effective_provider == Some(provider.instance_id.as_str());
@@ -227,7 +266,11 @@ pub(super) fn render_model_picker(
                 .text_size(px(13.0))
                 .line_height(px(20.0))
                 .text_color(muted)
-                .child("No models found"),
+                .child(if favorites_tab && !is_searching {
+                    "No favorites yet"
+                } else {
+                    "No models found"
+                }),
         );
     } else {
         for (idx, model) in models.iter().enumerate() {
@@ -238,8 +281,60 @@ pub(super) fn render_model_picker(
             let is_highlighted = idx == view.highlighted_index;
             let instance_id = model.instance_id.clone();
             let slug = model.slug.clone();
+            let is_favorite = view.catalog.is_favorite(model);
+            let group_name = SharedString::from(format!(
+                "model-picker-row-group-{}-{}",
+                model.instance_id, model.slug
+            ));
+            let star = {
+                let instance_id = model.instance_id.clone();
+                let slug = model.slug.clone();
+                let label = if is_favorite {
+                    "Remove from favorites"
+                } else {
+                    "Add to favorites"
+                };
+                // In Favorites every row is starred, so the star shows on hover there.
+                let on_hover_only = !is_favorite || (favorites_tab && !is_searching);
+                let star_color = if is_favorite {
+                    hsla(tokens.warning)
+                } else {
+                    muted
+                };
+                div()
+                    .id(SharedString::from(format!(
+                        "model-picker-favorite-{}-{}",
+                        model.instance_id, model.slug
+                    )))
+                    .a11y_button(
+                        format!(
+                            "composer.model-picker.favorite.{}.{}",
+                            model.instance_id, model.slug
+                        ),
+                        format!("{label}: {}", model.display_label()),
+                    )
+                    .conn_tooltip(label, tokens)
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .size(px(18.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .when(on_hover_only, |el| {
+                        el.opacity(0.0)
+                            .group_hover(group_name.clone(), |s| s.opacity(1.0))
+                    })
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |composer, _, _, cx| {
+                        cx.stop_propagation();
+                        composer.toggle_model_favorite(instance_id.clone(), slug.clone(), cx);
+                    }))
+                    .child(icons::icon(ICON_STAR, 12.0, star_color))
+            };
 
             let mut row = div()
+                .group(group_name.clone())
                 .id(SharedString::from(format!(
                     "model-picker-row-{}-{}",
                     model.instance_id, model.slug
@@ -319,7 +414,7 @@ pub(super) fn render_model_picker(
                 );
             }
 
-            row = row.child(label_group).child(
+            row = row.child(label_group).child(star).child(
                 div()
                     .flex_none()
                     .size(px(14.0))

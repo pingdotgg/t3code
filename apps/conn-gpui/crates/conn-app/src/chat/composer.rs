@@ -953,6 +953,29 @@ impl Composer {
         .detach();
     }
 
+    /// The picker's star (`useToggleEnvironmentModelFavorite`): sends the wanted state, so two
+    /// clients adding a favorite do not cancel each other. The settings stream brings it back.
+    pub(super) fn toggle_model_favorite(
+        &mut self,
+        instance_id: String,
+        slug: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let favorite = !self.catalog.preferences.is_favorite(&instance_id, &slug);
+        let request = conn_state::model_preferences::set_model_favorites_request(
+            &instance_id,
+            &[(slug, favorite)],
+        );
+        cx.spawn(async move |_, _| {
+            // A failed write leaves the star as the server has it.
+            let _ = connection.call_json("server.updateSettings", request).await;
+        })
+        .detach();
+    }
+
     /// `Open provider setup` for `instance_id`: the host opens Settings on its Providers page.
     pub(super) fn open_provider_setup(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
         self.model_picker_open = false;
@@ -970,7 +993,9 @@ impl Composer {
             self.footer_permissions_open = false;
             self.strip_permissions_open = false;
             self.stash.menu_open = false;
-            self.picker_provider_filter = self.selected_instance_id.clone();
+            self.picker_provider_filter = self
+                .catalog
+                .initial_picker_tab(self.selected_instance_id.as_deref());
             self.picker_highlighted_index = 0;
             self.model_search_input.update(cx, |input, cx| {
                 input.set_value("", window, cx);

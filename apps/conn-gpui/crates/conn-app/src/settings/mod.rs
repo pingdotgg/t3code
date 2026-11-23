@@ -12,6 +12,7 @@
 //!   `shell_divider_raised` between square rows, no trailing divider).
 
 pub(crate) mod controls;
+pub(crate) mod projects;
 pub(crate) mod providers;
 pub(crate) mod scheduled_tasks;
 
@@ -57,15 +58,17 @@ pub(crate) enum SettingsPage {
     Appearance,
     Connections,
     Providers,
+    Projects,
     ScheduledTasks,
     Keyboard,
 }
 
-const ALL_PAGES: [SettingsPage; 6] = [
+const ALL_PAGES: [SettingsPage; 7] = [
     SettingsPage::General,
     SettingsPage::Appearance,
     SettingsPage::Connections,
     SettingsPage::Providers,
+    SettingsPage::Projects,
     SettingsPage::ScheduledTasks,
     SettingsPage::Keyboard,
 ];
@@ -77,6 +80,7 @@ impl SettingsPage {
             Self::Appearance => "Appearance",
             Self::Connections => "Connections",
             Self::Providers => "Providers",
+            Self::Projects => "Projects",
             Self::ScheduledTasks => "Scheduled tasks",
             Self::Keyboard => "Keyboard",
         }
@@ -88,6 +92,7 @@ impl SettingsPage {
             Self::Appearance => IconName::Palette,
             Self::Connections => IconName::Plug,
             Self::Providers => IconName::Bot,
+            Self::Projects => IconName::Folder,
             Self::ScheduledTasks => IconName::Clock,
             Self::Keyboard => IconName::Keyboard,
         }
@@ -196,6 +201,8 @@ pub(crate) struct SettingsModal {
     operator_saved_notice: Option<String>,
     scheduled_tasks: Entity<ScheduledTasksView>,
     providers: Entity<providers::ProvidersView>,
+    projects: Entity<projects::ProjectsView>,
+    _projects_sub: Subscription,
     focus_handle: FocusHandle,
     scroll: ScrollHandle,
 }
@@ -286,7 +293,7 @@ impl SettingsModal {
                     geometry,
                     connection: live_connection,
                     server_url: scheduled_url,
-                    projects,
+                    projects: projects.clone(),
                     default_instance_id,
                     default_model: default_model_slug,
                 },
@@ -306,6 +313,20 @@ impl SettingsModal {
                 cx,
             )
         });
+
+        let projects_tokens = tokens.clone();
+        let projects = cx.new(|_| projects::ProjectsView::new(projects_tokens, geometry, projects));
+        let projects_sub = cx.subscribe(
+            &projects,
+            |this, _, event: &projects::ProjectsEvent, cx| match event {
+                projects::ProjectsEvent::OpenProviders(id, title) => {
+                    let scope = Some((id.clone(), title.clone()));
+                    this.providers
+                        .update(cx, |view, cx| view.set_project_scope(scope, cx));
+                    this.select_page(SettingsPage::Providers, cx);
+                }
+            },
+        );
 
         Self {
             tokens,
@@ -328,6 +349,8 @@ impl SettingsModal {
             operator_saved_notice: None,
             scheduled_tasks,
             providers,
+            projects,
+            _projects_sub: projects_sub,
             focus_handle,
             scroll: ScrollHandle::new(),
         }
@@ -339,6 +362,9 @@ impl SettingsModal {
         config: std::sync::Arc<conn_state::providers::ServerConfigState>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.projects.update(cx, |view, cx| {
+            view.set_server_config(std::sync::Arc::clone(&config), cx);
+        });
         self.providers
             .update(cx, |view, cx| view.set_server_config(config, cx));
     }
@@ -371,6 +397,8 @@ impl SettingsModal {
                 view.set_connection(provider_connection, environment, cx);
             });
         }
+        self.projects
+            .update(cx, |view, cx| view.set_projects(projects.clone(), cx));
         self.connection = connection;
         self.orbit = orbit;
         self.themes = build_theme_options(custom_themes);
@@ -395,6 +423,8 @@ impl SettingsModal {
         self.scheduled_tasks.update(cx, |view, cx| {
             view.set_tokens(tokens.clone(), cx);
         });
+        self.projects
+            .update(cx, |view, cx| view.set_tokens(tokens.clone(), cx));
         self.providers
             .update(cx, |view, cx| view.set_tokens(tokens, cx));
         cx.notify();
@@ -657,6 +687,7 @@ impl SettingsModal {
                 SettingsPage::Appearance => self.render_appearance_page(cx),
                 SettingsPage::Connections => self.render_connections_page(cx),
                 SettingsPage::Providers => self.providers.clone().into_any_element(),
+                SettingsPage::Projects => self.projects.clone().into_any_element(),
                 SettingsPage::ScheduledTasks => self.scheduled_tasks.clone().into_any_element(),
                 SettingsPage::Keyboard => self.render_keyboard_page(),
             }

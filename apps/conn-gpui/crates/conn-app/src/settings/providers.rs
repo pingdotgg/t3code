@@ -8,11 +8,16 @@
 //! `provider.auth.*` calls), Runtime and Environment sections; `editor.rs` holds the settings
 //! writes.
 //!
+//! A project scope (`?project=` in Conn, picked on Settings → Projects) turns each switch into
+//! that project's own override (`projectSettingsOverrides`), shown next to the device setting.
+//!
 //! Drift from Conn: a sign-in terminal shows its output as plain text with a one-line input, since
-//! there is no terminal emulator for a remote stream. The accent color is a `#rrggbb` field, not a
-//! color plane.
+//! there is no terminal emulator for a remote stream.
 
 mod editor;
+mod models;
+#[cfg(test)]
+mod tests;
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -28,7 +33,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, TestSupportExt as _, Window,
+    div, px,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -85,6 +91,8 @@ pub(crate) struct ProvidersView {
     write: editor::WriteState,
     /// The instance whose removal or reset waits for a second click.
     confirm_remove: Option<String>,
+    /// `(project id, title)` whose switches this page edits, or `None` for the device.
+    project_scope: Option<(String, String)>,
 }
 
 impl ProvidersView {
@@ -123,7 +131,19 @@ impl ProvidersView {
             adding: None,
             write: editor::WriteState::default(),
             confirm_remove: None,
+            project_scope: None,
         }
+    }
+
+    /// Edits `project`'s own provider switches, or with `None` the device's.
+    pub(crate) fn set_project_scope(
+        &mut self,
+        project: Option<(String, String)>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.project_scope = project;
+        self.confirm_remove = None;
+        cx.notify();
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
@@ -157,6 +177,7 @@ impl ProvidersView {
 
     /// `Open provider setup`: open the editor, with its Account row, of `instance_id`.
     pub(crate) fn focus_provider(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
+        self.project_scope = None;
         self.select(Some(instance_id), cx);
     }
 
@@ -489,36 +510,19 @@ impl ProvidersView {
         primary: bool,
         on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
     ) -> AnyElement {
-        let tokens = &self.tokens;
-        let fg = if primary {
-            hsla(tokens.primary_foreground)
-        } else {
-            hsla(tokens.foreground)
-        };
-        let hover = hsla(tokens.shell_highlight);
-        let base = div()
-            .id(SharedString::from(ax_id.clone()))
-            .a11y_button(ax_id, label.to_owned())
-            .flex()
-            .items_center()
-            .h(px(28.0))
-            .px(px(10.0))
-            .rounded(px(6.0))
-            .text_size(px(12.0))
-            .text_color(fg)
-            .when(primary, |el| el.bg(hsla(tokens.primary)))
-            .when(!primary, |el| {
-                el.border_1().border_color(hsla_alpha(tokens.border, 0.8))
-            });
-        match on_click {
-            Some(on_click) => base
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover))
-                .on_click(on_click)
-                .child(label.to_owned())
-                .into_any_element(),
-            None => base.opacity(0.5).child(label.to_owned()).into_any_element(),
-        }
+        styled_button(&self.tokens, ax_id, label, label, primary, on_click)
+    }
+
+    /// [`Self::button`] whose accessible name says more than its visible label.
+    fn labelled_button(
+        &self,
+        ax_id: String,
+        label: &str,
+        ax_label: &str,
+        primary: bool,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> AnyElement {
+        styled_button(&self.tokens, ax_id, label, ax_label, primary, on_click)
     }
 
     fn muted_line(&self, text: impl Into<SharedString>) -> gpui_kit::Div {
@@ -833,7 +837,62 @@ impl ProvidersView {
                 hsla(self.tokens.muted_foreground_raised)
             })
             .child(text)
+            .test_support()
             .into_any_element()
+    }
+}
+
+/// An outlined settings button. `on_click` is `None` while it is disabled.
+pub(crate) fn settings_button(
+    tokens: &Tokens,
+    ax_id: String,
+    label: &str,
+    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+) -> AnyElement {
+    styled_button(tokens, ax_id, label, label, false, on_click)
+}
+
+fn styled_button(
+    tokens: &Tokens,
+    ax_id: String,
+    label: &str,
+    ax_label: &str,
+    primary: bool,
+    on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+) -> AnyElement {
+    let fg = if primary {
+        hsla(tokens.primary_foreground)
+    } else {
+        hsla(tokens.foreground)
+    };
+    let hover = hsla(tokens.shell_highlight);
+    let base = div()
+        .id(SharedString::from(ax_id.clone()))
+        .a11y_button(ax_id, ax_label.to_owned())
+        .flex()
+        .items_center()
+        .h(px(28.0))
+        .px(px(10.0))
+        .rounded(px(6.0))
+        .text_size(px(12.0))
+        .text_color(fg)
+        .when(primary, |el| el.bg(hsla(tokens.primary)))
+        .when(!primary, |el| {
+            el.border_1().border_color(hsla_alpha(tokens.border, 0.8))
+        });
+    match on_click {
+        Some(on_click) => base
+            .cursor_pointer()
+            .hover(move |s| s.bg(hover))
+            .on_click(on_click)
+            .child(label.to_owned())
+            .test_support()
+            .into_any_element(),
+        None => base
+            .opacity(0.5)
+            .child(label.to_owned())
+            .test_support()
+            .into_any_element(),
     }
 }
 
@@ -865,9 +924,12 @@ impl Render for ProvidersView {
                         "settings.providers.add".to_owned(),
                         "Add provider",
                         false,
-                        (self.adding.is_none() && config.settings().is_some()).then(|| {
-                            cx.listener(|view, _, window, cx| view.open_add_form(window, cx))
-                        }),
+                        (self.adding.is_none()
+                            && config.settings().is_some()
+                            && conn_state::provider_settings::can_add_provider(
+                                config.managed_policy(),
+                            ))
+                        .then(|| cx.listener(|view, _, window, cx| view.open_add_form(window, cx))),
                     ),
                 )
                 .child(self.button(
@@ -885,6 +947,20 @@ impl Render for ProvidersView {
             &geometry,
         );
         let mut rows = vec![header];
+        if let Some((_, title)) = self.project_scope.clone() {
+            rows.push(settings_row(
+                &format!("Project: {title}"),
+                Some("Switches here turn a provider on or off for this project only. The device setting applies everywhere else."),
+                self.button(
+                    "settings.providers.scope.clear".to_owned(),
+                    "Show device settings",
+                    false,
+                    Some(cx.listener(|view, _, _, cx| view.set_project_scope(None, cx))),
+                ),
+                &tokens,
+                &geometry,
+            ));
+        }
         match config.settings() {
             None => {
                 rows.push(self.note_row(

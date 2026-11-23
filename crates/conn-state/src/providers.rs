@@ -4,6 +4,7 @@
 //! Pure and GPUI-free, so conn-gpui and the iOS app (`conn-ffi`) read one projection. The live
 //! projection of `subscribeServerConfig` events is [`ServerConfigState`].
 
+use crate::model_preferences::{ModelPreferences, sort_models_for_instance};
 use conn_contract::{
     ServerConfig, ServerConfigStreamEvent, ServerProviderAuthStatus,
     ServerProviderCompatibilityStatus, ServerProviderState, ServerProvidersItemItem,
@@ -270,10 +271,51 @@ pub struct ModelOption {
     pub is_default: bool,
     pub is_legacy: bool,
     pub is_new: bool,
+    /// Added by the user in Settings → Providers → Models (`isCustom`). Never hidden.
+    pub is_custom: bool,
+    /// The server reported capabilities for it. A custom or fallback model may have none.
+    pub has_capabilities: bool,
     pub descriptors: Vec<ModelOptionDescriptor>,
 }
 
 impl ModelOption {
+    /// `describeModelCapabilities`: `Fast mode`, and `No reasoning` when `flag_missing_reasoning`
+    /// (other models of the provider reason) and this discovered model has no reasoning control.
+    /// Alias slugs (`default`, Cursor's `auto`) defer to the provider, so reasoning is unknown.
+    #[must_use]
+    pub fn capability_labels(&self, flag_missing_reasoning: bool) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        let fast = self.descriptors.iter().any(|descriptor| match descriptor {
+            ModelOptionDescriptor::Boolean { id, .. } => id == "fastMode",
+            ModelOptionDescriptor::Select { id, choices, .. } => {
+                id == "serviceTier"
+                    && choices
+                        .iter()
+                        .any(|choice| choice.id == "fast" || choice.label == "Fast")
+            }
+        });
+        if fast {
+            labels.push("Fast mode");
+        }
+        if flag_missing_reasoning
+            && !self.is_custom
+            && self.has_capabilities
+            && !matches!(self.slug.as_str(), "default" | "auto")
+            && !self.has_reasoning_control()
+        {
+            labels.push("No reasoning");
+        }
+        labels
+    }
+
+    /// Whether a descriptor of this model sets reasoning.
+    #[must_use]
+    pub fn has_reasoning_control(&self) -> bool {
+        self.descriptors
+            .iter()
+            .any(ModelOptionDescriptor::is_reasoning)
+    }
+
     /// Compact trigger label (`getTriggerDisplayModelName`): `"Gemini 4 Neon"` -> `"4 Neon"`,
     /// `"Claude Sonnet 4.6"` -> `"Sonnet 4.6"`, `"GPT-5.4"` stays.
     #[must_use]
@@ -857,7 +899,14 @@ pub struct ModelCatalog {
     /// Every instance the server lists, in server order, disabled and model-less ones too.
     /// Threads keep the id of an instance that left the picker, so lookups read this list.
     pub instances: Vec<ProviderInstanceInfo>,
+    /// Favorites, hidden models and order. Hidden models leave the picker but stay findable,
+    /// so a thread that uses one still shows its name and options.
+    pub preferences: ModelPreferences,
 }
+
+/// The picker rail's Favorites tab, as a `selected_provider`. Instance ids start with a
+/// letter, so it never names an instance.
+pub const FAVORITES_TAB: &str = "@favorites";
 
 impl ModelCatalog {
     /// Builds a [`ModelCatalog`] from a typed `conn_contract::ServerConfig`.
@@ -999,6 +1048,57 @@ impl ModelCatalog {
             providers: order_provider_groups(groups),
             unlisted: unlisted_groups,
             instances,
+            preferences: ModelPreferences::default(),
+        }
+    }
+
+    /// The catalog with the environment's model preferences: each instance's models in its
+    /// saved order (`applyInstanceModelPreferences`), with hidden models and favorites kept
+    /// for the picker.
+    #[must_use]
+    pub fn with_preferences(mut self, preferences: ModelPreferences) -> Self {
+        let none = std::collections::HashSet::new();
+        for group in self.providers.iter_mut().chain(self.unlisted.iter_mut()) {
+            let order = preferences.instance(&group.instance_id).model_order;
+            if order.is_empty() {
+                continue;
+            }
+            let models = std::mem::take(&mut group.models);
+            group.models =
+                sort_models_for_instance(models, |m| m.slug.as_str(), &order, &none, false);
+        }
+        self.preferences = preferences;
+        self
+    }
+
+    /// Whether the picker leaves `model` out: hidden in Settings, and not a custom model.
+    #[must_use]
+    pub fn is_hidden(&self, model: &ModelOption) -> bool {
+        !model.is_custom && self.preferences.is_hidden(&model.instance_id, &model.slug)
+    }
+
+    /// Whether `model` is a favorite.
+    #[must_use]
+    pub fn is_favorite(&self, model: &ModelOption) -> bool {
+        self.preferences
+            .is_favorite(&model.instance_id, &model.slug)
+    }
+
+    /// The tab the picker opens on (`selectedInstanceId`'s initial value): Favorites when a
+    /// favorite can be picked and the active provider is ready, else the active provider.
+    #[must_use]
+    pub fn initial_picker_tab(&self, active_instance_id: Option<&str>) -> Option<String> {
+        let active_ready = active_instance_id.is_none_or(|id| {
+            self.providers
+                .iter()
+                .find(|p| p.instance_id == id)
+                .is_none_or(|p| p.ready)
+        });
+        let has_pickable_favorite = self.pickable_models().any(|m| self.is_favorite(m));
+        if active_ready && has_pickable_favorite {
+            Some(FAVORITES_TAB.to_owned())
+        } else {
+            active_instance_id.map(str::to_owned)
         }
     }
 
@@ -1007,7 +1107,7 @@ impl ModelCatalog {
         self.providers.iter().filter(|p| p.enabled)
     }
 
-    /// Returns the preferred default model across available providers:
+    /// Returns the preferred default model across available providers, hidden models aside:
     /// first ready provider's `is_default` model, else first model of a ready provider,
     /// else any `is_default` model, else the very first model in the catalog.
     #[must_use]
@@ -1016,13 +1116,14 @@ impl ModelCatalog {
             .iter()
             .filter(|p| p.ready)
             .flat_map(|p| p.models.iter())
+            .filter(|m| !self.is_hidden(m))
             .find(|m| m.is_default)
             .or_else(|| {
                 self.providers
                     .iter()
                     .filter(|p| p.ready)
                     .flat_map(|p| p.models.iter())
-                    .next()
+                    .find(|m| !self.is_hidden(m))
             })
             .or_else(|| {
                 self.providers
@@ -1080,7 +1181,7 @@ impl ModelCatalog {
             .iter()
             .filter(|p| p.ready)
             .flat_map(|p| p.models.iter())
-            .filter(|m| !is_synthetic_default(m))
+            .filter(|m| !is_synthetic_default(m) && !self.is_hidden(m))
     }
 
     /// Returns the models visible for the active provider tab and search query.
@@ -1090,6 +1191,20 @@ impl ModelCatalog {
     /// A provider that is not ready lists no model, as in Conn.
     #[must_use]
     pub fn filtered_models(
+        &self,
+        selected_provider: Option<&str>,
+        query: &str,
+    ) -> Vec<&ModelOption> {
+        let mut models = self.unsorted_filtered_models(selected_provider, query);
+        // `sortProviderModelItems`: favorites first, except in Favorites, which keeps the
+        // providers' order. The sort is stable.
+        if selected_provider != Some(FAVORITES_TAB) || !query.trim().is_empty() {
+            models.sort_by_key(|m| !self.is_favorite(m));
+        }
+        models
+    }
+
+    fn unsorted_filtered_models(
         &self,
         selected_provider: Option<&str>,
         query: &str,
@@ -1109,6 +1224,13 @@ impl ModelCatalog {
                             .as_deref()
                             .is_some_and(|sp| sp.to_ascii_lowercase().contains(&needle))
                 })
+                .collect();
+        }
+
+        if selected_provider == Some(FAVORITES_TAB) {
+            return self
+                .pickable_models()
+                .filter(|m| self.is_favorite(m))
                 .collect();
         }
 
@@ -1175,6 +1297,8 @@ fn model_option_from_contract(
         is_default: model.is_default.unwrap_or(false),
         is_legacy: model.is_legacy.unwrap_or(false),
         is_new: model.badge.is_some(),
+        is_custom: model.is_custom,
+        has_capabilities: model.capabilities.is_some(),
         descriptors,
     }
 }
@@ -1657,6 +1781,7 @@ pub struct ServerConfigState {
     catalog: ModelCatalog,
     scratch_workspace_root: Option<String>,
     model_catalog_refresh: bool,
+    managed_policy: Option<conn_contract::ManagedPolicySummary>,
     loaded: bool,
 }
 
@@ -1694,7 +1819,7 @@ impl ServerConfigState {
     /// The catalog with each instance enabled as `project_id` sees it
     /// (`providerInstanceEntriesFor` -> `applyProviderInstanceSettings`): a project's override,
     /// else the machine setting. A server that sends no `providerInstances` keeps the flags
-    /// of its snapshot.
+    /// of its snapshot. The environment's model preferences apply.
     #[must_use]
     pub fn catalog_for_project(&self, project_id: Option<&str>) -> ModelCatalog {
         let items: Vec<Option<ServerProvidersItemItem>> = self
@@ -1716,7 +1841,18 @@ impl ServerConfigState {
                 Some(provider)
             })
             .collect();
-        ModelCatalog::from_providers(&items)
+        let preferences = self
+            .settings
+            .as_ref()
+            .map(ModelPreferences::from_settings)
+            .unwrap_or_default();
+        ModelCatalog::from_providers(&items).with_preferences(preferences)
+    }
+
+    /// Every provider as the server sent it, in server order.
+    #[must_use]
+    pub fn providers(&self) -> &[ServerProvidersItemItem] {
+        &self.providers
     }
 
     /// One provider as the server sent it.
@@ -1725,6 +1861,13 @@ impl ServerConfigState {
         self.providers
             .iter()
             .find(|provider| provider.instance_id == instance_id)
+    }
+
+    /// `ServerConfig.managedPolicy`: what an administrator's policy locks, or `None` when the
+    /// environment is unmanaged.
+    #[must_use]
+    pub fn managed_policy(&self) -> Option<&conn_contract::ManagedPolicySummary> {
+        self.managed_policy.as_ref()
     }
 
     /// `ServerConfig.scratchWorkspaceRoot`.
@@ -1768,9 +1911,11 @@ impl ServerConfigState {
         let refresh = config.environment.capabilities.model_catalog_refresh == Some(true);
         let config_changed = !was_loaded
             || scratch != self.scratch_workspace_root
-            || refresh != self.model_catalog_refresh;
+            || refresh != self.model_catalog_refresh
+            || config.managed_policy != self.managed_policy;
         self.scratch_workspace_root = scratch;
         self.model_catalog_refresh = refresh;
+        self.managed_policy.clone_from(&config.managed_policy);
         let settings_changed = self.settings.as_ref() != Some(&config.settings);
         self.settings = Some(config.settings.clone());
         let mut change = self.set_providers(config.providers.iter().flatten().cloned().collect());
@@ -2255,6 +2400,65 @@ mod live_tests {
     }
 
     #[test]
+    fn model_preferences_hide_order_and_favor_models_in_the_picker() {
+        let mut state = loaded();
+        let (first, second) = ("gpt-6.1-sol", "gpt-6-astra");
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerModelPreferences"] = json!({
+            "codex": { "hiddenModels": [first], "modelOrder": [second] },
+            "claudeAgent": { "modelOrder": ["claude-sonnet-5-5"] },
+        });
+        settings["favorites"] = json!([{ "provider": "codex", "model": second }]);
+        state.apply(event(json!({
+            "version": 1, "type": "settingsUpdated", "payload": { "settings": settings }
+        })));
+        let catalog = state.catalog();
+        assert_eq!(
+            catalog.providers[0].models[0].slug, second,
+            "the saved order leads"
+        );
+        assert_eq!(catalog.providers[1].models[0].slug, "claude-sonnet-5-5");
+        let listed: Vec<&str> = catalog
+            .filtered_models(Some("codex"), "")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(listed, [second], "hidden models leave the picker");
+        let searched: Vec<&str> = catalog
+            .filtered_models(None, "s")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(searched.first(), Some(&second), "favorites lead a search");
+        assert!(
+            catalog.find_model(Some("codex"), first).is_some(),
+            "a hidden model stays findable for threads that use it"
+        );
+        assert_ne!(
+            catalog.default_model().map(|m| m.slug.as_str()),
+            Some(first)
+        );
+        let favorites: Vec<&str> = catalog
+            .filtered_models(Some(FAVORITES_TAB), "")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(favorites, [second]);
+        assert_eq!(
+            catalog.initial_picker_tab(Some("codex")).as_deref(),
+            Some(FAVORITES_TAB)
+        );
+        assert_eq!(
+            loaded()
+                .catalog()
+                .initial_picker_tab(Some("codex"))
+                .as_deref(),
+            Some("codex"),
+            "without favorites the active provider opens"
+        );
+    }
+
+    #[test]
     fn a_server_without_provider_instances_keeps_its_own_enabled_flags() {
         let mut snapshot = snapshot_json();
         snapshot["config"]["settings"]
@@ -2532,6 +2736,8 @@ mod tests {
             is_default: false,
             is_legacy: false,
             is_new: false,
+            is_custom: false,
+            has_capabilities: true,
             descriptors,
         }
     }

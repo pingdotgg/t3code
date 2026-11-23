@@ -7,7 +7,8 @@
 //! patch, built here so the iOS app sends the same bytes.
 
 use conn_contract::{
-    ProjectProviderInstanceOverride, ServerSettings, ServerSettingsProjectSettingsOverridesValue,
+    ManagedPolicySummary, ProjectProviderInstanceOverride, ServerProvidersItemItem, ServerSettings,
+    ServerSettingsProjectSettingsOverridesValue,
     ServerSettingsProviderInstancesValue as InstanceConfig,
     ServerSettingsProviderInstancesValueEnvironmentItem as EnvironmentVariable,
 };
@@ -914,6 +915,20 @@ pub fn new_instance(
     }
 }
 
+/// A project's own `enabled` for `instance_id`, or `None` when it follows the machine.
+#[must_use]
+pub fn project_override(
+    settings: &ServerSettings,
+    project_id: &str,
+    instance_id: &str,
+) -> Option<bool> {
+    project_overrides(settings, project_id)?
+        .provider_instances
+        .as_ref()?
+        .get(instance_id)?
+        .enabled
+}
+
 /// One project's overrides, for callers that only read them.
 #[must_use]
 pub fn project_overrides<'a>(
@@ -924,6 +939,388 @@ pub fn project_overrides<'a>(
         .project_settings_overrides
         .as_ref()?
         .get(project_id)
+}
+
+// --- managed policy ----------------------------------------------------------------------
+
+/// What an administrator's policy pins on instances of one driver (`ManagedInstanceLocks`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InstanceLocks {
+    /// Keys inside the instance's `config` users cannot change.
+    pub config_keys: Vec<String>,
+    /// Environment variables users cannot edit, rename or remove.
+    pub environment_names: Vec<String>,
+    /// Under a runtime-mode ceiling every variable is the administrator's.
+    pub whole_environment: bool,
+    /// `Managed by <organization>.`
+    pub reason: String,
+}
+
+impl InstanceLocks {
+    /// Whether the config key `key` is locked.
+    #[must_use]
+    pub fn locks_config(&self, key: &str) -> bool {
+        self.config_keys.iter().any(|k| k == key)
+    }
+
+    /// Whether the environment variable `name` is locked.
+    #[must_use]
+    pub fn locks_variable(&self, name: &str) -> bool {
+        self.whole_environment || self.environment_names.iter().any(|n| n == name)
+    }
+}
+
+/// `managedInstanceLocks`: what the policy pins on instances of `driver`, or `None`.
+#[must_use]
+pub fn managed_instance_locks(
+    policy: Option<&ManagedPolicySummary>,
+    driver: &str,
+) -> Option<InstanceLocks> {
+    let policy = policy?;
+    let paths = policy
+        .limits
+        .as_ref()?
+        .providers
+        .as_ref()?
+        .locked_instance_fields
+        .as_ref()?
+        .get(driver)?;
+    if paths.is_empty() {
+        return None;
+    }
+    let under = |prefix: &str| -> Vec<String> {
+        paths
+            .iter()
+            .filter_map(|path| path.strip_prefix(prefix).map(str::to_owned))
+            .collect()
+    };
+    Some(InstanceLocks {
+        config_keys: under("config."),
+        environment_names: under("environment."),
+        whole_environment: paths.iter().any(|path| path == "environment"),
+        reason: format!("Managed by {}.", policy.organization),
+    })
+}
+
+/// `isManagedDriverAllowed`: whether the policy lets `driver` run.
+#[must_use]
+pub fn is_managed_driver_allowed(policy: Option<&ManagedPolicySummary>, driver: &str) -> bool {
+    policy
+        .and_then(|p| {
+            p.limits
+                .as_ref()?
+                .providers
+                .as_ref()?
+                .allowed_drivers
+                .as_ref()
+        })
+        .is_none_or(|allowed| allowed.iter().any(|d| d == driver))
+}
+
+/// `disallowedProviderMessage`: why a provider the policy leaves out cannot be used.
+#[must_use]
+pub fn disallowed_provider_message(organization: Option<&str>, label: &str) -> String {
+    let owner = organization.map_or_else(|| "Your organization".to_owned(), |o| format!("{o}'s"));
+    format!("{owner} policy does not allow the {label} provider.")
+}
+
+/// Why switching `driver` on is refused, or `None`. Switching off stays the user's call.
+#[must_use]
+pub fn managed_enable_denial(
+    policy: Option<&ManagedPolicySummary>,
+    driver: &str,
+    enabled: bool,
+) -> Option<String> {
+    if enabled || is_managed_driver_allowed(policy, driver) {
+        return None;
+    }
+    let label = driver_def(driver).map_or(driver, |def| def.label);
+    Some(disallowed_provider_message(
+        policy.map(|p| p.organization.as_str()),
+        label,
+    ))
+}
+
+/// Whether Add provider is offered: a policy that allows no driver leaves nothing to add.
+#[must_use]
+pub fn can_add_provider(policy: Option<&ManagedPolicySummary>) -> bool {
+    policy
+        .and_then(|p| {
+            p.limits
+                .as_ref()?
+                .providers
+                .as_ref()?
+                .allowed_drivers
+                .as_ref()
+        })
+        .is_none_or(|allowed| !allowed.is_empty())
+}
+
+// --- secret references --------------------------------------------------------------------
+
+/// The 1Password secret provider kind.
+pub const ONE_PASSWORD_KIND: &str = "one_password";
+const MAX_SECRET_REFERENCE_CHARS: usize = 1024;
+const MAX_ONE_PASSWORD_ACCOUNT_CHARS: usize = 253;
+
+/// A configured secret provider a value can point at (`SecretSource`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretSource {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+}
+
+/// `{ provider, reference }`: a secret a secret provider holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecretRef {
+    pub provider: String,
+    pub reference: String,
+}
+
+fn is_one_password_account(value: &str) -> bool {
+    let mut chars = value.chars();
+    value.chars().count() <= MAX_ONE_PASSWORD_ACCOUNT_CHARS
+        && chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// `useSecretSources`: the secret providers a setting can point at. Only kinds this build
+/// reads (1Password with a valid account) count (`classifySecretProvider`).
+#[must_use]
+pub fn secret_sources(settings: &ServerSettings) -> Vec<SecretSource> {
+    settings
+        .secret_providers
+        .iter()
+        .flatten()
+        .filter(|(_, config)| {
+            config.kind == ONE_PASSWORD_KIND
+                && config
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.get("account"))
+                    .and_then(Value::as_str)
+                    .is_some_and(is_one_password_account)
+        })
+        .map(|(id, config)| SecretSource {
+            id: id.clone(),
+            kind: config.kind.clone(),
+            label: config.label.clone(),
+        })
+        .collect()
+}
+
+/// One name of a 1Password reference: `[A-Za-z0-9._-]`, spaces inside only.
+fn is_one_password_name(name: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    !name.is_empty()
+        && name.chars().all(|c| allowed(c) || c == ' ')
+        && name.chars().next().is_some_and(allowed)
+        && name.chars().last().is_some_and(allowed)
+}
+
+/// The 1Password reference syntax: `op://vault/item[/section]/field[?attribute=value]`.
+fn is_one_password_reference(reference: &str) -> bool {
+    if reference.chars().count() > MAX_SECRET_REFERENCE_CHARS {
+        return false;
+    }
+    let Some(rest) = reference.strip_prefix("op://") else {
+        return false;
+    };
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query)),
+        None => (rest, None),
+    };
+    let names: Vec<&str> = path.split('/').collect();
+    if !(3..=4).contains(&names.len()) || !names.iter().all(|n| is_one_password_name(n)) {
+        return false;
+    }
+    query.is_none_or(|query| {
+        query.split_once('=').is_some_and(|(key, value)| {
+            !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+                && !value.is_empty()
+                && value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        })
+    })
+}
+
+/// Whether `reference` is one the secret provider of `kind` reads (`definition.isReference`).
+/// Unknown kinds only need a single trimmed line (`SecretReferencePath`).
+#[must_use]
+pub fn is_valid_secret_reference(kind: &str, reference: &str) -> bool {
+    let trimmed = reference.trim();
+    if trimmed.is_empty()
+        || trimmed != reference
+        || reference.contains(['\r', '\n'])
+        || reference.chars().count() > MAX_SECRET_REFERENCE_CHARS
+    {
+        return false;
+    }
+    kind != ONE_PASSWORD_KIND || is_one_password_reference(reference)
+}
+
+/// The reference field's placeholder (`referencePlaceholder`).
+#[must_use]
+pub fn secret_reference_placeholder(kind: &str) -> &'static str {
+    if kind == ONE_PASSWORD_KIND {
+        "op://vault/item/field"
+    } else {
+        "Secret reference"
+    }
+}
+
+/// The message under a rejected reference (`invalidReferenceMessage`).
+#[must_use]
+pub fn invalid_secret_reference_message(kind: &str) -> &'static str {
+    if kind == ONE_PASSWORD_KIND {
+        "Use a 1Password reference like op://vault/item/field."
+    } else {
+        "Enter a valid secret reference."
+    }
+}
+
+/// The reference a variable reads its value from, if any.
+#[must_use]
+pub fn variable_secret(variable: &EnvironmentVariable) -> Option<SecretRef> {
+    variable.secret.as_ref().map(|secret| SecretRef {
+        provider: secret.provider.clone(),
+        reference: secret.reference.clone(),
+    })
+}
+
+/// A variable that reads its value from a secret provider (the stored shape: an empty
+/// `value`, `sensitive`, and the reference in `secret`).
+#[must_use]
+pub fn secret_variable(name: &str, secret: &SecretRef) -> EnvironmentVariable {
+    EnvironmentVariable {
+        name: name.to_owned(),
+        value: Some(String::new()),
+        sensitive: Some(true),
+        value_redacted: None,
+        secret: Some(conn_contract::SecretReference {
+            provider: secret.provider.clone(),
+            reference: secret.reference.clone(),
+        }),
+    }
+}
+
+/// `nextProviderEnvironmentWithFieldSecret`: points a driver's named variable at a secret, or
+/// with `None` removes it.
+#[must_use]
+pub fn with_environment_field_secret(
+    instance: &InstanceConfig,
+    name: &str,
+    secret: Option<&SecretRef>,
+) -> InstanceConfig {
+    let mut environment: Vec<EnvironmentVariable> = instance
+        .environment
+        .iter()
+        .flatten()
+        .filter(|variable| variable.name != name)
+        .cloned()
+        .collect();
+    if let Some(secret) = secret {
+        environment.push(secret_variable(name, secret));
+    }
+    with_environment(instance, environment)
+}
+
+/// A secret config field set to read from a secret provider.
+#[must_use]
+pub fn with_config_secret_reference(
+    instance: &InstanceConfig,
+    key: &str,
+    secret: &SecretRef,
+) -> InstanceConfig {
+    let mut config: Map<String, Value> = instance
+        .config
+        .as_ref()
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    config.insert(
+        key.to_owned(),
+        json!({ "provider": secret.provider, "reference": secret.reference }),
+    );
+    InstanceConfig {
+        config: Some(Value::Object(config)),
+        ..instance.clone()
+    }
+}
+
+/// The reference a secret config field reads from, when the server shows it.
+#[must_use]
+pub fn config_secret_reference(instance: &InstanceConfig, key: &str) -> Option<SecretRef> {
+    let value = instance.config.as_ref()?.get(key)?;
+    Some(SecretRef {
+        provider: value.get("provider")?.as_str()?.to_owned(),
+        reference: value.get("reference")?.as_str()?.to_owned(),
+    })
+}
+
+// --- text generation ----------------------------------------------------------------------
+
+/// `DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection`.
+#[must_use]
+pub fn default_text_generation_selection() -> Value {
+    json!({
+        "instanceId": "codex",
+        "model": "gpt-6-luna",
+        "options": [{ "id": "reasoningEffort", "value": "low" }],
+    })
+}
+
+/// The instance text generation (titles, commit messages) runs on
+/// (`resolveAppModelSelectionState(...).instanceId`): the selected one while it is enabled
+/// and available, else the first such instance that generates text.
+#[must_use]
+pub fn resolved_text_generation_instance(
+    settings: &ServerSettings,
+    providers: &[ServerProvidersItemItem],
+) -> Option<String> {
+    let selected = settings
+        .text_generation_model_selection
+        .as_ref()
+        .and_then(|selection| selection.instance_id.clone().flatten())
+        .and_then(|id| id.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "codex".to_owned());
+    let usable = |provider: &&ServerProvidersItemItem| {
+        provider.supports_text_generation != Some(false)
+            && provider.enabled
+            && !matches!(
+                provider.availability,
+                Some(conn_contract::ServerProvidersItemItemAvailability::Unavailable)
+            )
+    };
+    providers
+        .iter()
+        .filter(usable)
+        .find(|provider| provider.instance_id == selected)
+        .or_else(|| providers.iter().find(usable))
+        .map(|provider| provider.instance_id.clone())
+}
+
+/// `updateInstance`: the upsert, plus a reset of the text-generation model when this turns
+/// off the instance text generation runs on, so titles and commit messages keep working.
+#[must_use]
+pub fn update_instance_request(
+    settings: &ServerSettings,
+    providers: &[ServerProvidersItemItem],
+    instance_id: &str,
+    previous: &InstanceConfig,
+    next: &InstanceConfig,
+) -> Value {
+    let mut request = upsert_request(instance_id, next);
+    let disabling = next.enabled == Some(false) && resolve_instance_enabled(previous);
+    if disabling
+        && resolved_text_generation_instance(settings, providers).as_deref() == Some(instance_id)
+    {
+        request["patch"]["textGenerationModelSelection"] = default_text_generation_selection();
+    }
+    request
 }
 
 #[cfg(test)]
@@ -1171,5 +1568,186 @@ mod tests {
             "An instance named 'codex' already exists."
         );
         assert!(validate_instance_id(&"a".repeat(65), &[]).is_err());
+    }
+
+    fn policy(value: &Value) -> ManagedPolicySummary {
+        serde_json::from_value(value.clone()).expect("policy decode")
+    }
+
+    #[test]
+    fn managed_policy_locks_fields_and_refuses_disallowed_drivers() {
+        let summary = policy(&json!({
+            "organization": "Acme",
+            "lockedSettings": [],
+            "limits": { "providers": {
+                "allowedDrivers": ["codex"],
+                "lockedInstanceFields": {
+                    "codex": ["config.binaryPath", "environment.OPENAI_API_KEY"],
+                    "claudeAgent": ["environment"],
+                },
+            } },
+        }));
+        let locks = managed_instance_locks(Some(&summary), "codex").expect("codex locks");
+        assert!(locks.locks_config("binaryPath") && !locks.locks_config("homePath"));
+        assert!(locks.locks_variable("OPENAI_API_KEY") && !locks.locks_variable("OTHER"));
+        assert_eq!(locks.reason, "Managed by Acme.");
+        let claude = managed_instance_locks(Some(&summary), "claudeAgent").expect("claude");
+        assert!(claude.whole_environment && claude.locks_variable("ANY"));
+        assert_eq!(managed_instance_locks(Some(&summary), "grok"), None);
+        assert_eq!(managed_instance_locks(None, "codex"), None);
+
+        assert!(is_managed_driver_allowed(Some(&summary), "codex"));
+        assert!(!is_managed_driver_allowed(Some(&summary), "grok"));
+        assert!(is_managed_driver_allowed(None, "grok"));
+        assert_eq!(
+            managed_enable_denial(Some(&summary), "grok", false).as_deref(),
+            Some("Acme's policy does not allow the Grok provider.")
+        );
+        assert_eq!(
+            managed_enable_denial(Some(&summary), "grok", true),
+            None,
+            "turning it off stays allowed"
+        );
+        assert_eq!(
+            disallowed_provider_message(None, "Pi"),
+            "Your organization policy does not allow the Pi provider."
+        );
+        assert!(can_add_provider(Some(&summary)) && can_add_provider(None));
+    }
+
+    #[test]
+    fn secret_sources_and_references_follow_the_1password_definition() {
+        let settings = settings(&json!({
+            "secretProviders": {
+                "op": { "kind": "one_password", "label": "1Password", "config": { "account": "my.1password.com" } },
+                "bad": { "kind": "one_password", "label": "Bad", "config": { "account": "-x" } },
+                "vault": { "kind": "future", "label": "Future" },
+            },
+        }));
+        let sources = secret_sources(&settings);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].id, "op");
+        for good in [
+            "op://vault/item/field",
+            "op://My Vault/item/section/field",
+            "op://v/i/f?attribute=otp",
+        ] {
+            assert!(is_valid_secret_reference(ONE_PASSWORD_KIND, good), "{good}");
+        }
+        for bad in [
+            "op://vault/item",
+            "op://vault/item/a/b/c",
+            "op:// vault/item/field",
+            "vault/item/field",
+            "op://v/i/f?Attr=x",
+            " op://v/i/f",
+            "op://v/i/{{f}}",
+        ] {
+            assert!(!is_valid_secret_reference(ONE_PASSWORD_KIND, bad), "{bad}");
+        }
+        assert!(is_valid_secret_reference("future", "anything/at all"));
+        assert!(!is_valid_secret_reference("future", "two\nlines"));
+    }
+
+    #[test]
+    fn secret_writes_use_the_stored_shape() {
+        let secret = SecretRef {
+            provider: "op".to_owned(),
+            reference: "op://v/i/f".to_owned(),
+        };
+        let instance = with_environment_field_secret(
+            &blank_instance("cursor"),
+            "CURSOR_API_KEY",
+            Some(&secret),
+        );
+        assert_eq!(
+            serde_json::to_value(&instance).expect("encode")["environment"],
+            json!([{ "name": "CURSOR_API_KEY", "value": "", "sensitive": true,
+                     "secret": { "provider": "op", "reference": "op://v/i/f" } }])
+        );
+        let variable = environment_variable(&instance, "CURSOR_API_KEY").expect("variable");
+        assert_eq!(variable_secret(variable), Some(secret.clone()));
+        assert_eq!(
+            with_environment_field_secret(&instance, "CURSOR_API_KEY", None).environment,
+            None
+        );
+        let configured =
+            with_config_secret_reference(&blank_instance("opencode"), "serverPassword", &secret);
+        assert_eq!(
+            config_secret_reference(&configured, "serverPassword"),
+            Some(secret)
+        );
+        assert!(config_secret_saved(&configured, "serverPassword"));
+    }
+
+    fn provider(id: &str, enabled: bool, text: Option<bool>) -> ServerProvidersItemItem {
+        serde_json::from_value(json!({
+            "instanceId": id, "driver": id, "enabled": enabled, "installed": true,
+            "version": null, "status": "ready", "auth": { "status": "authenticated" },
+            "checkedAt": "2026-01-01T00:00:00Z", "models": [], "slashCommands": [], "skills": [],
+            "supportsTextGeneration": text,
+        }))
+        .expect("provider decode")
+    }
+
+    #[test]
+    fn disabling_the_text_generation_instance_resets_the_selection() {
+        let settings = settings(&json!({
+            "textGenerationModelSelection": { "instanceId": "claudeAgent", "model": "haiku" },
+        }));
+        let providers = [
+            provider("codex", true, None),
+            provider("claudeAgent", true, None),
+            provider("grok", true, Some(false)),
+        ];
+        assert_eq!(
+            resolved_text_generation_instance(&settings, &providers).as_deref(),
+            Some("claudeAgent")
+        );
+        let claude = blank_instance("claudeAgent");
+        let request = update_instance_request(
+            &settings,
+            &providers,
+            "claudeAgent",
+            &claude,
+            &with_enabled(&claude, false),
+        );
+        assert_eq!(
+            request["patch"]["textGenerationModelSelection"],
+            default_text_generation_selection()
+        );
+        let codex = blank_instance("codex");
+        let other = update_instance_request(
+            &settings,
+            &providers,
+            "codex",
+            &codex,
+            &with_enabled(&codex, false),
+        );
+        assert_eq!(
+            other["patch"],
+            json!({}),
+            "codex does not run text generation here"
+        );
+        let fallback = settings_with_missing_selection();
+        assert_eq!(
+            resolved_text_generation_instance(&fallback, &providers[1..]).as_deref(),
+            Some("claudeAgent"),
+            "a disabled or missing selection falls to the first usable instance"
+        );
+    }
+
+    fn settings_with_missing_selection() -> ServerSettings {
+        settings(&json!({}))
+    }
+
+    #[test]
+    fn project_override_reads_the_projects_own_value() {
+        let settings = settings(&json!({
+            "projectSettingsOverrides": { "p1": { "providerInstances": { "codex": { "enabled": false } } } },
+        }));
+        assert_eq!(project_override(&settings, "p1", "codex"), Some(false));
+        assert_eq!(project_override(&settings, "p1", "grok"), None);
+        assert_eq!(project_override(&settings, "p2", "codex"), None);
     }
 }
