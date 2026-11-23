@@ -38,6 +38,7 @@ import { loadOpenCode2Catalog, loadOpenCode2DirectoryCatalog } from "./openCode2
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
+  openCodeAgentOptionDescriptor,
   makeOpenCode2ModelLoader,
   makePendingOpenCodeProvider,
   openCode2CommandsToServerProviderSlashCommands,
@@ -159,6 +160,16 @@ function workspaceModelsFor(
   return Equal.equals(cwdModels.value, machineModels)
     ? {}
     : { models: cwdModels.value, workspaceModels: cwdModels.value };
+}
+
+// An unread agent list keeps the machine catalog's agent picker. OpenCode 2 turns pick their
+// agent from the interaction mode, so only OpenCode 1 publishes a workspace picker.
+function workspaceAgentsFor(
+  agents: Parameters<typeof openCodeAgentOptionDescriptor>[0] | undefined,
+) {
+  if (agents === undefined) return {};
+  const descriptor = openCodeAgentOptionDescriptor(agents);
+  return descriptor.options.length === 0 ? {} : { optionDescriptors: [descriptor] };
 }
 
 // Hot reads use the last successful probe; session opens await it to select the correct protocol.
@@ -551,6 +562,10 @@ export const OpenCodeDriver: ProviderDriver<
     ) =>
       Effect.all(
         {
+          agents: OpenCodeRuntime.loadOpenCodeAgents(client).pipe(
+            Effect.timeout("3 seconds"),
+            Effect.catchCause(() => Effect.undefined),
+          ),
           skills: openCodeRuntime.loadOpenCodeSkills(client),
           commandInventory: OpenCodeRuntime.loadOpenCodeCommands(client).pipe(
             Effect.timeoutOption(resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv)),
@@ -577,7 +592,8 @@ export const OpenCodeDriver: ProviderDriver<
         },
         { concurrency: "unbounded" },
       ).pipe(
-        Effect.map(({ skills, commandInventory, models }) => ({
+        Effect.map(({ agents, skills, commandInventory, models }) => ({
+          agents,
           skills,
           models,
           ...commandInventory,
@@ -763,9 +779,13 @@ export const OpenCodeDriver: ProviderDriver<
                     ),
                   ]).pipe(
                     Effect.map(
-                      ([machineSnapshot, { skills, models, commands, slashCommandsPending }]) => ({
+                      ([
+                        machineSnapshot,
+                        { agents, skills, models, commands, slashCommandsPending },
+                      ]) => ({
                         ...machineSnapshot,
                         ...workspaceModelsFor(machineSnapshot.models, models),
+                        ...workspaceAgentsFor(agents),
                         skills: openCodeSkillsToServerProviderSkills(skills),
                         slashCommands: openCodeCommandsToServerProviderSlashCommands(commands),
                         slashCommandsPending,

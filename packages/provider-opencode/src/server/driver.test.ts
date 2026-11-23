@@ -1342,6 +1342,7 @@ const openCode1Provider = (id: string, models: ReadonlyArray<string>) => ({
 });
 const openCode1Project = "/work/project-with-config";
 const openCode1UnreadableProject = "/work/unreadable-project";
+const openCode1StalledAgents = "/work/stalled-agents";
 const openCode1Providers = (directory: string) => {
   const all = [
     openCode1Provider("opencode", ["big-pickle"]),
@@ -1365,7 +1366,22 @@ const openCode1Runtime = {
           ? Promise.reject(new Error("provider list failed"))
           : Promise.resolve({ data: openCode1Providers(directory) }),
     },
-    app: { agents: () => Promise.resolve({ data: [] }) },
+    app: {
+      agents: (_input: unknown, options?: { readonly signal?: AbortSignal }) =>
+        directory === openCode1StalledAgents
+          ? new Promise((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+            })
+          : Promise.resolve({
+              data:
+                directory === openCode1Project
+                  ? [
+                      { name: "build", mode: "primary", hidden: false },
+                      { name: "reviewer", mode: "all", hidden: false },
+                    ]
+                  : [],
+            }),
+    },
     command: { list: () => Promise.resolve({ data: [] }) },
   }),
   loadOpenCodeInventory: () =>
@@ -1389,12 +1405,20 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         const slugsOf = (snapshot: { readonly models: ReadonlyArray<{ readonly slug: string }> }) =>
           snapshot.models.map((model) => model.slug).toSorted();
 
-        assert.deepStrictEqual(slugsOf(yield* instance.snapshotForCwd!(openCode1Project)), [
-          "opencode/big-pickle",
-          "uni/medium-gpt",
-        ]);
+        const projectSnapshot = yield* instance.snapshotForCwd!(openCode1Project);
+        assert.deepStrictEqual(slugsOf(projectSnapshot), ["opencode/big-pickle", "uni/medium-gpt"]);
+        const projectAgents = projectSnapshot.optionDescriptors?.find(
+          (option) => option.id === "agent",
+        );
+        assert.deepStrictEqual(
+          projectAgents?.type === "select"
+            ? projectAgents.options.map((option) => option.id)
+            : undefined,
+          ["build", "reviewer"],
+        );
         const otherSnapshot = yield* instance.snapshotForCwd!("/work/other-project");
         assert.deepStrictEqual(slugsOf(otherSnapshot), ["opencode/big-pickle"]);
+        assert.strictEqual(otherSnapshot.optionDescriptors, undefined);
         assert.strictEqual(otherSnapshot.workspaceModels, undefined);
         assert.strictEqual(otherSnapshot.workspaceModelsPending, undefined);
         const unreadable = yield* instance.snapshotForCwd!(openCode1UnreadableProject);
@@ -1402,6 +1426,31 @@ it.layer(Layer.mergeAll(layer, Layer.succeed(OpenCodeRuntime.OpenCodeRuntime, op
         assert.strictEqual(unreadable.workspaceModels, undefined);
         assert.strictEqual(unreadable.workspaceModelsPending, true);
       }),
+    );
+
+    it.effect("keeps commands and skills when OpenCode 1 agent discovery stalls", () =>
+      Effect.gen(function* () {
+        const instance = yield* create({}, noHttp);
+        const ready = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "ready"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+        yield* Fiber.join(ready);
+
+        const snapshotFiber = yield* instance.snapshotForCwd!(openCode1StalledAgents).pipe(
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("10 seconds");
+        const snapshot = yield* Fiber.join(snapshotFiber);
+        assert.deepStrictEqual(snapshot.skills, []);
+        assert.include(
+          snapshot.slashCommands.map((command) => command.name),
+          "compact",
+        );
+        assert.isUndefined(snapshot.optionDescriptors);
+      }).pipe(Effect.scoped),
     );
   },
 );
