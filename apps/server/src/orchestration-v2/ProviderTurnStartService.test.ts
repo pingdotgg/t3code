@@ -3404,16 +3404,15 @@ effectIt.effect(
   "fails the run instead of replacing a native thread when active background work blocks MCP rotation",
   () =>
     Effect.gen(function* () {
-      const detail =
-        "Cannot refresh MCP credentials while background work is running on this thread.";
+      const blockedError = new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
+        driver: ProviderDriverKind.make("codex"),
+        providerSessionId: ProviderSessionId.make("provider-session-mcp-blocked"),
+        providerThreadId: ProviderThreadId.make("new-provider-thread"),
+        reason: "background_work",
+      });
       const harness = makeLocalCommandHarness({
         text: "Continue",
-        resumeFailure: new ProviderAdapter.ProviderAdapterMcpRotationBlockedError({
-          driver: ProviderDriverKind.make("codex"),
-          providerSessionId: ProviderSessionId.make("provider-session-mcp-blocked"),
-          providerThreadId: ProviderThreadId.make("new-provider-thread"),
-          detail,
-        }),
+        resumeFailure: blockedError,
       });
 
       const exit = yield* Effect.exit(harness.start);
@@ -3431,7 +3430,11 @@ effectIt.effect(
         {
           type: "error",
           title: "Provider turn failed to start",
-          failure: { class: "provider_error", message: detail },
+          failure: {
+            class: "provider_error",
+            message:
+              "Cannot refresh MCP credentials while background work is running on this thread.",
+          },
         },
       ]);
     }),

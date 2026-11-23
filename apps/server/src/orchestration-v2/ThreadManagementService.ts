@@ -1098,6 +1098,7 @@ const make = Effect.gen(function* () {
                     error.cause.reason === "stopped"
                       ? "This turn was stopped and takes no result."
                       : "This output was submitted for a turn that is no longer active.",
+                  cause: error,
                 }),
               )
             : Effect.fail(error),

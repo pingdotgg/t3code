@@ -320,8 +320,8 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
 }
 
 /**
- * MCP credential rotation requires reloading the thread, which cannot run while
- * background work is active. Starting a replacement thread would split history.
+ * MCP credential rotation requires refreshing or reloading the thread, which
+ * cannot run right now without dropping live work or splitting history.
  */
 export class ProviderAdapterMcpRotationBlockedError extends Schema.TaggedError<ProviderAdapterMcpRotationBlockedError>()(
   "ProviderAdapterMcpRotationBlockedError",
@@ -329,11 +329,18 @@ export class ProviderAdapterMcpRotationBlockedError extends Schema.TaggedError<P
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
     providerThreadId: ProviderThreadId,
-    detail: Schema.String,
+    reason: Schema.Literals(["background_work", "reload_failed", "continuation_query"]),
   },
 ) {
   override get message(): string {
-    return this.detail;
+    switch (this.reason) {
+      case "background_work":
+        return "Cannot refresh MCP credentials while background work is running on this thread.";
+      case "reload_failed":
+        return "Could not reload the thread to refresh MCP credentials.";
+      case "continuation_query":
+        return "Cannot refresh MCP credentials on a retained Claude continuation query.";
+    }
   }
 }
 

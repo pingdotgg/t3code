@@ -270,15 +270,17 @@ describe("Pi MCP tool results", () => {
       const inFlight = tool.execute("late-1", {});
       await slowStarted.promise;
       bridge.setBearerTokenFile("run-2-token");
-      releaseSlow.resolve();
-      await inFlight;
       await startTurn(bridge);
 
       const beforeGen2 = seen.length;
       await tool.execute("fresh-2", {});
+      releaseSlow.resolve();
+      await inFlight;
+      await tool.execute("fresh-3", {});
       assert.deepEqual(seen.slice(beforeGen2), [
         { method: "initialize", auth: "Bearer run-2-token" },
         { method: "notifications/initialized", auth: "Bearer run-2-token", sid: "fresh-sid-2" },
+        { method: "tools/call", auth: "Bearer run-2-token", sid: "fresh-sid-2" },
         { method: "tools/call", auth: "Bearer run-2-token", sid: "fresh-sid-2" },
       ]);
       return;

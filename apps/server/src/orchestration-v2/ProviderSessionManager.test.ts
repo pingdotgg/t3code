@@ -3862,13 +3862,15 @@ it.effect.each([
           modelSelection,
           runtimePolicy,
         });
+        const unloadFailedRunId = RunId.make("run-unload-failed-typed");
+        const unloadFailedAttemptId = RunAttemptId.make("attempt-unload-failed-typed");
         yield* manager.open({
           threadId: unloadFailedThreadId,
           providerSessionId,
           modelSelection,
           runtimePolicy,
-          runId: RunId.make("run-unload-failed-typed"),
-          attemptId: RunAttemptId.make("attempt-unload-failed-typed"),
+          runId: unloadFailedRunId,
+          attemptId: unloadFailedAttemptId,
           requireRunScopedMcp: true,
         });
         const stagedToken = (yield* mcpSessions.read(
@@ -3887,9 +3889,34 @@ it.effect.each([
           beforeFailedUnload!.authorizationHeader,
         );
 
+        // Once the unload fault clears, retrying the same run and attempt succeeds with a bound credential.
+        yield* Ref.set(failUnload, false);
+        yield* openFor(manager, providerSessionId, unloadFailedThreadId, {
+          runId: unloadFailedRunId,
+          attemptId: unloadFailedAttemptId,
+          requireRunScopedMcp: true,
+        });
+        const retriedConfig = yield* mcpSessions.read(unloadFailedThreadId);
+        assert.isDefined(retriedConfig);
+        assert.notEqual(
+          retriedConfig!.authorizationHeader,
+          beforeFailedUnload!.authorizationHeader,
+        );
+        yield* runtime.resumeThread({
+          threadId: unloadFailedThreadId,
+          providerThread: unloadFailedProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isSome(yield* Queue.poll(unloads)));
+        const resolvedRetried = yield* registry.resolve(rawBearer(retriedConfig));
+        assert.isDefined(resolvedRetried);
+        assert.equal(resolvedRetried!.thread.runId, unloadFailedRunId);
+        assert.equal(resolvedRetried!.thread.attemptId, unloadFailedAttemptId);
+        assert.isUndefined(yield* registry.resolve(rawBearer(beforeFailedUnload)));
+
         // Once background work finishes, reloading a thread whose loaded credential became unbound
         // during keepLoaded retires that old unbound credential.
-        yield* Ref.set(failUnload, false);
         yield* openFor(manager, providerSessionId, threadId, {
           runId: RunId.make("run-bg-3-retire"),
           attemptId: RunAttemptId.make("attempt-bg-3-retire"),
@@ -3970,6 +3997,103 @@ it.effect.each([
             (yield* registry.resolve(originalRaceToken))?.capabilities.has("preview") ?? true,
           );
         }
+
+        // A failed linked-environment unload keeps the loaded MCP credential record so MCP refresh
+        // still rolls back a staged credential instead of bypassing rotation.
+        yield* Ref.set(sessionBackgroundWorkProbe, Effect.succeed(false));
+        const {
+          threadId: linksFailThreadId,
+          providerThread: linksFailProviderThread,
+          loadedConfig: beforeLinksFail,
+          loadedToken: beforeLinksFailToken,
+        } = yield* attachLoadedThread("links-unload-fail");
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* openFor(manager, providerSessionId, linksFailThreadId, {
+          runId: RunId.make("run-links-fail-typed"),
+          attemptId: RunAttemptId.make("attempt-links-fail-typed"),
+          requireRunScopedMcp: true,
+        });
+        const stagedLinksToken = rawBearer(yield* mcpSessions.read(linksFailThreadId));
+        assert.notEqual(stagedLinksToken, beforeLinksFailToken);
+        yield* Ref.set(failUnload, true);
+        yield* runtime.resumeThread({
+          threadId: linksFailThreadId,
+          providerThread: linksFailProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isUndefined(yield* registry.resolve(stagedLinksToken));
+        assert.equal(
+          (yield* mcpSessions.read(linksFailThreadId))?.authorizationHeader,
+          beforeLinksFail.authorizationHeader,
+        );
+
+        // A failed detach unload keeps the loaded MCP credential record so reattaching with a
+        // rotated credential still enforces reload/rollback and retries cleanly once unload recovers.
+        yield* Ref.set(failUnload, false);
+        const {
+          threadId: detachFailThreadId,
+          providerThread: detachFailProviderThread,
+          loadedConfig: beforeDetachFail,
+          loadedToken: beforeDetachFailToken,
+        } = yield* attachLoadedThread("detach-unload-fail");
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: detachFailThreadId }),
+              type: "provider-thread.updated",
+              threadId: detachFailThreadId,
+              occurredAt: now,
+              payload: detachFailProviderThread,
+            },
+          ],
+        });
+        yield* Ref.set(failUnload, true);
+        yield* manager.detach({ providerSessionId, threadId: detachFailThreadId });
+        const detachRetryRunId = RunId.make("run-detach-fail-typed");
+        const detachRetryAttemptId = RunAttemptId.make("attempt-detach-fail-typed");
+        yield* openFor(manager, providerSessionId, detachFailThreadId, {
+          runId: detachRetryRunId,
+          attemptId: detachRetryAttemptId,
+          requireRunScopedMcp: true,
+        });
+        const stagedDetachToken = rawBearer(yield* mcpSessions.read(detachFailThreadId));
+        assert.notEqual(stagedDetachToken, beforeDetachFailToken);
+        yield* runtime.resumeThread({
+          threadId: detachFailThreadId,
+          providerThread: detachFailProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isUndefined(yield* registry.resolve(stagedDetachToken));
+        assert.equal(
+          (yield* mcpSessions.read(detachFailThreadId))?.authorizationHeader,
+          beforeDetachFail.authorizationHeader,
+        );
+        yield* Ref.set(failUnload, false);
+        yield* openFor(manager, providerSessionId, detachFailThreadId, {
+          runId: detachRetryRunId,
+          attemptId: detachRetryAttemptId,
+          requireRunScopedMcp: true,
+        });
+        const retriedDetachConfig = yield* mcpSessions.read(detachFailThreadId);
+        assert.isDefined(retriedDetachConfig);
+        assert.notEqual(
+          retriedDetachConfig!.authorizationHeader,
+          beforeDetachFail.authorizationHeader,
+        );
+        yield* runtime.resumeThread({
+          threadId: detachFailThreadId,
+          providerThread: detachFailProviderThread,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isSome(yield* Queue.poll(unloads)));
+        const resolvedDetachRetry = yield* registry.resolve(rawBearer(retriedDetachConfig));
+        assert.isDefined(resolvedDetachRetry);
+        assert.equal(resolvedDetachRetry!.thread.runId, detachRetryRunId);
+        assert.equal(resolvedDetachRetry!.thread.attemptId, detachRetryAttemptId);
+        assert.isUndefined(yield* registry.resolve(beforeDetachFailToken));
 
         yield* manager.close(providerSessionId);
       });

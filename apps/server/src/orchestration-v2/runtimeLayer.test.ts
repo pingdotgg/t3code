@@ -12173,6 +12173,9 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         .pipe(Effect.flip);
       assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
       assert.include(rejected.message, "was stopped");
+      assert.instanceOf(rejected.cause, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(rejected.cause.cause, Orchestrator.RunOutputDispatchRejectionError);
+      assert.equal(rejected.cause.cause.reason, "stopped");
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.isUndefined(after.runs[0]?.output);
     }),

@@ -366,12 +366,13 @@ describe("AcpMcpOverAcpBridge", () => {
         const inFlight = yield* callTool("slow_call").pipe(Effect.forkChild);
         yield* Effect.promise(() => slowCallStarted.promise);
 
-        // Rotate auth while generation-1 call is in flight, then let generation-1 finish.
+        // Rotate auth while generation-1 is in flight, establish session-2 first, then let generation-1 finish.
         bridge.setAuthorization("Bearer run-2-token");
+        expect(yield* callTool()).toEqual({ content: [] });
         releaseSlowCall.resolve();
         yield* Fiber.join(inFlight);
 
-        // Generation-2 call must transparently re-initialize with run-2-token, not reuse session-1.
+        // A call after the late generation-1 response must still use session-2, not stale session-1.
         expect(yield* callTool()).toEqual({ content: [] });
         expect(seen).toEqual([
           { authorization: "Bearer run-1-token", sessionId: null, method: "initialize" },
@@ -382,6 +383,7 @@ describe("AcpMcpOverAcpBridge", () => {
             sessionId: "session-2",
             method: "notifications/initialized",
           },
+          { authorization: "Bearer run-2-token", sessionId: "session-2", method: "tools/call" },
           { authorization: "Bearer run-2-token", sessionId: "session-2", method: "tools/call" },
         ]);
         return;

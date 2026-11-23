@@ -1656,6 +1656,8 @@ it.effect(
   },
 );
 
+const decodeSubmitOutputFixture = Schema.decodeUnknownEffect(Schema.Struct({ ok: Schema.Boolean }));
+
 it.effect("t3_submit_output forwards caller run and attempt identity and surfaces rejection", () =>
   Effect.gen(function* () {
     const calls: Array<{
@@ -1669,7 +1671,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
     const runB = RunId.make("run-b");
     const attemptB = RunAttemptId.make("attempt-b");
 
-    let rejectNext: string | undefined;
+    let rejectNext: { readonly problem: string; readonly cause?: unknown } | undefined;
     const serverLayer = layerThreadToolkit.pipe(
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provide(NodeCrypto.layer),
@@ -1684,12 +1686,13 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
               callerAttemptId: input.callerAttemptId,
             });
             if (rejectNext !== undefined) {
-              const problem = rejectNext;
+              const rejection = rejectNext;
               rejectNext = undefined;
               return Effect.fail(
                 new ThreadManagement.ThreadManagementRunOutputRejectedError({
                   threadId: input.threadId,
-                  problem,
+                  problem: rejection.problem,
+                  ...(rejection.cause === undefined ? {} : { cause: rejection.cause }),
                 }),
               );
             }
@@ -1723,7 +1726,7 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       });
 
     // An unbound credential names its run in the call; service rejections surface as invalid_request.
-    rejectNext = "This output was submitted for a turn that is no longer active.";
+    rejectNext = { problem: "This output was submitted for a turn that is no longer active." };
     const unbound = yield* callWith(undefined, undefined, '{"ok":false}', runA).pipe(
       Effect.provide(serverLayer),
     );
@@ -1734,13 +1737,30 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
       message: "This output was submitted for a turn that is no longer active.",
     });
 
-    rejectNext = "This output was submitted for a turn that is no longer active.";
+    // Preserved dispatch causes stay out of MCP output; only SchemaError validation details append.
+    rejectNext = {
+      problem: "This output was submitted for a turn that is no longer active.",
+      cause: new OrchestratorDispatchError({
+        commandId: CommandId.make("cmd-submit-stale"),
+        commandType: "run.output.submit",
+      }),
+    };
     const stale = yield* callWith(runA, attemptA, '{"ok":false}').pipe(Effect.provide(serverLayer));
     expect(stale.isError).toBe(true);
     expect(declaredFailure(stale)).toEqual({
       _tag: "OrchestratorMcpFailure",
       code: "invalid_request",
       message: "This output was submitted for a turn that is no longer active.",
+    });
+
+    const schemaCause = yield* decodeSubmitOutputFixture({}).pipe(Effect.flip);
+    rejectNext = { problem: "The result does not match the schema.", cause: schemaCause };
+    const invalidSchema = yield* callWith(runB, attemptB, "{}").pipe(Effect.provide(serverLayer));
+    expect(invalidSchema.isError).toBe(true);
+    expect(declaredFailure(invalidSchema)).toEqual({
+      _tag: "OrchestratorMcpFailure",
+      code: "invalid_request",
+      message: `The result does not match the schema.\n${schemaCause.message.slice(0, 2000)}`,
     });
 
     // A bound credential outranks the argument.
@@ -1761,6 +1781,12 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         json: '{"ok":false}',
         callerRunId: runA,
         callerAttemptId: attemptA,
+      },
+      {
+        threadId,
+        json: "{}",
+        callerRunId: runB,
+        callerAttemptId: attemptB,
       },
       {
         threadId,

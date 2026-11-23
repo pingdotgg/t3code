@@ -8147,8 +8147,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 driver,
                 providerSessionId: input.providerSessionId,
                 providerThreadId: options.providerThreadId,
-                detail:
-                  "Cannot refresh MCP credentials while background work is running on this thread.",
+                reason: "background_work",
               });
             }
             return true;

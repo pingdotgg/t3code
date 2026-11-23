@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
@@ -305,10 +306,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
               ? new OrchestratorMcpFailure({
                   code: "invalid_request",
                   // The agent wrote the value, so it is told what in it did not fit.
-                  message:
-                    error.cause instanceof Error
-                      ? `${error.message}\n${error.cause.message.slice(0, 2000)}`
-                      : error.message,
+                  message: Schema.isSchemaError(error.cause)
+                    ? `${error.message}\n${error.cause.message.slice(0, 2000)}`
+                    : error.message,
                 })
               : unavailable(),
           ),

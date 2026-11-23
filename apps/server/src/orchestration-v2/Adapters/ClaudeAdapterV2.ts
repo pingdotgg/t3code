@@ -13288,7 +13288,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   driver: CLAUDE_PROVIDER,
                   providerSessionId: input.providerSessionId,
                   providerThreadId: turnInput.providerThread.id,
-                  detail: "Cannot refresh MCP credentials on a retained Claude continuation query.",
+                  reason: "continuation_query",
                 });
               if (
                 mcpOverrides.mcpServers === undefined ||
