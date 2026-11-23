@@ -144,8 +144,14 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
     updatedAt: "2026-11-17T00:00:00.000Z",
   });
   usePreviewMiniPlayerStore.getState().open(threadRef, { kind: "browser", tabId: "tab-1" });
+  const clipBox = document.createElement("div");
+  clipBox.style.cssText = "position:fixed;inset:0;overflow:hidden;border-radius:16px";
+  document.body.append(clipBox);
+  using _clipBox = { [Symbol.dispose]: () => clipBox.remove() };
   const isolatedPane = document.createElement("div");
-  isolatedPane.style.cssText = "display:flex;position:fixed;inset:0;isolation:isolate";
+  isolatedPane.style.cssText =
+    "display:flex;position:absolute;top:0;left:0;width:100%;height:100%;isolation:isolate";
+  clipBox.append(isolatedPane);
   await using _screen = await render(
     <RegistryContext.Provider value={appAtomRegistry}>
       <Harness />
@@ -170,6 +176,22 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
     return document.elementFromPoint(left + width / 2, top + height / 2);
   };
   expect(handle.contains(hit(handle))).toBe(true);
+  // Clipping the pane's left edge must not clip outer halves of unclipped resize handles.
+  isolatedPane.style.left = `${-(player.left + 20)}px`;
+  await act(() => window.dispatchEvent(new Event("resize")));
+  await vi.waitFor(() => {
+    const clipped = isolatedPane
+      .querySelector("[data-preview-mini-player]")!
+      .getBoundingClientRect();
+    const north = document.elementFromPoint(clipped.right - 20, clipped.top - 2);
+    expect(north?.getAttribute("data-preview-mini-player-resize")).toBe("north");
+    const east = document.elementFromPoint(clipped.right + 2, clipped.top + clipped.height / 2);
+    expect(east?.getAttribute("data-preview-mini-player-resize")).toBe("east");
+    const south = document.elementFromPoint(clipped.right - 20, clipped.bottom + 2);
+    expect(south?.getAttribute("data-preview-mini-player-resize")).toBe("south");
+  });
+  isolatedPane.style.left = "0";
+  await act(() => window.dispatchEvent(new Event("resize")));
 
   // Touch: tapping the handle toggles the pill closed, and pressing a pill button keeps it open.
   using _capture = vi

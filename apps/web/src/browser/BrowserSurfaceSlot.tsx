@@ -48,32 +48,13 @@ function clipAncestorsOf(element: HTMLElement): ClipAncestor[] {
 const near = (value: number, edges: readonly number[]) =>
   edges.some((edge) => Math.abs(edge - value) < 1);
 
-/**
- * The part of the slot its ancestors leave visible, as a `clip-path` in the
- * slot's own pixels. A corner that meets a rounded pane's corner, or where
- * the strip's edge cuts that pane (index.css, [data-pane-cut]), rounds as
- * the pane does.
- */
-function resolveClipPath(rect: DOMRect, scale: number, ancestors: readonly ClipAncestor[]) {
-  const boxes = ancestors.map((ancestor) => ancestor.element.getBoundingClientRect());
-  let left = rect.left;
-  let top = rect.top;
-  let right = rect.right;
-  let bottom = rect.bottom;
-  for (const box of boxes) {
-    left = Math.max(left, box.left);
-    top = Math.max(top, box.top);
-    right = Math.min(right, box.right);
-    bottom = Math.min(bottom, box.bottom);
-  }
-  if (right - left < 1 || bottom - top < 1) return "inset(50%)";
-  const corners = [
-    [left, top],
-    [right, top],
-    [right, bottom],
-    [left, bottom],
-  ] as const;
-  const radii = corners.map(([x, y], corner) => {
+function resolveCornerRadii(
+  corners: readonly (readonly [number, number])[],
+  scale: number,
+  ancestors: readonly ClipAncestor[],
+  boxes: readonly DOMRect[],
+) {
+  return corners.map(([x, y], corner) => {
     let radius = 0;
     ancestors.forEach((ancestor, index) => {
       const own = ancestor.radii[corner]!;
@@ -88,26 +69,93 @@ function resolveClipPath(rect: DOMRect, scale: number, ancestors: readonly ClipA
     });
     return radius / scale;
   });
-  const insets = [top - rect.top, rect.right - right, rect.bottom - bottom, left - rect.left].map(
-    (inset) => Math.max(0, inset / scale),
-  );
-  if (insets.every((inset) => inset < 0.5) && radii.every((radius) => radius === 0)) return "";
+}
+
+function formatInset(insets: readonly number[], radii: readonly number[]) {
   const round = radii.some((radius) => radius > 0)
     ? ` round ${radii.map((radius) => `${radius}px`).join(" ")}`
     : "";
   return `inset(${insets.map((inset) => `${inset}px`).join(" ")}${round})`;
 }
 
+/** Max overhang (px) of portaled controls such as resize handles and coarse touch targets. */
+const ABOVE_WEBVIEW_OVERHANG_PX = 16;
+
+/** Visible `clip-path`s: `webview` clamps to the slot; `above` keeps negative
+ * ancestor insets so overhanging resize handles stay unclipped on open sides. */
+function resolveClipPaths(rect: DOMRect, scale: number, ancestors: readonly ClipAncestor[]) {
+  if (ancestors.length === 0) return { webview: "", above: "" };
+  const boxes = ancestors.map((ancestor) => ancestor.element.getBoundingClientRect());
+  let clipLeft = Number.NEGATIVE_INFINITY;
+  let clipTop = Number.NEGATIVE_INFINITY;
+  let clipRight = Number.POSITIVE_INFINITY;
+  let clipBottom = Number.POSITIVE_INFINITY;
+  for (const box of boxes) {
+    clipLeft = Math.max(clipLeft, box.left);
+    clipTop = Math.max(clipTop, box.top);
+    clipRight = Math.min(clipRight, box.right);
+    clipBottom = Math.min(clipBottom, box.bottom);
+  }
+  const left = Math.max(rect.left, clipLeft);
+  const top = Math.max(rect.top, clipTop);
+  const right = Math.min(rect.right, clipRight);
+  const bottom = Math.min(rect.bottom, clipBottom);
+  if (right - left < 1 || bottom - top < 1) return { webview: "inset(50%)", above: "inset(50%)" };
+  const radii = resolveCornerRadii(
+    [
+      [left, top],
+      [right, top],
+      [right, bottom],
+      [left, bottom],
+    ],
+    scale,
+    ancestors,
+    boxes,
+  );
+  const insets = [top - rect.top, rect.right - right, rect.bottom - bottom, left - rect.left].map(
+    (inset) => Math.max(0, inset / scale),
+  );
+  const webview =
+    insets.every((inset) => inset < 0.5) && radii.every((radius) => radius === 0)
+      ? ""
+      : formatInset(insets, radii);
+  const aboveInsets = [
+    (clipTop - rect.top) / scale,
+    (rect.right - clipRight) / scale,
+    (rect.bottom - clipBottom) / scale,
+    (clipLeft - rect.left) / scale,
+  ];
+  const above =
+    webview === "" && aboveInsets.every((inset) => inset <= -ABOVE_WEBVIEW_OVERHANG_PX)
+      ? ""
+      : formatInset(
+          aboveInsets,
+          resolveCornerRadii(
+            [
+              [clipLeft, clipTop],
+              [clipRight, clipTop],
+              [clipRight, clipBottom],
+              [clipLeft, clipBottom],
+            ],
+            scale,
+            ancestors,
+            boxes,
+          ),
+        );
+  return { webview, above };
+}
+
 function placeAboveWebview(
   layer: HTMLElement,
   placement: BrowserSurfacePlacement,
+  clipPath: string,
   width: number,
   height: number,
 ) {
   layer.style.width = `${width}px`;
   layer.style.height = `${height}px`;
   layer.style.transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
-  layer.style.clipPath = placement.clipPath;
+  layer.style.clipPath = clipPath;
   layer.inert = !placement.interactive;
 }
 
@@ -143,6 +191,7 @@ export function BrowserSurfaceSlot(props: {
     let ancestors = clipAncestorsOf(element);
     let presented = "";
     let placed: BrowserSurfacePlacement | null = null;
+    let placedAboveClip = "";
     // The webview keeps the slot's own size and follows it on screen with a
     // transform, so a pane sliding or zooming never resizes the page.
     const update = (phase: BrowserSurfaceSlotPhase) => {
@@ -173,11 +222,12 @@ export function BrowserSurfaceSlot(props: {
         presented = key;
       }
       const scale = rect.width / width;
+      const clips = resolveClipPaths(rect, scale, ancestors);
       const next: BrowserSurfacePlacement = {
         x: rect.x,
         y: rect.y,
         scale,
-        clipPath: resolveClipPath(rect, scale, ancestors),
+        clipPath: clips.webview,
         // Under the overview (aria-hidden) or off the focused workspace mid-switch (inert).
         interactive: element.closest('[inert], [aria-hidden="true"]') === null,
       };
@@ -188,12 +238,17 @@ export function BrowserSurfaceSlot(props: {
         Math.abs(placed.scale - next.scale) > 0.0001 ||
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
+      const aboveClipChanged = placedAboveClip !== clips.above;
       if (moved || phase !== "frame") lease.place(next);
-      if (aboveWebviewRef.current && (moved || presentationChanged || phase !== "frame")) {
-        placeAboveWebview(aboveWebviewRef.current, next, width, height);
+      if (
+        aboveWebviewRef.current &&
+        (moved || aboveClipChanged || presentationChanged || phase !== "frame")
+      ) {
+        placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height);
       }
       placed = next;
-      return moved;
+      placedAboveClip = clips.above;
+      return moved || aboveClipChanged;
     };
     updateRef.current = update;
     update("start");
