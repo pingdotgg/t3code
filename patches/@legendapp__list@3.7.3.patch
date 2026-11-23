@@ -26,3 +26,29 @@ index b95e1f8..e2b013a 100644
      set$(ctx, "isAtEnd", isContentLess || distanceFromEnd <= EDGE_POSITION_EPSILON);
      set$(ctx, "isNearEnd", isContentLess || distanceFromEnd <= onEndReachedThreshold * scrollLength);
      set$(
+diff --git a/react.mjs b/react.mjs
+--- a/react.mjs
++++ b/react.mjs
+@@ -6460,7 +6460,8 @@
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // T3 patch: a list that follows the end takes a smaller row size at once. A deferred size leaves a gap under the last row for a frame.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && !peek$(ctx, "isFollowingEnd") && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       if (state.itemKey === currentItemKey) {
+diff --git a/react.js b/react.js
+--- a/react.js
++++ b/react.js
+@@ -6481,7 +6481,8 @@
+       size: layout
+     });
+   };
+-  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && previousSize !== void 0 && size + 1 < previousSize;
++  // T3 patch: a list that follows the end takes a smaller row size at once. A deferred size leaves a gap under the last row for a frame.
++  const shouldDeferWebShrinkLayoutUpdate = !isInMVCPActiveMode(listState) && !peek$(ctx, "isFollowingEnd") && previousSize !== void 0 && size + 1 < previousSize;
+   if (shouldDeferWebShrinkLayoutUpdate) {
+     scheduleWebShrinkMeasurement(state, () => {
+       if (state.itemKey === currentItemKey) {
