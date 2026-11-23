@@ -26,6 +26,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarMarkerId,
   withCollapsedSectionOrders,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
@@ -1216,13 +1217,23 @@ describe("Working shelf (beta)", () => {
         row("a9", "active"),
         marker("settled-header"),
       ];
-      const full = { pinned: ["p1", "p2", "p3"], active: ["a1", "a2", "a9"] };
+      const full = { pinned: ["p1", "p2", "p3"], active: ["a1", "a9", "a2"] };
       const drop = (activeKey: string, overId: string) =>
         withCollapsedSectionOrders(
           resolveSidebarDropTarget(collapsed, activeKey, overId)!,
           activeKey,
           full,
         );
+      expect(drop("p2", "p2")).toEqual({
+        section: "pinned",
+        pinnedOrder: full.pinned,
+        activeOrder: full.active,
+      });
+      expect(drop("a9", "a9")).toEqual({
+        section: "active",
+        pinnedOrder: full.pinned,
+        activeOrder: full.active,
+      });
       expect(drop("a9", "p2")).toEqual({
         section: "pinned",
         pinnedOrder: ["p1", "a9", "p2", "p3"],
@@ -1231,7 +1242,22 @@ describe("Working shelf (beta)", () => {
       expect(drop("p2", "a9")).toEqual({
         section: "active",
         pinnedOrder: ["p1", "p3"],
-        activeOrder: ["a1", "a2", "a9", "p2"],
+        activeOrder: ["a1", "a9", "p2", "a2"],
+      });
+      expect(
+        withCollapsedSectionOrders(
+          resolveSidebarDropTarget(
+            collapsed.filter((item) => item.kind !== "thread" || item.key !== "a9"),
+            "p2",
+            sidebarMarkerId("active-placeholder"),
+          )!,
+          "p2",
+          full,
+        ),
+      ).toEqual({
+        section: "active",
+        pinnedOrder: ["p1", "p3"],
+        activeOrder: ["a1", "a9", "a2", "p2"],
       });
       // An expanded section passes through unchanged.
       const target = resolveSidebarDropTarget(items, "p1", "a2")!;

@@ -292,6 +292,8 @@ export function withCollapsedSectionOrders(
   const restore = (visible: readonly string[], fullOrder: readonly string[]) => {
     const visibleKeys = new Set(visible);
     if (fullOrder.every((key) => key === movedKey || visibleKeys.has(key))) return visible;
+    if (visible.length === 1 && visible[0] === movedKey && fullOrder.includes(movedKey))
+      return fullOrder;
     const order = fullOrder.filter((key) => key !== movedKey);
     const movedIndex = visible.indexOf(movedKey);
     if (movedIndex === -1) return order;
