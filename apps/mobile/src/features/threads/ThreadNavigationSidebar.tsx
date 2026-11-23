@@ -60,6 +60,8 @@ import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
 import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
+import { useDeviceType } from "../../native/native-layout-metrics";
+import { workspaceDockBottomClearance } from "../layout/workspace/workspace-tabs-state";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
@@ -124,6 +126,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const gt = useGT();
   const messages = useMessages();
   const floatingTabsEnabled = useAndroidFloatingTabs();
+  const deviceType = useDeviceType();
   const { themeVariables: materialTheme } = useAppearancePreferences();
   const drawerColor = materialTheme["--color-drawer"];
 
@@ -631,7 +634,13 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 contentContainerStyle={[
                   styles.threadListContent,
                   {
-                    paddingBottom: Math.max(insets.bottom, 16) + 16,
+                    paddingBottom:
+                      deviceType === "pad"
+                        ? workspaceDockBottomClearance({
+                            bottomInset: insets.bottom,
+                            keyboardHeight: 0,
+                          })
+                        : Math.max(insets.bottom, 16) + 16,
                     paddingTop: 6,
                   },
                 ]}
