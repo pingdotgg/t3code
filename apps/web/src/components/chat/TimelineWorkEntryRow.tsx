@@ -37,13 +37,16 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 import { workGroupImageGallery } from "./markdownImageGallery";
+import { useAtomValue } from "@effect/atom-react";
 import { McpSignInAction } from "./McpSignInAction";
 import * as DateTime from "effect/DateTime";
+import { Atom } from "effect/reactivity";
 import { ChevronRightIcon, CircleAlertIcon, XIcon, RotateCcwIcon } from "lucide-react";
 import { Button, InlineButton } from "../ui/button";
 import { useAssetUrls } from "../../assets/assetUrls";
 import { observeResize } from "../../lib/observeResize";
 import { useThreadShell } from "../../state/entities";
+import { threadEnvironment } from "../../state/threads";
 import {
   threadReadTargetId,
   threadReadTargetTitle,
@@ -281,6 +284,8 @@ export function ViewedImagesTimelineRow({
   );
 }
 
+const NOT_SIGNED_IN = Atom.make(false);
+
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
@@ -301,20 +306,37 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
   );
-  const noticeMessage =
-    workEntry.structuredPayload?.type === "system_notice"
-      ? workEntry.structuredPayload.message
+  const payload = workEntry.structuredPayload;
+  const mcpSignInNotice =
+    payload?.type === "system_notice" && payload.mcpSignIn !== undefined
+      ? {
+          threadId: payload.threadId,
+          providerThreadId: payload.providerThreadId,
+          server: payload.mcpSignIn.server,
+          noticeAt: DateTime.toEpochMillis(payload.updatedAt),
+        }
       : null;
+  const mcpSignedIn = useAtomValue(
+    mcpSignInNotice !== null
+      ? threadEnvironment.mcpSignedInAtom(ctx.activeThreadEnvironmentId, {
+          threadId: mcpSignInNotice.threadId,
+          server: mcpSignInNotice.server,
+          noticeAt: mcpSignInNotice.noticeAt,
+        })
+      : NOT_SIGNED_IN,
+  );
+  const mcpSignInResolved = mcpSignInNotice !== null && mcpSignedIn;
+  const noticeMessage = payload?.type === "system_notice" ? payload.message : null;
   const labelRef = useRef<HTMLSpanElement>(null);
   const [noticeCutOff, setNoticeCutOff] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- only layout knows whether a notice fits its row
   useLayoutEffect(() => {
     const label = labelRef.current;
-    if (!label || noticeMessage === null) return;
+    if (!label || noticeMessage === null || mcpSignInResolved) return;
     const measure = () => setNoticeCutOff(label.scrollWidth > label.clientWidth);
     measure();
     return observeResize(label, measure);
-  }, [noticeMessage]);
+  }, [noticeMessage, mcpSignInResolved]);
   const onInitialOutputReady = () => {
     if (groupView) groupView.onContentReady?.(workEntry.id);
     else props.onContentReady?.();
@@ -403,25 +425,30 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     );
   }
   const iconConfig = workToneIcon(workEntry.tone);
-  const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
+  const showWarningIndicator =
+    !mcpSignInResolved && workEntry.sourceActivityKind === "runtime.warning";
   const showFailedIndicator =
-    !showWarningIndicator && workEntryDisplayIndicatesToolFailure(workEntry);
+    !mcpSignInResolved && !showWarningIndicator && workEntryDisplayIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     !showWarningIndicator &&
     showFailedIndicator &&
     (workEntrySignalsSevereFailure(workEntry) || !workLogEntryIsToolLike(workEntry));
-  const entryIconName =
-    showWarningIndicator || showDestructiveRowStyle ? "circle-alert" : workEntryIconName(workEntry);
+  const entryIconName = mcpSignInResolved
+    ? "check"
+    : showWarningIndicator || showDestructiveRowStyle
+      ? "circle-alert"
+      : workEntryIconName(workEntry);
   const entryToolIcon =
-    showWarningIndicator || showDestructiveRowStyle
+    mcpSignInResolved || showWarningIndicator || showDestructiveRowStyle
       ? undefined
       : (workEntry.toolIcon ?? workEntry.toolSource?.icon);
   const isReasoning = workEntry.itemType === "reasoning";
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
-  const previewText =
-    isReasoning && expanded
+  const previewText = mcpSignInResolved
+    ? gt("Signed in to {server}", { server: mcpSignInNotice.server })
+    : isReasoning && expanded
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? gt("Thinking")
         : gt("Thought")
@@ -431,17 +458,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
-  const payload = workEntry.structuredPayload;
   const mcpSignIn =
-    payload?.type === "system_notice" &&
-    payload.mcpSignIn !== undefined &&
-    payload.providerThreadId !== null ? (
+    mcpSignInNotice !== null && !mcpSignInResolved && mcpSignInNotice.providerThreadId !== null ? (
       <McpSignInAction
         environmentId={ctx.activeThreadEnvironmentId}
-        threadId={payload.threadId}
-        providerThreadId={payload.providerThreadId}
-        server={payload.mcpSignIn.server}
-        noticeAt={DateTime.toEpochMillis(payload.updatedAt)}
+        threadId={mcpSignInNotice.threadId}
+        providerThreadId={mcpSignInNotice.providerThreadId}
+        server={mcpSignInNotice.server}
       />
     ) : null;
   const skill =
@@ -496,6 +519,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     turnItemNeedsDetailFetch(workEntry.projectedItem.item);
   // A notice's details repeat its row, so it expands only to show text the row cuts off.
   const canExpandProjectedItem =
+    !mcpSignInResolved &&
     (noticeMessage === null || noticeCutOff) &&
     (plainOutput !== undefined
       ? Boolean(plainOutput || viewedImage || workEntry.questionAnswer || plainOutputFetches)
@@ -510,15 +534,17 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             ));
   const iconWrapperClass = cn(
     "flex size-4 items-center justify-center",
-    showWarningIndicator
-      ? "text-warning"
-      : showDestructiveRowStyle
-        ? "text-destructive"
-        : showFailedIndicator
-          ? failedToolIconClassName
-          : workEntry.tone === "tool"
-            ? "text-icon-muted"
-            : iconConfig.className,
+    mcpSignInResolved
+      ? "text-success-foreground"
+      : showWarningIndicator
+        ? "text-warning"
+        : showDestructiveRowStyle
+          ? "text-destructive"
+          : showFailedIndicator
+            ? failedToolIconClassName
+            : workEntry.tone === "tool"
+              ? "text-icon-muted"
+              : iconConfig.className,
   );
   const headingClass = showWarningIndicator
     ? "font-medium text-warning"

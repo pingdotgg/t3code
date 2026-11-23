@@ -10,6 +10,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
@@ -33,7 +34,8 @@ import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-import { environmentThreadDetails } from "../../state/threads";
+import { AppAtomRegistryProvider, appAtomRegistry } from "~/rpc/atomRegistry";
+import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { ChangedFilesCard } from "./ChangedFilesTree";
 import { MessagesTimeline } from "./MessagesTimeline";
@@ -2496,4 +2498,131 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   await expect
     .element(screen.getByRole("button", { name: "Open the current tab", exact: true }))
     .toBeVisible();
+});
+
+describe("MessagesTimeline MCP sign-in notice", () => {
+  it("replaces a resolved MCP sign-in warning with a signed-in row while keeping newer notices actionable", async () => {
+    setup();
+    const threadId = ThreadId.make("mcp-signin-thread");
+    const providerThreadId = ProviderThreadId.make("mcp-signin-provider-thread");
+    const runId = RunId.make("mcp-signin-run");
+    const server = "linear";
+    const firstNoticeAt = "2026-03-17T19:12:28.000Z";
+    const signedInAt = "2026-03-17T19:13:00.000Z";
+    const newerNoticeAt = "2026-03-17T19:14:00.000Z";
+    const warningMessage =
+      "The linear MCP server needs a sign-in before Claude can use it. " +
+      "Complete authentication in your browser so the agent can reconnect to this workspace tool.";
+
+    const signedInAtByKey = Atom.make<ReadonlyMap<string, number>>(new Map());
+    const receiptAtoms = Atom.family((key: string) => {
+      const [environmentId, receiptThreadId, receiptServer, noticeAt] = JSON.parse(key) as [
+        string,
+        string,
+        string,
+        number,
+      ];
+      return Atom.make((get) => {
+        const latest = get(signedInAtByKey).get(
+          JSON.stringify([environmentId, receiptThreadId, receiptServer]),
+        );
+        return latest !== undefined && noticeAt <= latest;
+      });
+    });
+
+    using _permission = vi
+      .spyOn(threadEnvironment.mcpSignInStart, "permissionAtom")
+      .mockReturnValue(Atom.make(true));
+    using _signedIn = vi
+      .spyOn(threadEnvironment, "mcpSignedInAtom")
+      .mockImplementation((environmentId, input) =>
+        receiptAtoms(JSON.stringify([environmentId, input.threadId, input.server, input.noticeAt])),
+      );
+
+    const noticeItem = (id: string, position: number, updatedAtIso: string) => {
+      const at = DateTime.makeUnsafe(updatedAtIso);
+      return {
+        position,
+        visibility: "local" as const,
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make(id),
+        item: {
+          id: TurnItemId.make(id),
+          threadId,
+          runId,
+          nodeId: null,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: position,
+          title: `MCP server ${server} needs a sign-in`,
+          startedAt: at,
+          completedAt: at,
+          updatedAt: at,
+          type: "system_notice" as const,
+          status: "completed" as const,
+          level: "warning" as const,
+          message: warningMessage,
+          mcpSignIn: { server },
+        },
+      };
+    };
+
+    const entriesFor = (items: ReadonlyArray<ReturnType<typeof noticeItem>>) =>
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: items,
+        optimisticMessages: [],
+      });
+
+    const props = baseProps();
+    const firstNotice = noticeItem("mcp-notice-1", 0, firstNoticeAt);
+    const newerNotice = noticeItem("mcp-notice-2", 1, newerNoticeAt);
+    const ui = (items: ReadonlyArray<ReturnType<typeof noticeItem>>) => (
+      <AppAtomRegistryProvider>
+        <MessagesTimeline {...props} timelineEntries={entriesFor(items)} />
+      </AppAtomRegistryProvider>
+    );
+
+    await using screen = await renderElement(ui([firstNotice]));
+    const firstRow = () =>
+      screen.container.querySelector<HTMLElement>('[data-work-entry-id="mcp-notice-1"]');
+
+    await vi.waitFor(() => expect(firstRow()).not.toBeNull());
+    expect(firstRow()!.textContent).toContain("needs a sign-in");
+    expect(firstRow()!.querySelector(".text-warning")).not.toBeNull();
+    expect(screen.buttons("Sign in to linear")).toHaveLength(1);
+
+    const rowToggle = firstRow()!.querySelector<HTMLElement>('[role="button"]');
+    if (rowToggle) {
+      await click(rowToggle);
+      expect(rowToggle.getAttribute("aria-expanded")).toBe("true");
+    }
+
+    await act(() => {
+      appAtomRegistry.set(
+        signedInAtByKey,
+        new Map([[JSON.stringify([ENVIRONMENT_ID, threadId, server]), Date.parse(signedInAt)]]),
+      );
+    });
+
+    await vi.waitFor(() => expect(firstRow()!.textContent).toContain("Signed in to linear"));
+    expect(firstRow()!.textContent).not.toContain("needs a sign-in");
+    expect(firstRow()!.textContent).toBe("Signed in to linear");
+    expect(firstRow()!.querySelector(".text-warning")).toBeNull();
+    expect(firstRow()!.querySelector(".text-success-foreground")).not.toBeNull();
+    expect(firstRow()!.querySelector('[role="button"]')).toBeNull();
+    expect(screen.buttons("Sign in to linear")).toHaveLength(0);
+
+    await screen.rerender(ui([firstNotice, newerNotice]));
+    const secondRow = () =>
+      screen.container.querySelector<HTMLElement>('[data-work-entry-id="mcp-notice-2"]');
+
+    await vi.waitFor(() => expect(secondRow()).not.toBeNull());
+    expect(firstRow()!.textContent).toBe("Signed in to linear");
+    expect(firstRow()!.querySelector(".text-warning")).toBeNull();
+    expect(secondRow()!.textContent).toContain("needs a sign-in");
+    expect(secondRow()!.querySelector(".text-warning")).not.toBeNull();
+    expect(screen.buttons("Sign in to linear")).toHaveLength(1);
+  });
 });
