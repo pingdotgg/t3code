@@ -1440,25 +1440,16 @@ impl Inner {
                 eprintln!("conn-engine: could not reopen watched checks after a push: {e}");
             }
         }
-        let ended_at = i64::try_from(self.clock.now_millis()).unwrap_or(i64::MAX);
-        // The session's process is gone, and with it every native subagent it ran
-        // (`writeReleasedSubagentEvents`). A clean stop leaves them for the next start.
-        // Before the run ends, so its end does not fail their open items.
-        if !self.shutting_down() {
-            let tid = thread_id.clone();
-            let result = self
-                .write(move |tx| {
-                    crate::families::end_orphaned_native_subagents(
-                        tx,
-                        &tid,
-                        "interrupted",
-                        Some(ended_at),
-                    )
-                })
+        // A session that ended on its own (its process exited), still the thread's current
+        // one: its native subagents died with it. A closed or replaced session is handled
+        // by `close_session`, which knows whether the process ended.
+        let current = lock(&self.live)
+            .get(&thread_id)
+            .is_some_and(|current| Arc::ptr_eq(current, &live));
+        if current && live.background_tasks_end_with_process && !self.shutting_down() {
+            // Before the run ends, so its end does not fail their open items.
+            self.end_released_subagents(&thread_id, &live.provider_session_id, self.now_ms())
                 .await;
-            if let Err(e) = result {
-                eprintln!("conn-engine: could not end orphaned subagents: {e}");
-            }
         }
         if !self.shutting_down()
             && let Some(active) = live.take_active()
@@ -2194,6 +2185,7 @@ impl Inner {
     pub(crate) async fn close_session(&self, thread_id: &str) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
+            let released_at = self.now_ms();
             self.command_output.finish_thread(thread_id);
             let closed = live.session.close().await;
             let instance = self
@@ -2211,6 +2203,15 @@ impl Inner {
                         self.drop_kept_tools(|_, kept| kept == instance);
                     }
                 }
+            }
+            // Only a process that ended takes its native subagents along; a shared one
+            // (Codex's `app-server`) may still run them.
+            if live.background_tasks_end_with_process
+                && closed == conn_provider::Closed::RuntimeStopped
+                && !self.shutting_down()
+            {
+                self.end_released_subagents(thread_id, &live.provider_session_id, released_at)
+                    .await;
             }
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
@@ -2262,6 +2263,32 @@ impl Inner {
 
     /// `readReleasedProviderThreads`: the session's background tasks ended with its process,
     /// so its provider threads' rosters (`pendingBackgroundTasks`) are cleared.
+    fn now_ms(&self) -> i64 {
+        i64::try_from(self.clock.now_millis()).unwrap_or(i64::MAX)
+    }
+
+    /// `writeReleasedSubagentEvents`: the released session's open native subagents end
+    /// interrupted.
+    async fn end_released_subagents(&self, thread_id: &str, provider_session_id: &str, at: i64) {
+        let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
+        let result = self
+            .write(move |tx| {
+                crate::families::end_orphaned_native_subagents(
+                    tx,
+                    &tid,
+                    "interrupted",
+                    Some(&crate::families::ReleasedSession {
+                        provider_session_id: &sid,
+                        released_at: at,
+                    }),
+                )
+            })
+            .await;
+        if let Err(e) = result {
+            eprintln!("conn-engine: could not end orphaned subagents: {e}");
+        }
+    }
+
     async fn clear_released_rosters(&self, thread_id: &str, provider_session_id: &str) {
         let (tid, sid) = (thread_id.to_owned(), provider_session_id.to_owned());
         let cleared = self

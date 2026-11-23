@@ -563,28 +563,81 @@ async fn a_provider_that_exits_during_a_turn_fails_the_run() {
     assert_eq!(status, "failed");
 }
 
-/// Writes, on t1, a running native subagent (`node:native`) with its node, turn item and
-/// child thread `child` (an open runless root turn, a command and a provider turn under it),
-/// plus a finished native one and a running app-owned one, which stay as they are.
-async fn seed_native_subagents(engine: &SqliteEngine) {
+/// t1's provider thread (the session's), once a turn has started there.
+async fn provider_thread_of_t1(engine: &SqliteEngine) -> String {
+    projection(engine, "t1").await["providerThreads"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// Writes, on t1, a running native subagent (`node:native`) of `provider_thread` with its
+/// node, turn item and child thread `child` (an open runless root turn, a command and a
+/// provider turn under it), plus a finished native one and a running app-owned one, which
+/// stay as they are. Two more running native ones belong to a newer session: `node:other`
+/// runs on another provider thread, `node:late` started after now.
+async fn seed_native_subagents(engine: &SqliteEngine, provider_thread: &str) {
     dispatch(engine, create("child", "c-child")).await;
+    let provider_thread = provider_thread.to_owned();
     engine
         .inner()
-        .write(|tx| {
+        .write(move |tx| {
             use crate::store::Draft;
             let now = tx.now().to_owned();
-            let sub = |id: &str, origin: &str, status: &str, child: Value| {
+            let later = "2999-01-01T00:00:00.000Z";
+            let sub = |id: &str, origin: &str, status: &str, child: Value, started: &str| {
                 json!({"id": id, "threadId": "t1", "runId": "run:t1:1", "parentNodeId": null,
                        "origin": origin, "createdBy": "agent", "driver": "claudeAgent",
                        "providerInstanceId": "claudeAgent", "providerThreadId": null,
                        "childThreadId": child, "prompt": "p", "title": id, "model": null,
-                       "status": status, "result": null, "startedAt": now,
-                       "completedAt": null, "updatedAt": now})
+                       "status": status, "result": null, "startedAt": started,
+                       "completedAt": null, "updatedAt": started})
             };
-            for row in [
-                sub("node:native", "provider_native", "running", json!("child")),
-                sub("node:done", "provider_native", "completed", json!(null)),
-                sub("node:app", "app_owned", "running", json!(null)),
+            for (row, on) in [
+                (
+                    sub(
+                        "node:native",
+                        "provider_native",
+                        "running",
+                        json!("child"),
+                        &now,
+                    ),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub(
+                        "node:done",
+                        "provider_native",
+                        "completed",
+                        json!(null),
+                        &now,
+                    ),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub("node:app", "app_owned", "running", json!(null), &now),
+                    provider_thread.as_str(),
+                ),
+                (
+                    sub(
+                        "node:other",
+                        "provider_native",
+                        "running",
+                        json!(null),
+                        &now,
+                    ),
+                    "pt:newer-session",
+                ),
+                (
+                    sub(
+                        "node:late",
+                        "provider_native",
+                        "running",
+                        json!(null),
+                        later,
+                    ),
+                    provider_thread.as_str(),
+                ),
             ] {
                 let id = row["id"].as_str().unwrap().to_owned();
                 tx.append(Draft::new("t1", "subagent.updated", row.clone()))?;
@@ -601,7 +654,8 @@ async fn seed_native_subagents(engine: &SqliteEngine) {
                     json!({
                     "id": format!("item:{id}"), "threadId": "t1", "runId": "run:t1:1",
                     "nodeId": id, "status": row["status"], "type": "subagent",
-                    "subagentId": id, "startedAt": now, "completedAt": null, "updatedAt": now}),
+                    "subagentId": id, "providerThreadId": on,
+                    "startedAt": now, "completedAt": null, "updatedAt": now}),
                 ))?;
             }
             tx.append(Draft::new(
@@ -723,10 +777,15 @@ async fn a_restart_cancels_orphaned_native_subagents() {
     {
         let (engine, _) = open(&db);
         dispatch(&engine, create("t1", "c1")).await;
-        seed_native_subagents(&engine).await;
+        seed_native_subagents(&engine, "pt:gone").await;
     }
     let (engine, _) = open(&db);
     assert_orphans_ended(&engine, "cancelled").await;
+    // No process survives a restart: a newer session's ones end too.
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:other").await,
+        "cancelled"
+    );
 }
 
 /// A session whose process ends takes its native subagents with it: they end interrupted
@@ -747,7 +806,8 @@ async fn a_provider_exit_interrupts_its_native_subagents() {
     next(&mut thread).await;
     dispatch(&engine, message("t1", "c2", "hang")).await;
     until_provider_turn(&mut thread).await;
-    seed_native_subagents(&engine).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
     exit.notify_waiters();
     // The pump stores the subagents' end after the run's.
     loop {
@@ -759,6 +819,85 @@ async fn a_provider_exit_interrupts_its_native_subagents() {
         }
     }
     assert_orphans_ended(&engine, "interrupted").await;
+    assert_newer_session_untouched(&engine).await;
+}
+
+/// A newer session's subagents stay open: one on another provider thread, one started after
+/// the release.
+async fn assert_newer_session_untouched(engine: &SqliteEngine) {
+    // The run's own end may close their items (all seeded in one run); the rows are not ours.
+    for id in ["node:other", "node:late"] {
+        assert_eq!(
+            row_status(engine, "t1", "subagents", id).await,
+            "running",
+            "{id}"
+        );
+        assert_eq!(
+            row_status(engine, "t1", "nodes", id).await,
+            "running",
+            "{id}"
+        );
+    }
+}
+
+/// A closed session whose process ended interrupts its own native subagents and no newer
+/// session's.
+#[tokio::test(flavor = "current_thread")]
+async fn a_closed_session_interrupts_only_its_own_native_subagents() {
+    let db = TempDb::new("orphans-close");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    assert_orphans_ended(&engine, "interrupted").await;
+    assert_newer_session_untouched(&engine).await;
+}
+
+/// A session closed on a process that keeps running (Codex's shared `app-server`) leaves its
+/// native subagents open: the process may still run them. Its pump ends all the same.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shared_runtime_close_leaves_native_subagents_open() {
+    let db = TempDb::new("orphans-shared");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent").with_shared_runtime());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    // The pump sees the close and ends the run; wait for that, then for anything after it.
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "run.updated" && item["event"]["payload"]["status"] == "failed"
+        {
+            break;
+        }
+    }
+    engine.inner().events_stored("t1").await;
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("child", "nodes", "node:child-root"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "running",
+            "{kind} {id}"
+        );
+    }
 }
 
 /// A clean stop leaves them open for the next start, which cancels them.
@@ -779,7 +918,8 @@ async fn a_shutdown_leaves_native_subagents_for_the_next_start() {
         next(&mut thread).await;
         dispatch(&engine, message("t1", "c2", "hang")).await;
         until_provider_turn(&mut thread).await;
-        seed_native_subagents(&engine).await;
+        let provider_thread = provider_thread_of_t1(&engine).await;
+        seed_native_subagents(&engine, &provider_thread).await;
         engine.begin_shutdown();
         exit.notify_waiters();
         for _ in 0..20 {

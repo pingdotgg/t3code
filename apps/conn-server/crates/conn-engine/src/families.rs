@@ -685,30 +685,68 @@ fn work_active(row: &Value) -> bool {
     )
 }
 
+/// A provider session whose process ended with it, and when its release began.
+pub(crate) struct ReleasedSession<'a> {
+    pub(crate) provider_session_id: &'a str,
+    /// Epoch milliseconds. A subagent that started or resumed later belongs to a newer
+    /// session.
+    pub(crate) released_at: i64,
+}
+
 /// `endOrphanedNativeSubagent` and `endRunlessRootTurns` (`subagentProjection.ts`): no
 /// provider process is left to report the end of the thread's open provider-native subagents.
 /// Each one's row, node and turn item end with `status`, and so does what its child thread
-/// still has open outside a run. `started_by` (epoch milliseconds) leaves a subagent that
-/// started or resumed later alone: a newer session owns it.
+/// still has open outside a run. With `released` (`writeReleasedSubagentEvents`), only the
+/// subagents of that session's provider threads end; without it (a start, when no process
+/// survived), all of them.
 pub(crate) fn end_orphaned_native_subagents(
     tx: &mut Tx<'_>,
     thread_id: &str,
     status: &str,
-    started_by: Option<i64>,
+    released: Option<&ReleasedSession<'_>>,
 ) -> StoreResult<()> {
     let now = tx.now().to_owned();
+    // The released session's provider threads: (id, driver).
+    let released_threads: Vec<(Value, Value)> = match released {
+        Some(released) => tx
+            .entities(thread_id, "providerThreads")?
+            .into_iter()
+            .filter(|t| t["providerSessionId"] == released.provider_session_id)
+            .map(|t| (t["id"].clone(), t["driver"].clone()))
+            .collect(),
+        None => Vec::new(),
+    };
+    if released.is_some() && released_threads.is_empty() {
+        return Ok(());
+    }
     for mut row in tx.entities(thread_id, "subagents")? {
         if row["origin"] != "provider_native" || !work_active(&row) {
             continue;
         }
-        let started = row["startedAt"]
-            .as_str()
-            .or(row["updatedAt"].as_str())
-            .and_then(crate::time::millis_from_iso);
-        if let (Some(cutoff), Some(started)) = (started_by, started)
-            && started > cutoff
-        {
-            continue;
+        if let Some(released) = released {
+            let started = row["startedAt"]
+                .as_str()
+                .or(row["updatedAt"].as_str())
+                .and_then(crate::time::millis_from_iso);
+            if started.is_some_and(|started| started > released.released_at) {
+                continue;
+            }
+            // Record and item are written together; a record without a live item lost its
+            // end, so the driver decides.
+            let id = row["id"].as_str().unwrap_or_default().to_owned();
+            let item = tx
+                .entities_where(thread_id, "turnItems", "subagentId", &id)?
+                .into_iter()
+                .find(|item| item["type"] == "subagent" && work_active(item));
+            let ours = released_threads.iter().any(|(thread, driver)| {
+                row["driver"] == *driver
+                    && item
+                        .as_ref()
+                        .is_none_or(|item| item["providerThreadId"] == *thread)
+            });
+            if !ours {
+                continue;
+            }
         }
         let id = row["id"].as_str().unwrap_or_default().to_owned();
         let run = row["runId"].as_str().map(str::to_owned);
