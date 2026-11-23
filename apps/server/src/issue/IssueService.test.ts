@@ -919,7 +919,20 @@ describe("IssueService with a standalone tracker", () => {
       Effect.gen(function* () {
         const working = IssueTrackerAccountId.make("working");
         const tracker = fakeStandaloneTracker({
-          // The task is in list 900, which only the expired first account binds.
+          // Only the working account can read; the task's list 900 is bound by the expired one.
+          getIssue: (input) =>
+            Effect.flatMap(IssueTrackerAccount, (account) =>
+              account === working
+                ? Effect.succeed(issue(input.key))
+                : Effect.fail(
+                    new IssueTrackerError({
+                      tracker: LINEAR,
+                      operation: "getIssue",
+                      reason: "unauthenticated",
+                      detail: "expired",
+                    }),
+                  ),
+            ),
           issueScope: () =>
             Effect.flatMap(IssueTrackerAccount, (account) =>
               account === working
@@ -950,6 +963,10 @@ describe("IssueService with a standalone tracker", () => {
         });
         expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
           scope: "900",
+        });
+        // The read a key-only link takes its metadata from goes through the working account.
+        expect(yield* service.linkMetadata({ ...ref, scope: "900", key: "xyz" })).toMatchObject({
+          displayKey: "#xyz",
         });
       }),
   );
