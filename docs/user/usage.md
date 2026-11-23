@@ -11,6 +11,7 @@ Usage aggregates history across Codex, Claude Code, Grok Build, OpenCode, Antigr
 
 - **Retention**: Servers keep scanned usage history for **92 days** by default (preserving Claude history after Claude's 30-day cleanup). Change `usageHistoryRetentionDays` in `<t3-home>/userdata/settings.json` (e.g. `365` or `"unlimited"`; views show up to 90 days).
 - **Custom data directories**: Honors `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `GROK_HOME`, `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR`, `OPENCODE_DATA_DIR`, `ANTIGRAVITY_DATA_DIR`, and `XDG_DATA_HOME` (Muse). Use absolute or `~/` paths. Set `T3CODE_HOST_ID` to pin a container's host identity.
+- **CLIProxyAPI data directories**: Also scans provider session directories (`projects`, `sessions`, `conversations`) found under `~/.cli-proxy-api`, or a root named by `CLIPROXY_API_AUTH_DIR`, `CLIPROXY_AUTH_DIR`, or `CLIPROXY_HOME` in the account or server environment, as long as they hold that provider's transcript files.
 - **Exclusions**: Codex and Claude Code 2.0.63+ text-generation runs (titles, commits, PR text, review guides) and Grok turns without a saved completed-turn record are not included.
 
 ## Custom model prices and filtering

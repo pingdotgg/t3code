@@ -1,4 +1,5 @@
 import { type AntigravitySettings, UsageReadError } from "@t3tools/contracts";
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type {
@@ -52,8 +53,14 @@ const make = Effect.gen(function* () {
       ),
       path.join(home, ".config", "antigravity"),
     ];
+    // A CLIProxyAPI-managed account can put its Antigravity home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "conversations",
+      filePattern: /\.db$/,
+    });
     const canonical = new Set<string>();
-    for (const root of configured?.length ? configured : defaults) {
+    for (const root of [...(configured?.length ? configured : defaults), ...cliproxyDirs]) {
       const resolved = path.resolve(expandHomePath(root, home));
       canonical.add(
         yield* fileSystem.realPath(resolved).pipe(Effect.orElseSucceed(() => resolved)),

@@ -26,8 +26,7 @@ import type { ProviderUsageLimitsReport } from "@t3tools/provider-core/server/sn
 import { makeUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
-import { museUsageReader } from "./usage.ts";
-import type * as MuseUsageHome from "./MuseUsageHome.ts";
+import { museUsageReader, type MuseUsageReaderEnv } from "./usage.ts";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -59,11 +58,7 @@ export type MuseDriverEnv =
   | Path.Path
   | ProviderEventLoggers.ProviderEventLoggers;
 
-export const MuseDriver: ProviderDriver<
-  MuseSettings,
-  MuseDriverEnv,
-  Path.Path | MuseUsageHome.MuseUsageHome
-> = {
+export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv, MuseUsageReaderEnv> = {
   driverKind: DRIVER_KIND,
   metadata: { displayName: "Muse Code", supportsMultipleInstances: true },
   usage: museUsageReader,

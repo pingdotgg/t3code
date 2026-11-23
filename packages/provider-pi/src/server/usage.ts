@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseTimestampMs,
@@ -125,7 +127,9 @@ export const piUsageFormat: TranscriptUsageFormat<typeof PiScanState.Type> = {
   state: { initial: () => ({ sessionId: "" }), schema: PiScanState },
 };
 
-export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
+export type PiUsageReaderEnv = FileSystem.FileSystem | Path.Path;
+
+export const piUsageReader: ProviderUsageReader<PiSettings, PiUsageReaderEnv> = {
   kind: "transcripts",
   provider: "pi",
   format: piUsageFormat,
@@ -139,12 +143,22 @@ export const piUsageReader: ProviderUsageReader<PiSettings, Path.Path> = {
     const sessionDirArg = config === undefined ? undefined : piLaunchSessionDir(config.launchArgs);
     const launchDir =
       sessionDirArg === undefined ? undefined : expandHomePath(sessionDirArg, launchHome);
+    const sessionsDir = resolvePiSessionsDir(environment, launchHome, path);
+    // A CLIProxyAPI-managed account can put its Pi home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "sessions",
+      filePattern: /\.jsonl$/,
+      fileProbeDepth: 0,
+      exclude: [sessionsDir, ...(launchDir === undefined ? [] : [launchDir])],
+    });
     // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.
     return [
       ...(launchDir !== undefined && path.isAbsolute(launchDir)
         ? [{ dir: path.resolve(launchDir) }]
         : []),
-      { dir: resolvePiSessionsDir(environment, launchHome, path) },
+      { dir: sessionsDir },
+      ...cliproxyDirs.map((dir) => ({ dir })),
     ];
   }),
 };

@@ -23,6 +23,10 @@
       "types": "./src/server/compatibility.ts",
       "import": "./src/server/compatibility.ts"
     },
+    "./server/cliproxySessionDirs": {
+      "types": "./src/server/cliproxySessionDirs.ts",
+      "import": "./src/server/cliproxySessionDirs.ts"
+    },
     "./server/auth": {
       "types": "./src/server/auth.ts",
       "import": "./src/server/auth.ts"

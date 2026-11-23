@@ -1,8 +1,10 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { discoverCliproxySessionDirs } from "@t3tools/provider-core/server/cliproxySessionDirs";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { providerProbeEnvironment } from "@t3tools/provider-core/server/snapshotProbe";
@@ -115,10 +117,9 @@ export const museUsageFormat: TranscriptUsageFormat<unknown> = {
   parseProjected: parseRecord,
 };
 
-export const museUsageReader: ProviderUsageReader<
-  MuseSettings,
-  Path.Path | MuseUsageHome.MuseUsageHome
-> = {
+export type MuseUsageReaderEnv = FileSystem.FileSystem | Path.Path | MuseUsageHome.MuseUsageHome;
+
+export const museUsageReader: ProviderUsageReader<MuseSettings, MuseUsageReaderEnv> = {
   kind: "transcripts",
   provider: "muse",
   format: museUsageFormat,
@@ -142,8 +143,18 @@ export const museUsageReader: ProviderUsageReader<
       awaitRefresh,
     });
     if (Option.isNone(museHome)) return [{ dir: binaryPath, refreshing: true }];
-    return museHome.value
-      ? [{ dir: path.join(museHome.value, "sessions"), fileName: "session.jsonl" }]
-      : [];
+    const sessionsDir = museHome.value ? path.join(museHome.value, "sessions") : null;
+    // A CLIProxyAPI-managed account can put its Muse home inside the proxy's data dir.
+    const cliproxyDirs = yield* discoverCliproxySessionDirs({
+      environment,
+      leafName: "sessions",
+      filePattern: /^session\.jsonl$/,
+      fileProbeDepth: 0,
+      exclude: sessionsDir === null ? [] : [sessionsDir],
+    });
+    return [
+      ...(sessionsDir === null ? [] : [{ dir: sessionsDir, fileName: "session.jsonl" }]),
+      ...cliproxyDirs.map((dir) => ({ dir, fileName: "session.jsonl" })),
+    ];
   }),
 };
