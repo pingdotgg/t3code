@@ -825,6 +825,45 @@ fn thread_replays_real_conn_server_turn_and_permission_fixtures() {
 }
 
 #[test]
+fn a_childs_pending_approval_reaches_its_parent_with_the_childs_own_details() {
+    let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
+    let card_index = frames
+        .iter()
+        .position(|f| f["event"]["payload"]["type"] == "approval_request")
+        .expect("fixture has an approval card");
+    let mut child = ThreadState::default();
+    for frame in &frames[..=card_index] {
+        child.apply(decode_thread(frame.clone()));
+    }
+    let threads = std::collections::HashMap::from([("child".to_owned(), child)]);
+    let listed = |id: &str| conn_state::ChildApprovalThread {
+        id: id.to_owned(),
+        title: "Review #278".to_owned(),
+    };
+
+    let approvals = conn_state::child_approvals(&[listed("child"), listed("unsynced")], &threads);
+    assert_eq!(approvals.len(), 1, "an unsynchronized child adds nothing");
+    let approval = &approvals[0];
+    assert_eq!(approval.thread_id, "child");
+    assert_eq!(approval.title, "Review #278");
+    assert!(approval.answerable);
+    assert_eq!(
+        Some(&approval.request_id),
+        threads["child"]
+            .pending_approvals()
+            .first()
+            .map(|a| &a.request_id)
+    );
+    // The card shows the prompt, else the request kind.
+    let kind = conn_state::request_kind_label(approval.details.request_kind);
+    assert_eq!(
+        approval.detail,
+        approval.details.prompt.as_deref().unwrap_or(kind)
+    );
+    assert!(!approval.detail.is_empty());
+}
+
+#[test]
 fn pending_approvals_follow_their_runtime_request() {
     let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
     let is_runtime_request = |frame: &Value| frame["event"]["type"] == "runtime-request.updated";
@@ -2491,7 +2530,8 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
             title: "Code Reviewer".to_owned(),
             role: "codex".to_owned(),
             status: TurnItemStatus::Running,
-            summary: Some("Reading main.rs cargo test".to_owned()),
+            // The card renders the Markdown; `plain_subagent_detail` gives web's one plain line.
+            summary: Some("Reading [main.rs](src/main.rs)\n- `cargo test`".to_owned()),
             remote_label: None,
             created_at: Some("2026-11-22T10:00:05.000Z".to_owned()),
             started_at: Some("2026-11-22T10:00:00.000Z".to_owned()),
@@ -2540,6 +2580,10 @@ fn subagent_maps_to_clickable_link_with_status_and_detail() {
         (SubagentTone::Stopped, "Stopped")
     );
     assert_eq!(format_subagent_display_title("Plain title"), "Plain title");
+    assert_eq!(
+        conn_state::plain_subagent_detail("Reading [main.rs](src/main.rs)\n- `cargo test`"),
+        "Reading main.rs cargo test"
+    );
 }
 
 #[test]

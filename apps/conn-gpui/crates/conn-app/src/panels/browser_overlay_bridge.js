@@ -122,14 +122,26 @@
     call("capture", plain(rect), 15_000);
 
   // ── Laravel Toolbar host bridge (matches Conn's LaravelToolbarPreload.ts) ──
+  // Response headers are read natively by the browser, so the page only reports what it holds
+  // itself: its inline payload (or that it has none) and the updates of its own toolbar.
   try {
     window.__LARAVEL_TOOLBAR_HOST__ = "Conn";
+    if (!document.getElementById("conn-laravel-toolbar-hide")) {
+      const style = document.createElement("style");
+      style.id = "conn-laravel-toolbar-hide";
+      style.textContent = "#laravel-toolbar-shadow-host { display: none !important; }";
+      (document.head || document.documentElement).appendChild(style);
+    }
   } catch {}
 
   const reportLaravelToolbarPage = () => {
+    if (window.__CONN_TOOLBAR_PAGE_REPORTED__) return;
+    window.__CONN_TOOLBAR_PAGE_REPORTED__ = true;
     const data = window.__LARAVEL_TOOLBAR_DATA__;
     if (data && typeof data === "object") {
-      emit({ type: "laravelToolbar", kind: "page", data: plain(data) });
+      emit({ type: "laravelToolbar", kind: "page", data: plain(data), url: location.href });
+    } else {
+      emit({ type: "laravelToolbar", kind: "ready", url: location.href });
     }
   };
   if (document.readyState === "loading") {
@@ -137,66 +149,14 @@
   } else {
     reportLaravelToolbarPage();
   }
-  window.addEventListener("laravel-toolbar:update", (event) => {
-    const data = event && event.detail && event.detail.data;
-    if (data && typeof data === "object") {
-      emit({ type: "laravelToolbar", kind: "update", data: plain(data) });
-    }
-  });
-
-  if (typeof window.fetch === "function" && !window.__CONN_FETCH_TOOLBAR_WRAPPED__) {
-    window.__CONN_FETCH_TOOLBAR_WRAPPED__ = true;
-    const origFetch = window.fetch.bind(window);
-    window.fetch = (...args) =>
-      origFetch(...args).then((resp) => {
-        try {
-          const full = resp.headers && resp.headers.get("x-toolbar");
-          const summary = resp.headers && resp.headers.get("x-toolbar-summary");
-          if (full || summary) {
-            const req = args[0];
-            const init = args[1];
-            const method = (init && init.method) || (req && req.method) || "GET";
-            const url = resp.url || (typeof req === "string" ? req : req && req.url) || location.href;
-            emit({
-              type: "laravelToolbarHeaders",
-              full: full || null,
-              summary: summary || null,
-              method: String(method).toUpperCase(),
-              url: String(url),
-            });
-          }
-        } catch {}
-        return resp;
-      });
-  }
-
-  if (typeof XMLHttpRequest !== "undefined" && !XMLHttpRequest.prototype.__CONN_TOOLBAR_WRAPPED__) {
-    XMLHttpRequest.prototype.__CONN_TOOLBAR_WRAPPED__ = true;
-    const origOpen = XMLHttpRequest.prototype.open;
-    const origSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-      this.__connMethod = method;
-      this.__connUrl = url;
-      return origOpen.call(this, method, url, ...rest);
-    };
-    XMLHttpRequest.prototype.send = function (...args) {
-      this.addEventListener("load", () => {
-        try {
-          const full = this.getResponseHeader("x-toolbar");
-          const summary = this.getResponseHeader("x-toolbar-summary");
-          if (full || summary) {
-            emit({
-              type: "laravelToolbarHeaders",
-              full: full || null,
-              summary: summary || null,
-              method: String(this.__connMethod || "GET").toUpperCase(),
-              url: String(this.responseURL || this.__connUrl || location.href),
-            });
-          }
-        } catch {}
-      });
-      return origSend.apply(this, args);
-    };
+  if (!window.__CONN_TOOLBAR_UPDATES__) {
+    window.__CONN_TOOLBAR_UPDATES__ = true;
+    window.addEventListener("laravel-toolbar:update", (event) => {
+      const data = event && event.detail && event.detail.data;
+      if (data && typeof data === "object") {
+        emit({ type: "laravelToolbar", kind: "update", data: plain(data), url: location.href });
+      }
+    });
   }
 
   // ── Vault credential autofill (origin-checked in-page as defense in depth) ─

@@ -364,9 +364,14 @@ pub fn set_model_selection(
     if let Some(opts) = options
         && !opts.is_empty()
     {
+        // The canonical wire form is `[{ id, value }]` (`ProviderOptionSelections`).
         selection.insert(
             "options".to_owned(),
-            serde_json::Value::Object(opts.clone()),
+            serde_json::Value::Array(
+                opts.iter()
+                    .map(|(id, value)| json!({ "id": id, "value": value }))
+                    .collect(),
+            ),
         );
     }
     conn_contract::from_json(json!({

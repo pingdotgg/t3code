@@ -659,6 +659,10 @@ fn render_pull_request_row(
         let mut stat_slot = div().relative().ml_auto().flex_shrink_0().child(
             h_flex()
                 .id(SharedString::from(format!("linked-pr-diff-stat-{index}")))
+                .a11y_button(
+                    format!("panel.linked-items.pr-change-breakdown.{index}"),
+                    format!("Change breakdown, {additions} added, {deletions} deleted"),
+                )
                 .items_center()
                 .gap(px(4.0))
                 .px(px(4.0))
@@ -943,7 +947,8 @@ fn render_row_actions_menu(
                      label: &'static str,
                      on_press: Box<dyn Fn(&mut Window, &mut App)>| {
         h_flex()
-            .id(SharedString::from(id))
+            .id(SharedString::from(id.clone()))
+            .a11y_button(format!("panel.linked-items.{id}"), label)
             .w_full()
             .min_h(px(28.0))
             .px(px(8.0))
@@ -1272,6 +1277,7 @@ fn outline_button(
     };
     let mut btn = h_flex()
         .id(id)
+        .a11y_button(format!("panel.linked-items.{id}"), label)
         .flex_shrink_0()
         .h(px(OUTLINE_BTN_HEIGHT_PX))
         .px(px(9.0))

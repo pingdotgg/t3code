@@ -6,6 +6,7 @@
 //! one client. This module keeps the existing `conn_desktop::orbit::*` paths working for
 //! `conn-app` without requiring call-site rewrites.
 
+pub mod linked_store;
 pub mod navigation;
 pub mod panel;
 pub mod storage;
@@ -22,9 +23,10 @@ pub use conn_orbit::{
     TasksError, TasksErrorReason, TasksFollower, TasksInvalidation, TasksListQuery,
     TasksLiveStatus, TasksPage, TasksResult, ThemeSlotSource, board, client, decode_projects,
     detail, extract_section, find_project, find_project_by_name, find_project_by_slug, fixtures,
-    fleet, follow_orbit_tasks, format, gateway, insights, merge_appearance, merge_device_section,
-    merge_workspaces, orbit_realtime_event, parse_profile_appearance, parse_profile_device_section,
-    profile, projects, realtime, same_workspaces, select_primary_agent_node, tasks,
-    to_gateway_form, workspace_matches_project,
+    fleet, follow_orbit_tasks, format, gateway, insights, linked, merge_appearance,
+    merge_device_section, merge_workspaces, orbit_realtime_event, parse_profile_appearance,
+    parse_profile_device_section, profile, projects, realtime, same_workspaces,
+    select_primary_agent_node, tasks, to_gateway_form, workspace_editor, workspace_matches_project,
 };
+pub use linked_store::{LinkedEnvironmentSettings, LinkedStore};
 pub use storage::{CachedOrbitSession, OrbitSessionStore, OrbitSyncSnapshot};

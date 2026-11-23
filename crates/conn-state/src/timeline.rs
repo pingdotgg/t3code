@@ -456,10 +456,10 @@ fn plain_detail(text: &str) -> String {
 /// Generic child-end text Conn hides (`/^Child task ended with status\b/i`).
 const GENERIC_CHILD_END: &str = "child task ended with status";
 
-/// The one-line subagent detail: progress while running, result once settled, hidden when
-/// it only restates the generic child-end message.
+/// The subagent detail as the agent wrote it (Markdown): progress while running, result once
+/// settled, hidden when it only restates the generic child-end message.
 #[must_use]
-pub fn subagent_detail(
+pub fn subagent_detail_markdown(
     status: TurnItemStatus,
     progress: Option<&str>,
     result: Option<&str>,
@@ -474,11 +474,25 @@ pub fn subagent_detail(
     let generic = raw
         .get(..GENERIC_CHILD_END.len())
         .is_some_and(|p| p.eq_ignore_ascii_case(GENERIC_CHILD_END));
-    if generic {
-        return None;
-    }
-    let detail = plain_detail(raw);
+    (!generic).then(|| raw.to_owned())
+}
+
+/// The one-line subagent detail: [`subagent_detail_markdown`] with links, backticks and bullets
+/// stripped and whitespace collapsed, as web's card shows it.
+#[must_use]
+pub fn subagent_detail(
+    status: TurnItemStatus,
+    progress: Option<&str>,
+    result: Option<&str>,
+) -> Option<String> {
+    let detail = plain_subagent_detail(&subagent_detail_markdown(status, progress, result)?);
     (!detail.is_empty()).then_some(detail)
+}
+
+/// A subagent detail as one plain line (`plainDetail`), for clients that do not render Markdown.
+#[must_use]
+pub fn plain_subagent_detail(markdown: &str) -> String {
+    plain_detail(markdown)
 }
 
 // ---------------------------------------------------------------------------------------------

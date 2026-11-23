@@ -6,7 +6,10 @@ mod approval_state;
 mod attachment_thumb;
 mod cache;
 mod cards;
+mod child_approvals;
+pub(crate) use self::child_approvals::ChildApprovalCard;
 mod color;
+mod command_label;
 mod composer;
 mod composer_state;
 pub(crate) use self::composer_state::{
@@ -16,6 +19,7 @@ pub(crate) use self::composer_state::{
 };
 mod draft_hero;
 mod icons;
+mod inline_code;
 pub(crate) mod markdown;
 mod provider_banner;
 mod question_logic;
@@ -129,6 +133,13 @@ pub(crate) enum ChatEvent {
     /// Answer an approval row: `decision` is `accept` or `decline`.
     Approval {
         entry_id: String,
+        decision: String,
+    },
+    /// Answer a child thread's approval card above the composer; the request belongs to the
+    /// child thread `thread_id`.
+    ChildApproval {
+        thread_id: String,
+        request_id: String,
         decision: String,
     },
     ModelSelected {
@@ -262,6 +273,8 @@ pub(crate) struct ChatView {
     /// typing guard hides any of them.
     incoming_approvals: Vec<conn_state::PendingApproval>,
     incoming_question: Option<(String, String)>,
+    /// Pending approvals of the thread's children, shown above the composer.
+    child_approvals: Vec<ChildApprovalCard>,
     /// Holds requests that arrive while the user types (`useComposerTypingGuard`).
     typing_guard: composer_state::TypingGuard,
     _typing_guard_idle: Option<gpui_kit::Task<()>>,
@@ -458,6 +471,7 @@ impl ChatView {
             pending_question_id: None,
             incoming_approvals: Vec::new(),
             incoming_question: None,
+            child_approvals: Vec::new(),
             typing_guard: composer_state::TypingGuard::default(),
             _typing_guard_idle: None,
             user_input_cards: HashMap::new(),
@@ -551,6 +565,17 @@ impl ChatView {
     ) {
         self.composer
             .update(cx, |c, cx| c.set_draft_text(text, window, cx));
+    }
+
+    /// Adds a file mention at the end of the composer's draft ("Add to chat").
+    pub(crate) fn insert_mention(
+        &mut self,
+        mention: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.insert_mention(mention, window, cx));
     }
 
     /// Toggles keeping the `BranchToolbar` context strip visible below the composer on active threads.
@@ -1050,6 +1075,17 @@ impl ChatView {
             self.wrapped_code_keys.insert(key.clone());
         }
         self.remeasure_for_id(&key);
+        cx.notify();
+    }
+
+    /// Expands or collapses a subagent card's summary (`chat.subagent.<id>.toggle`) and remeasures
+    /// the card's row, since its height changes.
+    pub(super) fn toggle_subagent_summary(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
+        let key = cards::subagent_summary_key(entry_id);
+        if !self.expanded_ids.remove(&key) {
+            self.expanded_ids.insert(key);
+        }
+        self.remeasure_for_id(entry_id);
         cx.notify();
     }
 
@@ -2567,7 +2603,7 @@ impl ChatView {
                             .a11y_group(format!("timeline.work.{id}.live"), ax_label)
                             .flex()
                             .flex_row()
-                            .items_center()
+                            .items_start()
                             .gap(px(6.0))
                             .w_full()
                             .min_w_0()
@@ -2586,6 +2622,7 @@ impl ChatView {
                                 div()
                                     .flex_1()
                                     .min_w_0()
+                                    .mt(px((24.0 - BODY_LINE_HEIGHT_PX) / 2.0))
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
@@ -2861,7 +2898,8 @@ impl ChatView {
             .id(SharedString::from(format!("tool-{id}")))
             .flex()
             .flex_row()
-            .items_center()
+            // Icon sits at the first line, like web's baseline-aligned `WorkLogLine`.
+            .items_start()
             .gap(px(6.0))
             .w_full()
             .min_w_0()
@@ -2883,6 +2921,8 @@ impl ChatView {
                 div()
                     .flex_1()
                     .min_w_0()
+                    // Centres the text line in the 24px icon box, as `items_center` did.
+                    .mt(px((24.0 - BODY_LINE_HEIGHT_PX) / 2.0))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
@@ -2913,6 +2953,8 @@ impl ChatView {
                         .justify_center()
                         .size(px(16.0))
                         .flex_none()
+                        // Centres the caret in the 24px first line.
+                        .mt(px(4.0))
                         .child(icons::icon(
                             if expanded {
                                 icons::CARET_DOWN
@@ -3035,10 +3077,15 @@ impl ChatView {
                             .flex_row()
                             .items_center()
                             .gap(px(6.0))
-                            .px(px(8.0))
+                            // Web's bordered `TimelineSystemDivider` pill: `rounded-full border
+                            // border-(--shell-divider) px-2.5 py-1`.
+                            .rounded_full()
+                            .border_1()
+                            .border_color(hsla(self.tokens.shell_divider))
+                            .px(px(10.0))
                             .py(px(4.0))
                             .child(icons::icon(
-                                icons::INFO,
+                                notice_icon(text),
                                 12.0,
                                 hsla(self.tokens.muted_foreground),
                             ))
@@ -3316,6 +3363,7 @@ impl Render for ChatView {
 
         let provider_banner = self.render_provider_banner(cx);
         let question_banner = self.render_question_banner(window, cx);
+        let child_approvals = self.render_child_approvals(cx);
         let banner_docked = question_banner.is_some();
         self.composer
             .update(cx, |c, cx| c.set_stash_docked(banner_docked, cx));
@@ -3352,6 +3400,7 @@ impl Render for ChatView {
                 .w_full()
                 .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
                 .mx_auto()
+                .when_some(child_approvals, |lane, cards| lane.child(cards))
                 .when_some(question_banner, |lane, banner| lane.child(banner))
                 .child(self.composer.clone()),
         );
@@ -3415,6 +3464,15 @@ fn now_epoch_ms() -> i64 {
 }
 
 /// First line of `text`, cut at 120 characters, for an AX label.
+/// The notice pill's glyph: web's `Minimize2` for context compaction, else the info glyph.
+fn notice_icon(text: &str) -> &'static str {
+    if text.to_ascii_lowercase().contains("compact") {
+        "superhero/minimize.svg"
+    } else {
+        icons::INFO
+    }
+}
+
 fn ax_snippet(text: &str) -> String {
     const MAX_CHARS: usize = 120;
     let line = text
@@ -3773,5 +3831,20 @@ mod worked_label_tests {
             None,
             "subsequent user turn clears prior plan follow-up"
         );
+    }
+}
+
+#[cfg(test)]
+mod notice_icon_tests {
+    use super::{icons, notice_icon};
+
+    #[test]
+    fn compaction_notices_get_the_minimize_glyph() {
+        assert_eq!(notice_icon("Compacting context"), "superhero/minimize.svg");
+        assert_eq!(
+            notice_icon("Context compacted 120k → 40k tokens"),
+            "superhero/minimize.svg"
+        );
+        assert_eq!(notice_icon("Something else"), icons::INFO);
     }
 }
