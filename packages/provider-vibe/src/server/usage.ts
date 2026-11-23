@@ -54,6 +54,7 @@ export const readVibeUsage = Effect.fn("VibeUsage.read")(function* (
           provider: "vibe",
           timestampMs,
           model: model || "vibe-unknown",
+          ...(model === "mistral-large-4-0-3" ? { rateModel: "mistral/mistral-large-4-0" } : {}),
           sessionId: session.id,
           totals: {
             ...EMPTY_TOTALS,

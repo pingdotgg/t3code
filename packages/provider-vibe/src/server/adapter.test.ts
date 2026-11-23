@@ -260,7 +260,9 @@ describe("Vibe adapter against an in-memory app-server", () => {
           }
           if (method === "session/read") {
             expect(params["sessionId"]).toBe("latest");
-            return { result: { state: { session: { id: "latest", model: "mistral-large" } } } };
+            return {
+              result: { state: { session: { id: "latest", model: "mistral-large-4-0-3" } } },
+            };
           }
           return undefined;
         });
@@ -273,7 +275,8 @@ describe("Vibe adapter against an in-memory app-server", () => {
           {
             provider: "vibe",
             sessionId: "latest",
-            model: "mistral-large",
+            model: "mistral-large-4-0-3",
+            rateModel: "mistral/mistral-large-4-0",
             timestampMs: 2000,
             totals: { uncachedInputTokens: 30, cachedInputTokens: 90, outputTokens: 15 },
           },
