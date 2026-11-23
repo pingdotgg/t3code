@@ -80,7 +80,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
             // Names the row in full on hover only when it is cut off.
             onPointerEnter={(event) => {
               const name = event.currentTarget;
-              name.title = name.querySelector("[data-overflow]") ? displayName : "";
+              const isCut = Array.from(name.children).some(
+                (part) => part.scrollWidth > part.clientWidth,
+              );
+              name.title = isCut ? displayName : "";
             }}
           />
           {/* The logo is decorative, so name the provider for screen readers. */}
