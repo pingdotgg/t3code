@@ -62,6 +62,7 @@ anything.
 ### Conventions
 
 - [Effect services](./internals/effect-services.md)
+- [Scripts](./internals/scripts.md)
 - [Web UI](./internals/web-ui.md)
 - [Testing](./internals/testing.md)
 - [Translating the UI (i18n)](./internals/i18n.md)
@@ -74,4 +75,3 @@ anything.
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
-- [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

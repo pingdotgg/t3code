@@ -10,6 +10,12 @@ const DOC_RULES = [
     instructions: "Hold changed code to the rules in docs/internals/effect-services.md.",
   },
   {
+    files: "docs/internals/scripts.md",
+    applyTo: "{scripts,apps/*/scripts,packages/*/scripts,infra/*/scripts}/**/*.{ts,mts}",
+    instructions:
+      "Hold repository and package scripts to docs/internals/scripts.md: use Effect, effect/cli, NodeServices, and NodeRuntime.runMain rather than raw node:fs, node:child_process, or hand-rolled process.argv parsing.",
+  },
+  {
     files: "docs/internals/web-ui.md",
     applyTo: "apps/web/src/**/*.{tsx,css}",
     instructions: "Hold changed code to the rules in docs/internals/web-ui.md.",

@@ -20,7 +20,7 @@ navigating between settings does not pop/push the column or unmount its header.
 
 ## UIKit and `react-native-screens` fork constraints
 
-The [react-native-screens fork](../operations/mobile-screens-fork.md) preserves native header
+The [react-native-screens fork](../../apps/mobile/deps/README.md#react-native-screens) preserves native header
 behavior that is easy to break:
 
 - Keep the brand in `headerTitle` (UIKit on iOS 26.5 morphs a background-free leading toolbar item

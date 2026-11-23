@@ -212,6 +212,7 @@ Read the matching doc before changing code in that area; code review enforces th
 | Mobile layout, navigation & dev lifecycle  | [mobile-layout.md](docs/internals/mobile-layout.md), [mobile-navigation.md](docs/internals/mobile-navigation.md), [mobile-development.md](docs/internals/mobile-development.md) |
 | Translations & UI copy                     | [i18n.md](docs/internals/i18n.md)                                                                                                                                               |
 | Writing & reviewing tests                  | [testing.md](docs/internals/testing.md)                                                                                                                                         |
+| Repo & package scripts                     | [scripts.md](docs/internals/scripts.md)                                                                                                                                         |
 
 ## Taste
 
