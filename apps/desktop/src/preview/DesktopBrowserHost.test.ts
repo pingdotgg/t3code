@@ -95,12 +95,7 @@ const makeDebuggee = (
   });
   let destroyed = false;
   let nativeCaptures = 0;
-  let throttled = true;
   const webContents = Object.assign(new NodeEvents.EventEmitter(), {
-    getBackgroundThrottling: () => throttled,
-    setBackgroundThrottling: (allowed: boolean) => {
-      throttled = allowed;
-    },
     capturePage: () => {
       nativeCaptures += 1;
       if (options.capturesStall?.()) return new Promise(() => {});
@@ -134,7 +129,6 @@ const makeDebuggee = (
     refuse: (id: number) => rejects[sent.indexOf(id)]?.(),
     focusEmulation,
     nativeCaptures: () => nativeCaptures,
-    throttled: () => throttled,
     nextSend: () => new Promise<void>((resolve) => sendWaiters.push(resolve)),
     release: () => pending.splice(0).forEach((resolve) => resolve()),
     releaseFirst: () => pending.shift()?.(),
@@ -393,6 +387,7 @@ describe("DesktopBrowserHost", () => {
       });
       host.attach(key, debuggee.tab);
       const replies = yield* watchReplies(host);
+      const painting = yield* watchPainting(host);
 
       yield* command(host, 1, "Page.captureScreenshot");
       yield* settle;
@@ -413,8 +408,6 @@ describe("DesktopBrowserHost", () => {
       drawsWhenCaptured = false;
       yield* command(host, 4, "Page.captureScreenshot");
       yield* settle;
-      // Unthrottled while it waits, as a hidden window's throttled guest draws nothing on Windows.
-      expect(debuggee.throttled()).toBe(false);
       for (const [wait, prods] of [
         ["250 millis", 2],
         ["500 millis", 3],
@@ -429,33 +422,32 @@ describe("DesktopBrowserHost", () => {
       expect(yield* Queue.take(replies)).toBe(4);
       yield* TestClock.adjust("10 seconds");
       expect(debuggee.nativeCaptures()).toBe(6);
-      expect(debuggee.throttled()).toBe(true);
 
+      // A command that outlasts its first prod is painted like a capture, which also unthrottles it.
       // A wait the agent's turn gave up on is no longer prodded.
       yield* command(host, 5, "Runtime.evaluate");
       yield* settle;
+      painting.length = 0;
       yield* TestClock.adjust("250 millis");
       expect(debuggee.nativeCaptures()).toBe(7);
+      expect(painting).toEqual([true]);
       yield* host.handleCommandLine(
         encodeJson({ type: "turn", threadId: key.threadId, active: false }),
       );
       yield* TestClock.adjust("10 seconds");
       expect(debuggee.nativeCaptures()).toBe(7);
+      expect(painting).toEqual([true, false]);
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(5);
-      expect(debuggee.throttled()).toBe(true);
 
       // Captures Electron never settles pile up no further than two.
       capturesStall = true;
-      // A guest something else unthrottled, such as picture-in-picture, stays so.
-      debuggee.tab.webContents.setBackgroundThrottling(false);
       yield* command(host, 6, "Runtime.evaluate");
       yield* settle;
       yield* TestClock.adjust("10 seconds");
       expect(debuggee.nativeCaptures()).toBe(9);
       debuggee.releaseFirst();
       expect(yield* Queue.take(replies)).toBe(6);
-      expect(debuggee.throttled()).toBe(false);
       // Even across a reattach of the same guest, as when DevTools closes.
       host.detach(key);
       host.attach(key, debuggee.tab);

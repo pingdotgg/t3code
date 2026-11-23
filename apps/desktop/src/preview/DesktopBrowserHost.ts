@@ -82,6 +82,8 @@ interface AttachedTab {
   /** Each wait on the guest's next frame, as whether it still waits; the guest is prodded until none do. */
   readonly frameWaits: Set<() => boolean>;
   nudging: Fiber.Fiber<void> | null;
+  /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
+  frameStalled: boolean;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
   /**
@@ -252,7 +254,7 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
+   * Electron composites no offscreen guest, so a screenshot, screencast or stalled command waits for a frame
    * that never comes. The client paints the guest behind the app while one is pending; the
    * capture then finishes on its own, and the guest goes back offscreen once none is.
    */
@@ -261,6 +263,7 @@ export const make = Effect.gen(function* () {
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
+        tab.frameStalled ||
         tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
@@ -269,31 +272,15 @@ export const make = Effect.gen(function* () {
 
   /** By guest rather than attachment, since reopening DevTools reattaches the same guest. */
   const nativeCaptures = new WeakMap<Electron.WebContents, number>();
-  /** Nudge loops per guest; a guest is rethrottled only by the last, and only if they unthrottled it. */
-  const unthrottleHolds = new WeakMap<Electron.WebContents, { count: number; owned: boolean }>();
-
-  /** On Windows a hidden window's throttled guest draws no frame, and capturePage cannot wake it. */
   const startNudging = (tab: AttachedTab) => {
-    if (tab.nudging !== null) return;
-    const { webContents } = tab.debuggee;
-    const hold = unthrottleHolds.get(webContents) ?? { count: 0, owned: false };
-    if (hold.count === 0 && !webContents.isDestroyed() && webContents.getBackgroundThrottling()) {
-      webContents.setBackgroundThrottling(false);
-      hold.owned = true;
-    }
-    hold.count += 1;
-    unthrottleHolds.set(webContents, hold);
-    tab.nudging = runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
+    tab.nudging ??= runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
   };
 
   const endNudging = (tab: AttachedTab) => {
-    if (tab.nudging === null) return;
     tab.nudging = null;
-    const { webContents } = tab.debuggee;
-    const hold = unthrottleHolds.get(webContents);
-    if (!hold || --hold.count > 0) return;
-    unthrottleHolds.delete(webContents);
-    if (hold.owned && !webContents.isDestroyed()) webContents.setBackgroundThrottling(true);
+    if (!tab.frameStalled) return;
+    tab.frameStalled = false;
+    syncPainting(tab);
   };
 
   /**
@@ -313,6 +300,11 @@ export const make = Effect.gen(function* () {
           ) {
             endNudging(tab);
             return Effect.void;
+          }
+          // On Windows a hidden window's throttled guest draws nothing, and capturePage cannot wake it.
+          if (!tab.frameStalled) {
+            tab.frameStalled = true;
+            syncPainting(tab);
           }
           const inFlight = nativeCaptures.get(webContents) ?? 0;
           if (inFlight < PAINT_NUDGE_IN_FLIGHT) {
@@ -628,6 +620,7 @@ export const make = Effect.gen(function* () {
       capturing: new Set(),
       frameWaits: new Set(),
       nudging: null,
+      frameStalled: false,
       painting: false,
       agentUsed: false,
       focusReleasing: false,
