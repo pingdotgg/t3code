@@ -206,7 +206,7 @@ function amsUnits(report: JsonObject): ReadonlyArray<PrinterAmsUnit> {
     return {
       id: `ams-${unitNumber + 1}`,
       label: `AMS ${unitNumber + 1}`,
-      humidityIndex: num(unit.humidity_raw) ?? num(unit.humidity),
+      humidityIndex: num(unit.humidity),
       temperatureC: num(unit.temp),
       trays: trays.map((tray, trayIndex) => {
         const trayNumber = num(tray.id) ?? trayIndex;
