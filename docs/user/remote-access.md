@@ -469,11 +469,11 @@ an address you trust: the code is sent there.
 - A link stays valid while agents use it. One unused for 30 days expires, as
   does one to a machine on an older T3 Code after 30 days; link again with a
   new pairing code.
-- On a LAN or other private network, a link can use the machine's plain
-  `http://` IP address, as pairing does. A machine picked from the list is
-  linked over its https, Tailscale or T3 Connect address instead whenever one
-  answers. Plain http to a public address or to a hostname is refused, apart
-  from `localhost` and Tailscale (`.ts.net`) names.
+- On a LAN, a link can use the machine's plain `http://` IP address when it is
+  in a private range (`10.x`, `172.16–31.x` or `192.168.x`). A machine picked
+  from the list is linked over its https, Tailscale or T3 Connect address
+  instead whenever one answers. Plain http to any other address or to a
+  hostname is refused, apart from `localhost` and Tailscale (`.ts.net`) names.
 
 An agent can also hand a task to a linked machine with `delegate_task`: it runs
 there as an ordinary thread, in the project with the same repository (or the

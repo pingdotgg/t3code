@@ -754,8 +754,14 @@ it.effect(
           .pipe(Effect.flip);
         expect(exposedAlternate.message).toContain("plain http");
         // So could a name, whatever it looks like: a search domain or unicast
-        // DNS can resolve it to a public address.
-        for (const url of ["http://box:3773", "http://box.local:3773"]) {
+        // DNS can resolve it to a public address. And carrier-grade NAT's shared
+        // space and the benchmarking range aren't a LAN either.
+        for (const url of [
+          "http://box:3773",
+          "http://box.local:3773",
+          "http://100.100.1.2:3773",
+          "http://198.18.0.5:3773",
+        ]) {
           const named = yield* a.links
             .link({ url, pairingCode: pairing.credential, access: "auto" })
             .pipe(Effect.flip);
@@ -884,7 +890,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
       expect(failed.reason).toBe("unreachable");
       expect(failed.answeredAs).toBe("Impostor");
       expect(failed.message).toBe(
-        `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://203.0.113.7:3773 is plain http to an address that is not a private IP, so the link's credentials could travel unencrypted across the internet. Use its https address, its Tailscale address, or its IP address on your local network.`,
+        `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://203.0.113.7:3773 is plain http to an address outside the private LAN ranges (10.x, 172.16-31.x, 192.168.x), so the link's credentials could travel unencrypted across networks you don't control. Use its https address, its Tailscale name (.ts.net), or its address on your LAN.`,
       );
       expect(yield* a.links.list).toEqual([]);
       expect(yield* linkedSessions(impostor)).toEqual([]);
