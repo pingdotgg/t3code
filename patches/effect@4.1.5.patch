@@ -1208,7 +1208,7 @@ index 0000000..d875046
 +    }
 +}, Effect.scoped);
 diff --git a/dist/ai/internal/mcpProtocol/v2026_07_28.js b/dist/ai/internal/mcpProtocol/v2026_07_28.js
-index af1ceed..1737b34 100644
+index af1ceed..301dde5 100644
 --- a/dist/ai/internal/mcpProtocol/v2026_07_28.js
 +++ b/dist/ai/internal/mcpProtocol/v2026_07_28.js
 @@ -17,6 +17,7 @@ import * as Schema from "../../../Schema.js";
@@ -1239,16 +1239,20 @@ index af1ceed..1737b34 100644
    const sendNotification = context.sendNotification;
    const supportsSubscriptions = sendNotification !== undefined;
    // Older adapters accept arbitrary JSON; this binding requires extension settings objects.
-@@ -277,7 +282,7 @@ export const makeHandlers = (core, _lifecycle, context) => {
+@@ -277,8 +282,11 @@ export const makeHandlers = (core, _lifecycle, context) => {
        completions: {},
        logging: {}
      };
 -    const declared = McpSkills.declareExtension(extensions, presence.skills);
 +    const declared = McpEvents.declareExtension(McpSkills.declareExtension(extensions, presence.skills), presence.events);
      if (declared !== undefined) capabilities.extensions = declared;
++    // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++    // They look for a top-level `events` capability instead of the extension.
++    if (presence.events) capabilities.events = {};
      if (presence.tools) capabilities.tools = {
        listChanged: supportsSubscriptions
-@@ -297,6 +302,26 @@ export const makeHandlers = (core, _lifecycle, context) => {
+     };
+@@ -297,6 +305,26 @@ export const makeHandlers = (core, _lifecycle, context) => {
        serverInfo: context.serverInfo
      };
    });
@@ -1275,7 +1279,7 @@ index af1ceed..1737b34 100644
    const requireSkills = method => McpSkills.requireSkills(core, method).pipe(Effect.catch(error => failWithHttpStatus(404, error)));
    const getInvocation = PublicMcpSchema.McpRequestContext.useSync(McpProtocol.invocationFromRequestContext);
    const getInputInvocation = Effect.fnUntraced(function* (request) {
-@@ -592,6 +617,96 @@ export const makeHandlers = (core, _lifecycle, context) => {
+@@ -592,6 +620,96 @@ export const makeHandlers = (core, _lifecycle, context) => {
        }, context.serverInfo);
        return yield* decodeReadResourceDirectoryResult(result);
      }, Effect.mapError(projectError)),
@@ -1372,7 +1376,7 @@ index af1ceed..1737b34 100644
      "notifications/cancelled": Effect.fnUntraced(function* (_request) {
        return yield* Effect.void;
      })
-@@ -613,10 +728,10 @@ const runtime = {
+@@ -613,10 +731,10 @@ const runtime = {
  export const protocol = /*#__PURE__*/McpProtocol.make({
    protocolVersion: McpSchema.protocolVersion,
    runtime,
@@ -1386,7 +1390,7 @@ index af1ceed..1737b34 100644
    makeHandlers,
    toReverseClient: () => ({
 diff --git a/dist/ai/internal/mcpRuntime.js b/dist/ai/internal/mcpRuntime.js
-index 88238ff..274e513 100644
+index 88238ff..721ff28 100644
 --- a/dist/ai/internal/mcpRuntime.js
 +++ b/dist/ai/internal/mcpRuntime.js
 @@ -39,6 +39,10 @@ const routingNameKey = method => {
@@ -1400,7 +1404,19 @@ index 88238ff..274e513 100644
        return "name";
      case "resources/read":
        return "uri";
-@@ -340,7 +344,8 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
+@@ -178,7 +182,10 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
+       if (nameKey !== undefined) {
+         const name = asRecord(inputRecord?.params)?.[nameKey];
+         const header = headers[MCP_NAME_HEADER];
+-        if (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name) {
++        // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++        // They send no Mcp-Name on these; one they do send must still match.
++        const optional = header === undefined && (method === "events/subscribe" || method === "events/unsubscribe");
++        if (!optional && (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name)) {
+           return headerMismatch("Mcp-Name header does not match request parameters");
+         }
+       }
+@@ -340,7 +347,8 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (protocols) {
        return {
          _tag: "Accepted",
          acknowledge: !isRequest || !hasId,
@@ -1419,10 +1435,10 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
 new file mode 100644
-index 0000000..0308277
+index 0000000..6bff946
 --- /dev/null
 +++ b/dist/ai/internal/mcpWebhooks.js
-@@ -0,0 +1,446 @@
+@@ -0,0 +1,447 @@
 +import * as Clock from "../../Clock.js";
 +import * as Digest from "../../crypto/Digest.js";
 +import * as Mac from "../../crypto/Mac.js";
@@ -1562,6 +1578,7 @@ index 0000000..0308277
 +    Effect.map((hex) => `sub_${hex.slice(0, 32)}`)
 +  );
 +  const messageId = (prefix) => Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`);
++  const eventWebhookId = (eventId) => /^[A-Za-z0-9_-]+$/.test(eventId) ? Effect.succeed(eventId) : messageId("msg");
 +  const sign = (keys, webhookId, timestamp, body) => Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
 +    Effect.orDie,
 +    Effect.map((tags) => tags.map((tag) => `v1,${Base64.encode(tag)}`).join(" "))
@@ -1640,7 +1657,7 @@ index 0000000..0308277
 +            cursor: item.cursor,
 +            ...item._meta === void 0 ? {} : { _meta: item._meta }
 +          });
-+          return Effect.flatMap(messageId("msg"), (webhookId) => deliver(subscription, body, webhookId)).pipe(
++          return Effect.flatMap(eventWebhookId(item.eventId), (webhookId) => deliver(subscription, body, webhookId)).pipe(
 +            Effect.andThen(Effect.sync(() => {
 +              subscription.watermark = item.cursor;
 +            }))
@@ -3092,7 +3109,7 @@ index 5393651..f40915b 100644
  }
  
 diff --git a/src/ai/internal/mcpProtocol/v2026_07_28.ts b/src/ai/internal/mcpProtocol/v2026_07_28.ts
-index a701ec8..c2e6db3 100644
+index a701ec8..55829ea 100644
 --- a/src/ai/internal/mcpProtocol/v2026_07_28.ts
 +++ b/src/ai/internal/mcpProtocol/v2026_07_28.ts
 @@ -22,6 +22,7 @@ import type * as Types from "../../../Types.ts"
@@ -3127,7 +3144,7 @@ index a701ec8..c2e6db3 100644
    const sendNotification = context.sendNotification
    const supportsSubscriptions = sendNotification !== undefined
    // Older adapters accept arbitrary JSON; this binding requires extension settings objects.
-@@ -384,7 +393,10 @@ export const makeHandlers = (
+@@ -384,8 +393,14 @@ export const makeHandlers = (
    }
    const getDiscovery = Effect.map(context.registrationPresence, (presence) => {
      const capabilities: Types.Mutable<typeof McpSchema.ServerCapabilities.Type> = { completions: {}, logging: {} }
@@ -3137,9 +3154,13 @@ index a701ec8..c2e6db3 100644
 +      presence.events
 +    )
      if (declared !== undefined) capabilities.extensions = declared
++    // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++    // They look for a top-level `events` capability instead of the extension.
++    if (presence.events) capabilities.events = {}
      if (presence.tools) capabilities.tools = { listChanged: supportsSubscriptions }
      if (presence.resources) {
-@@ -393,6 +405,30 @@ export const makeHandlers = (
+       capabilities.resources = { listChanged: supportsSubscriptions, subscribe: supportsSubscriptions }
+@@ -393,6 +408,30 @@ export const makeHandlers = (
      if (presence.prompts) capabilities.prompts = { listChanged: supportsSubscriptions }
      return { supportedVersions: context.supportedVersions, capabilities, serverInfo: context.serverInfo }
    })
@@ -3170,7 +3191,7 @@ index a701ec8..c2e6db3 100644
    const requireSkills = (method: string) =>
      McpSkills.requireSkills(core, method).pipe(
        Effect.catch((error) => failWithHttpStatus(404, error))
-@@ -728,6 +764,115 @@ export const makeHandlers = (
+@@ -728,6 +767,115 @@ export const makeHandlers = (
        const result = yield* projectCompleteResult({ ...cacheHint("skills"), resources }, context.serverInfo)
        return yield* decodeReadResourceDirectoryResult(result)
      }, Effect.mapError(projectError)),
@@ -3286,7 +3307,7 @@ index a701ec8..c2e6db3 100644
      "notifications/cancelled": Effect.fnUntraced(function*(
        _request: typeof McpSchema.CancelledNotification.payloadSchema.Type
      ) {
-@@ -751,10 +896,10 @@ const runtime = {
+@@ -751,10 +899,10 @@ const runtime = {
  export const protocol = McpProtocol.make({
    protocolVersion: McpSchema.protocolVersion,
    runtime,
@@ -3300,7 +3321,7 @@ index a701ec8..c2e6db3 100644
    makeHandlers,
    toReverseClient: () => ({
 diff --git a/src/ai/internal/mcpRuntime.ts b/src/ai/internal/mcpRuntime.ts
-index 9d4c96e..eb0590c 100644
+index 9d4c96e..0afe3ed 100644
 --- a/src/ai/internal/mcpRuntime.ts
 +++ b/src/ai/internal/mcpRuntime.ts
 @@ -53,6 +53,10 @@ const routingNameKey = (method: string): "name" | "uri" | undefined => {
@@ -3314,7 +3335,22 @@ index 9d4c96e..eb0590c 100644
        return "name"
      case "resources/read":
        return "uri"
-@@ -479,7 +483,9 @@ export const make = Effect.fnUntraced(function*(
+@@ -319,7 +323,13 @@ export const make = Effect.fnUntraced(function*(
+       if (nameKey !== undefined) {
+         const name = asRecord(inputRecord?.params)?.[nameKey]
+         const header = headers[MCP_NAME_HEADER]
+-        if (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name) {
++        // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++        // They send no Mcp-Name on these; one they do send must still match.
++        const optional = header === undefined && (method === "events/subscribe" || method === "events/unsubscribe")
++        if (
++          !optional &&
++          (typeof name !== "string" || header === undefined || McpProtocol.decodeRoutingHeader(header) !== name)
++        ) {
+           return headerMismatch("Mcp-Name header does not match request parameters")
+         }
+       }
+@@ -479,7 +489,9 @@ export const make = Effect.fnUntraced(function*(
        return {
          _tag: "Accepted",
          acknowledge: !isRequest || !hasId,
@@ -3327,10 +3363,10 @@ index 9d4c96e..eb0590c 100644
      effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
 diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
 new file mode 100644
-index 0000000..fb6114e
+index 0000000..a499d8b
 --- /dev/null
 +++ b/src/ai/internal/mcpWebhooks.ts
-@@ -0,0 +1,672 @@
+@@ -0,0 +1,678 @@
 +/**
 + * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
 + * validation, subscription identity, Standard Webhooks signing, the endpoint
@@ -3649,6 +3685,12 @@ index 0000000..fb6114e
 +  const messageId = (prefix: string) =>
 +    Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`)
 +
++  // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
++  // They require an event's webhook-id to be its eventId, which the spec says not to derive
++  // it from. An eventId outside the webhook-id charset still gets a random id.
++  const eventWebhookId = (eventId: string) =>
++    /^[A-Za-z0-9_-]+$/.test(eventId) ? Effect.succeed(eventId) : messageId("msg")
++
 +  const sign = (keys: ReadonlyArray<Mac.Key>, webhookId: string, timestamp: number, body: string) =>
 +    Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
 +      Effect.orDie,
@@ -3749,7 +3791,7 @@ index 0000000..fb6114e
 +              cursor: item.cursor,
 +              ...(item._meta === undefined ? {} : { _meta: item._meta })
 +            })
-+            return Effect.flatMap(messageId("msg"), (webhookId) => deliver(subscription, body, webhookId)).pipe(
++            return Effect.flatMap(eventWebhookId(item.eventId), (webhookId) => deliver(subscription, body, webhookId)).pipe(
 +              Effect.andThen(Effect.sync(() => {
 +                subscription.watermark = item.cursor
 +              }))

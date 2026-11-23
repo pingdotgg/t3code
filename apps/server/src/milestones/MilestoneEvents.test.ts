@@ -228,7 +228,9 @@ const serve = Effect.gen(function* () {
         cursor: result!.cursor as string,
         truncated: result!.truncated as boolean,
         hasMore: result!.hasMore as boolean,
-        ids: (result!.events as ReadonlyArray<{ eventId: string }>).map((event) => event.eventId),
+        ids: (result!.events as ReadonlyArray<{ data: { id: string } }>).map(
+          (event) => event.data.id,
+        ),
       })),
     );
   const stream = (args: Record<string, unknown>, id = 7) =>
@@ -297,13 +299,17 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     expect(discovered.result!.capabilities.extensions).toEqual({
       "io.modelcontextprotocol/events": {},
     });
+    // TODO(#41158): drop with the bridge for clients predating SEP-3415.
+    expect(discovered.result!.capabilities.events).toEqual({});
 
     const { events } = (yield* call("events/list")).result!;
     expect(events).toHaveLength(12);
     const settledType = events.find(
       (event: { name: string }) => event.name === "thread.run_settled",
     );
-    expect(settledType.delivery).toEqual(["poll", "push", "webhook"]);
+    for (const event of events) {
+      expect(event.delivery).toEqual(["poll", "push", "webhook"]);
+    }
     expect(Object.keys(settledType.inputSchema.properties)).toEqual([
       "projectIds",
       "threadIds",
@@ -363,13 +369,26 @@ it.effect("polls from now, then pages forward and says when a cursor fell behind
 
 it.effect("rejects a mismatched Mcp-Name, an unknown event and a bad webhook callback", () =>
   Effect.gen(function* () {
-    const { post, call } = yield* serve;
+    const { post, call, deliveries, answer, subscribeParams } = yield* serve;
     const params = { name: "thread.run_settled", cursor: null };
     const missing = yield* post("events/poll", params, { name: null });
     expect(missing.status).toBe(400);
     expect(((yield* missing.json) as JsonRpcResponse).error?.code).toBe(-32020);
     const mismatched = yield* post("events/poll", params, { name: "thread.needs_input" });
     expect(mismatched.status).toBe(400);
+    // TODO(#41158): drop with the bridge for clients predating SEP-3415. Subscribing needs no Mcp-Name,
+    // but one that is sent must match.
+    const wrongName = yield* post("events/subscribe", subscribeParams(), {
+      name: "thread.needs_input",
+    });
+    expect(((yield* wrongName.json) as JsonRpcResponse).error?.code).toBe(-32020);
+    const unnamed = yield* post("events/subscribe", subscribeParams(), { name: null }).pipe(
+      Effect.flatMap((response) => response.json),
+      Effect.forkChild,
+    );
+    const verification = yield* Queue.take(deliveries);
+    yield* answer(verification, 200, JSON.stringify({ challenge: verification.body.challenge }));
+    expect(((yield* Fiber.join(unnamed)) as JsonRpcResponse).result?.id).toMatch(/^sub_/);
 
     expect((yield* call("events/poll", { name: "nope", cursor: null })).error).toMatchObject({
       code: -32023,
@@ -419,7 +438,7 @@ it.effect("streams live milestones after active, replays from a cursor and sends
     expect(event).toMatchObject({
       method: "notifications/events/event",
       params: {
-        eventId: "b",
+        eventId: expect.stringMatching(/^evt_[\w-]{22}$/),
         name: "thread.run_settled",
         data: { id: "b", projectId: "project:b" },
         _meta: { "io.modelcontextprotocol/subscriptionId": 7 },
@@ -436,8 +455,8 @@ it.effect("streams live milestones after active, replays from a cursor and sends
     const replay = yield* stream({ cursor: "previous-boot.1" }, 8);
     expect(yield* Queue.takeN(replay, 3)).toMatchObject([
       { method: "notifications/events/active", params: { truncated: true } },
-      { method: "notifications/events/event", params: { eventId: "a" } },
-      { method: "notifications/events/event", params: { eventId: "b" } },
+      { method: "notifications/events/event", params: { data: { id: "a" } } },
+      { method: "notifications/events/event", params: { data: { id: "b" } } },
     ]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
@@ -549,7 +568,10 @@ it.effect("delivers one signed event at a time and advances the cursor once each
     yield* hub.publish(settled("a"));
     yield* hub.publish(settled("b"));
     const first = yield* Queue.take(deliveries);
-    expect(first.body).toMatchObject({ eventId: "a", name: "thread.run_settled" });
+    expect(first.body).toMatchObject({ data: { id: "a" }, name: "thread.run_settled" });
+    // TODO(#41158): drop with the bridge for clients predating SEP-3415. An event's webhook-id is its eventId.
+    expect(first.body.eventId).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(first.headers["webhook-id"]).toBe(first.body.eventId);
     expect(first.headers["x-mcp-subscription-id"]).toBe(subscribed.id);
     expect(yield* signedBy(secret, first.headers, first.raw)).toBe(true);
     yield* answer(first, 500);
@@ -564,7 +586,7 @@ it.effect("delivers one signed event at a time and advances the cursor once each
     // timestamp and signature.
     yield* TestClock.adjust("30 seconds");
     const retry = yield* Queue.take(deliveries);
-    expect(retry.body.eventId).toBe("a");
+    expect(retry.body.data.id).toBe("a");
     expect(retry.headers["webhook-id"]).toBe(first.headers["webhook-id"]);
     expect(retry.headers["webhook-timestamp"]).not.toBe(first.headers["webhook-timestamp"]);
     expect(yield* signedBy(secret, retry.headers, retry.raw)).toBe(true);
@@ -572,7 +594,7 @@ it.effect("delivers one signed event at a time and advances the cursor once each
 
     // Only after "a" resolved does "b" go out; a 410 gives it up without a retry.
     const second = yield* Queue.take(deliveries);
-    expect(second.body.eventId).toBe("b");
+    expect(second.body.data.id).toBe("b");
     expect(yield* refresh()).toMatchObject({
       cursor: first.body.cursor,
       deliveryStatus: { lastError: null, lastDeliveryAt: expect.any(String) },
@@ -585,7 +607,7 @@ it.effect("delivers one signed event at a time and advances the cursor once each
     });
     yield* hub.publish(settled("c"));
     const third = yield* Queue.take(deliveries);
-    expect(third.body.eventId).toBe("c");
+    expect(third.body.data.id).toBe("c");
     expect(yield* signedBy(secret, third.headers, third.raw)).toBe(true);
     expect(yield* signedBy(rotated, third.headers, third.raw)).toBe(true);
     expect(
@@ -616,7 +638,7 @@ it.effect("reports a gap the endpoint never took on the next refresh", () =>
     // "c" goes out only after the gap was given up on.
     yield* hub.publish(settled("c"));
     const next = yield* Queue.take(deliveries);
-    expect(next.body.eventId).toBe("c");
+    expect(next.body.data.id).toBe("c");
     const refresh = call("events/subscribe", subscribeParams(filter)).pipe(
       Effect.map(({ result }) => result!),
     );
@@ -639,11 +661,11 @@ it.effect("gives an event up after five attempts", () =>
       yield* TestClock.adjust(wait);
     }
     const last = yield* Queue.take(deliveries);
-    expect(last.body.eventId).toBe("a");
+    expect(last.body.data.id).toBe("a");
     yield* answer(last, 503);
     yield* hub.publish(settled("b"));
     const next = yield* Queue.take(deliveries);
-    expect(next.body.eventId).toBe("b");
+    expect(next.body.data.id).toBe("b");
     yield* answer(next, 200);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

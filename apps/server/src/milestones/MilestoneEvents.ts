@@ -7,7 +7,9 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -63,12 +65,6 @@ const DESCRIPTIONS: Record<MilestoneEventValue["type"], string> = {
   "workflow.run_ended": "A workflow run ended: completed, stopped, skipped or cancelled.",
 };
 
-const occurrence = ({ event }: MilestoneHub.PositionedMilestone) => ({
-  eventId: event.id,
-  timestamp: event.occurredAt,
-  data: event,
-});
-
 /**
  * Each milestone type as an MCP event type (SEP-3415), for outside clients to poll, stream or
  * receive by webhook. Cursors are the hub's, so a client that was away catches up on what the
@@ -96,7 +92,17 @@ export const make = Effect.gen(function* () {
     );
     return items.pipe(Stream.interruptWhen(revoked));
   });
-  const context = { hub, untilRevoked };
+  const digest = yield* Effect.service(Digest.Digest).pipe(Effect.provide(Digest.layerWebCrypto));
+  // TODO(#41158): drop this bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp).
+  // They take an event's eventId as its webhook-id, which allows only [A-Za-z0-9_-], so the
+  // eventId is a hash of the milestone id, the same in every delivery mode.
+  const occurrence = ({ event }: MilestoneHub.PositionedMilestone) =>
+    Effect.map(digest.digest(Digest.sha256, new TextEncoder().encode(event.id)), (hash) => ({
+      eventId: `evt_${Base64Url.encode(hash).slice(0, 22)}`,
+      timestamp: event.occurredAt,
+      data: event,
+    }));
+  const context = { hub, untilRevoked, occurrence };
   const isWorkflow = (payload: (typeof MilestoneEvent.members)[number]) =>
     payload.fields.type.literal.startsWith("workflow.");
   return {
@@ -113,8 +119,14 @@ const eventOf = <P extends typeof Parameters | typeof WorkflowParameters>(
   {
     hub,
     untilRevoked,
+    occurrence,
   }: {
     readonly hub: MilestoneHub.MilestoneHub["Service"];
+    readonly occurrence: (milestone: MilestoneHub.PositionedMilestone) => Effect.Effect<{
+      readonly eventId: string;
+      readonly timestamp: string;
+      readonly data: MilestoneEventValue;
+    }>;
     readonly untilRevoked: <A>(
       items: Stream.Stream<A>,
     ) => Effect.Effect<Stream.Stream<A, McpSchema.Forbidden>>;
@@ -137,7 +149,14 @@ const eventOf = <P extends typeof Parameters | typeof WorkflowParameters>(
           filter: filterOf(args),
           limit: Math.min(request.maxEvents ?? DEFAULT_EVENTS, MAX_EVENTS),
         })
-        .pipe(Effect.map((page) => ({ ...page, events: page.events.map(occurrence) }))),
+        .pipe(
+          Effect.flatMap((page) =>
+            Effect.map(Effect.forEach(page.events, occurrence), (events) => ({
+              ...page,
+              events,
+            })),
+          ),
+        ),
     stream: Effect.fn("MilestoneEvents.stream")(function* (
       args: P["Type"],
       request: McpServer.EventStreamRequest,
@@ -152,10 +171,15 @@ const eventOf = <P extends typeof Parameters | typeof WorkflowParameters>(
         truncated,
         items: yield* untilRevoked(
           items.pipe(
-            Stream.map((item): McpServer.EventStreamItem<MilestoneEventValue> =>
-              item._tag === "Milestone"
-                ? { _tag: "Event", cursor: item.cursor, ...occurrence(item) }
-                : item,
+            Stream.mapEffect(
+              (item): Effect.Effect<McpServer.EventStreamItem<MilestoneEventValue>> =>
+                item._tag === "Milestone"
+                  ? Effect.map(occurrence(item), (event) => ({
+                      _tag: "Event" as const,
+                      cursor: item.cursor,
+                      ...event,
+                    }))
+                  : Effect.succeed(item),
             ),
           ),
         ),
