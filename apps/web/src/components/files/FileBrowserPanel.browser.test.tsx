@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { COMPOSER_MENTION_DRAG_TYPE } from "~/components/chat/composerMentionDrag";
-import { RightPanelSheet } from "~/components/RightPanelSheet";
+import { Sheet, SheetPopup } from "~/components/ui/sheet";
 import { dismissContextMenu } from "~/contextMenuFallback";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -302,17 +302,24 @@ describe("FileBrowserPanel", () => {
   it("Escape in the file search clears it without closing the panel sheet", async () => {
     const onCloseSheet = vi.fn();
     await using _screen = await render(
-      <RightPanelSheet animationDurationMs={0} open onClose={onCloseSheet}>
-        <FileBrowserPanel
-          environmentId={EnvironmentId.make("env-files")}
-          cwd="/repo"
-          projectName="repo"
-          selectedPath={null}
-          selectedPathRevealId={0}
-          onOpenFile={() => {}}
-          workspaceMutationId={null}
-        />
-      </RightPanelSheet>,
+      <Sheet
+        open
+        onOpenChange={(open) => {
+          if (!open) onCloseSheet();
+        }}
+      >
+        <SheetPopup transitionDurationMs={0} side="right" showCloseButton={false} keepMounted>
+          <FileBrowserPanel
+            environmentId={EnvironmentId.make("env-files")}
+            cwd="/repo"
+            projectName="repo"
+            selectedPath={null}
+            selectedPathRevealId={0}
+            onOpenFile={() => {}}
+            workspaceMutationId={null}
+          />
+        </SheetPopup>
+      </Sheet>,
     );
     const search = page.getByRole("searchbox", { name: "Search repo files" });
     await userEvent.fill(search, "read");

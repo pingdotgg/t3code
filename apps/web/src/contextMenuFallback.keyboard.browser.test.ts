@@ -1,6 +1,5 @@
-import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import {
   dismissContextMenu,
   isContextMenuOpen,
