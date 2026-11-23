@@ -139,46 +139,53 @@ export const isProcessAlive = (pid: number): boolean => {
   }
 };
 
+/** Like `readPersistedServerRuntimeState`, for a caller that must tell unreadable from absent. */
+export const readServerRuntimeStateFile = Effect.fn(
+  "serverRuntimeState.readServerRuntimeStateFile",
+)(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const raw = yield* fs.readFileString(path).pipe(
+    Effect.matchEffect({
+      onFailure: (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed(Option.none<string>())
+          : Effect.fail(
+              new ServerRuntimeStateError({
+                operation: "read",
+                statePath: path,
+                cause,
+              }),
+            ),
+      onSuccess: (contents) => Effect.succeedSome(contents),
+    }),
+  );
+  if (Option.isNone(raw)) {
+    return Option.none<PersistedServerRuntimeState>();
+  }
+
+  const trimmed = raw.value.trim();
+  if (trimmed.length === 0) {
+    return Option.none<PersistedServerRuntimeState>();
+  }
+
+  return yield* decodePersistedServerRuntimeState(trimmed).pipe(
+    Effect.asSome,
+    Effect.mapError(
+      (cause) =>
+        new ServerRuntimeStateError({
+          operation: "decode",
+          statePath: path,
+          cause,
+        }),
+    ),
+  );
+});
+
 export const readPersistedServerRuntimeState = Effect.fn(
   "serverRuntimeState.readPersistedServerRuntimeState",
 )(
   function* (path: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const raw = yield* fs.readFileString(path).pipe(
-      Effect.matchEffect({
-        onFailure: (cause) =>
-          cause.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(
-                new ServerRuntimeStateError({
-                  operation: "read",
-                  statePath: path,
-                  cause,
-                }),
-              ),
-        onSuccess: (contents) => Effect.succeedSome(contents),
-      }),
-    );
-    if (Option.isNone(raw)) {
-      return Option.none<PersistedServerRuntimeState>();
-    }
-
-    const trimmed = raw.value.trim();
-    if (trimmed.length === 0) {
-      return Option.none<PersistedServerRuntimeState>();
-    }
-
-    return yield* decodePersistedServerRuntimeState(trimmed).pipe(
-      Effect.asSome,
-      Effect.mapError(
-        (cause) =>
-          new ServerRuntimeStateError({
-            operation: "decode",
-            statePath: path,
-            cause,
-          }),
-      ),
-    );
+    return yield* readServerRuntimeStateFile(path);
   },
   Effect.catchTags({
     ServerRuntimeStateError: (error) =>
