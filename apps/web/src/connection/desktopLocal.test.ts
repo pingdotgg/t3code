@@ -4,6 +4,36 @@ import { describe, expect, it } from "vite-plus/test";
 import { createDesktopSecondaryBootstrapsReader } from "./desktopLocal";
 
 describe("desktop local topology reads", () => {
+  it("refreshes topology over the async bridge read, keeping the snapshot through failures", async () => {
+    const secondary: DesktopEnvironmentBootstrap = {
+      id: "wsl:Ubuntu",
+      label: "WSL (Ubuntu)",
+      runningDistro: "Ubuntu",
+      httpBaseUrl: "http://127.0.0.1:4000",
+      wsBaseUrl: "ws://127.0.0.1:4000",
+    };
+    let cached: ReadonlyArray<DesktopEnvironmentBootstrap> = [];
+    let refresh = async () => [{ ...secondary, id: PRIMARY_LOCAL_ENVIRONMENT_ID }, secondary];
+    const reader = createDesktopSecondaryBootstrapsReader(() => ({
+      getLocalEnvironmentBootstraps: () => cached,
+      refreshLocalEnvironmentBootstraps: async () => (cached = await refresh()),
+    }));
+
+    expect(reader.readSnapshot()).toEqual([]);
+    const connected = await reader.refresh();
+    expect(connected).toEqual({ _tag: "Success", bootstraps: [secondary] });
+    expect(reader.readSnapshot()).toEqual([secondary]);
+
+    const cause = new Error("IPC unavailable");
+    refresh = () => Promise.reject(cause);
+    expect(await reader.refresh()).toEqual({ _tag: "Failure", cause });
+    expect(reader.readSnapshot()).toEqual([secondary]);
+
+    refresh = async () => [];
+    expect(await reader.refresh()).toEqual({ _tag: "Success", bootstraps: [] });
+    expect(reader.readSnapshot()).toEqual([]);
+  });
+
   it("reuses snapshots when polling returns fresh objects for the same topology", () => {
     const secondary: DesktopEnvironmentBootstrap = {
       id: "wsl:default",
