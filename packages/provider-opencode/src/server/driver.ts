@@ -462,10 +462,14 @@ export const OpenCodeDriver: ProviderDriver<
     /**
      * Some while `directory` still awaits the `model.updated` that ends its first load. OpenCode
      * lists a location as loaded from its first read on, so the wait outlives the call that found
-     * it cold, and callers ask before any read of their own.
+     * it cold, and callers ask before any read of their own. OpenCode can name a folder's location
+     * after the project root containing it, so both checks accept a containing location.
      */
     const openCode2ColdLoad = (directory: string) =>
       Effect.suspend(() => {
+        const holds = (location: string) =>
+          pathService.relative(location, directory).split(pathService.sep)[0] !== ".." &&
+          !pathService.isAbsolute(pathService.relative(location, directory));
         const known = openCode2Loads.get(directory);
         if (known) return Effect.succeed(known);
         const load = { cold: Deferred.makeUnsafe<boolean>(), loaded: Deferred.makeUnsafe<void>() };
@@ -481,13 +485,14 @@ export const OpenCodeDriver: ProviderDriver<
                     (event) =>
                       event.type === "model.updated" &&
                       "location" in event &&
-                      event.location?.directory === directory,
+                      event.location !== undefined &&
+                      holds(event.location.directory),
                   ),
                   Stream.runHead,
                   Effect.forkScoped,
                 );
                 const listed = yield* client.debug.location.list();
-                return listed.some((entry) => entry.directory === directory) ? undefined : first;
+                return listed.some((entry) => holds(entry.directory)) ? undefined : first;
               }).pipe(Effect.timeout("2 seconds"));
               if (updated === undefined) return;
               yield* Deferred.succeed(load.cold, true);

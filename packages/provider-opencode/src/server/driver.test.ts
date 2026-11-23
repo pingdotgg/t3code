@@ -610,78 +610,88 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
-  it.effect("keeps a cold OpenCode 2 directory's models pending until its model.updated", () =>
-    Effect.gen(function* () {
-      // OpenCode 2.4.1: a location lists as loaded from its first read, with only the built-in
-      // providers until the `model.updated` that follows its configured ones.
-      let touched = false;
-      let configured = false;
-      const booted = yield* Deferred.make<void>();
-      const subscribers: Array<ReadableStreamDefaultController<Uint8Array>> = [];
-      const http = HttpClient.make((request) => {
-        const path = new URL(request.url).pathname;
-        const json = (body: unknown) =>
-          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
-        const inWork =
-          Option.getOrUndefined(UrlParams.getFirst(request.urlParams, "location[directory]")) ===
-          "/work";
-        if (inWork) touched = true;
-        if (inWork && path === "/api/model") Deferred.doneUnsafe(booted, Effect.void);
-        switch (path) {
-          case "/api/info":
-            return json(JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body));
-          case "/api/event":
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                new Response(
-                  new ReadableStream({ start: (controller) => void subscribers.push(controller) }),
-                  { headers: { "content-type": "text/event-stream" } },
+  // OpenCode names a folder's location after the folder or after the project root containing it.
+  it.effect.each(["/work/folder", "/work"])(
+    "keeps a cold OpenCode 2 directory's models pending until the model.updated of location %s",
+    (location) =>
+      Effect.gen(function* () {
+        // OpenCode 2.4.1: a location lists as loaded from its first read, with only the built-in
+        // providers until the `model.updated` that follows its configured ones.
+        let touched = false;
+        let configured = false;
+        const booted = yield* Deferred.make<void>();
+        const subscribers = new Set<ReadableStreamDefaultController<Uint8Array>>();
+        const eventStream = () => {
+          let subscriber: ReadableStreamDefaultController<Uint8Array> | undefined;
+          return new ReadableStream<Uint8Array>({
+            start: (controller) => void subscribers.add((subscriber = controller)),
+            cancel: () => void (subscriber && subscribers.delete(subscriber)),
+          });
+        };
+        const http = HttpClient.make((request) => {
+          const path = new URL(request.url).pathname;
+          const json = (body: unknown) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+          const inWork =
+            Option.getOrUndefined(UrlParams.getFirst(request.urlParams, "location[directory]")) ===
+            "/work/folder";
+          if (inWork) touched = true;
+          if (inWork && path === "/api/model") Deferred.doneUnsafe(booted, Effect.void);
+          switch (path) {
+            case "/api/info":
+              return json(JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body));
+            case "/api/event":
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(eventStream(), { headers: { "content-type": "text/event-stream" } }),
                 ),
-              ),
-            );
-          case "/api/debug/location":
-            return json(touched ? [{ directory: "/work" }] : []);
-          case "/api/model":
-            return json({
-              location: { directory: "/work" },
-              data: [
-                openCode2Model("opencode", "big-pickle", "Big Pickle"),
-                ...(inWork && configured ? [openCode2Model("custom", "auto-fast", "Auto")] : []),
-              ],
-            });
-          case "/api/provider":
-            return json({ location: { directory: "/work" }, data: [] });
-          case "/api/command":
-          case "/api/skill":
-            return json(JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES[path].body));
-          default:
-            return Effect.die(`Unexpected request: ${path}`);
-        }
-      });
-      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
-      const snapshotAfter = (duration: Duration.Input) =>
-        Effect.gen(function* () {
-          const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
-          // The version probe ahead of the first read does real file I/O.
-          yield* Deferred.await(booted);
-          yield* TestClock.adjust(duration);
-          return yield* Fiber.join(snapshot);
+              );
+            case "/api/debug/location":
+              return json(touched ? [{ directory: location }] : []);
+            case "/api/model":
+              return json({
+                location: { directory: location },
+                data: [
+                  openCode2Model("opencode", "big-pickle", "Big Pickle"),
+                  ...(inWork && configured ? [openCode2Model("custom", "auto-fast", "Auto")] : []),
+                ],
+              });
+            case "/api/provider":
+              return json({ location: { directory: location }, data: [] });
+            case "/api/command":
+            case "/api/skill":
+              return json(JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES[path].body));
+            default:
+              return Effect.die(`Unexpected request: ${path}`);
+          }
         });
+        const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+        const snapshotAfter = (duration: Duration.Input) =>
+          Effect.gen(function* () {
+            const snapshot = yield* instance.snapshotForCwd!("/work/folder").pipe(Effect.forkChild);
+            // The version probe ahead of the first read does real file I/O.
+            yield* Deferred.await(booted);
+            yield* TestClock.adjust(duration);
+            return yield* Fiber.join(snapshot);
+          });
 
-      // The built-in step outlasts both the settle reads and the wait for the event.
-      assert.isTrue((yield* snapshotAfter("15 seconds")).workspaceModelsPending);
-      // The location now lists as loaded, and is still loading.
-      assert.isTrue((yield* snapshotAfter("6 seconds")).workspaceModelsPending);
+        // The built-in step outlasts both the settle reads and the wait for the event.
+        assert.isTrue((yield* snapshotAfter("15 seconds")).workspaceModelsPending);
+        // The location now lists as loaded, and is still loading.
+        assert.isTrue((yield* snapshotAfter("15 seconds")).workspaceModelsPending);
 
-      configured = true;
-      const event = { id: "evt_1", created: 0, type: "model.updated", data: {} };
-      const frame = `data: ${JSON.stringify({ ...event, location: { directory: "/work" } })}\n\n`;
-      for (const subscriber of subscribers) subscriber.enqueue(new TextEncoder().encode(frame));
-      const { models, workspaceModelsPending } = yield* snapshotAfter("1 second");
-      assert.isUndefined(workspaceModelsPending);
-      assert.isTrue(models.some((model) => model.slug === "custom/auto-fast"));
-    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+        configured = true;
+        const event = { id: "evt_1", created: 0, type: "model.updated", data: {} };
+        const frame = `data: ${JSON.stringify({ ...event, location: { directory: location } })}\n\n`;
+        for (const subscriber of subscribers) subscriber.enqueue(new TextEncoder().encode(frame));
+        // The second read finds the location loaded with no load left to wait for.
+        for (const _read of ["released", "loaded"]) {
+          const { models, workspaceModelsPending } = yield* snapshotAfter("15 seconds");
+          assert.isUndefined(workspaceModelsPending);
+          assert.isTrue(models.some((model) => model.slug === "custom/auto-fast"));
+        }
+      }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
   it.effect.each(["probe", "error", "empty"] as const)(
