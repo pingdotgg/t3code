@@ -463,6 +463,53 @@ async fn diff_preview_truncates_large_patches() {
     assert_eq!(source.files.as_ref().unwrap()[0].additions.0, 20_000.0);
 }
 
+/// T3's `loads working-tree contents as Git diffs them under the ident attribute`: Git expands
+/// `$Id$` in the checkout of a file marked `ident`, and the full-file request returns the
+/// keyword collapsed on both sides, so only the edited line differs and the desktop loader
+/// expands the hidden context. An unmarked file's literal `$Id: literal $` stays.
+#[tokio::test]
+async fn working_contents_collapse_a_git_ident_keyword_like_the_diff() {
+    let dir = TempDir::new("ident");
+    let repo = dir.path();
+    git(repo, &["init", "-qb", "main"]);
+    write(repo, ".gitattributes", "record.txt ident\n");
+    let trailing: String = (1..=24).map(|i| format!("unchanged line {i}\n")).collect();
+    let canonical = format!("$Id$\nfirst\n{trailing}");
+    write(repo, "record.txt", &canonical);
+    write(repo, "plain.txt", "first\n");
+    commit_all(repo, "ident");
+    std::fs::remove_file(repo.join("record.txt")).unwrap();
+    git(repo, &["checkout-index", "-f", "record.txt"]);
+    let expanded = std::fs::read_to_string(repo.join("record.txt")).unwrap();
+    assert!(
+        expanded.starts_with("$Id: ") && !expanded.starts_with("$Id$"),
+        "{expanded}"
+    );
+    write(repo, "record.txt", &expanded.replacen("first", "edited", 1));
+    write(repo, "plain.txt", "$Id: literal $\n");
+    let contents = |file: &str| ReviewDiffFileContentsInput {
+        cwd: repo.to_string_lossy().into_owned(),
+        source_kind: Kind::WorkingTree,
+        change_type: ChangeType::Change,
+        base_ref: Some("HEAD".into()),
+        head_ref: None,
+        old_path: file.into(),
+        new_path: file.into(),
+    };
+    let record = review::diff_file_contents(contents("record.txt"), |_| false)
+        .await
+        .unwrap();
+    assert_eq!(record.old_contents, canonical);
+    assert_eq!(
+        record.new_contents,
+        canonical.replacen("first", "edited", 1)
+    );
+    let plain = review::diff_file_contents(contents("plain.txt"), |_| false)
+        .await
+        .unwrap();
+    assert_eq!(plain.new_contents, "$Id: literal $\n");
+}
+
 #[tokio::test]
 async fn file_contents_and_branch_commits() {
     let fx = Fixture::new("contents");

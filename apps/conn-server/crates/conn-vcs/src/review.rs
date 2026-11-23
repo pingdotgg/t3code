@@ -890,7 +890,14 @@ pub async fn diff_file_contents(
         (ChangeType::Deleted, _) => String::new(),
         (_, Some(revision)) => show_file(&cwd, &revision, &input.new_path).await?,
         (_, None) => {
-            read_working_file(&input.cwd, root, input.new_path.clone(), is_internal).await?
+            let text = read_working_file(
+                &input.cwd,
+                root.clone(),
+                input.new_path.clone(),
+                is_internal,
+            )
+            .await?;
+            working_text_as_git_diffs_it(&root, &input.new_path, text).await?
         }
     };
     Ok(ReviewDiffFileContentsResult {
@@ -920,6 +927,87 @@ async fn show_file(cwd: &Path, revision: &str, path: &str) -> VcsResult<String> 
         ));
     }
     Ok(out.stdout_text())
+}
+
+/// The working copy as Git compares it: a file Git expands `$Id$` in (the `ident` attribute)
+/// shows the keyword collapsed, as the base does, when Git's own conversion of the path
+/// confirms it (T3's `readWorkingTreeReviewFile`). Literal text and other filters stay as read.
+async fn working_text_as_git_diffs_it(root: &Path, path: &str, text: String) -> VcsResult<String> {
+    if !text.contains("$Id:") {
+        return Ok(text);
+    }
+    let collapsed = collapse_ident_keywords(&text);
+    if collapsed == text {
+        return Ok(text);
+    }
+    const OP: &str = "GitVcsDriver.getReviewDiffFileContents.workingTree.ident";
+    // check-attr reports both boolean ident and literal ident=set as "set".
+    let attributes = git(
+        OP,
+        root,
+        ["check-attr", "-z", "ident", "filter", "--", path],
+    )
+    .text()
+    .await?;
+    let attributes: Vec<&str> = attributes.split('\0').collect();
+    if attributes.get(2) != Some(&"set") || attributes.get(5) != Some(&"unspecified") {
+        return Ok(text);
+    }
+    // A literal `filter=unspecified` reads like no filter in check-attr.
+    let filters = git(
+        OP,
+        root,
+        [
+            "config",
+            "--name-only",
+            "--get-regexp",
+            "^filter\\.unspecified\\.",
+        ],
+    )
+    .allow_exit(&[1])
+    .run()
+    .await?;
+    if filters.code != 1 || !filters.stdout.is_empty() {
+        return Ok(text);
+    }
+    // Git's conversion of a keyword that cannot overlap shows whether it collapses this path.
+    let path_arg = format!("--path={path}");
+    let hash = |input: &'static str| {
+        git(OP, root, ["hash-object", "--stdin", path_arg.as_str()])
+            .stdin(input.as_bytes().to_vec())
+            .text()
+    };
+    let (canonical, collapsed_hash) = tokio::join!(hash("$Id: probe $"), hash("$Id$"));
+    Ok(if canonical? == collapsed_hash? {
+        collapsed
+    } else {
+        text
+    })
+}
+
+/// Git's ident clean step (`ident_to_git` in convert.c): `$Id:` up to the next `$` on the
+/// same line becomes `$Id$`.
+fn collapse_ident_keywords(text: &str) -> String {
+    const KEYWORD: &str = "$Id:";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(KEYWORD) {
+        let (before, from_keyword) = rest.split_at(at);
+        out.push_str(before);
+        let tail = from_keyword.get(KEYWORD.len()..).unwrap_or_default();
+        match tail.find(['$', '\n']) {
+            Some(end) if tail.get(end..).is_some_and(|t| t.starts_with('$')) => {
+                out.push_str("$Id$");
+                rest = tail.get(end + 1..).unwrap_or_default();
+            }
+            _ => {
+                out.push_str(KEYWORD);
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 async fn read_working_file(
@@ -1101,6 +1189,21 @@ pub async fn branch_commits(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `GIT_IDENT_KEYWORD`: only a closed keyword on one line collapses.
+    #[test]
+    fn ident_keywords_collapse_as_git_cleans_them() {
+        for (text, expected) in [
+            ("$Id: 1b93 $\nfirst\n", "$Id$\nfirst\n"),
+            ("a $Id: x $ b $Id: y $\n", "a $Id$ b $Id$\n"),
+            ("$Id: open\n$ later\n", "$Id: open\n$ later\n"),
+            ("$Id:$ and $Id$\n", "$Id$ and $Id$\n"),
+            ("trailing $Id:", "trailing $Id:"),
+            ("é $Id: ü $ é", "é $Id$ é"),
+        ] {
+            assert_eq!(collapse_ident_keywords(text), expected, "{text:?}");
+        }
+    }
 
     #[test]
     fn numstat_parses_renames_and_binaries() {
