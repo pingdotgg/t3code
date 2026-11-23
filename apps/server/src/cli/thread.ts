@@ -846,14 +846,16 @@ const outputSchemaFlag = Flag.String("output-schema").pipe(
 const decodeOutputSchema = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
 );
-const readOutputSchema = Effect.fn("cli.thread.readOutputSchema")(function* (
+export const readOutputSchema = Effect.fn("cli.thread.readOutputSchema")(function* (
   path: Option.Option<string>,
 ) {
   if (Option.isNone(path)) return {};
   const fileSystem = yield* FileSystem.FileSystem;
   const usage = () =>
     new ThreadUsageError({ detail: `${path.value} does not hold a JSON Schema object.` });
-  const text = yield* fileSystem.readFileString(path.value).pipe(Effect.mapError(usage));
+  const text = yield* fileSystem
+    .readFileString(yield* expandHomePath(path.value))
+    .pipe(Effect.mapError(usage));
   return { outputSchema: yield* decodeOutputSchema(text).pipe(Effect.mapError(usage)) };
 });
 const messageArgument = Argument.String("message").pipe(

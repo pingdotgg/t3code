@@ -290,7 +290,7 @@ export function ShimmeringWorkContent(props: {
 
   // Uses a native Animated value instead of Reanimated, whose per-frame commits
   // starve React's while commit pausing is disabled (package.json). See
-  // docs/internals/performance-regressions.md.
+  // docs/internals/16_performance-regressions.md.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
   useEffect(() => {
     progress.setValue(0);
