@@ -213,7 +213,7 @@ const RunContextSelector = memo(function RunContextSelector({
   const WorkspaceIcon =
     effectiveEnvMode === "worktree"
       ? FolderGit2Icon
-      : activeWorktreePath
+      : activeWorktreePath && offersWorkspaceModes
         ? FolderGitIcon
         : FolderIcon;
   const workspaceLabel = forceNewWorktree

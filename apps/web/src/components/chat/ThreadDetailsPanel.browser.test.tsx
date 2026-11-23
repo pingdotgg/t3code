@@ -125,13 +125,23 @@ function setup(input: {
   };
 }
 
+const machines = (["This Mac", "Server"] as const).map((label, index) => ({
+  environmentId: EnvironmentId.make(index === 0 ? "environment" : "other"),
+  projectId: ProjectId.make("project"),
+  label,
+  isPrimary: index === 0,
+  machine: "server" as const,
+}));
+
 function Panel({
   fixture,
   draftEnvMode,
+  onMachines = false,
 }: {
   fixture: ReturnType<typeof setup>;
   /** Renders an unsent draft in this mode instead of a started thread. */
   draftEnvMode?: "local" | "worktree";
+  onMachines?: boolean;
 }) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
@@ -168,8 +178,10 @@ function Panel({
         gitCwd={state.folder}
         workspaceMutationId={null}
         isGitRepo={false}
+        offersWorkspaceModes={false}
         envLocked={draftEnvMode === undefined}
-        availableEnvironments={[]}
+        availableEnvironments={onMachines ? machines : []}
+        {...(onMachines ? { onEnvironmentChange: noop } : {})}
         onEnvModeChange={noop}
         envMode={draftEnvMode ?? "local"}
         startFromOrigin={false}
@@ -203,6 +215,16 @@ it("offers no New worktree to a No project draft whose default is New worktree",
   await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
   await expect.element(page.getByLabelText("Run context: Current checkout")).toBeVisible();
   await expect.element(page.getByRole("button", { name: /Run context/ })).not.toBeInTheDocument();
+});
+
+it("offers only machines to a No project draft on several machines", async () => {
+  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
+  await using _screen = await render(
+    <Panel fixture={fixture} draftEnvMode="worktree" onMachines />,
+  );
+  await page.getByRole("button", { name: "Run context: This Mac, Current checkout" }).click();
+  await expect.element(page.getByText("Run on")).toBeVisible();
+  await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
 });
 
 it("shows a linked pull request in a folder that is not a git repository", async () => {
