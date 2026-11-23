@@ -4,6 +4,7 @@ import {
   applyThemeBackdrop,
   computeDaylight,
   getActiveThemeBackdrop,
+  packGlyphBits,
   subscribeThemeBackdrop,
 } from "./themeBackdrop";
 
@@ -20,7 +21,13 @@ describe("themeBackdrop", () => {
     expect(computeDaylight(dusk)).toBeCloseTo(0.5, 5);
   });
 
-  it("tracks active GLSL backdrop state and notifies subscribers on change", () => {
+  it("packs 3x5 bitmap glyph strings into bitmasks", () => {
+    expect(packGlyphBits("...|...|...|...|...")).toBe(0);
+    expect(packGlyphBits("#..|...|...|...|...")).toBe(1);
+    expect(packGlyphBits("...|...|...|...|.#.")).toBe(1 << 13);
+  });
+
+  it("tracks active GLSL and WGSL backdrop state and notifies subscribers", () => {
     let calls = 0;
     const unsubscribe = subscribeThemeBackdrop(() => {
       calls += 1;
@@ -33,9 +40,17 @@ describe("themeBackdrop", () => {
       expect(getActiveThemeBackdrop()?.fps).toBe(24);
       expect(calls).toBe(1);
 
+      applyThemeBackdrop({
+        wgsl: "@vertex fn vs() -> @builtin(position) vec4f { return vec4f(0.0); }",
+        hdr: true,
+        hdrPeak: 3,
+      });
+      expect(getActiveThemeBackdrop()?.hdr).toBe(true);
+      expect(calls).toBe(2);
+
       applyThemeBackdrop(undefined);
       expect(getActiveThemeBackdrop()).toBeNull();
-      expect(calls).toBe(2);
+      expect(calls).toBe(3);
     } finally {
       unsubscribe();
       applyThemeBackdrop(undefined);

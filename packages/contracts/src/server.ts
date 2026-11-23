@@ -645,8 +645,28 @@ export const THEME_CSS_MAX_LENGTH = 100_000;
 export const THEME_BACKDROP_GLSL_MAX_LENGTH = 64_000;
 
 export const EnvironmentThemeBackdrop = Schema.Struct({
-  /** GLSL ES 3.00 fragment shader (receives u_time, u_resolution, u_daylight, u_dark). */
-  glsl: TrimmedNonEmptyString.check(Schema.isMaxLength(THEME_BACKDROP_GLSL_MAX_LENGTH)),
+  /** GLSL ES 3.00 fragment shader (WebGL2; receives u_time, u_resolution, u_daylight, u_dark). */
+  glsl: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(THEME_BACKDROP_GLSL_MAX_LENGTH)),
+  ),
+  /** WGSL shader module (WebGPU; single-pass `fs` or multi-pass `field`/`blur`/`composite` with HDR bloom). */
+  wgsl: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(THEME_BACKDROP_GLSL_MAX_LENGTH)),
+  ),
+  /** Enable extended-range HDR canvas (`rgba16float`) on HDR displays when using WebGPU. */
+  hdr: Schema.optional(Schema.Boolean),
+  /** Peak luminance multiplier in HDR mode (1-10, default 3). */
+  hdrPeak: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(10)),
+  ),
+  /** Cell dimensions `[width, height]` in px for multi-pass grid+bloom WGSL shaders (default `[4, 6]`). */
+  cellSize: Schema.optional(Schema.Tuple([Schema.Number, Schema.Number])),
+  /** Glyph scale multiplier for grid+bloom WGSL shaders (1-4, default 1). */
+  glyphScale: Schema.optional(
+    Schema.Number.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(4)),
+  ),
+  /** Optional 3x5 bitmap glyph strings (`|`-separated rows of `.`/`#`) packed into `u.glyphs` for WGSL shaders. */
+  glyphs: Schema.optional(Schema.Array(Schema.String)),
   /** Target frame rate (1-60, default 30). */
   fps: Schema.optional(
     Schema.Number.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(60)),
