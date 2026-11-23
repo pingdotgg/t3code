@@ -354,6 +354,12 @@ describe("question answer paths", () => {
       String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
       "Café Crème",
     ],
+    ["default ANSI code page", String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "Café"],
+    [
+      "DOS Cyrillic code page",
+      String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+      "Привет",
+    ],
     [
       "font character set",
       String.raw`{\rtf1\ansi\ansicpg1252\deff1{\fonttbl\f0\fnil\fcharset178 GeezaPro;\f1\fnil\fcharset0 LucidaGrande;}

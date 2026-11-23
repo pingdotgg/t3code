@@ -559,7 +559,8 @@ it.effect("--output-schema reads a ~/ path from the home directory", () =>
 
 /**
  * Serves t3_thread_read pages the way the server does: positions count every
- * item. A legacy server's strict schema refuses `beforePosition`.
+ * item, and a cursorless read is the newest page. A legacy server's strict
+ * schema refuses `beforePosition`.
  */
 const timelineTools = (types: ReadonlyArray<string>, server: "current" | "legacy" = "current") => {
   const items = types.map((type, position) => ({ position, itemId: `item-${position}`, type }));
@@ -596,9 +597,19 @@ const timelineTools = (types: ReadonlyArray<string>, server: "current" | "legacy
         earlierPosition: newestFirst.length > page.length ? page[0]!.position : null,
       });
     }
+    if (args.afterPosition === undefined) {
+      const page = items.filter(isMatch).slice(-args.limit);
+      served.push(page.length);
+      return Effect.succeed({
+        thread: { itemCount: items.length },
+        items: page,
+        nextPosition: null,
+        hasMore: false,
+      });
+    }
     // Scanning one match past the page keeps reads of huge fixtures linear.
     const matching: typeof items = [];
-    for (let position = (args.afterPosition ?? -1) + 1; position < items.length; position++) {
+    for (let position = args.afterPosition + 1; position < items.length; position++) {
       const item = items[position]!;
       if (isMatch(item)) {
         matching.push(item);
