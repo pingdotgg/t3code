@@ -48,6 +48,20 @@ export const Measured = Schema.Struct({
   scaling: Schema.optional(Scaling),
   streaming: Schema.optional(Window),
   soak: Schema.optional(Soak),
+  /** A server on a copy of the developer's real database, its projects backed by clones. */
+  busy: Schema.optional(
+    Schema.Struct({
+      readyMs: Schema.Number,
+      projects: Schema.Number,
+      /** Off-heap MB the server held so its RSS is a long-lived server's; not compared. */
+      ballastMB: Schema.Number,
+      rest: Window,
+      shellMs: Spread,
+      shellKB: Schema.Number,
+      /** Back-to-back turns in a clone, each ending in a checkpoint. */
+      git: Window,
+    }),
+  ),
 });
 export type Measured = typeof Measured.Type;
 
@@ -156,6 +170,8 @@ function noiseFloor(metric: string) {
   if (metric.endsWith("cpuPct")) return 1;
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
+  if (metric.endsWith("KB")) return 20;
+  if (metric.includes(".shellMs.")) return 50;
   if (metric.endsWith("loopDelayP50Ms")) return 2;
   if (metric.endsWith("loopDelayP99Ms")) return 5;
   if (metric.endsWith("loopDelayMaxMs")) return 20;
@@ -214,6 +230,8 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
     if (
       metric === "soak.minutes" ||
       metric.endsWith("loopSamples") ||
+      metric === "busy.projects" ||
+      metric === "busy.ballastMB" ||
       metric.startsWith("scaling.points")
     ) {
       continue;
@@ -373,4 +391,23 @@ export function heapGrowth(
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 25)
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
+}
+
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+const spellings: ReadonlyArray<(path: string) => string> = [
+  (path) => path,
+  // Inside a JSON string, with every escape JSON applies: backslashes, quotes, control characters.
+  (path) => encodeJsonString(path).slice(1, -1),
+  (path) => path.replaceAll("\\", "/"),
+];
+
+/** How a path can appear in a database's text: as written, JSON-escaped, with forward slashes. */
+export function pathSpellings(path: string) {
+  return [...new Set(spellings.map((spell) => spell(path)))];
+}
+
+/** Each spelling of `from` with the same spelling of `to`, for a textual rewrite. */
+export function pathRewrites(from: string, to: string) {
+  const pairs = new Map(spellings.map((spell) => [spell(from), spell(to)] as const));
+  return [...pairs];
 }

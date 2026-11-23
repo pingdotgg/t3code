@@ -6,6 +6,8 @@ import {
   heapGrowth,
   parsePsCpuTime,
   parseRunSelection,
+  pathRewrites,
+  pathSpellings,
   ServerMetrics,
   slope,
 } from "./server-metrics-report.ts";
@@ -125,6 +127,35 @@ describe("compareMetrics", () => {
   });
 });
 
+describe("compareMetrics on the busy shell snapshot", () => {
+  const window = { cpuPct: 1, wakeupsPerSec: 10, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 };
+  const busyRun = (shellMs: number, shellKB: number) =>
+    ({
+      meta,
+      runs: [
+        {
+          busy: {
+            readyMs: 8_000,
+            projects: 9,
+            ballastMB: 768,
+            rest: window,
+            shellMs: { median: shellMs, p90: shellMs },
+            shellKB,
+            git: window,
+          },
+        },
+      ],
+    }) satisfies ServerMetrics;
+  it.each([
+    ["40 ms slower, under the 50 ms floor", busyRun(230, 100), []],
+    ["150 ms slower, past it", busyRun(340, 100), ["busy.shellMs.median", "busy.shellMs.p90"]],
+    ["15 KB larger, under the 20 KB floor", busyRun(190, 115), []],
+    ["40 KB larger, past it", busyRun(190, 140), ["busy.shellKB"]],
+  ])("%s", (_name, after, regressed) => {
+    expect(compareMetrics(busyRun(190, 100), after).regressed).toEqual(regressed);
+  });
+});
+
 describe("heapGrowth", () => {
   it("lists only constructors that grew, small growth included", () => {
     const before = new Map([
@@ -218,5 +249,58 @@ describe("parseRunSelection", () => {
     ],
   ])("%s", (_name, input, expected) => {
     expect(parseRunSelection({ ...input, scenarios })).toEqual(expected);
+  });
+});
+
+describe("pathSpellings", () => {
+  it.each([
+    ["a POSIX path, one spelling", "/home/dev/repo", ["/home/dev/repo"]],
+    [
+      "a Windows path as written, JSON-escaped, and with forward slashes",
+      "C:\\Users\\dev\\repo",
+      ["C:\\Users\\dev\\repo", "C:\\\\Users\\\\dev\\\\repo", "C:/Users/dev/repo"],
+    ],
+    [
+      "a path with a quote, escaped the way JSON stores it",
+      '/mnt/dev/quote"repo',
+      ['/mnt/dev/quote"repo', '/mnt/dev/quote\\"repo'],
+    ],
+    [
+      "a path with a control character, escaped the way JSON stores it",
+      "/mnt/dev/new\nline",
+      ["/mnt/dev/new\nline", "/mnt/dev/new\\nline"],
+    ],
+  ])("%s", (_name, path, spellings) => {
+    expect(pathSpellings(path)).toEqual(spellings);
+  });
+});
+
+describe("pathRewrites", () => {
+  const rewrite = (text: string, from: string, to: string) =>
+    pathRewrites(from, to).reduce((value, [a, b]) => value.replaceAll(a, b), text);
+  it.each([
+    [
+      "a POSIX path in JSON",
+      '{"cwd":"/home/dev/repo/x"}',
+      "/home/dev/repo",
+      "/tmp/run/gone/root-0",
+      '{"cwd":"/tmp/run/gone/root-0/x"}',
+    ],
+    [
+      "a Windows path stored JSON-escaped",
+      '{"cwd":"C:\\\\Users\\\\dev\\\\repo\\\\x"}',
+      "C:\\Users\\dev\\repo",
+      "D:\\run\\gone\\root-0",
+      '{"cwd":"D:\\\\run\\\\gone\\\\root-0\\\\x"}',
+    ],
+    [
+      "a Windows path written with forward slashes",
+      "see C:/Users/dev/repo/x",
+      "C:\\Users\\dev\\repo",
+      "D:\\run\\gone\\root-0",
+      "see D:/run/gone/root-0/x",
+    ],
+  ])("%s", (_name, text, from, to, expected) => {
+    expect(rewrite(text, from, to)).toBe(expected);
   });
 });
