@@ -50,11 +50,10 @@ import {
   LinuxBrowserSecretHostError,
   LinuxPackagedAppMissingError,
   MacPackagedAppMissingError,
-  MacUpdateZipTimestampError,
   stageBrowserSecret,
   validateLinuxPackagedPayload,
   validateMacPackagedPayload,
-  validateMacUpdateZipTimestamps,
+  findMacUpdateZipTimestampProblem,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
   WindowsPrimaryNativeProbeError,
@@ -2039,41 +2038,27 @@ function makeZipExtraField(headerId: number, payloadLength: number): Buffer {
   return buf;
 }
 
-it.effect("validateMacUpdateZipTimestamps requires Info-ZIP UX extra field 0x5855", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-ts-" });
+it("findMacUpdateZipTimestampProblem requires Info-ZIP UX extra field 0x5855", () => {
+  const valid = buildSyntheticZip([
+    { name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra: makeZipExtraField(0x5855, 8) },
+    {
+      name: "T3 Code.app/Contents/Frameworks/Foo.framework/Versions/Current",
+      localExtra: Buffer.alloc(0),
+      versionMadeBy: 0x031e,
+      externalAttr: (0o120755 << 16) >>> 0,
+    },
+  ]);
+  assert.isUndefined(findMacUpdateZipTimestampProblem(valid));
 
-    const validZip = path.join(root, "valid.zip");
-    yield* fs.writeFile(
-      validZip,
-      buildSyntheticZip([
-        { name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra: makeZipExtraField(0x5855, 8) },
-        {
-          name: "T3 Code.app/Contents/Frameworks/Foo.framework/Versions/Current",
-          localExtra: Buffer.alloc(0),
-          versionMadeBy: 0x031e,
-          externalAttr: (0o120755 << 16) >>> 0,
-        },
-      ]),
+  for (const [localExtra, cdExtra] of [
+    [makeZipExtraField(0x000a, 32), makeZipExtraField(0x000a, 32)],
+    [makeZipExtraField(0x5455, 5), makeZipExtraField(0x5455, 5)],
+    [makeZipExtraField(0x5855, 4), makeZipExtraField(0x5855, 4)],
+    [Buffer.alloc(0), makeZipExtraField(0x5855, 8)],
+  ] as const) {
+    const problem = findMacUpdateZipTimestampProblem(
+      buildSyntheticZip([{ name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra, cdExtra }]),
     );
-    yield* validateMacUpdateZipTimestamps(validZip);
-
-    for (const [label, localExtra, cdExtra] of [
-      ["ntfs-only", makeZipExtraField(0x000a, 32), makeZipExtraField(0x000a, 32)],
-      ["ut-only", makeZipExtraField(0x5455, 5), makeZipExtraField(0x5455, 5)],
-      ["truncated-ux", makeZipExtraField(0x5855, 4), makeZipExtraField(0x5855, 4)],
-      ["cd-only-ux", Buffer.alloc(0), makeZipExtraField(0x5855, 8)],
-    ] as const) {
-      const badZip = path.join(root, `${label}.zip`);
-      yield* fs.writeFile(
-        badZip,
-        buildSyntheticZip([{ name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra, cdExtra }]),
-      );
-      const err = yield* validateMacUpdateZipTimestamps(badZip).pipe(Effect.flip);
-      assert.instanceOf(err, MacUpdateZipTimestampError);
-      assert.include(err.message, "0x5855");
-    }
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
+    assert.include(problem, "0x5855");
+  }
+});
