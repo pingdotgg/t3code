@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, oneshot};
 
 use super::{
-    Config, Failure, LaunchRequest, ScheduledTasks, SendError, SendRequest, TaskRunner,
+    Config, Failure, LaunchRequest, RunEnd, ScheduledTasks, SendError, SendRequest, TaskRunner,
     ThreadShell, UpsertInput,
     schedule::{format_iso, parse_iso},
 };
@@ -29,7 +29,7 @@ type Launch =
 type SendFn = Box<dyn Fn(SendRequest) -> BoxFuture<'static, Result<(), SendError>> + Send + Sync>;
 type Shell = Box<dyn Fn(String) -> Option<ThreadShell> + Send + Sync>;
 type Queued = Box<dyn Fn(String, String) -> bool + Send + Sync>;
-type Outcome = Box<dyn Fn(String, String) -> BoxFuture<'static, Option<String>> + Send + Sync>;
+type Outcome = Box<dyn Fn(String, String) -> BoxFuture<'static, RunEnd> + Send + Sync>;
 
 /// `Layer.mock(ThreadLaunchService)` and `Layer.mock(ThreadManagementService)`: each part
 /// answers as the test scripts it; an unscripted call fails as an unimplemented mock does.
@@ -54,7 +54,7 @@ impl Default for Fake {
             send: Box::new(|_| Box::pin(async { Err(SendError::Other("not scripted".into())) })),
             shell: Box::new(|_| None),
             queued: Box::new(|_, _| false),
-            outcome: Box::new(|_, _| Box::pin(async { None })),
+            outcome: Box::new(|_, _| Box::pin(async { RunEnd::Unknown })),
         }
     }
 }
@@ -81,7 +81,7 @@ impl TaskRunner for Fake {
         let queued = (self.queued)(task, thread);
         Box::pin(async move { Ok(queued) })
     }
-    fn run_outcome(&self, thread: String, message: String) -> BoxFuture<'_, Option<String>> {
+    fn run_outcome(&self, thread: String, message: String) -> BoxFuture<'_, RunEnd> {
         (self.outcome)(thread, message)
     }
 }
@@ -900,7 +900,7 @@ async fn a_run_that_fails_after_its_message_was_accepted_records_it() {
             let e = e.clone();
             Box::pin(async move {
                 e.notified().await;
-                Some("Weekly usage limit reached".to_owned())
+                RunEnd::Failed("Weekly usage limit reached".to_owned())
             })
         }),
         ..Fake::default()
@@ -936,6 +936,134 @@ async fn a_run_that_fails_after_its_message_was_accepted_records_it() {
             break;
         }
     }
+}
+
+/// A fake whose bound sends succeed and whose run ends as `end` once `ended` is notified;
+/// `read` is notified after the outcome was read.
+fn ending_run(end: RunEnd, ended: Arc<Notify>, read: Arc<Notify>) -> Fake {
+    Fake {
+        send: Box::new(|_| Box::pin(async { Ok(()) })),
+        shell: Box::new(|_| shell("project:test")),
+        outcome: Box::new(move |_, _| {
+            let (end, ended, read) = (end.clone(), ended.clone(), read.clone());
+            Box::pin(async move {
+                ended.notified().await;
+                read.notify_one();
+                end
+            })
+        }),
+        ..Fake::default()
+    }
+}
+
+/// `a one-time task is removed once its turn completes` (`ScheduledTaskService.test.ts:512`);
+/// the store keeps it removed after a restart.
+#[tokio::test(start_paused = true)]
+async fn a_one_time_task_is_removed_once_its_turn_completes() {
+    let env = Env::new("once-spent", "2026-11-01T07:00:00.000Z");
+    let (ended, read) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let service = env
+        .start(
+            ending_run(RunEnd::Completed, ended.clone(), read.clone()),
+            "UTC",
+            false,
+        )
+        .await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:once", "projectId": "project:test", "threadId": "thread:once",
+               "schedule": {"type": "once", "runAt": "2026-11-01T07:01:00.000Z"}}),
+    )
+    .await;
+    env.clock.set(ms("2026-11-01T07:02:00.000Z"));
+    let ran = service.run_now(&task.id).await.expect("ran");
+    // The dispatch alone keeps it: the turn can still fail.
+    assert_eq!(ran.task.last_run_status, ScheduledTaskRunStatus::Succeeded);
+    assert_eq!(next(&ran.task), None);
+    assert_eq!(tasks(&service).await.len(), 1, "kept until the turn ends");
+    let mut updates = service.subscribe();
+    ended.notify_one();
+    // The paused clock runs on when nothing is left to do, so a task that stays fails here.
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let list = updates.recv().await.expect("update");
+            if list.tasks.iter().flatten().all(|t| t.id != task.id) {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the spent task is removed");
+    drop(read);
+    drop(service);
+    let reopened = env.start(Fake::default(), "UTC", false).await;
+    assert!(tasks(&reopened).await.is_empty(), "removed from the store");
+}
+
+/// `a paused one-time task run by hand before its time is kept`
+/// (`ScheduledTaskService.test.ts:583`), and a due run whose turn fails is kept with its error.
+#[tokio::test(start_paused = true)]
+async fn a_one_time_task_run_early_or_failed_is_kept() {
+    let env = Env::new("once-kept", "2026-11-01T07:00:00.000Z");
+    let (ended, read) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let service = env
+        .start(
+            ending_run(RunEnd::Completed, ended.clone(), read.clone()),
+            "UTC",
+            false,
+        )
+        .await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:paused-once", "projectId": "project:test", "threadId": "thread:once",
+               "schedule": {"type": "once", "runAt": "2026-11-01T08:00:00.000Z"}}),
+    )
+    .await;
+    service.set_enabled(&task.id, false).await.expect("pause");
+    service.run_now(&task.id).await.expect("ran");
+    ended.notify_one();
+    read.notified().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let kept = service
+        .find(&task.id)
+        .await
+        .expect("an early run keeps the task");
+    assert_eq!(kept.run_count, 1);
+    drop(service);
+
+    let env = Env::new("once-failed", "2026-11-01T07:00:00.000Z");
+    let (ended, read) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let service = env
+        .start(
+            ending_run(
+                RunEnd::Failed("The run failed.".into()),
+                ended.clone(),
+                read.clone(),
+            ),
+            "UTC",
+            false,
+        )
+        .await;
+    let task = upsert(
+        &service,
+        json!({"id": "task:failed-once", "projectId": "project:test", "threadId": "thread:once",
+               "schedule": {"type": "once", "runAt": "2026-11-01T07:01:00.000Z"}}),
+    )
+    .await;
+    env.clock.set(ms("2026-11-01T07:02:00.000Z"));
+    service.run_now(&task.id).await.expect("ran");
+    let mut updates = service.subscribe();
+    ended.notify_one();
+    let kept = loop {
+        let list = updates.recv().await.expect("update");
+        let current = list.tasks.into_iter().flatten().find(|t| t.id == task.id);
+        let current = current.expect("a failed run keeps the task");
+        if current.last_run_status == ScheduledTaskRunStatus::Failed {
+            break current;
+        }
+    };
+    assert_eq!(kept.last_run_error.as_deref(), Some("The run failed."));
+    drop(read);
 }
 
 /// `a bound run follows its thread when promotion moves it mid-send`.

@@ -3800,3 +3800,91 @@ async fn fill_credential_answers_with_a_status_only() {
     assert_eq!(result["status"], "tab_unavailable");
     assert!(!result.to_string().contains("fixture-only"));
 }
+
+/// T3 `sendToThread` refuses an archived thread (`ThreadManagementService.ts:872`), so a
+/// bound schedule records the failure and sends nothing, from Run now and from the timer.
+#[tokio::test(flavor = "current_thread")]
+async fn a_bound_schedule_never_sends_to_an_archived_thread() {
+    use conn_contract::ScheduledTaskRunStatus;
+    use conn_features::{
+        clock::TestClock,
+        scheduled::{Config, EngineRunner, ScheduledTasks},
+    };
+    let f = fixture("schedule-archived");
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let clock = TestClock::new(1_800_000_000_000);
+    let service = ScheduledTasks::start(Config {
+        state_dir: f.dir.clone(),
+        clock: Arc::new(clock.clone()),
+        zone: jiff::tz::TimeZone::UTC,
+        runner: Arc::new(EngineRunner::new(f.service.config.engine.clone())),
+        secret_requests: None,
+        start_timer: true,
+    })
+    .await;
+    let task = |id: &str, thread: Option<&str>| {
+        serde_json::from_value(json!({
+            "id": id, "title": id, "prompt": id, "enabled": true,
+            "schedule": {"type": "interval", "everyMs": 60_000}, "projectId": project_id(),
+            "threadId": thread, "workspaceStrategy": {"type": "root"},
+            "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
+            "runtimeMode": "auto", "interactionMode": "default",
+        }))
+        .unwrap()
+    };
+    for id in ["manual", "timed"] {
+        service.upsert(task(id, Some(&thread))).await.unwrap();
+    }
+    dispatch(
+        &f,
+        json!({"type": "thread.archive", "commandId": "archive-destination", "threadId": thread}),
+    )
+    .await;
+    let refusal = format!("Thread {thread} is archived and cannot receive messages.");
+
+    let manual = service.run_now("manual").await.unwrap();
+    assert_eq!(manual.thread_id, None);
+    assert_eq!(manual.task.last_run_status, ScheduledTaskRunStatus::Failed);
+    assert_eq!(
+        manual.task.last_run_error.as_deref(),
+        Some(refusal.as_str())
+    );
+
+    // The timer: the task is due, and a change wakes the timer's pass.
+    let mut updates = service.subscribe();
+    clock.set(1_800_000_061_000);
+    service.upsert(task("wake", None)).await.unwrap();
+    let timed = loop {
+        let list = updates.recv().await.unwrap();
+        if let Some(timed) = list
+            .tasks
+            .into_iter()
+            .flatten()
+            .find(|t| t.id == "timed" && t.last_run_status == ScheduledTaskRunStatus::Failed)
+        {
+            break timed;
+        }
+    };
+    assert_eq!(timed.last_run_error.as_deref(), Some(refusal.as_str()));
+    let projection = f
+        .service
+        .config
+        .engine
+        .get_thread_projection(thread.as_str().into())
+        .await
+        .unwrap();
+    let sent: Vec<&Value> = projection["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["scheduledTaskId"].is_string())
+        .collect();
+    assert!(sent.is_empty(), "{sent:?}");
+}
