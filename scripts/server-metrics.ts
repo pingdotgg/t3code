@@ -10,6 +10,7 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 import * as Clock from "effect/Clock";
 import * as Console from "effect/Console";
@@ -18,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -26,9 +28,20 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
-import { HttpClient, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import {
+  ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+} from "@t3tools/contracts";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Socket from "effect/socket/Socket";
 
@@ -342,6 +355,11 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       Effect.flatMap(decodeLoop),
       Effect.map(({ result }) => result.value),
     ),
+    // Off-heap and touched, so it adds RSS (and page tables to copy on fork) but no GC work.
+    ballast: (mb: number) =>
+      send("Runtime.evaluate", {
+        expression: `globalThis.__t3ServerMetricsBallast = Array.from({ length: ${mb} }, () => new Uint8Array(1 << 20).fill(1)), 0`,
+      }).pipe(Effect.asVoid),
     heapAfterGc: Effect.gen(function* () {
       yield* send("HeapProfiler.collectGarbage");
       yield* send("HeapProfiler.collectGarbage");
@@ -454,7 +472,98 @@ interface Environment {
   readonly requests: ReadonlyArray<ApiRequest>;
   readonly noAgentScope: boolean;
   readonly serverDir: string;
+  /** The checkout whose clones back a seeded server's projects. */
+  readonly checkout: string;
 }
+
+interface ServerOptions {
+  /** A base dir `migrate-dev-db` prepared; the server starts on a copy of its database. */
+  readonly seed?: string;
+}
+
+/**
+ * Copies a seeded database into `baseDir` and points every project at a clone of `checkout` under
+ * `reposDir`, so the server's git work runs on real-size repositories and never on the developer's.
+ * Thread worktrees and task folders would name the developer's directories, so they are dropped.
+ */
+const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
+  seed: string,
+  baseDir: string,
+  reposDir: string,
+  checkout: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const database = path.join(baseDir, "userdata/statev2.sqlite");
+  yield* fs.copyFile(path.join(seed, "userdata/statev2.sqlite"), database);
+  return yield* Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const projects = yield* sql<{ project_id: string; deleted: number }>`
+      SELECT project_id, deleted_at IS NOT NULL AS deleted FROM projection_projects`;
+    const roots: string[] = [];
+    yield* Effect.forEach(
+      projects,
+      (project, index) =>
+        Effect.gen(function* () {
+          const root = path.join(reposDir, `repo-${index}`);
+          if (!project.deleted) {
+            yield* run("git", ["clone", "--shared", "-q", checkout, root]);
+            roots.push(root);
+          }
+          yield* sql`UPDATE projection_projects SET workspace_root = ${root}
+            WHERE project_id = ${project.project_id}`;
+        }),
+      { concurrency: 4, discard: true },
+    );
+    yield* sql`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.worktreePath', json('null'))
+      WHERE json_extract(payload_json, '$.worktreePath') IS NOT NULL`;
+    const tables = new Set(
+      (yield* sql<{ name: string }>`SELECT name FROM sqlite_master WHERE type = 'table'`).map(
+        (table) => table.name,
+      ),
+    );
+    if (tables.has("projection_threads"))
+      yield* sql`UPDATE projection_threads SET worktree_path = NULL`;
+    // Durable workflows postdate migrate-dev-db's list of pending work, so none may resume here.
+    for (const table of tables) {
+      if (table === "task_folders" || table.startsWith("workflow_")) {
+        yield* sql`DELETE FROM ${sql(table)}`;
+      }
+    }
+    return roots;
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: database })));
+});
+
+/** Runs the checkout's own `migrate-dev-db` into a temp base dir, closed with the scope. */
+const prepareSeed = Effect.fn("serverMetrics.prepareSeed")(function* (
+  checkout: string,
+  projects: number,
+  threadsPerProject: number,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const node = yield* HostProcess.ExecutablePath;
+  const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-server-metrics-seed-" });
+  yield* Console.error(`seeding ${checkout} from the real database (read-only)...`);
+  // Its output names the kept projects, so it stays out of ours.
+  const seeded = yield* run(
+    node,
+    [
+      "apps/server/scripts/migrate-dev-db.ts",
+      "--base-dir",
+      dir,
+      "--projects",
+      `${projects}`,
+      "--threads-per-project",
+      `${threadsPerProject}`,
+    ],
+    { cwd: checkout, allowExit: [0, 1] },
+  );
+  if (seeded.exitCode !== 0) {
+    return yield* new MetricsError({ message: `migrate-dev-db failed:\n${seeded.stderr.trim()}` });
+  }
+  return dir;
+});
 
 /** A free loopback port: bind 0, read it, let it go. */
 const freePort = Effect.scoped(
@@ -469,6 +578,7 @@ const freePort = Effect.scoped(
 const startServer = Effect.fn("serverMetrics.startServer")(function* (
   environment: Environment,
   name: string,
+  options: ServerOptions = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -494,6 +604,15 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   const baseDir = path.join(directory, "base");
   // Branch names come from Claude too, so a worktree launch's naming call reaches the fake API.
   yield* fs.makeDirectory(path.join(baseDir, "userdata"), { recursive: true });
+  const roots =
+    options.seed === undefined
+      ? []
+      : yield* seedBaseDir(
+          options.seed,
+          baseDir,
+          path.join(directory, "repos"),
+          environment.checkout,
+        );
   yield* fs.writeFileString(
     path.join(baseDir, "userdata/settings.json"),
     encodeJson({ textGenerationModelSelection: { instanceId: "claudeAgent", model: MODEL } }),
@@ -657,10 +776,18 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   return {
     readyMs,
+    origin: `http://127.0.0.1:${port}`,
+    /** The seeded projects' clones; none without a seed. */
+    roots,
     measure,
     profile: devtools.profile,
     snapshot: devtools.snapshot,
-    threadStart: (message: string, extra: ReadonlyArray<string> = []) =>
+    heapAfterGc: devtools.heapAfterGc,
+    ballast: devtools.ballast,
+    issueToken: cli(["auth", "session", "issue", "--token-only"]).pipe(
+      Effect.map(({ stdout }) => stdout.trim()),
+    ),
+    threadStart: (message: string, extra: ReadonlyArray<string> = [], root = project) =>
       cli([
         "thread",
         "start",
@@ -669,7 +796,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
         "--model",
         MODEL,
         ...extra,
-        project,
+        root,
         message,
       ]),
     threadSend: (threadId: string, message: string) =>
@@ -738,7 +865,63 @@ const openThreads = Effect.fn("serverMetrics.openThreads")(function* (
   return ids.filter((id) => id !== undefined);
 });
 
-const SCENARIOS = ["startup", "rest", "firstWord", "quiet", "streaming"] as const;
+/** The shell snapshot the web and mobile clients load first, timed to its last byte. */
+const loadShell = Effect.fn("serverMetrics.loadShell")(function* (server: Server, times: number) {
+  const http = yield* HttpClient.HttpClient;
+  const token = yield* server.issueToken;
+  const request = HttpClientRequest.get(
+    `${server.origin}/api/orchestration/shell?omitIdleSubagents=1&omitOlderSettled=1`,
+  ).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeader(ORCHESTRATION_PROTOCOL_HEADER, ORCHESTRATION_PROTOCOL_VERSION_TEXT),
+  );
+  const elapsed: number[] = [];
+  let bytes = 0;
+  for (let index = 0; index < times; index++) {
+    const started = yield* nowMs;
+    const response = yield* http.execute(request);
+    const body = yield* response.arrayBuffer;
+    if (response.status !== 200) {
+      return yield* new MetricsError({ message: `shell snapshot answered ${response.status}` });
+    }
+    elapsed.push((yield* nowMs) - started);
+    bytes = body.byteLength;
+  }
+  return { ms: spread(elapsed), KB: Math.round(bytes / 1_000) };
+});
+
+/** Short turns back to back in a clone, each ending in a checkpoint of the whole tree. */
+const gitTraffic = Effect.fn("serverMetrics.gitTraffic")(function* (server: Server) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = server.roots[0];
+  if (root === undefined) return yield* new MetricsError({ message: "the seed has no projects" });
+  const touch = (turn: number) =>
+    fs.writeFileString(path.join(root, "BENCH.md"), `turn ${turn}\n`, { flag: "a" });
+  yield* touch(0);
+  const started = yield* server.threadStart("Say hello.", ["--wait"], root);
+  const threadId = /^Thread (\S+)$/m.exec(started.stderr)?.[1];
+  if (started.exitCode !== 0 || threadId === undefined) {
+    return yield* new MetricsError({
+      message: `a turn in a clone failed: ${started.stderr.trim() || started.stdout.trim()}`,
+    });
+  }
+  return Effect.gen(function* () {
+    for (let turn = 1; ; turn++) {
+      yield* touch(turn);
+      const sent = yield* server.threadSend(threadId, `Short reply ${turn}.`);
+      if (sent.exitCode !== 0) {
+        return yield* new MetricsError({
+          message: `git traffic turn ${turn} failed: ${sent.stderr.trim() || sent.stdout.trim()}`,
+        });
+      }
+    }
+  });
+});
+
+const SCENARIOS = ["startup", "rest", "firstWord", "quiet", "streaming", "busy"] as const;
+/** Scenarios that read the developer's real database, so they run only when named. */
+const OPT_IN_SCENARIOS: ReadonlyArray<string> = ["busy"];
 
 interface RunOptions {
   readonly checkout: string;
@@ -747,6 +930,9 @@ interface RunOptions {
   readonly threads: ReadonlyArray<number>;
   readonly only: ReadonlyArray<string>;
   readonly soakMinutes: number;
+  /** A seeded base dir for the busy scenario. */
+  readonly seed: string | undefined;
+  readonly ballastMB: number;
   /** Where full CPU and allocation profiles go; none are written without it. */
   readonly profileDir: string | undefined;
 }
@@ -763,13 +949,19 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
     requests: api.requests,
     noAgentScope: options.noAgentScope,
     serverDir: path.join(options.checkout, "apps/server"),
+    checkout: options.checkout,
   };
-  const wanted = (scenario: string) => options.only.length === 0 || options.only.includes(scenario);
+  const wanted = (scenario: string) =>
+    options.only.includes(scenario) ||
+    (options.only.length === 0 && !OPT_IN_SCENARIOS.includes(scenario));
   const measured: { -readonly [K in keyof Measured]: Measured[K] } = {};
   const profiles: Record<string, ProfileSummary> = {};
   let soakHeapGrowth: ReturnType<typeof heapGrowth> | undefined;
-  const withServer = <A, E, R>(name: string, body: (server: Server) => Effect.Effect<A, E, R>) =>
-    Effect.scoped(Effect.flatMap(startServer(environment, name), body));
+  const withServer = <A, E, R>(
+    name: string,
+    body: (server: Server) => Effect.Effect<A, E, R>,
+    serverOptions: ServerOptions = {},
+  ) => Effect.scoped(Effect.flatMap(startServer(environment, name, serverOptions), body));
   const profile = Effect.fn("serverMetrics.saveProfile")(function* (server: Server, name: string) {
     const { summary, raw } = yield* server.profile(20);
     profiles[name] = summary;
@@ -870,6 +1062,37 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         measured.streaming = yield* server.measure(60);
         yield* profile(server, "streaming");
       }),
+    );
+  }
+  if (wanted("busy")) {
+    if (options.seed === undefined) {
+      return yield* new MetricsError({ message: "the busy scenario needs a seeded database" });
+    }
+    yield* withServer(
+      "busy",
+      (server) =>
+        Effect.gen(function* () {
+          yield* server.ballast(options.ballastMB);
+          yield* Effect.sleep(Duration.seconds(30));
+          const rest = yield* server.measure(30);
+          const shell = yield* loadShell(server, 5);
+          const traffic = yield* gitTraffic(server);
+          const loop = yield* Effect.forkScoped(traffic);
+          yield* Effect.sleep(Duration.seconds(5));
+          const git = yield* server.measure(30);
+          yield* profile(server, "busyGit");
+          yield* Fiber.interrupt(loop);
+          measured.busy = {
+            readyMs: server.readyMs,
+            projects: server.roots.length,
+            ballastMB: options.ballastMB,
+            rest,
+            shellMs: shell.ms,
+            shellKB: shell.KB,
+            git,
+          };
+        }),
+      { seed: options.seed },
     );
   }
   if (options.soakMinutes > 0) {
@@ -1030,6 +1253,29 @@ const runFlags = {
     Flag.withDescription(`Scenarios to run, comma separated: ${SCENARIOS.join(", ")}.`),
     Flag.optional,
   ),
+  seedDir: Flag.String("seed-dir").pipe(
+    Flag.withDescription(
+      "busy: a base dir `vp run migrate-dev-db --base-dir <dir>` already seeded, instead of seeding each checkout on every invocation.",
+    ),
+    Flag.optional,
+  ),
+  busyProjects: Flag.Int("busy-projects").pipe(
+    Flag.withSchema(PositiveInt),
+    Flag.withDescription("busy: projects to keep from the real database, each backed by a clone."),
+    Flag.withDefault(10),
+  ),
+  busyThreads: Flag.Int("busy-threads").pipe(
+    Flag.withSchema(PositiveInt),
+    Flag.withDescription("busy: stopped threads to keep per project."),
+    Flag.withDefault(200),
+  ),
+  busyBallast: Flag.Int("busy-ballast-mb").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    Flag.withDescription(
+      "busy: MB the server retains off-heap, so its RSS matches a server open for days. A seeded database alone keeps RSS near 0.5 GB.",
+    ),
+    Flag.withDefault(768),
+  ),
   soak: Flag.Int("soak").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
@@ -1044,6 +1290,10 @@ interface RunFlags {
   readonly threads: string;
   readonly only: Option.Option<string>;
   readonly soak: number;
+  readonly seedDir: Option.Option<string>;
+  readonly busyProjects: number;
+  readonly busyThreads: number;
+  readonly busyBallast: number;
 }
 
 const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
@@ -1068,8 +1318,24 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
     only,
     soakMinutes: flags.soak,
     profileDir,
+    seed: undefined,
+    ballastMB: flags.busyBallast,
   };
   return options;
+});
+
+/** The busy scenario's seed for these options: the given dir, or the checkout's own seeding. */
+const withSeed = Effect.fn("serverMetrics.withSeed")(function* (
+  options: RunOptions,
+  flags: RunFlags,
+) {
+  const path = yield* Path.Path;
+  if (!options.only.includes("busy")) return options;
+  const seed = Option.isSome(flags.seedDir)
+    ? path.resolve(flags.seedDir.value)
+    : yield* prepareSeed(options.checkout, flags.busyProjects, flags.busyThreads);
+  const seeded: RunOptions = { ...options, seed };
+  return seeded;
 });
 
 const runCommand = Command.make(
@@ -1097,7 +1363,7 @@ const runCommand = Command.make(
     );
     if (input.repeat < 1)
       return yield* new MetricsError({ message: "--repeat must be at least 1" });
-    const options = yield* toRunOptions(input, checkout, profileDir);
+    const options = yield* withSeed(yield* toRunOptions(input, checkout, profileDir), input);
     const meta = yield* metaFor(options);
     const runs: Measured[] = [];
     let last: Effect.Success<ReturnType<typeof runOnce>> | undefined;
@@ -1111,7 +1377,7 @@ const runCommand = Command.make(
       ...(last ? { profiles: last.profiles } : {}),
       ...(last?.soakHeapGrowth ? { soakHeapGrowth: last.soakHeapGrowth } : {}),
     });
-  }),
+  }, Effect.scoped),
 ).pipe(
   Command.withDescription(
     "Measure a checkout's server: startup, rest and first word on one server, then quiet threads (with their cost per thread), streaming and an optional soak on servers of their own. Needs the real claude CLI on PATH; on Windows the native claude.exe from claude.ai/install.ps1, since an npm claude.cmd shim cannot be started without a shell.",
@@ -1143,8 +1409,8 @@ const abCommand = Command.make(
     const outDir = path.resolve(input.outDir);
     yield* fs.makeDirectory(outDir, { recursive: true });
     const sides = [
-      yield* toRunOptions(input, input.checkoutA, undefined),
-      yield* toRunOptions(input, input.checkoutB, undefined),
+      yield* withSeed(yield* toRunOptions(input, input.checkoutA, undefined), input),
+      yield* withSeed(yield* toRunOptions(input, input.checkoutB, undefined), input),
     ] as const;
     const metas = [yield* metaFor(sides[0]), yield* metaFor(sides[1])] as const;
     const runs: [Measured[], Measured[]] = [[], []];
@@ -1161,7 +1427,7 @@ const abCommand = Command.make(
     yield* writeMetrics(Option.some(path.join(outDir, "a.json")), before);
     yield* writeMetrics(Option.some(path.join(outDir, "b.json")), after);
     yield* report(before, after, input.threshold);
-  }),
+  }, Effect.scoped),
 ).pipe(
   Command.withDescription(
     "Run two checkouts alternately on this machine and compare them. Each needs its dependencies installed; the harness comes from this script, so an old release works too.",
