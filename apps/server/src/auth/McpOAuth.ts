@@ -639,6 +639,8 @@ export const layerMcpClientAuthenticator = Layer.effect(
                     "orchestration",
                     "worktree",
                     "pull-requests",
+                    // A linked environment forwards its agents' issue tool calls here.
+                    ...(client.peerLink ? (["issues"] as const) : []),
                   ]),
                   issuedAt,
                 })),
