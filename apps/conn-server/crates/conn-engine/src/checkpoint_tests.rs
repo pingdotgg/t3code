@@ -1182,6 +1182,74 @@ async fn a_replaced_engine_s_rollback_touches_no_files() {
     assert!(repo.git(&["show-ref"]).contains(&stale), "refs untouched");
 }
 
+/// The #268 round-5 gate's probe: run A was interrupted with prompt B queued, and the store
+/// was copied after A ended but before its checkpoint capture committed. In a project that
+/// opted out of restart continuation, the replayed capture must not start B: it stays held.
+#[tokio::test(flavor = "current_thread")]
+async fn a_replayed_capture_does_not_start_a_queued_prompt() {
+    let db = TempDb::new("capture-replay-queued");
+    let copy = TempDb::new("capture-replay-queued-copy");
+    let repo = Repo::new("capture-replay-queued");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_worktree_thread(&repo),
+        &[],
+    )
+    .await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(&engine, message("t1", "c3", "after")).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    let cwd = p["checkpointScopes"][0]["cwd"].as_str().unwrap().to_owned();
+    {
+        let _held = engine.test_hold_workspace(&cwd).await;
+        dispatch(
+            &engine,
+            json!({"type": "run.interrupt", "commandId": "c4", "threadId": "t1", "runId": "run:t1:1"}),
+        )
+        .await;
+        until(&engine, |p| p["runs"][0]["status"] == "interrupted").await;
+        assert_eq!(outbox_statuses(&db, "checkpoint.capture"), ["running"]);
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .execute("VACUUM INTO ?1", [copy.path().to_str().unwrap()])
+            .unwrap();
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(copy.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: repo.root(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.checkpoints = true;
+    config.restart_policy = crate::RestartPolicy {
+        continue_by_default: true,
+        projects: [(SqliteEngine::project_id_for(&repo.root()), false)].into(),
+    };
+    let restarted = SqliteEngine::open(config).unwrap();
+    assert_eq!(
+        settled_statuses(&copy, "checkpoint.capture").await,
+        ["succeeded"]
+    );
+    let p = projection(&restarted, "t1").await;
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "queued");
+    assert_eq!(run_of(&p, "run:t1:2")["queueHeld"], true);
+    assert!(
+        crate::lock(&provider.calls)
+            .iter()
+            .all(|c| c != "start run:t1:2")
+    );
+}
+
 /// The round-5 gate's probe: an engine dropped while its rollback restores files keeps the
 /// store locked until the restore ends, so no replacement opens beside it.
 #[tokio::test(flavor = "current_thread")]

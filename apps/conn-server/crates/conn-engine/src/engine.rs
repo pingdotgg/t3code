@@ -406,6 +406,15 @@ impl SqliteEngine {
         for pending in pending_rollbacks {
             effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
         }
+        // T3 holds the prompts queued in a thread the previous process left unfinished, also
+        // one whose only unfinished run is queued: the user decides when they go. Before any
+        // replayed effect runs, so a replayed capture cannot start one.
+        let mut held = std::collections::HashSet::new();
+        for (thread_id, _) in &unfinished {
+            if held.insert(thread_id.as_str()) {
+                commands::hold_queue(&mut tx, thread_id)?;
+            }
+        }
         for (thread_id, run) in unfinished
             .iter()
             .filter(|(_, run)| commands::is_active(run))

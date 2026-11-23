@@ -352,10 +352,8 @@ pub(crate) fn recover(
     policy: &RestartPolicy,
 ) -> StoreResult<Vec<Effect>> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
-    // The previous process's sessions are gone, and T3 holds the prompts queued behind a cut
-    // run: the user decides when they go, whatever happens to the run below.
+    // The previous process's sessions are gone. Its queued prompts are held already (`open`).
     stop_sessions(tx, thread_id)?;
-    commands::hold_queue(tx, thread_id)?;
     // The provider finished; only the checkpoint capture was cut off. A capture row the
     // previous process left is replay-safe and runs again by itself.
     if run["status"] == "waiting" {

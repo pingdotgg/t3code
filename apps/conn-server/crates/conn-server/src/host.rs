@@ -280,9 +280,12 @@ impl EngineHost for Host {
             .flatten();
         let thread_id = thread_id.to_owned();
         Box::pin(async move {
+            // Each step runs whatever the others did; their errors come back together, so the
+            // close is tried again (`ResourceCleanupService`).
+            let mut errors = vec![];
             // Closing a terminal writes and deletes its history: file work, off the runtime.
             let closing = thread_id.clone();
-            tokio::task::spawn_blocking(move || match reason {
+            let terminals = tokio::task::spawn_blocking(move || match reason {
                 ThreadClose::Settled => terminals.close_on_settle(&closing),
                 ThreadClose::Archived | ThreadClose::Deleted => {
                     terminals.close(TerminalCloseInput {
@@ -292,25 +295,37 @@ impl EngineHost for Host {
                     });
                 }
             })
-            .await
-            .map_err(|e| format!("closing the thread's terminals stopped: {e}"))?;
+            .await;
+            if let Err(e) = terminals {
+                errors.push(format!("closing the thread's terminals stopped: {e}"));
+            }
+            if let Some(tasks) = tasks
+                && let Err(e) = tasks.delete_for_thread(&thread_id).await
+            {
+                errors.push(format!("deleting the thread's scheduled tasks: {e}"));
+            }
             if let Some(devices) = devices {
-                tokio::time::timeout(DEVICE_RELEASE_DEADLINE, devices.cleanup_thread(&thread_id))
-                    .await
-                    .map_err(|_| {
-                        format!(
-                            "releasing the thread's devices took over {} s",
-                            DEVICE_RELEASE_DEADLINE.as_secs()
-                        )
-                    })?;
+                match tokio::time::timeout(
+                    DEVICE_RELEASE_DEADLINE,
+                    devices.cleanup_thread(&thread_id),
+                )
+                .await
+                {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => {
+                        errors.push(format!("releasing the thread's devices: {}", e.message()));
+                    }
+                    Err(_) => errors.push(format!(
+                        "releasing the thread's devices took over {} s",
+                        DEVICE_RELEASE_DEADLINE.as_secs()
+                    )),
+                }
             }
-            if let Some(tasks) = tasks {
-                tasks
-                    .delete_for_thread(&thread_id)
-                    .await
-                    .map_err(|e| format!("deleting the thread's scheduled tasks: {e}"))?;
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
             }
-            Ok(())
         })
     }
 }
