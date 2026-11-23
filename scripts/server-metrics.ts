@@ -752,8 +752,9 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
   if (wanted("streaming")) {
     yield* withServer("streaming", (server) =>
       Effect.gen(function* () {
-        // Earlier scenarios share the fake API, so only this launch's markers count.
+        // Earlier scenarios share the fake API, so only this launch's requests count.
         const markers = [0, 1, 2, 3, 4].map((index) => `bench-run-${9_000 + index}`);
+        const launchedAt = yield* nowMs;
         const started = yield* Effect.forEach(
           markers,
           (marker) => server.threadStart(`Write a long answer. ${SLOW_MARKER} ${marker}`),
@@ -765,7 +766,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
         const streaming = () =>
           new Set(
             api.requests
-              .filter((request) => request.agent && request.stream)
+              .filter((request) => request.agent && request.stream && request.at >= launchedAt)
               .map((request) => request.marker),
           );
         for (let attempt = 0; attempt < 300; attempt++) {
