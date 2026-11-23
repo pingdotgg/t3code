@@ -1550,13 +1550,13 @@ it.effect.each([false, true])(
 
 it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
   Effect.gen(function* () {
+    const head = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
     const pinned: Array<string | undefined> = [];
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          getChangeRequest: () =>
-            Effect.succeed({ ...hostedChangeRequest("Body"), headSha: "new-head" }),
+          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("Body"), headSha: head }),
           getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-09-03T00:00:00Z")),
           runAction: (input) => Effect.sync(() => void pinned.push(input.expectedHeadSha)),
         }),
@@ -1564,11 +1564,16 @@ it.effect("refuses a merge whose head moved past expectedHeadSha and pins the ho
     });
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const refused = yield* Effect.flip(
-      service.runAction({ ...reference, action: "merge", expectedHeadSha: "reviewed-head" }),
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c4" }),
     );
-    assert.include(refused.message, "new-head");
-    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "new-head" });
-    assert.deepStrictEqual(pinned, ["new-head"]);
+    assert.include(refused.message, head);
+    const tooShort = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c" }),
+    );
+    assert.include(tooShort.message, head);
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: head });
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "0A1B2C3D4" });
+    assert.deepStrictEqual(pinned, [head, head]);
   }),
 );
 

@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
@@ -154,11 +155,32 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   );
 });
 
+// A link to an unresponsive network share must not hold up the local entries beside it.
+const SYMLINK_TARGET_STAT_TIMEOUT = Duration.seconds(1);
+// A timed-out stat cannot be cancelled and keeps a libuv worker (4 by default) busy,
+// so cap target stats in flight to leave most of the pool to other fs work.
+const MAX_PENDING_SYMLINK_TARGET_STATS = 2;
+
 /** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+  let pendingSymlinkTargetStats = 0;
+  const statSymlinkTarget = (candidate: { readonly name: string; readonly fullPath: string }) => {
+    if (pendingSymlinkTargetStats >= MAX_PENDING_SYMLINK_TARGET_STATS) {
+      return Promise.resolve(null);
+    }
+    pendingSymlinkTargetStats++;
+    return NodeFSP.stat(candidate.fullPath)
+      .then(
+        (stats) => (stats.isDirectory() ? candidate : null),
+        () => null,
+      )
+      .finally(() => {
+        pendingSymlinkTargetStats--;
+      });
+  };
   const vcsProcess = yield* VcsProcess.VcsProcess;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
@@ -252,16 +274,33 @@ export const make = Effect.gen(function* () {
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const symlinkCandidates: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          continue;
+        }
+        const fullPath = path.join(parentPath, dirent.name);
+        if (dirent.isDirectory()) {
+          entries.push({ name: dirent.name, fullPath });
+        } else if (dirent.isSymbolicLink()) {
+          symlinkCandidates.push({ name: dirent.name, fullPath });
+        }
+      }
+      if (symlinkCandidates.length > 0) {
+        const resolvedSymlinks = yield* Effect.forEach(
+          symlinkCandidates,
+          (candidate) =>
+            Effect.promise(() => statSymlinkTarget(candidate)).pipe(
+              Effect.timeoutOption(SYMLINK_TARGET_STAT_TIMEOUT),
+              Effect.map(Option.getOrNull),
+            ),
+          { concurrency: MAX_PENDING_SYMLINK_TARGET_STATS },
+        );
+        for (const candidate of resolvedSymlinks) {
+          if (candidate !== null) entries.push(candidate);
         }
       }
 

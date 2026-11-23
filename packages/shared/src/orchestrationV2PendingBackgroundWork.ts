@@ -319,7 +319,14 @@ export function derivePendingBackgroundWork(input: {
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);
 
-  return Array.from(byTaskId.values());
+  // Follow-up tasks can share a child thread; the pending list counts agents, not messages.
+  const childThreadIds = new Set<ThreadId>();
+  return Array.from(byTaskId.values()).filter((task) => {
+    if (task.kind !== "subagent" || task.childThreadId == null) return true;
+    if (childThreadIds.has(task.childThreadId)) return false;
+    childThreadIds.add(task.childThreadId);
+    return true;
+  });
 }
 
 function pullRequestWatchTasks(

@@ -1,7 +1,5 @@
 /**
  * MCP v2026-07-28 wire schemas.
- *
- * @internal
  */
 import * as Rpc from "../../../rpc/Rpc.ts"
 import * as RpcGroup from "../../../rpc/RpcGroup.ts"
