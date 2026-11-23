@@ -93,8 +93,32 @@ test(
     await screen.getByRole("button", "Toggle right panel").tap();
     const draftAfter = await position(true, false);
     await app.screenshot("draft-panel-open");
+
+    // The panel shortcut is pressed inside the focused draft, with a caret and then a selection.
+    const shortcutShifts: number[] = [];
+    for (const length of [0, 20]) {
+      const shortcutBefore = await browser.evaluate((length) => {
+        const scroller = document.querySelector<HTMLElement>(".composer-tiptap")!;
+        scroller.focus();
+        const node = document.createTreeWalker(scroller, NodeFilter.SHOW_TEXT).nextNode()!;
+        document.getSelection()!.setBaseAndExtent(node, 2500, node, 2500 + length);
+        const range = document.createRange();
+        range.setStart(node, 2500);
+        scroller.scrollTop +=
+          range.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 48;
+        return range.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      }, length);
+      await browser.keyboard.press("Control+Alt+B");
+      shortcutShifts.push(Math.abs((await position(true, false)) - shortcutBefore));
+      await app.screenshot(length === 0 ? "draft-caret-shortcut" : "draft-selection-shortcut");
+    }
+
     expect(
-      Math.max(Math.abs(timelineAfter - timelineBefore), Math.abs(draftAfter - draftBefore)),
+      Math.max(
+        Math.abs(timelineAfter - timelineBefore),
+        Math.abs(draftAfter - draftBefore),
+        ...shortcutShifts,
+      ),
     ).toBeLessThan(30);
   },
 );

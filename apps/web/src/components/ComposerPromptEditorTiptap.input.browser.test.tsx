@@ -682,9 +682,10 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
 
-it.each([false, true])(
-  "keeps the reading position when a draft rewraps (focused: %s)",
-  async (focused) => {
+it.each(["none", "caret", "selection"] as const)(
+  "keeps the reading position when a draft rewraps (focus: %s)",
+  async (focus) => {
+    const focused = focus !== "none";
     const value = "A long wrapped paragraph should keep the sentence being read in view. ".repeat(
       100,
     );
@@ -705,9 +706,18 @@ it.each([false, true])(
     })!;
     const before = editor.view.coordsAtPos(position.pos).top - box.top;
     if (focused) await focusAt(editor, position.pos);
+    if (focus === "selection") {
+      editor.commands.setTextSelection({ from: position.pos, to: position.pos + 20 });
+    }
     document.dispatchEvent(new Event("selectionchange"));
     const selection = editor.state.selection.toJSON();
     for (const width of [420, 700]) {
+      // The panel toggle shortcut reaches the focused editor before the width changes.
+      if (focused) {
+        scroller.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "b", ctrlKey: true, altKey: true, bubbles: true }),
+        );
+      }
       scroller.style.width = `${width}px`;
       await vi.waitFor(() => {
         const after =

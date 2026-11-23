@@ -94,7 +94,7 @@ export function preserveReadingPosition(
   const interrupt = () => {
     if (frame !== null) cancelAnimationFrame(frame);
     anchor = null;
-    // Input wins over a pending resize correction; the next frame captures the reader's new place.
+    // Scrolling wins over a pending resize correction; the next frame captures the reader's new place.
     frame = requestAnimationFrame(() => {
       frame = null;
       width = scroller.clientWidth;
@@ -103,7 +103,6 @@ export function preserveReadingPosition(
   };
   scroller.addEventListener("wheel", interrupt, { passive: true });
   scroller.addEventListener("touchmove", interrupt, { passive: true });
-  scroller.addEventListener("keydown", interrupt);
   return () => {
     stop();
     if (frame !== null) cancelAnimationFrame(frame);
@@ -112,6 +111,5 @@ export function preserveReadingPosition(
     document.removeEventListener("selectionchange", captureSelection);
     scroller.removeEventListener("wheel", interrupt);
     scroller.removeEventListener("touchmove", interrupt);
-    scroller.removeEventListener("keydown", interrupt);
   };
 }
