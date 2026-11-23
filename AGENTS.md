@@ -155,3 +155,12 @@ Read the matching doc before changing code in that area; code review enforces th
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
 - Security matters, but do not over-index on dev-mode or maintainer-only features. Read [SECURITY.md](SECURITY.md) before auditing or triaging reports.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
+## This fork
+
+This checkout is armandmorosanu/t3code, a personal fork; this section overrides the rest of the file.
+
+- `upstream` is pingdotgg/t3code, `origin` the fork. Fork `main` is `upstream/main` plus the fork's own commits on top, in a straight line. Nothing here goes to upstream unless the developer asks.
+- Work in a T3 worktree thread on a branch cut from `origin/main`. Never edit the fork's root checkout: the developer's daily app runs from it.
+- Finishing is a PR into the fork's `main` (`gh pr create -R armandmorosanu/t3code --base main`), opened when the developer says the work is done. It is squash-merged when they say so, which deletes the branch. No auto-merge, review bots or CI: Actions are off on the fork.
+- Syncing upstream: `git fetch upstream main`, rebase `main` onto `upstream/main`, then `git push --force-with-lease origin main`. Commits copied from open upstream PRs (`(PR #n)` in the title) drop out once upstream merges them; check with `git cherry`.
