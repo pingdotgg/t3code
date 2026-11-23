@@ -8,6 +8,7 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { Button } from "../ui/button";
+import { PanelFrame } from "../ui/panel-frame";
 import {
   activeWorkflowPaneIndex,
   closeWorkflowPaneTab,
@@ -70,11 +71,11 @@ export default function WorkflowPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b border-divider ps-2 pe-2">
+      <PanelFrame.Toolbar density="compact" className="h-(--workspace-topbar-height)">
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}
-          className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto"
+          className="flex min-w-0 flex-1 gap-1 overflow-x-auto"
         >
           {tabs.map((tab, index) => (
             <div
@@ -140,7 +141,7 @@ export default function WorkflowPane({
         >
           <XIcon />
         </Button>
-      </div>
+      </PanelFrame.Toolbar>
       <div role="tabpanel" className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {active === undefined ? null : "thread" in active ? (
           <WorkflowThreadPane
