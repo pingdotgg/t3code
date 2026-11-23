@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { compareMetrics, slope, type ServerMetrics } from "./server-metrics.ts";
+import { compareMetrics, slope, type ServerMetrics } from "./server-metrics-report.ts";
 
 type Quiet = { cpuPct: number; wakeupsPerSec: number | null; rssPeakMB: number };
 const quietRuns = (...runs: Quiet[]) =>
@@ -48,14 +48,6 @@ describe("compareMetrics", () => {
       { ...base, cpuPct: 2.4 },
     );
     expect(compareMetrics(fixed, noisy).regressed).toEqual([]);
-  });
-
-  it("reads a single-run file from before runs existed", () => {
-    const legacy = { meta: { commit: "old" }, quiet: { ...base, rssMB: 500, heapAfterGcMB: 200 } };
-    const after = quietRuns({ ...base, cpuPct: 18.6 });
-    expect(compareMetrics(legacy as unknown as ServerMetrics, after).regressed).toEqual([
-      "quiet.cpuPct",
-    ]);
   });
 });
 
