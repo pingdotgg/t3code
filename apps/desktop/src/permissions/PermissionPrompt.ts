@@ -42,33 +42,38 @@ const make = Effect.gen(function* PermissionPromptMake() {
   const platform = yield* HostProcess.Platform;
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let open = false;
-  const ask = (owner: BrowserWindow | undefined, question: PermissionQuestion) =>
-    Effect.suspend(() => {
-      if (open) return Effect.undefined;
-      open = true;
-      return electronDialog
-        .showMessageBox(
-          {
-            type: "question",
-            buttons: [...question.buttons],
-            // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
-            defaultId: 1,
-            cancelId: 1,
-            message: question.message,
-            ...(question.detail === undefined ? {} : { detail: question.detail }),
-          },
-          platform === "win32" ? undefined : owner,
-        )
-        .pipe(
-          Effect.map(({ response }): boolean | undefined => response === 0),
-          Effect.orElseSucceed(() => undefined),
-          Effect.ensuring(Effect.sync(() => (open = false))),
-        );
-    });
-  const confirmAppLink = (owner: BrowserWindow | undefined, rawUrl: string | undefined) => {
+  const ask = Effect.fn("PermissionPrompt.ask")(function* (
+    owner: BrowserWindow | undefined,
+    question: PermissionQuestion,
+  ) {
+    if (open) return undefined;
+    open = true;
+    return yield* electronDialog
+      .showMessageBox(
+        {
+          type: "question",
+          buttons: [...question.buttons],
+          // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
+          defaultId: 1,
+          cancelId: 1,
+          message: question.message,
+          ...(question.detail === undefined ? {} : { detail: question.detail }),
+        },
+        platform === "win32" ? undefined : owner,
+      )
+      .pipe(
+        Effect.map(({ response }): boolean | undefined => response === 0),
+        Effect.orElseSucceed(() => undefined),
+        Effect.ensuring(Effect.sync(() => (open = false))),
+      );
+  });
+  const confirmAppLink = Effect.fn("PermissionPrompt.confirmAppLink")(function* (
+    owner: BrowserWindow | undefined,
+    rawUrl: string | undefined,
+  ) {
     const url = rawUrl === undefined ? null : appLinkUrl(rawUrl);
-    if (url === null) return Effect.succeed(false);
-    return ask(owner, {
+    if (url === null) return false;
+    const answer = yield* ask(owner, {
       buttons: [
         m(msg("Open", { $context: "button, opens a link in another app" })),
         m(msg("Cancel")),
@@ -79,8 +84,9 @@ const make = Effect.gen(function* PermissionPromptMake() {
       detail: m(msg("A page in the browser wants to open another application:\n\n{url}"), {
         url: truncateForPrompt(url),
       }),
-    }).pipe(Effect.map((answer) => answer === true));
-  };
+    });
+    return answer === true;
+  });
   return PermissionPrompt.of({ ask, confirmAppLink });
 });
 

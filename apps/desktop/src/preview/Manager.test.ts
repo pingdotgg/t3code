@@ -2631,23 +2631,38 @@ describe("PreviewManager", () => {
         yield* manager.registerWebview("tab_1", 42);
         yield* Deferred.await(attached);
         const threadLink = "t3-thread://v2/env-1/thread-1";
-
+        const listener = (name: string) =>
+          (vi.mocked(contents.on).mock.calls as ReadonlyArray<ReadonlyArray<unknown>>).find(
+            ([event]) => event === name,
+          )?.[1] as ((...args: ReadonlyArray<unknown>) => void) | undefined;
+        const click = () => listener("input-event")?.({}, { type: "mouseDown" });
         const openWindow = vi.mocked(contents.setWindowOpenHandler).mock.calls[0]![0];
+        const willNavigate = listener("will-frame-navigate");
+        const navigation = (url: string) => ({ url, preventDefault: vi.fn() });
+
+        // A page cannot change the user's chat on its own.
+        expect(
+          openWindow({ url: threadLink, disposition: "foreground-tab" } as Electron.HandlerDetails),
+        ).toEqual({ action: "deny" });
+        const unprompted = navigation(threadLink);
+        willNavigate?.(unprompted);
+        expect(unprompted.preventDefault).toHaveBeenCalled();
+        expect(yield* Queue.size(openLinks)).toBe(0);
+
+        click();
         expect(
           openWindow({ url: threadLink, disposition: "foreground-tab" } as Electron.HandlerDetails),
         ).toEqual({ action: "deny" });
         expect(yield* Queue.take(openLinks)).toBe(threadLink);
-
-        const willNavigate = (
-          vi.mocked(contents.on).mock.calls as ReadonlyArray<ReadonlyArray<unknown>>
-        ).find(([event]) => event === "will-frame-navigate")?.[1] as
-          | ((event: { url: string; preventDefault: () => void }) => void)
-          | undefined;
-        const navigation = (url: string) => ({ url, preventDefault: vi.fn() });
         const toThread = navigation(threadLink);
         willNavigate?.(toThread);
         expect(toThread.preventDefault).toHaveBeenCalled();
         expect(yield* Queue.take(openLinks)).toBe(threadLink);
+
+        // As with Chromium's own user activation, the input counts for five seconds.
+        yield* TestClock.adjust(5_001);
+        willNavigate?.(navigation(threadLink));
+        expect(yield* Queue.size(openLinks)).toBe(0);
 
         // Every other app link stays with Chromium, which asks the session before the OS opens it.
         const toApp = navigation("obsidian://open?vault=v&file=A");

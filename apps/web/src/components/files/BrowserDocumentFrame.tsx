@@ -378,7 +378,7 @@ export function HtmlRenderDocument(props: {
   );
   const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
   const openLink = useOpenLink(props.threadRef);
-  const openAppLink = useOpenAppLink(props.threadRef?.environmentId ?? null);
+  const openAppLink = useOpenAppLink(props.threadRef ?? null);
   const open = useEffectEvent((link: HtmlRenderLinkRequest) => {
     const { url } = link;
     const modifiers = { metaKey: link.metaKey, ctrlKey: link.ctrlKey };

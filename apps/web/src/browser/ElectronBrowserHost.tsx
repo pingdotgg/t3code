@@ -108,12 +108,9 @@ function openLinkFromPreview(
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
   if (parseThreadAppLink(url) !== null) {
-    void openAppLink({
-      url,
-      environmentId: source.threadRef.environmentId,
-      openThread: ({ environmentId, threadId }) =>
-        router.navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } }),
-    }).catch((cause: unknown) => console.error(cause));
+    void openAppLink({ url, source: source.threadRef, navigate: router.navigate }).catch(
+      (cause: unknown) => console.error(cause),
+    );
     return;
   }
   void openUrlInPreview({
