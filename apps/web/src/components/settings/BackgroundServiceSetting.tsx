@@ -1,5 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { T, useGT } from "gt-react";
+import { useGT } from "gt-react";
 import { useState } from "react";
 
 import { m } from "~/i18n/messages";
@@ -9,18 +9,8 @@ import {
   refreshDesktopBackgroundServiceState,
 } from "~/state/desktopBackgroundService";
 import { useEnvironmentQuery } from "~/state/query";
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../ui/alert-dialog";
-import { Button } from "../ui/button";
-import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -29,115 +19,66 @@ export function BackgroundServiceSetting() {
   const gt = useGT();
   const bridge = getDesktopBackgroundServiceBridge();
   const query = useEnvironmentQuery(bridge ? desktopBackgroundServiceStateAtom : null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [isUpdating, setIsUpdating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [pendingChecked, setPendingChecked] = useState<boolean | null>(null);
 
   const state = query.data;
   if (!bridge || !state?.supported) return null;
 
-  const enabled = state.installed && state.otherBaseDir === null;
-  const blockedByOtherHome = state.otherBaseDir !== null;
+  const enabled = pendingChecked ?? state.enabled;
+  const isUpdating = pendingChecked !== null;
+  const managedExternally = state.externalService;
 
-  const description = blockedByOtherHome
-    ? gt("A background service is already installed for {path}.", { path: state.otherBaseDir })
-    : enabled && state.attached
+  const description = managedExternally
+    ? gt(
+        "Managed by the local t3 background service. Closing the window keeps agents and remote access running.",
+      )
+    : enabled
       ? gt(
-          "This computer's server runs in the background. Closing the window keeps agents and remote access running.",
+          "This computer's server stays running in the background when you close the window, freeing window memory while keeping agents and remote access active.",
         )
-      : enabled
-        ? gt(
-            "Background service is installed. Restart T3 Code to attach to it and keep agents running after closing the window.",
-          )
-        : gt(
-            "Run this computer's server as a background service so closing the window keeps agents and remote access running.",
-          );
+      : gt(
+          "Keep this computer's server running in the background when you close the window so agents and remote access stay active.",
+        );
 
-  const applyChange = async () => {
-    setIsUpdating(true);
-    setError(null);
+  const handleCheckedChange = async (checked: boolean) => {
+    if (isUpdating || managedExternally) return;
+    setPendingChecked(checked);
     try {
-      if (enabled) {
-        await bridge.disableBackgroundService();
-      } else {
+      if (checked) {
         await bridge.enableBackgroundService();
+      } else {
+        await bridge.disableBackgroundService();
       }
       refreshDesktopBackgroundServiceState();
-      setConfirmOpen(false);
-      setIsUpdating(false);
     } catch (cause) {
-      setError(
+      const message =
         cause instanceof Error
           ? (thrownErrorMessage(cause, m) ?? cause.message)
-          : gt("Couldn't change the background service."),
+          : gt("Couldn't update the background service setting.");
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Could not update background service"),
+          description: message,
+        }),
       );
-      setIsUpdating(false);
+    } finally {
+      setPendingChecked(null);
     }
   };
 
   return (
-    <>
-      <SettingsRow
-        {...searchableSetting("background-service")}
-        description={description}
-        control={
-          <Switch
-            checked={enabled}
-            disabled={isUpdating || blockedByOtherHome}
-            onCheckedChange={() => setConfirmOpen(true)}
-            aria-label={gt("Background service")}
-          />
-        }
-      />
-      <AlertDialog
-        open={confirmOpen}
-        onOpenChange={(open) => {
-          if (isUpdating) return;
-          setConfirmOpen(open);
-          if (!open) setError(null);
-        }}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {enabled
-                ? gt("Stop running as a background service?")
-                : gt("Run as a background service?")}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {enabled
-                ? gt(
-                    "T3 Code will uninstall the background service and restart with an embedded server. Closing the window will stop running agents and remote connections again.",
-                  )
-                : gt(
-                    "T3 Code will install a user background service and restart to attach to it. Afterward, closing the desktop window frees window memory while agents and remote connections keep running.",
-                  )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {error ? <p className="px-6 pb-4 text-sm text-destructive">{error}</p> : null}
-          <AlertDialogFooter>
-            <AlertDialogClose disabled={isUpdating} render={<Button variant="outline" />}>
-              <T>Cancel</T>
-            </AlertDialogClose>
-            <Button
-              variant={enabled ? "destructive" : "default"}
-              disabled={isUpdating}
-              onClick={() => void applyChange()}
-            >
-              {isUpdating ? (
-                <>
-                  <Spinner size="sm" />
-                  <T>Restarting…</T>
-                </>
-              ) : enabled ? (
-                gt("Uninstall and restart")
-              ) : (
-                gt("Install and restart")
-              )}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
-    </>
+    <SettingsRow
+      {...searchableSetting("background-service")}
+      description={description}
+      control={
+        <Switch
+          checked={enabled}
+          disabled={isUpdating || managedExternally}
+          onCheckedChange={(checked) => void handleCheckedChange(Boolean(checked))}
+          aria-label={gt("Background service")}
+        />
+      }
+    />
   );
 }

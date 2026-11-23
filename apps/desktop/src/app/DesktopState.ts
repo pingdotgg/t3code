@@ -12,11 +12,14 @@ export type PrimaryBackendStartup =
   | { readonly _tag: "Ready" }
   | ({ readonly _tag: "Failing" } & BackendStartupFailure);
 
+export type DesktopQuitMode = "quit" | "relaunch" | "update";
+
 export class DesktopState extends Context.Service<
   DesktopState,
   {
     readonly backendReady: Ref.Ref<boolean>;
     readonly quitting: Ref.Ref<boolean>;
+    readonly quitMode: Ref.Ref<DesktopQuitMode>;
     // Set by DesktopUpdates.configure, which runs before the first backend start.
     readonly canInstallUpdates: Ref.Ref<boolean>;
     readonly primaryBackendStartup: SubscriptionRef.SubscriptionRef<PrimaryBackendStartup>;
@@ -26,6 +29,7 @@ export class DesktopState extends Context.Service<
 const make = Effect.all({
   backendReady: Ref.make(false),
   quitting: Ref.make(false),
+  quitMode: Ref.make<DesktopQuitMode>("quit"),
   canInstallUpdates: Ref.make(false),
   primaryBackendStartup: SubscriptionRef.make<PrimaryBackendStartup>({ _tag: "Starting" }),
 });

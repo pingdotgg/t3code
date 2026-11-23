@@ -14,6 +14,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopBackgroundService from "./DesktopBackgroundService.ts";
 
 const textEncoder = new TextEncoder();
@@ -63,6 +64,7 @@ const withServiceTest = <A, E>(
   options: {
     readonly httpStatus?: number;
     readonly spawner?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+    readonly backgroundServiceEnabled?: boolean;
   },
   run: (input: {
     readonly home: string;
@@ -104,10 +106,15 @@ const withServiceTest = <A, E>(
         ),
       ),
     );
+    const settingsLayer = DesktopAppSettings.layerTest({
+      ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+      backgroundServiceEnabled: options.backgroundServiceEnabled ?? false,
+    });
     const serviceLayer = DesktopBackgroundService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           envLayer,
+          settingsLayer,
           NodeServices.layer,
           httpLayer,
           options.spawner ?? makeMockSpawner(() => ({ exitCode: 0, stdout: "" })).layer,
@@ -149,32 +156,15 @@ describe("DesktopBackgroundService", () => {
             "http://127.0.0.1:3773/",
           );
           assert.strictEqual(Option.getOrThrow(attached).label, "Windows");
-          assert.isTrue(Option.isSome(yield* service.attached));
-        } finally {
-          lock.close();
-        }
-      }),
-    ),
-  );
-
-  it.effect("does not attach when the owner is not serviceManaged", () =>
-    withServiceTest({}, ({ userdata, service }) =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.writeFileString(
-          `${userdata}/server-runtime.json`,
-          JSON.stringify({
-            version: 1,
-            pid: process.pid,
-            port: 3773,
-            origin: "http://127.0.0.1:3773",
-            startedAt: "2026-11-23T00:00:00.000Z",
-          }),
-        );
-        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
-        lock.exec("BEGIN EXCLUSIVE;");
-        try {
-          assert.isTrue(Option.isNone(yield* service.tryAttach));
+          assert.isFalse(Option.getOrThrow(attached).managedByDesktop);
+          assert.deepStrictEqual(yield* service.status, {
+            supported: true,
+            enabled: true,
+            running: true,
+            attached: true,
+            externalService: true,
+            version: "0.1.11",
+          });
         } finally {
           lock.close();
         }
@@ -183,46 +173,98 @@ describe("DesktopBackgroundService", () => {
   );
 
   it.effect(
-    "mints an administrative bearer token and reads service status via the bundled CLI",
-    () => {
-      const spawner = makeMockSpawner((args) => {
-        if (args.includes("issue")) {
-          return { exitCode: 0, stdout: "service-bearer-token\n" };
-        }
-        if (args.includes("status")) {
-          return {
-            exitCode: 0,
-            stdout: JSON.stringify({
-              service: {
-                supported: true,
-                installed: true,
-                installedVersion: "0.1.11",
-                otherBaseDir: null,
-              },
+    "attaches as desktop-managed when a desktopBackgroundManaged server holds the ownership lock",
+    () =>
+      withServiceTest({ backgroundServiceEnabled: true }, ({ userdata, service }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
+            `${userdata}/server-runtime.json`,
+            JSON.stringify({
+              version: 1,
+              pid: process.pid,
+              port: 3773,
+              origin: "http://127.0.0.1:3773",
+              startedAt: "2026-11-23T00:00:00.000Z",
+              desktopBackgroundManaged: true,
+              serverVersion: "0.1.11",
             }),
-          };
-        }
-        return { exitCode: 0, stdout: "" };
-      });
-      return withServiceTest({ spawner: spawner.layer }, ({ service }) =>
+          );
+          const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+          lock.exec("BEGIN EXCLUSIVE;");
+          try {
+            const attached = yield* service.tryAttach;
+            assert.isTrue(Option.isSome(attached));
+            assert.isTrue(Option.getOrThrow(attached).managedByDesktop);
+            assert.deepStrictEqual(yield* service.status, {
+              supported: true,
+              enabled: true,
+              running: true,
+              attached: true,
+              externalService: false,
+              version: "0.1.11",
+            });
+          } finally {
+            lock.close();
+          }
+        }),
+      ),
+  );
+
+  it.effect(
+    "does not attach when the owner is neither serviceManaged nor desktopBackgroundManaged",
+    () =>
+      withServiceTest({}, ({ userdata, service }) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
+            `${userdata}/server-runtime.json`,
+            JSON.stringify({
+              version: 1,
+              pid: process.pid,
+              port: 3773,
+              origin: "http://127.0.0.1:3773",
+              startedAt: "2026-11-23T00:00:00.000Z",
+            }),
+          );
+          const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+          lock.exec("BEGIN EXCLUSIVE;");
+          try {
+            assert.isTrue(Option.isNone(yield* service.tryAttach));
+          } finally {
+            lock.close();
+          }
+        }),
+      ),
+  );
+
+  it.effect("mints an administrative bearer token and reads instant settings status", () => {
+    const spawner = makeMockSpawner((args) => {
+      if (args.includes("issue")) {
+        return { exitCode: 0, stdout: "service-bearer-token\n" };
+      }
+      return { exitCode: 0, stdout: "" };
+    });
+    return withServiceTest(
+      { spawner: spawner.layer, backgroundServiceEnabled: true },
+      ({ service }) =>
         Effect.gen(function* () {
           const token = yield* service.issueBearerToken;
           assert.strictEqual(token, "service-bearer-token");
           const status = yield* service.status;
           assert.deepStrictEqual(status, {
             supported: true,
-            installed: true,
+            enabled: true,
             running: false,
             attached: false,
-            otherBaseDir: null,
-            version: "0.1.11",
+            externalService: false,
+            version: null,
           });
           const issueCall = spawner.calls.find((call) => call.includes("issue"));
           assert.isDefined(issueCall);
           assert.include(issueCall ?? [], "relay:configure");
           assert.include(issueCall ?? [], "--token-only");
         }),
-      );
-    },
-  );
+    );
+  });
 });

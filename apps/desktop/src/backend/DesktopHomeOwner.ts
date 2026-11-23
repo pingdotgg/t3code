@@ -19,6 +19,7 @@ const HomeOwnerRuntimeState = Schema.Struct({
   port: Schema.Int,
   origin: Schema.optional(Schema.String),
   serviceManaged: Schema.optional(Schema.Boolean),
+  desktopBackgroundManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
 });
 export type HomeOwner = typeof HomeOwnerRuntimeState.Type;

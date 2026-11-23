@@ -22,6 +22,7 @@ import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts"
 import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
+import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -1011,10 +1012,14 @@ const layerMakeServer = Layer.unwrap(
         }
 
         const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
+        const desktopBackgroundManaged = yield* Config.Boolean(
+          "T3CODE_DESKTOP_BACKGROUND_SERVER",
+        ).pipe(Config.withDefault(false));
         const state = yield* makePersistedServerRuntimeState({
           config,
           port: address.port,
           serviceManaged: launcher.managed,
+          desktopBackgroundManaged,
           managedPolicy: yield* ManagedPolicy.loadedPolicy(yield* ManagedPolicy.ManagedPolicy),
         });
         yield* ownership

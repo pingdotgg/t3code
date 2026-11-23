@@ -30,8 +30,8 @@ const unattachedBackgroundServiceLayer = Layer.succeed(
     clearAttached: Effect.void,
     issueBearerToken: Effect.die("unexpected background service token mint"),
     status: Effect.die("unexpected status"),
-    install: Effect.die("unexpected install"),
-    uninstall: Effect.die("unexpected uninstall"),
+    startDetached: () => Effect.die("unexpected startDetached"),
+    stopDetached: () => Effect.die("unexpected stopDetached"),
   },
 );
 
@@ -325,6 +325,7 @@ describe("DesktopLocalEnvironmentAuth", () => {
             httpBaseUrl: new URL("http://127.0.0.1:3773"),
             serverVersion: "0.1.11",
             label: "Windows",
+            managedByDesktop: true,
           }),
           tryAttach: Effect.succeedNone,
           clearAttached: Effect.void,
@@ -332,8 +333,8 @@ describe("DesktopLocalEnvironmentAuth", () => {
             Effect.as("attached-service-token"),
           ),
           status: Effect.die("unexpected status"),
-          install: Effect.die("unexpected install"),
-          uninstall: Effect.die("unexpected uninstall"),
+          startDetached: () => Effect.die("unexpected startDetached"),
+          stopDetached: () => Effect.die("unexpected stopDetached"),
         },
       );
       const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(

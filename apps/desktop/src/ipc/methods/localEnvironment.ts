@@ -1,15 +1,11 @@
 import { DesktopBackgroundServiceStateSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import * as DesktopBackgroundService from "../../backend/DesktopBackgroundService.ts";
-import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
-import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
-import * as DesktopHomeOwner from "../../backend/DesktopHomeOwner.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod, makeSyncIpcMethod } from "../DesktopIpc.ts";
@@ -67,41 +63,10 @@ export const enableBackgroundService = makeIpcMethod({
   payload: Schema.Void,
   result: DesktopBackgroundServiceStateSchema,
   handler: Effect.fn("desktop.ipc.localEnvironment.enableBackgroundService")(function* () {
-    const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
     const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
-    const pool = yield* DesktopBackendPool.DesktopBackendPool;
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-
-    const current = yield* backgroundService.status;
-    if (!current.supported) {
-      return yield* new DesktopBackgroundService.DesktopBackgroundServiceError({
-        operation: "install",
-        message: "Background service is not supported on this machine.",
-      });
-    }
-    if (current.otherBaseDir !== null) {
-      return yield* new DesktopBackgroundService.DesktopBackgroundServiceError({
-        operation: "install",
-        message: `A T3 Code background service is already installed for ${current.otherBaseDir}.`,
-      });
-    }
-
-    const wasAttached = Option.isSome(yield* backgroundService.attached);
-    const primary = yield* pool.primary;
-    let stoppedEmbeddedBackend = false;
-    if (!wasAttached && (yield* appSettings.get).localEnvironmentEnabled) {
-      yield* primary.stop({ timeout: DesktopBackendManager.BACKEND_QUIT_STOP_TIMEOUT });
-      stoppedEmbeddedBackend = true;
-      yield* DesktopHomeOwner.awaitHomeOwnershipRelease();
-    }
-
-    yield* backgroundService.install.pipe(
-      Effect.tapError(() => (stoppedEmbeddedBackend ? primary.start : Effect.void)),
-    );
-    yield* appSettings.setLocalEnvironmentEnabled(true);
-    const next = yield* backgroundService.status;
-    yield* lifecycle.relaunch("backgroundService=enabled");
-    return next;
+    const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
+    yield* appSettings.setBackgroundServiceEnabled(true);
+    return yield* backgroundService.status;
   }),
 });
 
@@ -110,12 +75,9 @@ export const disableBackgroundService = makeIpcMethod({
   payload: Schema.Void,
   result: DesktopBackgroundServiceStateSchema,
   handler: Effect.fn("desktop.ipc.localEnvironment.disableBackgroundService")(function* () {
+    const appSettings = yield* DesktopAppSettings.DesktopAppSettings;
     const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-    yield* backgroundService.uninstall;
-    yield* backgroundService.clearAttached;
-    const next = yield* backgroundService.status;
-    yield* lifecycle.relaunch("backgroundService=disabled");
-    return next;
+    yield* appSettings.setBackgroundServiceEnabled(false);
+    return yield* backgroundService.status;
   }),
 });

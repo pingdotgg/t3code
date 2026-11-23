@@ -355,10 +355,10 @@ export type DesktopCliCommandState = typeof DesktopCliCommandStateSchema.Type;
 
 export const DesktopBackgroundServiceStateSchema = Schema.Struct({
   supported: Schema.Boolean,
-  installed: Schema.Boolean,
+  enabled: Schema.Boolean,
   running: Schema.Boolean,
   attached: Schema.Boolean,
-  otherBaseDir: Schema.NullOr(Schema.String),
+  externalService: Schema.Boolean,
   version: Schema.NullOr(Schema.String),
 });
 export type DesktopBackgroundServiceState = typeof DesktopBackgroundServiceStateSchema.Type;
