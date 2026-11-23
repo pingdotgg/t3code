@@ -20,7 +20,10 @@ use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
-use conn_state::{LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadShell, TreeRow};
+use conn_state::{
+    LayoutState, ProjectShell, SETTLED_SHELF_ROW, ShellState, ThreadShell, TreeRow,
+    search_highlight_index,
+};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
@@ -93,6 +96,7 @@ pub(crate) fn render_thread_sidebar(
     drafts: &DraftSidebar<'_>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
+    search_highlight: Option<&str>,
     renaming_thread_id: Option<&str>,
     rename_input: &Entity<InputState>,
     filter_menu_open: bool,
@@ -236,10 +240,11 @@ pub(crate) fn render_thread_sidebar(
             ),
         );
     if has_query {
-        let search_to_clear = search_input.clone();
         search_box = search_box.child(
             div()
                 .id("sidebar-search-clear")
+                .test_support()
+                .a11y_button("sidebar.search.clear", "Clear thread search")
                 .flex()
                 .items_center()
                 .justify_center()
@@ -248,11 +253,10 @@ pub(crate) fn render_thread_sidebar(
                 .rounded(px(4.0))
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover_bg))
-                .on_click(move |_, window, cx| {
-                    search_to_clear.update(cx, |state, cx| {
-                        state.set_value(String::new(), window, cx);
-                    });
-                })
+                .on_click(cx.listener(|app, _, window, cx| {
+                    // Conn gives the keyboard back to the search box (`onClearSearch`, `focus()`).
+                    app.clear_sidebar_search(true, window, cx);
+                }))
                 .child(icons::concept("superhero/close.svg", 12.0, muted)),
         );
     }
@@ -270,10 +274,6 @@ pub(crate) fn render_thread_sidebar(
 
     // Flat list of threads, scoped to `active_workspace` (either an Orbit workspace or a
     // direct project filter) and live sidebar search when set.
-    let thread_in_scope = |thread: &ThreadShell| {
-        project_in_scope(shell, workspaces, active_workspace, &thread.project_id)
-    };
-
     let now_secs = current_unix_secs();
     let selected_id = layout.selected_thread_id.as_deref();
     let row_flags = |thread: &ThreadShell| {
@@ -282,18 +282,26 @@ pub(crate) fn render_thread_sidebar(
             renaming_thread_id == Some(thread.id.as_str()),
         )
     };
-    let visible_threads: Vec<&ThreadShell> = shell
-        .top_level_active_threads()
-        .filter(|thread| thread_in_scope(thread))
-        .filter(|thread| {
-            thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
-        })
-        .collect();
-    // Pinned (`pinOrderKey` order) above a subtle divider, then Active.
-    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = visible_threads
-        .into_iter()
-        .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
-    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
+    let SidebarThreads {
+        pinned,
+        active,
+        settled: settled_threads,
+    } = sidebar_threads(shell, workspaces, active_workspace, &search_query);
+    // Search lists its results flat, in one list the arrow keys walk (`SidebarSearchResultRow`);
+    // the highlighted one is what `Enter` opens.
+    let result_ids: Vec<String> = if has_query {
+        pinned
+            .iter()
+            .chain(&active)
+            .chain(&settled_threads)
+            .map(|thread| thread.id.clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let highlighted_id = search_highlight_index(&result_ids, search_highlight)
+        .and_then(|at| result_ids.get(at).map(String::as_str));
+    let highlight_of = |thread: &ThreadShell| has_query.then(|| highlighted_id == Some(&thread.id));
 
     let mut thread_rows: Vec<gpui_kit::AnyElement> =
         Vec::with_capacity(pinned.len() + active.len() + drafts.rows.len() + 2);
@@ -317,12 +325,13 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            highlight: highlight_of(thread),
             focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx).into_any_element());
     }
-    if !pinned.is_empty() {
+    if !pinned.is_empty() && !has_query {
         // `pinned-divider`: a hairline between the Pinned and Active groups.
         thread_rows.push(
             div()
@@ -349,30 +358,61 @@ pub(crate) fn render_thread_sidebar(
             hover_open: hover.open_for == Some(thread.id.as_str()),
             hover_rect: hover.rect,
             environment_label: hover.environment_label,
+            highlight: highlight_of(thread),
             focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx).into_any_element());
     }
 
+    if has_query {
+        for (idx, thread) in settled_threads.iter().enumerate() {
+            let (selected, is_renaming) = row_flags(thread);
+            let row = RowCtx {
+                row_key: 100_000 + idx,
+                thread,
+                project: shell.project(&thread.project_id),
+                selected,
+                is_renaming,
+                unsent_draft: drafts.unsent_threads.contains(&thread.id),
+                rename_input,
+                now_secs,
+                sidebar_width: layout.sidebar_width,
+                hover_open: hover.open_for == Some(thread.id.as_str()),
+                hover_rect: hover.rect,
+                environment_label: hover.environment_label,
+                highlight: highlight_of(thread),
+                focus: tree.row(TreeRow::leaf(thread.id.clone()), cx),
+                tokens,
+            };
+            thread_rows.push(render_settled_row(&row, cx).into_any_element());
+        }
+    }
+
     // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
-    // (Conn shows "Settled 0"), pushed to the bottom of the list with `mt-auto`.
-    let settled_threads: Vec<&ThreadShell> = shell
-        .top_level_settled_threads()
-        .into_iter()
-        .filter(|thread| thread_in_scope(thread))
-        .filter(|thread| {
-            thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
-        })
-        .collect();
+    // (Conn shows "Settled 0"), pushed to the bottom of the list with `mt-auto`. Search hides it
+    // and lists the settled threads that match among the results.
     let settled_count = settled_threads.len();
     let settled_expanded = collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY);
 
-    let no_matches = has_query && thread_rows.is_empty() && settled_count == 0;
+    let no_matches = has_query && result_ids.is_empty();
 
     let mut list_scroll = div()
         .id("sidebar-thread-scroll")
-        .a11y(gpui_kit::Role::List, "sidebar.thread-list", "Threads")
+        .test_support()
+        .a11y(
+            if has_query {
+                gpui_kit::Role::ListBox
+            } else {
+                gpui_kit::Role::List
+            },
+            "sidebar.thread-list",
+            if has_query {
+                "Thread search results"
+            } else {
+                "Threads"
+            },
+        )
         .track_scroll(tree.scroll())
         .flex()
         .flex_col()
@@ -394,11 +434,11 @@ pub(crate) fn render_thread_sidebar(
                 .text_size(px(geometry.ui_font_size_px))
                 .line_height(px(geometry.ui_line_height_px))
                 .text_color(muted)
-                .child("No matching threads"),
+                .child("No threads found"),
         );
     }
 
-    {
+    if !has_query {
         let header_focus = tree.row(TreeRow::group(SETTLED_SHELF_ROW, settled_expanded), cx);
         let header_ring = focus_ring(tokens);
         let settled_header = div()
@@ -477,6 +517,7 @@ pub(crate) fn render_thread_sidebar(
                 hover_open: hover.open_for == Some(thread.id.as_str()),
                 hover_rect: hover.rect,
                 environment_label: hover.environment_label,
+                highlight: None,
                 focus: tree.row(TreeRow::child(thread.id.clone(), SETTLED_SHELF_ROW), cx),
                 tokens,
             };
@@ -869,9 +910,33 @@ struct RowCtx<'a> {
     /// This thread's hover flyout is open.
     hover_open: bool,
     environment_label: Option<&'a str>,
+    /// `Some` for a search result, and whether the arrow keys have it highlighted (`Enter` opens
+    /// it). A highlighted result looks like the open thread.
+    highlight: Option<bool>,
     /// What the row needs to take the keyboard.
     focus: RowFocus,
     tokens: &'a Tokens,
+}
+
+impl RowCtx<'_> {
+    /// The row wears the open thread's look.
+    fn lit(&self) -> bool {
+        self.selected || self.highlight == Some(true)
+    }
+
+    /// A search result is a listbox option; any other row is a list item.
+    fn role(&self) -> gpui_kit::Role {
+        if self.highlight.is_some() {
+            gpui_kit::Role::ListBoxOption
+        } else {
+            gpui_kit::Role::ListItem
+        }
+    }
+
+    /// `aria-selected`: the highlighted result of a search, else the open thread.
+    fn aria_selected(&self) -> bool {
+        self.highlight.unwrap_or(self.selected)
+    }
 }
 
 /// Sidebar hover flyout inputs from the app.
@@ -920,7 +985,14 @@ fn attach_row_interactions(
     let rename_title = thread.title.clone();
     let menu_id = thread.id.clone();
     let hover_id = thread.id.clone();
+    let highlight_id = thread.id.clone();
     let row = row
+        // The pointer moves the search highlight along, so there is one (`onMouseMove`).
+        .when(ctx.highlight.is_some(), |row| {
+            row.on_mouse_move(cx.listener(move |app, _, _, cx| {
+                app.highlight_search_result(&highlight_id, cx);
+            }))
+        })
         .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
             app.thread_hover_changed(&hover_id, *hovered, cx);
         }))
@@ -948,7 +1020,7 @@ fn attach_row_interactions(
                 app.start_thread_rename(rename_id.clone(), rename_title.clone(), window, cx);
                 return;
             }
-            app.select_thread(select_id.clone(), cx);
+            app.open_thread_row(&select_id, window, cx);
         }),
     )
     .on_mouse_down(
@@ -1049,7 +1121,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let hover_bg = hsla(tokens.sidebar_row_hover);
     let active_bg = hsla(tokens.sidebar_row_active);
     let status = resolve_row_status(thread);
-    let recede = should_recede(status, row.selected);
+    let recede = should_recede(status, row.lit());
     let is_pinned = thread.pinned_at.as_ref().is_some_and(Option::is_some);
     let regenerating = thread
         .title_regeneration
@@ -1071,7 +1143,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
 
     if let Some(project) = row.project {
         let (dot_ring, dot_hover_ring) =
-            crate::panels::chrome::sidebar_status_dot_rings(tokens, row.selected);
+            crate::panels::chrome::sidebar_status_dot_rings(tokens, row.lit());
         let favicon_badge = div()
             .id(("thread-favicon-badge", row.row_key))
             .relative()
@@ -1253,11 +1325,11 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let mut card = div()
         .id(("thread-row", row.row_key))
         .a11y(
-            gpui_kit::Role::ListItem,
+            row.role(),
             SharedString::from(format!("sidebar.thread.{}", thread.id)),
             thread.title.clone(),
         )
-        .aria_selected(row.selected)
+        .aria_selected(row.aria_selected())
         .group(group)
         .flex()
         .flex_col()
@@ -1274,7 +1346,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
 
     // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
     // light mode adds `ring-1 ring-inset ring-sidebar-border/70` inside that top border.
-    if row.selected {
+    if row.lit() {
         card = card
             .bg(active_bg)
             .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
@@ -1351,7 +1423,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .text_size(px(TITLE_FONT_SIZE_PX))
             .line_height(px(TITLE_LINE_HEIGHT_PX))
             .font_weight(gpui_kit::FontWeight::NORMAL)
-            .text_color(if row.selected { fg } else { secondary })
+            .text_color(if row.lit() { fg } else { secondary })
             .group_hover(group.clone(), move |s| s.text_color(fg))
             .when(
                 thread
@@ -1419,11 +1491,11 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     let mut slim = div()
         .id(("thread-row", row.row_key))
         .a11y(
-            gpui_kit::Role::ListItem,
+            row.role(),
             SharedString::from(format!("sidebar.thread.{}", thread.id)),
             thread.title.clone(),
         )
-        .aria_selected(row.selected)
+        .aria_selected(row.aria_selected())
         .group(group)
         .flex()
         .flex_row()
@@ -1441,7 +1513,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .children(unsent_discard)
         .child(time_slot);
     slim = attach_row_keyboard(attach_row_interactions(slim, row, cx), row, cx);
-    if row.selected {
+    if row.lit() {
         slim = slim
             .bg(active_bg)
             .border_color(hsla(tokens.shell_divider_raised))
@@ -1710,6 +1782,45 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + i64::from(day) - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
+}
+
+/// The threads the sidebar lists for `query`, each group in display order.
+pub(crate) struct SidebarThreads<'a> {
+    pub(crate) pinned: Vec<&'a ThreadShell>,
+    pub(crate) active: Vec<&'a ThreadShell>,
+    /// Every settled thread, whether the shelf shows it or not.
+    pub(crate) settled: Vec<&'a ThreadShell>,
+}
+
+/// The pinned, active and settled threads of the open scope that match `query` (every thread
+/// for an empty one). One place decides it, for the list, the search results and traversal.
+#[must_use]
+pub(crate) fn sidebar_threads<'a>(
+    shell: &'a ShellState,
+    workspaces: &[OrbitWorkspace],
+    active_workspace: Option<&str>,
+    query: &str,
+) -> SidebarThreads<'a> {
+    let listed = |thread: &&ThreadShell| {
+        project_in_scope(shell, workspaces, active_workspace, &thread.project_id)
+            && thread_matches_search(thread, shell.project(&thread.project_id), query)
+    };
+    // Pinned (`pinOrderKey` order) above a subtle divider, then Active.
+    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
+        .top_level_active_threads()
+        .filter(listed)
+        .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
+    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
+    let settled = shell
+        .top_level_settled_threads()
+        .into_iter()
+        .filter(listed)
+        .collect();
+    SidebarThreads {
+        pinned,
+        active,
+        settled,
+    }
 }
 
 /// Matches a thread against the sidebar search query: every whitespace-separated term must appear

@@ -538,6 +538,87 @@ pub fn settle_thread(
     }
 }
 
+/// `thread.unsettle` for the undo of a settle: `restore_unsettled_at` puts the Active anchor the
+/// settle cleared back instead of moving the thread to the top (`None` leaves it to the server,
+/// `Some(None)` clears it).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn unsettle_thread_restoring(
+    thread_id: &str,
+    restore_unsettled_at: Option<Option<&str>>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut command = json!({
+        "type": "thread.unsettle",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "reason": "user",
+    });
+    if let Some(restore) = restore_unsettled_at {
+        command["restoreUnsettledAt"] = json!(restore);
+    }
+    conn_contract::from_json(command)
+}
+
+/// `thread.pin` in a given place among the pinned threads (`orderKey`), for the undo of a settle.
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn pin_thread_at(
+    thread_id: &str,
+    order_key: Option<&str>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut command = json!({
+        "type": "thread.pin",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+    });
+    if let Some(order_key) = order_key {
+        command["orderKey"] = json!(order_key);
+    }
+    conn_contract::from_json(command)
+}
+
+/// `thread.active.reorder`: put an active thread in a manual place (`orderKey`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn reorder_active_thread(
+    thread_id: &str,
+    order_key: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.active.reorder",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "orderKey": order_key,
+    }))
+}
+
+/// `thread.snooze`: hide a thread until `snoozed_until` (an ISO-8601 time in the future).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn snooze_thread(
+    thread_id: &str,
+    snoozed_until: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.snooze",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "snoozedUntil": snoozed_until,
+    }))
+}
+
 /// `thread.metadata.update`: rename `thread_id` to `title`.
 ///
 /// # Errors
@@ -766,6 +847,24 @@ mod tests {
             "thread.runtime-mode.set (approval-required) decodes"
         );
         assert!(settle_thread("t1", true).is_ok(), "thread.settle decodes");
+        assert!(
+            unsettle_thread_restoring("t1", None).is_ok()
+                && unsettle_thread_restoring("t1", Some(None)).is_ok()
+                && unsettle_thread_restoring("t1", Some(Some("2026-01-02T00:00:00Z"))).is_ok(),
+            "thread.unsettle with restoreUnsettledAt decodes"
+        );
+        assert!(
+            pin_thread_at("t1", None).is_ok() && pin_thread_at("t1", Some("a0")).is_ok(),
+            "thread.pin with an order key decodes"
+        );
+        assert!(
+            reorder_active_thread("t1", "m1").is_ok(),
+            "thread.active.reorder decodes"
+        );
+        assert!(
+            snooze_thread("t1", "2026-01-03T00:00:00Z").is_ok(),
+            "thread.snooze decodes"
+        );
         assert!(
             settle_thread("t1", false).is_ok(),
             "thread.unsettle decodes"

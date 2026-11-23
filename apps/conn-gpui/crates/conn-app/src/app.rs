@@ -69,6 +69,31 @@ enum DiscardedDraft {
     },
 }
 
+/// What a thread was before a settle, for the undo.
+fn settle_facts(thread: &conn_state::ThreadShell) -> conn_state::SettledThreadFacts<'_> {
+    fn text(value: &Option<Option<String>>) -> Option<&str> {
+        value.as_ref().and_then(Option::as_deref)
+    }
+    conn_state::SettledThreadFacts {
+        pinned: text(&thread.pinned_at).is_some(),
+        pin_order_key: text(&thread.pin_order_key),
+        active_order_key: text(&thread.active_order_key),
+        unsettled_at: text(&thread.unsettled_at),
+        snoozed_until: text(&thread.snoozed_until),
+    }
+}
+
+/// What `Undo` and `⌘Z` bring back.
+enum UndoEntry {
+    /// A discarded draft or thread input.
+    Draft(DiscardedDraft),
+    /// A settled thread, and the commands that put it back as it was.
+    Settled {
+        thread_id: String,
+        plan: Vec<conn_state::SettleUndoStep>,
+    },
+}
+
 /// `orchestration.launchThread` `workspaceStrategy` for a draft.
 fn draft_workspace_strategy(draft: &DraftThreadState) -> serde_json::Value {
     if let Some(path) = &draft.worktree_path {
@@ -118,8 +143,11 @@ pub(crate) struct ConnApp {
     /// The new-thread drafts behind the open one, and which draft each project opens. Their text
     /// and attachments wait in the composer's draft store, under the draft's id.
     drafts: DraftBook,
-    /// The discarded drafts `Undo` and `⌘Z` bring back, until their notice expires.
-    discards: conn_state::DiscardUndo<DiscardedDraft>,
+    /// The discards and settles `Undo` and `⌘Z` bring back, until their notice expires.
+    discards: conn_state::DiscardUndo<UndoEntry>,
+    /// The search result the arrow keys highlighted, by thread id (`searchHighlightKey`); the
+    /// first result while none, or when its thread left the results.
+    sidebar_search_highlight: Option<String>,
     /// Why the last undo could not put the input back, until its notice expires.
     discard_failure: Option<&'static str>,
     discard_failure_generation: u64,
@@ -423,8 +451,10 @@ impl ConnApp {
         });
         let sidebar_search_sub = cx.subscribe(
             &sidebar_search_input,
-            |_app, _, event: &gpui_kit::component::input::InputEvent, cx| {
+            |app, _, event: &gpui_kit::component::input::InputEvent, cx| {
                 if matches!(event, gpui_kit::component::input::InputEvent::Change) {
+                    // A new query starts at the top (`onSearchQueryChange`).
+                    app.sidebar_search_highlight = None;
                     cx.notify();
                 }
             },
@@ -474,6 +504,7 @@ impl ConnApp {
             scratch_project_id: None,
             drafts: DraftBook::default(),
             discards: conn_state::DiscardUndo::default(),
+            sidebar_search_highlight: None,
             discard_failure: None,
             discard_failure_generation: 0,
             undo_focus: cx.focus_handle().tab_index(0).tab_stop(true),
@@ -3831,6 +3862,14 @@ impl ConnApp {
         let Ok(cmd) = crate::commands::settle_thread(&thread_id, settled) else {
             return;
         };
+        // The undo restores the thread as it is now (`planThreadUndo("settle", thread)`); a
+        // settled thread that is un-settled by hand has nothing left to undo.
+        let undo_plan = settled.then(|| {
+            conn_state::plan_settle_undo(self.shell.find_thread(&thread_id).map(settle_facts))
+        });
+        if !settled {
+            self.forget_settle_undo(&thread_id);
+        }
         // `planForwardNavigation`: settling the open thread moves on to the next active one.
         let advance = settled
             && self.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
@@ -3838,14 +3877,17 @@ impl ConnApp {
         cx.spawn(
             async move |this, cx| match connection.dispatch_command(cmd).await {
                 Ok(_) => {
-                    if advance {
-                        let _ = this.update(cx, |app, cx| {
-                            if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
-                            {
-                                app.navigate_forward_from(&thread_id, cx);
-                            }
-                        });
-                    }
+                    let _ = this.update(cx, |app, cx| {
+                        if advance
+                            && app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
+                        {
+                            app.navigate_forward_from(&thread_id, cx);
+                        }
+                        // Only a settle the server took shows the notice (`showThreadUndoNotice`).
+                        if let Some(plan) = undo_plan {
+                            app.offer_settle_undo(thread_id, plan, cx);
+                        }
+                    });
                 }
                 Err(e) => eprintln!("settle: dispatchCommand failed: {e}"),
             },
@@ -3925,6 +3967,10 @@ impl ConnApp {
         pinned: bool,
         cx: &mut Context<'_, Self>,
     ) {
+        // Pinning clears what a settle undo would restore (`sendPin` invalidates it).
+        if pinned {
+            self.forget_settle_undo(&thread_id);
+        }
         self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, pinned), cx);
     }
 
@@ -4135,6 +4181,7 @@ impl ConnApp {
                 if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
                     app.navigate_forward_from(&thread_id, cx);
                 }
+                app.forget_settle_undo(&thread_id);
                 // The thread's unsent input goes with it (`clearComposerDraftForThread`).
                 let deleted = thread_id.clone();
                 app.dispatch_thread_command_then(
@@ -6228,6 +6275,10 @@ impl Render for ConnApp {
                             event.keystroke.modifiers, event.keystroke.key
                         );
                     }
+                    if app.thread_traversal_key_down(event, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if app.handle_add_menu_key(event, cx) {
                         cx.stop_propagation();
                         return;
@@ -6311,7 +6362,7 @@ impl Render for ConnApp {
             undo: self
                 .discard_failure
                 .map(UndoNotice::Failed)
-                .or_else(|| self.discards.notice().map(UndoNotice::Discarded)),
+                .or_else(|| self.discards.notice().map(UndoNotice::Undoable)),
             undo_focus: &self.undo_focus,
             unsent_threads: self.sidebar_unsent_threads(cx),
         };
@@ -6337,6 +6388,7 @@ impl Render for ConnApp {
                     &draft_sidebar,
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
+                    self.sidebar_search_highlight.as_deref(),
                     self.renaming_thread_id
                         .as_deref()
                         .filter(|_| !self.rename_in_header),

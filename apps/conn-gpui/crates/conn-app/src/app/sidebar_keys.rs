@@ -1,19 +1,25 @@
 //! The keyboard behaviour of the thread sidebar, as Conn has it: arrow keys between rows
 //! (`lib/sidebarTree.ts`), arrow keys in the thread and draft menus (`contextMenuFallback.ts`),
-//! and `⌘Z` for discarded drafts (`hooks/showThreadUndoNotice.ts`, `lib/discardComposerDraft.ts`).
-//! What each key does comes from `conn_state::sidebar_nav` and `conn_state::discard_undo`; this
-//! file applies it to the app.
+//! the search box working its results (`Sidebar.tsx` `handleThreadSearchKeyDown`), `⌘⇧[` and
+//! `⌘⇧]` between threads (`thread.previous`, `thread.next`), and `⌘Z` for discarded drafts and
+//! settled threads (`hooks/showThreadUndoNotice.ts`, `lib/discardComposerDraft.ts`,
+//! `hooks/useThreadActions.ts`). What each key does comes from `conn_state::sidebar_nav` and
+//! `conn_state::discard_undo`; this file applies it to the app.
 
 use conn_state::{
-    DISCARD_UNDO_SECS, KeyMods, MenuKey, MenuNavItem, MenuStep, RowKey, RowKind, TreeStep,
-    UNDO_FAILED_NEW_CONTENT, UndoShortcutScene, draft_has_content, first_enabled, is_modifier_key,
-    is_undo_key, menu_key, menu_step, row_key, row_kind, tree_key, tree_step,
-    undo_shortcut_applies,
+    DISCARD_UNDO_SECS, KeyMods, MenuKey, MenuNavItem, MenuStep, RowKey, RowKind, SearchKey,
+    SettleUndoStep, ThreadStep, TreeStep, UNDO_FAILED_NEW_CONTENT, UNDO_FAILED_SETTLE, UndoAction,
+    UndoShortcutScene, adjacent_thread, draft_has_content, first_enabled, is_modifier_key,
+    is_undo_key, menu_key, menu_step, row_key, row_kind, search_highlight_index, search_key,
+    search_step, thread_traversal_key, traversal_order, tree_key, tree_step, undo_shortcut_applies,
 };
-use gpui_kit::{Context, KeyDownEvent, KeystrokeEvent, Modifiers, Window};
+use gpui_kit::{Context, Focusable as _, KeyDownEvent, KeystrokeEvent, Modifiers, Window};
 
-use super::{ConnApp, DiscardedDraft};
-use crate::sidebar::thread_list::SETTLED_SHELF_TOGGLE_KEY;
+use super::{ConnApp, DiscardedDraft, UndoEntry};
+use crate::sidebar::thread_list::{
+    SETTLED_SHELF_TOGGLE_KEY, SidebarThreads, current_unix_secs, parse_iso8601_unix_secs,
+    sidebar_threads,
+};
 use crate::sidebar::thread_menu::{MenuCursor, ThreadMenuItem};
 
 fn key_mods(modifiers: &Modifiers) -> KeyMods {
@@ -23,6 +29,35 @@ fn key_mods(modifiers: &Modifiers) -> KeyMods {
         control: modifiers.control,
         platform: modifiers.platform,
     }
+}
+
+/// The command a step of an undone settle sends. A snooze whose wake time has passed sends
+/// none: the server refuses it (`executeThreadUndo` skips it too).
+fn settle_undo_command(
+    thread_id: &str,
+    step: &SettleUndoStep,
+) -> Option<Result<conn_contract::OrchestrationV2Command, serde_json::Error>> {
+    use crate::commands;
+    Some(match step {
+        SettleUndoStep::Unsettle {
+            restore_unsettled_at,
+        } => commands::unsettle_thread_restoring(
+            thread_id,
+            restore_unsettled_at.as_ref().map(Option::as_deref),
+        ),
+        SettleUndoStep::Pin { order_key } => {
+            commands::pin_thread_at(thread_id, order_key.as_deref())
+        }
+        SettleUndoStep::ReorderActive { order_key } => {
+            commands::reorder_active_thread(thread_id, order_key)
+        }
+        SettleUndoStep::Snooze { snoozed_until } => {
+            if parse_iso8601_unix_secs(snoozed_until).is_none_or(|at| at <= current_unix_secs()) {
+                return None;
+            }
+            commands::snooze_thread(thread_id, snoozed_until)
+        }
+    })
 }
 
 fn nav_items(items: &[ThreadMenuItem]) -> Vec<MenuNavItem> {
@@ -352,6 +387,24 @@ impl ConnApp {
             }
             return;
         }
+        if self
+            .sidebar_search_input
+            .focus_handle(cx)
+            .is_focused(window)
+            && self.sidebar_search_key(&keystroke.key, window, cx)
+        {
+            self.consume_keystroke(cx);
+            return;
+        }
+        // Key repeats cannot be told apart here (Conn leaves them out), so this handles the
+        // key only when nothing has the keyboard and the root's key handler is out of reach.
+        if window.focused(cx).is_none()
+            && let Some(step) = thread_traversal_key(&keystroke.key, mods)
+            && self.traverse_threads(step, cx)
+        {
+            self.consume_keystroke(cx);
+            return;
+        }
         if !is_undo_key(&keystroke.key, mods) {
             // Another key hands `⌘Z` back to text fields.
             if !is_modifier_key(&keystroke.key) {
@@ -377,7 +430,7 @@ impl ConnApp {
         };
         if undo_shortcut_applies(scene) {
             self.consume_keystroke(cx);
-            self.undo_discard_draft(cx);
+            self.undo_latest_action(cx);
         }
     }
 
@@ -393,8 +446,36 @@ impl ConnApp {
         discarded: DiscardedDraft,
         cx: &mut Context<'_, Self>,
     ) {
+        self.offer_undo(UndoAction::Discarded, UndoEntry::Draft(discarded), cx);
+    }
+
+    /// Keeps a settled thread for `Undo` (`settleThread` shows the notice once the server took
+    /// the settle). A thread settled again replaces its older entry, as its claim does.
+    pub(super) fn offer_settle_undo(
+        &mut self,
+        thread_id: String,
+        plan: Vec<SettleUndoStep>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.forget_settle_undo(&thread_id);
+        self.offer_undo(
+            UndoAction::Settled,
+            UndoEntry::Settled { thread_id, plan },
+            cx,
+        );
+    }
+
+    /// `ThreadUndo.invalidate("settle", thread)`: something else un-settled, pinned or deleted
+    /// the thread, so undoing its settle would undo the wrong thing.
+    pub(super) fn forget_settle_undo(&mut self, thread_id: &str) {
+        self.discards.retain(|entry| {
+            !matches!(entry, UndoEntry::Settled { thread_id: settled, .. } if settled == thread_id)
+        });
+    }
+
+    fn offer_undo(&mut self, action: UndoAction, entry: UndoEntry, cx: &mut Context<'_, Self>) {
         self.discard_failure = None;
-        let generation = self.discards.push(discarded);
+        let generation = self.discards.push_action(action, entry);
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(std::time::Duration::from_secs(DISCARD_UNDO_SECS))
@@ -406,20 +487,60 @@ impl ConnApp {
             });
         })
         .detach();
+        cx.notify();
     }
 
-    /// `Undo` on the notice or `⌘Z`: every discard of the notice comes back. A thread whose
+    /// `Undo` on the notice or `⌘Z`: every action the notice covers comes back. A thread whose
     /// composer holds new input since keeps it, and the notice says so.
-    pub(crate) fn undo_discard_draft(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn undo_latest_action(&mut self, cx: &mut Context<'_, Self>) {
         let mut failed = false;
-        for discarded in self.discards.undo() {
-            failed |= !self.restore_discarded(discarded, cx);
+        for entry in self.discards.undo() {
+            match entry {
+                UndoEntry::Draft(discarded) => failed |= !self.restore_discarded(discarded, cx),
+                UndoEntry::Settled { thread_id, plan } => self.undo_settled(thread_id, plan, cx),
+            }
         }
         if failed {
             self.show_undo_failure(UNDO_FAILED_NEW_CONTENT, cx);
         }
         self.settle_drafts(cx);
         cx.notify();
+    }
+
+    /// Runs the commands that bring a settled thread back, each once the one before it worked
+    /// (`executeThreadUndo`). A failure says so in the notice.
+    fn undo_settled(
+        &mut self,
+        thread_id: String,
+        plan: Vec<SettleUndoStep>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            self.show_undo_failure(UNDO_FAILED_SETTLE, cx);
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            for step in plan {
+                let Some(command) = settle_undo_command(&thread_id, &step) else {
+                    continue;
+                };
+                let sent = match command {
+                    Ok(command) => connection
+                        .dispatch_command(command)
+                        .await
+                        .map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                if let Err(error) = sent {
+                    eprintln!("undo settle: {error}");
+                    let _ = this.update(cx, |app, cx| {
+                        app.show_undo_failure(UNDO_FAILED_SETTLE, cx);
+                    });
+                    return;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Whether the discarded input came back: a draft always, a thread's input unless the
@@ -464,6 +585,7 @@ impl ConnApp {
 
     fn show_undo_failure(&mut self, reason: &'static str, cx: &mut Context<'_, Self>) {
         self.discard_failure = Some(reason);
+        cx.notify();
         self.discard_failure_generation = self.discard_failure_generation.wrapping_add(1);
         let generation = self.discard_failure_generation;
         cx.spawn(async move |this, cx| {
@@ -479,6 +601,188 @@ impl ConnApp {
             });
         })
         .detach();
+    }
+
+    /// The sidebar search box's text.
+    pub(crate) fn sidebar_search_query(&self, cx: &gpui_kit::App) -> String {
+        self.sidebar_search_input.read(cx).value().to_string()
+    }
+
+    /// The threads the search lists, in the order the arrow keys walk them: pinned, active,
+    /// then every settled one (`threadSearchResults`).
+    fn sidebar_search_results(&self, query: &str) -> Vec<String> {
+        let SidebarThreads {
+            pinned,
+            active,
+            settled,
+        } = sidebar_threads(
+            &self.shell,
+            &self.orbit.workspaces,
+            self.active_workspace.as_deref(),
+            query,
+        );
+        pinned
+            .iter()
+            .chain(&active)
+            .chain(&settled)
+            .map(|thread| thread.id.clone())
+            .collect()
+    }
+
+    /// A key in the search box (`handleThreadSearchKeyDown`): the arrows move the highlight
+    /// over the results and wrap, `Enter` opens the highlighted one, `Escape` clears the
+    /// search. Returns whether the search box used the key.
+    fn sidebar_search_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let query = self.sidebar_search_query(cx);
+        let searching = !query.trim().is_empty();
+        let results = if searching {
+            self.sidebar_search_results(&query)
+        } else {
+            Vec::new()
+        };
+        let Some(action) = search_key(key, searching, results.len()) else {
+            return false;
+        };
+        let active =
+            search_highlight_index(&results, self.sidebar_search_highlight.as_deref()).unwrap_or(0);
+        match action {
+            SearchKey::Clear => self.clear_sidebar_search(false, window, cx),
+            SearchKey::Next | SearchKey::Previous => {
+                let id = results[search_step(results.len(), active, action)].clone();
+                // `scrollIntoView({ block: "nearest" })` on the highlighted result.
+                self.sidebar_tree.reveal_row(&id);
+                self.sidebar_search_highlight = Some(id);
+                cx.notify();
+            }
+            SearchKey::Open => {
+                let id = results[active].clone();
+                self.open_search_result(&id, window, cx);
+            }
+        }
+        true
+    }
+
+    /// Empties the search box (`clearThreadSearch`); the clear button also gives the keyboard
+    /// back to it.
+    pub(crate) fn clear_sidebar_search(
+        &mut self,
+        refocus: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.sidebar_search_highlight = None;
+        self.sidebar_search_input.update(cx, |input, cx| {
+            input.set_value(String::new(), window, cx);
+            if refocus {
+                input.focus(window, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    /// Opens a search result and ends the search (`selectThreadSearchResult`). The keyboard
+    /// stays where it was.
+    fn open_search_result(
+        &mut self,
+        thread_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.clear_sidebar_search(false, window, cx);
+        self.select_thread(thread_id, cx);
+    }
+
+    /// A click on a thread row: a search result also ends the search.
+    pub(crate) fn open_thread_row(
+        &mut self,
+        thread_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.sidebar_search_query(cx).trim().is_empty() {
+            self.select_thread(thread_id, cx);
+        } else {
+            self.open_search_result(thread_id, window, cx);
+        }
+    }
+
+    /// The pointer is over a search result: the highlight follows it (`onMouseMove`).
+    pub(crate) fn highlight_search_result(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+        if self.sidebar_search_highlight.as_deref() != Some(thread_id) {
+            self.sidebar_search_highlight = Some(thread_id.to_owned());
+            cx.notify();
+        }
+    }
+
+    /// `thread.previous` / `thread.next` (`⌘⇧[` / `⌘⇧]`): opens the thread above or below the
+    /// open one, in sidebar order, and stops at the ends. Conn leaves out key repeats and
+    /// ignores the keys while the command palette or the model picker is open. Returns whether
+    /// a thread opened.
+    pub(crate) fn thread_traversal_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some(step) =
+            thread_traversal_key(&event.keystroke.key, key_mods(&event.keystroke.modifiers))
+        else {
+            return false;
+        };
+        !event.is_held && self.traverse_threads(step, cx)
+    }
+
+    /// Opens the thread `step` away from the open one, unless an overlay has the keyboard.
+    fn traverse_threads(&mut self, step: ThreadStep, cx: &mut Context<'_, Self>) -> bool {
+        if self.command_palette.is_some()
+            || self.settings_modal.is_some()
+            || self.chat.read(cx).model_picker_open(cx)
+        {
+            return false;
+        }
+        let order = self.thread_traversal_ids();
+        let open = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .filter(|_| self.draft.is_none());
+        let Some(target) = adjacent_thread(&order, open, step).map(str::to_owned) else {
+            return false;
+        };
+        self.select_thread(target.as_str(), cx);
+        self.sidebar_tree.reveal_row(&target);
+        true
+    }
+
+    /// The threads traversal walks (`orderedThreadKeys`): what the sidebar lists, search aside.
+    fn thread_traversal_ids(&self) -> Vec<String> {
+        let SidebarThreads {
+            pinned,
+            active,
+            settled,
+        } = sidebar_threads(
+            &self.shell,
+            &self.orbit.workspaces,
+            self.active_workspace.as_deref(),
+            "",
+        );
+        fn ids<'a>(threads: &[&'a conn_state::ThreadShell]) -> Vec<&'a str> {
+            threads.iter().map(|thread| thread.id.as_str()).collect()
+        }
+        traversal_order(
+            &ids(&pinned),
+            &ids(&active),
+            &ids(&settled),
+            self.collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY),
+            self.layout
+                .selected_thread_id
+                .as_deref()
+                .filter(|_| self.draft.is_none()),
+        )
     }
 
     /// The thread was deleted here: its unsent input goes with it (`clearComposerDraftForThread`
@@ -528,6 +832,54 @@ impl ConnApp {
         self.renaming_thread_id.as_deref()
     }
 
+    /// The result the arrow keys highlighted in the search box, as the list shows it.
+    pub(crate) fn search_highlight_for_test(&self, cx: &gpui_kit::App) -> Option<String> {
+        let query = self.sidebar_search_query(cx);
+        let results = self.sidebar_search_results(&query);
+        search_highlight_index(&results, self.sidebar_search_highlight.as_deref())
+            .map(|at| results[at].clone())
+    }
+
+    pub(crate) fn search_results_for_test(&self, cx: &gpui_kit::App) -> Vec<String> {
+        self.sidebar_search_results(&self.sidebar_search_query(cx))
+    }
+
+    /// Types `query` into the search box, which has the keyboard.
+    pub(crate) fn search_for_test(
+        &mut self,
+        query: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.sidebar_search_input.update(cx, |input, cx| {
+            input.set_value(query.to_owned(), window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn root_focus_for_test(&self) -> gpui_kit::FocusHandle {
+        self.focus_handle.clone()
+    }
+
+    pub(crate) fn traversal_ids_for_test(&self) -> Vec<String> {
+        self.thread_traversal_ids()
+    }
+
+    pub(crate) fn search_text_for_test(&self, cx: &gpui_kit::App) -> String {
+        self.sidebar_search_query(cx)
+    }
+
+    /// A settle the server took, as `settle_thread` offers it.
+    pub(crate) fn offer_settle_undo_for_test(
+        &mut self,
+        thread_id: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let plan = conn_state::plan_settle_undo(None);
+        self.offer_settle_undo(thread_id.to_owned(), plan, cx);
+    }
+
     pub(crate) fn settled_shelf_open_for_test(&self) -> bool {
         self.collapsed_projects.contains(SETTLED_SHELF_TOGGLE_KEY)
     }
@@ -553,5 +905,27 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.forget_thread_draft(thread_id, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snooze_that_has_ended_is_not_sent_back() {
+        let snooze = |until: &str| SettleUndoStep::Snooze {
+            snoozed_until: until.to_owned(),
+        };
+        assert!(settle_undo_command("t1", &snooze("2000-01-01T00:00:00Z")).is_none());
+        assert!(settle_undo_command("t1", &snooze("not a time")).is_none());
+        assert!(matches!(
+            settle_undo_command("t1", &snooze("2999-01-01T00:00:00Z")),
+            Some(Ok(_))
+        ));
+        let unsettle = SettleUndoStep::Unsettle {
+            restore_unsettled_at: Some(None),
+        };
+        assert!(matches!(settle_undo_command("t1", &unsettle), Some(Ok(_))));
     }
 }

@@ -2322,3 +2322,224 @@ fn tab_closes_the_thread_menu_and_goes_on_from_its_row(cx: &mut TestAppContext) 
         "and moves on to the row after the one that opened it"
     );
 }
+
+fn render_twice(cx: &mut TestAppContext, window: AnyWindowHandle) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+}
+
+fn search_for(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+    query: &str,
+) {
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| app.search_for_test(query, window, cx));
+    });
+    render_twice(cx, window);
+}
+
+fn search_highlight(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Option<String> {
+    cx.read(|cx| app.read(cx).search_highlight_for_test(cx))
+}
+
+#[gpui_kit::test]
+fn the_search_box_works_its_results_with_the_arrow_keys(cx: &mut TestAppContext) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "thread");
+    let results = cx.read(|cx| app.read(cx).search_results_for_test(cx));
+    assert_eq!(
+        results.first().map(String::as_str),
+        Some("thread-pinned"),
+        "pinned results lead (results: {results:?})"
+    );
+    assert_eq!(
+        results.last().map(String::as_str),
+        Some("thread-settled-1"),
+        "settled threads are results too, with the shelf collapsed (results: {results:?})"
+    );
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some("thread-pinned"),
+        "the first result starts highlighted"
+    );
+
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some(results[1].as_str()),
+        "ArrowDown highlights the next result"
+    );
+    press(cx, window, "up");
+    press(cx, window, "up");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        results.last().map(String::as_str),
+        "ArrowUp wraps from the first result to the last"
+    );
+    press(cx, window, "down");
+    assert_eq!(
+        search_highlight(cx, &app).as_deref(),
+        Some("thread-pinned"),
+        "ArrowDown wraps from the last result to the first"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Thread search results")
+        })
+        .unwrap_or(false),
+        "the results are a listbox for VoiceOver"
+    );
+
+    // `Enter` opens the highlighted result and ends the search.
+    press(cx, window, "down");
+    let highlighted = search_highlight(cx, &app);
+    press(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned)),
+        highlighted,
+        "Enter opens the highlighted result"
+    );
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_text_for_test(cx)),
+        "",
+        "and the search ends"
+    );
+}
+
+#[gpui_kit::test]
+fn escape_clears_the_search_and_a_search_with_no_results_has_nothing_to_walk(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    search_for(cx, window, &app, "no thread has this");
+    assert_eq!(search_highlight(cx, &app), None);
+    let selected = cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned));
+    press(cx, window, "down");
+    press(cx, window, "enter");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned)),
+        selected,
+        "Enter opens nothing without results"
+    );
+    assert!(
+        cx.update_window(window, |_, window, cx| {
+            has_label(window, cx, "Clear thread search")
+        })
+        .unwrap_or(false),
+        "the clear button has a name"
+    );
+    press(cx, window, "escape");
+    assert_eq!(
+        cx.read(|cx| app.read(cx).search_text_for_test(cx)),
+        "",
+        "Escape clears a search that has no results"
+    );
+}
+
+#[gpui_kit::test]
+fn command_shift_brackets_open_the_thread_above_or_below_and_stop_at_the_ends(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let order = cx.read(|cx| app.read(cx).traversal_ids_for_test());
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("thread-pinned"),
+        "pinned first (order: {order:?})"
+    );
+    assert!(
+        !order.iter().any(|id| id == "thread-settled-1"),
+        "a collapsed shelf is not walked (order: {order:?})"
+    );
+    let open = |cx: &mut TestAppContext| {
+        cx.read(|cx| app.read(cx).selected_thread_for_test().map(str::to_owned))
+    };
+    assert_eq!(open(cx).as_deref(), Some("thread-selected"));
+    let at = order
+        .iter()
+        .position(|id| id == "thread-selected")
+        .unwrap_or(0);
+
+    // Nothing has the keyboard yet.
+    press(cx, window, "cmd-shift-]");
+    assert_eq!(
+        open(cx).as_deref(),
+        order.get(at + 1).map(String::as_str),
+        "⌘⇧] opens the next thread"
+    );
+    // Then the root has it, as it does once a click or a closed menu hands it back.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let root = app.read(cx).root_focus_for_test();
+        window.focus(&root, cx);
+    });
+    press(cx, window, "cmd-shift-[");
+    assert_eq!(
+        open(cx).as_deref(),
+        Some("thread-selected"),
+        "⌘⇧[ goes back"
+    );
+
+    for _ in 0..order.len() {
+        press(cx, window, "cmd-shift-[");
+    }
+    assert_eq!(
+        open(cx).as_deref(),
+        Some("thread-pinned"),
+        "⌘⇧[ stops at the first thread, with no wrap"
+    );
+    for _ in 0..=order.len() {
+        press(cx, window, "cmd-shift-]");
+    }
+    assert_eq!(
+        open(cx).as_deref(),
+        order.last().map(String::as_str),
+        "⌘⇧] stops at the last thread, with no wrap"
+    );
+}
+
+#[gpui_kit::test]
+fn a_settled_thread_shows_its_notice_and_command_z_takes_it_back_until_something_else_changes_it(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_kitchen_sink(cx);
+    let notice = |cx: &mut TestAppContext, label: &str| {
+        cx.update_window(window, |_, window, cx| has_label(window, cx, label))
+            .unwrap_or(false)
+    };
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.offer_settle_undo_for_test("thread-failed", cx);
+            app.offer_settle_undo_for_test("thread-waiting", cx);
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        notice(cx, "Settled 2 threads, ⌘Z to undo"),
+        "settles stack in one notice"
+    );
+    assert!(notice(cx, "Undo settle"), "its button names what it undoes");
+
+    // Pinning a thread ends the claim on its settle (`sendPin`).
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.pin_thread("thread-waiting".to_owned(), true, cx)
+        });
+    });
+    render_twice(cx, window);
+    assert!(
+        notice(cx, "Settled 1 thread, ⌘Z to undo"),
+        "the pinned thread left the notice"
+    );
+
+    // With no server to take the commands, the undo says so.
+    press(cx, window, "cmd-z");
+    assert!(
+        notice(cx, "Failed to undo settle."),
+        "⌘Z undoes the settle, and a refused one says why"
+    );
+    assert!(!notice(cx, "Undo settle"), "the notice is gone");
+}

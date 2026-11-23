@@ -1,8 +1,9 @@
 //! Keyboard navigation of the thread sidebar that does not depend on the toolkit: how the arrow
 //! keys move between rows (Conn `lib/sidebarTree.ts`), what a key does on a row
-//! (`SidebarThreadRow.tsx` and `SidebarDraftBlock.tsx` `handleKeyDown`), and how the arrow keys
-//! move through a context menu (`contextMenuFallback.ts`). Plain data in and out, so the iPhone
-//! app can share it.
+//! (`SidebarThreadRow.tsx` and `SidebarDraftBlock.tsx` `handleKeyDown`), how the arrow keys
+//! move through a context menu (`contextMenuFallback.ts`), how the search box works its results
+//! (`Sidebar.tsx` `handleThreadSearchKeyDown`) and what `⌘⇧[` / `⌘⇧]` do (`thread.previous` /
+//! `thread.next`). Plain data in and out, so the iPhone app can share it.
 
 /// Modifier keys held with a key press.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -358,6 +359,135 @@ pub fn first_enabled(items: &[MenuNavItem]) -> Option<usize> {
     items.iter().position(|item| item.enabled)
 }
 
+/// A key in the sidebar search box that works the results.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchKey {
+    /// `ArrowDown`: highlight the next result, from the last to the first.
+    Next,
+    /// `ArrowUp`: highlight the previous result, from the first to the last.
+    Previous,
+    /// `Enter`: open the highlighted result.
+    Open,
+    /// `Escape`: clear the search.
+    Clear,
+}
+
+/// What `key` does in the search box. `Escape` clears a search that has text, with results or
+/// not; the other keys need results. Conn leaves the modifiers out of it.
+#[must_use]
+pub fn search_key(key: &str, searching: bool, results: usize) -> Option<SearchKey> {
+    if key == "escape" && searching {
+        return Some(SearchKey::Clear);
+    }
+    if results == 0 {
+        return None;
+    }
+    match key {
+        "down" => Some(SearchKey::Next),
+        "up" => Some(SearchKey::Previous),
+        "enter" => Some(SearchKey::Open),
+        _ => None,
+    }
+}
+
+/// The highlighted result. It follows its thread, so results that arrive late do not move it
+/// under `Enter`; a thread that is not listed, and a new search, start at the top. None without
+/// results (`activeSearchResultIndex`).
+#[must_use]
+pub fn search_highlight_index(keys: &[String], highlight: Option<&str>) -> Option<usize> {
+    if keys.is_empty() {
+        return None;
+    }
+    Some(
+        highlight
+            .and_then(|key| keys.iter().position(|k| k == key))
+            .unwrap_or(0),
+    )
+}
+
+/// The result `ArrowDown` or `ArrowUp` highlights, wrapping at both ends (`moveSearchHighlight`).
+/// `active` is the highlighted index from [`search_highlight_index`].
+#[must_use]
+pub fn search_step(count: usize, active: usize, key: SearchKey) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    match key {
+        SearchKey::Next => (active + 1) % count,
+        SearchKey::Previous => (active + count - 1) % count,
+        SearchKey::Open | SearchKey::Clear => active.min(count - 1),
+    }
+}
+
+/// `thread.previous` and `thread.next`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadStep {
+    Previous,
+    Next,
+}
+
+/// The thread traversal `key` is: `⌘⇧[` and `⌘⇧]`, Conn's defaults (`mod+shift+[`, `mod+shift+]`
+/// in `packages/shared/src/keybindings.ts`). The shifted characters count too, as a keyboard may
+/// report either.
+#[must_use]
+pub fn thread_traversal_key(key: &str, mods: KeyMods) -> Option<ThreadStep> {
+    if !(mods.platform && mods.shift && !mods.alt && !mods.control) {
+        return None;
+    }
+    match key {
+        "[" | "{" => Some(ThreadStep::Previous),
+        "]" | "}" => Some(ThreadStep::Next),
+        _ => None,
+    }
+}
+
+/// The threads traversal walks, in sidebar order: pinned, active, then the settled threads the
+/// shelf shows. A collapsed shelf shows only the open thread (`orderedThreads`,
+/// `renderedSettledThreads`, `routeThreadOnly`). Drafts and the search results are not in it.
+#[must_use]
+pub fn traversal_order(
+    pinned: &[&str],
+    active: &[&str],
+    settled: &[&str],
+    settled_open: bool,
+    open_thread: Option<&str>,
+) -> Vec<String> {
+    pinned
+        .iter()
+        .chain(active)
+        .chain(
+            settled
+                .iter()
+                .filter(|id| settled_open || Some(**id) == open_thread),
+        )
+        .map(|id| (*id).to_owned())
+        .collect()
+}
+
+/// The thread `⌘⇧[` or `⌘⇧]` opens (`resolveAdjacentThreadId`). It stops at the ends, with no
+/// wrap. With no thread open, `previous` goes to the last and `next` to the first; an open thread
+/// that is not listed goes nowhere.
+#[must_use]
+pub fn adjacent_thread<'a>(
+    ids: &'a [String],
+    current: Option<&str>,
+    step: ThreadStep,
+) -> Option<&'a str> {
+    let Some(current) = current else {
+        return match step {
+            ThreadStep::Previous => ids.last(),
+            ThreadStep::Next => ids.first(),
+        }
+        .map(String::as_str);
+    };
+    let at = ids.iter().position(|id| id == current)?;
+    match step {
+        ThreadStep::Previous => at.checked_sub(1).and_then(|i| ids.get(i)),
+        ThreadStep::Next => ids.get(at + 1),
+    }
+    .map(String::as_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -601,5 +731,143 @@ mod tests {
             Some(MenuKey::Activate)
         );
         assert_eq!(menu_key("x", KeyMods::default()), None);
+    }
+
+    fn ids(list: &[&str]) -> Vec<String> {
+        list.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    #[test]
+    fn the_search_box_works_the_results_with_arrows_and_enter() {
+        assert_eq!(search_key("down", true, 3), Some(SearchKey::Next));
+        assert_eq!(search_key("up", true, 3), Some(SearchKey::Previous));
+        assert_eq!(search_key("enter", true, 3), Some(SearchKey::Open));
+        assert_eq!(
+            search_key("down", true, 0),
+            None,
+            "no results, no highlight"
+        );
+        assert_eq!(search_key("enter", true, 0), None);
+        assert_eq!(search_key("left", true, 3), None);
+    }
+
+    #[test]
+    fn escape_clears_a_search_that_has_text_with_results_or_not() {
+        assert_eq!(search_key("escape", true, 0), Some(SearchKey::Clear));
+        assert_eq!(search_key("escape", true, 3), Some(SearchKey::Clear));
+        assert_eq!(
+            search_key("escape", false, 0),
+            None,
+            "an empty box leaves it alone"
+        );
+    }
+
+    #[test]
+    fn the_highlight_follows_its_thread_and_wraps_at_both_ends() {
+        let keys = ids(&["a", "b", "c"]);
+        assert_eq!(search_highlight_index(&keys, None), Some(0));
+        assert_eq!(search_highlight_index(&keys, Some("c")), Some(2));
+        assert_eq!(
+            search_highlight_index(&keys, Some("gone")),
+            Some(0),
+            "a thread that left the results starts over at the top"
+        );
+        assert_eq!(search_highlight_index(&[], Some("a")), None);
+        assert_eq!(search_step(3, 2, SearchKey::Next), 0);
+        assert_eq!(search_step(3, 0, SearchKey::Previous), 2);
+        assert_eq!(search_step(3, 1, SearchKey::Next), 2);
+        assert_eq!(search_step(1, 0, SearchKey::Next), 0);
+        assert_eq!(search_step(0, 0, SearchKey::Next), 0);
+    }
+
+    #[test]
+    fn command_shift_brackets_are_thread_traversal() {
+        let command_shift = KeyMods {
+            platform: true,
+            shift: true,
+            ..KeyMods::default()
+        };
+        assert_eq!(
+            thread_traversal_key("[", command_shift),
+            Some(ThreadStep::Previous)
+        );
+        assert_eq!(
+            thread_traversal_key("{", command_shift),
+            Some(ThreadStep::Previous)
+        );
+        assert_eq!(
+            thread_traversal_key("]", command_shift),
+            Some(ThreadStep::Next)
+        );
+        assert_eq!(
+            thread_traversal_key("}", command_shift),
+            Some(ThreadStep::Next)
+        );
+        for mods in [
+            KeyMods::default(),
+            KeyMods {
+                platform: true,
+                ..KeyMods::default()
+            },
+            KeyMods {
+                shift: true,
+                ..KeyMods::default()
+            },
+            KeyMods {
+                alt: true,
+                ..command_shift
+            },
+            KeyMods {
+                control: true,
+                ..command_shift
+            },
+        ] {
+            assert_eq!(thread_traversal_key("]", mods), None, "{mods:?}");
+        }
+        assert_eq!(thread_traversal_key("a", command_shift), None);
+    }
+
+    #[test]
+    fn traversal_stops_at_the_ends_and_starts_at_an_end_when_nothing_is_open() {
+        let order = ids(&["p", "a", "b"]);
+        let next = |current, step| adjacent_thread(&order, current, step);
+        assert_eq!(next(Some("p"), ThreadStep::Next), Some("a"));
+        assert_eq!(next(Some("a"), ThreadStep::Previous), Some("p"));
+        assert_eq!(
+            next(Some("b"), ThreadStep::Next),
+            None,
+            "no wrap at the end"
+        );
+        assert_eq!(
+            next(Some("p"), ThreadStep::Previous),
+            None,
+            "no wrap at the start"
+        );
+        assert_eq!(next(None, ThreadStep::Next), Some("p"));
+        assert_eq!(next(None, ThreadStep::Previous), Some("b"));
+        assert_eq!(
+            next(Some("gone"), ThreadStep::Next),
+            None,
+            "an unlisted thread goes nowhere"
+        );
+        assert_eq!(adjacent_thread(&[], None, ThreadStep::Next), None);
+    }
+
+    #[test]
+    fn traversal_walks_what_the_sidebar_shows() {
+        let walk = |shelf, open_thread| {
+            traversal_order(&["p"], &["a", "b"], &["s1", "s2"], shelf, open_thread).concat()
+        };
+        assert_eq!(
+            walk(true, None),
+            "pabs1s2",
+            "an open shelf lists every settled thread"
+        );
+        assert_eq!(walk(false, None), "pab", "a collapsed shelf lists none");
+        assert_eq!(
+            walk(false, Some("s2")),
+            "pabs2",
+            "a collapsed shelf still shows the open settled thread"
+        );
     }
 }

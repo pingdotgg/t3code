@@ -8,8 +8,8 @@
 use std::collections::HashSet;
 
 use conn_state::{
-    DiscardNotice, ProjectShell, SidebarDraftRow, TreeRow, discard_short_summary, discard_summary,
-    draft_row_label, draft_tree_key, is_activation_key, undo_label,
+    DiscardNotice, ProjectShell, SidebarDraftRow, TreeRow, draft_row_label, draft_tree_key,
+    is_activation_key, notice_short_summary, notice_summary, undo_button_label, undo_label,
 };
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::TestSupportExt as _;
@@ -43,7 +43,7 @@ const PREVIEW_LINE_PX: f32 = 20.0;
 /// What the sidebar shows for drafts.
 pub(crate) struct DraftSidebar<'a> {
     pub(crate) rows: Vec<DraftRowView<'a>>,
-    /// The notice for a discard that can still be brought back.
+    /// The notice for a discard or a settle that can still be brought back.
     pub(crate) undo: Option<UndoNotice>,
     /// The notice's `Undo` button.
     pub(crate) undo_focus: &'a FocusHandle,
@@ -54,9 +54,9 @@ pub(crate) struct DraftSidebar<'a> {
 /// What the undo notice at the foot of the sidebar says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UndoNotice {
-    /// Discards that `⌘Z` or the button bring back.
-    Discarded(DiscardNotice),
-    /// An undo that could not put the input back.
+    /// Discards or settles that `⌘Z` or the button bring back.
+    Undoable(DiscardNotice),
+    /// An undo that could not bring the thread or input back.
     Failed(&'static str),
 }
 
@@ -264,8 +264,8 @@ fn render_draft_row(
     )
 }
 
-/// The undo notice (`SidebarThreadUndoNotice`): `Discarded,` with a `⌘Z to undo` button, at the
-/// foot of the sidebar card. After an undo that failed it says why instead.
+/// The undo notice (`SidebarThreadUndoNotice`): `Discarded,` or `Settled,` with a `⌘Z to undo`
+/// button, at the foot of the sidebar card. After an undo that failed it says why instead.
 #[must_use]
 pub(crate) fn render_draft_undo_notice(
     notice: UndoNotice,
@@ -278,9 +278,9 @@ pub(crate) fn render_draft_undo_notice(
     let hover_bg = hsla(tokens.sidebar_row_hover);
     let ring = focus_ring(tokens);
     let (summary, spoken) = match notice {
-        UndoNotice::Discarded(discarded) => (
-            discard_short_summary(discarded.count),
-            format!("{}, {}", discard_summary(discarded.count), undo_label()),
+        UndoNotice::Undoable(undoable) => (
+            notice_short_summary(undoable),
+            format!("{}, {}", notice_summary(undoable), undo_label()),
         ),
         UndoNotice::Failed(reason) => (reason.to_owned(), reason.to_owned()),
     };
@@ -303,20 +303,23 @@ pub(crate) fn render_draft_undo_notice(
         .text_size(px(PROJECT_FONT_PX))
         .text_color(muted)
         .child(div().flex_1().min_w_0().truncate().child(summary));
-    if matches!(notice, UndoNotice::Failed(_)) {
+    let UndoNotice::Undoable(undoable) = notice else {
         return row.into_any_element();
-    }
+    };
     row.child(
         div()
             .id("sidebar-draft-undo")
             .test_support()
-            .a11y_button("sidebar.draft-undo.button", "Undo discard")
+            .a11y_button(
+                "sidebar.draft-undo.button",
+                undo_button_label(undoable.action),
+            )
             .track_focus(focus)
             .focus_visible(move |s| s.shadow(vec![ring]))
             .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
                 if is_activation_key(&event.keystroke.key) {
                     cx.stop_propagation();
-                    app.undo_discard_draft(cx);
+                    app.undo_latest_action(cx);
                 }
             }))
             .flex_shrink_0()
@@ -327,7 +330,7 @@ pub(crate) fn render_draft_undo_notice(
             .font_weight(gpui_kit::FontWeight::MEDIUM)
             .text_color(fg)
             .hover(move |s| s.bg(hover_bg))
-            .on_click(cx.listener(|app, _, _, cx| app.undo_discard_draft(cx)))
+            .on_click(cx.listener(|app, _, _, cx| app.undo_latest_action(cx)))
             .child(undo_label()),
     )
     .into_any_element()

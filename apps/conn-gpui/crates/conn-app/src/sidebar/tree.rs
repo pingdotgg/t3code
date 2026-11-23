@@ -162,6 +162,13 @@ impl SidebarTree {
         self.last_focus = focused_row(&self.rows, key);
     }
 
+    /// Scrolls the list the least that shows the row `key`, without moving the keyboard.
+    pub(crate) fn reveal_row(&self, key: &str) {
+        if let Some(slot) = self.slots.get(key) {
+            self.reveal(slot);
+        }
+    }
+
     /// Scrolls the list the least that shows `slot`'s row (`scrollIntoView({ block: "nearest" })`).
     fn reveal(&self, slot: &RowFocus) {
         let (Some(row), container) = (slot.bounds.get(), self.scroll.bounds()) else {

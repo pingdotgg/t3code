@@ -54,9 +54,11 @@ pub use crate::scheduled::{
 };
 
 pub use crate::discard_undo::{
-    DISCARD_UNDO_SECS, DiscardNotice, DiscardUndo, UNDO_FAILED_NEW_CONTENT, UNDO_SHORTCUT_LABEL,
+    DISCARD_UNDO_SECS, DiscardNotice, DiscardUndo, SettleUndoStep, SettledThreadFacts,
+    UNDO_FAILED_NEW_CONTENT, UNDO_FAILED_SETTLE, UNDO_SHORTCUT_LABEL, UndoAction,
     UndoShortcutScene, discard_short_summary, discard_summary, is_modifier_key, is_undo_key,
-    undo_label, undo_shortcut_applies, undone_summary,
+    notice_short_summary, notice_summary, notice_undone_summary, plan_settle_undo,
+    undo_button_label, undo_label, undo_shortcut_applies, undone_summary,
 };
 pub use crate::drafts::{
     ProjectDraftSlots, Retarget, keeps_displaced_draft, persists_across_restart, project_draft_key,
@@ -75,8 +77,10 @@ pub use crate::sidebar::{
 };
 pub use crate::sidebar_nav::{
     FocusedRow, KeyMods, MenuKey, MenuNavItem, MenuStep, RowKey, RowKind, SETTLED_SHELF_ROW,
-    TreeKey, TreeRow, TreeStep, draft_tree_key, first_enabled, focused_row, is_menu_key, menu_key,
-    menu_step, restore_target, row_key, row_kind, tree_key, tree_step,
+    SearchKey, ThreadStep, TreeKey, TreeRow, TreeStep, adjacent_thread, draft_tree_key,
+    first_enabled, focused_row, is_menu_key, menu_key, menu_step, restore_target, row_key,
+    row_kind, search_highlight_index, search_key, search_step, thread_traversal_key,
+    traversal_order, tree_key, tree_step,
 };
 pub use crate::thread::{
     EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,
