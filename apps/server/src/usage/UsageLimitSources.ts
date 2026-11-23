@@ -22,8 +22,8 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -33,7 +33,7 @@ import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
-const decodeHttpQuotaResponse = Schema.decodeUnknownSync(HttpQuotaResponse);
+const decodeHttpQuotaResponse = HttpClientResponse.schemaBodyJson(HttpQuotaResponse);
 
 export class UsageLimitSources extends Context.Service<
   UsageLimitSources,
@@ -103,6 +103,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const http = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -138,24 +139,28 @@ export const make = Effect.gen(function* () {
     } as const;
     const managementKey = yield* readManagementKey(config);
     if (config.kind === "http") {
-      const result = yield* Effect.tryPromise(async (signal) => {
-        if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {
-          throw new Error("Invalid HTTP quota endpoint");
-        }
-        if (typeof config.managementKey !== "string" && !managementKey) {
-          throw new Error("Could not resolve quota source token");
-        }
-        const response = await fetch(url, {
-          signal,
-          redirect: "error",
-          headers: {
-            Accept: "application/json",
-            ...(managementKey ? { Authorization: `Bearer ${managementKey}` } : {}),
-          },
-        });
-        if (!response.ok) throw new Error("Quota endpoint returned an error");
-        return decodeHttpQuotaResponse(await response.json());
-      }).pipe(Effect.timeout("10 seconds"), Effect.result);
+      if (!url || !/^https?:$/.test(url.protocol) || url.username || url.password) {
+        return { ...base, accounts: [], error: "Invalid HTTP quota source URL." };
+      }
+      if (typeof config.managementKey !== "string" && !managementKey) {
+        return { ...base, accounts: [], error: "Could not resolve the quota source token." };
+      }
+      const request = HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeader("Accept", "application/json"),
+      );
+      const result = yield* http
+        .execute(
+          managementKey
+            ? request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${managementKey}`))
+            : request,
+        )
+        .pipe(
+          Effect.flatMap(HttpClientResponse.filterStatusOk),
+          Effect.flatMap(decodeHttpQuotaResponse),
+          Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+          Effect.timeout("10 seconds"),
+          Effect.result,
+        );
       return result._tag === "Success"
         ? { ...base, accounts: [], quotaAccounts: result.success.accounts }
         : { ...base, accounts: [], error: "Could not read the HTTP quota source." };

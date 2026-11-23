@@ -17,7 +17,6 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
-import { vi } from "vite-plus/test";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -110,40 +109,30 @@ it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   ),
 );
 
-it.effect("publishes validated HTTP quotas as display-only accounts", () =>
-  Effect.gen(function* () {
-    const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
-    const accounts = [{ id: "account", label: "External plan", windows: [window] }];
-    const fetch = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        vi
-          .spyOn(globalThis, "fetch")
-          .mockImplementation(async () => Response.json({ version: 1, accounts })),
-      ),
-      (mock) =>
-        Effect.sync(() => {
-          mock.mockRestore();
+it.effect("publishes validated HTTP quotas as display-only accounts", () => {
+  const window = { id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 35 };
+  const accounts = [{ id: "account", label: "External plan", windows: [window] }];
+  let usedPercent = 35;
+  const client = HttpClient.make((request, url) =>
+    Effect.sync(() => {
+      expect(url.href).toBe("https://quota.test/v1");
+      expect(request.headers.authorization).toBe("Bearer test-token");
+      return HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          version: 1,
+          accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent }] }],
         }),
-    );
+      );
+    }),
+  );
+  return Effect.gen(function* () {
     const sources = yield* UsageLimitSources.make;
     yield* sources.refresh;
     const [snapshot] = yield* sources.current;
     expect(snapshot).toMatchObject({ kind: "http", accounts: [], quotaAccounts: accounts });
     expect(snapshot?.origin).toBeUndefined();
-    expect(fetch).toHaveBeenCalledWith(
-      new URL("https://quota.test/v1"),
-      expect.objectContaining({
-        redirect: "error",
-        headers: { Accept: "application/json", Authorization: "Bearer test-token" },
-      }),
-    );
-
-    fetch.mockImplementation(async () =>
-      Response.json({
-        version: 1,
-        accounts: [{ ...accounts[0], windows: [{ ...window, usedPercent: 101 }] }],
-      }),
-    );
+    usedPercent = 101;
     yield* sources.refresh;
     const [failed] = yield* sources.current;
     expect(failed).toMatchObject({ accounts: [], error: "Could not read the HTTP quota source." });
@@ -168,14 +157,11 @@ it.effect("publishes validated HTTP quotas as display-only accounts", () =>
       Layer.mock(BackgroundPolicy.BackgroundPolicy)({
         shouldRunScopeWork: () => Effect.succeed(false),
       }),
-      Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make(() => Effect.die("Unexpected hub request")),
-      ),
+      Layer.succeed(HttpClient.HttpClient, client),
       NodeCrypto.layer,
     ]),
-  ),
-);
+  );
+});
 
 it.effect("reads a management key from its secret provider", () => {
   const authorizations: Array<string | undefined> = [];
