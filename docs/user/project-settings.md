@@ -92,9 +92,10 @@ using its project, model, and workspace settings. Daily and weekly schedules
 use the **Time zone** at the top of the page: each environment's own zone unless
 you pick one. When you travel, choose **Use** with your current zone, and
 upcoming runs on every connected environment move to the same times where you
-are now. Moving west can repeat a daily run that already happened today. Choose **Once** to run a
-task a single time at a date and time in your own time zone; travel does not move
-it. If the environment is offline then, the task runs when it is back.
+are now. Moving west can repeat a daily run that already happened today. Choose
+**Once** to run a task a single time at a date and time in your own time zone;
+travel does not move it. If the environment is offline then, the task runs when
+it is back.
 
 Under **Destination**, choose where runs go. **New thread each run** keeps every
 run separate. The two one-thread choices start a thread on the first run and post

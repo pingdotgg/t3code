@@ -1457,24 +1457,22 @@ export const layer = Layer.effect(
       sql.withTransaction,
     );
 
-    const settingsChanges = yield* serverSettings.subscribeChanges;
-    let appliedZone = yield* currentZone;
-    yield* moveFixedTimeRunsToZone(appliedZone).pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
-      ),
-    );
-    yield* Stream.runForEach(settingsChanges, (settings) => {
-      const zone = scheduleZone(settings.scheduledTaskTimeZone);
-      if (DateTime.zoneToString(zone) === DateTime.zoneToString(appliedZone)) return Effect.void;
-      // Republish even when no run moved: lists carry the zone label.
-      return moveFixedTimeRunsToZone(zone).pipe(
-        Effect.tap(() => Effect.sync(() => (appliedZone = zone))),
-        Effect.andThen(notifyChanged),
-        Effect.catch((cause) =>
+    // Unset until a move succeeds, so a failed move is retried on the next settings change.
+    let appliedZone: string | undefined;
+    const applyZone = (zone: DateTime.TimeZone) =>
+      moveFixedTimeRunsToZone(zone).pipe(
+        Effect.tap(() => Effect.sync(() => (appliedZone = DateTime.zoneToString(zone)))),
+        Effect.catchCause((cause) =>
           Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
         ),
       );
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* applyZone(yield* currentZone);
+    yield* Stream.runForEach(settingsChanges, (settings) => {
+      const zone = scheduleZone(settings.scheduledTaskTimeZone);
+      if (DateTime.zoneToString(zone) === appliedZone) return Effect.void;
+      // Republish even when no run moved: lists carry the zone label.
+      return applyZone(zone).pipe(Effect.andThen(notifyChanged));
     }).pipe(Effect.forkIn(serviceScope));
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());

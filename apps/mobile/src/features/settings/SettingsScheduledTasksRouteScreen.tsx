@@ -460,6 +460,9 @@ export function SettingsScheduledTasksRouteScreen() {
   });
   const { availableTargets, selectedTargets, selectedProjectKey, projectGroups } =
     useSettingsEnvironmentFilter();
+  const zoneTargets = availableTargets.filter(
+    (target) => target.serverConfig.environment.capabilities.scheduleTimeZone === true,
+  );
   const selectedGroup = projectGroups.find((group) => group.key === selectedProjectKey);
   const visibleEnvironments = settingsTargetsForProject(
     selectedTargets,
@@ -497,9 +500,7 @@ export function SettingsScheduledTasksRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {availableTargets.length > 0 ? (
-          <ScheduleTimeZoneSection targets={availableTargets} />
-        ) : null}
+        {zoneTargets.length > 0 ? <ScheduleTimeZoneSection targets={zoneTargets} /> : null}
         {visibleEnvironments.length > 0 ? (
           visibleEnvironments.map((environment) => (
             <EnvironmentTasks

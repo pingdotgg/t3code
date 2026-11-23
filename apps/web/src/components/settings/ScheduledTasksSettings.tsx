@@ -470,7 +470,11 @@ export function ScheduledTasksSettings(target: {
     (_entry, index) => createPermissions[index],
   );
   // The schedule zone follows the traveler on every environment, not just the scoped ones.
-  const zoneEnvironments = useEnvironments().environments.filter(supportsSharedSettingsSync);
+  const zoneEnvironments = useEnvironments().environments.filter(
+    (entry) =>
+      supportsSharedSettingsSync(entry) &&
+      entry.serverConfig?.environment.capabilities.scheduleTimeZone === true,
+  );
   const scheduleZones = useAtomValue(
     scheduledTasksListAtom(environmentIdsKey(zoneEnvironments.map((entry) => entry.environmentId))),
   ).map((query) => AsyncResult.getOrElse(query, () => null)?.timeZone);

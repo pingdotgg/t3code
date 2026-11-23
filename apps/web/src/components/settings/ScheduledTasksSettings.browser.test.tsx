@@ -103,7 +103,10 @@ function environment() {
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
       ? {
-          environment: { platform: "linux", capabilities: { oneTimeSchedules: true } },
+          environment: {
+            platform: "linux",
+            capabilities: { oneTimeSchedules: true, scheduleTimeZone: true },
+          },
           settings: DEFAULT_SERVER_SETTINGS,
         }
       : null,
