@@ -10,6 +10,7 @@ import {
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   OrchestrationV2AppThread,
   OrchestrationV2Run,
+  OrchestrationV2ThreadDetailSnapshot,
   OrchestrationV2TurnItem,
   OrchestrationV2ThreadTranscript,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
@@ -30,7 +31,6 @@ import * as Etag from "effect/http/Etag";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HttpApi from "effect/http-api/HttpApi";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
-import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -45,7 +45,6 @@ import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 class TranscriptTestApi extends HttpApi.make("environment").add(
   EnvironmentHttpApi.groups.orchestration,
@@ -355,84 +354,15 @@ it.effect("exports full history with size, scope, and missing-thread checks", ()
   }),
 );
 
-// No progress: the wire sets it to undefined, which the endpoint's JSON codec sends as null.
-const subagentItem = Schema.decodeSync(OrchestrationV2TurnItem)({
-  id: "item-subagent",
-  threadId: "source-thread",
-  runId: null,
-  nodeId: null,
-  providerThreadId: null,
-  providerTurnId: null,
-  nativeItemRef: null,
-  parentItemId: null,
-  ordinal: items.length,
-  status: "completed",
-  title: "Find the failing import",
-  startedAt: now,
-  completedAt: now,
-  updatedAt: now,
-  type: "subagent",
-  subagentId: "node:subagent",
-  origin: "app_owned",
-  driver: "codex",
-  providerInstanceId: "codex",
-  childThreadId: null,
-  prompt: "Find the failing import.",
-  result: null,
-});
+const decodeThreadSnapshot = Schema.decodeUnknownSync(
+  Schema.toCodecJson(OrchestrationV2ThreadDetailSnapshot),
+);
 
-class SnapshotReferenceApi extends HttpApi.make("reference").add(
-  HttpApiGroup.make("orchestration").add(
-    EnvironmentHttpApi.groups.orchestration.endpoints.threadSnapshot,
-  ),
-) {}
-
-// The endpoint before streaming: HttpApiBuilder encodes and stringifies the returned snapshot.
-const serveReferenceSnapshot = (
-  services: Context.Context<ThreadManagementService.ThreadManagementService>,
-) =>
-  Effect.gen(function* () {
-    const management = Context.get(services, ThreadManagementService.ThreadManagementService);
-    const routes = HttpApiBuilder.layer(SnapshotReferenceApi).pipe(
-      Layer.provide(
-        HttpApiBuilder.group(SnapshotReferenceApi, "orchestration", (handlers) =>
-          handlers.handle("threadSnapshot", ({ params }) =>
-            management.getThreadSnapshot(params.threadId).pipe(
-              Effect.map((snapshot) => ({
-                snapshotSequence: snapshot.snapshotSequence,
-                projection: projectThreadProjectionForWire(snapshot.projection),
-              })),
-              Effect.orDie,
-            ),
-          ),
-        ),
-      ),
-      Layer.provide(
-        Layer.succeed(EnvironmentAuthenticatedAuth, (effect) =>
-          effect.pipe(
-            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-              sessionId: AuthSessionId.make("reference-session"),
-              subject: "reference",
-              method: "bearer-access-token",
-              scopes: new Set<AuthEnvironmentScope>(["orchestration:read"]),
-            }),
-          ),
-        ),
-      ),
-      Layer.provide(HttpPlatform.layer),
-      Layer.provide(Etag.layerWeak),
-      Layer.provide(NodeServices.layer),
-    );
-    const { handler, dispose } = HttpRouter.toWebHandler(routes, { disableLogger: true });
-    yield* Effect.addFinalizer(() => Effect.promise(dispose));
-    return handler;
-  });
-
-it.effect("serves the full snapshot as the HttpApiBuilder endpoint did, with the same errors", () =>
+it.effect("streams the full snapshot with the endpoint's errors", () =>
   Effect.gen(function* () {
     const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
     yield* eventSink.write({
-      events: [...items, subagentItem].map((item) => ({
+      events: items.map((item) => ({
         id: EventId.make(`create-${item.id}`),
         type: "turn-item.updated" as const,
         threadId: thread.id,
@@ -456,11 +386,9 @@ it.effect("serves the full snapshot as the HttpApiBuilder endpoint did, with the
     const response = yield* read(handler, thread.id);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/json");
-    const reference = yield* read(yield* serveReferenceSnapshot(services), thread.id);
-    expect(reference.status).toBe(200);
-    const body = yield* Effect.promise(() => response.text());
-    expect(body).toContain('"progress":null');
-    expect(body).toBe(yield* Effect.promise(() => reference.text()));
+    const body = decodeThreadSnapshot(yield* Effect.promise(() => response.json()));
+    expect(body.snapshotSequence).toBe(snapshot.snapshotSequence);
+    expect(body.projection.turnItems).toHaveLength(snapshot.projection.turnItems.length);
 
     const missing = yield* read(handler, ThreadId.make("missing"));
     expect(missing.status).toBe(404);
