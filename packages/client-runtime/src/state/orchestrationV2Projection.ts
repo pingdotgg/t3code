@@ -1,6 +1,7 @@
 import { applyThreadPullRequestLinkUpdate } from "../threadPullRequests.ts";
 import {
   applyOrchestrationV2ThreadVisit,
+  isOrchestrationV2WorkActive,
   isQueuedProviderThreadPlaceholder,
 } from "@t3tools/contracts";
 import type {
@@ -446,6 +447,15 @@ export function applyOrchestrationV2ProjectionEvent(
       ) {
         return projection;
       }
+      const previous = itemIndex === -1 ? undefined : projection.turnItems[itemIndex];
+      // A delayed tool_use frame cannot restart work cancelled before execution.
+      if (
+        previous?.toolNonExecutionKind === "cancelled" &&
+        (previous.type === "command_execution" || previous.type === "dynamic_tool") &&
+        isOrchestrationV2WorkActive(payload.status)
+      ) {
+        payload = previous;
+      }
       const turnItems =
         itemIndex === -1
           ? [...projection.turnItems, payload]
@@ -453,7 +463,6 @@ export function applyOrchestrationV2ProjectionEvent(
       const next = { ...base, turnItems };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
-      const previous = itemIndex === -1 ? undefined : projection.turnItems[itemIndex];
       const visible =
         payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
           ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }
