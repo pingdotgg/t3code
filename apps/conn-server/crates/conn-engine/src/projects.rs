@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::commands::{self, CommandError, Effect, is_live};
 use crate::engine::{Inner, project_id};
-use crate::store::{ReceiptKey, Tx, new_project};
+use crate::store::{ReceiptKey, ReceiptOwner, Tx, new_project};
 
 /// Title of the project that holds threads without a project (`ManagedProjectFolders.ts`).
 const SCRATCH_TITLE: &str = "No project";
@@ -376,7 +376,7 @@ impl Inner {
                         let receipt = command_id.as_deref().map(|id| ReceiptKey {
                             command_id: id,
                             command_type: "project",
-                            thread_id: None,
+                            owner: ReceiptOwner::Project,
                         });
                         let seq = tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
                         Ok((value, effects, seq))

@@ -572,7 +572,14 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         run["restartContinuationOfRunId"] = json!(source);
     }
     if let Some(merge_back) = &merge_back {
-        crate::merge_back::append_records(tx, merge_back, &run_id, cid, &c.thread_id)?;
+        crate::merge_back::append_records(
+            tx,
+            merge_back,
+            &run_id,
+            cid,
+            &c.thread_id,
+            model["instanceId"].as_str(),
+        )?;
     }
     tx.append(draft("run.created", run))?;
     tx.append(draft(
@@ -1764,6 +1771,7 @@ fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ThreadVisit {
+    command_id: String,
     thread_id: String,
     visited_at: Value,
 }
@@ -1779,9 +1787,25 @@ fn thread_visit(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.thread_id
         ));
     };
-    patch_thread(tx, &c.thread_id, "thread.visited", false, |t, _| {
-        t["lastVisitedAt"] = json!(crate::time::iso_from_millis(visited));
-    })?;
+    // T3's `dispatchThreadVisit`: only a later visit moves the read mark, compared as times,
+    // and the event carries the visit, not the thread.
+    let thread = live_thread(tx, &c.thread_id)?;
+    let moves_forward = thread["lastVisitedAt"]
+        .as_str()
+        .and_then(crate::time::millis_from_iso)
+        .is_none_or(|last| visited > last);
+    if !moves_forward {
+        return Ok(vec![]);
+    }
+    tx.append(
+        Draft::new(
+            &c.thread_id,
+            "thread.visit-recorded",
+            json!({"lastVisitedAt": crate::time::iso_from_millis(visited)}),
+        )
+        .command(Some(&c.command_id))
+        .instance_of(&thread),
+    )?;
     Ok(vec![])
 }
 
@@ -2268,19 +2292,16 @@ fn thread_patch(
 ) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
     let mut thread = live_thread(tx, &thread_id)?;
-    let before = thread.clone();
     let now = tx.now().to_owned();
     patch(&mut thread, &now)?;
-    // A setter that changes nothing writes nothing, so a retry or a double click is quiet.
-    if thread != before {
-        let cid = command["commandId"].as_str().map(str::to_owned);
-        let instance = thread["providerInstanceId"].as_str().map(str::to_owned);
-        tx.append(
-            Draft::new(&thread_id, event_type, thread)
-                .command(cid.as_deref())
-                .provider_instance(instance.as_deref()),
-        )?;
-    }
+    // T3's `dispatchThreadMutation` records the event even when nothing changed (a re-pin keeps
+    // `updatedAt`); a retry of the same command id is answered by its receipt instead.
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, event_type, thread)
+            .command(cid.as_deref())
+            .payload_instance(),
+    )?;
     Ok(vec![])
 }
 
@@ -2301,10 +2322,24 @@ fn is_null(thread: &Value, field: &str) -> bool {
 
 fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
-    let auto = command["type"] == "thread.auto-settle";
-    if !auto {
-        refuse_archived(tx, &command)?;
+    // T3's `thread.auto-settle` rechecks the live thread against the sweep's snapshot: a user's
+    // own choice or any change since wins. Then it is a settle.
+    if command["type"] == "thread.auto-settle" {
+        let thread = live_thread(tx, &thread_id)?;
+        let changed_at = thread["updatedAt"]
+            .as_str()
+            .and_then(crate::time::millis_from_iso);
+        let snapshot = command["snapshotAt"]
+            .as_str()
+            .and_then(|at| tx.date_input_millis(at));
+        let unchanged = matches!((changed_at, snapshot), (Some(at), Some(seen)) if at <= seen);
+        if !is_null(&thread, "settledOverride") || !unchanged {
+            return reject(format!(
+                "Thread {thread_id} changed before automatic settlement."
+            ));
+        }
     }
+    refuse_archived(tx, &command)?;
     if let Some(expected) = command["expectedLatestRunId"].as_str() {
         let latest = tx
             .entities(&thread_id, "runs")?
@@ -2314,14 +2349,6 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         if latest.is_some_and(|r| r["id"] != expected) {
             return Ok(vec![]);
         }
-    }
-    if auto {
-        let thread = live_thread(tx, &thread_id)?;
-        if !is_null(&thread, "autoSettleDisabledAt") || !is_null(&thread, "pinnedAt") {
-            return Ok(vec![]);
-        }
-        // T3's auto-settle runs its own check, then dispatches a settle.
-        refuse_archived(tx, &command)?;
     }
     if active_run(tx, &thread_id)?.is_some() {
         return reject(format!(

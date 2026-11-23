@@ -18,7 +18,7 @@ use tokio::sync::{oneshot, watch};
 
 use crate::commands::{self, CommandError, Effect};
 use crate::runner::LiveThread;
-use crate::store::{Receipt, ReceiptKey, Store, StoreResult, Tx};
+use crate::store::{Receipt, ReceiptKey, ReceiptOwner, Store, StoreResult, StoredOwner, Tx};
 use crate::{BoxFuture, Engine, EngineError, Subscription, streams};
 
 /// A folder the engine offers as a project at start. Clients add more at runtime.
@@ -919,10 +919,27 @@ impl Inner {
                 let key = ReceiptKey {
                     command_id: &command_id,
                     command_type: &command_type,
-                    thread_id: receipt_thread.as_deref(),
+                    owner: ReceiptOwner::Thread(&receipt_thread),
                 };
                 if let Some(receipt) = store.outcome(&command_id).map_err(CommandError::Store)? {
-                    return replay(&key, receipt, guard.is_some()).map(|seq| (vec![], seq, true));
+                    let seq = replay(&key, receipt, guard.is_some())?;
+                    // T3's `replayCommandReceipt` checks the queue again for these two.
+                    let only = command["runId"].as_str();
+                    let effects = match command_type.as_str() {
+                        "queue.resume" | "queued-run.start" => {
+                            let mut tx = store.tx().map_err(CommandError::Store)?;
+                            let started =
+                                commands::start_next_queued(&mut tx, &receipt_thread, only)
+                                    .map_err(CommandError::Store)?;
+                            tx.commit(None).map_err(CommandError::Store)?;
+                            started
+                                .into_iter()
+                                .map(|effect| inner.reserve_effect(effect))
+                                .collect()
+                        }
+                        _ => vec![],
+                    };
+                    return Ok((effects, seq, true, store.high_water()));
                 }
                 let mut tx = store.tx().map_err(CommandError::Store)?;
                 if let Some(guard) = &guard
@@ -981,7 +998,7 @@ impl Inner {
                             .into_iter()
                             .map(|effect| inner.reserve_effect(effect))
                             .collect::<Vec<_>>();
-                        Ok((reserved, seq, false))
+                        Ok((reserved, seq, false, store.high_water()))
                     }
                     Err(e) => {
                         tx.rollback();
@@ -998,13 +1015,19 @@ impl Inner {
                 }
             })
             .await;
-        let (effects, seq, replayed) = outcome.map_err(|e| match e {
+        let (effects, seq, replayed, high) = outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
             CommandError::Store(message) => DispatchError::Internal(message),
         })?;
-        if !replayed {
-            self.notify.send_replace(seq);
-        }
+        // Subscribers follow the store's high-water mark; a quiet command's answer may be
+        // older (its thread's latest sequence).
+        self.notify.send_if_modified(|current| {
+            let moved = high > *current;
+            if moved {
+                *current = high;
+            }
+            moved
+        });
         for effect in effects {
             effect.start();
         }
@@ -1303,15 +1326,25 @@ const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
 /// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
 /// is both the `message` and the `detail`; without one, the generic message and no `detail`.
 /// The thread a command's receipt is kept for: T3's `commandThreadId`.
-fn receipt_thread_id(command: &Value) -> Option<String> {
-    ["threadId", "parentThreadId", "sourceThreadId"]
-        .iter()
-        .find_map(|field| command[*field].as_str())
-        .map(str::to_owned)
+fn receipt_thread_id(command: &Value) -> String {
+    let field = match command["type"].as_str().unwrap_or_default() {
+        "thread.fork" | "thread.merge_back" => "targetThreadId",
+        "delegated_task.request"
+        | "delegated_task.remote.request"
+        | "delegated_task.remote.complete"
+        | "delegated_task.remote.stop"
+        | "delegated_task.wake-policy"
+        | "delegated_task.completion-delivery.acknowledge"
+        | "delegated_task.completion-delivery.dispose"
+        | "thread.created.record" => "parentThreadId",
+        _ => "threadId",
+    };
+    command[field].as_str().unwrap_or_default().to_owned()
 }
 
 /// A retried command's answer from its receipt (`replayCommandReceipt`): the refusal again,
-/// a conflict when the id was handled for another thread, else the sequence it answered.
+/// or a conflict when the id was handled for something else, else the sequence it answered.
+/// A receipt from before owners whose owner nothing proves is refused, never run again.
 fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, CommandError> {
     if let Some(refusal) = receipt.refusal {
         return Err(CommandError::Rejected(format!(
@@ -1319,13 +1352,28 @@ fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, 
             key.command_id
         )));
     }
-    if let (Some(handled), Some(thread)) = (&receipt.thread_id, key.thread_id)
-        && handled != thread
-    {
-        return Err(CommandError::Rejected(format!(
-            "Command {} was already handled for thread {handled} and cannot be replayed for {thread}.",
-            key.command_id
-        )));
+    let ReceiptOwner::Thread(thread) = key.owner else {
+        return Ok(receipt.sequence);
+    };
+    match receipt.owner {
+        Some(StoredOwner::Thread(handled)) if handled == thread => {}
+        Some(StoredOwner::Thread(handled)) => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was already handled for thread {handled} and cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
+        Some(StoredOwner::Project) => {
+            return Err(CommandError::Rejected(
+                "Conflicting receipt is not a thread command receipt.".into(),
+            ));
+        }
+        None => {
+            return Err(CommandError::Rejected(format!(
+                "Command {} was already handled, for a thread its receipt does not name; it cannot be replayed for {thread}.",
+                key.command_id
+            )));
+        }
     }
     if guarded {
         // A guarded caller never gets a second accept for one command.

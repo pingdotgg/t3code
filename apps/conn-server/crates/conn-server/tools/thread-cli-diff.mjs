@@ -27,7 +27,8 @@
 //
 // At the end both event logs are read: each event's top-level `providerInstanceId`, keyed by
 // event type (and a turn item's type), must be the same set on both servers. A key only one
-// server writes is listed, not failed.
+// server writes is listed, not failed. One known difference is excused row by row
+// (`excusedQuestion`).
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
@@ -524,8 +525,8 @@ function findFiles(dir, name) {
   return found;
 }
 
-/** `key -> Set` of the instances (or "(none)") the side's stored events name. */
-function eventInstances(side) {
+/** The side's stored events, in order: type, thread, payload and envelope instance. */
+function storedEvents(side) {
   const t3 = side.name === "t3";
   const [file] = findFiles(side.dir, t3 ? "statev2.sqlite" : "engine.sqlite");
   if (file === undefined) throw new Error(`${side.name}: no event store under ${side.dir}`);
@@ -533,38 +534,74 @@ function eventInstances(side) {
   const rows = t3
     ? db
         .prepare(
-          "SELECT event_type AS type, payload_json AS payload, metadata_json AS meta FROM orchestration_events WHERE aggregate_kind = 'thread'",
+          "SELECT event_type AS type, stream_id AS thread, payload_json AS payload, metadata_json AS meta FROM orchestration_events WHERE aggregate_kind = 'thread' ORDER BY sequence",
         )
         .all()
-        .map((row) => ({ type: row.type, payload: JSON.parse(row.payload), instance: JSON.parse(row.meta ?? "{}").providerInstanceId }))
+        .map((row) => ({ type: row.type, thread: row.thread, payload: JSON.parse(row.payload), instance: JSON.parse(row.meta ?? "{}").providerInstanceId }))
     : db
-        .prepare("SELECT event FROM events")
+        .prepare("SELECT event FROM events ORDER BY seq")
         .all()
         .map((row) => JSON.parse(row.event))
-        .map((event) => ({ type: event.type, payload: event.payload, instance: event.providerInstanceId }));
+        .map((event) => ({ type: event.type, thread: event.threadId, payload: event.payload, instance: event.providerInstanceId }));
   db.close();
+  return rows;
+}
+
+const keyOf = (row) => (row.type === "turn-item.updated" ? `${row.type}:${row.payload?.type}` : row.type);
+
+/**
+ * The one known difference, matched row by row. T3's ingestor cancels a pending question when
+ * its provider turn ends (`dismissNativeUserInputs`, the session's instance). Conn has no such
+ * step: the question stays pending until its session is released, which expires it, and T3's
+ * release names no instance. So a Conn row is excused only when it is a question expired
+ * right after its own session's release, and T3 has a cancelled question with an instance.
+ */
+function excusedQuestion(rows, index, t3Rows) {
+  const row = rows[index];
+  const before = rows[index - 1];
+  return (
+    row.type === "runtime-request.updated" &&
+    row.instance === undefined &&
+    row.payload?.kind === "user_input" &&
+    row.payload?.status === "expired" &&
+    row.payload?.responseCapability?.type === "live" &&
+    before?.type === "provider-session.updated" &&
+    before.thread === row.thread &&
+    before.payload?.status === "stopped" &&
+    before.payload?.id === row.payload.responseCapability.providerSessionId &&
+    t3Rows.some(
+      (t3) =>
+        t3.type === "runtime-request.updated" &&
+        t3.payload?.kind === "user_input" &&
+        t3.payload?.status === "cancelled" &&
+        t3.instance !== undefined,
+    )
+  );
+}
+
+/** `key -> Set` of the instances (or "(none)") the rows name. */
+function instancesByKey(rows) {
   const byKey = new Map();
   for (const row of rows) {
-    const key = row.type === "turn-item.updated" ? `${row.type}:${row.payload?.type}` : row.type;
+    const key = keyOf(row);
     if (!byKey.has(key)) byKey.set(key, new Set());
     byKey.get(key).add(row.instance ?? "(none)");
   }
   return byKey;
 }
 
-// Instances one server writes for a key and the other does not, with the reason.
-const KNOWN_INSTANCES = [
-  {
-    key: "runtime-request.updated",
-    conn: "(none)",
-    reason:
-      "T3's ingestor cancels a pending question when its provider turn ends (dismissNativeUserInputs, the session's instance); Conn has no such step, so the session release expires it, and T3's release names no instance",
-  },
-];
-
 function compareInstances(t3, conn) {
-  const a = eventInstances(t3);
-  const b = eventInstances(conn);
+  const t3Rows = storedEvents(t3);
+  const connAll = storedEvents(conn);
+  const connRows = connAll.filter((_, i) => {
+    if (!excusedQuestion(connAll, i, t3Rows)) return true;
+    console.log(
+      "  known Conn expires a question at its session's release with no instance; T3 cancels it at the turn's end (dismissNativeUserInputs)",
+    );
+    return false;
+  });
+  const a = instancesByKey(t3Rows);
+  const b = instancesByKey(connRows);
   let failures = 0;
   for (const key of [...new Set([...a.keys(), ...b.keys()])].sort()) {
     const x = a.get(key);
@@ -573,10 +610,7 @@ function compareInstances(t3, conn) {
       console.log(`  only ${x === undefined ? "Conn" : "T3"} writes ${key}`);
       continue;
     }
-    const excused = KNOWN_INSTANCES.filter((k) => k.key === key && y.has(k.conn) && !x.has(k.conn));
-    const ys = new Set([...y].filter((v) => !excused.some((k) => k.conn === v)));
-    for (const k of excused) console.log(`  known Conn also writes ${k.conn} for ${key}: ${k.reason}`);
-    const same = x.size === ys.size && [...x].every((v) => ys.has(v));
+    const same = x.size === y.size && [...x].every((v) => y.has(v));
     if (same) {
       console.log(`ok   providerInstanceId of ${key}: ${[...x].join(", ")}`);
     } else {

@@ -440,7 +440,10 @@ pub(crate) fn append_records(
     run_id: &str,
     command_id: Option<&str>,
     thread_id: &str,
+    instance: Option<&str>,
 ) -> StoreResult<()> {
+    // Written before the run they belong to, so their envelopes take the destination
+    // instance from the caller, as T3's do (`modelSelection.instanceId`).
     tx.append(
         Draft::new(
             thread_id,
@@ -448,13 +451,15 @@ pub(crate) fn append_records(
             consumption.handoff.clone(),
         )
         .run(Some(run_id))
-        .command(command_id),
+        .command(command_id)
+        .provider_instance(instance),
     )?;
     for transfer in &consumption.transfers {
         tx.append(
             Draft::new(thread_id, "context-transfer.updated", transfer.clone())
                 .run(Some(run_id))
-                .command(command_id),
+                .command(command_id)
+                .provider_instance(instance),
         )?;
     }
     Ok(())

@@ -33,11 +33,25 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   message, closed link requests and remote delegation rows (`store::Instance`).
 
 - Command receipts are kept for good and record refusals, as T3's `CommandReceiptV2`: a retry
-  gets the recorded refusal again (`Command … was previously rejected: …`), a receipt answers
-  only for its own thread, and an old retry after an undo changes nothing. Refusals made
-  before the decision (access, a disabled provider) stay open, as T3's mode-limit refusals.
+  gets the recorded refusal again (`Command … was previously rejected: …`), and a receipt
+  answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
+  `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
+  before owners get theirs from their own events; one nothing proves is kept and refused.
+  Refusals made before the decision (access, a disabled provider) stay open, as T3's
+  mode-limit refusals. A replayed `queue.resume` or `queued-run.start` checks the queue
+  again. A command that writes nothing answers its own thread's latest sequence.
+- Thread setters record their event even when nothing changes, as T3's deciders do.
+  `thread.auto-settle` refuses a thread set active or changed after its snapshot, then
+  settles. `thread.visit` keeps the later visit and records `thread.visit-recorded`.
+- The receipts' high-water mark reads an index. Opening the engine off the runtime thread
+  is #261's.
 
-Proof: `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
+Proof: `a_fork_receipt_belongs_to_its_target_thread`,
+`receipts_from_before_owners_name_them_or_refuse`,
+`a_repin_records_its_event_and_a_quiet_stop_answers_its_thread`,
+`a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
+`a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
+`the_receipt_high_water_reads_an_index`, `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
 `a_retried_command_returns_its_receipt` (T3's own tests, ported),
 `an_old_retry_after_an_undo_leaves_the_thread_as_it_is` (4,400 writes later),
 `date_input_matches_t3s` (T3's own answers for 1683 strings in five zones,
