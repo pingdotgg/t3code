@@ -1365,6 +1365,39 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect("finds the cwd when the first prompt carries an image over 1 MiB", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const workspace = yield* makeTempDir("t3code-workspace-");
+        const image = "A".repeat(1_100 * 1024);
+        const prompt = JSON.stringify({
+          type: "user",
+          cwd: workspace,
+          sessionId: "s1",
+          message: {
+            role: "user",
+            content: [
+              { type: "text", text: "Prompt" },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: image } },
+            ],
+          },
+        });
+        const contents = `{"type":"queue-operation","operation":"enqueue"}\n{"type":"queue-operation","operation":"dequeue"}\n${prompt}\n${JSON.stringify({ type: "assistant" })}\n`;
+        yield* writeTranscript({
+          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+          contents,
+          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+        });
+
+        const result = yield* runScan({ claudeHomePath, codexHomePath });
+
+        expect(prompt.length).toBeGreaterThan(1024 * 1024);
+        expect(result.candidates.map((candidate) => candidate.path)).toEqual([workspace]);
+      }),
+    );
+
     it.effect("reads a complete transcript record at the exact chunk boundary", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
