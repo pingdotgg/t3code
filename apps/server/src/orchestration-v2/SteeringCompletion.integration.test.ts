@@ -364,7 +364,7 @@ it.effect.each(
         (event) =>
           event.type === "run.updated" &&
           event.payload.id === first.runId &&
-          event.payload.status === "waiting",
+          event.payload.status === "completed",
       );
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const turn = projection.providerTurns[0]!;
@@ -1448,7 +1448,7 @@ it.effect.each(["complete", "stop-before-end"] as const)(
             (event) =>
               event.type === "run.updated" &&
               event.payload.id === first.runId &&
-              event.payload.status === "waiting",
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -1690,7 +1690,7 @@ it.effect.each(declinedSteerTimings)(
             (event) =>
               event.type === "run.updated" &&
               event.payload.id === first.runId &&
-              event.payload.status === "waiting",
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -1836,7 +1836,7 @@ it.effect("queues a delegated completion wake whose steer the provider declined"
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === first.runId &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         ),
         Stream.take(1),
         Stream.runDrain,
@@ -1905,7 +1905,7 @@ it.effect("queues a steer until the turn ends when the provider cannot steer it"
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === first.runId &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         ),
         Stream.take(1),
         Stream.runDrain,
@@ -1974,7 +1974,7 @@ it.effect("delivers agent messages queued behind /compact before a later one ste
             (event) =>
               event.type === "run.updated" &&
               event.payload.id === turnInput.runId &&
-              (event.payload.status === "waiting" || event.payload.status === "completed"),
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -2156,7 +2156,7 @@ const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
       const providerTurn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns.find(
         (candidate) => candidate.runAttemptId === turn.attemptId,
       )!;
-      const settled = yield* watchRun(turn.runId, "waiting");
+      const settled = yield* watchRun(turn.runId, "completed");
       yield* Queue.offer(harness.events, {
         type: "provider_turn.updated",
         driver,
@@ -2558,7 +2558,7 @@ it.effect("keeps a held commentary draft before the steer when turn end flushes 
         (event) =>
           event.type === "run.updated" &&
           event.payload.id === first.runId &&
-          event.payload.status === "waiting",
+          event.payload.status === "completed",
       );
       yield* Queue.offer(events, assistantItem("answer", "All fixed.", false));
       yield* Queue.offer(events, assistantItem("draft", "Let me look at the", false));
@@ -3804,7 +3804,7 @@ it.effect("replays an accepted steer after its target turn completes", () =>
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === accepted.run.id &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         ),
         Stream.take(1),
         Stream.runDrain,
@@ -4031,7 +4031,7 @@ it.effect.each(["next", "/goal ship it", "fresh next"])(
             (event) =>
               event.type === "run.updated" &&
               event.payload.id === started[0]!.runId &&
-              event.payload.status === "waiting",
+              event.payload.status === "completed",
           ),
           Stream.take(1),
           Stream.runDrain,
@@ -4234,7 +4234,7 @@ it.effect("a side chat that opens with /goal gets its context on the next questi
         (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
       );
       const settled = yield* sideChatEvent(
-        (event) => event.type === "run.updated" && event.payload.status === "waiting",
+        (event) => event.type === "run.updated" && event.payload.status === "completed",
       );
       yield* ask("goal", "/goal clear");
       yield* worker.drain();
