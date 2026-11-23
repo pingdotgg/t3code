@@ -697,7 +697,10 @@ describe("CLIProxyAPI built-in management API", () => {
           windowDurationMins: 10080,
         },
       ]);
-      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+      expect(test.requests.map((request) => request.path)).toEqual([
+        "/v0/management/auth-files",
+        "/v0/management/auth-files/models",
+      ]);
     }),
   );
 
@@ -711,7 +714,10 @@ describe("CLIProxyAPI built-in management API", () => {
       const [account] = yield* (yield* test.api).readAccounts(config);
       expect(account?.driver).toBe("devin");
       expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
-      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+      expect(test.requests.map((request) => request.path)).toEqual([
+        "/v0/management/auth-files",
+        "/v0/management/auth-files/models",
+      ]);
     }),
   );
 
@@ -746,7 +752,10 @@ describe("CLIProxyAPI built-in management API", () => {
           resetsAt: "2099-01-08T00:00:00Z",
         },
       ]);
-      expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+      expect(test.requests.map((request) => request.path)).toEqual([
+        "/v0/management/auth-files",
+        "/v0/management/auth-files/models",
+      ]);
     }),
   );
 
