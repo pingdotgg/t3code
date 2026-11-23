@@ -142,8 +142,9 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.click(page.getByRole("dialog").getByRole("button", { name: "Connect & add" }));
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
+    // The spinner's "Loading" status is part of the button's accessible name.
     await expect
-      .element(page.getByRole("dialog").getByRole("button", { name: "Connecting to devbox…" }))
+      .element(page.getByRole("dialog").getByRole("button", { name: /Connecting to devbox…$/ }))
       .toBeDisabled();
     await expect.element(page.getByText(/opening an SSH tunnel/)).toBeInTheDocument();
     finishConnection(AsyncResult.failure(Cause.fail(new Error("dismissed SSH attempt"))));
