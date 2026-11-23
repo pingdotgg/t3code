@@ -260,7 +260,8 @@ export const layer: Layer.Layer<
           if (currentRun.status !== "waiting" && !stoppedNow) {
             return;
           }
-          // Stop on a waiting run only records its request; the run must still end stopped.
+          // A Stop that reached no provider turn only recorded its request; only capture can end the
+          // run stopped. One delivered to a provider turn (its background work) defers to that turn.
           const { turnItems: stopItems } = stoppedNow
             ? { turnItems: [] }
             : yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
@@ -270,7 +271,8 @@ export const layer: Layer.Layer<
           const stopRequest = stopItems.some((item) => item.type === "run_interrupt_result")
             ? undefined
             : stopItems.find((item) => item.type === "run_interrupt_request");
-          const stopRequested = stopRequest?.type === "run_interrupt_request";
+          const stopRequested =
+            stopRequest?.type === "run_interrupt_request" && stopRequest.providerTurnId === null;
           const finalStatus = stopRequested ? ("interrupted" as const) : ("completed" as const);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
