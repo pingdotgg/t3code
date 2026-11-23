@@ -266,11 +266,15 @@ function upsertVisibleTurnItem(
 // items never received stay absent.
 function restoreQueuedUserItems(
   projection: OrchestrationV2ThreadProjection,
-  runId: OrchestrationV2Run["id"],
+  runId?: OrchestrationV2Run["id"],
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   let visibleTurnItems = projection.visibleTurnItems;
   for (const item of projection.turnItems) {
-    if (item.runId !== runId || item.type !== "user_message" || item.inputIntent !== "queued_turn")
+    if (
+      (runId !== undefined && item.runId !== runId) ||
+      item.type !== "user_message" ||
+      item.inputIntent !== "queued_turn"
+    )
       continue;
     if (!shouldShowLocalTurnItem(projection, item)) continue;
     visibleTurnItems = upsertVisibleTurnItem(
@@ -281,6 +285,20 @@ function restoreQueuedUserItems(
     );
   }
   return visibleTurnItems;
+}
+
+// Older caches can retain delivered queued input hidden by the former visibility rule.
+// Request cards retained outside the window must not be pulled into the timeline.
+export function restoreCachedProjectionVisibility(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  const visibleTurnItems = restoreQueuedUserItems({
+    ...projection,
+    visibleTurnItems: activeVisibleTurnItems(projection),
+  });
+  return visibleTurnItems === projection.visibleTurnItems
+    ? projection
+    : { ...projection, visibleTurnItems };
 }
 
 export function applyOrchestrationV2ProjectionEvent(

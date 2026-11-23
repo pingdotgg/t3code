@@ -1,3 +1,4 @@
+import legacyQueuedCache from "./fixtures/legacy-delivered-queued-cache.json" with { type: "json" };
 import {
   EnvironmentAuthorizationError,
   EnvironmentId,
@@ -77,6 +78,9 @@ const PREPARED: PreparedConnection = {
   httpAuthorization: null,
   target: TARGET,
 };
+const decodeLegacyThreadCache = Schema.decodeEffect(
+  Schema.fromJsonString(StoredOrchestrationThreadSnapshot),
+);
 const BASE_PROJECTION: OrchestrationV2ThreadProjection = {
   ...v2Projection,
   thread: { ...v2Projection.thread, title: "Cached thread" },
@@ -423,6 +427,54 @@ const deleted = (sequence = 3): OrchestrationV2ThreadStreamItem => {
 };
 
 describe("EnvironmentThreads", () => {
+  it.effect.each([
+    ["disk", true],
+    ["retained", true],
+    ["disk", false],
+    ["retained", false],
+  ] as const)(
+    "restores cached queued-input visibility before history loads (%s, started=%s)",
+    ([cacheKind, started]) =>
+      Effect.gen(function* () {
+        const stored = yield* decodeLegacyThreadCache(legacyQueuedCache.cache);
+        const projection = started
+          ? stored.snapshot.projection
+          : {
+              ...stored.snapshot.projection,
+              runs: stored.snapshot.projection.runs.map((run) => ({ ...run, startedAt: null })),
+            };
+        expect(projection.turnItems.map((item) => item.id)).toContain("Delivered before recovery");
+        expect(projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual(["Later input"]);
+        const h = yield* makeHarness({
+          loadCached: Effect.succeedSome({ ...stored.snapshot, projection }),
+          ...(cacheKind === "retained"
+            ? {
+                resumeCache: {
+                  owner: undefined,
+                  snapshot: {
+                    state: {
+                      ...EMPTY_ENVIRONMENT_THREAD_STATE,
+                      data: Option.some(projection),
+                      status: "live",
+                    },
+                    sequence: stored.snapshot.snapshotSequence,
+                    persisted: true,
+                  },
+                },
+              }
+            : {}),
+          completionMarker: true,
+        });
+        yield* Queue.offer(h.inputs, synchronized());
+        const state = yield* awaitThreadState(h.observed, (value) => value.status === "live");
+        expect(
+          Option.getOrThrow(state.data).visibleTurnItems.map((row) => row.sourceItemId),
+        ).toEqual(started ? ["Delivered before recovery", "Later input"] : ["Later input"]);
+        expect(yield* Ref.get(h.loaderCalls)).toBe(0);
+        expect(yield* Ref.get(h.lastSubscribeAfterSequence)).toBe(stored.snapshot.snapshotSequence);
+      }),
+  );
+
   it.effect.each([
     ["disk", false],
     ["retained", false],
