@@ -5612,5 +5612,11 @@
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
   "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
   "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "70283068f9bb4114": "Esta descrição foi alterada em outro lugar desde que você começou a editá-la. Seu rascunho foi mantido acima.",
+  "daf41681db7a899a": "Ocultar a descrição atual",
+  "8fc15cfdaa9abfc6": "Mostrar a descrição atual",
+  "2d98551f5e3365ac": "Nenhuma descrição fornecida.",
+  "5574a212c0cd0256": "Descartar meu rascunho",
+  "e5d6dc0c92c17ff7": "Manter meu rascunho"
 }

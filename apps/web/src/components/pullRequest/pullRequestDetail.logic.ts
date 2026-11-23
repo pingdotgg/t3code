@@ -1529,6 +1529,11 @@ export function isPullRequestNotFound(failure: unknown): boolean {
   return isPullRequestOperationError(failure) && failure.reason === "not-found";
 }
 
+/** The host refused a write because what it was based on changed since it was read. */
+export function isPullRequestConflict(failure: unknown): boolean {
+  return isPullRequestOperationError(failure) && failure.reason === "conflict";
+}
+
 const OPERATION_PREFIX = /^Pull request operation \w+ failed:\s*/iu;
 
 const HOST_LABELS = sourceControlClients.definitions

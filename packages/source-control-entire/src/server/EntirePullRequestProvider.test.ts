@@ -382,7 +382,7 @@ describe("EntirePullRequestProvider", () => {
       }).pipe(Effect.provide(server.layer));
     });
 
-    it.effect("asks for a refresh when the project trail changed since it was read", () => {
+    it.effect("reports a conflict when the project trail changed since it was read", () => {
       const server = fakeEntire(
         {
           "GET /trails/7": change,
@@ -399,9 +399,10 @@ describe("EntirePullRequestProvider", () => {
           expectedBody: `${link}\n\nOld intent`,
           body: "New intent",
         }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "conflict");
         assert.strictEqual(
           error.detail,
-          "The description changed elsewhere. Refresh and try again.",
+          "The description changed elsewhere since you started editing.",
         );
         // The title is left as it was.
         assert.deepStrictEqual(server.writes(), [`PATCH ${trailPath}`]);
@@ -431,15 +432,16 @@ describe("EntirePullRequestProvider", () => {
           body: `${link}\n\nNew intent`,
         });
         const error = yield* Effect.flip(save);
+        assert.strictEqual(error.reason, "conflict");
         assert.strictEqual(
           error.detail,
-          "The description changed elsewhere. Refresh and try again.",
+          "The description changed elsewhere since you started editing.",
         );
         assert.deepStrictEqual(server.writes(), []);
 
         assert.include((yield* provider.getChangeRequest(target)).body, "Edited elsewhere");
         const stale = yield* Effect.flip(save);
-        assert.include(stale.detail, "changed elsewhere");
+        assert.strictEqual(stale.reason, "conflict");
         assert.deepStrictEqual(server.writes(), []);
         yield* provider.updateChangeRequest!({
           ...target,

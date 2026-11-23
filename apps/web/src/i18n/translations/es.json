@@ -12782,5 +12782,9 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "7c5a90bf39328351": "Esta descripción cambió en otro lugar desde que empezaste a editarla. Tu borrador se conserva abajo.",
+  "8fc15cfdaa9abfc6": "Mostrar la descripción actual",
+  "5574a212c0cd0256": "Descartar mi borrador",
+  "e5d6dc0c92c17ff7": "Conservar mi borrador"
 }

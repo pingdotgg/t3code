@@ -490,7 +490,9 @@ function toPullRequestErrorWith(
     return new PullRequestOperationError({
       operation,
       detail: error.detail,
-      ...(error.reason === "not-found" ? { reason: "not-found" as const } : {}),
+      ...(error.reason === "not-found" || error.reason === "conflict"
+        ? { reason: error.reason }
+        : {}),
       cause: error,
     });
   };

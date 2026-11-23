@@ -12787,5 +12787,9 @@
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
   "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "6d8e4ebc889bace9": "Ajouter un compte",
+  "7c5a90bf39328351": "Cette description a été modifiée ailleurs depuis que vous avez commencé à la modifier. Votre brouillon est conservé ci-dessous.",
+  "8fc15cfdaa9abfc6": "Afficher la description actuelle",
+  "5574a212c0cd0256": "Abandonner mon brouillon",
+  "e5d6dc0c92c17ff7": "Garder mon brouillon"
 }

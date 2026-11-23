@@ -5618,5 +5618,11 @@
   "856812e7e1fc445e": "Verktygsanrop i chatten",
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
   "99d51127f573296b": "Ett konto till",
-  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare."
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "70283068f9bb4114": "Den här beskrivningen har ändrats någon annanstans sedan du började redigera. Ditt utkast finns kvar ovan.",
+  "daf41681db7a899a": "Dölj den aktuella beskrivningen",
+  "8fc15cfdaa9abfc6": "Visa den aktuella beskrivningen",
+  "2d98551f5e3365ac": "Ingen beskrivning angiven.",
+  "5574a212c0cd0256": "Kasta mitt utkast",
+  "e5d6dc0c92c17ff7": "Behåll mitt utkast"
 }

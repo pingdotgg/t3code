@@ -5612,5 +5612,11 @@
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
   "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}."
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "70283068f9bb4114": "Cette description a été modifiée ailleurs depuis que vous avez commencé à la modifier. Votre brouillon est conservé ci-dessus.",
+  "daf41681db7a899a": "Masquer la description actuelle",
+  "8fc15cfdaa9abfc6": "Afficher la description actuelle",
+  "2d98551f5e3365ac": "Aucune description fournie.",
+  "5574a212c0cd0256": "Abandonner mon brouillon",
+  "e5d6dc0c92c17ff7": "Garder mon brouillon"
 }

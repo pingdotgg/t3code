@@ -56,6 +56,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
       "forbidden",
       "rate-limited",
       "not-found",
+      // The host refused a write because what it was based on changed since it was read.
+      "conflict",
       "failed",
     ]),
     detail: Schema.String,

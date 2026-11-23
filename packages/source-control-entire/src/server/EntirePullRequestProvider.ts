@@ -678,9 +678,20 @@ export const make = Effect.gen(function* () {
     yield* Cache.invalidate(revisions, trailKey(input));
   });
 
-  const refreshSentences = {
-    409: "The description changed elsewhere. Refresh and try again.",
-    412: "The description changed elsewhere. Refresh and try again.",
+  const CHANGED_ELSEWHERE = "The description changed elsewhere since you started editing.";
+  const changedElsewhere = () =>
+    new PullRequestProviderError({
+      provider: KIND,
+      operation: "updateChangeRequest",
+      reason: "conflict",
+      detail: CHANGED_ELSEWHERE,
+    });
+  // Entire answers a write based on an older version with 409 or 412.
+  const conflictOnStaleVersion = (error: PullRequestProviderError) => {
+    const status = isEntireApiError(error.cause) ? error.cause.status : null;
+    return status === 409 || status === 412
+      ? new PullRequestProviderError({ ...error, reason: "conflict", detail: CHANGED_ELSEWHERE })
+      : error;
   };
 
   // The description lives on the change's project trail, as on entire.com; a change without
@@ -710,7 +721,7 @@ export const make = Effect.gen(function* () {
       );
     if (route && projectTrail) {
       if (input.expectedBody === undefined || input.expectedBody !== current)
-        return yield* failure("updateChangeRequest", refreshSentences[412]);
+        return yield* changedElsewhere();
       if (projectTrail.etag === null)
         return yield* failure(
           "updateChangeRequest",
@@ -728,7 +739,7 @@ export const make = Effect.gen(function* () {
           body: { body: markdown },
         },
         Ignored,
-      ).pipe(Effect.mapError(explained(refreshSentences)));
+      ).pipe(Effect.mapError(conflictOnStaleVersion));
     }
     // Entire keeps a change's description only on its project trail.
     return yield* failure(

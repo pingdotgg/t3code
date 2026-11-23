@@ -12796,5 +12796,9 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "99963c0142e17f00": "For the new {tracker} account.",
-  "6d8e4ebc889bace9": "Add account"
+  "6d8e4ebc889bace9": "Add account",
+  "7c5a90bf39328351": "This description changed elsewhere since you started editing. Your draft is kept below.",
+  "8fc15cfdaa9abfc6": "Show the current description",
+  "5574a212c0cd0256": "Discard my draft",
+  "e5d6dc0c92c17ff7": "Keep my draft"
 }

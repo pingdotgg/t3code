@@ -5612,5 +5612,11 @@
   "856812e7e1fc445e": "Llamadas a herramientas en el chat",
   "8d545d54c0a9e950": "Oculta los comandos, ediciones y búsquedas que ejecutan los agentes. Ocultar las correctas mantiene los fallos. Zen solo muestra las respuestas finales. Las aprobaciones, preguntas y errores siempre se muestran.",
   "99d51127f573296b": "Otra cuenta",
-  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}."
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "70283068f9bb4114": "Esta descripción cambió en otro lugar desde que empezaste a editarla. Tu borrador se conserva arriba.",
+  "daf41681db7a899a": "Ocultar la descripción actual",
+  "8fc15cfdaa9abfc6": "Mostrar la descripción actual",
+  "2d98551f5e3365ac": "No se proporcionó ninguna descripción.",
+  "5574a212c0cd0256": "Descartar mi borrador",
+  "e5d6dc0c92c17ff7": "Conservar mi borrador"
 }

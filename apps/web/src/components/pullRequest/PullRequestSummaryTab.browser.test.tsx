@@ -3,13 +3,19 @@ import {
   SourceControlProviderKind,
   type ClientSettings,
 } from "@t3tools/contracts";
-import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  PullRequestOperationError,
+  type PullRequestDetailView,
+} from "@t3tools/contracts";
 import { Cause } from "effect";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   update: vi.fn(),
+  refreshFromHost: vi.fn(),
   canUpdate: true,
   timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
 }));
@@ -49,6 +55,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 function setup() {
   state.update.mockReset();
+  state.refreshFromHost.mockReset();
   state.update.mockResolvedValue({ _tag: "Success", value: undefined });
   state.canUpdate = true;
   state.timestampFormat = "locale";
@@ -123,6 +130,7 @@ const tab = (value = detail) => (
     activityPending={false}
     activityError={null}
     onRefresh={() => {}}
+    onRefreshChecks={state.refreshFromHost}
   />
 );
 
@@ -167,6 +175,58 @@ it("keeps an unsaved description when collapsed and reopened, and after a failed
   );
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   expect(screen.container.querySelector("textarea")!.value).toBe("Unsaved description");
+});
+
+const changedElsewhere = {
+  _tag: "Failure",
+  cause: Cause.fail(
+    new PullRequestOperationError({
+      operation: "update",
+      detail: "The description changed elsewhere since you started editing.",
+      reason: "conflict",
+    }),
+  ),
+};
+
+async function refusedAsChanged() {
+  setup();
+  state.update.mockResolvedValueOnce(changedElsewhere);
+  const screen = await render({ ...detail, observedAt: 1 });
+  await act(async () =>
+    screen.container.querySelector<HTMLButtonElement>('[aria-label="Edit description"]')!.click(),
+  );
+  const textarea = screen.container.querySelector("textarea")!;
+  await userEvent.clear(textarea);
+  await userEvent.type(textarea, "My draft");
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  await expect.element(screen.getByText(/changed elsewhere since you started/u)).toBeVisible();
+  // The server may still hold the older description, so the newer one is read from the host.
+  expect(state.refreshFromHost).toHaveBeenCalledTimes(1);
+  // Neither choice is offered until the newer description has been read.
+  await expect.element(screen.getByRole("button", { name: "Keep my draft" })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await screen.rerender(tab({ ...detail, body: "Edited elsewhere", observedAt: 2 }));
+  return screen;
+}
+
+it("saves a draft over a description changed elsewhere only once the user keeps it", async () => {
+  await using screen = await refusedAsChanged();
+  expect(screen.container.querySelector("textarea")!.value).toBe("My draft");
+  await userEvent.click(screen.getByRole("button", { name: "Keep my draft" }));
+  await userEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(state.update).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ body: "My draft", expectedBody: "Edited elsewhere" }),
+    }),
+  );
+});
+
+it("replaces the draft with the newer description when the user discards it", async () => {
+  await using screen = await refusedAsChanged();
+  await userEvent.click(screen.getByRole("button", { name: "Discard my draft" }));
+  expect(screen.container.querySelector("textarea")!.value).toBe("Edited elsewhere");
+  expect(screen.container.innerText).not.toMatch(/changed elsewhere since/u);
+  expect(state.update).toHaveBeenCalledTimes(1);
 });
 
 it("ticks a description checkbox placed after an attachment and edits from the ticked body", async () => {

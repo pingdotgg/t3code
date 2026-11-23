@@ -177,6 +177,38 @@ it.effect("refuses maintainer edits on a host without the capability", () =>
   }),
 );
 
+it.effect("passes on that a description save was refused because it changed elsewhere", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          updateChangeRequest: () =>
+            Effect.fail(
+              new PullRequestProviderError({
+                provider: SourceControlProviderKind.make("github"),
+                operation: "updateChangeRequest",
+                reason: "conflict",
+                detail: "The description changed elsewhere since you started editing.",
+              }),
+            ),
+        }),
+      ],
+    });
+    const error = yield* service
+      .update({
+        projectId: "p1" as ProjectId,
+        repository: "acme/web",
+        number: 1,
+        body: "Mine",
+        expectedBody: "Old",
+      })
+      .pipe(Effect.flip);
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(error._tag === "PullRequestOperationError" && error.reason, "conflict");
+  }),
+);
+
 it.effect("does not wait for an in-flight detail read to display a preview", () =>
   Effect.gen(function* () {
     const detailStarted = yield* Deferred.make<void>();

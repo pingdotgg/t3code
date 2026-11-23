@@ -5618,5 +5618,11 @@
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
   "99d51127f573296b": "Weiteres Konto",
-  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer."
+  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
+  "70283068f9bb4114": "Diese Beschreibung wurde woanders geändert, seit du mit der Bearbeitung begonnen hast. Dein Entwurf bleibt oben erhalten.",
+  "daf41681db7a899a": "Aktuelle Beschreibung ausblenden",
+  "8fc15cfdaa9abfc6": "Aktuelle Beschreibung anzeigen",
+  "2d98551f5e3365ac": "Keine Beschreibung angegeben.",
+  "5574a212c0cd0256": "Meinen Entwurf verwerfen",
+  "e5d6dc0c92c17ff7": "Meinen Entwurf behalten"
 }

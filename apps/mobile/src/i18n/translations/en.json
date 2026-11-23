@@ -5620,5 +5620,11 @@
   "856812e7e1fc445e": "Tool calls in chat",
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user."
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "70283068f9bb4114": "This description changed elsewhere since you started editing. Your draft is kept above.",
+  "daf41681db7a899a": "Hide the current description",
+  "8fc15cfdaa9abfc6": "Show the current description",
+  "2d98551f5e3365ac": "No description provided.",
+  "5574a212c0cd0256": "Discard my draft",
+  "e5d6dc0c92c17ff7": "Keep my draft"
 }

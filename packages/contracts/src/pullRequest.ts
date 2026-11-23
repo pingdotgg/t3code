@@ -1059,7 +1059,7 @@ export class PullRequestOperationError extends Schema.TaggedError<PullRequestOpe
   {
     operation: Schema.String,
     detail: TrimmedNonEmptyString,
-    reason: Schema.optional(Schema.Literal("not-found")),
+    reason: Schema.optional(Schema.Literals(["not-found", "conflict"])),
     listResult: Schema.optional(PullRequestListResult),
     cause: Schema.optional(Schema.Defect()),
   },
