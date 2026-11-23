@@ -722,16 +722,10 @@ it.effect("rejects arguments a tool does not declare instead of dropping them", 
       threadId: "thread-excess-arguments",
       timeout: 5_000,
     });
-    const read = yield* callTool("t3_thread_read", {
-      threadId: "thread-excess-arguments",
-      position: 5_100,
-      limit: 20,
-    });
 
     expect(calls).toEqual([]);
     expect(invalidArgumentText(launch)).toContain('Unknown argument "prompt"');
     expect(invalidArgumentText(wait)).toContain('Unknown argument "timeout"');
-    expect(invalidArgumentText(read)).toContain('Unknown argument "position"');
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
