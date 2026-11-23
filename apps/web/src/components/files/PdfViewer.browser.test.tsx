@@ -194,14 +194,14 @@ it("keeps the page in view, with its painted canvas, when the pane narrows", asy
     const canvas = region.querySelector<HTMLCanvasElement>('canvas[aria-label="Page 4"]')!;
     await vi.waitFor(() => expect(canvas.width).toBeGreaterThan(300));
 
-    const resized = new Promise((resolve) => new ResizeObserver(resolve).observe(container));
     container.style.width = "300px";
-    await resized;
-    const top = region.getBoundingClientRect().top;
-    const box = canvas.getBoundingClientRect();
-    expect(canvas.isConnected).toBe(true);
-    expect(box.top).toBeLessThanOrEqual(top);
-    expect(box.bottom).toBeGreaterThan(top);
+    await vi.waitFor(() => {
+      const top = region.getBoundingClientRect().top;
+      const box = canvas.getBoundingClientRect();
+      expect(box.width).toBe(region.clientWidth - 32);
+      expect(box.top).toBeLessThanOrEqual(top);
+      expect(box.bottom).toBeGreaterThan(top);
+    });
     await expect.element(screen.getByText("4 / 6 pages")).toBeVisible();
   } finally {
     URL.revokeObjectURL(url);

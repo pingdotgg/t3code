@@ -264,7 +264,7 @@ export default function PdfViewer(props: {
   const [zoom, setZoom] = useState(initialView.zoom);
   const [pageWidth, setPageWidth] = useState(612);
   const [viewport, setViewport] = useState({ width: 600, height: 800 });
-  const [scrolled, setScrolled] = useState({ top: 0, width: 0 });
+  const [scrolled, setScrolled] = useState({ top: 0, width: 0, pdf });
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<number[]>([]);
   const [finding, setFinding] = useState(false);
@@ -340,7 +340,7 @@ export default function PdfViewer(props: {
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
   // A new page width moves every page, so the place in view has a new offset before the DOM scrolls.
-  const resized = pdf !== null && scrolled.width > 0 && scrolled.width !== width;
+  const resized = pdf !== null && scrolled.pdf === pdf && scrolled.width !== width;
   const scrollTop = resized ? pdfResizedScrollTop(ratios, scrolled, width) : scrolled.top;
   const current = currentPdfPage(offsets, ratios.length, scrollTop);
   const visible = visiblePdfPages(ratios, offsets, scrollTop, viewport.height);
@@ -378,7 +378,7 @@ export default function PdfViewer(props: {
       top: pdfRestoredScrollTop(ratios, width, initialView, savedPosition?.width),
       left: initialView.left,
     });
-    setScrolled({ top: node.scrollTop, width });
+    setScrolled({ top: node.scrollTop, width, pdf });
     saveView(node);
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Restore the saved PDF scroll position after the loaded document's page layout commits.
@@ -565,7 +565,7 @@ export default function PdfViewer(props: {
         tabIndex={0}
         className="relative min-h-0 min-w-0 w-full flex-1 overflow-auto scrollbar-gutter-stable bg-muted/40"
         onScroll={(event) => {
-          setScrolled({ top: event.currentTarget.scrollTop, width });
+          setScrolled({ top: event.currentTarget.scrollTop, width, pdf });
           saveView(event.currentTarget);
         }}
         onKeyDown={(event) => {
