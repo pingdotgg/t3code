@@ -71,6 +71,7 @@ import { ThreadPullRequestsSheet } from "./features/threads/ThreadPullRequestsSh
 import { ThreadAgentsSheet } from "./features/threads/ThreadAgentsSheet";
 import { LinkedThreadSheet } from "./features/threads/LinkedThreadSheet";
 import { ThreadGuestShareSheet } from "./features/threads/ThreadGuestShareSheet";
+import { ThreadMoveSheet } from "./features/threads/ThreadMoveSheet";
 import { ThreadBackgroundWorkSheet } from "./features/threads/ThreadBackgroundWorkSheet";
 import { ThreadQueueSheet } from "./features/threads/ThreadQueueControl";
 import {
@@ -816,6 +817,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
     ThreadGuestShare: createNativeStackScreen({
       screen: ThreadGuestShareSheet,
       options: sheetRoute({ detent: 0.5 }),
+    }),
+    ThreadMove: createNativeStackScreen({
+      screen: ThreadMoveSheet,
+      options: sheetRoute({ detent: 0.75, androidMaxDetent: 0.95 }),
     }),
     GitOverview: createNativeStackScreen({
       screen: GitOverviewSheet,

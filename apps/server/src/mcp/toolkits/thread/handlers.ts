@@ -6,8 +6,12 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  isRuntimeModeAbove,
+  type ThreadMoveError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
@@ -29,7 +33,20 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { rejectionText } from "../../../orchestration-v2/runOutput.ts";
-import { ThreadToolkit } from "./tools.ts";
+import * as ThreadMoveService from "../../../orchestration-v2/ThreadMoveService.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
+import { ThreadImportTool, ThreadToolkit } from "./tools.ts";
+
+const moveFailure = (error: ThreadMoveError) =>
+  new OrchestratorMcpFailure({
+    code:
+      error.reason === "thread-not-found"
+        ? "thread_not_found"
+        : error.reason === "failed"
+          ? "orchestration_error"
+          : "invalid_request",
+    message: error.detail,
+  });
 
 function queueEntry(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "messages">,
@@ -161,6 +178,95 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         })),
       };
     }),
+  ),
+  t3_thread_move: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        if (input.threadId === scope.thread?.threadId) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "A thread cannot move itself while it runs. Ask the user to use Move to… in this thread's menu once the turn ends.",
+          });
+        }
+        if (input.targetEnvironmentId === scope.environmentId) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The thread is already in this environment.",
+          });
+        }
+        if (scope.linkedEnvironments === false) return yield* PeerForwarding.linkedEnvironmentsOff;
+        const forwarding = yield* Effect.serviceOption(PeerForwarding.PeerForwarding);
+        if (Option.isNone(forwarding)) {
+          return yield* new OrchestratorMcpFailure({
+            code: "orchestration_error",
+            message: "This environment cannot reach linked environments.",
+          });
+        }
+        const moves = yield* ThreadMoveService.ThreadMoveService;
+        const snapshot = yield* moves
+          .exportThread(input.threadId)
+          .pipe(Effect.mapError(moveFailure));
+        const imported = yield* forwarding.value.call(
+          scope,
+          ThreadImportTool,
+          input.targetEnvironmentId,
+          { commandId: yield* newCommandId(), projectId: input.projectId, snapshot },
+        );
+        const label = yield* forwarding.value.links(scope).pipe(
+          Effect.map(
+            (result) =>
+              result.links.find((link) => link.environmentId === input.targetEnvironmentId)
+                ?.label ?? input.targetEnvironmentId,
+          ),
+          Effect.orElseSucceed(() => input.targetEnvironmentId),
+        );
+        const completed = yield* Effect.exit(
+          moves.completeMove({ threadId: input.threadId, targetEnvironmentLabel: label }),
+        );
+        return {
+          environmentId: input.targetEnvironmentId,
+          threadId: imported.threadId,
+          link: McpInvocationContext.threadLinkFor(
+            { environmentId: input.targetEnvironmentId, client: scope.client },
+            imported.threadId,
+            snapshot.title,
+          ),
+          carriedBranch: imported.carriedBranch,
+          sourceArchived: Exit.isSuccess(completed),
+        };
+      }),
+  ),
+  t3_thread_import: McpToolAccess.startsThreads(
+    () => ({}),
+    (input, modes) =>
+      Effect.gen(function* () {
+        const moves = yield* ThreadMoveService.ThreadMoveService;
+        return yield* moves
+          .importThread(
+            {
+              ...input,
+              snapshot: {
+                ...input.snapshot,
+                // The link's modes cap the moved thread, as they cap anything it starts.
+                runtimeMode: isRuntimeModeAbove(input.snapshot.runtimeMode, modes.runtimeMode)
+                  ? modes.runtimeMode
+                  : input.snapshot.runtimeMode,
+                interactionMode:
+                  modes.interactionMode === "plan" ? "plan" : input.snapshot.interactionMode,
+              },
+            },
+            {
+              createdBy: "agent",
+              creationSource: "mcp",
+              linkOrigin: modes.linkOrigin,
+            },
+          )
+          .pipe(Effect.mapError(moveFailure));
+      }),
+    "stamped",
   ),
   t3_thread_transfer: McpToolAccess.either(
     (input) => input.action === "status",

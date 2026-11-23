@@ -9,6 +9,8 @@ export type ThreadActionMenuId =
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
+  | "move"
+  | `move:${string}`
   | "project-settings"
   | "pin"
   | "unpin"
@@ -127,6 +129,8 @@ export interface ThreadActionMenuState {
   readonly canShareWithGuest?: boolean;
   /** A No project thread with its own folder, on a server that can promote it. */
   readonly canTurnIntoProject?: boolean;
+  /** Other connected machines the thread can move to; the item is left out when empty. */
+  readonly moveTargets?: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>;
 }
 
 /** Local navigation, read markers, and copying remain available to read-only clients. */
@@ -267,6 +271,23 @@ export function buildThreadActionMenuItems(
             label: resolve(msg("Turn into project")),
             icon: "folder-plus",
             disabled: state.isRunning,
+          },
+        ]
+      : []),
+    ...(state.moveTargets && state.moveTargets.length > 0
+      ? [
+          {
+            id: "move" as const,
+            label: resolve(
+              msg("Move to…", { $context: "submenu of machines to move the thread to" }),
+            ),
+            icon: "arrow-right-left",
+            // Export refuses a running thread, same as archive.
+            disabled: state.isRunning,
+            children: state.moveTargets.map((target) => ({
+              id: `move:${target.environmentId}` as const,
+              label: target.label,
+            })),
           },
         ]
       : []),

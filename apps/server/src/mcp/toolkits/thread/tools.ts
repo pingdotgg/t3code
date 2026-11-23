@@ -20,11 +20,16 @@ import {
   NonNegativeInt,
   ProjectId,
   clampedPositiveInt,
+  CommandId,
+  EnvironmentId,
+  ThreadMoveImportResult,
+  ThreadMoveSnapshot,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
+import * as ThreadMoveService from "../../../orchestration-v2/ThreadMoveService.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -193,6 +198,44 @@ const ThreadTransferTool = Tool.make("t3_thread_transfer", {
   ]),
 }).annotate(Tool.Destructive, true);
 
+const ThreadMoveTool = Tool.make("t3_thread_move", {
+  ...commandTool,
+  description:
+    "Move a thread to a linked environment. Its conversation goes to a new thread in `projectId` there, on its branch when pushed; tool activity and unpushed work stay. Then it is archived here. Not the thread you run in, and not while it runs. `projectId`: `t3_project_list` with that environment's id.",
+  parameters: Schema.Struct({
+    threadId: ThreadId,
+    targetEnvironmentId: EnvironmentId,
+    projectId: ProjectId,
+  }),
+  success: Schema.Struct({
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+    link: Schema.String,
+    carriedBranch: Schema.NullOr(Schema.String),
+    /** False when the new thread exists but this one could not be archived. */
+    sourceArchived: Schema.Boolean,
+  }),
+  dependencies: [...commandTool.dependencies, ThreadMoveService.ThreadMoveService],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
+
+/** Called by another environment's `t3_thread_move` over its link; agents here never see it. */
+export const ThreadImportTool = Tool.make("t3_thread_import", {
+  ...commandTool,
+  description: "Receive a thread another environment is moving here.",
+  parameters: Schema.Struct({
+    commandId: CommandId,
+    projectId: ProjectId,
+    snapshot: ThreadMoveSnapshot,
+  }),
+  success: ThreadMoveImportResult,
+  dependencies: [...commandTool.dependencies, ThreadMoveService.ThreadMoveService],
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.onlyForLinkedClients);
+
 const ThreadSearchTool = Tool.make("t3_thread_search", {
   ...commandTool,
   description:
@@ -261,6 +304,8 @@ export const ThreadToolkit = Toolkit.make(
   ThreadSearchTool,
   ThreadConfigureTool,
   ThreadTransferTool,
+  ThreadMoveTool,
+  ThreadImportTool,
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,

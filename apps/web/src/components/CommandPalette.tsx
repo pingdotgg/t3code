@@ -63,6 +63,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  ArrowRightLeftIcon,
   BugIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
@@ -128,6 +129,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
+import { threadMove, threadMoveTargetsAtom } from "../state/threadMove";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -187,6 +189,7 @@ import {
 } from "../rightPanelStore";
 import { getLatestThreadForProject, sortThreads } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
 import {
   cn,
   getLocalFileManagerName,
@@ -277,6 +280,7 @@ import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
+import { openMoveThread } from "./MoveThreadDialog";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { openUseInAnotherApp } from "./mcp/UseInAnotherAppDialog";
 import { ProjectContentSearchDialog } from "./search/ProjectContentSearchDialog";
@@ -533,6 +537,12 @@ function OpenCommandPaletteDialog(props: {
   );
   const canShareActiveThreadWithGuest = useAtomValue(
     canShareWithGuestAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
+  );
+  const activeThreadMoveTargets = useAtomValue(
+    threadMoveTargetsAtom(activeThread?.environmentId ?? ("" as EnvironmentId)),
+  );
+  const canMoveActiveThread = useAtomValue(
+    threadMove.completePermissionAtom(activeThread?.environmentId ?? null),
   );
   const activeThreadReferenceCopyTarget =
     referenceThreadRef === null || (pathname === "/pull-requests" && !openPanelPullRequestUrl)
@@ -1592,6 +1602,26 @@ function OpenCommandPaletteDialog(props: {
         openGuestShareDialog(threadRef);
       },
     });
+  }
+
+  if (activeThread !== null && canMoveActiveThread) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    // Export refuses a running thread.
+    const running = !threadRuntimeCanArchive(activeThread.runtime);
+    for (const target of activeThreadMoveTargets) {
+      actionItems.push({
+        kind: "action",
+        value: `action:move-thread:${target.environmentId}`,
+        searchTerms: ["move", "transfer", "machine", "environment", "handoff", target.label],
+        title: gt("Move thread to {machine}…", { machine: target.label }),
+        ...(running ? { description: gt("Stop the thread before moving it.") } : {}),
+        disabled: running,
+        icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openMoveThread({ threadRef, targetEnvironmentId: target.environmentId });
+        },
+      });
+    }
   }
 
   if (activeThread !== null) {

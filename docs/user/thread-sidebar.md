@@ -61,6 +61,27 @@ Enable **Settings → Labs → Boring sidebar (group by project)** on web/deskto
 
 Customize presets in **Settings → Threads → Snooze options** (durations like `3 hours` or times like `9:00 PM tomorrow`), or pick **Snooze → Custom…** for an exact date/time or duration. **Snooze → Indefinitely** keeps a thread snoozed until you wake it (it still wakes early on approvals, questions, errors, or new messages). Choose **Wake thread** to bring a thread back early.
 
+## Move a thread to another machine
+
+When this app is connected to more than one environment, choose **Move to…** in a thread's
+menu (**Move to another machine…** on mobile), or the move action in the command palette, and
+pick a machine. On that machine, pick
+the project to move into; T3 Code suggests the one for the same repository. If the repository
+is not there yet, add it from the dialog first. Agents can do the same between
+[linked environments](remote-access.md#link-another-environment).
+
+- The conversation moves, not the run history. Your requests and the agent's answers come
+  along; tool activity, attachments and reasoning stay in the original thread. A very long
+  thread brings its first request and its most recent messages, and says how many it left
+  behind. The next message you send starts the agent fresh with that conversation.
+- Code moves through your Git remote. If the thread's branch is pushed, the moved thread works
+  on that branch on the other machine, reusing a checkout of it that is already there.
+  Uncommitted changes and unpushed commits stay behind, and the dialog lists them first: push
+  before moving to bring them along. Without a pushed branch, the moved thread starts where a
+  new thread in that project would.
+- Afterwards the original thread is archived, with a note saying where it went. Unarchive it
+  from **Settings → Archive** to pick it back up. A running thread cannot move; stop it first.
+
 ## Link a pull request
 
 The server automatically links open PRs matching an unsettled thread's branch. On web/desktop, right-click any PR link in a thread and choose **Link to thread** or **Unlink from thread** to override it. Linked PRs participate in auto-settlement.
