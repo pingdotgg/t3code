@@ -89,7 +89,7 @@ function layerTestFor(state: {
   beforeLocalStatus?: Effect.Effect<void>;
   beforeCurrentBranch?: Effect.Effect<void>;
   beforeInvalidate?: Effect.Effect<void>;
-  branchRead?: () => Effect.Effect<string | null>;
+  branchRead?: () => Effect.Effect<string | null, GitCommandError>;
   fileSystem?: FileSystem.FileSystem;
   pullCurrentBranch?: GitWorkflowService.GitWorkflowService["Service"]["pullCurrentBranch"];
   headPath?: string;
@@ -2181,6 +2181,82 @@ describe("VcsStatusBroadcaster", () => {
         // The reconcile retry is still backing off, so only a fresh branch check finds "repro".
         state.failLocalStatus = false;
         assert.strictEqual(yield* snapshotBranch(broadcaster), "repro");
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
+  );
+
+  it.effect("a HEAD change while a checkout publish backs off unconfirms the branch", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const arrivals = yield* Queue.unbounded<void>();
+      const failedRead = yield* Deferred.make<void>();
+      let failBranchRead = false;
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, isDefaultRef: true, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: "/repo/.git/HEAD",
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          // The watch fiber only takes the next event after this one reached the first buffer.
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(
+              Stream.tap(() => Queue.offer(arrivals, undefined)),
+              Stream.onStart(Effect.sync(() => options?.onReady?.())),
+            ),
+        }),
+        branchRead: () =>
+          failBranchRead
+            ? Deferred.succeed(failedRead, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "VcsStatusBroadcaster.test",
+                      command: "git symbolic-ref",
+                      cwd: "/repo",
+                      detail: "HEAD is being rewritten",
+                    }),
+                  ),
+                ),
+              )
+            : Effect.sync(() => state.currentLocalStatus.refName),
+      };
+      const snapshotBranch = (broadcaster: VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]) =>
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.map(([event]) => (event?._tag === "snapshot" ? event.local.refName : null)),
+        );
+      const checkout = (refName: string) =>
+        Effect.gen(function* () {
+          state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName };
+          yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+          yield* Queue.take(arrivals);
+        });
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const subscribed = yield* Deferred.make<void>();
+        yield* Stream.runForEach(
+          broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+          () => Deferred.succeed(subscribed, undefined),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(subscribed);
+
+        // The checkout's own HEAD read fails, so its publish backs off on the test clock.
+        failBranchRead = true;
+        yield* checkout("one");
+        yield* Deferred.await(failedRead);
+        failBranchRead = false;
+        assert.strictEqual(yield* snapshotBranch(broadcaster), "one");
+
+        // The next checkout waits behind that retry, yet a joining subscriber must not get "one".
+        yield* checkout("two");
+        assert.strictEqual(yield* snapshotBranch(broadcaster), "two");
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }),
   );

@@ -1104,9 +1104,6 @@ export const make = Effect.gen(function* () {
   const publishCheckedOutRef = Effect.fn("VcsStatusBroadcaster.publishCheckedOutRef")(function* (
     cwd: string,
   ) {
-    // The cache still holds the old branch until the reconcile read lands, which can fail and retry.
-    branchConfirmedUnder.delete(cwd);
-    headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
     if (!detailedSubscribers.has(cwd)) return yield* refreshBranchStatusCore(cwd);
     const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
     yield* publishBranch(cwd, { refName, isRepo }, observation);
@@ -1152,6 +1149,13 @@ export const make = Effect.gen(function* () {
             : Effect.succeed(false),
         ),
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
+        // On arrival: the cache keeps the old branch until reads below land, and they can retry.
+        Stream.tap(() =>
+          Effect.sync(() => {
+            branchConfirmedUnder.delete(cwd);
+            headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
+          }),
+        ),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
         Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
