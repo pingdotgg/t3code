@@ -650,7 +650,11 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, message)
     assertEquals(2, manager.activeNotifications.size)
   }
+}
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [24, 26, 33, 36], manifest = Config.NONE)
+class AgentNotificationsLocalizationTest : AgentNotificationsFixture() {
   @Test
   fun simplifiedChineseLocaleTranslatesActivityCardChipActionsAndChannels() {
     lifecycle.currentState = Lifecycle.State.RESUMED
