@@ -238,6 +238,14 @@ export function workflowRunLists(
   };
 }
 
+/** Whether a run is of this workflow or invoked one, so a workflow that only runs inside others is found. */
+export function workflowRunInvolves(node: WorkflowRunNode, workflow: string): boolean {
+  return (
+    node.run.workflow === workflow ||
+    node.children.some((child) => workflowRunInvolves(child, workflow))
+  );
+}
+
 /** The list to open on: what waits on a person, else what is under way, else everything. */
 export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListTab {
   if (groups.needsYou.length > 0) return "needs-you";

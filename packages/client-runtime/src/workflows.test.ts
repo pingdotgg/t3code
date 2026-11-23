@@ -21,6 +21,7 @@ import {
   workflowFlowFocus,
   workflowPausedBeat,
   workflowResultLines,
+  workflowRunInvolves,
   workflowRunLists,
   workflowRunNow,
   workflowRunRefreshKey,
@@ -221,6 +222,14 @@ describe("the list of runs", () => {
         groupWorkflowRuns([], [run("old", { status: "completed", endedAt: at(1) })], []),
       ),
     ).toBe("all");
+    const invoked = workflowRunLists(
+      groupWorkflowRuns(
+        [],
+        [run("parent"), run("child", { workflow: "check", parentRunId: "parent" }), run("other")],
+        [],
+      ),
+    ).all;
+    expect(ids(invoked.filter((node) => workflowRunInvolves(node, "check")))).toEqual(["parent"]);
   });
 
   it("leaves out what a workflow skipped, but not a skipped step of another run", () => {

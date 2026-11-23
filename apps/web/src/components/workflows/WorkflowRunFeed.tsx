@@ -27,7 +27,14 @@ import {
   SquareIcon,
 } from "lucide-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -182,6 +189,13 @@ const nthTry = (count: number, resolve: MessageResolver) =>
     }),
   );
 
+// The loading view and the timeline each draw a question's card, so a reason typed while the
+// steps load is kept here rather than in the card that is about to be replaced.
+const AnswerDrafts = createContext<{
+  readonly get: (key: string) => string | null;
+  readonly set: (key: string, reason: string | null) => void;
+} | null>(null);
+
 export function WorkflowRunFeed({
   environmentId,
   node,
@@ -218,6 +232,17 @@ export function WorkflowRunFeed({
   const cancel = useAtomCommand(serverEnvironment.cancelWorkflowRun, { label: "workflow cancel" });
   const [busy, setBusy] = useState(false);
   const target = { environmentId, input: { runId: run.runId } };
+  const [drafts, setDrafts] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const answerDrafts = {
+    get: (key: string) => drafts.get(key) ?? null,
+    set: (key: string, reason: string | null) =>
+      setDrafts((current) => {
+        const next = new Map(current);
+        if (reason === null) next.delete(key);
+        else next.set(key, reason);
+        return next;
+      }),
+  };
   const resumeRun = async () => {
     if (busy) return;
     setBusy(true);
@@ -405,184 +430,188 @@ export function WorkflowRunFeed({
   );
 
   return (
-    <article
-      aria-label={run.title}
-      className="mx-auto flex w-full max-w-5xl min-w-0 flex-col px-5 pt-5 pb-10"
-    >
-      <header className="space-y-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="-ms-2.5 md:hidden"
-          onClick={() => onSelect(null)}
-          aria-label={gt("Back to the list of runs")}
-        >
-          <ArrowLeftIcon />
-          <T context="noun, the list of workflow runs">Runs</T>
-        </Button>
-        {parent === null ? null : (
-          <button
-            type="button"
-            className="block cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            onClick={() => onSelect(parent.runId)}
+    <AnswerDrafts.Provider value={answerDrafts}>
+      <article
+        aria-label={run.title}
+        className="mx-auto flex w-full max-w-5xl min-w-0 flex-col px-5 pt-5 pb-10"
+      >
+        <header className="space-y-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="-ms-2.5 md:hidden"
+            onClick={() => onSelect(null)}
+            aria-label={gt("Back to the list of runs")}
           >
-            <T>
-              Part of <Var>{parent.title}</Var>
-            </T>
-          </button>
-        )}
-        <div className="flex items-center gap-2">
-          <h2 className="min-w-0 flex-1 text-base font-semibold break-words">{run.title}</h2>
-          <WorkflowStateWord node={node} />
-          {ended ? null : (
-            <Button
-              size="xs"
-              variant="ghost-destructive"
-              disabled={busy || !canCancel}
-              title={gt("Cancel run")}
-              onClick={() => void cancelRun()}
+            <ArrowLeftIcon />
+            <T context="noun, the list of workflow runs">Runs</T>
+          </Button>
+          {parent === null ? null : (
+            <button
+              type="button"
+              className="block cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              onClick={() => onSelect(parent.runId)}
             >
-              <SquareIcon className="size-2.5 fill-current" />
-              {gt("Stop")}
-            </Button>
+              <T>
+                Part of <Var>{parent.title}</Var>
+              </T>
+            </button>
           )}
-        </div>
-        <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          <WorkflowChip name={run.workflow} />
-          <span>{run.workflow}</span>
-          <span aria-hidden>·</span>
-          <span>
-            <T>
-              started{" "}
-              <Var>
-                <RelativeLabel value={run.startedAt} />
-              </Var>
-            </T>
-          </span>
-          {run.status === "paused" ? null : (
-            <>
-              <span aria-hidden>·</span>
-              <span>
-                {ended
-                  ? gt("took {duration}", { duration: formatDuration(ranMs) })
-                  : gt("{duration} so far", { duration: formatDuration(ranMs) })}
-              </span>
-            </>
-          )}
-          {run.retired ? (
-            <>
-              <span aria-hidden>·</span>
-              <span>
-                <T>its version is no longer registered</T>
-              </span>
-            </>
-          ) : null}
-        </p>
-        {references.length === 0 ? null : (
-          <ul aria-label={gt("What the run touched")} className="flex flex-wrap gap-1.5 pt-1.5">
-            {references.map((reference) => (
-              <li key={`${reference.kind}:${reference.key}`} className="min-w-0">
-                {chip(reference, reference.title !== "" && run.title.includes(reference.title))}
-              </li>
-            ))}
-          </ul>
-        )}
-      </header>
-
-      {detail.error ||
-      feed === null ||
-      (feed.length === 0 && run.status === "paused" && loose.length === 0) ? (
-        <>
-          {detail.error ? (
-            <p className="mt-4 text-xs text-destructive">{detail.error}</p>
-          ) : feed === null ? (
-            <p className="mt-4 text-xs text-muted-foreground" role="status">
-              <T>Loading steps…</T>
-            </p>
-          ) : null}
-          {/* A question the run already asks is answerable without its step history. */}
-          {run.status === "paused" ? (
-            <div className="mt-4 border-t border-border pt-4">
-              <div className="max-w-2xl">{pause(null, run.pauses, run.detail)}</div>
-            </div>
-          ) : null}
-          {node.questions.map((question) => (
-            <div key={question.name} className="mt-4">
-              <WorkflowQuestionCard
-                environmentId={environmentId}
-                question={question}
-                onOpenThread={onOpenThread}
-              />
-            </div>
-          ))}
-        </>
-      ) : (
-        <div className="mt-4 flex flex-col gap-4 @2xl/feed:flex-row @2xl/feed:items-start">
-          <WorkflowTimeline
-            environmentId={environmentId}
-            rows={feed}
-            node={node}
-            nowMs={nowMs}
-            // Only a step someone picked is marked; what the panel follows on its own is not.
-            focus={picked !== null && keys.has(picked) ? picked : null}
-            current={shown}
-            onPick={pick}
-            loose={loose}
-            paused={pausedApart}
-            end={ended ? endWord : null}
-            question={questionOf}
-            onOpenThread={onOpenThread}
-            openedAtMs={openedAtMs}
-          />
-          <section
-            ref={panel}
-            aria-label={gt("What happened")}
-            className="min-w-0 flex-1 border-t border-border pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:ps-6 @2xl/feed:pt-1"
-          >
-            {shownBeat !== undefined ? (
-              // Keyed by the step: a reason typed for one question must not follow to the next.
-              <div key={shownBeat.name} data-step={shownBeat.name}>
-                {beatCard(shownBeat)}
-                {(() => {
-                  // With one reference, the header already says it.
-                  const touched =
-                    references.length > 1 ? workflowStepReferences(references, shownBeat.name) : [];
-                  return touched.length === 0 ? null : (
-                    <div className="mt-4 flex flex-wrap gap-1.5">
-                      {touched.map((reference) => chip(reference, true))}
-                    </div>
-                  );
-                })()}
-              </div>
-            ) : shownQuick !== undefined && shownQuick.kind === "quick" ? (
-              <WorkflowQuickStepsCard row={shownQuick} />
-            ) : asking ? null : focus === "pause" ? (
-              pause(null, run.pauses, run.detail)
-            ) : focus === "end" ? (
-              <FeedCard tone={run.status === "completed" ? "done" : "plain"}>
-                <CardHead
-                  mark={
-                    run.status === "completed" ? (
-                      <CheckIcon className="size-3.5 text-success-foreground" />
-                    ) : null
-                  }
-                  name={endWord}
-                  sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
-                />
-                {run.status !== "completed" && run.detail ? (
-                  <p className="mt-3 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
-                ) : null}
-                <ResultLines lines={resultLines} />
-              </FeedCard>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                <T>Nothing yet.</T>
-              </p>
+          <div className="flex items-center gap-2">
+            <h2 className="min-w-0 flex-1 text-base font-semibold break-words">{run.title}</h2>
+            <WorkflowStateWord node={node} />
+            {ended ? null : (
+              <Button
+                size="xs"
+                variant="ghost-destructive"
+                disabled={busy || !canCancel}
+                title={gt("Cancel run")}
+                onClick={() => void cancelRun()}
+              >
+                <SquareIcon className="size-2.5 fill-current" />
+                {gt("Stop")}
+              </Button>
             )}
-          </section>
-        </div>
-      )}
-    </article>
+          </div>
+          <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+            <WorkflowChip name={run.workflow} />
+            <span>{run.workflow}</span>
+            <span aria-hidden>·</span>
+            <span>
+              <T>
+                started{" "}
+                <Var>
+                  <RelativeLabel value={run.startedAt} />
+                </Var>
+              </T>
+            </span>
+            {run.status === "paused" ? null : (
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  {ended
+                    ? gt("took {duration}", { duration: formatDuration(ranMs) })
+                    : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+                </span>
+              </>
+            )}
+            {run.retired ? (
+              <>
+                <span aria-hidden>·</span>
+                <span>
+                  <T>its version is no longer registered</T>
+                </span>
+              </>
+            ) : null}
+          </p>
+          {references.length === 0 ? null : (
+            <ul aria-label={gt("What the run touched")} className="flex flex-wrap gap-1.5 pt-1.5">
+              {references.map((reference) => (
+                <li key={`${reference.kind}:${reference.key}`} className="min-w-0">
+                  {chip(reference, reference.title !== "" && run.title.includes(reference.title))}
+                </li>
+              ))}
+            </ul>
+          )}
+        </header>
+
+        {detail.error ||
+        feed === null ||
+        (feed.length === 0 && run.status === "paused" && loose.length === 0) ? (
+          <>
+            {detail.error ? (
+              <p className="mt-4 text-xs text-destructive">{detail.error}</p>
+            ) : feed === null ? (
+              <p className="mt-4 text-xs text-muted-foreground" role="status">
+                <T>Loading steps…</T>
+              </p>
+            ) : null}
+            {/* A question the run already asks is answerable without its step history. */}
+            {run.status === "paused" ? (
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="max-w-2xl">{pause(null, run.pauses, run.detail)}</div>
+              </div>
+            ) : null}
+            {node.questions.map((question) => (
+              <div key={question.name} className="mt-4">
+                <WorkflowQuestionCard
+                  environmentId={environmentId}
+                  question={question}
+                  onOpenThread={onOpenThread}
+                />
+              </div>
+            ))}
+          </>
+        ) : (
+          <div className="mt-4 flex flex-col gap-4 @2xl/feed:flex-row @2xl/feed:items-start">
+            <WorkflowTimeline
+              environmentId={environmentId}
+              rows={feed}
+              node={node}
+              nowMs={nowMs}
+              // Only a step someone picked is marked; what the panel follows on its own is not.
+              focus={picked !== null && keys.has(picked) ? picked : null}
+              current={shown}
+              onPick={pick}
+              loose={loose}
+              paused={pausedApart}
+              end={ended ? endWord : null}
+              question={questionOf}
+              onOpenThread={onOpenThread}
+              openedAtMs={openedAtMs}
+            />
+            <section
+              ref={panel}
+              aria-label={gt("What happened")}
+              className="min-w-0 flex-1 border-t border-border pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:ps-6 @2xl/feed:pt-1"
+            >
+              {shownBeat !== undefined ? (
+                // Keyed by the step: a reason typed for one question must not follow to the next.
+                <div key={shownBeat.name} data-step={shownBeat.name}>
+                  {beatCard(shownBeat)}
+                  {(() => {
+                    // With one reference, the header already says it.
+                    const touched =
+                      references.length > 1
+                        ? workflowStepReferences(references, shownBeat.name)
+                        : [];
+                    return touched.length === 0 ? null : (
+                      <div className="mt-4 flex flex-wrap gap-1.5">
+                        {touched.map((reference) => chip(reference, true))}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : shownQuick !== undefined && shownQuick.kind === "quick" ? (
+                <WorkflowQuickStepsCard row={shownQuick} />
+              ) : asking ? null : focus === "pause" ? (
+                pause(null, run.pauses, run.detail)
+              ) : focus === "end" ? (
+                <FeedCard tone={run.status === "completed" ? "done" : "plain"}>
+                  <CardHead
+                    mark={
+                      run.status === "completed" ? (
+                        <CheckIcon className="size-3.5 text-success-foreground" />
+                      ) : null
+                    }
+                    name={endWord}
+                    sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
+                  />
+                  {run.status !== "completed" && run.detail ? (
+                    <p className="mt-3 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
+                  ) : null}
+                  <ResultLines lines={resultLines} />
+                </FeedCard>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  <T>Nothing yet.</T>
+                </p>
+              )}
+            </section>
+          </div>
+        )}
+      </article>
+    </AnswerDrafts.Provider>
   );
 }
 
@@ -1777,7 +1806,12 @@ function WorkflowQuestionCard({
 }) {
   const gt = useGT();
   const view = readWorkflowQuestion(question);
-  const [reason, setReason] = useState<string | null>(null);
+  const drafts = useContext(AnswerDrafts);
+  const [ownReason, setOwnReason] = useState<string | null>(null);
+  const draftKey = `${question.runId}:${question.name}:${question.askedAt}`;
+  const reason = drafts === null ? ownReason : drafts.get(draftKey);
+  const setReason = (next: string | null) =>
+    drafts === null ? setOwnReason(next) : drafts.set(draftKey, next);
   const [busy, setBusy] = useState(false);
   const canAnswer = useAtomValue(
     serverEnvironment.answerWorkflowQuestion.permissionAtom(environmentId),

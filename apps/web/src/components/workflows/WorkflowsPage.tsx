@@ -116,8 +116,9 @@ export function WorkflowsPage() {
         return fileMenu.activate(picked as FileContextMenuAction, target);
       });
   };
+  // The run stays in the address, so the breadcrumb back to the runs reopens it.
   const openDefinitions = (file: string | null) =>
-    go({ ...env, definitions: true, ...(file === null ? {} : { file }) });
+    go({ ...env, ...run, definitions: true, ...(file === null ? {} : { file }) });
   // What is open beside the run, which belongs to the run: picking another one closes it.
   const pane: WorkflowPaneState =
     environmentId === null || editing || search.pane === undefined

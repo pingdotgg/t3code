@@ -30,6 +30,7 @@ import {
   workflowTriggerLine,
   type WorkflowListTab,
   type WorkflowRunNode,
+  workflowRunInvolves,
 } from "@t3tools/client-runtime/workflows";
 
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
@@ -109,6 +110,35 @@ export function WorkflowRunsView({
       </p>
     );
   }
+  // A broken file is said even where nothing has run, or its workflows would just seem missing.
+  const problemAlert =
+    snapshot.definition?.problem == null ? null : (
+      <div
+        role="alert"
+        className="flex shrink-0 items-center gap-3 border-b bg-destructive/4 px-4 py-2 text-xs"
+      >
+        <span className="min-w-0 flex-1 text-muted-foreground">
+          <T>
+            <span className="font-medium text-destructive-foreground">
+              A workflow file has a problem.
+            </span>{" "}
+            The last version that did keeps running.
+          </T>
+        </span>
+        <Button size="xs" variant="outline" onClick={onOpenDefinitions}>
+          <T>Open the file</T>
+        </Button>
+      </div>
+    );
+  const withProblem = (empty: ReactNode) =>
+    problemAlert === null ? (
+      empty
+    ) : (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {problemAlert}
+        {empty}
+      </div>
+    );
   const notHere = (
     <WorkflowsEmpty
       title={gt("This run is not here")}
@@ -128,10 +158,10 @@ export function WorkflowRunsView({
   );
   // A link to a run says it is not here, even where nothing has run at all.
   if (snapshot.runs.length === 0 && snapshot.workflows.length === 0 && selectedRunId !== null) {
-    return notHere;
+    return withProblem(notHere);
   }
   if (snapshot.runs.length === 0 && snapshot.workflows.length === 0) {
-    return (
+    return withProblem(
       <WorkflowsEmpty
         title={gt("No workflow runs yet")}
         description={
@@ -156,7 +186,7 @@ export function WorkflowRunsView({
             </a>
           </T>
         }
-      />
+      />,
     );
   }
   // A skipped run opened by its link is shown all the same.
@@ -189,28 +219,11 @@ export function WorkflowRunsView({
     pickedTab ??
     (selectedRunId === null || holds(opening) ? opening : holds("running") ? "running" : "all");
   const listed = lists[tab].filter(
-    (node) => section === null || node.run.workflow === section.name,
+    (node) => section === null || workflowRunInvolves(node, section.name),
   );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {snapshot.definition?.problem == null ? null : (
-        <div
-          role="alert"
-          className="flex shrink-0 items-center gap-3 border-b bg-destructive/4 px-4 py-2 text-xs"
-        >
-          <span className="min-w-0 flex-1 text-muted-foreground">
-            <T>
-              <span className="font-medium text-destructive-foreground">
-                A workflow file has a problem.
-              </span>{" "}
-              The last version that did keeps running.
-            </T>
-          </span>
-          <Button size="xs" variant="outline" onClick={onOpenDefinitions}>
-            <T>Open the file</T>
-          </Button>
-        </div>
-      )}
+      {problemAlert}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Below md there is room for one of the two: the list, or the run picked from it. */}
         <div
