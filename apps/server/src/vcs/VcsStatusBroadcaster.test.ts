@@ -2107,6 +2107,84 @@ describe("VcsStatusBroadcaster", () => {
     }),
   );
 
+  it.effect("a branch read that a checkout overtakes does not confirm the old branch", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const failures = yield* Queue.unbounded<void>();
+      const readStarted = yield* Deferred.make<void>();
+      const releaseRead = yield* Deferred.make<void>();
+      let gateNextRead = false;
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, isDefaultRef: true, refName: "main" },
+        currentRemoteStatus: null,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: "/repo/.git/HEAD",
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(Stream.onStart(Effect.sync(() => options?.onReady?.()))),
+        }),
+        failLocalStatus: false,
+        onLocalStatusFailure: Queue.offer(failures, undefined).pipe(Effect.asVoid),
+        branchRead: () => {
+          const refName = state.currentLocalStatus.refName;
+          if (!gateNextRead) return Effect.succeed(refName);
+          gateNextRead = false;
+          return Deferred.succeed(readStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseRead)),
+            Effect.as(refName),
+          );
+        },
+      };
+      const snapshotBranch = (broadcaster: VcsStatusBroadcaster.VcsStatusBroadcaster["Service"]) =>
+        broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }).pipe(
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.map(([event]) => (event?._tag === "snapshot" ? event.local.refName : null)),
+        );
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const subscribed = yield* Deferred.make<void>();
+        yield* Stream.runForEach(
+          broadcaster.streamStatus({ cwd: "/repo", includeRemote: false }),
+          () => Deferred.succeed(subscribed, undefined),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(subscribed);
+        const sawRepro = yield* Deferred.make<void>();
+        yield* broadcaster.streamBranchChanges.pipe(
+          Stream.runForEach((change) =>
+            change.refName === "repro" ? Deferred.succeed(sawRepro, undefined) : Effect.void,
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+
+        // index.lock is held, so every reconcile read fails and the cache keeps "main".
+        state.failLocalStatus = true;
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+        yield* Queue.take(failures);
+
+        // A joining subscriber's branch read starts on "main"; the checkout lands before it ends.
+        gateNextRead = true;
+        const overtaken = yield* snapshotBranch(broadcaster).pipe(Effect.forkScoped);
+        yield* Deferred.await(readStarted);
+        state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "repro" };
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+        yield* Deferred.await(sawRepro);
+        yield* Deferred.succeed(releaseRead, undefined);
+        yield* Fiber.join(overtaken);
+
+        // The reconcile retry is still backing off, so only a fresh branch check finds "repro".
+        state.failLocalStatus = false;
+        assert.strictEqual(yield* snapshotBranch(broadcaster), "repro");
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
+  );
+
   it.effect("subscribers share one HEAD watch and branch check until the last leaves", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

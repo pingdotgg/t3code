@@ -484,6 +484,8 @@ export const make = Effect.gen(function* () {
   // A branch read while a HEAD watch was ready stays current for that watch's lifetime: any
   // checkout after it reaches the cache through the watch. A reconnect burst then forks git once.
   const branchConfirmedUnder = new Map<string, Fiber.Fiber<void, never>>();
+  // Bumped on every HEAD event, so a read that a checkout overtook cannot confirm its branch.
+  const headGenerations = new Map<string, number>();
   const readyHeadWatch = (cwd: string) =>
     SynchronizedRef.get(headWatchersRef).pipe(
       Effect.map((watchers) => {
@@ -499,8 +501,11 @@ export const make = Effect.gen(function* () {
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string) {
       const watch = yield* readyHeadWatch(cwd);
+      const generation = headGenerations.get(cwd);
       const confirm = <A>(value: A) => {
-        if (watch !== undefined) branchConfirmedUnder.set(cwd, watch);
+        if (watch !== undefined && headGenerations.get(cwd) === generation) {
+          branchConfirmedUnder.set(cwd, watch);
+        }
         return value;
       };
       const cached = yield* getCachedStatus(cwd);
@@ -1101,6 +1106,7 @@ export const make = Effect.gen(function* () {
   ) {
     // The cache still holds the old branch until the reconcile read lands, which can fail and retry.
     branchConfirmedUnder.delete(cwd);
+    headGenerations.set(cwd, (headGenerations.get(cwd) ?? 0) + 1);
     if (!detailedSubscribers.has(cwd)) return yield* refreshBranchStatusCore(cwd);
     const { observation, refName, isRepo } = yield* readHeadBranch(cwd);
     yield* publishBranch(cwd, { refName, isRepo }, observation);
@@ -1208,6 +1214,7 @@ export const make = Effect.gen(function* () {
     });
     if (watcherToInterrupt) {
       if (branchConfirmedUnder.get(cwd) === watcherToInterrupt) branchConfirmedUnder.delete(cwd);
+      headGenerations.delete(cwd);
       yield* Fiber.interrupt(watcherToInterrupt).pipe(Effect.ignore);
     }
   });
