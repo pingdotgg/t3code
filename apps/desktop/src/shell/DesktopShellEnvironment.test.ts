@@ -1132,23 +1132,25 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
-  it.effect("keeps an inherited Windows HTTPS_PROXY out of reach of its lowercase alias", () =>
-    runShellEnvironment({
-      env: { PATH: "C:\\Windows\\System32", HTTPS_PROXY: "http://proxy.corp:8080" },
-      platform: "win32",
-      handler: (command) =>
-        command._tag === "StandardCommand" ? envOutput({ PATH: "C:\\Windows\\System32" }) : "",
-      use: (service) =>
-        Effect.gen(function* () {
-          assert.isTrue(yield* service.awaitDiscovery);
-          const snapshot = yield* Stream.runHead(service.updates);
-          assert.isTrue(Option.isSome(snapshot));
-          const published = Option.getOrThrow(snapshot).environment;
-          assert.equal(published.HTTPS_PROXY, "http://proxy.corp:8080");
-          assert.notProperty(published, "https_proxy");
-          return true;
-        }),
-    }),
+  it.effect.each(["HTTPS_PROXY", "https_proxy"])(
+    "leaves an inherited Windows %s out of published patches",
+    (name) =>
+      runShellEnvironment({
+        env: { PATH: "C:\\Windows\\System32", [name]: "http://proxy.corp:8080" },
+        platform: "win32",
+        handler: (command) =>
+          command._tag === "StandardCommand" ? envOutput({ PATH: "C:\\Windows\\System32" }) : "",
+        use: (service) =>
+          Effect.gen(function* () {
+            assert.isTrue(yield* service.awaitDiscovery);
+            const snapshot = yield* Stream.runHead(service.updates);
+            assert.isTrue(Option.isSome(snapshot));
+            const published = Option.getOrThrow(snapshot).environment;
+            assert.notProperty(published, "HTTPS_PROXY");
+            assert.notProperty(published, "https_proxy");
+            return true;
+          }),
+      }),
   );
 
   it.effect("prefers login-shell desktop session hints over inherited values on linux", () =>

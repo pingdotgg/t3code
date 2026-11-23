@@ -658,15 +658,19 @@ const ShellEnvironmentCache = Schema.fromJsonString(
     environment: ShellEnvironmentPatch,
   }),
 );
-// Windows env names are case-insensitive, so a null for one spelling would delete the other.
-const WINDOWS_ALIASED_ENV_NAMES: ReadonlySet<string> = new Set([
+// Windows discovery never reads proxies, and its case-insensitive env would let a null for one
+// spelling delete an inherited value under the other, so Windows patches leave them alone.
+const WINDOWS_UNTOUCHED_ENV_NAMES: ReadonlySet<string> = new Set([
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "NO_PROXY",
   "https_proxy",
   "http_proxy",
   "no_proxy",
 ]);
 const patchEnvNames = (platform: NodeJS.Platform) =>
   Object.keys(ShellEnvironmentPatch.fields).filter(
-    (name) => platform !== "win32" || !WINDOWS_ALIASED_ENV_NAMES.has(name),
+    (name) => platform !== "win32" || !WINDOWS_UNTOUCHED_ENV_NAMES.has(name),
   );
 const encodeCacheKey = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
 const decodeCache = Schema.decodeUnknownEffect(ShellEnvironmentCache);
