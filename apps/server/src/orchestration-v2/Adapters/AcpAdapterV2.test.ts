@@ -3222,6 +3222,168 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #41516 a native `/plan` moves Copilot into its plan session mode while the thread
+  // never picked a mode; the Mode picker must follow it so picking Agent again is sent.
+  it.live("follows a session mode the agent entered itself when no mode was picked", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-native-plan-",
+      });
+      const statusPath = path.join(directory, "status.json");
+      const sessionId = "native-plan-session";
+      const modes = {
+        currentModeId: "agent",
+        availableModes: [
+          { id: "agent", name: "Agent" },
+          { id: "plan", name: "Plan" },
+          { id: "autopilot", name: "Autopilot" },
+        ],
+      };
+      const prompt = (updates: ReadonlyArray<unknown>) => [
+        {
+          type: "expect_outbound" as const,
+          frame: { kind: "request", method: "session/prompt", params: "<any>" },
+        },
+        ...updates.map((update) => ({
+          type: "emit_inbound" as const,
+          frame: { kind: "notification", method: "session/update", params: { sessionId, update } },
+        })),
+        {
+          type: "emit_inbound" as const,
+          frame: {
+            kind: "response",
+            method: "session/prompt",
+            result: { stopReason: "end_turn" },
+          },
+        },
+      ];
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: ACP_TEST_DRIVER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "native-plan",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/new", result: { sessionId, modes } },
+            },
+            ...prompt([{ sessionUpdate: "current_mode_update", currentModeId: "plan" }]),
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "request",
+                method: "session/set_mode",
+                params: { sessionId, modeId: "agent" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/set_mode", result: {} },
+            },
+            ...prompt([]),
+          ],
+        },
+        ACP_TEST_DRIVER,
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-native-plan");
+      const threadId = ThreadId.make("thread-acp-native-plan");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeAcpReplayRuntime({
+            transcript,
+            statusPath,
+            fileSystem,
+            scriptPath: yield* path.fromFileUrl(
+              new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+            ),
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: directory,
+      });
+      const initial = { instanceId, model: "default" } as const;
+      const agent = {
+        instanceId,
+        model: "default",
+        options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: "agent" }],
+      };
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-native-plan"),
+        modelSelection: initial,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection: initial,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const reported: Array<unknown> = [];
+      // Turn 1 is the `/plan` message; turn 2 is sent after picking Mode: Agent.
+      for (const [ordinal, modelSelection, messageText] of [
+        [1, initial, "/plan test plan"],
+        [2, agent, "Reply with the mode you are in."],
+      ] as const) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal,
+            messageText,
+            modelSelection,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              if (event.type === "thread_model_selection.updated") {
+                reported.push(event.changes);
+              }
+            }),
+          ),
+        );
+      }
+      yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
+      assert.deepStrictEqual(
+        reported,
+        [[{ id: ACP_SESSION_MODE_OPTION_ID, from: "agent", to: "plan" }]],
+        "the Mode picker must follow the agent into plan mode",
+      );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   // regression: #21499 turns blocked only on T3 thread waits must show as waiting
   it.effect.each(["agent_message_chunk"] as const)(
     "keeps named ACP %s open while deriving thread wait execution state",
