@@ -59,10 +59,13 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
   const endpoints: AdvertisedEndpoint[] = [];
   const interfaces = Object.entries(input.networkInterfaces);
 
-  // A CGNAT address that is not Tailscale's belongs to another VPN (NetBird, WARP). Tailscale
-  // hosts exclude it; a host without Tailscale offers it as a VPN route.
+  // A stopped Tailscale still reports the netmap it had, so its addresses prove nothing.
+  const tailnetIpv4Addresses =
+    input.status?.running === false ? [] : (input.status?.tailnetIpv4Addresses ?? []);
+  // An unclaimed CGNAT address is offered as a VPN route only where Tailscale is not running,
+  // since the address alone does not show which network it came from.
   const hostRunsTailscale =
-    (input.status?.tailnetIpv4Addresses.length ?? 0) > 0 ||
+    tailnetIpv4Addresses.length > 0 ||
     interfaces.some(
       ([name, addresses]) => addresses !== undefined && isTailscaleInterface(name, addresses),
     );
@@ -77,8 +80,7 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
       if (!isTailscaleIpv4Address(address.address)) continue;
       if (seen.has(address.address)) continue;
       const isTailscaleAddress =
-        onTailscaleInterface ||
-        (input.status?.tailnetIpv4Addresses.includes(address.address) ?? false);
+        onTailscaleInterface || tailnetIpv4Addresses.includes(address.address);
       if (!isTailscaleAddress && hostRunsTailscale) continue;
       seen.add(address.address);
 
