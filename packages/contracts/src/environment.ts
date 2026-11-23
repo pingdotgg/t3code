@@ -194,6 +194,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** A full-access link can ask this server for a one-time pairing credential for a client
       of the linking environment. Absent on servers from before it. */
   linkClientPairing: Schema.optionalKey(Schema.Boolean),
+  /** The same route also mints a pairing code for a link from another environment. */
+  linkPairingForLink: Schema.optionalKey(Schema.Boolean),
   /** Mints pairing codes that approve one agent sign-in at a set level (`AUTO-…`). */
   mcpApprovalCodes: Schema.optionalKey(Schema.Boolean),
   peerLinkPairingCodes: Schema.optionalKey(Schema.Boolean),
@@ -218,8 +220,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   shellOlderSettled: Schema.optionalKey(Schema.Boolean),
   /** Publishes a pull request refresh when linked-thread answers change; older servers need polling. */
   linkedThreadRefreshes: Schema.optionalKey(Schema.Boolean),
+  /** Honors the `agentFeedback` setting; older servers drop it, so hide its switch where absent. */
+  agentFeedback: Schema.optionalKey(Schema.Boolean),
   /** Answers `issues.linkedThreads`, the threads an issue is linked to. */
   issueLinkedThreads: Schema.optionalKey(Schema.Boolean),
+  /** Keeps more than one account per standalone issue tracker; older servers keep one. */
+  issueTrackerAccounts: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

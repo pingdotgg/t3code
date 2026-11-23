@@ -63,7 +63,11 @@ export type PeerLinkCreateInput = typeof PeerLinkCreateInput.Type;
 export const PeerLinkRemoveInput = Schema.Struct({ environmentId: EnvironmentId });
 export type PeerLinkRemoveInput = typeof PeerLinkRemoveInput.Type;
 
-export const PeerLinkRemoveResult = Schema.Struct({ removed: Schema.Boolean });
+export const PeerLinkRemoveResult = Schema.Struct({
+  removed: Schema.Boolean,
+  // Whether the peer ended the link's session. Older servers never ask it to.
+  endedThere: Schema.optionalKey(Schema.Boolean),
+});
 export type PeerLinkRemoveResult = typeof PeerLinkRemoveResult.Type;
 
 /** Why linking or calling a peer failed, in words a user can act on. */
@@ -160,6 +164,17 @@ export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadRe
 export const PeerLinkClientPairingInput = Schema.Struct({ environmentId: EnvironmentId });
 export type PeerLinkClientPairingInput = typeof PeerLinkClientPairingInput.Type;
 
+/**
+ * A client of this environment asks it for a pairing code from one it links to, to link another
+ * environment there with: the linked one mints it, so the user fetches none.
+ */
+export const PeerLinkLinkPairingInput = Schema.Struct({
+  environmentId: EnvironmentId,
+  /** The access the new link will have. */
+  access: AuthMcpClientAccess,
+});
+export type PeerLinkLinkPairingInput = typeof PeerLinkLinkPairingInput.Type;
+
 const peerLinkClientPairingTarget = {
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -201,6 +216,11 @@ export const PeerLinkClientPairingRequest = Schema.Struct({
   scopes: Schema.Array(AuthEnvironmentScope),
   /** The client's name there, shown in Connections here. */
   clientLabel: TrimmedNonEmptyString,
+  /**
+   * Set when the pairing is for a link from another environment, not for the client itself: the
+   * credential is then a link pairing code at this access, and `scopes` is not used.
+   */
+  link: Schema.optionalKey(Schema.Struct({ access: AuthMcpClientAccess })),
 });
 export type PeerLinkClientPairingRequest = typeof PeerLinkClientPairingRequest.Type;
 

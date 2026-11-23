@@ -6,6 +6,25 @@ public class T3VoiceTranscriptionModule: Module {
   public func definition() -> ModuleDefinition {
     Name("T3VoiceTranscription")
 
+    Function("isAppleSpeechAvailable") {
+      if #available(iOS 26, *) { return AppleSpeechEngine.isAvailable }
+      return false
+    }
+
+    AsyncFunction("prepareAppleSpeech") { (locale: String) async throws -> String? in
+      guard #available(iOS 26, *) else { throw CocoaError(.featureUnsupported) }
+      do {
+        return try await AppleSpeechEngine.prepare(locale)
+      } catch AppleSpeechEngine.Failure.unsupportedLocale {
+        return nil
+      }
+    }
+
+    AsyncFunction("transcribeWithAppleSpeech") { (uri: URL, locale: String) async throws -> String in
+      guard #available(iOS 26, *) else { throw CocoaError(.featureUnsupported) }
+      return try await AppleSpeechEngine.transcribe(locale, file: uri)
+    }
+
     AsyncFunction("decodeRecording") { (uri: URL) throws -> Data in
       guard uri.isFileURL else { throw CocoaError(.fileReadUnsupportedScheme) }
       var opened: ExtAudioFileRef?

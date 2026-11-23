@@ -562,17 +562,28 @@ describe("source file scroll", () => {
 });
 
 describe("rendered Markdown task saves", () => {
-  it("keeps a truncated read read-only without queuing a replacement", async () => {
+  it("renders the whole file of a truncated read, read-only", async () => {
     using _settings = setup();
+    state.assetUrl = {
+      _tag: "Success",
+      url: "/assets/tasks.md",
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const realFetch = globalThis.fetch;
+    using _fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation((input, init) =>
+        new URL(String(input), location.href).pathname === "/assets/tasks.md"
+          ? Promise.resolve(
+              new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
+            )
+          : realFetch(input, init),
+      );
     await using screen = await render(markdownPreview(true));
-    using _timers = fakeTimers();
+    await expect.element(screen.getByText("Past the first megabyte")).toBeVisible();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    expect(checkbox).not.toBeNull();
     expect(checkbox.disabled).toBe(true);
-    expect(checkbox.readOnly).toBe(true);
     await act(async () => checkbox.click());
-    await vi.advanceTimersByTimeAsync(500);
-    expect(checkbox.checked).toBe(false);
     expect(state.optimistic).toBeNull();
     expect(state.writeFile).not.toHaveBeenCalled();
   });
@@ -580,6 +591,8 @@ describe("rendered Markdown task saves", () => {
   it("still toggles and saves tasks from a complete read", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(false));
+    // The virtualized list mounts its pieces after measuring the viewport.
+    await expect.element(screen.getByRole("checkbox")).toBeInTheDocument();
     using _timers = fakeTimers();
     const checkbox = screen.container.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
     expect(checkbox).not.toBeNull();
