@@ -5186,6 +5186,8 @@ interface ActiveClaudeTurnContext {
   unansweredRequestSince?: DateTime.Utc | undefined;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  // Shared with subagents after this context stops being the latest settled turn.
+  readonly rootTurnOutcome: { status: OrchestrationV2ProviderTurn["status"] };
   readonly autoCompactWindow: string;
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -5315,6 +5317,8 @@ interface ActiveClaudeProviderRetry {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  readonly rootTurnOutcome: ActiveClaudeTurnContext["rootTurnOutcome"];
+  readonly providerTurnId: ActiveClaudeTurnContext["providerTurnId"];
   readonly nativeTaskType: string | undefined;
   readonly confirmedOutcome: ProviderAdapter.ProviderAdapterV2SubagentOutcome | undefined;
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
@@ -7580,6 +7584,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const ids = claudeSubagentIds(resume.context, resume.taskId);
           const now = yield* DateTime.now;
           const subagent: ActiveClaudeSubagent = {
+            rootTurnOutcome: resume.context.rootTurnOutcome,
+            providerTurnId: resume.context.providerTurnId,
             nativeTaskType: undefined,
             confirmedOutcome: undefined,
             childThread: null,
@@ -8267,11 +8273,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     )
                   : undefined));
           const model = input.model ?? priorTask?.model ?? null;
+          // Idle launches join their owner's run even after later turns settle.
+          const runOwner =
+            existingSubagent === undefined && (yield* Ref.get(activeTurn)) !== input.context
+              ? input.owner
+              : undefined;
           const task = {
             ...(priorTask ?? {
               id: nodeId,
               threadId: input.context.input.threadId,
-              runId: input.context.input.runId,
+              runId: runOwner === undefined ? input.context.input.runId : runOwner.task.runId,
               parentNodeId: input.owner?.task.id ?? input.context.input.rootNodeId,
               origin: "provider_native" as const,
               createdBy: "agent" as const,
@@ -8318,6 +8329,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } satisfies OrchestrationV2Subagent;
           const subagent = {
             task,
+            rootTurnOutcome:
+              input.reopen === true && input.status === "running" && existingSubagent !== undefined
+                ? input.context.rootTurnOutcome
+                : (existingSubagent?.rootTurnOutcome ??
+                  runOwner?.rootTurnOutcome ??
+                  input.context.rootTurnOutcome),
+            providerTurnId:
+              input.reopen === true && input.status === "running" && existingSubagent !== undefined
+                ? input.context.providerTurnId
+                : (existingSubagent?.providerTurnId ??
+                  runOwner?.providerTurnId ??
+                  input.context.providerTurnId),
             nativeTaskType: input.nativeTaskType ?? existingSubagent?.nativeTaskType,
             confirmedOutcome:
               input.nativeOutcome !== undefined || input.processExited === true
@@ -8325,7 +8348,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 : isReopen
                   ? undefined
                   : existingSubagent?.confirmedOutcome,
-            rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
+            rootNodeId:
+              existingSubagent?.rootNodeId ??
+              runOwner?.rootNodeId ??
+              input.context.input.rootNodeId,
             childThreadId,
             childRootNodeId,
             turnItemId: existingSubagent?.turnItemId ?? derivedIds.turnItemId,
@@ -8392,6 +8418,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
           }
 
+          let createdChildThread: OrchestrationV2AppThread | null = null;
           if (subagent.childThread === null) {
             const childThread = makeSubagentChildThread({
               parentThread: input.context.input.appThread,
@@ -8413,14 +8440,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               createdBy: "agent",
               creationSource: "provider",
             });
-            // Recovery cannot tell whether the child thread was already persisted.
-            yield* emitProviderEvent({
-              type: "app_thread.created",
-              driver: CLAUDE_PROVIDER,
-              appThread: childThread,
-              ...(existingSubagent === undefined ? {} : { createOnly: true }),
-            });
             subagent.childThread = childThread;
+            createdChildThread = childThread;
           }
 
           if (lifecycleChanged) {
@@ -8437,7 +8458,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 status: input.status,
                 countsForRun: false,
                 providerThreadId: input.context.input.providerThread.id,
-                providerTurnId: input.context.providerTurnId,
+                providerTurnId: subagent.providerTurnId,
                 nativeItemRef: {
                   driver: CLAUDE_PROVIDER,
                   nativeId: input.taskId,
@@ -8450,12 +8471,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               },
             });
           }
-          // Emit before child records so the resumed run can adopt the child thread.
+          // Enroll the child thread before any of its records, including its creation.
           yield* emitProviderEvent({
             type: "subagent.updated",
             driver: CLAUDE_PROVIDER,
             subagent: task,
           });
+          if (createdChildThread !== null) {
+            // Recovery cannot tell whether the child thread was already persisted.
+            yield* emitProviderEvent({
+              type: "app_thread.created",
+              driver: CLAUDE_PROVIDER,
+              appThread: createdChildThread,
+              ...(existingSubagent === undefined ? {} : { createOnly: true }),
+            });
+          }
           if (lifecycleChanged) {
             yield* emitProviderEvent({
               type: "node.updated",
@@ -8517,7 +8547,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               runId: task.runId,
               nodeId: task.id,
               providerThreadId: input.context.input.providerThread.id,
-              providerTurnId: input.context.providerTurnId,
+              providerTurnId: subagent.providerTurnId,
               nativeItemRef: task.nativeTaskRef,
               parentItemId: null,
               ordinal: subagent.turnItemOrdinal,
@@ -10000,6 +10030,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
+          input.context.rootTurnOutcome.status = input.status;
           if (input.status === "completed") {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
           } else {
@@ -10838,6 +10869,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
           ) {
             return null;
+          }
+          // Only completed owner runs keep ingesting while their subagents work.
+          // The last settled turn may belong to a later run.
+          if (
+            message.type === "system" &&
+            message.subtype === "task_started" &&
+            !isClaudeNonSubagentTask(message) &&
+            message.tool_use_id !== undefined &&
+            !(yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
+          ) {
+            const ownerToolUseId = pendingSubagentLaunchesByToolUseId.get(
+              message.tool_use_id,
+            )?.ownerToolUseId;
+            const ownerTaskId =
+              ownerToolUseId === undefined
+                ? undefined
+                : (yield* Ref.get(sessionSubagentTaskIdsByToolUseId)).get(ownerToolUseId);
+            const owner =
+              ownerTaskId === undefined
+                ? undefined
+                : (yield* Ref.get(sessionSubagentsByTaskId)).get(ownerTaskId);
+            return owner?.task.status === "running" &&
+              owner.task.runId !== null &&
+              owner.rootTurnOutcome.status === "completed" &&
+              !bufferedStarts.some((start) => start.task_id === ownerTaskId)
+              ? settled
+              : null;
           }
           if (taskId === undefined) {
             return parentToolUseId === null ? null : settled;
@@ -13734,6 +13792,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             );
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
+              rootTurnOutcome: { status: "running" },
               autoCompactWindow,
               queryPolicy: querySession.queryPolicy,
               nativeThreadId,

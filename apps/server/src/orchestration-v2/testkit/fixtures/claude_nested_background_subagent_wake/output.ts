@@ -38,6 +38,39 @@ export function assertClaudeNestedBackgroundSubagentWakeOutput(
   const grandchild = byTask(GRANDCHILD_TASK_ID);
   assert.equal(child.parentNodeId, projection.runs[0]?.rootNodeId);
   assert.equal(grandchild.parentNodeId, child.id, "the grandchild hangs off the child");
+  assert.equal(grandchild.runId, child.runId, "the grandchild stays in the child's run");
+
+  const wakeStartIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "run.updated" &&
+      event.payload.id === projection.runs[1]?.id &&
+      event.payload.status === "starting",
+  );
+  assert.isAtLeast(wakeStartIndex, 0);
+  const grandchildRowIndex = result.domainEvents.findIndex(
+    (event) => event.type === "subagent.updated" && event.payload.id === grandchild.id,
+  );
+  const grandchildThreadIndex = result.domainEvents.findIndex(
+    (event) => event.type === "thread.created" && event.payload.id === grandchild.childThreadId,
+  );
+  const grandchildEndIndex = result.domainEvents.findIndex(
+    (event) =>
+      event.type === "subagent.updated" &&
+      event.payload.id === grandchild.id &&
+      event.payload.status === "completed",
+  );
+  for (const [label, index] of [
+    ["row", grandchildRowIndex],
+    ["thread", grandchildThreadIndex],
+    ["completion", grandchildEndIndex],
+  ] as const) {
+    assert.isAtLeast(index, 0, `the grandchild's ${label} is stored`);
+    assert.isBelow(
+      index,
+      wakeStartIndex,
+      `the grandchild's ${label} is stored before the root wakes`,
+    );
+  }
 
   const wakeMessage = projection.messages.find(
     (message) => message.id === projection.runs[1]?.userMessageId,
