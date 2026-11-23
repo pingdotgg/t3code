@@ -75,13 +75,19 @@ const vendorPrefix = (platform: DevicePlatform) =>
 export const makeDeviceHubOperations = (options: {
   readonly hostId: DeviceHostId;
   readonly origin: string;
+  readonly token?: string | undefined;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
   /** Android gates listing AVDs, which the hub does not report until they boot. */
   readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
-  const httpClient = options.http.pipe(HttpClient.withScope);
+  const { token } = options;
+  const httpClient = (
+    token === undefined
+      ? options.http
+      : options.http.pipe(HttpClient.mapRequest(HttpClientRequest.bearerToken(token)))
+  ).pipe(HttpClient.withScope);
 
   const fetchJson = Effect.fn("DeviceHubOperations.fetchJson")(function* <A, I>(
     request: HttpClientRequest.HttpClientRequest,

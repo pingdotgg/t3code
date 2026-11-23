@@ -1945,6 +1945,21 @@ it.effect("prefers fj for HTTP and ported SSH aliases on root servers", () => {
     });
     assert.strictEqual(viewer.stdout, '{"login":"maria"}');
     assert.strictEqual(requests.at(-1), "https://forgejo.local:3000/api/v1/user");
+    requests.length = 0;
+    yield* cli.api({
+      cwd: "/no-remotes",
+      reference: "http://forgejo.local:3000/maria/project/pulls/42",
+      path: "user",
+    });
+    yield* cli.api({
+      cwd: "/no-remotes",
+      repository: "http://forgejo.local:3000/maria/project",
+      path: "user",
+    });
+    assert.deepStrictEqual(requests, [
+      "https://forgejo.local:3000/api/v1/user",
+      "https://forgejo.local:3000/api/v1/user",
+    ]);
     const upstreamViewer = yield* cli.api({
       cwd: "/upstream-only",
       host: "forgejo.local:3000",
