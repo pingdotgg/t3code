@@ -301,15 +301,36 @@ describe("preview guest input", () => {
         ["CROSS", "session-cross"],
         ["NESTED", "session-nested"],
       ]),
-      unanswered?: string,
+      unanswered: { readonly lookup?: string; readonly input?: string } = {},
     ) => {
+      const sessions = new Map(frameSessions);
+      const detachListeners = new Map<string, Set<() => void>>();
+      const onDetach = (sessionId: string, listener: () => void) => {
+        if (![...sessions.values()].includes(sessionId)) {
+          listener();
+          return () => {};
+        }
+        const listeners = detachListeners.get(sessionId) ?? new Set();
+        detachListeners.set(sessionId, listeners);
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      };
+      const detach = (sessionId: string) => {
+        for (const [frameId, session] of sessions) {
+          if (session === sessionId) sessions.delete(frameId);
+        }
+        for (const listener of detachListeners.get(sessionId) ?? []) listener();
+      };
+      const sentTo: Array<string | undefined> = [];
       const input: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const lookups: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const sendCommand = vi.fn(
         async (method: string, params: Record<string, unknown>, sessionId?: string) => {
           const document = documents[sessionId ?? "page"]!;
           if (method === "Page.getLayoutMetrics") {
-            if (unanswered !== undefined && sessionId === unanswered) return new Promise(() => {});
+            if (sessionId !== undefined && sessionId === unanswered.lookup) {
+              return new Promise(() => {});
+            }
             return { cssLayoutViewport: document.scroll };
           }
           if (method === "DOM.getNodeForLocation") {
@@ -329,6 +350,10 @@ describe("preview guest input", () => {
             const [left, top, right, bottom] = owner!.content;
             return { model: { content: [left, top, right, top, right, bottom, left, bottom] } };
           }
+          sentTo.push(sessionId);
+          if (sessionId !== undefined && sessionId === unanswered.input) {
+            return new Promise(() => {});
+          }
           input.push({ sessionId, x: params["x"], y: params["y"] });
           return {};
         },
@@ -341,14 +366,14 @@ describe("preview guest input", () => {
           "Input.dispatchMouseEvent",
           params,
           undefined,
-          routed ? routeMouseToFrame(debuggee, frameSessions) : undefined,
+          routed ? routeMouseToFrame(debuggee, sessions, onDetach) : undefined,
         );
       const click = async (x: number, y: number, routed = true) => {
         for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
           await send({ type, x, y }, routed);
         }
       };
-      return { click, send, input, lookups };
+      return { click, send, detach, input, lookups, sentTo };
     };
 
     it("sends it to the frame under the point, at the frame's own coordinates", async () => {
@@ -378,10 +403,10 @@ describe("preview guest input", () => {
       expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(9).fill(undefined));
     });
 
-    it("gives the page an event whose frame never answers, without holding later input", async () => {
+    it("gives the page an event whose frame never answers its lookup", async () => {
       vi.useFakeTimers();
       try {
-        const guest = makeFramedGuest(undefined, "session-cross");
+        const guest = makeFramedGuest(undefined, { lookup: "session-cross" });
         const stalled = guest.click(75, 116);
         await vi.advanceTimersByTimeAsync(3_000);
         await stalled;
@@ -390,6 +415,16 @@ describe("preview guest input", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("fails input that its frame never takes before detaching, without holding later input", async () => {
+      const guest = makeFramedGuest(undefined, { input: "session-cross" });
+      const pressed = guest.send({ type: "mousePressed", x: 75, y: 116 }, true);
+      await vi.waitFor(() => expect(guest.sentTo).toContain("session-cross"));
+      guest.detach("session-cross");
+      await expect(pressed).rejects.toThrow(/went away before it took this input/);
+      await guest.click(650, 50);
+      expect(guest.input.map(({ sessionId }) => sessionId)).toEqual(Array(3).fill(undefined));
     });
 
     it("leaves wheels, pages without cross-site frames, and shown guests to Chromium", async () => {

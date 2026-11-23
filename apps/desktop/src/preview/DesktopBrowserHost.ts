@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
-import { routeMouseToFrame, sendPageCommand } from "./GuestInput.ts";
+import { type FrameDetachWatch, routeMouseToFrame, sendPageCommand } from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -57,7 +57,10 @@ export interface DesktopBrowserTabDebugger {
 const keyOf = ({ threadId, tabId }: DesktopBrowserTabKey) => `${threadId}\u0000${tabId}`;
 
 const trackFrameSession = (
-  tab: { readonly frameSessions: Map<string, string> },
+  tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  },
   method: string,
   params: unknown,
 ) => {
@@ -74,8 +77,33 @@ const trackFrameSession = (
     for (const [frameId, frameSession] of tab.frameSessions) {
       if (frameSession === sessionId) tab.frameSessions.delete(frameId);
     }
+    if (sessionId === undefined) return;
+    const listeners = tab.frameDetachListeners.get(sessionId);
+    tab.frameDetachListeners.delete(sessionId);
+    for (const listener of listeners ?? []) listener();
   }
 };
+
+const watchFrameDetach =
+  (tab: {
+    readonly frameSessions: Map<string, string>;
+    readonly frameDetachListeners: Map<string, Set<() => void>>;
+  }): FrameDetachWatch =>
+  (sessionId, listener) => {
+    if (![...tab.frameSessions.values()].includes(sessionId)) {
+      listener();
+      return () => {};
+    }
+    const listeners = tab.frameDetachListeners.get(sessionId) ?? new Set();
+    tab.frameDetachListeners.set(sessionId, listeners);
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && tab.frameDetachListeners.get(sessionId) === listeners) {
+        tab.frameDetachListeners.delete(sessionId);
+      }
+    };
+  };
 
 interface AttachedTab {
   readonly key: DesktopBrowserTabKey;
@@ -104,6 +132,8 @@ interface AttachedTab {
   readonly frameWaits: Set<() => boolean>;
   /** Sessions of the guest's cross-site frames that Chromium attached, by frame id. */
   readonly frameSessions: Map<string, string>;
+  /** Input sent to a frame session, waiting to learn if the frame detaches first. */
+  readonly frameDetachListeners: Map<string, Set<() => void>>;
   nudging: Fiber.Fiber<void> | null;
   /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
   frameStalled: boolean;
@@ -460,7 +490,7 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
-    const routeMouse = routeMouseToFrame(debuggee, tab.frameSessions);
+    const routeMouse = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
       // A guest the window shows routes its own pointer input.
       const shown = shownTabs.get(keyOf(tab.key)) === true;
@@ -653,6 +683,7 @@ export const make = Effect.gen(function* () {
       capturing: new Set(),
       frameWaits: new Set(),
       frameSessions: new Map(),
+      frameDetachListeners: new Map(),
       nudging: null,
       frameStalled: false,
       painting: false,

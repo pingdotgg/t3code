@@ -101,15 +101,10 @@ const HOST_FOCUS = "globalThis.__t3PreviewFocus";
 /** A CDP pointer press focuses the guest's native view even with focus emulation enabled. */
 const sendPointerPress = async (
   webContents: Electron.WebContents,
-  debuggee: Electron.Debugger,
-  method: string,
-  params: Record<string, unknown>,
-  sessionId: string | undefined,
+  dispatch: () => Promise<unknown>,
 ) => {
   const host = webContents.hostWebContents;
-  if (!host || host.isDestroyed() || webContents.focusedFrame) {
-    return debuggee.sendCommand(method, params, sessionId);
-  }
+  if (!host || host.isDestroyed() || webContents.focusedFrame) return dispatch();
   // Focus in a webview with a press in flight came from that press, so keep the earlier save.
   await host.executeJavaScript(`(() => {
     const state = (${HOST_FOCUS} ??= { saved: null, presses: [] });
@@ -124,7 +119,7 @@ const sendPointerPress = async (
     state.presses.push(${webContents.id});
   })()`);
   try {
-    return await debuggee.sendCommand(method, params, sessionId);
+    return await dispatch();
   } finally {
     if (!host.isDestroyed()) {
       // Membership check: a host reload starts a new state without this press.
@@ -144,10 +139,20 @@ const sendPointerPress = async (
   }
 };
 
+/** Calls `listener` once the frame session detaches, at once if it already has; returns a stop. */
+export type FrameDetachWatch = (sessionId: string, listener: () => void) => () => void;
+
+interface FrameRoute {
+  readonly params: Record<string, unknown>;
+  readonly sessionId: string;
+  readonly onDetach: FrameDetachWatch;
+}
+
 /** Moves a page point into the cross-site frame under it, if one has a session; null when none does. */
-export type PointerRoute = (
-  params: Record<string, unknown>,
-) => Promise<{ readonly params: Record<string, unknown>; readonly sessionId: string } | null>;
+export type PointerRoute = (params: Record<string, unknown>) => Promise<FrameRoute | null>;
+
+const FRAME_GONE_MESSAGE =
+  "The frame under the pointer went away before it took this input. Check the page before retrying.";
 
 const MAX_FRAME_DEPTH = 8;
 const ROUTE_DEADLINE = "1 second";
@@ -158,7 +163,11 @@ const ROUTE_DEADLINE = "1 second";
  * That frame's own session takes the event at frame-local coordinates.
  */
 export const routeMouseToFrame =
-  (debuggee: Electron.Debugger, frameSessions: ReadonlyMap<string, string>): PointerRoute =>
+  (
+    debuggee: Electron.Debugger,
+    frameSessions: ReadonlyMap<string, string>,
+    onDetach: FrameDetachWatch,
+  ): PointerRoute =>
   async (params) => {
     // A wheel over a frame that cannot scroll would no longer reach the page behind it.
     if (params["type"] === "mouseWheel" || frameSessions.size === 0) return null;
@@ -169,9 +178,16 @@ export const routeMouseToFrame =
         Effect.map(Option.getOrNull),
       ),
     );
-    if (routed && ![...frameSessions.values()].includes(routed.sessionId)) return null;
-    return routed;
+    if (!routed || ![...frameSessions.values()].includes(routed.sessionId)) return null;
+    return { ...routed, onDetach };
   };
+
+/** Chromium can drop the reply to input on a frame that detaches before acknowledging it. */
+const sendToFrame = (debuggee: Electron.Debugger, method: string, route: FrameRoute) =>
+  new Promise<unknown>((resolve, reject) => {
+    const stop = route.onDetach(route.sessionId, () => reject(new Error(FRAME_GONE_MESSAGE)));
+    debuggee.sendCommand(method, route.params, route.sessionId).then(resolve, reject).finally(stop);
+  });
 
 const locateFrame = async (
   debuggee: Electron.Debugger,
@@ -244,10 +260,12 @@ const sendPointerCommand = async (
     .catch(() => {})
     .then(async () => {
       const routed = route && sessionId === undefined ? await route(params) : null;
-      const target = routed ?? { params, sessionId };
+      const dispatch = routed
+        ? () => sendToFrame(debuggee, method, routed)
+        : () => debuggee.sendCommand(method, params, sessionId);
       return params["type"] === "mousePressed" || params["type"] === "touchStart"
-        ? sendPointerPress(webContents, debuggee, method, target.params, target.sessionId)
-        : debuggee.sendCommand(method, target.params, target.sessionId);
+        ? sendPointerPress(webContents, dispatch)
+        : dispatch();
     });
   pointerCommands.set(webContents, current);
   try {
