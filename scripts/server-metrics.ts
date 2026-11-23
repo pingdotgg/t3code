@@ -940,6 +940,19 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       ),
     ),
   );
+  // The server answers HTTP before it records its runtime state, and until then the CLI
+  // finds no server, tries to make changes locally, and exits 78 on the server's lock.
+  yield* fs.exists(path.join(baseDir, "userdata/server-runtime.json")).pipe(
+    Effect.filterOrFail((recorded) => recorded),
+    Effect.retry({ schedule: Schedule.spaced(Duration.millis(100)), times: 3_000 }),
+    Effect.catch(() =>
+      Effect.flatMap(
+        Ref.get(stderr),
+        (text) =>
+          new MetricsError({ message: `server never recorded its runtime state:\n${text}` }),
+      ),
+    ),
+  );
   const inspectorUrl = /ws:\/\/127\.0\.0\.1:\d+\/[\w-]+/.exec(yield* Ref.get(stderr))?.[0];
   if (!inspectorUrl) return yield* new MetricsError({ message: "no inspector URL on stderr" });
   const devtools = yield* inspect(inspectorUrl);
