@@ -157,7 +157,8 @@ Turn on **Settings → Labs → Boring sidebar (group by project)** on web and d
 threads in a folder for each project. Pinned projects come first. A project with no active
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
 project's folder comes last and shows only while it has active threads. Click a folder to open or
-close it. Drag a folder by its name to reorder it. The first reorder switches
+close it. Drag a folder by its name to reorder it within its section. Pinned folders stay above
+unpinned folders, and archived folders stay last. The first reorder switches
 **Settings → General → Project order** to **Manual** on that client. A closed folder shows
 how many threads it holds, and a dot when one of them needs you. Use the pen button on a
 folder, or right-click it, to start a thread in that project.
