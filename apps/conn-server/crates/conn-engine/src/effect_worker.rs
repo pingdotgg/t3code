@@ -194,8 +194,8 @@ impl Inner {
                 Ok(()) => return,
                 Err(e) => e,
             };
-            // A newer engine cancelled the row at its start; this one writes nothing more.
-            if self.engine_dropped.load(Ordering::SeqCst) {
+            // A newer engine took the store and decides the row; this one writes nothing more.
+            if !self.still_owns().await {
                 return;
             }
             eprintln!("conn-engine: could not settle effect {id}: {error}");
@@ -209,6 +209,13 @@ impl Inner {
             failures += 1;
             tokio::time::sleep(settle_backoff(failures)).await;
         }
+    }
+
+    /// Whether this engine still owns the store, read from the durable epoch after a failed
+    /// write. A read that fails too counts as owned: the next try asks again.
+    async fn still_owns(&self) -> bool {
+        !self.engine_dropped.load(Ordering::SeqCst)
+            && self.db(|store| store.owns_store()).await.unwrap_or(true)
     }
 
     /// One settlement write, tried again while the store is locked. An engine that no longer
@@ -226,7 +233,8 @@ impl Inner {
                 .await;
             match result {
                 Ok(_) => return Ok(()),
-                Err(e) if locked(&e) && !self.engine_dropped.load(Ordering::SeqCst) => {
+                Err(_) if !self.still_owns().await => return Ok(()),
+                Err(e) if locked(&e) => {
                     #[cfg(test)]
                     if let Some(busy) = crate::lock(&self.worker_hooks).settle_busy.take() {
                         let _ = busy.send(());

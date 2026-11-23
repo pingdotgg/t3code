@@ -205,14 +205,14 @@ fn a_thread_runs_one_effect_at_a_time_in_commit_order() {
 #[test]
 fn an_engine_that_no_longer_owns_the_store_writes_nothing() {
     let mut t = TempStore::new("unowned");
-    t.1.take_ownership().unwrap();
+    t.1.take_ownership(None).unwrap();
     enqueue(&mut t.1, &[start("t1", "r1"), start("t2", "r2")]);
     let running = claimed(&t.1);
     assert_eq!(running.len(), 2);
 
     // A newer engine opens the same database: the older one is fenced.
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
-    let released = newer.take_ownership().unwrap();
+    let released = newer.take_ownership(None).unwrap();
     enqueue(&mut newer, &[start("t3", "r3")]);
     assert!(t.1.claim_effects(64).unwrap().is_empty());
     assert!(
@@ -347,13 +347,13 @@ fn rollback_phase(store: &Store, command: &str) -> String {
 #[test]
 fn a_replaced_engine_cannot_move_a_rollback_on() {
     let mut t = TempStore::new("rollback-fence");
-    t.1.take_ownership().unwrap();
+    t.1.take_ownership(None).unwrap();
     let tx = t.1.tx().unwrap();
     tx.put_pending_rollback("rb", "t1", &json!({"providerThreadId": "p"}))
         .unwrap();
     tx.commit(None).unwrap();
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
-    newer.take_ownership().unwrap();
+    newer.take_ownership(None).unwrap();
     assert!(
         !t.1.advance_rollback("rb", "admitted", "provider", None)
             .unwrap()
@@ -378,9 +378,9 @@ fn a_replaced_engine_cannot_move_a_rollback_on() {
 #[test]
 fn a_stale_open_cancels_nothing() {
     let mut t = TempStore::new("stale-open");
-    t.1.take_ownership().unwrap();
+    t.1.take_ownership(None).unwrap();
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
-    newer.take_ownership().unwrap();
+    newer.take_ownership(None).unwrap();
     enqueue(&mut newer, &[start("t1", "r1")]);
     assert_eq!(
         t.1.cancel_unsettled_effects().unwrap_err(),

@@ -696,9 +696,14 @@ impl Inner {
                     store.advance_rollback(&id, "provider", "provider_done", Some(&stored))
                 })
                 .await;
-            if !matches!(kept, Ok(true)) {
+            match kept {
+                Ok(true) => {}
+                // Another engine owns the rollback now, and records how it ended.
+                Ok(false) => return Err(RollbackFailure::Fenced),
                 // A restart then records a failure instead of finishing the rollback.
-                eprintln!("conn-engine: could not keep a provider rollback's answer: {kept:?}");
+                Err(e) => {
+                    eprintln!("conn-engine: could not keep a provider rollback's answer: {e}")
+                }
             }
             progress.provider = Some((row.clone(), Some((live, snapshot.provider_thread))));
             row
@@ -707,6 +712,14 @@ impl Inner {
         let cwd = context.scope["cwd"].as_str().unwrap_or_default().to_owned();
         if let Some(checkpoints) = &self.checkpoints {
             let _held = checkpoints.workspace(&cwd).await;
+            // The lock may have waited: an engine replaced meanwhile touches no file.
+            let owned = self
+                .db(|store| store.owns_store())
+                .await
+                .map_err(RollbackFailure::Failed)?;
+            if !owned {
+                return Err(RollbackFailure::Fenced);
+            }
             let path = PathBuf::from(&cwd);
             if restore_files && !progress.files_restored {
                 let reference = context.checkpoint["ref"].as_str().unwrap_or_default();

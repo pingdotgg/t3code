@@ -859,6 +859,44 @@ async fn a_failed_settlement_frees_the_thread_without_running_the_effect_again()
     }
 }
 
+/// The round-3 gate's probe: a settlement that keeps failing (here every write fails) stops
+/// trying once another engine took the store, even though this engine was never dropped.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settlement_stops_retrying_once_another_engine_owns_the_store() {
+    let db = TempDb::new("settle-owner-changed");
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let release = archive_up_to_settlement(&engine).await;
+    engine
+        .inner()
+        .db(|store| store.settle_faults.set(u32::MAX))
+        .await;
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute(
+            "UPDATE meta SET value = value + 1 WHERE key = 'engine_epoch'",
+            [],
+        )
+        .unwrap();
+    release.send(()).unwrap();
+    let faults = || engine.inner().db(|store| store.settle_faults.get());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let first = faults().await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(
+        faults().await,
+        first,
+        "no settlement after the owner changed"
+    );
+}
+
 /// T3's "keeps requeueing a failed claim while the database is locked" (`retryWhileLocked`),
 /// and the second gate's probe: another connection holds the write lock while the worker
 /// settles. The settlement waits for the lock, then the row succeeds and the next turn starts.
@@ -997,6 +1035,39 @@ async fn opening_the_engine_does_not_block_the_runtime() {
         during >= 5,
         "the runtime ran {during} ticks while the engine opened"
     );
+}
+
+/// The round-3 gate's probe: a start the server gave up on (its future dropped) still runs on
+/// the blocking pool. When it gets to the lease after a newer engine opened, it must not take
+/// the store from that engine.
+#[tokio::test(flavor = "current_thread")]
+async fn an_abandoned_start_never_takes_the_lease_of_a_newer_engine() {
+    let db = TempDb::new("abandoned-start");
+    drop(open(&db));
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let mut config = EngineConfig::new(db.path());
+    config.open_pause = Some(crate::engine::OpenPause {
+        paused: paused_tx,
+        release: release_rx,
+        finished: finished_tx,
+    });
+    let abandoned = tokio::spawn(SqliteEngine::start(config));
+    tokio::task::spawn_blocking(move || paused_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    abandoned.abort();
+    assert!(abandoned.await.is_err_and(|e| e.is_cancelled()));
+    let (engine, _) = open(&db);
+    release_tx.send(()).unwrap();
+    tokio::task::spawn_blocking(move || finished_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    // The newer engine still owns the store: its commands commit.
+    dispatch(&engine, create("t1", "c1")).await;
 }
 
 /// A row a previous process left running does not hold its thread after a restart: the start

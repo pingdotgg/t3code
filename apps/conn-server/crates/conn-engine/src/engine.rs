@@ -74,6 +74,18 @@ pub struct EngineConfig {
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
     pub attention: bool,
+    /// Test hook: [`SqliteEngine::open`] stops before it takes the store's lease.
+    #[cfg(test)]
+    pub(crate) open_pause: Option<OpenPause>,
+}
+
+/// Test hook: `open` sends on `paused` and waits on `release` before its lease, then sends on
+/// `finished` when it returns, whatever it returns.
+#[cfg(test)]
+pub(crate) struct OpenPause {
+    pub(crate) paused: std::sync::mpsc::Sender<()>,
+    pub(crate) release: std::sync::mpsc::Receiver<()>,
+    pub(crate) finished: std::sync::mpsc::Sender<()>,
 }
 
 /// See [`EngineConfig::command_output_tap`].
@@ -134,6 +146,8 @@ impl EngineConfig {
             clock: Arc::new(crate::SystemClock),
             recover_runs: true,
             attention: false,
+            #[cfg(test)]
+            open_pause: None,
         }
     }
 }
@@ -238,6 +252,28 @@ impl SqliteEngine {
     /// Opens the store, adds the configured projects, and recovers every run a previous process
     /// left active (see `restart.rs`): a turn the provider had continues in a new run.
     pub fn open(config: EngineConfig) -> Result<Self, String> {
+        Self::open_unless(config, None)
+    }
+
+    /// [`Self::open`], unless `abandoned` is set before the store's lease is taken.
+    fn open_unless(
+        config: EngineConfig,
+        abandoned: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Self, String> {
+        #[cfg(test)]
+        let mut config = config;
+        #[cfg(test)]
+        let _finished = config.open_pause.take().map(|pause| {
+            let _ = pause.paused.send(());
+            let _ = pause.release.recv();
+            struct Finished(std::sync::mpsc::Sender<()>);
+            impl Drop for Finished {
+                fn drop(&mut self) {
+                    let _ = self.0.send(());
+                }
+            }
+            Finished(pause.finished)
+        });
         let home = config.home.clone().unwrap_or_else(|| {
             config
                 .database
@@ -247,7 +283,7 @@ impl SqliteEngine {
         });
         let mut store = Store::open(&config.database)?;
         // From here every older engine on this database is fenced.
-        let engine_dropped = store.take_ownership()?;
+        let engine_dropped = store.take_ownership(abandoned)?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
         let attention = config
@@ -342,8 +378,19 @@ impl SqliteEngine {
     /// [`Self::open`] for a caller on the runtime: the store is opened, migrated and recovered
     /// on the blocking pool (AGENTS rule 2), and the effect worker starts once recovery
     /// committed.
+    ///
+    /// The open goes on when the caller drops this future; it then takes no lease, so an engine
+    /// opened after the drop keeps the store.
     pub async fn start(config: EngineConfig) -> Result<Self, String> {
-        tokio::task::spawn_blocking(move || Self::open(config))
+        struct AbandonOnDrop(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for AbandonOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let abandoned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _guard = AbandonOnDrop(abandoned.clone());
+        tokio::task::spawn_blocking(move || Self::open_unless(config, Some(&abandoned)))
             .await
             .map_err(|e| format!("the engine's open stopped: {e}"))?
     }

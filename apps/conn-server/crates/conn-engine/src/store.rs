@@ -332,6 +332,10 @@ pub(crate) fn lease_guard(n: usize) -> String {
     format!("(?{n} IS NULL OR ?{n} = (SELECT value FROM meta WHERE key = 'engine_epoch'))")
 }
 
+/// A start its caller gave up on before it took the store.
+pub(crate) const ABANDONED: &str =
+    "store: the engine's start was abandoned before it took the store";
+
 /// A write by an engine that no longer owns the store.
 pub(crate) const NOT_OWNER: &str = "store: this engine no longer owns the database";
 
@@ -411,13 +415,20 @@ impl Store {
 
     /// Makes this store's engine the one that may write: a newer epoch fences every engine
     /// that opened the database before. Returns the flag that releases the lease on drop.
+    ///
+    /// `abandoned` is read under the lease's write lock: a start its caller gave up on before
+    /// that takes nothing, so it cannot fence an engine that opened after it.
     pub(crate) fn take_ownership(
         &mut self,
+        abandoned: Option<&std::sync::atomic::AtomicBool>,
     ) -> StoreResult<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(err)?;
+        if abandoned.is_some_and(|a| a.load(std::sync::atomic::Ordering::SeqCst)) {
+            return Err(ABANDONED.into());
+        }
         let epoch: i64 = tx
             .query_row(
                 "INSERT INTO meta (key, value) VALUES ('engine_epoch', 1)
@@ -442,6 +453,11 @@ impl Store {
 
     pub(crate) fn owner(&self) -> Option<&Owner> {
         self.owner.as_ref()
+    }
+
+    /// Whether this engine still holds the store, by the durable epoch and its drop flag.
+    pub(crate) fn owns_store(&self) -> StoreResult<bool> {
+        owns(&self.conn, self.owner())
     }
 
     /// What a write outside [`Tx`] must check (`Owner`).
