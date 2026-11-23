@@ -760,34 +760,51 @@ export const makeOpenCode2AgentLoader = Effect.fn("OpenCodeStatus.makeAgentLoade
   };
 });
 
+function openCodeAgentDescriptor(
+  agents: ReadonlyArray<OpenCode2Agent.Info>,
+): ProviderOptionDescriptor | undefined {
+  const primaryAgents = agents.filter((agent) => !agent.hidden && agent.mode !== "subagent");
+  if (primaryAgents.length === 0) return undefined;
+  return {
+    id: "agent",
+    label: "Agent",
+    type: "select",
+    options: primaryAgents.map((agent) => ({
+      id: agent.id,
+      label: agent.name,
+      ...(agent.id === "build" ? { isDefault: true } : {}),
+    })),
+    ...(primaryAgents.some((agent) => agent.id === "build") ? { currentValue: "build" } : {}),
+  };
+}
+
+/** A model without capabilities of its own still offers every agent the server discovered. */
+function withDiscoveredAgents(
+  capabilities: ModelCapabilities,
+  agents: ReadonlyArray<OpenCode2Agent.Info>,
+): ModelCapabilities {
+  const descriptor = openCodeAgentDescriptor(agents);
+  if (descriptor === undefined) return capabilities;
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(capabilities.optionDescriptors ?? []).filter((option) => option.id !== "agent"),
+      descriptor,
+    ],
+  });
+}
+
 function openCode2ModelCapabilities(
   model: OpenCode2Model,
   agents: ReadonlyArray<OpenCode2Agent.Info>,
 ): ModelCapabilities {
-  const primaryAgents = agents.filter((agent) => !agent.hidden && agent.mode !== "subagent");
+  const descriptor = openCodeAgentDescriptor(agents);
   return createModelCapabilities({
     optionDescriptors: [
       ...openCodeVariantDescriptors(
         model.providerID,
         model.variants.map((variant) => variant.id),
       ),
-      ...(primaryAgents.length === 0
-        ? []
-        : [
-            {
-              id: "agent",
-              label: "Agent",
-              type: "select" as const,
-              options: primaryAgents.map((agent) => ({
-                id: agent.id,
-                label: agent.name,
-                ...(agent.id === "build" ? { isDefault: true } : {}),
-              })),
-              ...(primaryAgents.some((agent) => agent.id === "build")
-                ? { currentValue: "build" }
-                : {}),
-            },
-          ]),
+      ...(descriptor === undefined ? [] : [descriptor]),
     ],
   });
 }
@@ -814,7 +831,7 @@ export function openCode2ProviderModels(
       }),
     ).toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+    withDiscoveredAgents(DEFAULT_OPENCODE_MODEL_CAPABILITIES, agents),
   );
 }
 

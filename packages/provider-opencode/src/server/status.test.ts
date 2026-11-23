@@ -1251,6 +1251,35 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
     }),
   );
 
+  it.effect("offers discovered agents on a custom model without capabilities", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const loadAgents = yield* makeOpenCode2AgentLoader(
+        Effect.succeed([Agent.Info.default(Agent.ID.make("researcher"))]),
+      );
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings({ customModels: ["opencode/custom-pick"] }),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+        ]),
+        undefined,
+        loadAgents,
+      );
+
+      const custom = snapshot.models.find((model) => model.slug === "opencode/custom-pick");
+      const descriptor = custom?.capabilities?.optionDescriptors?.find(
+        (option) => option.id === "agent",
+      );
+      NodeAssert.deepEqual(
+        descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [],
+        ["researcher"],
+      );
+    }),
+  );
+
   it.effect("a workspace waits for the first in-flight OpenCode 2 agent read", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
