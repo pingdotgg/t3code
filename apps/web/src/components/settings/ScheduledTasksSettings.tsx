@@ -2269,6 +2269,7 @@ function ScheduledTaskEditorForm({
                   </Label>
                   <TimePicker
                     id="scheduled-task-time"
+                    disabled={saving}
                     aria-labelledby="scheduled-task-time-label"
                     aria-describedby={
                       runAtZone === undefined ? undefined : "scheduled-task-time-zone"

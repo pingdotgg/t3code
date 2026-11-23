@@ -4,6 +4,7 @@ import * as React from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Button } from "./button";
 import { Popover, PopoverPopup, PopoverTrigger } from "./popover";
 import {
   applyHourDigit,
@@ -395,9 +396,14 @@ export function TimePicker({
         <PopoverTrigger
           disabled={disabled}
           aria-label={gt("Choose time")}
-          className={cn(
-            "inline-flex size-5.5 shrink-0 cursor-pointer items-center justify-center rounded-[5px] p-0 text-icon-muted transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-primary data-popup-open:text-primary-foreground",
-          )}
+          render={
+            <Button
+              type="button"
+              variant={open ? "default" : "ghost-muted"}
+              size="icon-micro"
+              className="size-5.5 rounded-[5px]"
+            />
+          }
         >
           <ClockIcon className="size-3.5" aria-hidden="true" />
         </PopoverTrigger>
@@ -529,16 +535,17 @@ export function TimePicker({
               ⏎
             </kbd>
           </span>
-          <button
+          <Button
             type="button"
-            className="h-5.5 cursor-pointer rounded-md bg-secondary px-2 text-xs font-medium text-secondary-foreground transition-colors outline-none hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            variant="secondary"
+            size="xs"
             onClick={() => {
               setOpen(false);
               hourSegRef.current?.focus();
             }}
           >
             <T>Done</T>
-          </button>
+          </Button>
         </div>
       </PopoverPopup>
     </Popover>
