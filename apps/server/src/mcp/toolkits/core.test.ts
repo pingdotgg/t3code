@@ -1218,6 +1218,18 @@ it.effect.each([
     code: "invalid_request",
     message: "The scheduled task was not found.",
   },
+  {
+    scenario: "refuses a task whose saved prompt signs a provider out",
+    tasks: [
+      {
+        ...Schema.decodeSync(ScheduledTask)(scheduledTask("task-webhook", "full-access")),
+        prompt: "/logout",
+      },
+    ],
+    error: new ScheduledTaskError({ message: "must not run a sign-out task" }),
+    code: "capability_denied",
+    message: "Only the user can sign a provider out, by sending `/logout` themselves.",
+  },
 ])("run_scheduled_task_now $scenario", ({ tasks, error, code, message }) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;

@@ -1,7 +1,12 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { EnvironmentId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestratorMcpUpdateScheduledTaskInput,
+  ProjectId,
+  ProviderInstanceId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -87,5 +92,44 @@ it.effect("an MCP edit cannot recreate a concurrently deleted schedule", () =>
     );
     expect((yield* schedules.list()).tasks).toEqual([]);
     expect(result._tag).toBe("Failure");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("an MCP edit cannot turn on or keep running a saved sign-out prompt", () =>
+  Effect.gen(function* () {
+    const schedules = yield* Schedules.ScheduledTaskService;
+    const { task } = yield* schedules.upsert({
+      title: "Sign out",
+      prompt: "/logout",
+      projectId: ProjectId.make("project"),
+      schedule: { type: "interval", everyMs: 60_000 },
+      enabled: true,
+      workspaceStrategy: { type: "root" },
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+    });
+    const update = (input: Omit<OrchestratorMcpUpdateScheduledTaskInput, "scheduledTaskId">) =>
+      Mcp.OrchestratorMcpService.pipe(
+        Effect.flatMap((mcp) =>
+          mcp.updateScheduledTask(client, { scheduledTaskId: task.id, ...input }),
+        ),
+        Effect.provide(Mcp.layer),
+        Effect.result,
+      );
+    const enabled = () =>
+      schedules
+        .list()
+        .pipe(Effect.map(({ tasks }) => tasks.find((t) => t.id === task.id)?.enabled));
+
+    expect((yield* update({ schedule: { type: "interval", everyMs: 120_000 } }))._tag).toBe(
+      "Failure",
+    );
+    expect((yield* update({ enabled: false }))._tag).toBe("Success");
+    expect(yield* enabled()).toBe(false);
+    const refused = yield* update({ enabled: true });
+    expect(refused).toMatchObject({ _tag: "Failure", failure: { code: "capability_denied" } });
+    expect(yield* enabled()).toBe(false);
+    expect((yield* update({ prompt: "Review", enabled: true }))._tag).toBe("Success");
   }).pipe(Effect.provide(layer)),
 );

@@ -1261,6 +1261,41 @@ it.effect("creating a project through MCP refuses a model default instead of dro
   }),
 );
 
+it.effect("creating a project through MCP saves no actions", () =>
+  Effect.gen(function* () {
+    const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const created: unknown[] = [];
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        create: (input) =>
+          Effect.sync(() => created.push(input)).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new Project.ProjectInvalidError({ projectId: input.projectId, detail: "Stop." }),
+              ),
+            ),
+          ),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    yield* toolkit
+      .handle("t3_project_create", {
+        title: "client-target",
+        workspaceRoot: "/projects/client-target",
+        scripts: [{ id: "x", name: "X", command: "true", icon: "play", runOnWorktreeCreate: true }],
+      } as never)
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(created).toEqual([expect.not.objectContaining({ scripts: expect.anything() })]);
+  }),
+);
+
 it.effect("an agent's clone is not cut off while git is still transferring", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -1611,6 +1646,44 @@ it.effect("a project update changes Settings and the project together or not at 
     expect(refused.result).toMatchObject({ code: "invalid_request", message: "Bad icon." });
     expect(refused.settings.projectSettingsOverrides[harness.projectId]).toEqual({
       defaultModelSelection: overrideModel,
+    });
+
+    // When the overrides can't be put back, the agent hears that rather than the row's error.
+    let overrideWrites = 0;
+    const stranded = yield* run(
+      Layer.merge(
+        Layer.merge(
+          harness.dependencies,
+          Layer.mock(Project.ProjectService)({
+            update: (input) =>
+              Effect.fail(
+                new Project.ProjectInvalidError({
+                  projectId: input.projectId,
+                  detail: "Bad icon.",
+                }),
+              ),
+          }),
+        ),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          managedPolicy: undefined,
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          updateProjectSettingsOverrides: () =>
+            ++overrideWrites === 1
+              ? Effect.succeed(DEFAULT_SERVER_SETTINGS)
+              : Effect.fail(
+                  new ServerSettingsError({
+                    settingsPath: "settings.json",
+                    operation: "write-file",
+                  }),
+                ),
+        }),
+      ),
+      { projectId: harness.projectId, autoPull: true },
+    );
+    expect(overrideWrites).toBe(2);
+    expect(stranded.result).toMatchObject({
+      code: "orchestration_error",
+      message: expect.stringContaining("could not be put back"),
     });
   }),
 );

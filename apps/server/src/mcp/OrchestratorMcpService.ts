@@ -2564,6 +2564,9 @@ const make = Effect.gen(function* () {
         if (input.prompt !== undefined) yield* refuseProviderSignOut(input.prompt);
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
+        // A saved `/logout` prompt must not run either; turning such a task off stays allowed.
+        if (input.prompt === undefined && (input.enabled ?? existing.enabled))
+          yield* refuseProviderSignOut(existing.prompt);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         if (
           input.bindToCurrentThread === true &&

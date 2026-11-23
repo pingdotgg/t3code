@@ -18,6 +18,7 @@ import {
   newCommandId,
   readCaller,
   readThread,
+  refuseProviderSignOut,
   unavailable,
 } from "../../threadAccess.ts";
 import { providerOptionDescriptors, refuseAgentModePick } from "../../delegatedTaskModes.ts";
@@ -115,11 +116,13 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const saved = tasks.find((task) => task.id === input.taskId);
+      if (saved === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
+      yield* refuseProviderSignOut(saved.prompt);
       const { task, threadId } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(

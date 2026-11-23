@@ -77,5 +77,7 @@ it can change the default model, new-thread mode, and auto-pull.
 
 Some settings stay with you: secrets and credentials, providers, access and sharing, cleanup that
 deletes files, actions, instructions that other models follow, and anything that widens what agents
-may do, such as browser or device access or the default permission mode. The agent can read them, but asks you to change them in Settings.
+may do, such as browser or device access or the default permission mode. The agent sees that these
+settings exist and whether you changed them, but not their values, and asks you to change them in
+Settings.
 Settings your organization manages cannot be changed by an agent either.
