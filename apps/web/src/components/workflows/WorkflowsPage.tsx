@@ -1,13 +1,25 @@
-import { EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  workflowReferenceIssue,
+  workflowReferencePullRequest,
+} from "@t3tools/client-runtime/workflows";
+import { EnvironmentId, ThreadId, type WorkflowRunReference } from "@t3tools/contracts";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { FileCode2Icon } from "lucide-react";
 import { lazy, Suspense, useState, type MouseEvent } from "react";
 
 import { isElectron } from "~/env";
 import { type FileContextMenuAction, useFileContextMenu } from "../../fileContextMenu";
+import { openThreadToTheSide } from "../../layout/layoutDrag";
+import { selectFocusedPane } from "../../layout/layoutModel";
+import { useLayoutStore } from "../../layout/layoutStore";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
+import { requestLayoutSurfacePlacement } from "../../layout/surfaceSync";
 import { cn } from "../../lib/utils";
+import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { readLocalApi } from "../../localApi";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import {
@@ -15,6 +27,7 @@ import {
   useEnvironments,
   usePrimaryEnvironmentId,
 } from "../../state/environments";
+import { threadlessSurfacesRef } from "../../threadlessSurfaces";
 import { useWorkflowEnvironmentIds } from "./useWorkflowEnvironmentIds";
 import { Button, InlineButton } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -33,22 +46,16 @@ import {
   toggleWorkflowPaneTab,
   type WorkflowPaneState,
 } from "./workflowPane.logic";
+import { workflowsSearchFromUrl, type WorkflowsSearch } from "./workflowsSearch.logic";
 
 const COPY_PATH = "copy-path";
 
 // The editor brings the code view's highlighter with it, which the run list has no use for.
 const WorkflowDefinitionEditor = lazy(() => import("./WorkflowDefinitionEditor"));
 
-export interface WorkflowsSearch extends WorkflowPaneState {
-  readonly env?: string;
-  readonly run?: string;
-  /** Show the definition files instead of the runs: all of them, or `file` in the editor. */
-  readonly definitions?: boolean;
-  readonly file?: string;
-}
-
 export function WorkflowsPage() {
-  const search = useSearch({ from: "/_chat/workflows" });
+  const location = useLayoutPageLocation();
+  const search = workflowsSearchFromUrl(location.search);
   const navigate = useNavigate();
   const gt = useGT();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -132,8 +139,59 @@ export function WorkflowsPage() {
   const togglePane = (runId: string, tab: Parameters<typeof toggleWorkflowPaneTab>[1]) =>
     select({ ...env, run: runId, ...toggleWorkflowPaneTab(pane, tab) });
 
+  const openReferenceBeside = (runId: string, reference: WorkflowRunReference) => {
+    if (environmentId === null) return;
+    const focusedPane = selectFocusedPane(useLayoutStore.getState().layout);
+    const issue = workflowReferenceIssue(reference);
+    if (issue !== null) {
+      const surfaceOwner = threadlessSurfacesRef(environmentId, issue.projectId);
+      if (focusedPane !== null) {
+        requestLayoutSurfacePlacement(surfaceOwner, {
+          kind: "split",
+          paneId: focusedPane.id,
+          side: "right",
+        });
+      }
+      useRightPanelStore.getState().openIssue(surfaceOwner, {
+        environmentId,
+        projectId: issue.projectId,
+        tracker: issue.tracker,
+        ...(issue.host === undefined ? {} : { host: issue.host }),
+        scope: issue.scope,
+        key: issue.key,
+        ...(reference.url === null ? {} : { url: reference.url }),
+      });
+      return;
+    }
+    const pullRequest = workflowReferencePullRequest(reference);
+    if (pullRequest !== null) {
+      const surfaceOwner = threadlessSurfacesRef(environmentId, pullRequest.projectId);
+      if (focusedPane !== null) {
+        requestLayoutSurfacePlacement(surfaceOwner, {
+          kind: "split",
+          paneId: focusedPane.id,
+          side: "right",
+        });
+      }
+      useRightPanelStore.getState().openPullRequest(surfaceOwner, {
+        environmentId,
+        projectId: pullRequest.projectId,
+        ...(pullRequest.host === undefined ? {} : { host: pullRequest.host }),
+        repository: pullRequest.repository,
+        number: pullRequest.number,
+        ...(reference.url === null ? {} : { url: reference.url }),
+      });
+      return;
+    }
+    togglePane(runId, { kind: reference.kind, key: reference.key });
+  };
+
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none">
+    <SidebarInset
+      variant="pane"
+      className="h-full min-h-0 overflow-hidden overscroll-y-none"
+      {...workspaceAreaProps("workflows", 20)}
+    >
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Below md there is room for one thing, and an open pane is that thing. */}
         <div
@@ -294,15 +352,17 @@ export function WorkflowsPage() {
               paneOpen={paneOpen}
               shownTab={shownTab}
               onSelect={(runId) => select({ ...env, ...(runId === null ? {} : { run: runId }) })}
-              onOpenThread={(runId, thread) =>
-                togglePane(runId, {
-                  thread: thread.threadId,
-                  ...(thread.environmentId === null ? {} : { env: thread.environmentId }),
-                })
+              onOpenThread={(_runId, thread) =>
+                openThreadToTheSide(
+                  scopeThreadRef(
+                    thread.environmentId === null
+                      ? environmentId
+                      : EnvironmentId.make(thread.environmentId),
+                    ThreadId.make(thread.threadId),
+                  ),
+                )
               }
-              onOpenReference={(runId, reference: WorkflowRunReference) =>
-                togglePane(runId, { kind: reference.kind, key: reference.key })
-              }
+              onOpenReference={openReferenceBeside}
             />
           )}
         </div>

@@ -1922,7 +1922,7 @@ function OpenCommandPaletteDialog(props: {
       title: gt("Open workflows"),
       icon: <WorkflowIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
-        await navigate({ to: "/workflows" });
+        await openLayoutPage("workflows");
       },
     });
   }

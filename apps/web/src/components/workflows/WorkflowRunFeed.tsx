@@ -50,6 +50,7 @@ import ChatMarkdown from "../ChatMarkdown";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { Button, ContentButton, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
+import { StatusDot } from "../ui/status-dot";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildWorkflowFeed,
@@ -173,7 +174,7 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
       )}
     >
       {state.tone === "working" ? (
-        <span aria-hidden className="size-1.5 rounded-full bg-info" />
+        <StatusDot tone="info" />
       ) : state.tone === "done" ? (
         <CheckIcon aria-hidden className="size-3" />
       ) : null}
@@ -1627,7 +1628,7 @@ function WorkflowBeatCard({
         return (
           <FeedCard tone="quiet" label={beat.name}>
             <CardHead
-              mark={<span aria-hidden className="size-1.5 rounded-full bg-info" />}
+              mark={<StatusDot tone="info" />}
               name={beat.name}
               sub={
                 <>

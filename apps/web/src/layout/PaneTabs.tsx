@@ -18,6 +18,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   GitForkIcon,
+  WorkflowIcon,
   PanelRightIcon,
   PlusIcon,
   SettingsIcon,
@@ -1744,7 +1745,9 @@ export function useLayoutTabLabel(tab: LayoutTab): {
           ? gt("Usage")
           : tab.content.kind === "issues"
             ? gt("Issues", { $context: "sidebar link to the list of issues" })
-            : gt("Pull requests");
+            : tab.content.kind === "workflows"
+              ? gt("Workflows")
+              : gt("Pull requests");
     const Icon =
       tab.content.kind === "settings"
         ? SettingsIcon
@@ -1752,7 +1755,9 @@ export function useLayoutTabLabel(tab: LayoutTab): {
           ? ChartNoAxesColumnIcon
           : tab.content.kind === "issues"
             ? IssueGlyph.issue
-            : PullRequestGlyph.pullRequest;
+            : tab.content.kind === "workflows"
+              ? WorkflowIcon
+              : PullRequestGlyph.pullRequest;
     return {
       icon: <Icon aria-hidden className="size-3.5 shrink-0" />,
       title,

@@ -25,9 +25,9 @@ export const THREAD_TERMINAL_SURFACE_ID = "thread-terminal";
  */
 export const LEGACY_PANEL_SURFACE_ID = "legacy-panel";
 
-/** Pull requests and Issues always show as workspace tabs; Settings and Usage open as modals. */
+/** Pull requests, Issues and Workflows always show as workspace tabs; Settings and Usage open as modals. */
 export type LayoutPageContent = {
-  kind: "settings" | "usage" | "pull-requests" | "issues";
+  kind: "settings" | "usage" | "pull-requests" | "issues" | "workflows";
   href?: string;
 };
 
@@ -53,7 +53,8 @@ export function isLayoutPageContent(content: LayoutTabContent): content is Layou
     content.kind === "settings" ||
     content.kind === "usage" ||
     content.kind === "pull-requests" ||
-    content.kind === "issues"
+    content.kind === "issues" ||
+    content.kind === "workflows"
   );
 }
 
@@ -2150,7 +2151,8 @@ function isTabContent(value: unknown): value is LayoutTabContent {
     value.kind === "settings" ||
     value.kind === "usage" ||
     value.kind === "pull-requests" ||
-    value.kind === "issues"
+    value.kind === "issues" ||
+    value.kind === "workflows"
   ) {
     if (value.href === undefined) return true;
     if (typeof value.href !== "string") return false;

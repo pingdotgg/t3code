@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon, WorkflowIcon } from "lucide-react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -29,6 +29,7 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { useOpenLayoutPage } from "../../layout/pageNavigation";
 import { IssueGlyph } from "../issue/issuePresentation";
+import { useWorkflowEnvironmentIds } from "../workflows/useWorkflowEnvironmentIds";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
@@ -190,6 +191,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   });
   const pullRequestsSupported = usePullRequestsSupported();
   const issuesSupported = useIssuesSupported();
+  const workflowsReachable = useWorkflowEnvironmentIds().length > 0;
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -202,6 +204,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleIssuesClick = () => {
     closeMobileSidebar();
     void openLayoutPage("issues");
+  };
+  const handleWorkflowsClick = () => {
+    closeMobileSidebar();
+    void openLayoutPage("workflows");
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -257,6 +263,14 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                   label={gt("Issues", { $context: "sidebar link to the list of issues" })}
                   onClick={handleIssuesClick}
                   onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "issues" })}
+                />
+              ) : null}
+              {workflowsReachable ? (
+                <SidebarUtilityItem
+                  icon={<WorkflowIcon className="size-4" />}
+                  label={gt("Workflows")}
+                  onClick={handleWorkflowsClick}
+                  onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "workflows" })}
                 />
               ) : null}
               <SidebarUtilityItem

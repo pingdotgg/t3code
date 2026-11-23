@@ -26,6 +26,8 @@ import {
 import { isElectron } from "../env";
 import { IssueGlyph } from "../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
+import { useWorkflowEnvironmentIds } from "../components/workflows/useWorkflowEnvironmentIds";
+import { WorkflowIcon } from "lucide-react";
 import {
   COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
   COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
@@ -182,6 +184,7 @@ function NewTabLauncherBody({
   const focusedWorkspaceId = useLayoutStore((state) => state.layout.focusedWorkspaceId);
   const openLayoutPage = useOpenLayoutPage();
   const issuesSupported = useIssuesSupported();
+  const workflowsReachable = useWorkflowEnvironmentIds().length > 0;
   const openPage = (kind: LayoutPageContent["kind"]) =>
     void openLayoutPage(
       kind,
@@ -318,6 +321,14 @@ function NewTabLauncherBody({
             label={gt("All issues")}
             detail=""
             onSelect={() => openPage("issues")}
+          />
+        ) : null}
+        {workflowsReachable ? (
+          <DraftProjectRow
+            icon={<WorkflowIcon className="size-4 shrink-0 text-muted-foreground" />}
+            label={gt("Workflows")}
+            detail=""
+            onSelect={() => openPage("workflows")}
           />
         ) : null}
         <LayoutLearningTips />
