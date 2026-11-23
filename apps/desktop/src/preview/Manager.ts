@@ -608,6 +608,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const displayMediaHandlerSessions = new WeakSet<Session>();
   let frameCaptureWindowOpen = true;
   let currentMainWindow: BrowserWindow | undefined;
+  const previewGuests = new Set<Electron.WebContents>();
+  const mainWindowOnScreen = () => {
+    const window = currentMainWindow;
+    return (
+      window !== undefined && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
+    );
+  };
   let mainWindowCleanupFiber: Fiber.Fiber<void, never> | undefined;
   const tabLifecycleLocks = new Map<
     string,
@@ -726,9 +733,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const restoreFrameCaptureWebContentsBackgroundThrottling = Effect.fnUntraced(function* (
     webContentsIds: ReadonlySet<number>,
   ) {
-    const window = currentMainWindow;
-    const enabled =
-      window === undefined || window.isDestroyed() || !window.isVisible() || window.isMinimized();
+    const enabled = !mainWindowOnScreen();
     yield* Effect.forEach(
       webContentsIds,
       (webContentsId) => {
@@ -745,6 +750,26 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
       },
       { concurrency: "unbounded", discard: true },
+    );
+  });
+  /**
+   * Preview guests attach unthrottled so a parked page keeps its heartbeats while the app is on
+   * screen; a hidden app throttles them again, except a guest a capture still needs.
+   */
+  const syncGuestThrottling = Effect.fn("PreviewManager.syncGuestThrottling")(function* () {
+    yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
+      Effect.gen(function* () {
+        const captured = new Set(
+          [...sessions.values()].flatMap((session) => [...session.unthrottledWebContentsIds]),
+        );
+        const enabled = !mainWindowOnScreen();
+        yield* Effect.forEach(
+          [...previewGuests].filter((wc) => !captured.has(wc.id)),
+          (wc) => setFrameCaptureWebContentsBackgroundThrottling(wc, enabled).pipe(Effect.ignore),
+          { discard: true },
+        );
+        return [undefined, sessions] as const;
+      }),
     );
   });
   const keepFrameCaptureWebContentsUnthrottled = Effect.fnUntraced(function* (
@@ -2102,6 +2127,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     yield* rendererHistory.register(wc, { surface: "preview" });
     const webContentsId = wc.id;
+    previewGuests.add(wc);
+    if (currentMainWindow !== undefined && !mainWindowOnScreen()) {
+      yield* setFrameCaptureWebContentsBackgroundThrottling(wc, true).pipe(Effect.ignore);
+    }
     wc.on("did-start-navigation", (event) => {
       if (event.isMainFrame && !event.isSameDocument) guestLoadFailures.delete(webContentsId);
     });
@@ -2114,6 +2143,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     });
     wc.once("destroyed", () => {
+      previewGuests.delete(wc);
       guestLoadFailures.delete(webContentsId);
       runFork(
         Effect.gen(function* () {
@@ -3767,6 +3797,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     pickElement,
     updateAnnotationVoice,
     prepareWebview,
+    syncGuestThrottling,
     reapplyZoom,
     refresh,
     stopLoading,
@@ -3968,6 +3999,7 @@ export class PreviewManager extends Context.Service<
       webContentsId: number,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly prepareWebview: (webContents: Electron.WebContents) => Effect.Effect<void>;
+    readonly syncGuestThrottling: () => Effect.Effect<void>;
     readonly navigate: (tabId: string, url: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goBack: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly goForward: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
@@ -4144,6 +4176,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     closeTab: operations.closeTab,
     registerWebview: operations.registerWebview,
     prepareWebview: operations.prepareWebview,
+    syncGuestThrottling: operations.syncGuestThrottling,
     navigate: operations.navigate,
     goBack: operations.goBack,
     goForward: operations.goForward,

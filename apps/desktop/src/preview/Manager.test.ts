@@ -333,6 +333,7 @@ const makeTestPreviewWebContents = (
     isCurrentlyAudible: () => false,
     on: vi.fn(),
     off: vi.fn(),
+    once: vi.fn(),
     ipc: { on: vi.fn(), off: vi.fn() },
     send: webviewSend,
     navigationHistory: { canGoBack: () => false, canGoForward: () => false },
@@ -2199,6 +2200,51 @@ describe("PreviewManager", () => {
         yield* manager.stopRecording("tab_capture_throttling_2");
         expect(setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
         expect(secondWebContents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
+      }),
+    ),
+  );
+
+  effectIt.effect("throttles idle preview guests while the app is hidden, not a recorded one", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        let hidden = false;
+        const capturePage = vi.fn(async () => ({
+          toJPEG: () => Buffer.from("recording-frame"),
+          getSize: () => ({ width: 1280, height: 720 }),
+        }));
+        const host = makeTestHostWebContents();
+        const recorded = makeTestPreviewWebContents(capturePage, 41, host);
+        const idle = makeTestPreviewWebContents(capturePage, 43, host);
+        const webContentsById = new Map([
+          [41, recorded],
+          [43, idle],
+        ]);
+        fromId.mockImplementation((id) =>
+          id === undefined ? null : (webContentsById.get(id) ?? null),
+        );
+        yield* manager.prepareWebview(recorded as never);
+        yield* manager.prepareWebview(idle as never);
+        yield* manager.createTab("tab_hidden_recording");
+        yield* manager.registerWebview("tab_hidden_recording", 41);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          isVisible: () => !hidden,
+          isMinimized: () => false,
+          once: vi.fn(),
+          webContents: { setBackgroundThrottling: vi.fn() },
+        } as never);
+        yield* manager.startRecording("tab_hidden_recording");
+        host.displayMediaHandler()?.({ frame: host.mainFrame }, () => {});
+
+        hidden = true;
+        yield* manager.syncGuestThrottling();
+        expect(idle.setBackgroundThrottling.mock.calls).toEqual([[true]]);
+        expect(recorded.setBackgroundThrottling.mock.calls).toEqual([[false]]);
+
+        hidden = false;
+        yield* manager.syncGuestThrottling();
+        expect(idle.setBackgroundThrottling.mock.calls).toEqual([[true], [false]]);
+        expect(recorded.setBackgroundThrottling.mock.calls).toEqual([[false]]);
       }),
     ),
   );
