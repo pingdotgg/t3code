@@ -896,6 +896,51 @@ process.exit(0);
       }),
   );
 
+  it.effect("repoints a unit that names this T3 home through a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-alias-" });
+      const alias = path.join(root, "alias");
+      yield* fs.symlink(root, alias);
+      const statePath = path.join(root, "runtime", "service-state.json");
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.1.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.1.0",
+          update: {
+            id: "update-1",
+            fromVersion: "1.0.0",
+            targetVersion: "1.1.0",
+            status: "committed",
+          },
+        }),
+      );
+      const unit = yield* fakeServiceUnit(fs, path, alias, "1.0.0");
+      const launcher = new Launcher(
+        root,
+        yield* Effect.promise(() => readServiceState(statePath)),
+        {
+          serviceUnit: unit,
+        },
+      );
+      const running = launcher.run();
+      yield* Effect.promise(() => launcher.stop("SIGTERM"));
+      yield* Effect.promise(() => running);
+
+      assert.equal(
+        yield* fs.readFileString(unit.path),
+        renderBootServiceUnit(unitPlan(alias, "1.1.0")),
+      );
+    }),
+  );
+
   it.effect("waits without exiting and restarts once the other owner releases the T3 home", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

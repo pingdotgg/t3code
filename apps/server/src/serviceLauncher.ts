@@ -1406,9 +1406,10 @@ export class Launcher {
         }
         const contents = decodeServiceUnit(await NodeFSP.readFile(unit.path));
         const installedBaseDir = serviceUnitBaseDirOf(contents);
+        const real = (dir: string) => NodeFSP.realpath(dir).catch(() => NodePath.resolve(dir));
         if (
           installedBaseDir === undefined ||
-          NodePath.resolve(installedBaseDir) !== NodePath.resolve(this.#baseDir)
+          (await real(installedBaseDir)) !== (await real(this.#baseDir))
         ) {
           return;
         }

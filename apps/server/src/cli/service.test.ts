@@ -281,13 +281,21 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     { label: "this home's service", otherHome: false, unreadable: false, removed: [true] },
     { label: "another home's service", otherHome: true, unreadable: false, removed: [] },
     { label: "an unreadable service", otherHome: false, unreadable: true, removed: [true] },
+    {
+      label: "this home's service under another spelling",
+      otherHome: false,
+      unreadable: false,
+      removed: [true],
+      spelling: "/home/me/alias",
+    },
   ])("uninstall removes only $label", (input) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
       const { service, uninstalls } = makeTestService({
         ...status,
-        installedBaseDir: input.otherHome ? "/home/me/.t3" : baseDir,
+        installedBaseDir: input.otherHome ? "/home/me/.t3" : (input.spelling ?? baseDir),
+        ...(input.otherHome ? { otherBaseDir: "/home/me/.t3" } : {}),
       });
       vi.spyOn(BootService, "layer").mockReturnValue(
         Layer.succeed(
