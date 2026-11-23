@@ -494,7 +494,8 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      ...(easProjectId === undefined ? {} : { projectId: easProjectId }),
+      // expo-observe refuses to load without one, even with reports turned off.
+      projectId: easProjectId ?? "00000000-0000-0000-0000-000000000000",
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
