@@ -1,3 +1,4 @@
+import { assert } from "@effect/vitest"
 import {
   BigDecimal,
   Chunk,
@@ -207,18 +208,30 @@ describe("toFormatter", () => {
     strictEqual(format("a"), "A")
   })
 
-  it("preserves Union member encoding metadata for onBefore", () => {
-    const member = Schema.String.pipe(
-      Schema.decode({
-        decode: SchemaGetter.transform((s) => s),
-        encode: SchemaGetter.transform((s) => s)
-      })
-    )
-    const format = Schema.toFormatter(Schema.Union([member, Schema.Number]), {
-      onBefore: (ast) => ast.encoding ? () => "transformed" : undefined
+  it("passes type-side AST nodes to onBefore", () => {
+    const schema = Schema.Struct({ value: Schema.NumberFromString }).pipe(Schema.fromJsonString)
+    const format = Schema.toFormatter(schema, {
+      onBefore: (ast) => {
+        strictEqual(ast.encoding, undefined)
+        if (ast._tag === "Number") {
+          return (value: number) => `number:${value}`
+        }
+      }
     })
 
-    strictEqual(format("a"), "transformed")
+    strictEqual(format({ value: 1 }), `{ "value": number:1 }`)
+  })
+
+  it("selects decoded Union members when onBefore calls recur with a codec AST", () => {
+    const schema = Schema.Union([Schema.NumberFromString, Schema.Boolean])
+    const format = Schema.toFormatter(Schema.Unknown, {
+      onBefore: (ast, recur) => {
+        if (ast._tag === "Unknown") return recur(schema.ast)
+        if (ast._tag === "Number") return (value: number) => `number:${value}`
+      }
+    })
+
+    assert.strictEqual(format(1), "number:1")
   })
 
   describe("Tuple", () => {
@@ -349,6 +362,17 @@ describe("toFormatter", () => {
         Schema.Option(Schema.Number)
       ))
       strictEqual(format({ a: Option.some(1), b: Option.some(2) }), `{ "a": some(1) }`)
+    })
+
+    it("Record with a transformed key should select keys by the decoded key", () => {
+      const UpperCase = Schema.String.check(Schema.isPattern(/^[a-z]+$/)).pipe(
+        Schema.decodeTo(Schema.String.check(Schema.isPattern(/^[A-Z]+$/)), {
+          decode: SchemaGetter.transform((s: string) => s.toUpperCase()),
+          encode: SchemaGetter.transform((s: string) => s.toLowerCase())
+        })
+      )
+      const format = Schema.toFormatter(Schema.Record(UpperCase, Schema.Option(Schema.Number)))
+      strictEqual(format({ A: Option.some(1) }), `{ "A": some(1) }`)
     })
 
     it("Record(Symbol, Option(Number))", () => {

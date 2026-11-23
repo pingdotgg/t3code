@@ -25,6 +25,7 @@ github:chuks-qua
 -github:coygeek Filed over 270 automated issues, about 50 a day at peak, far past what maintainers can triage
 github:cursoragent
 github:D3OXY
+github:danshapiro
 github:dbalders
 github:eggfriedrice24
 github:esthor
@@ -45,6 +46,7 @@ github:jamesx0416
 github:jappyjan
 github:jasonLaster
 github:JoeEverest
+github:jschachter
 github:justsomelegs
 github:kridaydave
 github:lgwacker
@@ -52,14 +54,17 @@ github:lnieuwenhuis
 github:Lucenx9
 github:mackinleysmith
 github:maria-rcks
+github:maschwenk
 github:MatthewFeroz
 github:maxwellyoung
+github:mvanhorn
 github:mweinbach
 github:mwolson
 github:myacoub91
 github:naMqe-h
 github:nateEc
 github:naveed949
+github:navidnadali
 github:nexxeln
 github:nmggithub
 github:Noojuno

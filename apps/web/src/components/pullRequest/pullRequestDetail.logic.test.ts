@@ -1215,6 +1215,21 @@ describe("adding a remark to the chat", () => {
       ].join("\n\n"),
     );
 
+    const beforeContext = buildPullRequestCommentContext(
+      {
+        ...pullRequest,
+        reviewThreads: reviewThreads.map((thread) => ({ ...thread, side: "left" as const })),
+        reviewThreadsTruncated: false,
+      },
+      { kind: "comment", comment: review },
+    )!;
+    const beforeRecord = reviewCommentContextRecord(beforeContext);
+    const beforePrompt = projectComposerContextForProvider({
+      text: formatComposerContextReference(beforeRecord),
+      records: [beforeRecord],
+    });
+    expect(beforePrompt).toContain("`src/main.rs` line 12 (before)");
+
     const sent = reviewCommentContextRecord(
       buildPullRequestCommentContext(
         { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },
@@ -1265,6 +1280,15 @@ describe("adding a remark to the chat", () => {
     });
 
     expect(context?.text).toBe("octocat: This leaks the token.\n\n```html\n<!-- kept -->\n```");
+    // A stray backtick before the comment opens no code span across the paragraphs.
+    const stray = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c2",
+        "Avoid `foo.\n\n<!-- bot state -->\nSee `bar` and `` a ` <!-- b --> ``.",
+      ),
+    });
+    expect(stray?.text).toBe("octocat: Avoid `foo.\n\nSee `bar` and `` a ` <!-- b --> ``.");
   });
 
   it("keeps comments inside a quoted fence as code", () => {

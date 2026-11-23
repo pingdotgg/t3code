@@ -37,4 +37,18 @@ describe("getProjectFilePickerMatches", () => {
       [0, 1, 2],
     );
   });
+
+  it("maps highlights back to original characters when lowercasing expands them", () => {
+    const entries = [{ kind: "file", path: "icons/İ-logo.svg" }] as const;
+    const indices = (query: string) => {
+      const match = getProjectFilePickerMatches(entries, query)[0];
+      return [match?.nameMatchIndices, match?.pathMatchIndices];
+    };
+
+    assert.deepEqual(indices("logo"), [
+      [2, 3, 4, 5],
+      [8, 9, 10, 11],
+    ]);
+    assert.deepEqual(indices("İ"), [[0], [0, 6]]);
+  });
 });

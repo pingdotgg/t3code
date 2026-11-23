@@ -1,4 +1,6 @@
 import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 /** "completed" → "Completed"; a reason the tracker spells with a dash reads as words. */
 function issueCloseReasonLabel(reason: string): string {
@@ -6,28 +8,46 @@ function issueCloseReasonLabel(reason: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-export function issueEventSentence(event: IssueEvent): string {
+export function issueEventSentence(event: IssueEvent, resolve: MFunctionType = mFallback): string {
   switch (event.kind) {
     case "closed":
       return event.detail
-        ? `closed this as ${issueCloseReasonLabel(event.detail).toLowerCase()}`
-        : "closed this";
+        ? resolve(
+            msg("closed this as {reason}", {
+              reason: issueCloseReasonLabel(event.detail).toLowerCase(),
+            }),
+          )
+        : resolve(msg("closed this"));
     case "reopened":
-      return "reopened this";
+      return resolve(msg("reopened this"));
     case "labeled":
-      return event.detail ? `added the ${event.detail} label` : "added a label";
+      return event.detail
+        ? resolve(msg("added the {label} label", { label: event.detail }))
+        : resolve(msg("added a label"));
     case "unlabeled":
-      return event.detail ? `removed the ${event.detail} label` : "removed a label";
+      return event.detail
+        ? resolve(msg("removed the {label} label", { label: event.detail }))
+        : resolve(msg("removed a label"));
     case "assigned":
-      return event.detail ? `assigned ${event.detail}` : "assigned someone";
+      return event.detail
+        ? resolve(msg("assigned {person}", { person: event.detail }))
+        : resolve(msg("assigned someone"));
     case "unassigned":
-      return event.detail ? `unassigned ${event.detail}` : "unassigned someone";
+      return event.detail
+        ? resolve(msg("unassigned {person}", { person: event.detail }))
+        : resolve(msg("unassigned someone"));
     case "renamed":
-      return event.detail ? `renamed this to “${event.detail}”` : "renamed this";
+      return event.detail
+        ? resolve(msg("renamed this to “{title}”", { title: event.detail }))
+        : resolve(msg("renamed this"));
     case "referenced":
-      return event.detail ? `referenced this from ${event.detail}` : "referenced this";
+      return event.detail
+        ? resolve(msg("referenced this from {source}", { source: event.detail }))
+        : resolve(msg("referenced this"));
     case "state-changed":
-      return event.detail ? `moved this to ${event.detail}` : "changed the state";
+      return event.detail
+        ? resolve(msg("moved this to {state}", { state: event.detail }))
+        : resolve(msg("changed the state"));
   }
 }
 
@@ -35,11 +55,15 @@ export function issueEventSentence(event: IssueEvent): string {
  * What the viewer may do to an issue here: the client's write scope, the issue being inside a
  * project's scope, what the tracker can do at all, and what it grants this account.
  */
-export function issueWriteAccess(detail: IssueDetail, canWrite: boolean) {
+export function issueWriteAccess(
+  detail: IssueDetail,
+  canWrite: boolean,
+  resolve: MFunctionType = mFallback,
+) {
   const blocked = !canWrite
-    ? "Writing to this tracker needs the source-control write scope."
+    ? resolve(msg("Writing to this tracker needs the source-control write scope."))
     : !detail.writable
-      ? "This issue is outside every project's own scope, so it is read-only here."
+      ? resolve(msg("This issue is outside every project's own scope, so it is read-only here."))
       : null;
   const may = (capability: boolean, permission: boolean) =>
     blocked === null && capability && permission;
