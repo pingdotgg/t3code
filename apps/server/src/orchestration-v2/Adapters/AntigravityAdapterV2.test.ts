@@ -1693,6 +1693,80 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 
+  // agy dequeued the finished command's wake (the transcript ends on its SYSTEM_MESSAGE) but the
+  // model call has streamed nothing for over 2 minutes. The run must wait for that reply instead
+  // of completing with the pre-wake "Waiting for task-1" text.
+  it.effect("keeps the run open past the quiet limit while a dequeued wake is unanswered", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-slow-wake-" });
+      const logs = path.join(
+        profile,
+        "antigravity-acp",
+        "brain",
+        "mock-session-1",
+        ".system_generated",
+        "logs",
+      );
+      const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 }, undefined, undefined, {
+          profileDirectory: profile,
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+
+      yield* TestClock.adjust("80 seconds");
+      yield* fileSystem.makeDirectory(logs, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(logs, "transcript.jsonl"),
+        [
+          JSON.stringify({
+            step_index: 1,
+            type: "PLANNER_RESPONSE",
+            status: "DONE",
+            content: "Waiting for task-1 to finish.",
+          }),
+          JSON.stringify({
+            step_index: 2,
+            type: "SYSTEM_MESSAGE",
+            status: "DONE",
+            content: "priority=MESSAGE_PRIORITY_HIGH task-1",
+          }),
+        ].join("\n") + "\n",
+      );
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "DONE", exit_code: 0 },
+      });
+      yield* send({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "The command finished." },
+      });
+
+      // The model call stays silent for 150 s, past the 2-minute quiet limit.
+      yield* TestClock.adjust("150 seconds");
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The command printed DONE." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.include(
+        JSON.stringify(run),
+        "The command printed DONE.",
+        "the wake reply must belong to the run instead of the pre-wake text",
+      );
+      assert.lengthOf(offers, 0, "the open run needs no continuation");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // A background command can finish while the initial prompt's final reply is still in flight,
   // so the tool is already `completed` when session/prompt returns end_turn while its wake sits
   // unread in the inbox.
