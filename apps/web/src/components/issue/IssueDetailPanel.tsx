@@ -130,6 +130,7 @@ function IssueLabelPicker({
   disabledReason: string;
 }) {
   const gt = useGT();
+  const registry = useContext(RegistryContext);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueLabelCandidate>);
@@ -170,6 +171,8 @@ function IssueLabelPicker({
         return;
       }
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
+      // The tracker may have applied part of the change before refusing the rest.
+      registry.refresh(issueEnvironment.detail({ environmentId, input: reference }));
       toastManager.add({
         type: "error",
         title: m(msg("Could not change labels")),
@@ -249,6 +252,7 @@ function IssueAssigneePicker({
   disabledReason: string;
 }) {
   const gt = useGT();
+  const registry = useContext(RegistryContext);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [picks, setPicks] = useState(noIssuePicks<IssueAssigneeCandidate>);
@@ -288,6 +292,8 @@ function IssueAssigneePicker({
         return;
       }
       setPicks((latest) => issuePicksAfterFailedWrite(latest, sent));
+      // The tracker may have applied part of the change before refusing the rest.
+      registry.refresh(issueEnvironment.detail({ environmentId, input: reference }));
       toastManager.add({
         type: "error",
         title: m(msg("Could not change assignees")),
@@ -637,7 +643,7 @@ export function IssueDetailPanel({
             <span className="flex-1" />
             {stateControl}
             <IssueThreadLinks
-              key={`${environmentId}:${detail.url}`}
+              key={`${environmentId}:${detail.url}:${detail.scope}`}
               environmentId={environmentId}
               reference={{ ...placedScope(reference, detail), host: reference.host ?? detail.host }}
               issue={detail}

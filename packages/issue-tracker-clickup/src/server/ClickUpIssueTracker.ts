@@ -5,6 +5,7 @@
  */
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type {
   IssueActor,
@@ -72,6 +73,8 @@ const CLOSED_STATUS_TYPES = ["closed", "done"];
 const SCOPE_CONCURRENCY = 4;
 /** Discovering lists costs two requests a space against a 100-a-minute limit; reuse it a while. */
 const DISCOVERY_TTL_MS = 10 * 60_000;
+const RATE_LIMIT_RETRIES = 3;
+const MAX_RATE_LIMIT_WAIT_MS = 65_000;
 
 const isoFromMillis = (value: string | null | undefined): string | null =>
   value == null || !/^\d+$/.test(value)
@@ -144,12 +147,19 @@ function commentsCursor(page: {
   return !page.more || oldest === undefined ? null : `${oldest.date}:${oldest.id}`;
 }
 
-/** `<page>:<offset>`: ClickUp pages are a fixed hundred, and a listing asks for fewer. */
-function parseListCursor(cursor: string | undefined): { page: number; offset: number } {
-  const match = /^(\d+):(\d+)$/.exec(cursor ?? "");
+/**
+ * `<page>:<task ids already listed from it>`. ClickUp pages are a fixed hundred and a listing
+ * asks for fewer; an update can reorder a page between slices, so the rest of a page is what
+ * was not yet listed, not what lies past an offset.
+ */
+function parseListCursor(cursor: string | undefined): {
+  page: number;
+  listed: ReadonlySet<string>;
+} {
+  const match = /^(\d+):([a-z0-9,]*)$/i.exec(cursor ?? "");
   return match === null
-    ? { page: 0, offset: 0 }
-    : { page: Number(match[1]), offset: Number(match[2]) };
+    ? { page: 0, listed: new Set() }
+    : { page: Number(match[1]), listed: new Set(match[2]!.split(",").filter(Boolean)) };
 }
 
 const failed = (operation: string, detail: string) =>
@@ -162,7 +172,7 @@ const requireListId = (
   const id = scope.trim();
   return /^\d+$/.test(id)
     ? Effect.succeed(id)
-    : Effect.fail(failed(operation, `"${scope}" is not a ClickUp list id.`));
+    : Effect.fail(failed(operation, "The scope is not a ClickUp list id."));
 };
 
 const requireTaskId = (
@@ -328,9 +338,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
                   (tag) => tag.name.toLowerCase() === name.trim().toLowerCase(),
                 );
                 return match === undefined
-                  ? Effect.fail(
-                      failed(operation, `ClickUp has no tag named "${name}" in this space.`),
-                    )
+                  ? Effect.fail(failed(operation, "A tag is not one this ClickUp space has."))
                   : Effect.succeed(match.name);
               }),
             ),
@@ -361,7 +369,9 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       const ids = yield* Effect.forEach(assignees, (wanted, index) => {
         const id = known[index] ?? find(members, wanted);
         return id === undefined
-          ? Effect.fail(failed(operation, `"${wanted}" is not a member of this ClickUp list.`))
+          ? Effect.fail(
+              failed(operation, "An assignee is not a member of this ClickUp list's workspace."),
+            )
           : Effect.succeed(id);
       });
       return [...new Set(ids)];
@@ -392,15 +402,39 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
     };
 
     /** Every list the token reaches, named by where it sits: space, folder, list. */
+    /**
+     * Discovery reads every space, two requests each, against ClickUp's per-minute limit: a
+     * refused read waits for the reset and is asked again, so the spaces already read stand.
+     */
+    const waitOutRateLimit = Effect.fn("ClickUpIssueTracker.waitOutRateLimit")(function* <A>(
+      read: Effect.Effect<A, IssueTrackerError>,
+    ): Effect.fn.Return<A, IssueTrackerError> {
+      for (let attempt = 1; ; attempt++) {
+        const result = yield* Effect.result(read);
+        if (result._tag === "Success") return result.success;
+        const error = result.failure;
+        if (error.reason !== "rate-limited" || attempt > RATE_LIMIT_RETRIES) {
+          return yield* error;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        const resetIn = (error.retryAt ?? now + MAX_RATE_LIMIT_WAIT_MS) - now;
+        yield* Effect.sleep(
+          Duration.millis(Math.min(Math.max(resetIn, 1_000), MAX_RATE_LIMIT_WAIT_MS)),
+        );
+      }
+    });
+    const probeRead = <A>(request: ClickUpApi.ClickUpRequest<A>) =>
+      waitOutRateLimit(clickup.request(request));
+
     const reachableLists = Effect.fn("ClickUpIssueTracker.reachableLists")(function* (
       token: string,
     ) {
-      const teams = yield* workspaces("probe", token);
+      const teams = yield* waitOutRateLimit(workspaces("probe", token));
       const perTeam = yield* Effect.forEach(
         teams,
         (team) =>
           Effect.gen(function* () {
-            const { spaces } = yield* clickup.request({
+            const { spaces } = yield* probeRead({
               operation: "probe",
               method: "GET",
               path: `/team/${encodeURIComponent(team.id)}/space`,
@@ -413,7 +447,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
               (space) =>
                 Effect.all(
                   [
-                    clickup.request({
+                    probeRead({
                       operation: "probe",
                       method: "GET",
                       path: `/space/${encodeURIComponent(space.id)}/folder`,
@@ -421,7 +455,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
                       decode: Responses.folders,
                       token,
                     }),
-                    clickup.request({
+                    probeRead({
                       operation: "probe",
                       method: "GET",
                       path: `/space/${encodeURIComponent(space.id)}/list`,
@@ -514,7 +548,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
 
       listIssues: Effect.fn("ClickUpIssueTracker.listIssues")(function* (input) {
         const listId = yield* requireListId("listIssues", input.scope);
-        const { page, offset } = parseListCursor(input.cursor);
+        const { page, listed } = parseListCursor(input.cursor);
         // ClickUp ORs repeated assignees, so only one narrows the read; the rest filter below.
         const assigneeLogins = [
           ...(input.involvement === "assigned" ? [input.viewer] : []),
@@ -580,11 +614,17 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
               ? b.createdAt.localeCompare(a.createdAt)
               : b.updatedAt.localeCompare(a.updatedAt),
           );
-        const end = offset + input.limit;
+        const remaining = matching.filter((item) => !listed.has(item.key));
+        const items = remaining.slice(0, input.limit);
         const lastPage = data.last_page ?? data.tasks.length < TASKS_PAGE;
         return {
-          items: matching.slice(offset, end),
-          nextCursor: end < matching.length ? `${page}:${end}` : lastPage ? null : `${page + 1}:0`,
+          items,
+          nextCursor:
+            remaining.length > items.length
+              ? `${page}:${[...listed, ...items.map((item) => item.key)].join(",")}`
+              : lastPage
+                ? null
+                : `${page + 1}:`,
         };
       }),
 
@@ -735,6 +775,19 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
               decode: Responses.ignored,
             }),
           { concurrency: SCOPE_CONCURRENCY, discard: true },
+        ).pipe(
+          // The fields and earlier tags are written by then; ClickUp has no transaction to undo.
+          Effect.mapError(
+            (error) =>
+              new IssueTrackerError({
+                tracker: error.tracker,
+                operation: error.operation,
+                reason: error.reason,
+                detail: "ClickUp may have kept part of this change before refusing the rest.",
+                ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
+                cause: error,
+              }),
+          ),
         );
       }),
 
@@ -745,7 +798,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           (status) => status.status.toLowerCase() === input.state.trim().toLowerCase(),
         );
         if (wanted === undefined)
-          return yield* failed("setState", `This list's workflow has no "${input.state}" status.`);
+          return yield* failed("setState", "The status is not one this ClickUp list has.");
         yield* clickup.request({
           operation: "setState",
           method: "PUT",

@@ -85,7 +85,9 @@ export function isStandaloneIssueLink(url: string): boolean {
 
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return text.includes(`${LINEAR_HOST}/`) || text.includes(`${CLICKUP_HOST}/t/`);
+  // Hosts are case-insensitive in a URL, and the parsers read them that way.
+  const lower = text.toLowerCase();
+  return lower.includes(`${LINEAR_HOST}/`) || lower.includes(`${CLICKUP_HOST}/t/`);
 }
 
 /**

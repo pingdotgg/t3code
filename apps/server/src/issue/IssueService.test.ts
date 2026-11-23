@@ -971,6 +971,38 @@ describe("IssueService with a standalone tracker", () => {
       }),
   );
 
+  it.effect("tries the next account when placing a link's issue fails", () =>
+    Effect.gen(function* () {
+      const second = IssueTrackerAccountId.make("second");
+      const tracker = fakeStandaloneTracker({
+        issueScope: () =>
+          Effect.flatMap(IssueTrackerAccount, (account) =>
+            account === second
+              ? Effect.succeed("OPS")
+              : Effect.fail(
+                  new IssueTrackerError({
+                    tracker: LINEAR,
+                    operation: "issueScope",
+                    reason: "rate-limited",
+                    detail: "slow down",
+                  }),
+                ),
+          ),
+      });
+      const service = yield* makeService({
+        projects: [project({ id: "web" }), project({ id: "api" })],
+        trackers: [tracker],
+        bindings: {
+          web: { tracker: LINEAR, scope: "ENG" },
+          api: { tracker: LINEAR, accountId: second, scope: "OPS" },
+        },
+      });
+      expect(
+        yield* service.resolveUrl("https://linear.app/acme/issue/ENG-1/old-title"),
+      ).toMatchObject({ projectId: "api", scope: "OPS", writable: true });
+    }),
+  );
+
   it.effect("names a key-only reference by the scope the tracker places it in", () =>
     Effect.gen(function* () {
       // The task's list is bound only by another project.

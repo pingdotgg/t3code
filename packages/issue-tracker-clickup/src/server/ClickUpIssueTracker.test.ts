@@ -1,9 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { TestClock } from "effect/testing";
 import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
 
@@ -202,10 +204,10 @@ describe("ClickUpIssueTracker", () => {
       const api = yield* tracker;
       const first = yield* api.listIssues({ ...listing, limit: 1 });
       expect(first.items.map((item) => item.key)).toEqual(["a"]);
-      expect(first.nextCursor).toBe("0:1");
+      expect(first.nextCursor).toBe("0:a");
       const second = yield* api.listIssues({ ...listing, limit: 1, cursor: first.nextCursor! });
       expect(second.items.map((item) => item.key)).toEqual(["c"]);
-      expect(second.nextCursor).toBe("1:0");
+      expect(second.nextCursor).toBe("1:");
       expect(pages).toEqual(["0", "0"]);
       expect(first.items[0]).toMatchObject({
         displayKey: "#a",
@@ -213,6 +215,36 @@ describe("ClickUpIssueTracker", () => {
         assignees: [{ login: "theo" }],
         labels: [{ name: "bug", color: "#f00" }],
       });
+    }),
+  );
+
+  it.effect("lists every task of a page once even when an update reorders it", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const { tracker } = fakeClickUp({
+        "GET /list/900/task": () => {
+          reads += 1;
+          // After the first slice, B is updated and moves to the top of the page.
+          const updatedB = reads === 1 ? "1782950400002" : "1782950400009";
+          return {
+            tasks: [
+              task("a", { date_updated: "1782950400003" }),
+              task("b", { date_updated: updatedB }),
+              task("c", { date_updated: "1782950400001" }),
+            ],
+            last_page: true,
+          };
+        },
+      });
+      const api = yield* tracker;
+      const keys: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = yield* api.listIssues({ ...listing, limit: 1, cursor });
+        keys.push(...page.items.map((item) => item.key));
+        cursor = page.nextCursor ?? undefined;
+      } while (cursor !== undefined);
+      expect(keys).toEqual(["a", "b", "c"]);
     }),
   );
 
@@ -316,7 +348,7 @@ describe("ClickUpIssueTracker", () => {
       });
       const api = yield* tracker;
       const refused = yield* Effect.flip(api.setState({ ...target, key: "abc", state: "Shipped" }));
-      expect(refused.detail).toContain("Shipped");
+      expect(refused.detail).toBe("The status is not one this ClickUp list has.");
       yield* api.setState({ ...target, key: "abc", state: "Complete" });
       expect(requests.find((request) => request.method === "PUT")?.body).toEqual({
         status: "complete",
@@ -386,7 +418,7 @@ describe("ClickUpIssueTracker", () => {
       const refused = yield* Effect.flip(
         api.update({ ...target, key: "abc", title: "Renamed", labels: ["missing"] }),
       );
-      expect(refused.detail).toContain("missing");
+      expect(refused.detail).toBe("A tag is not one this ClickUp space has.");
       expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
     }),
   );
@@ -525,6 +557,30 @@ describe("ClickUpIssueTracker", () => {
       });
       const candidates = yield* (yield* tracker).listCandidates(target);
       expect(candidates.assignees.map((candidate) => candidate.id)).toEqual(["22"]);
+    }),
+  );
+
+  it.effect("waits out a rate limit during discovery and keeps what it already read", () =>
+    Effect.gen(function* () {
+      let refused = false;
+      const { tracker, requests } = fakeClickUp({
+        "GET /user": () => ({ user: JULIUS }),
+        "GET /team": () => ({ teams: [{ id: "9015", name: "Acme" }] }),
+        "GET /team/9015/space": () => ({ spaces: [{ id: "77", name: "Product" }] }),
+        "GET /space/77/folder": () => {
+          if (refused) return { folders: [] };
+          refused = true;
+          return new Response(JSON.stringify({ err: "Rate limit reached" }), { status: 429 });
+        },
+        "GET /space/77/list": () => ({ lists: [{ id: "901", name: "Inbox" }] }),
+      });
+      const api = yield* tracker;
+      const probing = yield* Effect.forkChild(api.probeCredential("pk_new"));
+      yield* TestClock.adjust("65 seconds");
+      const probe = yield* Fiber.join(probing);
+      expect(probe.scopes).toEqual([{ key: "901", name: "Product / Inbox" }]);
+      expect(requests.filter((request) => request.path === "/team/9015/space")).toHaveLength(1);
+      expect(requests.filter((request) => request.path === "/space/77/folder")).toHaveLength(2);
     }),
   );
 

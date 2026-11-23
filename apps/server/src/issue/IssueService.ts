@@ -951,20 +951,23 @@ const make = Effect.gen(function* () {
         const canonical = canonicalUrl === null ? null : standalone.api.parseIssueUrl(canonicalUrl);
         if (canonical !== null && canonical.workspace === standalone.link.workspace) {
           const { issueScope } = found.lender.api;
+          if (issueScope === undefined) {
+            return { ...found.resolved, issue: toDetail(found.served, read.success) };
+          }
+          const scope = yield* issueScope({
+            cwd: found.lender.project.workspaceRoot,
+            host: found.lender.host,
+            scope: link.scope,
+            key: link.key,
+          }).pipe(Effect.mapError(toIssueError("resolveUrl")), Effect.result);
+          // Only a placed scope makes the link writable; a read without one stays a fallback.
           const placed =
-            issueScope === undefined
-              ? found
-              : (serve(
-                  candidates,
-                  yield* issueScope({
-                    cwd: found.lender.project.workspaceRoot,
-                    host: found.lender.host,
-                    scope: link.scope,
-                    key: link.key,
-                  }).pipe(Effect.mapError(toIssueError("resolveUrl"))),
-                ) ?? found);
+            scope._tag === "Success" ? (serve(candidates, scope.success) ?? found) : found;
+          if (scope._tag === "Failure" && (failure === null || isNotFound(failure))) {
+            failure = scope.failure;
+          }
           const result = { ...placed.resolved, issue: toDetail(placed.served, read.success) };
-          if (issueScope === undefined || result.writable) return result;
+          if (scope._tag === "Success" && result.writable) return result;
           readable ??= result;
         }
       }

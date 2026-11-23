@@ -123,7 +123,7 @@ type Query = Readonly<
   Record<string, string | number | boolean | ReadonlyArray<string> | undefined>
 >;
 
-interface ClickUpRequest<A> {
+export interface ClickUpRequest<A> {
   readonly operation: string;
   readonly method: "GET" | "POST" | "PUT" | "DELETE";
   readonly path: string;
