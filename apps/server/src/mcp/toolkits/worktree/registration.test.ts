@@ -49,6 +49,10 @@ import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
 import { AssetSigner } from "../../../assets/AssetSigner.ts";
 import { ProjectCloneTracker } from "../../../project/ProjectCloneTracker.ts";
+import { FeedbackStore } from "../../../feedback/FeedbackStore.ts";
+import { MilestoneHub } from "../../../milestones/MilestoneHub.ts";
+import { TaskFolders } from "../../../workspace/TaskFolders.ts";
+import * as Workflows from "../../../workflows/Workflows.ts";
 
 const layerStubServices = Layer.mergeAll(
   SqlitePersistence.layerMemory,
@@ -85,6 +89,10 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(ThreadSearch.ThreadSearch)({}),
   Layer.mock(AssetSigner)({}),
   Layer.mock(ProjectCloneTracker)({}),
+  Layer.mock(FeedbackStore)({}),
+  Layer.mock(MilestoneHub)({}),
+  Layer.mock(TaskFolders)({}),
+  Workflows.layerDisabled,
 );
 
 const ToolsListPayload = Schema.fromJsonString(

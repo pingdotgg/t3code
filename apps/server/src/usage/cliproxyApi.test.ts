@@ -61,6 +61,7 @@ function fixture(
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
     cooldownBody?: unknown;
+    models?: (name: string) => Response;
   } = {},
 ) {
   const requests: Array<{ path: string; body?: RequestBody }> = [];
@@ -73,6 +74,12 @@ function fixture(
           ? decodeRequest(new TextDecoder().decode(request.body.body))
           : undefined;
       requests.push({ path, ...(body ? { body } : {}) });
+      if (path.endsWith("/auth-files/models"))
+        return HttpClientResponse.fromWeb(
+          request,
+          options.models?.(new URL(request.url).searchParams.get("name")!) ??
+            Response.json({}, { status: 404 }),
+        );
       if (path.endsWith("/auth-files"))
         return HttpClientResponse.fromWeb(
           request,
@@ -231,6 +238,24 @@ describe("CLIProxyAPI built-in management API", () => {
       }),
   );
 
+  it.effect("names the models the hub routes to each account, when the hub lists them", () =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [...accounts, { ...accounts[1]!, id: "third.json", auth_index: "c" }],
+        models: (name) =>
+          name === "first.json"
+            ? Response.json({ models: [{ id: "gpt-5.6-sol" }, { id: " " }] })
+            : name === "third.json"
+              ? Response.json({ models: [] })
+              : Response.json({}, { status: 404 }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.models)).toEqual([["gpt-5.6-sol"], undefined, []]);
+      expect(result[1]?.usageLimits.windows).toHaveLength(1);
+    }),
+  );
+
   it.effect("resolves a missing usage plan from current, then legacy, token plans", () =>
     Effect.gen(function* () {
       const test = fixture({
@@ -337,7 +362,10 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result[0]?.usageLimits.unavailable).toEqual({
+        reason: "probeFailed",
+        message: "The provider refused the hub request (HTTP 401).",
+      });
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
     }),
@@ -670,7 +698,9 @@ describe("CLIProxyAPI built-in management API", () => {
         });
         const [account] = yield* (yield* test.api).readAccounts(config);
         expect(account?.usageLimits.unavailable?.reason).toBe("probeFailed");
-        expect(test.requests.map((request) => request.path)).toEqual(["/v0/management/auth-files"]);
+        expect(test.requests.map((request) => request.path)).not.toContain(
+          "/v0/management/api-call",
+        );
       }),
   );
 

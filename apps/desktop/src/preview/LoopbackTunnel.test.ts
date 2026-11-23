@@ -2,6 +2,7 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeWS from "@effect/platform-node/NodeWS";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import { expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
 import * as Context from "effect/Context";
@@ -30,20 +31,23 @@ const closeServer = (server: NodeNet.Server | NodeWS.WebSocketServer) =>
   );
 
 /** A local listener that must never see a connection: the reviewer's own localhost server. */
-const listenDecoy = Effect.acquireRelease(
-  Effect.promise(
-    () =>
-      new Promise<{ server: NodeNet.Server; connections: () => number }>((resolve) => {
-        let connections = 0;
-        const server = NodeNet.createServer((socket) => {
-          connections++;
-          socket.destroy();
-        });
-        server.listen(0, "127.0.0.1", () => resolve({ server, connections: () => connections }));
-      }),
-  ),
-  ({ server }) => closeServer(server),
-);
+const listenDecoyOn = (host: string) =>
+  Effect.acquireRelease(
+    Effect.promise(
+      () =>
+        new Promise<{ server: NodeNet.Server; connections: () => number }>((resolve, reject) => {
+          let connections = 0;
+          const server = NodeNet.createServer((socket) => {
+            connections++;
+            socket.destroy();
+          });
+          server.once("error", reject);
+          server.listen(0, host, () => resolve({ server, connections: () => connections }));
+        }),
+    ),
+    ({ server }) => closeServer(server),
+  );
+const listenDecoy = listenDecoyOn("127.0.0.1");
 
 /** Stands in for the environment's /api/preview/tunnel: echoes each frame behind a 0xee byte. */
 const listenEndpoint = Effect.acquireRelease(
@@ -101,6 +105,7 @@ const makeTunnel = (
             }),
             NodeFileSystem.layer,
             SecureRandom.layerWebCrypto,
+            NetService.layer,
             host ?? Layer.empty,
           ),
         ),
@@ -357,24 +362,33 @@ it.effect("forwards a port over the tunnel on the same local port until stopped"
   }),
 );
 
-it.effect("moves a forward to a free port when its own is taken here", () =>
-  Effect.gen(function* () {
-    const decoy = yield* listenDecoy;
-    const endpoint = yield* listenEndpoint;
-    const remotePort = addressPort(decoy.server);
-    const tunnel = yield* makeTunnel(
-      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
-    );
-    const forward = yield* tunnel.forward({
-      environmentId: EnvironmentId.make("remote"),
-      remotePort,
-    });
-    expect(forward.localPort).not.toBe(remotePort);
+const hasIpv6Loopback = await new Promise<boolean>((resolve) => {
+  const probe = NodeNet.createServer();
+  probe.once("error", () => resolve(false));
+  probe.listen(0, "::1", () => probe.close(() => resolve(true)));
+});
 
-    expect(yield* exchange(forward.localPort, Uint8Array.of(6))).toEqual([0xee, 6]);
-    expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?port=${remotePort}`);
-    expect(decoy.connections()).toBe(0);
-  }),
+// Vite listens on ::1 by default on macOS, and Node's default listen is ::.
+it.effect.each(hasIpv6Loopback ? ["127.0.0.1", "::1", "::"] : ["127.0.0.1"])(
+  "moves a forward to a free port when its own is taken here on %s",
+  (host) =>
+    Effect.gen(function* () {
+      const decoy = yield* listenDecoyOn(host);
+      const endpoint = yield* listenEndpoint;
+      const remotePort = addressPort(decoy.server);
+      const tunnel = yield* makeTunnel(
+        `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+      );
+      const forward = yield* tunnel.forward({
+        environmentId: EnvironmentId.make("remote"),
+        remotePort,
+      });
+      expect(forward.localPort).not.toBe(remotePort);
+
+      expect(yield* exchange(forward.localPort, Uint8Array.of(6))).toEqual([0xee, 6]);
+      expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?port=${remotePort}`);
+      expect(decoy.connections()).toBe(0);
+    }),
 );
 
 /** An environment on this machine: each tunnel connection dials the requested local port. */

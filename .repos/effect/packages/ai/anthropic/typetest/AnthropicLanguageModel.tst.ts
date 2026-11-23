@@ -2,6 +2,7 @@ import { AnthropicLanguageModel, type Generated } from "@effect/ai-anthropic"
 import { describe, expect, it } from "tstyche"
 
 declare const acceptsKnownModel: (model: AnthropicLanguageModel.Model) => void
+declare const effort: Generated.BetaEffortLevel | null
 
 describe("AnthropicLanguageModel", () => {
   describe("Model", () => {
@@ -13,6 +14,12 @@ describe("AnthropicLanguageModel", () => {
   })
 
   describe("Config", () => {
+    it("accepts every generated effort level", () => {
+      expect(AnthropicLanguageModel.model).type.toBeCallableWith("claude-opus-4-8", {
+        output_config: { effort }
+      })
+    })
+
     it("accepts the adaptive thinking display setting", () => {
       expect(AnthropicLanguageModel.model).type.toBeCallableWith("claude-opus-4-6", {
         thinking: { type: "adaptive", display: "omitted" }
@@ -23,6 +30,12 @@ describe("AnthropicLanguageModel", () => {
 
 // Released `Generated` contracts that must survive spec updates
 describe("Generated", () => {
+  it("keeps string beta headers in parameter types", () => {
+    expect<Generated.CompletePostParams["anthropic-beta"]>().type.toBe<
+      string | ReadonlyArray<Generated.AnthropicBeta> | undefined
+    >()
+  })
+
   it("keeps the 4XX error aliases", () => {
     expect<Generated.BetaMessagesPost4XX>().type.toBe<Generated.BetaErrorResponse>()
   })

@@ -9,6 +9,7 @@
 - [Terminal history](./user/terminal.md)
 - [Source control](./user/source-control.md)
 - [Project settings](./user/project-settings.md)
+- [Projects with several repositories](./user/multi-repo-projects.md)
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Copy on select](./user/copy-on-select.md)

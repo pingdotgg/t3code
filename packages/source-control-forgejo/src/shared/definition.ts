@@ -99,8 +99,10 @@ export const definition = defineSourceControl({
     const link = parseChangeRequestPath(url, CHANGE_REQUEST_PATH);
     return link === null ? null : { ...link, authority: url.host.toLowerCase() };
   },
-  // `/issues/` is too generic a path to believe from a host not named after Forgejo or Gitea.
-  parseIssueUrl: (url) => (isForgejoHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null),
+  // `/issues/` is too generic a path to believe from a host not named after Forgejo or Gitea,
+  // unless a Forgejo project on that host vouches for it.
+  parseIssueUrl: (url, known) =>
+    known || isForgejoHost(url.hostname) ? parseIssuePath(url, ISSUE_PATH) : null,
   changeRequestUrlFromReferenceAutolink: () => null,
   commitUrl: (input) => buildCommitUrl(input, "commit"),
   parseCommitUrl: (url) => parseCommitPath(url, COMMIT_PATH),
