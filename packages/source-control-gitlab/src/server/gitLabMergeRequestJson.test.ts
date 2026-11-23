@@ -1042,9 +1042,68 @@ describe("decodeListStatesJson", () => {
       decision: "approved",
     },
   ])("reads $reading as $decision", ({ enterprise, approval, decision }) => {
-    expect([...statesOf(enterprise, [{ iid: "7", ...approval }])]).toEqual([
+    expect([...statesOf(enterprise, [{ iid: "7", ...approval }])]).toMatchObject([
       [7, { reviewDecision: decision, checksState: null }],
     ]);
+  });
+
+  it("names who approves now and who asks for changes, with avatars on the instance", () => {
+    const state = statesOf(true, [
+      {
+        iid: "2794",
+        webUrl: "https://git.acme.dev/ios/app/-/merge_requests/2794",
+        approved: true,
+        approvedBy: {
+          nodes: [
+            {
+              username: "lkolesnikov",
+              name: "Lev Kolesnikov",
+              avatarUrl: "https://secure.gravatar.com/avatar/d5ff?s=80&d=identicon",
+            },
+            {
+              username: "nnikonov",
+              name: "Nikolai Nikonov",
+              avatarUrl: "/uploads/-/system/user/avatar/76/avatar.png?v=1",
+            },
+          ],
+        },
+        reviewers: {
+          nodes: [
+            { username: "lkolesnikov", mergeRequestInteraction: { reviewState: "APPROVED" } },
+            {
+              username: "nnikonov",
+              name: "Nikolai Nikonov",
+              avatarUrl: "/uploads/-/system/user/avatar/76/avatar.png?v=1",
+              mergeRequestInteraction: { reviewState: "REQUESTED_CHANGES" },
+            },
+            { username: "julius", mergeRequestInteraction: { reviewState: "UNREVIEWED" } },
+          ],
+        },
+        headPipeline: { status: "SUCCESS" },
+      },
+    ]).get(2794);
+    expect(state).toEqual({
+      reviewDecision: "changes-requested",
+      checksState: "passing",
+      verdicts: [
+        {
+          author: {
+            login: "nnikonov",
+            name: "Nikolai Nikonov",
+            avatarUrl: "https://git.acme.dev/uploads/-/system/user/avatar/76/avatar.png?v=1",
+          },
+          reviewState: "CHANGES_REQUESTED",
+        },
+        {
+          author: {
+            login: "lkolesnikov",
+            name: "Lev Kolesnikov",
+            avatarUrl: "https://secure.gravatar.com/avatar/d5ff?s=80&d=identicon",
+          },
+          reviewState: "APPROVED",
+        },
+      ],
+    });
   });
 
   it.each([
@@ -1090,7 +1149,15 @@ describe("decodeListStatesJson", () => {
       ]),
     ]).toEqual([
       [7, { checksState: "failing" }],
-      [8, { checksState: null }],
+      [
+        8,
+        {
+          checksState: null,
+          verdicts: [
+            { author: { login: "julius", name: null, avatarUrl: null }, reviewState: "APPROVED" },
+          ],
+        },
+      ],
       [9, { checksState: null }],
     ]);
   });

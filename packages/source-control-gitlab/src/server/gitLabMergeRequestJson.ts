@@ -1578,11 +1578,14 @@ const LIST_STATE_GRAPHQL_FIELDS = `iid approved approvedBy(first: 1) { nodes { u
   reviewers(first: 20) { nodes { username mergeRequestInteraction { reviewState } } }
   headPipeline { status }`;
 
+/** Unlike the list, which only counts approvals, these states also name who reviewed. */
 export const LIST_STATES_GRAPHQL_QUERY = `query($fullPath: ID!, $iids: [String!]) {
   metadata { enterprise }
   project(fullPath: $fullPath) {
     mergeRequests(iids: $iids, first: 100) {
-      nodes { ${LIST_STATE_GRAPHQL_FIELDS} }
+      nodes { iid webUrl approved approvedBy(first: 50) { nodes { username name avatarUrl } }
+        reviewers(first: 20) { nodes { username name avatarUrl mergeRequestInteraction { reviewState } } }
+        headPipeline { status } }
     }
   }
 }`;
@@ -1591,13 +1594,21 @@ const RawMetadataSchema = Schema.optional(
   Schema.NullOr(Schema.Struct({ enterprise: Schema.optional(Schema.NullOr(Schema.Boolean)) })),
 );
 
+const RawGraphqlUserFields = {
+  username: Schema.optional(Schema.NullOr(Schema.String)),
+  name: Schema.optional(Schema.NullOr(Schema.String)),
+  avatarUrl: Schema.optional(Schema.NullOr(Schema.String)),
+};
+
 const RawListStateFields = {
   iid: Schema.String,
   approved: Schema.optional(Schema.NullOr(Schema.Boolean)),
   approvedBy: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        nodes: Schema.optional(Schema.NullOr(Schema.Array(Schema.Unknown))),
+        nodes: Schema.optional(
+          Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Struct(RawGraphqlUserFields)))),
+        ),
       }),
     ),
   ),
@@ -1609,7 +1620,7 @@ const RawListStateFields = {
             Schema.Array(
               Schema.NullOr(
                 Schema.Struct({
-                  username: Schema.optional(Schema.NullOr(Schema.String)),
+                  ...RawGraphqlUserFields,
                   mergeRequestInteraction: Schema.optional(
                     Schema.NullOr(
                       Schema.Struct({ reviewState: Schema.optional(Schema.NullOr(Schema.String)) }),
@@ -1628,7 +1639,10 @@ const RawListStateFields = {
   ),
 };
 
-const RawListStateNodeSchema = Schema.Struct(RawListStateFields);
+const RawListStateNodeSchema = Schema.Struct({
+  ...RawListStateFields,
+  webUrl: Schema.optional(Schema.NullOr(Schema.String)),
+});
 
 const RawListStatesSchema = Schema.Struct({
   data: Schema.Struct({
@@ -1647,10 +1661,56 @@ const RawListStatesSchema = Schema.Struct({
 
 const decodeListStates = decodeJsonResult(RawListStatesSchema);
 
+export interface GitLabMergeRequestVerdict {
+  readonly author: PullRequestActor;
+  readonly reviewState: "APPROVED" | "CHANGES_REQUESTED";
+}
+
 export interface GitLabMergeRequestListState {
   /** Absent when the approval state can't be judged. */
   readonly reviewDecision?: PullRequestReviewDecision | null;
   readonly checksState: PullRequestChecksState | null;
+  /** Who approves or asks for changes now; absent when no one does or the read did not ask. */
+  readonly verdicts?: ReadonlyArray<GitLabMergeRequestVerdict>;
+}
+
+// GraphQL gives an uploaded avatar as a path on the instance; REST gives a full URL.
+function toGraphqlActor(
+  user: Schema.Struct.Type<typeof RawGraphqlUserFields> | null | undefined,
+  webUrl: string | null | undefined,
+) {
+  const avatarUrl = trimmed(user?.avatarUrl);
+  return toActor(
+    user == null
+      ? null
+      : {
+          username: user.username ?? "",
+          name: user.name,
+          avatar_url:
+            avatarUrl == null || webUrl == null
+              ? null
+              : (URL.parse(avatarUrl, webUrl)?.toString() ?? null),
+        },
+  );
+}
+
+function toVerdicts(
+  node: typeof RawListStateNodeSchema.Type,
+): ReadonlyArray<GitLabMergeRequestVerdict> {
+  const verdicts = new Map<string, GitLabMergeRequestVerdict>();
+  for (const reviewer of node.reviewers?.nodes ?? []) {
+    const author = toGraphqlActor(reviewer, node.webUrl);
+    if (author !== null && reviewer?.mergeRequestInteraction?.reviewState === "REQUESTED_CHANGES") {
+      verdicts.set(author.login, { author, reviewState: "CHANGES_REQUESTED" });
+    }
+  }
+  for (const approver of node.approvedBy?.nodes ?? []) {
+    const author = toGraphqlActor(approver, node.webUrl);
+    if (author !== null && !verdicts.has(author.login)) {
+      verdicts.set(author.login, { author, reviewState: "APPROVED" });
+    }
+  }
+  return [...verdicts.values()];
 }
 
 function toChecksState(pipelineStatus: string | null | undefined): PullRequestChecksState | null {
@@ -1717,7 +1777,9 @@ export function decodeListStatesJson(
   for (const node of decoded.success.data.project?.mergeRequests?.nodes ?? []) {
     const number = Number(node?.iid);
     if (node === null || !Number.isSafeInteger(number)) continue;
-    states.set(number, toListState(node, enterprise));
+    const verdicts = toVerdicts(node);
+    const state = toListState(node, enterprise);
+    states.set(number, verdicts.length === 0 ? state : { ...state, verdicts });
   }
   return Result.succeed(states);
 }
@@ -1815,22 +1877,11 @@ export function decodeMergeRequestGraphqlListJson(
     const node = exit.value;
     const number = Number(node.iid);
     if (!Number.isSafeInteger(number)) continue;
-    const avatarUrl = trimmed(node.author?.avatarUrl);
     items.push({
       number,
       title: node.title,
       url: node.webUrl,
-      author: toActor(
-        node.author == null
-          ? null
-          : {
-              username: node.author.username ?? "",
-              name: node.author.name,
-              // GraphQL gives an uploaded avatar as a path on the instance; REST gives a full URL.
-              avatar_url:
-                avatarUrl == null ? null : (URL.parse(avatarUrl, node.webUrl)?.toString() ?? null),
-            },
-      ),
+      author: toGraphqlActor(node.author, node.webUrl),
       headBranch: node.sourceBranch,
       baseBranch: node.targetBranch,
       state: toState({ state: node.state, merged_at: node.mergedAt }),

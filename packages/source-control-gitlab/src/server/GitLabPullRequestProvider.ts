@@ -360,12 +360,18 @@ export const make = Effect.gen(function* () {
             projectMergeCapabilities,
             JSON.stringify([input.cwd, input.repository, input.host]),
           ),
+          listStates({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            numbers: [input.number],
+          }),
         ],
-        { concurrency: 2 },
+        { concurrency: 3 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
-        Effect.map(([mergeRequest, mergeCapabilities]): ProviderChangeRequestDetail => ({
-          ...mergeRequest,
+        Effect.map(([mergeRequest, mergeCapabilities, states]): ProviderChangeRequestDetail => ({
+          ...withListState(mergeRequest, states),
           mergeCapabilities,
           viewerPermissions: gitLabViewerPermissions(mergeRequest),
           // Missing divergence counts mean unknown, not up to date.
@@ -409,16 +415,30 @@ export const make = Effect.gen(function* () {
               Effect.map((mergeRequest) => ({
                 url: mergeRequest.url,
                 diffRefs: mergeRequest.diffRefs,
+                createdAt: mergeRequest.createdAt,
               })),
             ),
             null,
           ),
+          listStates({
+            cwd: input.cwd,
+            host: input.host,
+            repository: input.repository,
+            numbers: [input.number],
+          }),
         ],
-        { concurrency: 5 },
+        { concurrency: 6 },
       ).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(
-          ([notes, commits, discussions, awards, detail]): ProviderChangeRequestActivity => {
+          ([
+            notes,
+            commits,
+            discussions,
+            awards,
+            detail,
+            states,
+          ]): ProviderChangeRequestActivity => {
             const noteUrl = (id: string) => (detail === null ? null : `${detail.url}#note_${id}`);
             const findingIds = new Set(discussions.overviewFindingIds);
             const edited = (id: string) => {
@@ -437,16 +457,55 @@ export const make = Effect.gen(function* () {
               url: noteUrl(comment.id),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             });
+            const reviewed = new Set(
+              notes.comments.flatMap((comment) =>
+                comment.kind === "review" && comment.author !== null
+                  ? [comment.author.login.toLowerCase()]
+                  : [],
+              ),
+            );
+            // GitLab says who approves now, not since when. Dated at the newest commit, an
+            // approval that outlived a push stays current and keeps its date as the MR changes.
+            const verdictsAt = [detail?.createdAt, ...commits.map((commit) => commit.committedDate)]
+              .filter((at) => at !== undefined)
+              .reduce<string | null>(
+                (latest, at) =>
+                  latest === null || Date.parse(at) > Date.parse(latest) ? at : latest,
+                null,
+              );
+            const verdicts =
+              verdictsAt === null
+                ? []
+                : (states.get(input.number)?.verdicts ?? []).flatMap((verdict) =>
+                    reviewed.has(verdict.author.login.toLowerCase())
+                      ? []
+                      : [
+                          {
+                            id: `gitlab-${verdict.reviewState === "APPROVED" ? "approval" : "changes-requested"}:${verdict.author.login}`,
+                            kind: "review" as const,
+                            author: withBotFlag(verdict.author),
+                            body: "",
+                            createdAt: verdictsAt,
+                            url: null,
+                            path: null,
+                            reviewState: verdict.reviewState,
+                            reactions: [],
+                          },
+                        ],
+                  );
             return {
               reactions: awards.reactions,
-              comments: notes.comments.map((comment) => ({
-                ...comment,
-                ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
-                ...edited(comment.id),
-                author: withBotFlag(comment.author),
-                url: noteUrl(comment.id),
-                reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
-              })),
+              comments: [
+                ...notes.comments.map((comment) => ({
+                  ...comment,
+                  ...(findingIds.has(comment.id) ? { kind: "review-comment" as const } : {}),
+                  ...edited(comment.id),
+                  author: withBotFlag(comment.author),
+                  url: noteUrl(comment.id),
+                  reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
+                })),
+                ...verdicts,
+              ],
               commentCount: notes.comments.length,
               commentsTruncated: notes.truncated || discussions.truncated,
               reviewThreads: discussions.threads.flatMap((thread) =>
