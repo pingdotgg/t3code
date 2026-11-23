@@ -239,7 +239,11 @@ const environmentLinkCommand = Command.make("link", {
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       if (Option.isSome(flags.from)) {
-        if (Option.isSome(flags.url) || Option.isSome(flags.pairingCode)) {
+        if (
+          Option.isSome(flags.url) ||
+          Option.isSome(flags.pairingCode) ||
+          flags.alternateUrl.length > 0
+        ) {
           return yield* new EnvironmentLinkUsageError({
             detail: "--from takes its addresses and pairing codes from the file.",
           });
