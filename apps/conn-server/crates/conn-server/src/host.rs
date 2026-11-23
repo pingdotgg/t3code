@@ -8,8 +8,7 @@ use std::{
 };
 
 use conn_contract::{
-    ChatAttachment, ProjectClonePhase, TerminalCloseInput, WorktreeSetupStageId,
-    WorktreeSetupStageStatus, from_json, to_json,
+    ChatAttachment, ProjectClonePhase, TerminalCloseInput, WorktreeSetupStageId, from_json, to_json,
 };
 use conn_engine::{
     AgentSession, AgentTools, BoxFuture, EngineHost, ProvisionedWorktree, ThreadClose,
@@ -58,6 +57,59 @@ pub fn worktrees_dir(environment: &Environment) -> PathBuf {
 impl Host {
     fn worktrees_dir(&self) -> PathBuf {
         worktrees_dir(&self.environment)
+    }
+
+    /// The project's setup script, run in the thread's terminal. `None` without the `/mcp`
+    /// service, which owns the project script runner.
+    fn setup_runner(
+        &self,
+        project_id: Option<String>,
+    ) -> Option<Arc<dyn conn_vcs::setup::SetupRunner>> {
+        Some(Arc::new(TerminalSetup {
+            mcp: self.mcp.get()?.clone(),
+            setups: self.vcs.setups.clone(),
+            project_id: project_id?,
+        }))
+    }
+}
+
+/// `ProjectSetupScriptRunner.runForThread` for a launch: the script runs in terminal
+/// `setup-<id>`, and its output lines go to the setup's tail.
+struct TerminalSetup {
+    mcp: Arc<McpService>,
+    setups: conn_vcs::WorktreeSetups,
+    project_id: String,
+}
+
+impl conn_vcs::setup::SetupRunner for TerminalSetup {
+    fn start<'a>(
+        &'a self,
+        thread: &'a str,
+        worktree: &'a std::path::Path,
+    ) -> conn_vcs::setup::SetupFuture<'a, Result<Option<conn_vcs::setup::StartedSetup>, String>>
+    {
+        Box::pin(async move {
+            let (setups, owner) = (self.setups.clone(), thread.to_owned());
+            let on_line = Box::new(move |line: String| {
+                setups.append_tail(&owner, WorktreeSetupStageId::SetupScript, &line);
+            });
+            let path = worktree.to_string_lossy();
+            let started = self
+                .mcp
+                .start_launch_setup(thread, &self.project_id, &path, on_line)
+                .await?;
+            Ok(started.map(|s| conn_vcs::setup::StartedSetup {
+                name: s.name,
+                command: s.command,
+                terminal_id: s.terminal_id,
+                background: s.background,
+                completion: Box::pin(async move { s.completion.await.ok().flatten() }),
+            }))
+        })
+    }
+
+    fn discard(&self, thread: &str, terminal_id: &str) {
+        self.mcp.discard_launch_setup(thread, terminal_id);
     }
 }
 
@@ -198,7 +250,7 @@ impl EngineHost for Host {
                     base_ref: request.base_ref,
                     branch: request.branch,
                     start_from_origin: request.start_from_origin,
-                    setup_script: None,
+                    setup: self.setup_runner(request.project_id),
                     worktrees_dir: self.worktrees_dir(),
                 },
             )
@@ -227,6 +279,18 @@ impl EngineHost for Host {
             }
             if let Err(error) = delete_branch(&root, &worktree.branch, Removal::Force).await {
                 eprintln!("discard branch {}: {error}", worktree.branch);
+            }
+            // A refused command left no thread to show the setup script's terminal. A replay's
+            // terminal id is the winning attempt's, so it stays.
+            let terminal = refused.as_ref().and(
+                self.vcs
+                    .setups
+                    .get(&thread_id)
+                    .and_then(|s| s.setup_script)
+                    .map(|s| s.terminal_id),
+            );
+            if let (Some(mcp), Some(terminal)) = (self.mcp.get(), terminal) {
+                mcp.discard_launch_setup(&thread_id, &terminal);
             }
             // A refused command made no thread, so no agent ends its setup. A replay leaves
             // the setup to the attempt that made the thread.
@@ -318,20 +382,14 @@ impl TurnObserver for Host {
         if let Some(mcp) = self.mcp.get() {
             mcp.touch_thread(&point.thread_id);
         }
-        // A launch into a new worktree ends its setup when the agent starts.
+        // A launch into a new worktree ends its setup when the agent starts, or when its
+        // async setup script ends after that.
         let setups = &self.vcs.setups;
         if setups
             .get(&point.thread_id)
             .is_some_and(|s| s.phase == ProjectClonePhase::Running)
         {
-            setups.mark_uncancellable(&point.thread_id);
-            setups.stage_status(
-                &point.thread_id,
-                WorktreeSetupStageId::Agent,
-                WorktreeSetupStageStatus::Done,
-                None,
-            );
-            setups.finish(&point.thread_id, ProjectClonePhase::Done, None);
+            setups.agent_started(&point.thread_id);
         }
         Box::pin(std::future::ready(()))
     }
@@ -557,6 +615,211 @@ mod tests {
             runs, "ran\n",
             "one run for the first settlement, none for its repeat"
         );
+        terminals.shutdown().await;
+        engine.shutdown().await;
+        drop(host);
+        drop(service);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// T3's launch preparation (`ThreadLaunchService.prepareInBackground`): a thread launched
+    /// into a new worktree runs the project's `runOnWorktreeCreate` script in terminal
+    /// `setup-<id>`. A script with `async: false` holds the launch until it exits; an async
+    /// one (T3's default) runs on while the launch answers, and its stage records its end.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_worktree_launch_runs_the_setup_script_through_the_host() {
+        use conn_contract::{
+            ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
+        };
+        let dir = std::env::temp_dir().join(format!("conn-host-setup-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let root = dir.join("repo");
+        {
+            let root = root.clone();
+            tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(&root).unwrap();
+                git(&root, &["init", "-q", "-b", "main"]);
+                git(
+                    &root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "init",
+                    ],
+                );
+            })
+            .await
+            .unwrap();
+        }
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let script = |command: &str, blocking: bool| {
+            let mut script = json!({"id":"install","name":"Install","icon":"play",
+                "command":command,"runOnWorktreeCreate":true});
+            if blocking {
+                script["async"] = json!(false);
+            }
+            json!({"defaultProjectScripts":[script]})
+        };
+        let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            ..Default::default()
+        });
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: terminals.clone(),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+        });
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.to_string_lossy().into_owned(),
+        }];
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new(
+            "claudeAgent",
+        ))];
+        config.host = Some(host.clone());
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let service = mcp::service(&Deps {
+            environment: Some(environment.clone()),
+            engine: Some(engine.clone()),
+            terminals: Some(terminals.clone()),
+            ..Deps::default()
+        })
+        .unwrap();
+        host.mcp.set(service.clone()).unwrap();
+        let launch = |thread: &str| {
+            let engine = engine.clone();
+            let root = root.clone();
+            let thread = thread.to_owned();
+            async move {
+                let launched = engine
+                    .launch_thread(json!({"commandId":format!("launch:{thread}"),"threadId":thread,
+                        "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
+                        "title":"Setup","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+                        "runtimeMode":"auto","interactionMode":"default",
+                        "workspaceStrategy":{"type":"worktree","baseRef":"main","startFromOrigin":false},
+                        "createdBy":"user","creationSource":"web"}))
+                    .await;
+                let Ok(launched) = launched else {
+                    panic!(
+                        "the launch fails: {:?}",
+                        launched.err().map(|e| format!("{e:?}"))
+                    );
+                };
+                PathBuf::from(
+                    launched["projection"]["thread"]["worktreePath"]
+                        .as_str()
+                        .expect("the thread records its worktree"),
+                )
+            }
+        };
+        let exists = |path: PathBuf| async move {
+            tokio::task::spawn_blocking(move || path.exists())
+                .await
+                .unwrap()
+        };
+        let stage = |thread: &str| {
+            let snapshot = host.vcs.setups.get(thread).unwrap();
+            let stage = snapshot
+                .stages
+                .iter()
+                .find(|s| s.id == Id::SetupScript)
+                .unwrap()
+                .clone();
+            (snapshot.setup_script.map(|s| s.terminal_id), stage)
+        };
+
+        // `async: false`: the launch answers after the script exited.
+        environment
+            .settings
+            .update(
+                script(
+                    "printf '%s\\n' \"$T3CODE_PROJECT_ROOT\" > setup-ran.txt; printf 'INSTALLED-%s\\n' ok",
+                    true,
+                ),
+                None,
+            )
+            .unwrap();
+        let worktree = launch("thread:blocking").await;
+        assert!(
+            exists(worktree.join("setup-ran.txt")).await,
+            "a blocking setup script finished before the launch answered"
+        );
+        let (terminal, script_stage) = stage("thread:blocking");
+        assert_eq!(terminal.as_deref(), Some("setup-install"));
+        assert_eq!(script_stage.status, St::Done);
+        assert_eq!(script_stage.detail.as_deref(), Some("exited with 0"));
+        assert!(
+            script_stage.tail.iter().any(|line| line == "INSTALLED-ok"),
+            "{:?}",
+            script_stage.tail
+        );
+
+        // T3's default (`async` unset): the launch answers while the script still runs.
+        let gate = dir.join("go");
+        environment
+            .settings
+            .update(
+                script(
+                    &format!(
+                        "while [ ! -f '{}' ]; do sleep 0.1; done; printf done > async-ran.txt",
+                        gate.display()
+                    ),
+                    false,
+                ),
+                None,
+            )
+            .unwrap();
+        let mut watch = host.vcs.setups.subscribe("thread:async");
+        let worktree = launch("thread:async").await;
+        assert_eq!(stage("thread:async").1.status, St::Running);
+        assert!(!exists(worktree.join("async-ran.txt")).await);
+        host.vcs.setups.agent_started("thread:async");
+        assert_eq!(
+            host.vcs.setups.get("thread:async").unwrap().phase,
+            Phase::Running,
+            "the setup waits for its async script"
+        );
+        tokio::task::spawn_blocking({
+            let gate = gate.clone();
+            move || std::fs::write(gate, "").unwrap()
+        })
+        .await
+        .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                if watch
+                    .borrow_and_update()
+                    .as_ref()
+                    .is_some_and(|s| s.phase == Phase::Done)
+                {
+                    return;
+                }
+                watch.changed().await.unwrap();
+            }
+        })
+        .await
+        .expect("the async script's end finishes the setup");
+        assert_eq!(
+            stage("thread:async").1.detail.as_deref(),
+            Some("exited with 0")
+        );
+        assert!(exists(worktree.join("async-ran.txt")).await);
+
         terminals.shutdown().await;
         engine.shutdown().await;
         drop(host);

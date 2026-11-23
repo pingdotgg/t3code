@@ -266,6 +266,8 @@ pub struct AgentTools {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorktreeRequest {
     pub thread_id: String,
+    /// The project, for its settings overrides (`worktreeSubmodules`).
+    pub project_id: Option<String>,
     pub project_root: String,
     pub base_ref: String,
     pub branch: Option<String>,

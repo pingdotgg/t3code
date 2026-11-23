@@ -555,40 +555,120 @@ async fn file_contents_and_branch_commits() {
     assert!(commits.commits[0].committed_at.contains('T'));
 }
 
+/// One scripted answer: the script's `async` flag and where its exit code arrives.
+type ScriptAnswer = Option<(bool, tokio::sync::oneshot::Receiver<Option<i64>>)>;
+
+/// A setup runner the test drives: each start takes the next scripted answer, and the
+/// completion resolves when the test sends the exit code.
+#[derive(Default)]
+struct FakeRunner {
+    answers: std::sync::Mutex<std::collections::VecDeque<ScriptAnswer>>,
+    started: std::sync::Mutex<Vec<(String, PathBuf)>>,
+    discarded: std::sync::Mutex<Vec<String>>,
+}
+
+impl FakeRunner {
+    /// Queues a script; `background` is its `async` flag. Send its exit code on the sender.
+    fn script(&self, background: bool) -> tokio::sync::oneshot::Sender<Option<i64>> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.answers
+            .lock()
+            .unwrap()
+            .push_back(Some((background, rx)));
+        tx
+    }
+
+    fn no_script(&self) {
+        self.answers.lock().unwrap().push_back(None);
+    }
+}
+
+impl conn_vcs::setup::SetupRunner for FakeRunner {
+    fn start<'a>(
+        &'a self,
+        thread: &'a str,
+        worktree: &'a std::path::Path,
+    ) -> conn_vcs::setup::SetupFuture<'a, Result<Option<conn_vcs::setup::StartedSetup>, String>>
+    {
+        Box::pin(async move {
+            self.started
+                .lock()
+                .unwrap()
+                .push((thread.to_owned(), worktree.to_owned()));
+            let answer = self.answers.lock().unwrap().pop_front().flatten();
+            Ok(
+                answer.map(|(background, rx)| conn_vcs::setup::StartedSetup {
+                    name: "Setup".into(),
+                    command: "pnpm i".into(),
+                    terminal_id: "setup-s1".into(),
+                    background,
+                    completion: Box::pin(async move { rx.await.ok().flatten() }),
+                }),
+            )
+        })
+    }
+
+    fn discard(&self, thread: &str, terminal_id: &str) {
+        self.discarded
+            .lock()
+            .unwrap()
+            .push(format!("{thread}:{terminal_id}"));
+    }
+}
+
+/// Lets spawned tasks run.
+async fn settle_tasks() {
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// T3's launch preparation (`ThreadLaunchService.prepareInBackground`): the setup script
+/// starts in the new checkout; a script with `async: false` holds the launch until it exits
+/// and fails it on a non-zero exit, removing the worktree and its branch.
 #[tokio::test]
-async fn provision_creates_a_worktree_and_runs_the_setup_script() {
+async fn provision_creates_a_worktree_and_waits_for_a_blocking_setup_script() {
     use conn_contract::{
         ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
     };
-    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
 
     let fx = Fixture::new("provision");
     git(&fx.work, &["tag", "launch-tag"]);
     git(&fx.work, &["push", "-q", "origin", "launch-tag"]);
     git(&fx.work, &["tag", "-d", "launch-tag"]);
     let setups = WorktreeSetups::new();
-    let request = |thread: &str, command: &str| ProvisionRequest {
+    let runner = Arc::new(FakeRunner::default());
+    let request = |thread: &str| ProvisionRequest {
         thread_id: thread.into(),
         project_root: fx.work.clone(),
         base_ref: "main".into(),
         branch: None,
         start_from_origin: true,
-        setup_script: Some(SetupScript {
-            id: "s1".into(),
-            name: "Setup".into(),
-            command: command.into(),
-        }),
+        setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
     };
-    let done = setup::provision(
-        &setups,
-        request(
-            "t1",
-            "echo one; echo two >&2; echo \"$T3CODE_PROJECT_ROOT\" > root.txt",
-        ),
-    )
-    .await
-    .unwrap();
+    let exit = runner.script(false);
+    let launch = {
+        let (setups, request) = (setups.clone(), request("t1"));
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    settle_tasks().await;
+    assert!(!launch.is_finished(), "a blocking script holds the launch");
+    let running = setups.get("t1").unwrap();
+    assert_eq!(
+        running
+            .setup_script
+            .as_ref()
+            .map(|s| s.terminal_id.as_str()),
+        Some("setup-s1")
+    );
+    exit.send(Some(0)).unwrap();
+    let done = launch.await.unwrap().unwrap();
     assert!(
         done.branch.starts_with("t3/") && done.branch.len() == 11,
         "{}",
@@ -602,10 +682,9 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     );
     assert!(done.path.join("README.md").exists());
     assert_eq!(
-        std::fs::read_to_string(done.path.join("root.txt"))
-            .unwrap()
-            .trim(),
-        fx.cwd()
+        runner.started.lock().unwrap().first().map(|s| s.1.clone()),
+        Some(done.path.clone()),
+        "the script runs in the new checkout"
     );
     let snapshot = setups.get("t1").unwrap();
     let stage = |id| snapshot.stages.iter().find(|s| s.id == id).unwrap().clone();
@@ -619,34 +698,36 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     let script = stage(Id::SetupScript);
     assert_eq!(script.status, St::Done);
     assert_eq!(script.detail.as_deref(), Some("exited with 0"));
-    let mut tail = script.tail.clone();
-    tail.sort();
-    assert_eq!(tail, ["one", "two"]);
     assert_eq!(
         snapshot.worktree_path.as_deref(),
         Some(&*done.path.to_string_lossy())
     );
-    setups.finish("t1", Phase::Done, None);
-    assert_eq!(
-        setups.get("t1").unwrap().stages.last().unwrap().id,
-        Id::Agent
-    );
+    setups.agent_started("t1");
+    assert_eq!(setups.get("t1").unwrap().phase, Phase::Done);
 
     write(&fx.work, "local-only.txt", "local base\n");
     commit_all(&fx.work, "local base");
     git(&fx.origin, &["update-ref", "-d", "refs/heads/main"]);
-    let local = setup::provision(&setups, request("deleted", "exit 0"))
-        .await
-        .unwrap();
+    runner.no_script();
+    let local = setup::provision(&setups, request("deleted")).await.unwrap();
     assert_eq!(
         git(&local.path, &["rev-parse", "HEAD"]),
         git(&fx.work, &["rev-parse", "main"])
     );
+    let skipped = setups.get("deleted").unwrap();
+    assert!(
+        skipped
+            .stages
+            .iter()
+            .any(|s| s.id == Id::SetupScript && s.status == St::Skipped),
+        "no script: the stage is skipped"
+    );
 
-    // A failing script fails the setup and removes the worktree and its branch.
-    let failed = setup::provision(&setups, request("t2", "exit 3"))
-        .await
-        .unwrap_err();
+    // A failing script fails the setup, closes its terminal, and removes the worktree and
+    // its branch.
+    let exit = runner.script(false);
+    exit.send(Some(3)).unwrap();
+    let failed = setup::provision(&setups, request("t2")).await.unwrap_err();
     assert!(
         matches!(failed, ProvisionError::SetupScript(ref m) if m == "Setup script exited with 3.")
     );
@@ -656,139 +737,113 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert!(!path.exists());
     let branch = snapshot.branch.unwrap();
     assert!(!git(&fx.work, &["branch", "--list", &branch]).contains(&branch));
+    assert_eq!(*runner.discarded.lock().unwrap(), ["t2:setup-s1"]);
 }
 
-/// Reads a PID the script wrote, waiting up to 10 s for the file.
-async fn read_pid(path: &std::path::Path) -> u32 {
-    for _ in 0..200 {
-        if let Some(pid) = std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| text.trim().parse().ok())
-        {
-            return pid;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    panic!("no pid in {}", path.display())
-}
-
-fn alive(pid: u32) -> bool {
-    // `ps -o stat=` prints nothing for a missing process and `Z` for a zombie.
-    let out = std::process::Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .unwrap();
-    let stat = String::from_utf8_lossy(&out.stdout);
-    !stat.trim().is_empty() && !stat.trim().starts_with('Z')
-}
-
-/// Waits up to 3 s for `pids` to end; kills the survivors either way, and returns them.
-async fn survivors(pids: &[u32]) -> Vec<u32> {
-    for _ in 0..60 {
-        if pids.iter().all(|p| !alive(*p)) {
-            return Vec::new();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    let left: Vec<u32> = pids.iter().copied().filter(|p| alive(*p)).collect();
-    for pid in &left {
-        let _ = std::process::Command::new("kill")
-            .args(["-9", &pid.to_string()])
-            .status();
-    }
-    left
-}
-
-/// The setup script's whole process tree ends when the setup is cancelled, when the launch is
-/// dropped, and when the script exits leaving a background job; no entry stays running.
+/// An `async` setup script (T3's default) does not hold the launch; its stage records the exit
+/// when the script ends, and the setup finishes only once both it and the agent are done.
 #[tokio::test]
-async fn setup_scripts_leave_no_processes_behind() {
-    use conn_contract::ProjectClonePhase as Phase;
-    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, SetupScript, WorktreeSetups};
+async fn an_async_setup_script_runs_on_while_the_agent_starts() {
+    use conn_contract::{
+        ProjectClonePhase as Phase, WorktreeSetupStageId as Id, WorktreeSetupStageStatus as St,
+    };
+    use conn_vcs::setup::{self, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
 
-    let fx = Fixture::new("setup-tree");
+    let fx = Fixture::new("provision-async");
     let setups = WorktreeSetups::new();
-    let request = |thread: &str, command: &str| ProvisionRequest {
+    let runner = Arc::new(FakeRunner::default());
+    let request = |thread: &str| ProvisionRequest {
         thread_id: thread.into(),
         project_root: fx.work.clone(),
         base_ref: "main".into(),
         branch: None,
         start_from_origin: false,
-        setup_script: Some(SetupScript {
-            id: "s1".into(),
-            name: "Setup".into(),
-            command: command.into(),
-        }),
+        setup: Some(runner.clone()),
         worktrees_dir: fx.root.path().join("worktrees"),
     };
-    let pids_dir = fx.root.path().join("pids");
-    std::fs::create_dir_all(&pids_dir).unwrap();
-    let script = |name: &str, tail: &str| {
-        let d = pids_dir.join(name);
-        std::fs::create_dir_all(&d).unwrap();
-        let d = d.display();
-        format!("sleep 30 & echo $! > {d}/bg; sleep 31 & echo $! > {d}/fg; {tail}")
+    let script_stage = |thread: &str| {
+        let snapshot = setups.get(thread).unwrap();
+        let stage = snapshot
+            .stages
+            .iter()
+            .find(|s| s.id == Id::SetupScript)
+            .unwrap()
+            .clone();
+        (snapshot.phase, stage.status, stage.detail)
     };
 
-    // Cancelled while it runs.
-    let run = {
-        let (setups, request) = (setups.clone(), request("cancel", &script("cancel", "wait")));
+    // The agent starts first; the script's end finishes the setup.
+    let exit = runner.script(true);
+    setup::provision(&setups, request("agent-first"))
+        .await
+        .unwrap();
+    assert_eq!(
+        script_stage("agent-first"),
+        (Phase::Running, St::Running, None)
+    );
+    setups.agent_started("agent-first");
+    assert_eq!(
+        script_stage("agent-first").0,
+        Phase::Running,
+        "the setup waits for its async script"
+    );
+    exit.send(Some(0)).unwrap();
+    settle_tasks().await;
+    assert_eq!(
+        script_stage("agent-first"),
+        (Phase::Done, St::Done, Some("exited with 0".into()))
+    );
+
+    // The script fails before the agent starts: the launch goes on, the stage says so.
+    let exit = runner.script(true);
+    setup::provision(&setups, request("script-first"))
+        .await
+        .unwrap();
+    exit.send(Some(2)).unwrap();
+    settle_tasks().await;
+    assert_eq!(
+        script_stage("script-first"),
+        (Phase::Running, St::Failed, Some("exited with 2".into()))
+    );
+    setups.agent_started("script-first");
+    assert_eq!(script_stage("script-first").0, Phase::Done);
+}
+
+/// Cancelling while a blocking script runs ends the launch and closes the script's terminal.
+#[tokio::test]
+async fn cancelling_a_blocking_setup_closes_its_terminal() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::sync::Arc;
+
+    let fx = Fixture::new("provision-cancel");
+    let setups = WorktreeSetups::new();
+    let runner = Arc::new(FakeRunner::default());
+    let _exit = runner.script(false);
+    let request = ProvisionRequest {
+        thread_id: "cancel".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: None,
+        start_from_origin: false,
+        setup: Some(runner.clone()),
+        worktrees_dir: fx.root.path().join("worktrees"),
+    };
+    let launch = {
+        let setups = setups.clone();
         tokio::spawn(async move { setup::provision(&setups, request).await })
     };
-    let pids = [
-        read_pid(&pids_dir.join("cancel/bg")).await,
-        read_pid(&pids_dir.join("cancel/fg")).await,
-    ];
+    while runner.started.lock().unwrap().is_empty() {
+        tokio::task::yield_now().await;
+    }
+    settle_tasks().await;
     assert!(setups.cancel("cancel"));
-    let result = run.await.unwrap();
-    let left = survivors(&pids).await;
+    let result = launch.await.unwrap();
     assert!(
         matches!(result, Err(ProvisionError::Cancelled)),
         "{result:?}"
     );
-    assert_eq!(left, Vec::<u32>::new(), "cancel left processes running");
-
-    // The launch future dropped while the script runs.
-    let run = {
-        let (setups, request) = (setups.clone(), request("drop", &script("drop", "wait")));
-        tokio::spawn(async move { setup::provision(&setups, request).await })
-    };
-    let pids = [
-        read_pid(&pids_dir.join("drop/bg")).await,
-        read_pid(&pids_dir.join("drop/fg")).await,
-    ];
-    run.abort();
-    let _ = run.await;
-    let left = survivors(&pids).await;
-    assert_eq!(
-        left,
-        Vec::<u32>::new(),
-        "a dropped launch left processes running"
-    );
-    assert_ne!(setups.get("drop").unwrap().phase, Phase::Running);
-
-    // The script exits at once, but its background jobs hold its output pipes.
-    let started = std::time::Instant::now();
-    let done = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        setup::provision(&setups, request("exit", &script("exit", "exit 0"))),
-    )
-    .await;
-    let pids = [
-        read_pid(&pids_dir.join("exit/bg")).await,
-        read_pid(&pids_dir.join("exit/fg")).await,
-    ];
-    let left = survivors(&pids).await;
-    assert!(
-        matches!(done, Ok(Ok(_))),
-        "{done:?} after {:?}",
-        started.elapsed()
-    );
-    assert_eq!(
-        left,
-        Vec::<u32>::new(),
-        "background jobs outlived the script"
-    );
+    assert_eq!(*runner.discarded.lock().unwrap(), ["cancel:setup-s1"]);
 }
 
 #[tokio::test]

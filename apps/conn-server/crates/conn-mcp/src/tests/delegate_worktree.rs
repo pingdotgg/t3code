@@ -51,7 +51,7 @@ impl conn_engine::EngineHost for GitHost {
                     base_ref: request.base_ref,
                     branch: request.branch,
                     start_from_origin: request.start_from_origin,
-                    setup_script: None,
+                    setup: None,
                     worktrees_dir: self.worktrees.clone(),
                 },
             )

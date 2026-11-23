@@ -17,9 +17,19 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
 out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`
 tests (`tests/delegate_worktree.rs`) and live Claude and Codex children on a scratch server.
-Left: T3's generated branch name and waiting for the setup script (both also open for a
-worktree launch). One difference by design: when the checkout fails, the call is
+Left: T3's generated branch name (also open for a worktree launch). One difference by design: when the checkout fails, the call is
 refused and no child is made; T3 makes the child and fails its run in preparation.
+
+**Setup script on worktree launch (2026-11-23):** a thread launched into a new worktree, and a
+`delegate_task` worktree child, run the project's `runOnWorktreeCreate` script in terminal
+`setup-<id>`, as T3's launch preparation does. A script with `async: false` holds the launch
+(and the delegate) until it exits; a non-zero exit fails it and removes the worktree. Any
+other script is async, as in T3 (`script.async !== false`): the launch answers at once, and
+the setup ends when both the agent and the script are done. The setup card's tail gets the
+script's output lines. Proof: `conn-vcs` provision tests and `conn-server`
+`a_worktree_launch_runs_the_setup_script_through_the_host` (it failed with the old
+`setup_script: None`). One difference by design: a failed blocking script refuses the launch
+and leaves no thread; T3 keeps the thread with a failed run.
 
 **Known difference, stop in progress (2026-11-18):** with the provider's reply to
 `turn/interrupt` held, T3 reported the run interrupted on one slow CI run (cause not proven).

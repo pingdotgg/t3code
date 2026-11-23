@@ -487,7 +487,6 @@ version = "0.4.2"
 dependencies = [
  "conn-contract",
  "conn-support",
- "rustix",
  "serde",
  "serde_json",
  "sha2",

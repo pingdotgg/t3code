@@ -329,6 +329,19 @@ impl std::fmt::Debug for McpService {
     }
 }
 
+/// A launch's started setup script ([`McpService::start_launch_setup`]).
+#[derive(Debug)]
+pub struct LaunchSetup {
+    pub name: String,
+    pub command: String,
+    pub terminal_id: String,
+    /// The script's `async` flag (`script.async !== false`): the agent starts without
+    /// waiting for it.
+    pub background: bool,
+    /// The exit code, or `None` when the terminal ended first.
+    pub completion: tokio::sync::oneshot::Receiver<Option<i64>>,
+}
+
 impl McpService {
     pub async fn run_worktree_setup(
         &self,
@@ -341,6 +354,81 @@ impl McpService {
         };
         tools::worktree::setup(config, thread, project, path).await?;
         Ok(())
+    }
+
+    /// A worktree launch's setup script, as T3's launch preparation runs it
+    /// (`ThreadLaunchService.prepareInBackground` → `runForThread` with `observeCompletion`):
+    /// the project's `runOnWorktreeCreate` script in terminal `setup-<id>`, followed to its
+    /// end, its output lines handed to `on_line`. `None` when the project has no such script.
+    pub async fn start_launch_setup(
+        &self,
+        thread: &str,
+        project_id: &str,
+        path: &str,
+        on_line: Box<dyn FnMut(String) + Send>,
+    ) -> Result<Option<LaunchSetup>, String> {
+        let Some(config) = &self.config.worktrees else {
+            return Ok(None);
+        };
+        let shell = self
+            .config
+            .engine
+            .shell_snapshot()
+            .await
+            .map_err(|_| "The project list could not be read.".to_owned())?;
+        let project = shell["projects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|p| p["id"] == project_id)
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Project was not found for setup script execution for thread '{thread}' in '{path}'."
+                )
+            })?;
+        let run = tools::worktree::start_project_script(
+            config,
+            thread,
+            &project,
+            path,
+            tools::worktree::ScriptTrigger::Setup,
+            Some(tools::worktree::Observe {
+                on_line: Some(on_line),
+            }),
+        )
+        .await?;
+        let (Some(completion), "started") = (
+            run.completion,
+            run.started["status"].as_str().unwrap_or_default(),
+        ) else {
+            return Ok(None);
+        };
+        let text = |key: &str| run.started[key].as_str().unwrap_or_default().to_owned();
+        Ok(Some(LaunchSetup {
+            name: text("scriptName"),
+            terminal_id: text("terminalId"),
+            command: run.command,
+            background: run.is_async,
+            completion,
+        }))
+    }
+
+    /// Closes a launch's setup terminal when its launch failed or was cancelled: no thread
+    /// is left to show it.
+    pub fn discard_launch_setup(&self, thread: &str, terminal_id: &str) {
+        if let Some(terminals) = self
+            .config
+            .worktrees
+            .as_ref()
+            .and_then(|c| c.terminals.clone())
+        {
+            terminals.close(conn_contract::TerminalCloseInput {
+                thread_id: thread.to_owned(),
+                terminal_id: Some(terminal_id.to_owned()),
+                delete_history: Some(true),
+            });
+        }
     }
 
     /// `cleanUpSettledThread` after `closeOnSettle` (`ThreadSettlementService.ts:700`): a live,

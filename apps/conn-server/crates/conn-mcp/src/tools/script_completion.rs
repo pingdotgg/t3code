@@ -149,12 +149,90 @@ fn exit_code(line: &str, sentinel: &str) -> Option<Option<i64>> {
     Some(number.parse().ok())
 }
 
+/// Where a followed script's output lines go (`observeCompletion.onOutputLine`).
+pub(crate) struct OutputLines<'a> {
+    /// The shell echoes typed input; lines ending with these are the wrapper, not output.
+    pub(crate) echoed: &'a [String],
+    pub(crate) sink: &'a mut (dyn FnMut(String) + Send),
+}
+
+/// Output lines are cut to this many characters (`OUTPUT_LINE_MAX_LENGTH`).
+const OUTPUT_LINE_MAX_LENGTH: usize = 400;
+
+impl OutputLines<'_> {
+    /// `handleLine` for a line that is not the sentinel.
+    fn line(&mut self, raw: &str, sentinel: &str) {
+        let cleaned = strip_terminal_control(raw);
+        let cleaned = cleaned.trim_end();
+        if cleaned.is_empty()
+            || cleaned.contains(sentinel)
+            || self
+                .echoed
+                .iter()
+                .any(|echoed| cleaned.ends_with(echoed.as_str()))
+        {
+            return;
+        }
+        (self.sink)(cleaned.chars().take(OUTPUT_LINE_MAX_LENGTH).collect());
+    }
+}
+
+/// `stripTerminalControl`: ECMA-48 CSI and OSC sequences, any other escape with its
+/// intermediates and final byte, then the remaining control characters except tab.
+fn strip_terminal_control(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            if !(c.is_control() && c != '\t' && (u32::from(c) < 0x20 || c == '\x7f')) {
+                out.push(c);
+            }
+            continue;
+        }
+        match chars.peek().copied() {
+            Some('[') => {
+                chars.next();
+                // Parameters and intermediates, then one final byte in @..~.
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                while let Some(next) = chars.next() {
+                    if next == '\x07' {
+                        break;
+                    }
+                    if next == '\x1b' {
+                        if chars.peek() == Some(&'\\') {
+                            chars.next();
+                        }
+                        break;
+                    }
+                }
+            }
+            _ => {
+                while chars.peek().is_some_and(|n| (' '..='/').contains(n)) {
+                    chars.next();
+                }
+                if chars.peek().is_some_and(|n| ('0'..='~').contains(n)) {
+                    chars.next();
+                }
+            }
+        }
+    }
+    out
+}
+
 /// `observeTerminalCompletion`: reads the terminal's output until the sentinel and returns
 /// its exit code, then waits briefly for the prompt to be drawn again (closing earlier mistakes
 /// the redraw for activity). `None` when the terminal exited or closed first.
 pub(crate) async fn completion(
     stream: &mut conn_terminal::Subscription,
     sentinel: &str,
+    mut lines_out: Option<OutputLines<'_>>,
 ) -> Option<i64> {
     let mut buffer = String::new();
     let code = loop {
@@ -175,7 +253,17 @@ pub(crate) async fn completion(
                     }
                     buffer.drain(..cut);
                 }
-                if let Some(code) = lines.iter().find_map(|line| exit_code(line, sentinel)) {
+                let mut found = None;
+                for line in &lines {
+                    if let Some(code) = exit_code(line, sentinel) {
+                        found = Some(code);
+                        break;
+                    }
+                    if let Some(out) = lines_out.as_mut() {
+                        out.line(line, sentinel);
+                    }
+                }
+                if let Some(code) = found {
                     break code;
                 }
             }
@@ -305,6 +393,33 @@ mod tests {
         } else {
             assert!(syntax.is_some_and(|code| code != 0), "{syntax:?}");
         }
+    }
+
+    #[test]
+    fn output_lines_drop_terminal_control_the_wrapper_and_the_sentinel() {
+        assert_eq!(
+            strip_terminal_control("\x1b[1;32mok\x1b[0m \x1b]0;title\x07done\x1b(B\x01"),
+            "ok done"
+        );
+        let mut seen = Vec::new();
+        let mut sink = |line: String| seen.push(line);
+        let echoed = vec!["printf '%s' x".to_owned()];
+        let sentinel = sentinel("t");
+        let mut output = OutputLines {
+            echoed: &echoed,
+            sink: &mut sink,
+        };
+        output.line("$ printf '%s' x", &sentinel);
+        output.line(&format!("echo {sentinel}"), &sentinel);
+        output.line("   ", &sentinel);
+        output.line(&"y".repeat(500), &sentinel);
+        output.line("installed 3 packages  ", &sentinel);
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen.first().map(String::len), Some(400));
+        assert_eq!(
+            seen.get(1).map(String::as_str),
+            Some("installed 3 packages")
+        );
     }
 
     #[test]

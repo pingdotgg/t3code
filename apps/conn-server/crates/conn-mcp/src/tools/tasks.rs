@@ -230,10 +230,9 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
         command["workspaceStrategy"] =
             json!({"type": "worktree", "baseRef": base, "startFromOrigin": false});
     }
+    // The child's checkout and its setup script were made before this commits
+    // (`EngineHost::provision_worktree`): a blocking script is done, an async one runs on.
     cx.dispatch(command).await?;
-    if let Some((project, _)) = &isolated {
-        run_setup_script(cx, &child, project).await;
-    }
 
     if wait {
         let (_, timed_out, _) = threads::wait_for_run(
@@ -297,25 +296,6 @@ async fn worktree_base(cx: &Cx<'_>, parent: &Value) -> Result<(Value, String), T
         ));
     }
     Ok((project, base))
-}
-
-/// The project's `runOnWorktreeCreate` script in the child's new checkout, as T3's
-/// preparation runs it (`ProjectSetupScriptRunner.runForThread`). It starts in the child's
-/// terminal and does not hold the child back; a failure to start it is logged, as the
-/// worktree handoff does.
-async fn run_setup_script(cx: &Cx<'_>, child: &str, project: &Value) {
-    let Some(config) = cx.config().worktrees.as_ref() else {
-        return;
-    };
-    let Ok(projection) = cx.projection(child).await else {
-        return;
-    };
-    let Some(path) = projection["thread"]["worktreePath"].as_str() else {
-        return;
-    };
-    if let Err(error) = super::worktree::setup(config, child, project, path).await {
-        eprintln!("delegate_task setup script for {child}: {error}");
-    }
 }
 
 pub(super) async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {
