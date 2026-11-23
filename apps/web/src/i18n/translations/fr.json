@@ -12799,5 +12799,5 @@
   ],
   "e3a7999beb9b272a": "Aucun fuseau horaire trouvé.",
   "776636fe04a87fce": "fuseau horaire voyage quotidien hebdomadaire routines automatisations heure locale",
-  "74fceabf33743812": "Les tâches quotidiennes et hebdomadaires de tous les environnements connectés s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions."
+  "be7d9cdcf3cdc7bd": "Les tâches quotidiennes et hebdomadaires s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions dans chaque environnement connecté que vous pouvez modifier et qui le prend en charge."
 }

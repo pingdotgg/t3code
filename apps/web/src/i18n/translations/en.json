@@ -12804,5 +12804,5 @@
   "fe8d0e48798ba231": ["This device is in ", { "i": 1, "k": "_gt_value_1", "v": "v" }, "."],
   "e3a7999beb9b272a": "No time zones found.",
   "776636fe04a87fce": "timezone travel daily weekly routines automations local time",
-  "74fceabf33743812": "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs."
+  "be7d9cdcf3cdc7bd": "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs on each connected environment you can change that supports it."
 }

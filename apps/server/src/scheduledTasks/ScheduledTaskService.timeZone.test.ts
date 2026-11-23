@@ -49,12 +49,13 @@ const serviceLayer = (
   threadLaunch: Partial<ThreadLaunchService.ThreadLaunchService["Service"]> = {},
   webhookOrigin?: Effect.Effect<{ readonly relayHookBaseUrl: string | null }>,
   threadManagement: Partial<ThreadManagementService.ThreadManagementService["Service"]> = {},
+  scheduler: Layer.Layer<Scheduler.Scheduler> = Scheduler.layer,
 ) =>
   ScheduledTaskService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         NodeCrypto.layer,
-        Scheduler.layer,
+        scheduler,
         ManagedPolicy.layerTest(),
         settingsLayer(timeZone),
         webhookOrigin === undefined
@@ -70,6 +71,19 @@ const serviceLayer = (
       ),
     ),
   );
+
+/** Hands the scheduled-task due-work run to the test instead of ticking it on a timer. */
+const capturingScheduler = (captured: Ref.Ref<Effect.Effect<void> | undefined>) =>
+  Layer.succeed(Scheduler.Scheduler, {
+    register: <E, R>(name: string, runDueWork: Effect.Effect<void, E, R>) =>
+      name !== "scheduled-tasks"
+        ? Effect.void
+        : Effect.context<R>().pipe(
+            Effect.flatMap((context) =>
+              Ref.set(captured, runDueWork.pipe(Effect.provideContext(context), Effect.orDie)),
+            ),
+          ),
+  });
 
 const task = (
   id: string,
@@ -302,6 +316,7 @@ it.effect("a scheduled run postponed by a zone switch during its queue check doe
     yield* TestClock.setTime(NOW);
     const entered = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
+    const runDueTasks = yield* Ref.make<Effect.Effect<void> | undefined>(undefined);
     yield* Effect.gen(function* () {
       const service = yield* ScheduledTaskService.ScheduledTaskService;
       yield* service.upsert(
@@ -314,29 +329,37 @@ it.effect("a scheduled run postponed by a zone switch during its queue check doe
       );
       // 09:00 Denver: the scheduler re-reads the task, then pauses in the thread queue check.
       yield* TestClock.setTime(Date.parse("2026-07-01T15:00:00.000Z"));
-      yield* TestClock.adjust("6 seconds");
+      const tick = yield* Ref.get(runDueTasks);
+      if (tick === undefined) return yield* Effect.die("The scheduler was not registered.");
+      const ticking = yield* Effect.forkChild(tick);
       yield* Deferred.await(entered);
       yield* switchZone("Asia/Tokyo");
       yield* Deferred.succeed(release, undefined);
-      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(ticking);
       const [listed] = (yield* service.list()).tasks;
       expect(listed?.lastRunStatus).toBe("never");
       expect(listed?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
     }).pipe(
       Effect.provide(
-        serviceLayer("America/Denver", {}, undefined, {
-          getThreadShell: () =>
-            Effect.succeed({
-              projectId: "project-time-zone",
-              archivedAt: null,
-              deletedAt: null,
-            } as never),
-          getThreadRecords: () =>
-            Deferred.succeed(entered, undefined).pipe(
-              Effect.andThen(Deferred.await(release)),
-              Effect.as({ runs: [], messages: [] } as never),
-            ),
-        }),
+        serviceLayer(
+          "America/Denver",
+          {},
+          undefined,
+          {
+            getThreadShell: () =>
+              Effect.succeed({
+                projectId: "project-time-zone",
+                archivedAt: null,
+                deletedAt: null,
+              } as never),
+            getThreadRecords: () =>
+              Deferred.succeed(entered, undefined).pipe(
+                Effect.andThen(Deferred.await(release)),
+                Effect.as({ runs: [], messages: [] } as never),
+              ),
+          },
+          capturingScheduler(runDueTasks),
+        ),
       ),
     );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),

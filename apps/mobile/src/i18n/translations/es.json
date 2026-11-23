@@ -5616,5 +5616,5 @@
   "a54e0232b776cce4": "{description} Este dispositivo está en {zone}.",
   "044286af877f7f1e": "Zona horaria",
   "ea8f3f3e5ae5568d": "Usar {zone}",
-  "74fceabf33743812": "Las tareas diarias y semanales de todos los entornos conectados se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones."
+  "be7d9cdcf3cdc7bd": "Las tareas diarias y semanales se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones en cada entorno conectado que puedas modificar y que lo admita."
 }

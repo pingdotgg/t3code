@@ -5616,5 +5616,5 @@
   "a54e0232b776cce4": "{description} Este dispositivo está em {zone}.",
   "044286af877f7f1e": "Fuso horário",
   "ea8f3f3e5ae5568d": "Usar {zone}",
-  "74fceabf33743812": "Tarefas diárias e semanais em todos os ambientes conectados são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções."
+  "be7d9cdcf3cdc7bd": "Tarefas diárias e semanais são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções em cada ambiente conectado que você pode alterar e que oferece suporte."
 }

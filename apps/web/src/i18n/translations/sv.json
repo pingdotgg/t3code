@@ -12802,5 +12802,5 @@
   "fe8d0e48798ba231": ["Den här enheten är i ", { "i": 1, "k": "_gt_value_1", "v": "v" }, "."],
   "e3a7999beb9b272a": "Inga tidszoner hittades.",
   "776636fe04a87fce": "tidszon resa daglig veckovis rutiner automatiseringar lokal tid",
-  "74fceabf33743812": "Dagliga och veckovisa uppgifter i alla anslutna miljöer körs vid sin angivna tid i den här tidszonen. Om du ändrar den flyttas kommande körningar."
+  "be7d9cdcf3cdc7bd": "Dagliga och veckovisa uppgifter körs vid sin angivna tid i den här tidszonen. Om du ändrar den flyttas kommande körningar i varje ansluten miljö som du kan ändra och som stöder det."
 }

@@ -5616,5 +5616,5 @@
   "a54e0232b776cce4": "{description} Cet appareil est dans le fuseau {zone}.",
   "044286af877f7f1e": "Fuseau horaire",
   "ea8f3f3e5ae5568d": "Utiliser {zone}",
-  "74fceabf33743812": "Les tâches quotidiennes et hebdomadaires de tous les environnements connectés s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions."
+  "be7d9cdcf3cdc7bd": "Les tâches quotidiennes et hebdomadaires s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions dans chaque environnement connecté que vous pouvez modifier et qui le prend en charge."
 }

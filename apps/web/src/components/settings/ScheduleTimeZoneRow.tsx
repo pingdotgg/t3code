@@ -88,7 +88,7 @@ export function ScheduleTimeZoneRow({
       mixed={mixed}
       {...setting("schedule-time-zone")}
       description={gt(
-        "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
+        "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs on each connected environment you can change that supports it.",
       )}
       status={
         canWrite &&

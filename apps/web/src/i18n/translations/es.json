@@ -12790,5 +12790,5 @@
   "fe8d0e48798ba231": ["Este dispositivo está en ", { "i": 1, "k": "_gt_value_1", "v": "v" }, "."],
   "e3a7999beb9b272a": "No se encontraron zonas horarias.",
   "776636fe04a87fce": "zona horaria viaje diario semanal rutinas automatizaciones hora local",
-  "74fceabf33743812": "Las tareas diarias y semanales de todos los entornos conectados se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones."
+  "be7d9cdcf3cdc7bd": "Las tareas diarias y semanales se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones en cada entorno conectado que puedas modificar y que lo admita."
 }

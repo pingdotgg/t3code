@@ -12795,5 +12795,5 @@
   "fe8d0e48798ba231": ["Este dispositivo está em ", { "i": 1, "k": "_gt_value_1", "v": "v" }, "."],
   "e3a7999beb9b272a": "Nenhum fuso horário encontrado.",
   "776636fe04a87fce": "fuso horário viagem diário semanal rotinas automações hora local",
-  "74fceabf33743812": "Tarefas diárias e semanais em todos os ambientes conectados são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções."
+  "be7d9cdcf3cdc7bd": "Tarefas diárias e semanais são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções em cada ambiente conectado que você pode alterar e que oferece suporte."
 }

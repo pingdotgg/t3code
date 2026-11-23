@@ -5622,5 +5622,5 @@
   "a54e0232b776cce4": "{description} Dieses Gerät befindet sich in {zone}.",
   "044286af877f7f1e": "Zeitzone",
   "ea8f3f3e5ae5568d": "{zone} verwenden",
-  "74fceabf33743812": "Tägliche und wöchentliche Aufgaben auf allen verbundenen Umgebungen laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen."
+  "be7d9cdcf3cdc7bd": "Tägliche und wöchentliche Aufgaben laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen in jeder verbundenen Umgebung, die du ändern darfst und die das unterstützt."
 }

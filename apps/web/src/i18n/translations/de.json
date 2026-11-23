@@ -12799,5 +12799,5 @@
   ],
   "e3a7999beb9b272a": "Keine Zeitzonen gefunden.",
   "776636fe04a87fce": "Zeitzone Reise täglich wöchentlich Routinen Automatisierungen Ortszeit",
-  "74fceabf33743812": "Tägliche und wöchentliche Aufgaben auf allen verbundenen Umgebungen laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen."
+  "be7d9cdcf3cdc7bd": "Tägliche und wöchentliche Aufgaben laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen in jeder verbundenen Umgebung, die du ändern darfst und die das unterstützt."
 }

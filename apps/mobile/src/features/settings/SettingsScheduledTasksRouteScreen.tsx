@@ -569,7 +569,7 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
   );
   const machine = gt("Each machine's time zone");
   const description = gt(
-    "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
+    "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs on each connected environment you can change that supports it.",
   );
   const save = (zone: string) =>
     void writeSettings(
