@@ -451,7 +451,19 @@ export const OpenCodeDriver: ProviderDriver<
           );
         }).pipe(Effect.scoped),
       );
-    const listOpenCode2DirectoryCatalog = (cwd: string) =>
+    // Asked before a probe's own requests, which register a location before its models load.
+    const isOpenCode2LocationLoaded = (cwd: string) =>
+      openCode2Server
+        .withConnection(({ client }) =>
+          client.debug.location.list().pipe(
+            Effect.map((loaded) =>
+              loaded.some((entry) => entry.directory === pathService.resolve(cwd)),
+            ),
+            Effect.timeout("2 seconds"),
+          ),
+        )
+        .pipe(Effect.orElseSucceed(() => true));
+    const listOpenCode2DirectoryCatalog = (cwd: string, loaded: boolean) =>
       openCode2Server
         .withConnection(({ client, events }) =>
           Effect.gen(function* () {
@@ -476,13 +488,7 @@ export const OpenCodeDriver: ProviderDriver<
               loadOpenCode2DirectoryCatalog(client, cwd),
               Deferred.await(updated),
               // Without events no load can be awaited, so settle the reads as before.
-              stream._tag === "None"
-                ? Effect.succeed(true)
-                : client.debug.location.list().pipe(
-                    Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
-                    Effect.timeout("2 seconds"),
-                    Effect.orElseSucceed(() => true),
-                  ),
+              Effect.succeed(loaded || stream._tag === "None"),
               processEnv,
             );
           }).pipe(Effect.scoped),
@@ -747,44 +753,48 @@ export const OpenCodeDriver: ProviderDriver<
               ),
               Effect.flatMap((probed) =>
                 byOpenCodeRuntime(Effect.succeed(probed), {
-                  v2: Effect.all(
-                    [
-                      snapshot.getSnapshot,
-                      // A project's opencode.jsonc can define its own providers.
-                      listOpenCode2DirectoryCatalog(cwd).pipe(
-                        Effect.map(
-                          Option.map((catalog) =>
-                            openCode2ProviderModels(effectiveConfig, catalog),
+                  v2: isOpenCode2LocationLoaded(cwd).pipe(
+                    Effect.flatMap((loaded) =>
+                      Effect.all(
+                        [
+                          snapshot.getSnapshot,
+                          // A project's opencode.jsonc can define its own providers.
+                          listOpenCode2DirectoryCatalog(cwd, loaded).pipe(
+                            Effect.map(
+                              Option.map((catalog) =>
+                                openCode2ProviderModels(effectiveConfig, catalog),
+                              ),
+                            ),
                           ),
-                        ),
+                          listOpenCode2Workspace(cwd).pipe(
+                            // Leaves room for the reads around the scan wait, which uses the same override.
+                            Effect.timeout(
+                              2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                            ),
+                            Effect.mapError(
+                              (cause) =>
+                                new ProviderDriverError({
+                                  driver: DRIVER_KIND,
+                                  instanceId,
+                                  detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                                  cause,
+                                }),
+                            ),
+                          ),
+                        ],
+                        { concurrency: "unbounded" },
+                      ).pipe(
+                        Effect.map(([machineSnapshot, cwdModels, { skills, commands }]) => ({
+                          ...machineSnapshot,
+                          ...workspaceModelsFor(machineSnapshot.models, cwdModels),
+                          skills: openCode2SkillsToServerProviderSkills(skills),
+                          slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                          // A finished scan lists at least the built-ins. None means it
+                          // timed out, so the registry decides from the provider's health.
+                          slashCommandsPending: commands.length > 0 ? false : undefined,
+                        })),
                       ),
-                      listOpenCode2Workspace(cwd).pipe(
-                        // Leaves room for the reads around the scan wait, which uses the same override.
-                        Effect.timeout(
-                          2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
-                        ),
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderDriverError({
-                              driver: DRIVER_KIND,
-                              instanceId,
-                              detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
-                              cause,
-                            }),
-                        ),
-                      ),
-                    ],
-                    { concurrency: "unbounded" },
-                  ).pipe(
-                    Effect.map(([machineSnapshot, cwdModels, { skills, commands }]) => ({
-                      ...machineSnapshot,
-                      ...workspaceModelsFor(machineSnapshot.models, cwdModels),
-                      skills: openCode2SkillsToServerProviderSkills(skills),
-                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                      // A finished scan lists at least the built-ins. None means it
-                      // timed out, so the registry decides from the provider's health.
-                      slashCommandsPending: commands.length > 0 ? false : undefined,
-                    })),
+                    ),
                   ),
                   v1: Effect.all([
                     snapshot.getSnapshot,

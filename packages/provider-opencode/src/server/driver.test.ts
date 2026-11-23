@@ -608,6 +608,94 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("waits for a cold OpenCode 2 directory's models when its own probe registers it", () =>
+    Effect.gen(function* () {
+      // The workspace reads register the location before its configured providers load.
+      let registered = false;
+      let locationChecks = 0;
+      const configuredLoaded = yield* Deferred.make<void>();
+      const model = (providerID: string, id: string) => ({
+        id,
+        modelID: id,
+        providerID,
+        name: id,
+        package: "@opencode/ai/providers/openai-compatible",
+        settings: {},
+        compatibility: {},
+        capabilities: { tools: true, input: ["text"], output: ["text"] },
+        variants: [],
+        time: { released: 1789516800000 },
+        cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+        status: "active",
+        enabled: true,
+        limit: { context: 1000000, output: 65536 },
+      });
+      const http = HttpClient.make((request) => {
+        const path = new URL(request.url).pathname;
+        const json = (body: unknown) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+        const touch = Effect.sync(() => {
+          if (
+            Option.getOrUndefined(UrlParams.getFirst(request.urlParams, "location[directory]")) ===
+            "/work"
+          )
+            registered = true;
+        });
+        switch (path) {
+          case "/api/info":
+            return json(JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body));
+          case "/api/event":
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(new ReadableStream(), {
+                  headers: { "content-type": "text/event-stream" },
+                }),
+              ),
+            );
+          case "/api/debug/location":
+            // The first check answers after the probe's other requests have reached OpenCode.
+            return Effect.sleep(locationChecks++ === 0 ? "1 second" : "0 millis").pipe(
+              Effect.andThen(
+                Effect.suspend(() => json(registered ? [{ directory: "/work" }] : [])),
+              ),
+            );
+          case "/api/model":
+            return touch.pipe(
+              Effect.andThen(Deferred.isDone(configuredLoaded)),
+              Effect.flatMap((done) =>
+                json({
+                  location: { directory: "/work" },
+                  data: [
+                    model("opencode", "big-pickle"),
+                    ...(done ? [model("custom", "auto-fast")] : []),
+                  ],
+                }),
+              ),
+            );
+          case "/api/provider":
+            return touch.pipe(Effect.andThen(json({ location: { directory: "/work" }, data: [] })));
+          case "/api/command":
+          case "/api/skill":
+            return touch.pipe(
+              Effect.andThen(json(JSON.parse(OPENCODE_2_WORKSPACE_RESPONSES[path].body))),
+            );
+          default:
+            return Effect.die(`Unexpected request: ${path}`);
+        }
+      });
+      const instance = yield* create({ serverUrl: "http://127.0.0.1:4096" }, http);
+
+      const snapshot = yield* instance.snapshotForCwd!("/work").pipe(Effect.forkChild);
+      // The built-in step outlasts two settle reads 250 ms apart.
+      yield* TestClock.adjust("3 seconds");
+      yield* Deferred.succeed(configuredLoaded, undefined);
+      yield* TestClock.adjust("30 seconds");
+      const { models } = yield* Fiber.join(snapshot);
+      assert.isTrue(models.some((entry) => entry.slug.includes("auto-fast")));
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect.each(["probe", "error", "empty"] as const)(
     "recovers discovery without a manual refresh after %s",
     (initialCatalog) =>
