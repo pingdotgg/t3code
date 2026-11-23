@@ -1,10 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
-import * as Tracer from "effect/Tracer";
-import * as Effect from "effect/Effect";
-import * as Predicate from "effect/Predicate";
-
-import type { ProviderReplayTranscript } from "@t3tools/contracts";
+import { ProviderThreadId, RunId, type ProviderReplayTranscript } from "@t3tools/contracts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { materializeReplayTranscriptWorkspace } from "@t3tools/provider-testing/replayTranscript";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Predicate from "effect/Predicate";
+import * as Tracer from "effect/Tracer";
+
+import * as ContextHandoffService from "../ContextHandoffService.ts";
+import { CLAUDE_MODEL_SELECTION, projectionFor } from "./fixtures/shared.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import {
   findReplayFixture,
@@ -87,4 +91,70 @@ it.effect(
       );
       assert.isTrue(writes.every((count) => count <= 3));
     }),
+);
+
+it.effect.each([true, false])(
+  "a provider handoff preserves a steered Codex reply only when it completed (completed: %s)",
+  (completed) =>
+    Effect.gen(function* () {
+      const fixture = findReplayFixture("message_steering")!;
+      const driver = fixture.providers.find((provider) => provider.driver === "codex")!;
+      const result = yield* runReplayFixture({
+        fixtureName: fixture.name,
+        buildInput: fixture.buildInput,
+        driver,
+        harness: CodexOrchestratorReplayHarness,
+        materializeWorkspace: (transcript, workspace) =>
+          Effect.succeed(materializeReplayTranscriptWorkspace(transcript, workspace)),
+        // Keep every frame except the first reply's completion in the abandoned case.
+        transformTranscript: (transcript) => ({
+          ...transcript,
+          entries: transcript.entries.filter((entry) => {
+            if (completed || entry.type !== "emit_inbound" || entry.label !== "item/completed")
+              return true;
+            const frame = entry.frame;
+            return !(
+              Predicate.isObject(frame) &&
+              Predicate.isObject(frame.params) &&
+              Predicate.isObject(frame.params.item) &&
+              frame.params.item.type === "agentMessage" &&
+              frame.params.item.text === "steering fixture initial response"
+            );
+          }),
+        }),
+      });
+      const projection = projectionFor(result, fixture.name);
+      const source = projection.providerThreads[0]!;
+      const handoffs = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const handoff = yield* handoffs.prepareProviderHandoff({
+        threadId: projection.thread.id,
+        targetRunId: RunId.make("run:switch"),
+        transferId: null,
+        fromProviderThreadIds: [source.id],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:claude"),
+        fromProviderInstanceId: source.providerInstanceId,
+        toProviderInstanceId: CLAUDE_MODEL_SELECTION.instanceId,
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "full_thread_summary",
+        items: projection.turnItems,
+        runs: projection.runs,
+        createdAt: source.createdAt,
+      });
+      const replies = [
+        ...(completed ? ["steering fixture initial response"] : []),
+        "steering fixture observed",
+      ];
+      assert.deepEqual(
+        projection.messages
+          .filter((message) => message.role === "assistant")
+          .map((message) => message.text),
+        replies,
+      );
+      assert.deepEqual(
+        handoff.history?.messages
+          .filter((message) => message.role === "assistant")
+          .map(({ text, status }) => ({ text, status })),
+        replies.map((text) => ({ text, status: "completed" })),
+      );
+    }).pipe(Effect.provide(ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer)))),
 );

@@ -141,6 +141,7 @@ export function historicalMessage(
       text = withMessageSenderNote(item, item.text);
       break;
     case "assistant_message":
+      if (item.supersededBySteer) return null;
       text = item.text;
       break;
     case "command_execution":

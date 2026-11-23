@@ -1419,6 +1419,9 @@ interface ActiveCodexTurnContext {
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly messagePhases: Map<string, "commentary" | "partial_answer" | "final_answer">;
   readonly asyncMessageIds: Set<string>;
+  /** Open final answers and the first user input delivered while each was streaming. */
+  steeredAnswerOrdinals?: Map<string, number>;
+  latestCompletedAnswerOrdinal?: number;
   readonly itemPositions: Map<
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
@@ -4107,7 +4110,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const finalAnswerItem = (yield* Ref.get(finalAnswerItemIdsByTurn))
                 .get(update.turnId)
                 ?.has(update.itemId);
-              if (finalAnswerItem) {
+              const steerOrdinal = context.steeredAnswerOrdinals?.get(update.itemId);
+              const abandoned =
+                update.completed &&
+                steerOrdinal !== undefined &&
+                (context.latestCompletedAnswerOrdinal ?? 0) > steerOrdinal;
+              if (finalAnswerItem && !abandoned) {
                 const finalAnswerItemIds = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(
                   update.turnId,
                 );
@@ -4134,9 +4142,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitProviderEvent({
                 type: "node.updated",
                 driver: CODEX_PROVIDER,
-                node: artifacts.node,
+                node: abandoned ? { ...artifacts.node, status: "cancelled" } : artifacts.node,
               });
-              if (update.completed) {
+              if (update.completed && !abandoned) {
                 yield* emitProviderEvent({
                   type: "message.updated",
                   driver: CODEX_PROVIDER,
@@ -4146,9 +4154,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* emitProviderEvent({
                 type: "turn_item.updated",
                 driver: CODEX_PROVIDER,
-                turnItem: artifacts.turnItem,
+                turnItem: abandoned
+                  ? { ...artifacts.turnItem, status: "cancelled", supersededBySteer: true }
+                  : artifacts.turnItem,
               });
-              if (finalAnswerItem && update.completed) {
+              if (finalAnswerItem && update.completed && !abandoned) {
                 imageTurn(update.turnId).answer = { id: update.itemId, text: update.text };
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   const updated = new Map(current);
@@ -5592,6 +5602,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
 
             if (payload.item.type === "userMessage") {
+              const open = (yield* Ref.get(finalAnswerItemIdsByTurn)).get(payload.turnId);
+              if (open?.size) {
+                const steerOrdinal = yield* resolveItemOrdinal(context, payload.item.id);
+                const steered = (context.steeredAnswerOrdinals ??= new Map());
+                for (const id of open) {
+                  if (!context.asyncMessageIds.has(id) && !steered.has(id))
+                    steered.set(id, steerOrdinal);
+                }
+              }
               yield* emitSubagentUserMessage(
                 context,
                 payload.item,
@@ -6036,6 +6055,21 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               context.messagePhases.set(payload.item.id, payload.item.phase);
             if (payload.item.delivery === "async") context.asyncMessageIds.add(payload.item.id);
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
+            // A late item/completed confirms this answer even if a steer arrived while it streamed.
+            context.steeredAnswerOrdinals?.delete(payload.item.id);
+            if (
+              finalAnswer &&
+              !context.asyncMessageIds.has(payload.item.id) &&
+              payload.item.text &&
+              context.steeredAnswerOrdinals?.size
+            ) {
+              const position = context.itemPositions.get(payload.item.id);
+              if (position)
+                context.latestCompletedAnswerOrdinal = Math.max(
+                  context.latestCompletedAnswerOrdinal ?? 0,
+                  position.ordinal,
+                );
+            }
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                 const updated = new Map(current);

@@ -1616,6 +1616,28 @@ describe("work-log failure policy (#7999/#7893)", () => {
 });
 
 describe("incremental v2 timeline entries", () => {
+  it.each([false, true])(
+    "removes a streamed reply only when a steer supersedes it (%s)",
+    (superseded) => {
+      const row = makeStreamingTimelineFixture("draft").visibleTurnItems.at(-1)!;
+      if (row.item.type !== "assistant_message") throw new Error("Expected assistant fixture");
+      const input = { visibleTurnItems: [row], optimisticMessages: [] };
+      const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+      expect(previous.entries.map((entry) => entry.id)).toEqual([row.item.messageId]);
+      const settled = {
+        ...row.item,
+        status: "cancelled" as const,
+        streaming: false,
+        ...(superseded ? { supersededBySteer: true as const } : {}),
+      };
+      const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(
+        { ...input, visibleTurnItems: [{ ...row, item: settled }] },
+        previous,
+      );
+      expect(next.entries.map((entry) => entry.id)).toEqual(superseded ? [] : [row.item.messageId]);
+    },
+  );
+
   it("retains history and attachment previews through decoded streaming updates", () => {
     const fixture = makeStreamingTimelineFixture("Partial");
     const attachment = {

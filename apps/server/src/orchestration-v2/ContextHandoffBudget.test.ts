@@ -2,6 +2,7 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { assert, describe, it } from "@effect/vitest";
 import {
   ContextHandoffId,
+  MessageId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -164,6 +165,31 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
+  });
+
+  it("keeps a cancelled Codex reply when a steer did not replace it", () => {
+    const partial = historicalMessage({
+      type: "assistant_message",
+      id: TurnItemId.make("item:child-reply"),
+      threadId,
+      runId: RunId.make("run:child"),
+      nodeId: null,
+      providerThreadId: providerThread.id,
+      providerTurnId: null,
+      nativeItemRef: { driver: providerThread.driver, nativeId: "child-reply", strength: "strong" },
+      parentItemId: null,
+      ordinal: 1,
+      status: "cancelled",
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      messageId: MessageId.make("message:child"),
+      text: "Found the failing test before the parent stopped.",
+      streaming: false,
+    });
+    assert.equal(partial?.text, "Found the failing test before the parent stopped.");
+    assert.equal(partial?.status, "cancelled");
   });
 
   it("omits oversized multilingual items whole, preserves original constraints and recent work", () => {

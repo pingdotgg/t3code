@@ -596,6 +596,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item) && !item.deferredWork) continue;
     if (item.type === "checkpoint") continue;
+    if (item.type === "assistant_message" && item.supersededBySteer) continue;
     if (
       item.type === "user_message" &&
       item.inputIntent === "queued_turn" &&

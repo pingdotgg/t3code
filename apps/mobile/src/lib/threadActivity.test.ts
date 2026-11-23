@@ -448,6 +448,29 @@ function assistantMessage(updatedAt = "2026-06-20T00:00:03.000Z") {
 }
 
 describe("buildThreadFeed", () => {
+  it.each([false, true])(
+    "removes a streamed reply only when a steer supersedes it (%s)",
+    (superseded) => {
+      const cache = createThreadFeedCache();
+      const reply = assistantMessage();
+      const stream = projected({ ...reply, streaming: true, status: "running" }, 0);
+      expect(buildThreadFeed([stream], { cache }).map((entry) => entry.id)).toEqual([
+        reply.messageId,
+      ]);
+      const settled = projected(
+        {
+          ...reply,
+          status: "cancelled",
+          ...(superseded ? { supersededBySteer: true as const } : {}),
+        },
+        0,
+      );
+      expect(buildThreadFeed([settled], { cache }).map((entry) => entry.id)).toEqual(
+        superseded ? [] : [reply.messageId],
+      );
+    },
+  );
+
   it("keeps async answers in question history instead of user bubbles", () => {
     const requestId = RuntimeRequestId.make("question");
     const question: OrchestrationV2TurnItem = {
