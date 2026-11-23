@@ -1447,6 +1447,17 @@ impl Tx<'_> {
             .transpose()
     }
 
+    /// Whether the thread has any entity of `kind`: an indexed lookup that stops at the first.
+    pub(crate) fn exists(&self, thread_id: &str, kind: &str) -> StoreResult<bool> {
+        self.tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM entities WHERE thread_id = ?1 AND kind = ?2)",
+                params![thread_id, kind],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(err)
+    }
+
     pub(crate) fn count(&self, thread_id: &str, kind: &str) -> StoreResult<u64> {
         self.tx
             .query_row(

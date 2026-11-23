@@ -1216,3 +1216,155 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
 }
+
+fn fork_to(command: &str, target: &str) -> Value {
+    let mut c = fork(command, json!({"type": "latest_stable"}));
+    c["targetThreadId"] = json!(target);
+    c
+}
+
+fn side_chat(command: &str, target: &str) -> Value {
+    let mut c = fork_to(command, target);
+    c["sideChat"] = json!(true);
+    c
+}
+
+/// T3 `Orchestrator.ts` `thread.delete` with `onlyIfUnused`: the clients close a side chat this
+/// way, and a side chat that holds a conversation stays. An unused one goes.
+#[tokio::test(flavor = "current_thread")]
+async fn closing_a_side_chat_keeps_it_once_used() {
+    let db = TempDb::new("side-chat-close");
+    let repo = Repo::new("side-chat-close");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(&engine, message("t2", "m", "a real side conversation")).await;
+    until_run_ends(&mut stream).await;
+    for (id, target) in [("close", "t2"), ("close-unused", "t3")] {
+        dispatch(
+            &engine,
+            json!({"type":"thread.delete","commandId":id,"threadId":target,"onlyIfUnused":true}),
+        )
+        .await;
+    }
+    assert!(projection(&engine, "t2").await["thread"]["deletedAt"].is_null());
+    assert!(engine.get_thread_projection("t3".into()).await.is_err());
+
+    // A first send racing the close: whichever commits first decides, and an accepted send
+    // always keeps its chat.
+    dispatch(&engine, side_chat("f3", "t4")).await;
+    let send = engine.dispatch(from_json(message("t4", "race", "first words")).unwrap());
+    let close = engine.dispatch(
+        from_json(
+            json!({"type": "thread.delete", "commandId": "close-race", "threadId": "t4",
+            "onlyIfUnused": true}),
+        )
+        .unwrap(),
+    );
+    let (sent, closed) = tokio::join!(send, close);
+    assert!(closed.is_ok());
+    let kept = engine.get_thread_projection("t4".into()).await.is_ok();
+    assert_eq!(sent.is_ok(), kept, "an accepted send keeps the chat");
+}
+
+/// T3 `Orchestrator.ts` `thread.archive`/`unarchive`/`delete`: side chats live inside their
+/// parent. Archive takes the active ones, except one waiting on delegated tasks; unarchive
+/// restores only those it took; delete takes all.
+#[tokio::test(flavor = "current_thread")]
+async fn side_chats_follow_their_parent() {
+    let db = TempDb::new("side-chat-parent");
+    let repo = Repo::new("side-chat-parent");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c"),
+        &["one"],
+    )
+    .await;
+    dispatch(&engine, side_chat("f", "t2")).await;
+    dispatch(&engine, side_chat("f2", "t3")).await;
+    dispatch(&engine, fork_to("f3", "t4")).await;
+    // A side chat whose own turn waits on a running delegated task.
+    dispatch(&engine, side_chat("f5", "t5")).await;
+    dispatch(&engine, message("t5", "busy", "hang")).await;
+    let mut task = super::delegate("task", "hang", None);
+    task["parentThreadId"] = json!("t5");
+    task["parentRunId"] = json!("run:t5:1");
+    task["parentNodeId"] = json!("node:run:t5:1:root");
+    dispatch(&engine, task).await;
+    // A delegated child of the parent: not a side chat, so the cascade leaves it alone.
+    dispatch(&engine, message("t1", "busy-parent", "hang")).await;
+    let mut child_task = super::delegate("parent-task", "child work", None);
+    child_task["parentRunId"] = json!("run:t1:2");
+    child_task["parentNodeId"] = json!("node:run:t1:2:root");
+    dispatch(&engine, child_task).await;
+    let child = "thread:delegated-task:parent-task";
+    super::run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    // A client with the side chat open hears each transition.
+    let mut view = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut view).await;
+    let archive = |id: &str, thread: &str, kind: &str| json!({"type": kind, "commandId": id, "threadId": thread});
+    dispatch(&engine, archive("early", "t3", "thread.archive")).await;
+    dispatch(&engine, archive("archive", "t1", "thread.archive")).await;
+    let archived = |p: Value| p["thread"]["archivedAt"].is_string();
+    assert!(archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.archived").await;
+    assert!(
+        !archived(projection(&engine, child).await),
+        "a delegated child stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t4").await),
+        "a plain fork stays"
+    );
+    assert!(
+        !archived(projection(&engine, "t5").await),
+        "a side chat waiting on delegated tasks stays"
+    );
+    dispatch(&engine, archive("restore", "t1", "thread.unarchive")).await;
+    assert!(!archived(projection(&engine, "t2").await));
+    until_event(&mut view, "thread.unarchived").await;
+    assert!(
+        archived(projection(&engine, "t3").await),
+        "archived before its parent"
+    );
+    dispatch(&engine, archive("delete", "t1", "thread.delete")).await;
+    for gone in ["t1", "t2", "t3", "t5"] {
+        assert!(
+            engine.get_thread_projection(gone.into()).await.is_err(),
+            "{gone}"
+        );
+    }
+    until_event(&mut view, "thread.deleted").await;
+    assert!(projection(&engine, "t4").await["thread"]["deletedAt"].is_null());
+    assert!(projection(&engine, child).await["thread"]["deletedAt"].is_null());
+}
+
+/// Reads a thread view until an event of `kind` for that thread arrives.
+async fn until_event<T: serde::Serialize, E: serde::Serialize>(
+    view: &mut Subscription<T, E>,
+    kind: &str,
+) {
+    loop {
+        let item = next(view).await;
+        if item["kind"] == "event" && item["event"]["type"] == kind {
+            return;
+        }
+    }
+}

@@ -1680,53 +1680,127 @@ fn patch_thread(
     Ok(())
 }
 
-fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadOnly = decode(command)?;
-    crate::link_requests::close_pending(tx, &c.thread_id)?;
-    patch_thread(tx, &c.thread_id, "thread.archived", true, |t, now| {
+/// T3's `liveSideChatIds`: side chats live inside their parent, so deleting or archiving the
+/// parent takes them too. The command's one transaction stands in for T3's side-chat locks.
+fn live_side_chats(tx: &Tx<'_>, parent_id: &str) -> StoreResult<Vec<Value>> {
+    Ok(tx
+        .threads_where("lineage.parentThreadId", parent_id)?
+        .into_iter()
+        .filter(|t| t["lineage"]["sideChat"] == true && t["forkedFrom"]["threadId"] == parent_id)
+        .collect())
+}
+
+/// T3's `hasRunningDelegatedTasks`: an app-owned task with a child thread still at work.
+fn has_running_delegated_tasks(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    Ok(tx.entities(thread_id, "subagents")?.iter().any(|task| {
+        task["origin"] == "app_owned"
+            && !task["childThreadId"].is_null()
+            && matches!(
+                task["status"].as_str(),
+                Some("pending" | "running" | "waiting")
+            )
+    }))
+}
+
+fn archive_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    crate::link_requests::close_pending(tx, thread_id)?;
+    patch_thread(tx, thread_id, "thread.archived", true, |t, now| {
         t["archivedAt"] = json!(now);
         crate::pull_requests::end_watches(t);
     })?;
     Ok(vec![Effect::ThreadClosed {
-        thread_id: c.thread_id,
+        thread_id: thread_id.to_owned(),
         reason: crate::ThreadClose::Archived,
     }])
 }
 
+fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let c: ThreadOnly = decode(command)?;
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
+    let mut effects = archive_one(tx, &c.thread_id)?;
+    // Orchestrator.ts `thread.archive`: an active side chat follows its parent, unless it
+    // still waits on delegated tasks.
+    for side_chat in side_chats {
+        let id = side_chat["id"].as_str().unwrap_or_default();
+        if side_chat["archivedAt"].is_null() && !has_running_delegated_tasks(tx, id)? {
+            effects.extend(archive_one(tx, id)?);
+        }
+    }
+    Ok(effects)
+}
+
 fn thread_unarchive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
+    let parent_archived_at = live_thread(tx, &c.thread_id)?["archivedAt"].clone();
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
     patch_thread(tx, &c.thread_id, "thread.unarchived", true, |t, _| {
         t["archivedAt"] = Value::Null;
     })?;
+    // Unarchive restores the side chats this parent's archive took, not ones archived before it.
+    for side_chat in side_chats {
+        let at = |v: &Value| v.as_str().and_then(conn_support::time::millis_from_iso);
+        let follows = matches!(
+            (at(&side_chat["archivedAt"]), at(&parent_archived_at)),
+            (Some(child), Some(parent)) if child >= parent
+        );
+        if follows {
+            let id = side_chat["id"].as_str().unwrap_or_default();
+            patch_thread(tx, id, "thread.unarchived", true, |t, _| {
+                t["archivedAt"] = Value::Null;
+            })?;
+        }
+    }
     Ok(vec![])
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThreadDelete {
+    thread_id: String,
+    only_if_unused: Option<bool>,
+}
+
 fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
-    let c: ThreadOnly = decode(command)?;
-    let mut effects = vec![];
-    for run in tx
-        .entities(&c.thread_id, "runs")?
-        .into_iter()
-        .filter(is_live)
+    let c: ThreadDelete = decode(command)?;
+    live_thread(tx, &c.thread_id)?;
+    // Orchestrator.ts `thread.delete`: a message sent since the client looked keeps the thread.
+    if c.only_if_unused == Some(true)
+        && (tx.exists(&c.thread_id, "runs")? || tx.exists(&c.thread_id, "messages")?)
     {
-        let run_id = run["id"].as_str().unwrap_or_default();
-        finish_run(tx, &c.thread_id, run_id, "cancelled", None)?;
+        return Ok(vec![]);
     }
-    effects.push(Effect::CloseSession {
-        thread_id: c.thread_id.clone(),
-    });
-    patch_thread(tx, &c.thread_id, "thread.deleted", true, |t, now| {
+    let side_chats = live_side_chats(tx, &c.thread_id)?;
+    let mut effects = delete_one(tx, &c.thread_id)?;
+    for side_chat in side_chats {
+        effects.extend(delete_one(
+            tx,
+            side_chat["id"].as_str().unwrap_or_default(),
+        )?);
+    }
+    Ok(effects)
+}
+
+fn delete_one(tx: &mut Tx<'_>, thread_id: &str) -> Outcome {
+    for run in tx.entities(thread_id, "runs")?.into_iter().filter(is_live) {
+        let run_id = run["id"].as_str().unwrap_or_default();
+        finish_run(tx, thread_id, run_id, "cancelled", None)?;
+    }
+    patch_thread(tx, thread_id, "thread.deleted", true, |t, now| {
         t["deletedAt"] = json!(now);
     })?;
-    effects.push(Effect::CleanupHtmlAttachments {
-        thread_id: c.thread_id.clone(),
-        ids: crate::html_cleanup::plan(tx, &c.thread_id)?,
-    });
-    effects.push(Effect::ThreadClosed {
-        thread_id: c.thread_id,
-        reason: crate::ThreadClose::Deleted,
-    });
-    Ok(effects)
+    Ok(vec![
+        Effect::CloseSession {
+            thread_id: thread_id.to_owned(),
+        },
+        Effect::CleanupHtmlAttachments {
+            thread_id: thread_id.to_owned(),
+            ids: crate::html_cleanup::plan(tx, thread_id)?,
+        },
+        Effect::ThreadClosed {
+            thread_id: thread_id.to_owned(),
+            reason: crate::ThreadClose::Deleted,
+        },
+    ])
 }
 
 #[derive(Deserialize)]
