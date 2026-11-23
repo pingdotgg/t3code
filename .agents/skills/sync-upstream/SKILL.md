@@ -94,14 +94,15 @@ merge touched. Done when each surface was driven and what you saw is written dow
 
 Push the branch to `origin` and open a PR into the fork's `main`. The body names the upstream
 commit merged, the fork changes restored, each DROPPED line accepted and why, the test counts, and
-what the live check covered. Chris merges it with a **merge commit**; a squash would orphan the
-commits the release tag points at.
+what the live check covered. Merge it yourself with a **merge commit** once CI is green and review
+is done; a squash would orphan the commits the release tag points at. Hand the merge to Chris only
+when the change is high risk.
 
 The PR's CI must pass. This Mac is arm64 and CI runs on x64 Linux, so some failures only show up
 there; fix them at their cause like any other. A job GitHub cancels with "not acquired by Runner"
 never got a macOS runner: rerun it with
 `gh run rerun <run-id> --failed --repo pseudoseed/t3code_dev`. Done when the PR is open and every CI
-job passes. Stop there until Chris merges.
+job passes and the PR is merged.
 
 ### 8. Release from merged main
 
@@ -112,7 +113,7 @@ git fetch origin main && git switch --detach origin/main
 ```
 
 `ship-mac.sh` refuses any commit other than a clean `origin/main` and leaves the release as a
-draft. Publish only after Chris approves that release:
+draft. Publish it once both builds verify; there is no approval gate:
 `gh release edit pseudocode-v<version> --repo pseudoseed/t3code_dev --draft=false --latest`.
 
 ## When something fails

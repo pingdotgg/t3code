@@ -123,8 +123,12 @@ So keep key `PPWXK32GH7`. Two things to do with it:
    xcrun notarytool store-credentials pseudocode \
      --key ~/.appstoreconnect/private_keys/AuthKey_PPWXK32GH7.p8 \
      --key-id PPWXK32GH7 \
-     --issuer 126cdda4-2c8b-4e16-9931-56ee123495cb
+     --issuer 126cdda4-2c8b-4e16-9931-56ee123495cb \
+     --keychain "$HOME/Library/Keychains/login.keychain-db"
    ```
+
+   Without `--keychain`, an agent shell prints "Credentials validated" and saves nothing; success
+   also prints "Credentials saved to Keychain".
 
    From here on, notarization uses the profile name `pseudocode` and nothing else.
 

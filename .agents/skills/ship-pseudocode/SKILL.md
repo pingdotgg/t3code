@@ -16,7 +16,7 @@ are unbuilt here.
 One command each. Both run from anywhere in the repo.
 
 ```sh
-.agents/skills/ship-pseudocode/scripts/ship-mac.sh          # arm64 DMG, add "x64" for Intel
+.agents/skills/ship-pseudocode/scripts/ship-mac.sh          # arm64 DMG; the fork ships no Intel build
 .agents/skills/ship-pseudocode/scripts/ship-ios.sh          # TestFlight upload
 ```
 
@@ -32,12 +32,11 @@ a merged PR first, and the release is cut from that merged commit. It ends with 
 `apps/server/package.json`, which is the one electron-builder stamps onto the artifact. Anything
 less than a notarized result is a failure, not a warning, and
 uploading only happens after verification passes: an unnotarized DMG on a release page is worse
-than no DMG, because macOS refuses to open it. Going live is a separate step, once Chris approves
-that release: `gh release edit pseudocode-v<version> --repo pseudoseed/t3code_dev --draft=false --latest`.
+than no DMG, because macOS refuses to open it. Publish it once the build verifies; there is no
+approval gate: `gh release edit pseudocode-v<version> --repo pseudoseed/t3code_dev --draft=false --latest`.
 
 The tag is deliberately not `v<version>`. The release workflow triggers on `v*.*.*` and cannot
-produce a usable artifact here, so a tag in that shape starts a run guaranteed to fail. Re-running
-for the other architecture adds its DMG to the same release.
+produce a usable artifact here, so a tag in that shape starts a run guaranteed to fail.
 
 The release carries `latest-mac.yml`, the zip, and both blockmaps alongside the DMG, because that
 is what "Check for updates" reads. electron-updater takes the version from `latest-mac.yml` and
@@ -53,6 +52,9 @@ filename disagreeing.
 `ship-ios.sh` ends when Apple accepts the upload. The build then processes for 5 to 15 minutes
 before appearing in TestFlight, so an empty build list right after upload is normal. Report the
 upload as done and processing rather than waiting on it.
+
+`ship-ios.sh` bumps only the `.env.local` it runs in, so copy in the one with the highest
+`T3CODE_IOS_BUILD_NUMBER` first.
 
 ## Credentials
 
