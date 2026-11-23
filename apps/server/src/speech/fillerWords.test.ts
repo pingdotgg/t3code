@@ -9,6 +9,7 @@ describe("removeSpeechFillerWords", () => {
       "acrescente na thread, toda vez que criar um título.",
     ],
     ["como se ele tivesse, é, é, é ansioso.", "como se ele tivesse, é ansioso."],
+    ["Uma frase.\nÉ, acrescente na thread.", "Uma frase.\nacrescente na thread."],
   ])("drops Portuguese hesitations: %s", (input, expected) => {
     expect(removeSpeechFillerWords(input, "pt-BR")).toBe(expected);
   });

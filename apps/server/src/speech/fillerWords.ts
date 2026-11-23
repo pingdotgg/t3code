@@ -23,9 +23,9 @@ const LANGUAGE_FILLER_WORDS: Readonly<Record<string, readonly string[]>> = {
 
 // Hesitation sounds that are also real words. Portuguese speakers hesitate with "é", which is also
 // the verb "is", so it is only dropped as a comma-delimited aside at the start of a clause
-// ("É, acrescenta", "tivesse, é, é ansioso"), never after a word ("a regra é, ele...").
+// ("É, acrescenta" at a sentence or line start, "tivesse, é, é ansioso"), never after a word ("a regra é, ele...").
 const LANGUAGE_FILLER_PATTERNS: Readonly<Record<string, readonly string[]>> = {
-  pt: ["(?<=(?:^|[,.!?…])[^\\S\\r\\n]*)é,"],
+  pt: ["(?<=(?:^|[,.!?…\\r\\n])[^\\S\\r\\n]*)é,"],
 };
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
