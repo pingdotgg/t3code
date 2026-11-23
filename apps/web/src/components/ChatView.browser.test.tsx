@@ -788,14 +788,15 @@ it("a file picked after the phone composer collapses still attaches", async () =
 
   // Opening the native picker blurs the editor, which collapses the phone composer.
   await vi.waitFor(() => {
-    const attachButton = document.querySelector('button[aria-label="Attach files"]');
-    if (attachButton) {
+    const surface = document.querySelector("[data-chat-composer-mobile-collapsed]");
+    if (surface?.getAttribute("data-chat-composer-mobile-collapsed") !== "true") {
       const editorEl = editor.element() as HTMLElement;
       editorEl.focus();
       editorEl.blur();
     }
-    expect(attachButton).toBeNull();
+    expect(surface?.getAttribute("data-chat-composer-mobile-collapsed")).toBe("true");
   });
+  await expect.element(page.getByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
   const files = new DataTransfer();
   files.items.add(new File([PNG], "picked.png", { type: "image/png" }));
   input!.files = files.files;
