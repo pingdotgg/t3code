@@ -424,6 +424,9 @@ export function endpointDefaultPreferenceKey(endpoint: AdvertisedEndpoint): stri
   if (endpoint.id.startsWith("tailscale-ip:")) {
     return "tailscale:ip:http";
   }
+  if (endpoint.id.startsWith("vpn-ip:")) {
+    return endpoint.id;
+  }
   if (isTailscaleHttpsEndpoint(endpoint)) {
     return "tailscale:magicdns:https";
   }
