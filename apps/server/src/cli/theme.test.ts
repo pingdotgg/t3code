@@ -30,6 +30,17 @@ const runCli = (args: ReadonlyArray<string>) =>
     ),
   );
 
+const runCliIn = (cwd: string, args: ReadonlyArray<string>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous = process.cwd();
+      process.chdir(cwd);
+      return previous;
+    }),
+    () => runCli(args),
+    (previous) => Effect.sync(() => process.chdir(previous)),
+  );
+
 const makeBaseDir = () => NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-theme-cli-"));
 
 const settingsPathFor = (baseDir: string) => NodePath.join(baseDir, "userdata", "settings.json");
@@ -133,6 +144,108 @@ describe("t3 theme", () => {
         (entry) => !entry.endsWith(".json"),
       );
       assert.deepEqual(residue, []);
+    }),
+  );
+
+  it.effect("publishes the file named with a leading space, not its trimmed sibling", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      NodeFS.mkdirSync(NodePath.join(baseDir, " palettes"));
+      NodeFS.mkdirSync(NodePath.join(baseDir, "palettes"));
+      NodeFS.writeFileSync(
+        NodePath.join(baseDir, " palettes", "nightfall.json"),
+        NIGHTFALL_THEME_JSON,
+      );
+      NodeFS.writeFileSync(NodePath.join(baseDir, "palettes", "nightfall.json"), JUNK_THEME_JSON);
+
+      yield* runCliIn(baseDir, ["theme", "set", " palettes/nightfall.json", "--base-dir", "."]);
+
+      const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
+      assert.equal(NodeFS.readFileSync(published, "utf8"), NIGHTFALL_THEME_JSON);
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+    }),
+  );
+
+  // Win32 resolves both names to one file.
+  it.effect.skipIf(windowsHost)("publishes a file whose name ends in a space", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      NodeFS.writeFileSync(NodePath.join(baseDir, "nightfall.json "), NIGHTFALL_THEME_JSON);
+      NodeFS.writeFileSync(NodePath.join(baseDir, "nightfall.json"), JUNK_THEME_JSON);
+
+      yield* runCliIn(baseDir, [
+        "theme",
+        "set",
+        "nightfall.json ",
+        "--id",
+        "nightfall",
+        "--base-dir",
+        ".",
+      ]);
+
+      const published = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
+      assert.equal(NodeFS.readFileSync(published, "utf8"), NIGHTFALL_THEME_JSON);
+    }),
+  );
+
+  // Simulates Win32 on other hosts; on Windows itself the two fixtures would be one file.
+  it.effect.skipIf(windowsHost)("drops only trailing ASCII spaces on Windows", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+      NodeFS.writeFileSync(`${themeFile} `, JUNK_THEME_JSON);
+      const nbspFile = NodePath.join(baseDir, "dusk.json\u00a0");
+      NodeFS.writeFileSync(nbspFile, NIGHTFALL_THEME_JSON);
+      NodeFS.writeFileSync(NodePath.join(baseDir, "dusk.json"), JUNK_THEME_JSON);
+      const onWindows = Effect.provideService(HostProcess.Platform, "win32");
+
+      yield* runCli(["theme", "set", `${themeFile} `, "--base-dir", baseDir]).pipe(onWindows);
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+
+      yield* runCli(["theme", "set", nbspFile, "--id", "dusk", "--base-dir", baseDir]).pipe(
+        onWindows,
+      );
+      assert.equal(readSettings(baseDir).defaultTheme, "dusk");
+
+      const longHome = NodePath.join(baseDir, "\\\\?\\home");
+      NodeFS.mkdirSync(longHome);
+      NodeFS.writeFileSync(NodePath.join(longHome, "dawn.json "), NIGHTFALL_THEME_JSON);
+      NodeFS.writeFileSync(NodePath.join(longHome, "dawn.json"), JUNK_THEME_JSON);
+      yield* runCliIn(baseDir, [
+        "theme",
+        "set",
+        "~/dawn.json ",
+        "--id",
+        "dawn",
+        "--base-dir",
+        ".",
+      ]).pipe(onWindows, Effect.provideService(HostProcess.HomeDirectory, "\\\\?\\home"));
+      assert.equal(readSettings(baseDir).defaultTheme, "dawn");
+    }),
+  );
+
+  it.effect("still trims a path or id that only matches once trimmed", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themeFile = NodePath.join(baseDir, "palettes", "nightfall.json");
+      NodeFS.mkdirSync(NodePath.dirname(themeFile));
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+      NodeFS.mkdirSync(NodePath.join(baseDir, " palettes", "nightfall.json"), { recursive: true });
+
+      yield* runCli(["theme", "set", `${themeFile} `, "--base-dir", baseDir]);
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+
+      yield* runCli(["theme", "set", " ocean ", "--base-dir", baseDir]);
+      assert.equal(readSettings(baseDir).defaultTheme, "ocean");
+
+      yield* runCliIn(baseDir, ["theme", "set", " palettes/nightfall.json", "--base-dir", "."]);
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+
+      const failure = yield* runCli(["theme", "set", "  ", "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+      assert.include(String(failure), "Provide a theme id or file");
     }),
   );
 
