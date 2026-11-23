@@ -286,4 +286,66 @@ describe("PrimeAgentAdapterV2", () => {
       }),
     ).pipe(Effect.provide(testLayer)),
   );
+
+  it.effect("advertises canResumeAfterRestart and reattaches via --resume in resumeThread", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const repoDir = yield* fs.makeTempDirectoryScoped({ prefix: "prime-agent-resume-" });
+        const records: Array<SpawnRecord> = [];
+        const spawner = makeFakePrimeAgentSpawner(records, "prime-sess-99");
+        const selfInvocation = yield* resolveSelfInvocation();
+        const adapter = yield* makePrimeAgentAdapterV2({
+          instanceId,
+          settings: ENABLED_SETTINGS,
+          environment: { PRIME_API_KEY: "pk_secret" },
+          selfInvocation,
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        const runtimePolicy = decodeRuntimePolicy({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: repoDir,
+        });
+        const modelSelection: ModelSelection = {
+          instanceId,
+          model: "claude-sonnet-4-5",
+          options: [
+            { id: PRIME_AGENT_PROVIDER_OPTION_ID, value: "anthropic" },
+            { id: PRIME_AGENT_THINKING_OPTION_ID, value: "medium" },
+            { id: PRIME_AGENT_RLM_DEPTH_OPTION_ID, value: "2" },
+          ],
+        };
+
+        const session = yield* adapter.openSession({
+          providerSessionId: ProviderSessionId.make("psess-resume-1"),
+          threadId: ThreadId.make("thread-resume-1"),
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(session.canResumeAfterRestart, true);
+
+        const thread = yield* session.ensureThread({
+          threadId: ThreadId.make("thread-resume-1"),
+          modelSelection,
+          runtimePolicy,
+        });
+        // Resuming a different native session ID triggers cli-flag respawn with --resume.
+        yield* session.resumeThread({
+          providerThread: {
+            ...thread,
+            nativeThreadRef: {
+              ...thread.nativeThreadRef!,
+              nativeId: "prime-sess-other",
+            },
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+
+        assert.equal(records.length, 2);
+        assert.include(records[1]?.args ?? [], "--resume");
+        assert.include(records[1]?.args ?? [], "prime-sess-other");
+      }),
+    ).pipe(Effect.provide(testLayer)),
+  );
 });

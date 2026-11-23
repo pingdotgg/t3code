@@ -37,7 +37,7 @@ describe("SandboxOrchestratorService", () => {
               if (input.command.includes("pair")) {
                 return {
                   exitCode: 0,
-                  stdout: "Pairing URL: https://pair.example.test/?token=abc123\n",
+                  stdout: "Pairing URL: http://127.0.0.1:3773/#token=abc123\n",
                   stderr: "",
                 };
               }
@@ -110,13 +110,16 @@ describe("SandboxOrchestratorService", () => {
           expect(spawned.sandbox.baseSnapshotId).toBe("snap-1");
           expect(spawned.sandbox.connectionUrl).toBe("https://public.upstash.app");
           expect(spawned.sandbox.environmentId).toBe("env-cloud-1");
-          expect(spawned.pairingUrl).toBe("https://pair.example.test/?token=abc123");
+          expect(spawned.pairingUrl).toBe("https://public.upstash.app/#token=abc123");
 
           // Verify cloud machine kind + secret passthrough + headless serve launch
           const serverStart = execLog.find((entry) => entry.detached === true);
           expect(serverStart?.command).toContain("T3CODE_ENVIRONMENT_MACHINE_KIND=cloud");
           expect(serverStart?.command).toContain("serve --lan --port 3773 --no-browser");
           expect(serverStart?.env?.PRIME_API_KEY).toBe("prime_secret");
+          const pairExec = execLog.find((entry) => entry.command.includes("$CLI pair"));
+          expect(pairExec?.command).toBeDefined();
+          expect(pairExec?.command).not.toContain("--url");
 
           const snap = yield* orchestrator.snapshotSandbox({
             id: spawned.sandbox.id,

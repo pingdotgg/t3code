@@ -13,6 +13,7 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { listManageableSettings } from "../policy/managedSettings.ts";
 import { macosProfile, windowsAdml, windowsAdmx } from "../policy/policyTemplates.ts";
+import { expandHomePath } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
@@ -132,13 +133,14 @@ const templatesCommand = Command.make("templates", {
       const path = yield* Path.Path;
       let document = SAMPLE_POLICY;
       if (Option.isSome(policy)) {
-        if (!(yield* fs.exists(policy.value))) {
+        const file = yield* expandHomePath(policy.value);
+        if (!(yield* fs.exists(file))) {
           return yield* new CliError.UserError({
             cause: policy.value,
             userMessage: `No policy file at ${policy.value}.`,
           });
         }
-        const loaded = (yield* ManagedPolicy.load(policy.value)).document;
+        const loaded = (yield* ManagedPolicy.load(file)).document;
         if (loaded !== undefined) document = loaded;
       }
       const random = yield* SecureRandom.SecureRandom;

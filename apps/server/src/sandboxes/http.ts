@@ -93,7 +93,7 @@ const activityRoute = HttpRouter.add(
       readonly lastActivity: string | null;
     }>`
       SELECT
-        SUM(CASE WHEN status IN ('preparing', 'starting', 'running') THEN 1 ELSE 0 END) AS activeCount,
+        SUM(CASE WHEN status IN ('preparing', 'starting', 'running', 'waiting') THEN 1 ELSE 0 END) AS activeCount,
         MAX(COALESCE(completed_at, requested_at)) AS lastActivity
       FROM orchestration_v2_projection_runs
     `.pipe(Effect.orElseSucceed(() => []));

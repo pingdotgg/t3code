@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  MessageId,
   NodeId,
   type OrchestratorMcpThreadReadResult,
   type OrchestrationV2ThreadProjection,
@@ -431,6 +432,134 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
+it("readThread does not attribute the /compact T3 Code sends before a stale send to the user", async () => {
+  const compactRunId = RunId.make("run-mcp-compact-on-return");
+  const sendRunId = RunId.make("run-mcp-held-send");
+  const compactMessageId = MessageId.make("message-mcp-compact-on-return");
+  const sendMessageId = MessageId.make("message-mcp-held-send");
+  const projection = {
+    thread: baseThread({
+      threadId: parentThreadId,
+      title: "Parent",
+      instanceId: parentInstanceId,
+      model: "gpt-5.4",
+    }),
+    runs: [
+      makeRun({ id: compactRunId, ordinal: 1, status: "completed" }),
+      makeRun({ id: sendRunId, ordinal: 2, status: "completed" }),
+    ],
+    visibleTurnItems: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [
+      {
+        id: compactMessageId,
+        threadId: parentThreadId,
+        runId: compactRunId,
+        role: "user",
+        text: "/compact",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        idleCompaction: "onReturn",
+      },
+      {
+        id: sendMessageId,
+        threadId: parentThreadId,
+        runId: sendRunId,
+        role: "user",
+        text: "use webgpu",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    ],
+    contextTransfers: [],
+    subagents: [],
+    updatedAt: now,
+  } as unknown as OrchestrationV2ThreadProjection;
+  const userRow = (position: number, runId: RunId, messageId: MessageId, text: string) => ({
+    position,
+    visibility: "visible",
+    sourceThreadId: parentThreadId,
+    sourceItemId: TurnItemId.make(`turn-item-mcp-user-${position}`),
+    item: {
+      type: "user_message",
+      runId,
+      messageId,
+      status: "completed",
+      title: null,
+      text,
+      attachments: [],
+      updatedAt: now,
+    },
+  });
+  const rows = [
+    userRow(0, compactRunId, compactMessageId, "/compact"),
+    {
+      position: 1,
+      visibility: "visible",
+      sourceThreadId: parentThreadId,
+      sourceItemId: TurnItemId.make("turn-item-mcp-compaction"),
+      item: {
+        type: "compaction",
+        runId: compactRunId,
+        status: "completed",
+        title: null,
+        summary: "Context compacted",
+        updatedAt: now,
+      },
+    },
+    userRow(2, sendRunId, sendMessageId, "use webgpu"),
+  ];
+
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getTimelinePage: () =>
+            Effect.succeed({
+              items: rows as unknown as OrchestrationV2ThreadProjection["visibleTurnItems"],
+              totalItems: rows.length,
+              hasMore: false,
+              hasEarlier: false,
+            }),
+          getThreadRecords: () => Effect.succeed(projection),
+          getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
+          getThreadShell: () =>
+            Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          list: () => Effect.succeed({ tasks: [] }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const view of ["activity", "messages"] as const) {
+      const result = yield* service.readThread(makeScope(), { threadId: parentThreadId, view });
+      const fromUser = result.items.filter(
+        (item) => item.type === "user_message" && item.createdBy === "user",
+      );
+      expect(fromUser.map((item) => item.text)).toEqual(["use webgpu"]);
+    }
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
 it("readThread returns the newest items that fit the response budget", async () => {
   const projection = {
     thread: baseThread({
@@ -511,8 +640,15 @@ it("readThread returns the newest items that fit the response budget", async () 
       maxCharsPerItem: 1_500,
     };
     const result = yield* service.readThread(makeScope(), read);
-    // The CLI reads as a client without a cursor and follows only hasMore.
-    const first = yield* service.readThread({ ...makeScope(), thread: undefined }, read);
+    // An outside MCP client, such as claude.ai, reads without a thread or a link.
+    const outside = yield* service.readThread(
+      {
+        ...makeScope(),
+        thread: undefined,
+        client: { sessionId: "session-1", label: "claude.ai", access: "read-only" },
+      },
+      read,
+    );
     const fromStart = yield* service.readThread(makeScope(), { ...read, afterPosition: -1 });
     const linked = yield* service.readThread(
       {
@@ -530,7 +666,7 @@ it("readThread returns the newest items that fit the response budget", async () 
 
     expect(pageOptions).toEqual([
       { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
-      { limit: 100, view: "activity" },
+      { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
       { afterPosition: -1, limit: 100, view: "activity" },
       { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
     ]);
@@ -540,10 +676,13 @@ it("readThread returns the newest items that fit the response budget", async () 
     expect(result.items.at(-1)?.position).toBe(99);
     expect(result.earlierPosition).toBe(result.items[0]?.position);
     expect(result.hasMore).toBe(false);
-    expect(first.items[0]?.position).toBe(0);
-    expect(first.hasMore).toBe(true);
-    expect(first.nextPosition).toBe(first.items.at(-1)?.position);
+    expect(outside.items.at(-1)?.position).toBe(99);
+    expect(outside.earlierPosition).toBe(outside.items[0]?.position);
+    expect(outside.hasMore).toBe(false);
+    // The t3 thread CLI pages forward from here, following only hasMore.
     expect(fromStart.items[0]?.position).toBe(0);
+    expect(fromStart.hasMore).toBe(true);
+    expect(fromStart.nextPosition).toBe(fromStart.items.at(-1)?.position);
     expect(linked.items.at(-1)?.position).toBe(99);
     expect(linked.earlierPosition).toBe(linked.items[0]?.position);
     expect(linked.hasMore).toBe(false);

@@ -272,6 +272,7 @@ export function ComposerControlsBar(props: {
         <PrimeAgentComposerControls
           size={controlSize}
           isCloudSandbox={props.isCloudSandbox === true}
+          hidden={composerControlsHidden}
           onPromptEdit={onPromptEdit}
         />
       ) : null}

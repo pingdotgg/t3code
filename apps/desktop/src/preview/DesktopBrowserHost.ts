@@ -32,6 +32,12 @@ const POINTER_TRAVEL = new Set<unknown>(["mouseMoved", "mouseWheel"]);
 const FOCUS_IDLE = "5 seconds";
 /** How long a screenshot waits for the client to draw its guest at full detail. */
 const CAPTURE_DRAW_WAIT = "1 second";
+/** Most waits settle within a frame or two of this, so a quick one is never prodded. */
+const PAINT_NUDGE_FIRST_MS = 250;
+/** A long wait, such as a page awaiting a timer, is prodded less often as it goes on. */
+const PAINT_NUDGE_LONGEST_MS = 2_000;
+/** Electron's capture has no deadline and a cold guest can stall one, so a second may follow. */
+const PAINT_NUDGE_IN_FLIGHT = 2;
 /** Well inside the server's 10 s DESKTOP_ATTACH_TIMEOUT, for a first page that never reports it is up. */
 const FIRST_PAGE_TIMEOUT = "5 seconds";
 const ERR_ABORTED = -3;
@@ -73,6 +79,11 @@ interface AttachedTab {
   readonly focusPending: Map<object, string | undefined>;
   /** Screenshots Chromium was sent and has not answered; each keeps its wake lock until then. */
   readonly capturing: Set<object>;
+  /** Each wait on the guest's next frame, as whether it still waits; the guest is prodded until none do. */
+  readonly frameWaits: Set<() => boolean>;
+  nudging: Fiber.Fiber<void> | null;
+  /** A wait outlasted its first nudge, so the guest is painted and unthrottled like a capture. */
+  frameStalled: boolean;
   /** Whether the client keeps the guest painting, as published on `painting`. */
   painting: boolean;
   /**
@@ -243,7 +254,7 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
+   * Electron composites no offscreen guest, so a screenshot, screencast or stalled command waits for a frame
    * that never comes. The client paints the guest behind the app while one is pending; the
    * capture then finishes on its own, and the guest goes back offscreen once none is.
    */
@@ -252,10 +263,76 @@ export const make = Effect.gen(function* () {
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
+        tab.frameStalled ||
         tab.waitingScreenshots.some((waiting) => waiting.live()));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
+  };
+
+  /** By guest rather than attachment, since reopening DevTools reattaches the same guest. */
+  const nativeCaptures = new WeakMap<Electron.WebContents, number>();
+  const startNudging = (tab: AttachedTab) => {
+    tab.nudging ??= runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
+  };
+
+  const endNudging = (tab: AttachedTab) => {
+    tab.nudging = null;
+    if (!tab.frameStalled) return;
+    tab.frameStalled = false;
+    syncPainting(tab);
+  };
+
+  /**
+   * A hidden, minimized or covered window (which Electron reports as visible) stops drawing its
+   * guest, so a wait on its next frame never ends. Electron's own capture still draws one.
+   */
+  const nudgePaint = (tab: AttachedTab, delayMs: number): Effect.Effect<void> =>
+    Effect.sleep(delayMs).pipe(
+      Effect.andThen(
+        Effect.suspend(() => {
+          const { webContents } = tab.debuggee;
+          for (const waits of tab.frameWaits) if (!waits()) tab.frameWaits.delete(waits);
+          if (
+            tab.frameWaits.size === 0 ||
+            tabs.get(keyOf(tab.key)) !== tab ||
+            webContents.isDestroyed()
+          ) {
+            endNudging(tab);
+            return Effect.void;
+          }
+          // On Windows a hidden window's throttled guest draws nothing, and capturePage cannot wake it.
+          if (!tab.frameStalled) {
+            tab.frameStalled = true;
+            syncPainting(tab);
+          }
+          const inFlight = nativeCaptures.get(webContents) ?? 0;
+          if (inFlight < PAINT_NUDGE_IN_FLIGHT) {
+            nativeCaptures.set(webContents, inFlight + 1);
+            const settled = () => {
+              nativeCaptures.set(webContents, (nativeCaptures.get(webContents) ?? 1) - 1);
+            };
+            webContents.capturePage().then(settled, settled);
+          }
+          return nudgePaint(tab, Math.min(delayMs * 2, PAINT_NUDGE_LONGEST_MS));
+        }),
+      ),
+    );
+
+  /** Prods the guest while `work` is pending and `waits` holds; one loop serves all of a tab's waits. */
+  const nudgedUntilSettled = <A>(
+    tab: AttachedTab,
+    waits: () => boolean,
+    work: () => Promise<A>,
+  ) => {
+    tab.frameWaits.add(waits);
+    startNudging(tab);
+    return work().finally(() => {
+      tab.frameWaits.delete(waits);
+      if (tab.frameWaits.size > 0 || tab.nudging === null) return;
+      runFork(Fiber.interrupt(tab.nudging));
+      endNudging(tab);
+    });
   };
 
   /** A command may wait on the page's next frame, so the guest stays focused until it settles. */
@@ -265,7 +342,8 @@ export const make = Effect.gen(function* () {
     tab.focusUses += 1;
     setFocusEmulation(tab, true);
     releaseFocusWhenIdle(tab);
-    return work().finally(() => {
+    // Dropping the hold, at a turn's end or a new document, stops the prods too.
+    return nudgedUntilSettled(tab, () => tab.focusPending.has(pending), work).finally(() => {
       if (!tab.focusPending.delete(pending)) return;
       tab.focusUses += 1;
       releaseFocusWhenIdle(tab);
@@ -296,11 +374,14 @@ export const make = Effect.gen(function* () {
     const sent = {};
     tab.capturing.add(sent);
     syncPainting(tab);
+    const sendNudged = () => nudgedUntilSettled(tab, () => tab.capturing.has(sent), send);
     // Sent at once when already drawn, so it keeps its place among the commands after it.
-    return (drawnTabs.has(keyOf(tab.key)) ? send() : whenDrawn(tab).then(send)).finally(() => {
-      tab.capturing.delete(sent);
-      syncPainting(tab);
-    });
+    return (drawnTabs.has(keyOf(tab.key)) ? sendNudged() : whenDrawn(tab).then(sendNudged)).finally(
+      () => {
+        tab.capturing.delete(sent);
+        syncPainting(tab);
+      },
+    );
   };
 
   /**
@@ -537,6 +618,9 @@ export const make = Effect.gen(function* () {
       focusUses: 0,
       focusPending: new Map(),
       capturing: new Set(),
+      frameWaits: new Set(),
+      nudging: null,
+      frameStalled: false,
       painting: false,
       agentUsed: false,
       focusReleasing: false,
