@@ -844,6 +844,8 @@ effectIt.effect.each([
   { platform: "darwin", listener: "renamed" },
   // ps prints `(node)` for a parent it cannot read yet, so the listener is read again later.
   { platform: "darwin", listener: "renamed-unreadable-parent" },
+  // A root-owned parent never becomes readable, so after one retry the listener is unowned.
+  { platform: "darwin", listener: "renamed-never-readable-parent" },
 ] as const)(
   "attributes listeners to the agent thread on $platform ($listener), after the agent exits",
   ({ platform, listener }) => {
@@ -859,7 +861,7 @@ effectIt.effect.each([
     let environmentFails = false;
     let lsofCalls = 0;
     let environmentReads = 0;
-    let parentReadable = listener !== "renamed-unreadable-parent";
+    let parentReadable = listener === "direct" || listener === "renamed";
     const requests: string[] = [];
     const missing = FileSystem.makeNoop({});
     const procEnviron: Record<string, string> = {
@@ -976,6 +978,13 @@ effectIt.effect.each([
       }
       if (!parentReadable) {
         expect(yield* scanner.scan()).toEqual([]);
+        if (listener === "renamed-never-readable-parent") {
+          expect(yield* scanner.scan()).toEqual([]);
+          const reads = environmentReads;
+          expect(yield* scanner.scan()).toEqual([]);
+          expect(environmentReads).toBe(reads);
+          return;
+        }
         parentReadable = true;
       }
       expect(yield* scanner.scan()).toMatchObject([
@@ -984,7 +993,7 @@ effectIt.effect.each([
       expect(requests).toEqual([]);
 
       expect(yield* scanner.scan()).toHaveLength(1);
-      const reads = { direct: 2, renamed: 3, "renamed-unreadable-parent": 5 }[listener];
+      const reads = listener === "direct" ? 2 : listener === "renamed" ? 3 : 5;
       expect(environmentReads).toBe(reads);
 
       // Stop reads its target's environment again rather than trust the cache, and still finds it.

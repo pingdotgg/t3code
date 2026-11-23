@@ -560,6 +560,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
+  // Listeners whose ancestor was unreadable once. A second miss caches them as unowned, since a
+  // root-owned ancestor such as `login` or `sudo` is never readable.
+  const unreadableAncestry = new Set<number>();
 
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
@@ -632,8 +635,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             }
             if (
               resolved.get(pid) === null &&
-              ancestors.some((ancestor) => !variables.has(ancestor))
+              ancestors.some((ancestor) => !variables.has(ancestor)) &&
+              !unreadableAncestry.has(pid)
             ) {
+              unreadableAncestry.add(pid);
               resolved.delete(pid);
               agentScanPending = true;
             }
@@ -646,6 +651,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const listener = cached.has(pid) ? cached.get(pid) : resolved.get(pid);
       if (listener !== undefined) next.set(pid, listener);
     }
+    for (const pid of unreadableAncestry) if (!pids.includes(pid)) unreadableAncestry.delete(pid);
     yield* Ref.set(agentThreadsRef, next);
     return next;
   });
@@ -1074,6 +1080,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* Ref.set(socketOwnersRef, new Map());
         yield* Ref.set(socketOwnerMissesRef, new Map());
         const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        unreadableAncestry.clear();
         if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
       }),
     );
