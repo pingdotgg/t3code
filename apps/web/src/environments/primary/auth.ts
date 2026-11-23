@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
@@ -20,6 +21,8 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -61,7 +64,12 @@ export class PrimaryEnvironmentRequestError extends Schema.TaggedError<PrimaryEn
   }
 
   override get message(): string {
-    return `Primary environment request failed during ${this.operation} (HTTP ${this.status}).`;
+    return m(
+      msg("Primary environment request failed during {operation} (HTTP {status}).", {
+        operation: this.operation,
+        status: this.status,
+      }),
+    );
   }
 }
 
@@ -75,7 +83,7 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Invalid pairing token. Check the token and try again.";
+    return m(msg("Invalid pairing token. Check the token and try again."));
   }
 }
 
@@ -87,7 +95,7 @@ export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErro
   },
 ) {
   override get message(): string {
-    return "Timed out waiting for authenticated session after bootstrap.";
+    return m(msg("Timed out waiting for authenticated session after bootstrap."));
   }
 }
 
@@ -98,7 +106,7 @@ export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Enter a pairing token to continue.";
+    return m(msg("Enter a pairing token to continue."));
   }
 }
 
@@ -151,7 +159,7 @@ export function stripPairingTokenFromUrl() {
   if (next.toString() === url.toString()) {
     return;
   }
-  window.history.replaceState({}, document.title, next.toString());
+  window.history.replaceState(window.history.state, document.title, next.toString());
 }
 
 export function takePairingTokenFromUrl(): string | null {
@@ -330,7 +338,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
     return {
       status: "requires-auth",
       auth: currentSession.auth,
-      errorMessage: error instanceof Error ? error.message : "Authentication failed.",
+      errorMessage: thrownErrorMessage(error, m) ?? m(msg("Authentication failed.")),
     };
   }
 }
