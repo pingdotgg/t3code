@@ -10442,6 +10442,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 steerText,
                 images,
               );
+              let steerConfirmed = true;
               if (steerId !== undefined) {
                 const injected = steerInjection(steerId);
                 // The agent reads a steer at its next step. One that lands after the last
@@ -10458,8 +10459,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     detail: `Provider turn ${turnInput.providerTurnId} ended before it read the steering message.`,
                   });
                 }
+                // A steer still unread at the bound may yet be dropped, so its notes stay unsent.
+                steerConfirmed = yield* Deferred.isDone(injected);
               }
               if (
+                steerConfirmed &&
                 appContextEntries.length > 0 &&
                 !context.interrupted &&
                 (yield* Ref.get(compactionMarkers)).get(context.nativeThreadId) === compactionMarker
