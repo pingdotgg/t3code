@@ -303,6 +303,13 @@ impl SqliteEngine {
         {
             effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
         }
+        // `recoverDelegatedTasks`: once recovery decided which runs continue, a delegated
+        // child's tasks whose work ended with a cancelled run are published.
+        let recovered: std::collections::BTreeSet<&str> =
+            unfinished.iter().map(|(id, _)| id.as_str()).collect();
+        for thread_id in recovered {
+            effects.extend(crate::families::finalize_tasks(&mut tx, thread_id)?);
+        }
         tx.commit(None)?;
         let high = store.high_water();
         let engine = Self {

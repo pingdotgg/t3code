@@ -4226,6 +4226,107 @@ async fn a_running_follow_up_wakes_its_parent_once_when_it_finishes() {
     );
 }
 
+/// `Orchestrator.ts:7076`: a run the child queues for itself, and a restart continuation,
+/// continue the follow-up task of the run that sent them, so the task reports their answer.
+#[tokio::test(flavor = "current_thread")]
+async fn a_follow_ups_own_next_turn_and_its_restart_continuation_stay_its_work() {
+    let f = fixture("task-followup-continued");
+    let (parent, mut operator, mut agent) = parent_with_agent(&f).await;
+    let first = agent
+        .ok(
+            "delegate_task",
+            json!({"task": "original", "mode": "wait", "timeoutMs": 5000}),
+        )
+        .await;
+    let child = first["childThreadId"].as_str().unwrap().to_owned();
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    let mut child_agent = Client::open(&f.service, agent_of(&f, &child)).await;
+    let next = child_agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "final", "mode": "queue"}),
+        )
+        .await;
+    operator
+        .ok("conn_thread_interrupt", json!({"threadId": child}))
+        .await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "runId": next["runId"], "timeoutMs": 5000}),
+        )
+        .await;
+    let status = agent.ok("task_status", json!({"taskId": followup})).await;
+    assert_eq!(status["summary"], "echo: final", "{status}");
+
+    // A restart cuts a follow-up's turn short; its continuation answers for the task.
+    let sent = agent
+        .ok(
+            "conn_thread_send",
+            json!({"threadId": child, "message": "hang", "mode": "queue"}),
+        )
+        .await;
+    let followup = sent["taskId"].as_str().unwrap().to_owned();
+    until_provider_turn(&f, &child).await;
+    drop((agent, operator, child_agent));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut operator = Client::open(&f.service, client(true)).await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": child, "untilDelegatedWorkSettled": true, "timeoutMs": 5000}),
+        )
+        .await;
+    let projection = projection_of(&f, &parent).await;
+    let row = projection["subagents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == followup.as_str())
+        .unwrap();
+    assert_eq!(row["status"], "completed", "{row}");
+    assert!(
+        row["result"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("echo: Continue where you left off")),
+        "{row}"
+    );
+}
+
+/// `Orchestrator.ts:16134`: a restart that cancels a delegated child's turn waiting on an
+/// approval starts no continuation, and still publishes the task.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_publishes_a_task_whose_turn_it_cancels() {
+    let f = fixture("task-restart-approval");
+    let (parent, _operator, mut agent) = parent_with_agent(&f).await;
+    let task = agent.ok("delegate_task", json!({"task": "ask"})).await;
+    let child = task["childThreadId"].as_str().unwrap().to_owned();
+    for _ in 0..200 {
+        let pending = projection_of(&f, &child).await["runtimeRequests"]
+            .as_array()
+            .is_some_and(|r| r.iter().any(|r| r["status"] == "pending"));
+        if pending {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    drop((agent, _operator));
+    let f = reopen(f, FakeProvider::new("claudeAgent")).await;
+    let mut agent = Client::open(&f.service, agent_of(&f, &parent)).await;
+    let status = agent
+        .ok("task_status", json!({"taskId": task["taskId"]}))
+        .await;
+    assert_eq!(status["workState"], "result_available", "{status}");
+    assert_eq!(status["status"], "cancelled", "{status}");
+}
+
 /// `Orchestrator.ts:16085`: a child whose turn ended while a command it awaits still runs
 /// settles when the roster reports that command gone: the settled-work wait returns its
 /// result, and the parent is woken once.

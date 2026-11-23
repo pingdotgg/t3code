@@ -567,6 +567,19 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(source) = &c.restart_continuation_of_run_id {
         run["restartContinuationOfRunId"] = json!(source);
     }
+    // A run the thread queues for itself continues the task of the run that sent it.
+    let continued = match &c.restart_continuation_of_run_id {
+        Some(source) => tx.entity(&c.thread_id, "runs", source)?,
+        None if c.sender_thread_id.as_deref() == Some(c.thread_id.as_str()) => {
+            active_run(tx, &c.thread_id)?
+        }
+        None => None,
+    };
+    if let Some(task) = continued.as_ref().map(|r| &r["delegatedTaskId"])
+        && task.is_string()
+    {
+        run["delegatedTaskId"] = task.clone();
+    }
     if let Some(merge_back) = &merge_back {
         crate::merge_back::append_records(tx, merge_back, &run_id, cid, &c.thread_id)?;
     }
