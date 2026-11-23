@@ -1427,7 +1427,7 @@ it.effect.each([1_700_000_000, 1_700_000_000.9999])(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
-it.effect.each(["local", "mixed", "exit"] as const)(
+it.effect.each(["local", "mixed", "exit", "non-UTF-8 refs", "pruned ref"] as const)(
   "checkpoint authorship uses local evidence or full fallback ($0)",
   (mode) =>
     Effect.gen(function* () {
@@ -1441,7 +1441,7 @@ it.effect.each(["local", "mixed", "exit"] as const)(
       const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/from");
       const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/authorship/to");
       yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
-      if (mode === "mixed") {
+      if (mode !== "local" && mode !== "exit") {
         yield* fs.writeFileString(path.join(cwd, "imported.txt"), "upstream\n");
         yield* git(["add", "."]);
         const tree = (yield* git(["write-tree"])).stdout.trim();
@@ -1476,12 +1476,28 @@ it.effect.each(["local", "mixed", "exit"] as const)(
       const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) => {
+            if (mode === "non-UTF-8 refs" && input.args.includes("for-each-ref")) {
+              return liveProcess
+                .run(input)
+                .pipe(Effect.map((result) => ({ ...result, stdoutInvalidUtf8: true })));
+            }
+            // Pruned between listing the refs and walking their reflogs.
+            if (mode === "pruned ref" && input.args.includes("for-each-ref")) {
+              return liveProcess.run(input).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  stdout: `refs/remotes/origin/pruned\n${result.stdout}`,
+                })),
+              );
+            }
             if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
             const scope = input.args.includes("--all")
-              ? "worktree HEADs"
-              : input.args.includes("--stdin")
-                ? "refs"
-                : "HEAD";
+              ? `worktree HEADs${input.args.includes("--branches") ? " and --branches" : ""}`
+              : input.args.includes("--remotes")
+                ? "--remotes"
+                : input.args.includes("--stdin")
+                  ? "refs"
+                  : "HEAD";
             reflogScopes.push(scope);
             if (scope !== "HEAD" || mode !== "exit") return liveProcess.run(input);
             return Effect.fail(
@@ -1506,8 +1522,14 @@ it.effect.each(["local", "mixed", "exit"] as const)(
       );
       assert.deepEqual(
         reflogScopes,
-        // Without an import no remote-tracking ref holds the turn's commits, so none is read.
-        mode === "mixed" ? ["HEAD", "refs", "worktree HEADs"] : ["HEAD"],
+        {
+          local: ["HEAD"],
+          mixed: ["HEAD", "refs", "worktree HEADs"],
+          // Without an import no remote-tracking ref holds the turn's commits, so none is read.
+          exit: ["HEAD"],
+          "non-UTF-8 refs": ["HEAD", "--remotes", "worktree HEADs and --branches"],
+          "pruned ref": ["HEAD", "refs", "worktree HEADs"],
+        }[mode],
       );
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
@@ -1581,12 +1603,12 @@ it.effect("checkpoint authorship reads only reflogs of refs holding the turn's c
       previousCheckpointRef: fromCheckpointRef,
     });
 
-    const reflogWalks: string[] = [];
+    const reflogWalks: Array<{ args: ReadonlyArray<string>; refs: ReadonlyArray<string> }> = [];
     const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
       Effect.provideService(VcsProcess.VcsProcess, {
         run: (input) => {
           if (input.args.includes("--walk-reflogs")) {
-            reflogWalks.push([...input.args, input.stdin ?? ""].join(" "));
+            reflogWalks.push({ args: input.args, refs: (input.stdin ?? "").split("\n") });
           }
           return liveProcess.run(input);
         },
@@ -1597,9 +1619,12 @@ it.effect("checkpoint authorship reads only reflogs of refs holding the turn's c
       new Set(["own.txt", "picked.txt", "local.txt"]),
     );
     assert.isNotEmpty(reflogWalks);
-    for (const walk of reflogWalks) {
-      assert.notInclude(walk, "unrelated");
-      if (walk.includes("--all")) assert.include(walk, "--exclude=refs/*");
+    for (const { args, refs } of reflogWalks) {
+      // Refs come only from the explicit list; --all is limited to worktree HEADs.
+      const selectors = args.filter((arg) => /^--(?:all|branches|remotes|glob|tags)\b/.test(arg));
+      assert.deepEqual(selectors, args.includes("--all") ? ["--all"] : []);
+      if (args.includes("--all")) assert.include(args, "--exclude=refs/*");
+      for (const ref of refs) assert.notInclude(ref, "unrelated");
     }
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
