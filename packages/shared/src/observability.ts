@@ -581,6 +581,10 @@ function redactExitCredentials(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unk
   return cause === exit.cause ? exit : ExitRuntime.failCause(cause);
 }
 
+// Fast successful spans end many times per streamed event and filled most of the trace file.
+// The file keeps the ones worth reading later: slow, failed, or carrying a log.
+const ROUTINE_SPAN_MAX_NANOS = 10_000_000n;
+
 class LocalFileSpan implements Tracer.Span {
   readonly _tag = "Span";
   readonly name: string;
@@ -632,7 +636,11 @@ class LocalFileSpan implements Tracer.Span {
     };
     this.delegate.end(endTime, redactExitCredentials(traceExit));
 
-    if (this.sampled) {
+    const routine =
+      ExitRuntime.isSuccess(exit) &&
+      this.events.length === 0 &&
+      endTime - this.status.startTime < ROUTINE_SPAN_MAX_NANOS;
+    if (this.sampled && !routine) {
       this.push(spanToTraceRecord(this));
     }
   }
