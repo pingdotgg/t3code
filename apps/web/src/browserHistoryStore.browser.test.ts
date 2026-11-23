@@ -164,8 +164,6 @@ it("bounds saved thread mappings while keeping live registrations", async () => 
   }
 });
 
-let historyDocumentCount = 0;
-
 async function openHistoryDocument(
   disposables: DisposableStack,
   { withoutIndexedDB = false } = {},
@@ -176,7 +174,7 @@ async function openHistoryDocument(
   if (!withoutIndexedDB) {
     // A fresh store module gets its own connection and channel like another tab, without
     // an iframe re-evaluating the whole app graph (seconds per document on CI).
-    source.searchParams.set("document", String(++historyDocumentCount));
+    source.searchParams.set("document", Math.random().toString(36).slice(2));
     const instance: typeof import("./browserHistoryStore") = await import(
       /* @vite-ignore */ source.href
     );
