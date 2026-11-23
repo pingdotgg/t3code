@@ -330,6 +330,16 @@ describe("question answer paths", () => {
       "A\tB\t\nC",
     ],
     [
+      "hidden text",
+      String.raw`{\rtf1\ansi A {\v B{\v0 C}D} E\v F\v0  G\v1 H\plain  I}`,
+      "A C E G I",
+    ],
+    [
+      "hidden text table and escapes",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\v B\u945?\'e9\cell\v0 C\cell\v\row\v0 D\cell}`,
+      "A\tC\t\nD",
+    ],
+    [
       "document breaks",
       String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
       "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
@@ -343,6 +353,12 @@ describe("question answer paths", () => {
       "explicit Macintosh code page",
       String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
       "Café Crème",
+    ],
+    ["default ANSI code page", String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "Café"],
+    [
+      "DOS Cyrillic code page",
+      String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+      "Привет",
     ],
     [
       "font character set",
@@ -843,6 +859,16 @@ describe("question answer paths", () => {
           },
           expected: ["Intro 3\nFee $700\tdue"],
           absent: ["PAGEREF", "$500", "Moved", "\u2011"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p><w:r><w:t xml:space="preserve">Opening </w:t></w:r><m:oMath><m:r><m:rPr><m:sty m:val="p"/></m:rPr><w:rPr><w:vanish/></w:rPr><m:t>Formula</m:t></m:r></m:oMath><w:r><w:rPr><w:vanish/></w:rPr><w:t>Omitted</w:t></w:r><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t xml:space="preserve">Zero </w:t></w:r><w:r><w:rPr><w:vanish w:val="false"/></w:rPr><w:t xml:space="preserve">False </w:t></w:r><w:r><w:rPr><w:vanish w:val="off"/></w:rPr><w:t xml:space="preserve">Off </w:t></w:r><w:r><w:rPr><w:vanish w:val="true"/></w:rPr><w:t>Draft</w:t></w:r><w:r><w:rPr><w:vanish w:val="1"/></w:rPr><w:t>Note</w:t></w:r><w:r><w:rPr><w:vanish w:val="on"/></w:rPr><w:t>Aside</w:t></w:r><w:r><w:rPr><w:rPrChange><w:rPr><w:vanish/></w:rPr></w:rPrChange></w:rPr><w:t>Shown</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Opening Zero False Off Shown"],
+          absent: ["Omitted", "Draft", "Note", "Aside", "Formula"],
         },
         {
           ext: "odt",

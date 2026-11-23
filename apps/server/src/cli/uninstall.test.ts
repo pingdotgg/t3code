@@ -200,9 +200,21 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       // recorded launchers: through a symlinked home, and dangling after a prune.
       const throughAlias = path.join(root, "bin/t3-alias");
       const pruned = path.join(root, "bin/t3-pruned");
+      const scriptThroughAlias = path.join(scriptDir, "t3-alias");
+      const prunedScript = path.join(scriptDir, "t3-pruned");
       yield* fs.symlink(root, path.join(root, "alias"));
       yield* fs.symlink(path.join(root, "alias/runtime/versions/1.0.0/t3"), throughAlias);
       yield* fs.symlink(path.join(versionsDir, "0.9.0/t3"), pruned);
+      yield* fs.writeFileString(
+        scriptThroughAlias,
+        posixLauncherScript(path.join(root, "alias/runtime/versions/1.0.0/t3")),
+        { mode: 0o755 },
+      );
+      yield* fs.writeFileString(
+        prunedScript,
+        posixLauncherScript(path.join(versionsDir, "0.9.0/t3")),
+        { mode: 0o755 },
+      );
       // Another program inside a version is not a launcher.
       const sibling = path.join(root, "bin/t3-sibling");
       yield* fs.symlink(path.join(versionsDir, "1.0.0/node"), sibling);
@@ -216,6 +228,8 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
           pruned,
           sibling,
           script,
+          scriptThroughAlias,
+          prunedScript,
           editedScript,
           path.join(root, "missing"),
         ].join("\n") + "\n",
@@ -226,6 +240,8 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
           throughAlias,
           pruned,
           script,
+          scriptThroughAlias,
+          prunedScript,
         ]);
       }
 

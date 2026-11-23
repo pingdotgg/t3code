@@ -296,6 +296,14 @@ Third}`;
       if (mac.type !== "document") throw new Error("Expected document");
       expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
     }
+    for (const [rtf, expected] of [
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+    ] as const) {
+      const decoded = openRtf(bytes(rtf));
+      if (decoded.type !== "document") throw new Error("Expected document");
+      expect(decoded.pages[0]!.html).toBe(expected);
+    }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
     );
@@ -567,6 +575,26 @@ Third}`;
       archive.file("content.xml", source);
       await expect(openDocument(archive, kind)).rejects.toMatchObject({ code: "xml-invalid" });
     }
+  });
+
+  it("keeps OpenDocument image descriptions in image alt text", async () => {
+    const archive = new JSZip()
+      .file(
+        "content.xml",
+        '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:l="http://www.w3.org/1999/xlink" xmlns:s="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0">' +
+          '<office:body><office:text><text:p><draw:frame><draw:image l:href="picture.png"/><s:title>Logo</s:title><s:desc>Research &amp; &quot;Design&quot;</s:desc></draw:frame>Visible caption</text:p></office:text></office:body></office:document-content>',
+      )
+      .file(
+        "picture.png",
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+        { base64: true },
+      );
+
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toMatch(
+      /^<p><img src="data:image\/png;base64,[^"]+" alt="Logo Research &amp; &quot;Design&quot;">Visible caption<\/p>$/,
+    );
   });
 
   it("reads EPUB chapters in spine order and removes active and remote content", async () => {

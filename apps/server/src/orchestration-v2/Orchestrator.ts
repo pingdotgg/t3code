@@ -4077,10 +4077,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
         ? {}
         : { delegatedFrom: command.delegatedFrom }),
+      ...(command.workflowRun === undefined ? {} : { workflowRun: command.workflowRun }),
       lineage: {
         parentThreadId: null,
         relationshipToParent: null,
         rootThreadId: command.threadId,
+        ...(command.workflowRun === undefined ? {} : { workflowStep: true }),
       },
       forkedFrom: null,
       createdAt: now,
@@ -4630,7 +4632,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     if (command.type === "thread.settle") {
-      const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"]);
+      const projection = yield* loadProjectionForCommand(
+        command,
+        ["runs", "runtimeRequests", "providerThreads", "turnItems"],
+        {
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemStatuses: ["pending", "running", "waiting"],
+        },
+      );
       if (
         command.expectedLatestRunId !== undefined &&
         projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -4677,13 +4686,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const blockingRequestExists = pendingRequests.some(
         (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
       );
+      // Settling detaches the provider session, which ends the work running inside it. Hold for
+      // the work auto-settle waits on. Delegated tasks run in their own thread and survive.
+      const awaitedSessionWorkExists =
+        !runningRunExists &&
+        backgroundWorkHoldsCompletion(
+          derivePendingBackgroundWork({
+            latestRun: projection.runs.findLast((run) => run.status !== "queued"),
+            providerThreads: projection.providerThreads,
+            turnItems: projection.turnItems.filter(
+              (item) => item.type !== "subagent" || item.origin !== "app_owned",
+            ),
+            activeProviderThreadId: projection.thread.activeProviderThreadId,
+            runs: projection.runs,
+          }),
+        );
       const blocker = blockingRequestExists
         ? "is waiting on an approval or question. Answer it before settling."
         : runningRunExists
           ? "is still running. Stop it before settling."
           : queuedMessageExists
             ? "has a queued message. Send it or remove it from the queue before settling."
-            : null;
+            : awaitedSessionWorkExists
+              ? "is still running background agents or commands, and settling would end them. Wait for them to finish, or press Stop, then settle."
+              : null;
       if (blocker !== null) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -6166,6 +6192,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.sourceThreadId} is not a fork of ${command.targetThreadId}.`,
+      });
+    }
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.sourceThreadId} was deleted.`,
+      });
+    }
+    if (targetProjection.thread.deletedAt !== null || targetProjection.thread.archivedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.targetThreadId} is archived or deleted.`,
       });
     }
     // Queued runs cannot consume merge-back context. Refuse under the target's
@@ -14572,6 +14612,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ["providerThreads", "checkpoints", "checkpointScopes", "runs", "providerTurns", "attempts"],
         { turnItemTypes: [], messageRoles: ["user"] },
       );
+      if (projection.thread.deletedAt !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Thread ${command.threadId} is deleted.`,
+        });
+      }
       const providerThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -15101,9 +15148,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const readDelegatedChildControls = Effect.fn("Orchestrator.readDelegatedChildControls")(
     function* (childThreadId: ThreadId, taskIds: ReadonlyArray<NodeId>) {
-      const controls: DelegatedChildControls = yield* projectionStore.getDelegatedChildControls(
-        childThreadId,
-        { taskIds, windowSize: DELEGATED_CHILD_RUN_WINDOW },
+      // Progress tells a held wake from a held message the user wrote by the run's message.
+      const withHeldMessages = Effect.fn("Orchestrator.readHeldRunMessages")(function* <
+        A extends Omit<DelegatedChildControls, "runsFloor">,
+      >(read: A) {
+        const heldRunIds = read.runs.flatMap((run) =>
+          run.status === "queued" && run.queueHeld === true ? [run.id] : [],
+        );
+        if (heldRunIds.length === 0) return read;
+        const { messages } = yield* projectionStore.getThreadRecords(childThreadId, ["messages"], {
+          messageRoles: ["user"],
+          messageRunIds: heldRunIds,
+        });
+        return { ...read, messages: [...read.messages, ...messages] };
+      });
+      const controls: DelegatedChildControls = yield* withHeldMessages(
+        yield* projectionStore.getDelegatedChildControls(childThreadId, {
+          taskIds,
+          windowSize: DELEGATED_CHILD_RUN_WINDOW,
+        }),
       );
       const progress = delegatedTaskProgress(controls);
       // The latest result may have ended before the runs read above; then read them all.
@@ -15111,7 +15174,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         controls.runsFloor !== undefined &&
         (progress.resultRun === undefined || !ranSince(progress.resultRun, controls.runsFloor))
       ) {
-        const all = yield* readAllDelegatedChildControls(childThreadId);
+        const all = yield* withHeldMessages(yield* readAllDelegatedChildControls(childThreadId));
         return { controls: all, progress: delegatedTaskProgress(all) };
       }
       return { controls, progress };
@@ -15493,12 +15556,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       childThreadId,
       openTasks.map((task) => task.id),
     );
+    const cancelAwaitsWork = progress.state === "working" && !progress.onlyAwaitsUserRun;
     for (const task of openTasks) {
       // A cancelled task does not wait for the work its cancel is stopping.
       const cancelled = task.cancelledRunId !== undefined;
       if (
         task.id === forkedFrom.nodeId &&
-        (cancelled ? progress.state === "working" : progress.state !== "result_available")
+        (cancelled ? cancelAwaitsWork : progress.state !== "result_available")
       )
         continue;
       yield* finalizeAppOwnedSubagentTask(childControls, {
@@ -15517,7 +15581,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       resultTask?.cancelledRunId !== undefined && resultTask.cancelledRunId === resultRun?.id;
     if (
       resultRun === undefined ||
-      (taskCancelled ? progress.state === "working" : progress.state !== "result_available")
+      (taskCancelled ? cancelAwaitsWork : progress.state !== "result_available")
     )
       return;
     const status = delegatedTaskTerminalStatus(runOutcome(resultRun));
