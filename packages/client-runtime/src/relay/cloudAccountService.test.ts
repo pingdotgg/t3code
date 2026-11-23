@@ -160,9 +160,11 @@ describe("createCloudAccountService", () => {
     const { source, emit } = makeSource();
     service.attach(source);
 
-    // Offline: an id-less client, or the placeholder built from the session cookie.
+    // Offline: an id-less client, the placeholder built from the session cookie,
+    // or the placeholder Expo's empty resource cache loads.
     emit(null, "");
     emit(null, "client_init");
+    emit(null, "client_DUMMY_ID");
     expect(service.getState()).toEqual({ _tag: "Unobserved" });
     expect(log).toEqual([]);
 
