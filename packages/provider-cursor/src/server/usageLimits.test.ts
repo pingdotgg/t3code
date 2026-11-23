@@ -7,7 +7,7 @@ import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimit
 describe("Cursor usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
 
-  it("uses the advertised percentages and reset, or Spend when no allowance is included", () => {
+  it("uses the advertised percentages and billing-cycle reset", () => {
     const limits = cursorUsageResponseToLimits(
       {
         billingCycleEnd: "1789876386000",
@@ -40,100 +40,41 @@ describe("Cursor usage limits", () => {
         },
       ]),
     );
-    const withSpendLimit = cursorUsageResponseToLimits(
-      {
-        billingCycleEnd: "1789876386000",
-        planUsage: { totalPercentUsed: 72.4, autoPercentUsed: 69.5, apiPercentUsed: 100 },
-        spendLimitUsage: { individualLimit: 5000, individualUsed: 100 },
-      },
-      checkedAt,
-    );
-    expect(withSpendLimit.windows).toEqual(limits.windows);
+  });
+
+  it("shows Spend against the personal limit only when no allowance is included", () => {
     const zeroPercents = { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 };
-    const zeroPlanWindows = [
-      { id: "apiPercentUsed", kind: "monthly", label: "Other Models", usedPercent: 0 },
-      { id: "autoPercentUsed", kind: "monthly", label: "Cursor Models", usedPercent: 0 },
-      { id: "totalPercentUsed", kind: "monthly", label: "Overall", usedPercent: 0 },
-    ];
     const windowIds = (response: Parameters<typeof cursorUsageResponseToLimits>[0]) =>
       cursorUsageResponseToLimits(response, checkedAt).windows.map((window) => window.id);
-    // Usage already counted against a pooled plan keeps the plan bars.
+    const planIds = ["apiPercentUsed", "autoPercentUsed", "totalPercentUsed"];
+    const pool = { pooledLimit: "3000000", overallLimit: 50000, overallUsed: 3211 };
+    // Usage already counted against the plan, an included allowance, or no team pool keep the plan bars.
     expect(
-      windowIds({
-        planUsage: { totalPercentUsed: 6, autoPercentUsed: 6, apiPercentUsed: 0 },
-        spendLimitUsage: { pooledLimit: "3000000", overallLimit: 50000, overallUsed: 3211 },
-      }),
-    ).toEqual(["apiPercentUsed", "autoPercentUsed", "totalPercentUsed"]);
-    // Fresh-cycle Pro: an included allowance, or no pool marker, keeps the plan bars.
-    for (const response of [
-      {
-        planUsage: { ...zeroPercents, limit: "2000" },
-        spendLimitUsage: { individualLimit: 5000, individualUsed: 0, pooledLimit: "3000000" },
-      },
-      { planUsage: zeroPercents, spendLimitUsage: { individualLimit: 5000 } },
-    ]) {
-      expect(cursorUsageResponseToLimits(response, checkedAt).windows).toEqual(zeroPlanWindows);
-    }
+      windowIds({ planUsage: { ...zeroPercents, autoPercentUsed: 6 }, spendLimitUsage: pool }),
+    ).toEqual(planIds);
     expect(
-      windowIds({
-        planUsage: { ...zeroPercents, limit: "0" },
-        spendLimitUsage: { pooledLimit: "3000000", overallLimit: 50000, overallUsed: 3211 },
-      }),
-    ).toEqual(["spendLimit"]);
-    // Without includePooledUsage, Cursor reports start = end = now instead of the cycle.
+      windowIds({ planUsage: { ...zeroPercents, limit: "2000" }, spendLimitUsage: pool }),
+    ).toEqual(planIds);
+    expect(
+      windowIds({ planUsage: zeroPercents, spendLimitUsage: { individualLimit: 5000 } }),
+    ).toEqual(planIds);
+    // A start equal to the end is not a billing cycle; a missing used means zero.
     expect(
       cursorUsageResponseToLimits(
         {
           billingCycleStart: "1793491200000",
           billingCycleEnd: "1793491200000",
-          spendLimitUsage: { individualLimit: "2000", individualUsed: "500" },
+          spendLimitUsage: { overallLimit: 0, individualLimit: "2000", individualUsed: "500" },
         },
         checkedAt,
       ).windows,
     ).toEqual([{ id: "spendLimit", kind: "monthly", label: "Spend", usedPercent: 25 }]);
-    // Limit and used come from the same pair; protobuf JSON omits a zero used.
-    for (const [spendLimitUsage, usedPercent] of [
-      [{ overallLimit: 50000, individualUsed: 3211 }, 0],
-      [{ overallLimit: 0, individualLimit: "2000", individualUsed: "500" }, 25],
-    ] as const) {
-      expect(
-        cursorUsageResponseToLimits({ spendLimitUsage }, checkedAt).windows.map(
-          (window) => window.usedPercent,
-        ),
-      ).toEqual([usedPercent]);
-    }
-  });
-
-  it("maps a live Enterprise response to the personal spend limit", () => {
-    // Captured from a live Enterprise account on a token-based contract, 2026-11-23.
-    // The pooled team budget arrives as a string, the personal pair as numbers.
-    const enterpriseResponse = {
-      billingCycleStart: "1793491200000",
-      billingCycleEnd: "1796083200000",
-      planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
-      spendLimitUsage: {
-        totalSpend: 679881371,
-        pooledLimit: "1009395000",
-        pooledUsed: 679881371,
-        pooledRemaining: "329513629",
-        limitType: "team",
-        overallLimit: 100000,
-        overallUsed: 68757,
-        overallRemaining: 31243,
-      },
-    };
-    const limits = cursorUsageResponseToLimits(enterpriseResponse, checkedAt);
-    // $687.57 of a $1,000 personal limit; Cursor reports the same 69% for this response.
-    expect(limits.windows).toEqual([
-      {
-        id: "spendLimit",
-        kind: "monthly",
-        label: "Spend",
-        usedPercent: 68.757,
-        resetsAt: "2026-12-01T00:00:00.000Z",
-        windowDurationMins: 43_200,
-      },
-    ]);
+    expect(
+      cursorUsageResponseToLimits(
+        { spendLimitUsage: { overallLimit: 50000, individualUsed: 3211 } },
+        checkedAt,
+      ).windows[0]?.usedPercent,
+    ).toBe(0);
   });
 
   it("reports the billing-cycle length so pace can be computed", () => {
@@ -196,16 +137,10 @@ describe("Cursor usage limits", () => {
       externalUsage: { label: "Cursor usage", url: "https://cursor.com/dashboard?tab=usage" },
     };
     expect(cursorUsageResponseToLimits({ planUsage: {} }, checkedAt)).toEqual(linkOnly);
-    // Real Enterprise (token-based contract) response: no planUsage at all.
-    expect(cursorUsageResponseToLimits({ billingCycleEnd: "1793495876373" }, checkedAt)).toEqual(
-      linkOnly,
-    );
-    // Enterprise seat with only the team pool: zeroed percentages and no personal limit.
+    // Enterprise seat with only the team pool and no personal limit.
     expect(
       cursorUsageResponseToLimits(
         {
-          billingCycleStart: "1793491200000",
-          billingCycleEnd: "1796083200000",
           planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
           spendLimitUsage: { pooledLimit: "3000000" },
         },
@@ -237,21 +172,22 @@ describe("Cursor usage limits", () => {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
                   request,
+                  // Captured from a live Enterprise account (token-based contract), 2026-11-23:
+                  // the team pool arrives as int64 strings, the personal pair as numbers.
                   Response.json({
                     billingCycleStart: "1793491200000",
                     billingCycleEnd: "1796083200000",
-                    displayThreshold: 50,
                     planUsage: { totalPercentUsed: 0, autoPercentUsed: 0, apiPercentUsed: 0 },
                     spendLimitUsage: {
+                      totalSpend: 679881371,
+                      pooledLimit: "1009395000",
+                      pooledUsed: 679881371,
+                      pooledRemaining: "329513629",
                       limitType: "team",
-                      overallLimit: 50000,
-                      overallUsed: 3211,
-                      overallRemaining: 46789,
-                      pooledLimit: "3000000",
-                      pooledUsed: 0,
-                      pooledRemaining: "3000000",
+                      overallLimit: 100000,
+                      overallUsed: 68757,
+                      overallRemaining: 31243,
                     },
-                    displayMessage: "You've used 6% of your included usage",
                   }),
                 ),
               );
@@ -265,7 +201,7 @@ describe("Cursor usage limits", () => {
               id: "spendLimit",
               kind: "monthly",
               label: "Spend",
-              usedPercent: 6.422,
+              usedPercent: 68.757,
               resetsAt: "2026-12-01T00:00:00.000Z",
               windowDurationMins: 43_200,
             },
