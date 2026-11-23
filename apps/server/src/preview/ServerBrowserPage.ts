@@ -198,7 +198,6 @@ const SNAPSHOT_SCRIPT = `(() => {
     title: document.title,
     loading: document.readyState !== "complete",
     visibleText: document.body?.innerText || "",
-    interactiveElements: [],
   };
 })()`;
 
@@ -699,10 +698,7 @@ const capture = async (
       "page state",
       () =>
         input.page.evaluate(SNAPSHOT_SCRIPT) as Promise<
-          Pick<
-            PreviewAutomationSnapshot,
-            "url" | "title" | "loading" | "visibleText" | "interactiveElements"
-          >
+          Pick<PreviewAutomationSnapshot, "url" | "title" | "loading" | "visibleText">
         >,
     ),
     // A cheap real frame still sizes the screenshot; computing it from metrics drifted from the PNG.

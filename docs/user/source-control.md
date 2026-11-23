@@ -146,8 +146,10 @@ Merging a stack lands it through GitCafe, and updating a branch restacks the lay
 
 ### TanStack Source
 
-TanStack Source is in private beta, so the server shows it only when started with
-`T3CODE_TANSTACK_SOURCE=1` in its environment. Install its CLI and sign in:
+TanStack Source is in private beta, so the server shows it only when its environment turns the flag
+on: `export T3CODE_FEATURE_FLAGS=tanstack_source` in your shell profile, then restart T3 Code. Separate
+several flags with commas. A value already set in the server's own environment, such as a service
+definition, is used instead of the profile. Install its CLI and sign in:
 
 ```sh
 curl -fsSL https://source.tanstack.com/install | sh
@@ -158,7 +160,9 @@ Alternatively, open **Settings → Source control & issues**, expand **TanStack 
 from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
 used before the `src` login. With several `src` logins, pick the account there too.
 
-Pull requests show the runs of TanStack Source CI with their logs, and update live while open. Issues
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. An
+agent can open a private pull request on a public repository when you ask for one: its branch goes
+to the repository's private companion and never to the repository itself. Issues
 can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
 from a list are not available yet.
 
@@ -412,7 +416,9 @@ To list Linear issues beside a project's, connect Linear with an API key under
 Settings → Source control & issues, then pick one or more teams for that project there. Pick
 another team at any time to add it; uncheck every team to unbind the project. Each team's
 issues appear in the Linear group of the issue list, sorted with the rest by last update, and
-each can be loaded further on its own. Agents file new issues in the first team picked.
+each can be loaded further on its own. Agents file new issues in the first team picked unless you name another bound team. To
+connect another Linear workspace or user, add another account in the same place; each project
+reads its teams through the account you picked them under.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

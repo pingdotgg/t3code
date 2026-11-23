@@ -89,6 +89,11 @@ export default mergeConfig(
           dependsOn: ["@t3tools/web#build"],
           cache: false,
         },
+        // A local tsbuildinfo is leftover build state, not a typecheck input.
+        typecheck: {
+          command: "effect-tsgo tsrs --noEmit",
+          cache: { input: [{ auto: true }, "!*.tsbuildinfo"] },
+        },
       },
     },
     pack: {
