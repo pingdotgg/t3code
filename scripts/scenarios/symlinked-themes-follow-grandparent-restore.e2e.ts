@@ -30,13 +30,17 @@ test(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         yield* fs.writeFileString(`${themes}/${file}`, contents("Original Tree Palette"));
-        for (const [tree, name] of [
-          [active, "Linked Tree Palette"],
-          [restored, "Restored Tree Palette"],
-        ] as const) {
+        for (const tree of [active, restored]) {
           yield* fs.makeDirectory(`${tree}/shared/themes`, { recursive: true });
-          yield* fs.writeFileString(`${tree}/shared/themes/${file}`, contents(name));
+          yield* fs.writeFileString(
+            `${tree}/shared/themes/${file}`,
+            contents("Linked Tree Palette"),
+          );
         }
+        yield* fs.writeFileString(
+          `${restored}/shared/themes/${file}`,
+          contents("Restored Tree Palette"),
+        );
       }),
     );
 
@@ -66,12 +70,13 @@ test(
       await restoredTheme.scrollIntoView();
 
       await runPromise(
-        Effect.flatMap(FileSystem.FileSystem, (fs) =>
-          fs.writeFileString(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.writeFileString(
             `${active}/shared/themes/${file}`,
             contents("Edited Restored Tree Palette"),
-          ),
-        ),
+          );
+        }),
       );
 
       try {
