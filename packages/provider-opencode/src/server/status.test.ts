@@ -4,6 +4,7 @@ import * as NodeSqlite from "node:sqlite";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1313,4 +1314,31 @@ it.effect("lists a catalog whose cold server start outlasts the settle budget", 
     yield* TestClock.adjust("10 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
   }),
+);
+
+it.effect(
+  "does not settle on OpenCode's startup snapshot before the live catalog replaces it",
+  () =>
+    Effect.gen(function* () {
+      const snapshot: ReadonlyArray<OpenCode2Model> = [
+        {
+          providerID: "github-copilot",
+          id: "gemini-4-argon",
+          name: "Gemini 4 Argon",
+          variants: [],
+        },
+      ];
+      const live: ReadonlyArray<OpenCode2Model> = [
+        { providerID: "github-copilot", id: "gemini-4-neon", name: "Gemini 4 Neon", variants: [] },
+      ];
+      const startedAt = yield* Clock.currentTimeMillis;
+      // OpenCode 2.3.2 serves its built-in snapshot for ~1.5s, then emits model.updated.
+      const read = Clock.currentTimeMillis.pipe(
+        Effect.map((now) => (now - startedAt < 1_500 ? snapshot : live)),
+      );
+      const load = yield* makeOpenCode2ModelLoader(read);
+      const fiber = yield* Effect.forkChild(load);
+      yield* TestClock.adjust("10 seconds");
+      NodeAssert.deepEqual(yield* Fiber.join(fiber), live);
+    }),
 );
