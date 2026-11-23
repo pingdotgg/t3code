@@ -5431,6 +5431,7 @@ interface ClaudeLiveQueryContext {
   readonly launchArgSettings: ClaudeSdkSettings | undefined;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly queryPolicyKeyWithoutWorkspace: string;
   selection: CompiledClaudeModelSelection;
   readonly program: string | undefined;
   readonly startedWithApiModelId: string;
@@ -13292,10 +13293,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
-          const queryPolicyKey = claudeEffectiveQueryPolicyKey(
+          const openedQueryPolicyKey = claudeEffectiveQueryPolicyKey(
             queryPolicy,
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
+          );
+          const queryPolicyKeyWithoutWorkspace = claudeEffectiveQueryPolicyKey(
+            queryPolicy,
+            mcpOverrides,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -13308,6 +13313,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             return existing;
           }
+          // A changed folder list alone must not end background work; a later process picks it up.
+          const queryPolicyKey =
+            existing !== null &&
+            existing.nativeThreadId === nativeThreadId &&
+            !existing.stopping &&
+            existing.queryPolicyKey !== openedQueryPolicyKey &&
+            existing.queryPolicyKeyWithoutWorkspace === queryPolicyKeyWithoutWorkspace &&
+            (yield* liveProcessRunsBackgroundWork(existing))
+              ? existing.queryPolicyKey
+              : openedQueryPolicyKey;
           const reuseLaunchSettings =
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
@@ -13542,7 +13557,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             settingsCwd: turnInput.runtimePolicy.cwd,
             launchArgSettings,
             query: querySession,
-            queryPolicyKey,
+            queryPolicyKey: openedQueryPolicyKey,
+            queryPolicyKeyWithoutWorkspace,
             selection: compiledSelection,
             program,
             startedWithApiModelId: compiledSelection.apiModelId,
