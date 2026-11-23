@@ -382,7 +382,20 @@ for (const stop of ["interrupt", "timeout"] as const)
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const driver = yield* GitVcsDriver.makeVcsDriverShape();
+        // Windows hosts without symlink rights must get the same isolation.
+        const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            symlink: () =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "symlink",
+                }),
+              ),
+          }),
+        );
         const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-lfs-" });
         const cwd = path.join(sandbox, "repo");
         yield* fs.makeDirectory(cwd);
@@ -479,7 +492,8 @@ s.on('end', () => process.stdin.pipe(process.stdout));`,
         assert.strictEqual(yield* Effect.promise(() => externalExit), 0);
         assert.deepEqual(yield* lfsEntries, [["objects", "tmp"], 0]);
         const pointer = (yield* git(["show", `${checkpointRef}:asset.bin`])).stdout;
-        const oid = /oid sha256:([0-9a-f]{64})/.exec(pointer)?.[1] ?? "";
+        const oid = /oid sha256:([0-9a-f]{64})/.exec(pointer)?.[1];
+        if (oid === undefined) return assert.fail(`not an LFS pointer: ${pointer}`);
         assert.isTrue(
           yield* fs.exists(path.join(lfsDir, "objects", oid.slice(0, 2), oid.slice(2, 4), oid)),
         );

@@ -666,6 +666,9 @@ const gitSupportsRemergeDiff = (versionOutput: string): boolean => {
   return major > 2 || (major === 2 && Number(match[2]) >= 36);
 };
 
+// git-lfs stores each object at objects/<oid[0:2]>/<oid[2:4]>/<sha256 oid>.
+const LFS_OBJECT_PATH = /^[0-9a-f]{2}[\\/][0-9a-f]{2}[\\/][0-9a-f]{64}$/;
+
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -1260,7 +1263,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           ),
       );
       // A stopped add strands git-lfs's copy in lfs/tmp, which other git-lfs writers share, so this
-      // capture gives git-lfs its own storage that reaches the shared objects through a symlink.
+      // capture gives git-lfs its own storage and moves the objects it wrote out once staging succeeds.
       const lfsObjects = path.join(gitCommonDir, "lfs", "objects");
       const privateLfsStorage = yield* Effect.gen(function* () {
         if (!(yield* fileSystem.exists(lfsObjects))) return undefined;
@@ -1285,10 +1288,30 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
             ),
         );
-        // Windows can refuse the symlink; git-lfs then uses its shared storage as before.
-        yield* fileSystem.symlink(lfsObjects, path.join(directory, "objects"));
         return directory;
       }).pipe(Effect.orElseSucceed(() => undefined));
+      const publishLfsObjects = Effect.fn("GitVcsDriver.publishLfsObjects")(
+        function* (storage: string) {
+          const objects = path.join(storage, "objects");
+          const entries = yield* fileSystem.readDirectory(objects, { recursive: true }).pipe(
+            Effect.catchIf(
+              (cause) => cause.reason._tag === "NotFound",
+              (): Effect.Effect<ReadonlyArray<string>> => Effect.succeed([]),
+            ),
+          );
+          for (const entry of entries) {
+            if (!LFS_OBJECT_PATH.test(entry)) continue;
+            const target = path.join(lfsObjects, entry);
+            if (yield* fileSystem.exists(target)) continue;
+            yield* fileSystem.makeDirectory(path.dirname(target), { recursive: true });
+            yield* fileSystem.rename(path.join(objects, entry), target);
+          }
+        },
+        Effect.mapError(
+          (cause) =>
+            new VcsCheckpointStorageError({ operation, cwd: input.cwd, stage: "publish", cause }),
+        ),
+      );
       const commitEnv: NodeJS.ProcessEnv = {
         GIT_INDEX_FILE: tempIndexPath,
         GIT_OBJECT_DIRECTORY: privateObjects,
@@ -1648,6 +1671,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               ),
           }),
         );
+
+        if (privateLfsStorage !== undefined) yield* publishLfsObjects(privateLfsStorage);
 
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
 
