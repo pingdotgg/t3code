@@ -326,12 +326,13 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
         Layer.effect(
           Workflows.Workflows,
           Effect.gen(function* () {
-            if (builds++ === 0) {
+            const built = builds++;
+            if (built === 0) {
               yield* Effect.addFinalizer(() =>
                 Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
               );
             }
-            return Workflows.disabled;
+            return { ...Workflows.disabled, start: () => Effect.succeed({ runId: `${built}` }) };
           }),
         ),
     );
@@ -339,8 +340,15 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
     yield* Effect.gen(function* () {
       const workflows = yield* Workflows.Workflows;
       const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
-      const saving = yield* Effect.forkChild(definitions.save("greet.ts", greet("hi")));
+      const saving = yield* Effect.forkChild(
+        definitions.save("hold.ts", hold.replace("version: 1", "version: 2")),
+      );
       yield* Deferred.await(closing);
+      // hold@1 is going away: the old engine must not take a run that nothing would execute.
+      const starting = yield* Effect.forkChild(
+        workflows.start("hold", {}, { idempotencyKey: "k", version: 1 }),
+        { startImmediately: true },
+      );
 
       const answered = yield* Effect.all([
         workflows.list(),
@@ -356,6 +364,7 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
       );
       assert.isTrue(Option.isSome(answered));
       yield* Fiber.join(saving);
+      assert.strictEqual((yield* Fiber.join(starting)).runId, "1");
     }).pipe(Effect.provide(runtime), Effect.scoped);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

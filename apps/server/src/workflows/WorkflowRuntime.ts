@@ -307,6 +307,10 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   // One reload at a time, and callers while the next engine builds wait for it.
   const lock = yield* Semaphore.make(1);
   let ready = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
+  /** The engine the reload in progress brings up; `ready` itself when none is in progress. */
+  let coming = ready;
+  /** While the old engine drains, the definitions the next one runs. */
+  let replacing: ReadonlyArray<WorkflowDefinition> | undefined;
   let engineScope: Scope.Closeable | undefined;
   let running: ReadonlyArray<WorkflowDefinition> = [];
   let imported = false;
@@ -370,13 +374,16 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const boot = Effect.fn("WorkflowRuntime.boot")(
     function* (definitions: ReadonlyArray<WorkflowDefinition>) {
       const previous = running;
-      // Callers keep the old engine while it waits on its in-flight steps. The cluster keeps a
-      // run started meanwhile for the next engine to take up.
-      if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
-      engineScope = undefined;
       const next = (yield* Deferred.isDone(ready))
         ? Deferred.makeUnsafe<Workflows.Workflows["Service"]>()
         : ready;
+      coming = next;
+      // Callers keep the old engine while it waits on its in-flight steps. The cluster keeps a
+      // run started meanwhile for the next engine to take up.
+      replacing = definitions;
+      if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
+      engineScope = undefined;
+      replacing = undefined;
       ready = next;
       running = [];
       if (definitions.length === 0 && !imported && !(yield* kept)) {
@@ -592,6 +599,33 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   );
 
   const current = Effect.suspend(() => Deferred.await(ready));
+  type Definitions = ReadonlyArray<WorkflowDefinition>;
+  // During a drain, a start goes to the old engine only when the next one would start the same
+  // version (or refuse it too), so no run is left without its definition. Others wait for it.
+  const starting = (chosen: (definitions: Definitions) => WorkflowDefinition | undefined) =>
+    Effect.suspend(() => {
+      const tag = (definitions: Definitions) => {
+        const definition = chosen(definitions);
+        return definition === undefined ? undefined : engineTag(definition);
+      };
+      const same = replacing === undefined || tag(running) === tag(replacing);
+      return Deferred.await(same ? ready : coming);
+    });
+  const started = (name: string | undefined, version?: number) => (definitions: Definitions) => {
+    const versions = definitions.filter((definition) => definition.name === name);
+    return version === undefined
+      ? versions.toSorted((left, right) => right.version - left.version)[0]
+      : versions.find((definition) => definition.version === version);
+  };
+  const hooked = (id: string) => (definitions: Definitions) =>
+    started(
+      definitions.find((definition) =>
+        definition.triggers.some(
+          (trigger) =>
+            trigger.kind === "webhook" && Workflows.hookId(definition.name, trigger.name) === id,
+        ),
+      )?.name,
+    )(definitions);
   // A watcher outlives the engine it began on: each reload hands it the next one's stream.
   const followed = <A>(pick: (service: Workflows.Workflows["Service"]) => Stream.Stream<A>) =>
     SubscriptionRef.changes(state).pipe(
@@ -601,7 +635,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     );
   const service = Workflows.Workflows.of({
     start: Effect.fn("Workflows.start")(function* (...input) {
-      return yield* (yield* current).start(...input);
+      return yield* (yield* starting(started(input[0], input[2].version))).start(...input);
     }),
     signal: Effect.fn("Workflows.signal")(function* (...input) {
       return yield* (yield* current).signal(...input);
@@ -641,7 +675,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     unfinished: Effect.flatMap(current, (live) => live.unfinished),
     hooks: Effect.flatMap(current, (live) => live.hooks),
     deliver: Effect.fn("Workflows.deliver")(function* (...input) {
-      return yield* (yield* current).deliver(...input);
+      return yield* (yield* starting(hooked(input[0].hookId))).deliver(...input);
     }),
     stored: Effect.fn("Workflows.stored")(function* (...input) {
       return yield* (yield* current).stored(...input);
