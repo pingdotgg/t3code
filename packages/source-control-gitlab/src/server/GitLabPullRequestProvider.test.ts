@@ -254,6 +254,31 @@ describe("getChangeRequest base freshness", () => {
     }),
   );
 
+  it.effect("carries the approval decision the list reads", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const changeRequest = yield* provider.getChangeRequest({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "gitlab.com",
+        number: 7,
+      });
+
+      expect(changeRequest.reviewDecision).toBe("approved");
+    }).pipe(
+      Effect.provide(
+        Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+          getMergeRequestDetail: () => Effect.succeed(detail),
+          getProjectMergeCapabilities: () =>
+            Effect.succeed({ merge: true, squash: true, rebase: true }),
+          listMergeRequestStats: () => Effect.succeed([]),
+          getListStates: () =>
+            Effect.succeed(new Map([[7, { reviewDecision: "approved", checksState: null }]])),
+        }),
+      ),
+    ),
+  );
+
   it.effect("says nothing at all where GitLab counted nothing", () =>
     Effect.gen(function* () {
       const changeRequest = yield* readWith({});
