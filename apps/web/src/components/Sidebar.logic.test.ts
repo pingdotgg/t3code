@@ -1738,7 +1738,15 @@ describe("resolveSidebarFolderDot", () => {
       runtime: { ...runtime, status: "failed" as const, lastErrorClass: "usage_limit" as const },
     };
 
+    const failed = { ...idle, runtime: { ...runtime, status: "failed" as const } };
+    const stopped = { ...idle, runtime: { ...runtime, status: "idle" as const } };
+
     expect(resolveSidebarFolderDot([idle])).toBeNull();
+    expect(resolveSidebarFolderDot([idle, stopped])).toBeNull();
+    expect(resolveSidebarFolderDot([failed])).toBe("failed");
+    expect(resolveSidebarFolderDot([working, failed])).toBe("failed");
+    expect(resolveSidebarFolderDot([unread, failed])).toBe("failed");
+    expect(resolveSidebarFolderDot([failed, limited])).toBe("attention");
     // A waiting thread stays quiet even with an unread completion, like its row.
     expect(
       resolveSidebarFolderDot([{ ...unread, runtime: { ...runtime, status: "idle" as const } }]),
