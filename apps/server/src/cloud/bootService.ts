@@ -19,6 +19,7 @@ import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./userManagerOom.ts";
 import {
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
@@ -329,12 +330,21 @@ function systemdManager(input: {
     command: "systemctl",
     args: ["--user", "reset-failed", BOOT_SERVICE_UNIT_FILE],
   };
-  const prepareActivation = [
+  const reload = [
     {
       step: "reloading systemd user units",
       command: "systemctl",
       args: ["--user", "daemon-reload"],
     },
+    {
+      step: "restoring systemd-oomd's watch on the user manager",
+      optional: true,
+      command: "/bin/sh",
+      args: ["-c", RESTORE_OOMD_WATCH_SCRIPT],
+    },
+  ];
+  const prepareActivation = [
+    ...reload,
     {
       step: "enabling the service",
       command: "systemctl",
@@ -388,13 +398,7 @@ function systemdManager(input: {
         timeout: STOP_STEP_TIMEOUT,
       },
     ],
-    finalize: [
-      {
-        step: "reloading systemd user units",
-        command: "systemctl",
-        args: ["--user", "daemon-reload"],
-      },
-    ],
+    finalize: reload,
   };
 }
 
@@ -1020,12 +1024,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   let { manager: detectedManager, unitPath, plan } = resolveTarget(systemdUnitDir);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
   const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
+  const canonicalPath = (dir: string) =>
+    fs.realPath(dir).pipe(Effect.orElseSucceed(() => path.resolve(dir)));
+  const isThisHome = (dir: string) =>
+    Effect.zipWith(canonicalPath(dir), canonicalPath(input.baseDir), (a, b) => a === b);
   const otherBaseDirOf = (unit: string) => {
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    return installedBaseDir !== undefined &&
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-      ? installedBaseDir
-      : undefined;
+    return installedBaseDir === undefined
+      ? Effect.undefined
+      : Effect.map(isThisHome(installedBaseDir), (same) => (same ? undefined : installedBaseDir));
   };
   const writeDurably = (filePath: string, contents: string | Uint8Array) =>
     Effect.scoped(
@@ -1257,7 +1264,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const refuseOtherBaseDir = Effect.gen(function* () {
       const existingUnit = yield* readUnit().pipe(Effect.option);
       const installedBaseDir = Option.isSome(existingUnit)
-        ? otherBaseDirOf(existingUnit.value)
+        ? yield* otherBaseDirOf(existingUnit.value)
         : undefined;
       if (installedBaseDir !== undefined) {
         return yield* new BootServiceOtherBaseDirError({
@@ -1487,10 +1494,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const unit = yield* readUnit().pipe(Effect.option);
     if (Option.isNone(unit)) return "skipped" as const;
     const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
+    if (installedBaseDir === undefined || !(yield* isThisHome(installedBaseDir))) {
       return "skipped" as const;
     }
     // Writes no state, and the launcher lets an update transition in flight
@@ -1520,10 +1524,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const unit = yield* readUnit().pipe(Effect.option);
     if (Option.isNone(unit)) return yield* operation;
     const installedBaseDir = bootServiceBaseDirOf(unit.value);
-    if (
-      installedBaseDir === undefined ||
-      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
-    ) {
+    if (installedBaseDir === undefined || !(yield* isThisHome(installedBaseDir))) {
       return yield* operation;
     }
     // `is-active` misses crash-looping systemd units; launchd can be loaded without a pid.
@@ -1603,7 +1604,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
-    const otherBaseDir = otherBaseDirOf(unit);
+    const otherBaseDir = yield* otherBaseDirOf(unit);
+    // Another spelling of this home is current; repairing it would flip the unit between spellings.
+    const thisHomeUnit =
+      installedBaseDir !== undefined && otherBaseDir === undefined
+        ? unit.replaceAll(installedBaseDir, () => input.baseDir)
+        : unit;
     const normalizeUnit = (contents: string) =>
       manager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -1625,7 +1631,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       current:
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
-        normalizeUnit(unit) === normalizeUnit(manager.render(planForUnit(unit))) &&
+        normalizeUnit(thisHomeUnit) === normalizeUnit(manager.render(planForUnit(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
