@@ -77,9 +77,11 @@ const ICON_SOURCE_FILES = [
 ] as const;
 
 const HTML_LINK_RE = /<link\b[^<>]*>/gi;
-const HTML_ICON_REL_RE = /\brel=["'](?:icon|shortcut icon)["']/i;
+// `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
+const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
+const HTML_ICON_REL_RE = new RegExp(String.raw`\brel=${ICON_REL_VALUE}`, "i");
 const HTML_ICON_HREF_RE = /\bhref=["']([^"'?]+)/i;
-const ICON_REL_RE = /\brel\s*:\s*["'](?:icon|shortcut icon)["']/i;
+const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
 export class ProjectFaviconResolutionError extends Schema.TaggedError<ProjectFaviconResolutionError>()(
