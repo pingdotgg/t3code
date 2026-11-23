@@ -213,19 +213,20 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
             delta: { stop_reason: "end_turn", stop_sequence: null },
             usage: { output_tokens: words },
           }),
-          event("message_stop", {}),
+        ),
+      ),
+      // Stamped as the last event is produced, so it is set before any client can see the end.
+      Stream.concat(
+        Stream.fromEffect(
+          Effect.map(nowMs, (now) => {
+            entry.endedAt = now;
+            return event("message_stop", {});
+          }),
         ),
       ),
       Stream.encodeText,
     );
-    const recorded = events.pipe(
-      Stream.ensuring(
-        Effect.map(nowMs, (now) => {
-          entry.endedAt = now;
-        }),
-      ),
-    );
-    return HttpServerResponse.stream(recorded, {
+    return HttpServerResponse.stream(events, {
       contentType: "text/event-stream",
       headers: { "cache-control": "no-cache" },
     });
