@@ -877,7 +877,37 @@ fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
 
 /// Sets `queueHeld` on every queued run, so they wait for the user.
 pub(crate) fn hold_queue(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    hold_queued(tx, thread_id, Held::All)
+}
+
+/// Which queued runs a hold leaves free.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Held {
+    All,
+    /// A provider failure leaves buffered provider notifications free: they replay output the
+    /// CLI already produced and prompt nothing (T3's `startNextQueuedRun`).
+    ExceptBufferedWakes,
+}
+
+/// T3's `isBufferedProviderNotification`: a wake the provider buffered, not a delegated result.
+fn is_buffered_provider_notification(message: &Value) -> bool {
+    message["createdBy"] == "agent"
+        && message["creationSource"] == "provider"
+        && message["notification"].is_object()
+        && is_null(message, "delegatedCompletion")
+}
+
+pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> StoreResult<()> {
     for mut run in queued_runs(tx, thread_id)? {
+        if held == Held::ExceptBufferedWakes && run["queueHeld"] != true {
+            let message = match run["userMessageId"].as_str() {
+                Some(id) => tx.entity(thread_id, "messages", id)?,
+                None => None,
+            };
+            if message.is_some_and(|m| is_buffered_provider_notification(&m)) {
+                continue;
+            }
+        }
         if run["queueHeld"] != true {
             run["queueHeld"] = json!(true);
             let id = run["id"].as_str().unwrap_or_default().to_owned();

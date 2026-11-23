@@ -22,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
+use crate::commands::{Held, failure, finish_run_as, hold_queued, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::Draft;
@@ -373,7 +373,7 @@ impl Inner {
                 // late end of a run that already ended (a start failing after Force stop)
                 // holds nothing.
                 if held_on_failure && ended {
-                    hold_queue(tx, &thread_id)?;
+                    hold_queued(tx, &thread_id, Held::ExceptBufferedWakes)?;
                 }
                 // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
                 // admitted meanwhile runs after it and sees the run completed. The capture ends

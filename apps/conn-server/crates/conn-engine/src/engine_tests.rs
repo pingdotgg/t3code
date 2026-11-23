@@ -6055,3 +6055,50 @@ async fn an_async_question_is_answered_with_one_message_and_one_run() {
         1
     );
 }
+
+/// A provider failure holds the queue, but a buffered provider notification still starts: it
+/// replays output the CLI already produced (T3's "starts a provider wake queued behind a run
+/// that fails").
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_failure_holds_messages_and_starts_a_buffered_wake() {
+    let db = TempDb::new("failure-buffered-wake");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    // Hold only effect execution so every message is queued before the fake provider fails.
+    let gate = engine
+        .inner()
+        .reserve_effect(crate::commands::Effect::CloseSession {
+            thread_id: "t1".into(),
+        });
+    dispatch(&engine, message("t1", "active", "fail")).await;
+    let queued =
+        |id, text| message_with("t1", id, text, json!({"type":"queue_after_active"}), None);
+    dispatch(&engine, queued("later", "Queued by the user")).await;
+    let notification = json!({"source":{"kind":"background_task"},"outcome":"updated",
+        "summary":"Background activity updated"});
+    let mut wake = queued("wake", "Background task completed.");
+    wake["createdBy"] = json!("agent");
+    wake["creationSource"] = json!("provider");
+    wake["notification"] = notification.clone();
+    dispatch(&engine, wake).await;
+    // A wake the server queued is not provider output: it waits with the user's message.
+    let mut server = queued("server", "Monitor fired.");
+    server["createdBy"] = json!("agent");
+    server["creationSource"] = json!("server");
+    server["notification"] = notification;
+    dispatch(&engine, server).await;
+    drop(gate);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(
+        run_statuses(&p),
+        [
+            ("run:t1:1".into(), "failed".into()),
+            ("run:t1:2".into(), "queued".into()),
+            ("run:t1:3".into(), "completed".into()),
+            ("run:t1:4".into(), "queued".into()),
+        ]
+    );
+    assert_eq!(p["runs"][1]["queueHeld"], true);
+    assert_eq!(p["runs"][3]["queueHeld"], true);
+}
