@@ -7,6 +7,19 @@ const Window = Schema.Struct({
   rssPeakMB: Schema.Number,
   rssMB: Schema.Number,
   heapAfterGcMB: Schema.Number,
+  // Files written before these were recorded still decode, and compare shows them as n/a.
+  /** Event-loop delay past the 10 ms sampling interval, from a histogram inside the server. */
+  loopDelayP50Ms: Schema.optional(Schema.Number),
+  loopDelayP99Ms: Schema.optional(Schema.Number),
+  loopDelayMaxMs: Schema.optional(Schema.Number),
+  /**
+   * Delay samples taken. Each can wake an idle loop, so they sit inside `wakeupsPerSec` (up to
+   * 100/s at rest, near none under load, when the loop is already awake); not compared.
+   */
+  loopSamples: Schema.optional(Schema.Number),
+  /** GC events and their summed pause in the window, from a `gc` PerformanceObserver. */
+  gcCount: Schema.optional(Schema.Number),
+  gcPauseMs: Schema.optional(Schema.Number),
 });
 export type Window = typeof Window.Type;
 const Spread = Schema.Struct({ median: Schema.Number, p90: Schema.Number });
@@ -35,6 +48,58 @@ export const Measured = Schema.Struct({
   scaling: Schema.optional(Scaling),
   streaming: Schema.optional(Window),
   soak: Schema.optional(Soak),
+  /** One web-like client attached over the WebSocket RPC, with N threads subscribed. */
+  clients: Schema.optional(
+    Schema.Struct({
+      /** The quiet window by subscribed thread count. */
+      attached: Schema.Record(Schema.String, Window),
+      /** Every client drops and reconnects at once. */
+      storm: Schema.Struct({
+        clients: Schema.Number,
+        resubscribedMs: Schema.Number,
+        loopDelayP99Ms: Schema.Number,
+        loopDelayMaxMs: Schema.Number,
+      }),
+    }),
+  ),
+  /** 50 short turns back to back on one thread. */
+  pipeline: Schema.optional(
+    Schema.Struct({
+      /** Send to the agent's API request. */
+      toRequestMs: Spread,
+      /** The reply's last byte to the CLI seeing a finished run: turn end and checkpoint. */
+      turnEndMs: Spread,
+      /** Wall time per turn, the CLI's own start included. */
+      msPerTurn: Schema.Number,
+      loopDelayP99Ms: Schema.Number,
+      loopDelayMaxMs: Schema.Number,
+      gcPauseMs: Schema.Number,
+    }),
+  ),
+  /** A server on a copy of the developer's real database, its projects backed by clones. */
+  busy: Schema.optional(
+    Schema.Struct({
+      readyMs: Schema.Number,
+      projects: Schema.Number,
+      /** Off-heap MB the server held so its RSS is a long-lived server's; not compared. */
+      ballastMB: Schema.Number,
+      rest: Window,
+      shellMs: Spread,
+      shellKB: Schema.Number,
+      /** The seeded thread with the most messages, opened through its bounded HTTP snapshot. */
+      largeThread: Schema.optional(
+        Schema.Struct({
+          messages: Schema.Number,
+          openMs: Spread,
+          KB: Schema.Number,
+          /** Heap after GC once it was opened, less before. */
+          heapMB: Schema.Number,
+        }),
+      ),
+      /** Back-to-back turns in a clone, each ending in a checkpoint. */
+      git: Window,
+    }),
+  ),
 });
 export type Measured = typeof Measured.Type;
 
@@ -143,6 +208,13 @@ function noiseFloor(metric: string) {
   if (metric.endsWith("cpuPct")) return 1;
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
+  if (metric.endsWith("KB")) return 20;
+  if (metric.includes(".shellMs.") || metric.includes(".openMs.")) return 50;
+  if (metric.endsWith("loopDelayP50Ms")) return 2;
+  if (metric.endsWith("loopDelayP99Ms")) return 5;
+  if (metric.endsWith("loopDelayMaxMs")) return 20;
+  if (metric.endsWith("gcPauseMs")) return 10;
+  if (metric.endsWith("gcCount")) return 20;
   return 300;
 }
 
@@ -193,11 +265,34 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   const improved: string[] = [];
   let compared = 0;
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
-    if (metric === "soak.minutes" || metric.startsWith("scaling.points")) continue;
+    if (
+      metric === "soak.minutes" ||
+      metric.endsWith("loopSamples") ||
+      metric === "busy.projects" ||
+      metric === "busy.ballastMB" ||
+      metric === "clients.storm.clients" ||
+      metric === "busy.largeThread.messages" ||
+      metric.startsWith("scaling.points")
+    ) {
+      continue;
+    }
     const x = a.get(metric);
     const y = b.get(metric);
     if (!x || !y) {
       lines.push(`| ${metric} | ${x ? median(x) : "–"} | ${y ? median(y) : "–"} | n/a | | |`);
+      continue;
+    }
+    // Wakeups include the delay sampler's only when `loopSamples` sits beside them, so a file
+    // from before the sampler and one from after measured different things. The per-thread fit
+    // comes from the quiet windows.
+    const window =
+      metric === "scaling.wakeupsPerThread"
+        ? "quiet."
+        : metric.endsWith("wakeupsPerSec")
+          ? metric.slice(0, -"wakeupsPerSec".length)
+          : "";
+    if (window && a.has(`${window}loopSamples`) !== b.has(`${window}loopSamples`)) {
+      lines.push(`| ${metric} | ${median(x)} | ${median(y)} | not comparable | | |`);
       continue;
     }
     compared++;
@@ -336,4 +431,52 @@ export function heapGrowth(
     .toSorted((a, b) => b.bytes - a.bytes)
     .slice(0, 25)
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
+}
+
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
+const spellings: ReadonlyArray<(path: string) => string> = [
+  (path) => path,
+  // Inside a JSON string, with every escape JSON applies: backslashes, quotes, control characters.
+  (path) => encodeJsonString(path).slice(1, -1),
+  (path) => path.replaceAll("\\", "/"),
+];
+
+/** How a path can appear in a database's text: as written, JSON-escaped, with forward slashes. */
+export function pathSpellings(path: string) {
+  return [...new Set(spellings.map((spell) => spell(path)))];
+}
+
+/** Each spelling of `from` with the same spelling of `to`, for a textual rewrite. */
+export function pathRewrites(from: string, to: string) {
+  const pairs = new Map(spellings.map((spell) => [spell(from), spell(to)] as const));
+  return [...pairs];
+}
+
+/**
+ * When the next activity report goes out, `intervalMs` after the previous send, and whether it
+ * starts too late to renew the lease that send took: past `latestMs`, a renewal can land after it
+ * lapsed.
+ */
+export function nextActivityReport(
+  lastSentAt: number,
+  now: number,
+  intervalMs = 25_000,
+  latestMs = 40_000,
+) {
+  const due = lastSentAt + intervalMs;
+  return { waitMs: Math.max(0, due - now), late: Math.max(due, now) - lastSentAt > latestMs };
+}
+
+/**
+ * Whether a renewal let the previous send's lease lapse: it went out past `latestMs` after that
+ * send (a stalled loop wakes late), or its answer came after the lease (`leaseMs`) ran out.
+ */
+export function activityRenewalMissed(
+  previousSentAt: number,
+  sentAt: number,
+  repliedAt: number,
+  latestMs = 40_000,
+  leaseMs = 45_000,
+) {
+  return sentAt - previousSentAt > latestMs || repliedAt - previousSentAt > leaseMs;
 }
