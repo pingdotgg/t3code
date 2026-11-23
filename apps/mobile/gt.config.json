@@ -4,7 +4,6 @@
   "src": [
     "src/**/*.{ts,tsx}",
     "../../packages/client-runtime/src/**/*.{ts,tsx}",
-    "../../packages/contracts/src/**/*.{ts,tsx}",
     "../../packages/shared/src/**/*.{ts,tsx}",
     "!**/*.test.{ts,tsx}"
   ],
