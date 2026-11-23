@@ -1269,8 +1269,13 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             }),
           );
         }
+        // Each client gets its own scope so the storm can drop them on cue; the server's scope
+        // still closes any left open when a step fails or is interrupted.
+        const clientScope = Effect.acquireRelease(Scope.make(), (scope, exit) =>
+          Scope.close(scope, exit),
+        );
         // Every client holds the shell, VCS status and one thread, then all drop and come back.
-        const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => Scope.make());
+        const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => clientScope);
         const attachAll = Effect.forEach(
           clients,
           (scope, index) =>
@@ -1285,7 +1290,7 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           concurrency: "unbounded",
           discard: true,
         });
-        const reopened = yield* Effect.forEach(clients, () => Scope.make());
+        const reopened = yield* Effect.forEach(clients, () => clientScope);
         yield* Effect.forEach(
           reopened,
           (scope, index) =>
