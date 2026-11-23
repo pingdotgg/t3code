@@ -1304,7 +1304,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             if (isNumberedWorktreePath(gitlink.path)) {
               let branch: string | null = recordedWorktreeBranches.get(gitlink.path) ?? null;
               const currentBranch =
-                branch !== null ? null : yield* readWorktreeBranchName(nestedCwd);
+                branch !== null ? null : yield* readWorktreeBranchName(nestedCwd, fileSystem, path);
               if (currentBranch !== null) {
                 const currentHead = yield* nestedGit(nestedCwd, [
                   "rev-parse",
@@ -2149,7 +2149,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             return Effect.forEach(
               numberedPaths,
               (entryPath) =>
-                readWorktreeBranchName(path.join(baseDir, entryPath)).pipe(
+                readWorktreeBranchName(path.join(baseDir, entryPath), fileSystem, path).pipe(
                   Effect.map((branch) =>
                     branch !== null
                       ? `${WORKTREE_BRANCH_TRAILER}: ${JSON.stringify([entryPath, branch])}`

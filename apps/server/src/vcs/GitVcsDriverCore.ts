@@ -4592,7 +4592,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const displayPrefix =
         options.displayPrefix ??
         (isNumberedWorktreePath(nestedPath)
-          ? formatWorktreeDisplayPrefix(nestedPath, yield* readWorktreeBranchName(nestedCwd))
+          ? formatWorktreeDisplayPrefix(
+              nestedPath,
+              yield* readWorktreeBranchName(nestedCwd, fileSystem, path),
+            )
           : nestedPath);
       const nestedDiffArgs = [
         "-c",

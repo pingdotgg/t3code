@@ -76,9 +76,7 @@ export function extractAliasedWorktreePrefix(
 }
 
 export const readWorktreeBranchName = Effect.fn("worktreeDisplayPath.readWorktreeBranchName")(
-  function* (worktreeCwd: string) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
+  function* (worktreeCwd: string, fileSystem: FileSystem.FileSystem, path: Path.Path) {
     const dotGitPath = path.join(worktreeCwd, ".git");
     const dotGitStat = yield* fileSystem.stat(dotGitPath).pipe(Effect.orElseSucceed(() => null));
     if (dotGitStat === null) return null;

@@ -110,13 +110,16 @@ describe("worktreeDisplayPath", () => {
           path.join(gitDir, "HEAD"),
           "ref: refs/heads/feat/display-names\n",
         );
-        assert.strictEqual(yield* readWorktreeBranchName(worktreeDir), "feat/display-names");
+        assert.strictEqual(
+          yield* readWorktreeBranchName(worktreeDir, fileSystem, path),
+          "feat/display-names",
+        );
 
         yield* fileSystem.writeFileString(
           path.join(gitDir, "HEAD"),
           "0123456789abcdef0123456789abcdef01234567\n",
         );
-        assert.strictEqual(yield* readWorktreeBranchName(worktreeDir), null);
+        assert.strictEqual(yield* readWorktreeBranchName(worktreeDir, fileSystem, path), null);
 
         const regularRepo = path.join(root, "regular");
         yield* fileSystem.makeDirectory(path.join(regularRepo, ".git"), { recursive: true });
@@ -124,9 +127,12 @@ describe("worktreeDisplayPath", () => {
           path.join(regularRepo, ".git/HEAD"),
           "ref: refs/heads/main\n",
         );
-        assert.strictEqual(yield* readWorktreeBranchName(regularRepo), "main");
+        assert.strictEqual(yield* readWorktreeBranchName(regularRepo, fileSystem, path), "main");
 
-        assert.strictEqual(yield* readWorktreeBranchName(path.join(root, "missing")), null);
+        assert.strictEqual(
+          yield* readWorktreeBranchName(path.join(root, "missing"), fileSystem, path),
+          null,
+        );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
