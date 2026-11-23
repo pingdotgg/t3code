@@ -157,6 +157,7 @@ import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
   PullRequestActorLabel,
   PullRequestMetaLine,
+  PullRequestReviewDecisionGlyph,
   PullRequestReviewOutcomeIcon,
   pullRequestChecksState,
   pullRequestChecksStatePresentation,
@@ -2003,6 +2004,9 @@ export function PullRequestDetailPanel({
                         )}
                       </span>
                     </span>
+                  ) : detail.reviewDecision === "approved" ? (
+                    // GitLab names no dated approvals in activity, only its decision.
+                    <PullRequestReviewDecisionGlyph decision="approved" />
                   ) : null}
                 </PullRequestMetaLine>
                 <Button

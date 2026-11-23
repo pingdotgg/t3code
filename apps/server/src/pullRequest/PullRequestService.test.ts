@@ -3708,7 +3708,8 @@ it.effect(
     }),
 );
 
-it.effect("opening detail replaces a held review decision when the host sent one", () =>
+// GitHub's detail read leaves out the latest reviews its summary read falls back on.
+it.effect("opening detail keeps the held review decision", () =>
   Effect.gen(function* () {
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const service = yield* makeService({
@@ -3718,22 +3719,16 @@ it.effect("opening detail replaces a held review decision when the host sent one
           getChangeRequestSummary: () =>
             Effect.succeed({
               ...changeRequest(1, "2026-07-02T00:00:00Z"),
-              reviewDecision: "changes-requested",
-              checksState: "passing",
-            }),
-          getChangeRequest: () =>
-            Effect.succeed({
-              ...hostedChangeRequest("body"),
               reviewDecision: "approved",
             }),
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("body"), reviewDecision: null }),
         }),
       ],
     });
     yield* service.summary(reference);
     yield* service.detail(reference);
-    const summary = yield* service.summary(reference);
-    assert.strictEqual(summary.reviewDecision, "approved");
-    assert.strictEqual(summary.checksState, "passing");
+    assert.strictEqual((yield* service.summary(reference)).reviewDecision, "approved");
   }),
 );
 

@@ -3427,7 +3427,7 @@ export const make = Effect.gen(function* () {
     detail: PullRequestDetail,
     previous: PullRequestSummary | undefined,
   ): PullRequestSummary => ({
-    // Detail still has no checksState. A defined reviewDecision is current, including null.
+    // Detail does not carry review/check summaries. Keep the last summary observation.
     ...previous,
     provider: detail.provider,
     projectId: detail.projectId,
@@ -3443,7 +3443,6 @@ export const make = Effect.gen(function* () {
     changedFiles: detail.changedFiles,
     mergeability: detail.mergeability,
     ...(detail.rebaseRequired === undefined ? {} : { rebaseRequired: detail.rebaseRequired }),
-    ...(detail.reviewDecision === undefined ? {} : { reviewDecision: detail.reviewDecision }),
     headBranch: detail.headBranch,
     baseBranch: detail.baseBranch,
     closedAt: detail.closedAt,
