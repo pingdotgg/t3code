@@ -215,6 +215,18 @@ describe("scrollLeftByWheel", () => {
     zoomTo(1.5);
     expect(feed(row, [[36_000, 100, -80]])).toEqual([row.scrollLeft]);
     await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(200, 0));
+    // 200% on 1x (ratio=2), 150% on 2x (ratio=3), and 125% on 1.5x (ratio=1.875).
+    zoomTo(2);
+    expect(feed(row, [[36_200, 100, -60]])).toEqual([row.scrollLeft]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(300, 0));
+    // Trackpad at 100% on 2x Retina still moves directly when legacy === -3 * delta.
+    expect(feed(row, [[36_400, 20, -60]])).toEqual([320]);
+    zoomTo(3);
+    expect(feed(row, [[36_600, 100, -80]])).toEqual([320]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(420, 0));
+    zoomTo(1.875);
+    expect(feed(row, [[36_800, 100, -96]])).toEqual([420]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(520, 0));
     zoomTo(1.100000023841858);
     const deltas = [11.818181, 6.363636, 20.909091];
     const positions = feed(
@@ -236,5 +248,48 @@ describe("scrollLeftByWheel", () => {
     ]);
     expect(positions).toEqual([0, 7, 16]);
     await vi.waitFor(() => expect(row.scrollLeft).toBe(56));
+  });
+
+  it("keeps an active ease alive when a direct wheel hits the left edge", async () => {
+    using row = mountRow();
+    const positions = feed(row, [
+      [50_000, 100, -120],
+      [50_016, -10, 30],
+    ]);
+    expect(positions).toEqual([0, 0]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBe(90));
+  });
+
+  it("ends a running ease when reduced motion turns on", async () => {
+    using row = mountRow();
+    using other = mountRow();
+    expect(feed(other, [[60_000, 100, -120]])).toEqual([0]);
+    expect(feed(row, [[60_001, 100, -120]])).toEqual([0]);
+    using _reduced = vi.spyOn(MediaQueryList.prototype, "matches", "get").mockReturnValue(true);
+    expect(feed(row, [[60_016, 40, -120]])).toEqual([40]);
+    await vi.waitFor(() => expect(other.scrollLeft).toBe(100));
+    expect(row.scrollLeft).toBe(40);
+  });
+
+  it("isolates wheel stream state across windows with separate timeOrigins", async () => {
+    using row = mountRow();
+    // Main window sends a trackpad delta at a high timestamp.
+    expect(feed(row, [[70_000, 7, -21]])).toEqual([7]);
+    const iframe = document.createElement("iframe");
+    document.body.append(iframe);
+    using _iframe = { [Symbol.dispose]: () => iframe.remove() };
+    const otherWin = iframe.contentWindow!;
+    const notched = {
+      deltaMode: 0,
+      deltaX: 100,
+      deltaY: 0,
+      wheelDeltaX: -120,
+      wheelDeltaY: 0,
+      timeStamp: 1_000,
+      view: otherWin,
+    } as unknown as WheelEvent;
+    scrollLeftByWheel(row, notched, 100);
+    expect(row.scrollLeft).toBe(7);
+    await vi.waitFor(() => expect(row.scrollLeft).toBe(107));
   });
 });

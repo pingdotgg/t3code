@@ -6833,6 +6833,102 @@ body {
   inherits: false;
   initial-value: 1;
 }
+@property --strip-chevron-space {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* Pane tab strip scroll chevrons (PaneTabs.tsx): mouse/fine pointer only, and
+   only on a side with hidden tabs. Touch keeps the edge fade alone. */
+[data-layout-tab-strip] {
+  scroll-padding-inline-start: calc(
+    var(--pane-join-ear, 0px) + (1.5rem + var(--strip-chevron-space)) *
+      var(--strip-overflowing-start, 0)
+  );
+  scroll-padding-inline-end: calc(
+    var(--pane-join-ear, 0px) + var(--pane-join-tail, 0px) + (1.5rem + var(--strip-chevron-space)) *
+      var(--strip-overflowing-end, 0)
+  );
+}
+
+[data-strip-scroll-button] {
+  display: none;
+}
+
+@media (any-pointer: fine) {
+  [data-layout-tab-strip] {
+    --strip-chevron-space: 1.5rem;
+  }
+
+  [data-strip-scroll-button] {
+    display: inline-flex;
+    visibility: hidden;
+    opacity: 0;
+    scale: 0.75;
+    pointer-events: none;
+    transition:
+      visibility 0s var(--panel-animation-duration, 150ms),
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][data-can-scroll] {
+    visibility: visible;
+    opacity: 1;
+    scale: 1;
+    pointer-events: auto;
+    transition:
+      visibility 0s 0s,
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][data-can-scroll]:active {
+    scale: 0.97;
+  }
+
+  /* At an end, keep the hovered button disabled at half opacity so a fast
+     extra click does not hit the tab underneath, then hide it 500ms after the
+     last press. Changing min-width with visibility forces Chromium to refresh
+     the cursor and hover hit-test without pointer movement. */
+  [data-strip-scroll-button][aria-disabled="true"]:is(:hover, :focus-visible) {
+    visibility: visible;
+    opacity: 0.5;
+    scale: 1;
+    pointer-events: auto;
+    transition:
+      visibility 0s 0s,
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][aria-disabled="true"]:hover:not(:active, :focus-visible) {
+    visibility: hidden;
+    min-width: 1px;
+    transition:
+      visibility 0s 500ms,
+      min-width 0s 500ms allow-discrete,
+      opacity var(--panel-animation-duration, 150ms) ease-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-strip-scroll-button],
+  [data-strip-scroll-button][data-can-scroll],
+  [data-strip-scroll-button][aria-disabled="true"]:is(:hover, :focus-visible) {
+    transition: none;
+  }
+
+  [data-strip-scroll-button][aria-disabled="true"]:hover:not(:active, :focus-visible) {
+    transition:
+      visibility 0s 500ms,
+      min-width 0s 500ms allow-discrete;
+  }
+}
 
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
@@ -6948,7 +7044,6 @@ body {
         calc(var(--pane-join-drop) * -1 - 1px) calc(var(--pane-join-ear) * -1);
       /* Its padding passes presses on to the controls it runs under. */
       pointer-events: none;
-      scroll-padding-inline: var(--pane-join-ear);
       /* Every title gets the active one's room, so activating a tab moves no
          other tab under the sliding shape. */
       --pane-inactive-tab-title-max: 17rem;

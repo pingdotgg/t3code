@@ -565,8 +565,6 @@ export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly continuesPromptStack?: boolean;
   /** A work row or closed fold directly above a prompt keeps a full turn gap below it. */
   readonly precedesPrompt?: boolean;
-  /** A reply whose own turn goes on below it, such as with a notice, sits close to that row. */
-  readonly turnTailBelow?: boolean;
 };
 
 type MessagesTimelineRowContent =
@@ -688,6 +686,8 @@ type MessagesTimelineRowContent =
       projectedItem?: OrchestrationV2ProjectedTurnItem;
       switchHandoff?: Extract<OrchestrationV2ProjectedTurnItem["item"], { type: "handoff" }>;
       showAssistantMeta: boolean;
+      /** The footer moved to an assistant-meta row below trailing rows of this run. */
+      assistantMetaBelow?: boolean;
       suppressEmptyResponse?: boolean;
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
@@ -1960,7 +1960,8 @@ function attachTrailingToolGroupsToAssistant(
       }
       if (
         candidate.kind === "event" &&
-        candidate.resourceSummary &&
+        (candidate.resourceSummary ||
+          candidate.projectedItem.item.type === "run_interrupt_result") &&
         candidate.projectedItem.item.runId === runId
       ) {
         hasTrailingToolGroup = true;
@@ -1976,6 +1977,8 @@ function attachTrailingToolGroupsToAssistant(
           candidate.groupedEntries.some(
             (entry) =>
               workLogEntryIsToolLike(entry) ||
+              entry.itemType === "system_notice" ||
+              entry.itemType === "notification" ||
               (entry.projectedItem?.item.type === "error" &&
                 entry.projectedItem.item.status === "failed"),
           )
@@ -2007,7 +2010,12 @@ function attachTrailingToolGroupsToAssistant(
   const result: MessagesTimelineRow[] = [];
   for (const [index, row] of rows.entries()) {
     if (row.kind === "message" && messageRowsWithoutMeta.has(row.id)) {
-      result.push({ ...row, showAssistantMeta: false, showAssistantCopyButton: false });
+      result.push({
+        ...row,
+        showAssistantMeta: false,
+        showAssistantCopyButton: false,
+        assistantMetaBelow: true,
+      });
     } else {
       result.push(row);
     }
@@ -3261,19 +3269,6 @@ function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesT
           : {}),
       };
     }
-    if (
-      (row.kind === "message" && row.message.role === "assistant") ||
-      row.kind === "assistant-meta"
-    ) {
-      const runId = row.message.runId;
-      const turnTailBelow =
-        runId != null &&
-        ((next?.kind === "work" && next.groupedEntries.every((entry) => entry.runId === runId)) ||
-          (next?.kind === "event" &&
-            next.projectedItem.item.type === "run_interrupt_result" &&
-            next.projectedItem.item.runId === runId));
-      return (row.turnTailBelow ?? false) === turnTailBelow ? row : { ...row, turnTailBelow };
-    }
     if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
     const own = timelineRowIsOwnUserMessage(row);
     const continuesPromptStack = timelineRowIsUserPrompt(next);
@@ -4260,7 +4255,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.superseded !== b.superseded) return false;
   if (a.continuesWorkLog !== b.continuesWorkLog) return false;
   if (a.precedesPrompt !== b.precedesPrompt) return false;
-  if (a.turnTailBelow !== b.turnTailBelow) return false;
 
   switch (a.kind) {
     case "background-activity": {
@@ -4418,6 +4412,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.projectedItem === bm.projectedItem &&
         a.switchHandoff === bm.switchHandoff &&
         a.showAssistantMeta === bm.showAssistantMeta &&
+        a.assistantMetaBelow === bm.assistantMetaBelow &&
         a.suppressEmptyResponse === bm.suppressEmptyResponse &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
