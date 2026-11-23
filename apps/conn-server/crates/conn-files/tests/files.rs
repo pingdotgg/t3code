@@ -162,6 +162,25 @@ fn reads_stay_inside_the_root_and_out_of_server_state() {
     assert!(result.truncated);
     assert_eq!(result.byte_length, big.len() as i64);
     assert_eq!(result.contents.len(), 1024 * 1024);
+
+    // T3 "rejects files with invalid UTF-8": U+FFFD would overwrite Latin-1 bytes on save.
+    fs::write(f.project.join("latin1.txt"), b"name=caf\xe9\n").unwrap();
+    assert_eq!(read(&f, "latin1.txt").unwrap_err(), Failure::BinaryFile);
+    // An incomplete last character is invalid when the whole file was read.
+    fs::write(f.project.join("cut.txt"), b"a\xe2\x82").unwrap();
+    assert_eq!(read(&f, "cut.txt").unwrap_err(), Failure::BinaryFile);
+    // T3 "drops a multibyte character split by the read limit".
+    let mut split = vec![b'a'; 1024 * 1024 - 1];
+    split.extend_from_slice("€\n".as_bytes());
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    let result = read(&f, "split.txt").unwrap();
+    assert!(result.truncated);
+    assert_eq!(result.byte_length, split.len() as i64);
+    assert_eq!(result.contents, "a".repeat(1024 * 1024 - 1));
+    // Invalid bytes before the limit are still refused.
+    split[10] = 0xe9;
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    assert_eq!(read(&f, "split.txt").unwrap_err(), Failure::BinaryFile);
 }
 
 #[test]
