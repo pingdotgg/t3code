@@ -2,8 +2,11 @@
 
 ## Primitives
 
-Controls come from [`components/ui`](../../apps/web/src/components/ui).
-[AGENTS.md](../../AGENTS.md#taste) says how to use and extend them.
+Controls come from [`components/ui`](../../apps/web/src/components/ui), and those exports own
+their look. Pick a `variant` or `size`; do not restyle one with `className`. If none fits and the
+look is a generic concept, add a variant to the component; a look that belongs to one feature stays
+in that feature's own component, not in `components/ui`. Layout classes (width, flex, margin,
+position) belong on the parent. `shadcn/no-restyle` fails lint on violations.
 
 Don't style a raw `<button>`, `<input>`, `<select>`, or `<textarea>` to look like a control a
 primitive provides. Raw elements are right when the element isn't that control: semantic rows, tabs,

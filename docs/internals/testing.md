@@ -1,6 +1,6 @@
 # Testing
 
-Rules for writing tests, and for asking for them in review. AGENTS.md carries the same writing rules under Verifying; change both together.
+Rules for writing tests, and for asking for them in review.
 
 ## What to test
 
