@@ -243,16 +243,13 @@ function wrapCommandForCompletion(
       return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
       // The closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
-      // Interactive fish leaves a body that fails to parse in its editor, so it is parse-checked first, except on
-      // fish before 3.3 (no --no-config) or when it uses an abbreviation, which only the editor expands. A failed
-      // check reads away the lines typed after it, so none are left in the editor of a shell a retry reuses.
+      // Interactive fish leaves a body that fails to parse in its editor, so it is parse-checked first (fish before
+      // 3.2 rejects unknown commands there). A failed check reads away the lines typed after it, so a retry finds an
+      // empty editor, then prints the error last so the setup output tail still shows it.
       return [
-        "begin; if string match -qr '^(3\\.([3-9]|[1-9][0-9])|[4-9]|[1-9][0-9])\\.' -- $version",
-        "and not abbr --show | string match -q -- '* --regex *'",
-        "set -l a (abbr --list | string escape --style=regex)",
-        `if test (count $a) -eq 0; or not string match -qr -- '(^|[\\s;|&(])('(string join '|' -- $a)')($|[\\s;|&)])' ${quoteFish(body)}`,
-        `printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-config --no-execute; or begin; set -l s $status; for __t3i in (seq ${body.split("\r").length + 2}); read -l --prompt-str '' __t3l; end; printf '\\n${sentinel}%s\\n' $s; end`,
-        `end; end; end\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`,
+        "begin; if string match -qr '^(3\\.([2-9]|[1-9][0-9])|[4-9]|[1-9][0-9])\\.' -- $version",
+        `set -l e (printf '%s' ${quoteFish(body)} | ${quoteFish(shellPath)} --no-execute 2>&1); or begin; set -l s $status; for __t3i in (seq ${body.split("\r").length + 2}); read -l --prompt-str '' __t3l; end; printf '%s\\n' $e; printf '\\n${sentinel}%s\\n' $s; end`,
+        `end; end\rbegin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`,
       ].join("; ");
     case "nushell": {
       const escaped = command.replace(/["\\\x00-\x1f]/g, (char) =>
