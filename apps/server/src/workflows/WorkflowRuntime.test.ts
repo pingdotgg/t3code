@@ -3,7 +3,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -310,6 +312,52 @@ it.effect(
         );
       }).pipe(Effect.provide(runtime), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("reads and deliveries answer while a reload waits on the old engine's steps", () =>
+  Effect.gen(function* () {
+    // The first engine stands in for one with a step in flight: it ends only when let go.
+    const closing = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let builds = 0;
+    const { runtime } = yield* setup(
+      (real) => ({ ...real, watch: () => Stream.never }),
+      () =>
+        Layer.effect(
+          Workflows.Workflows,
+          Effect.gen(function* () {
+            if (builds++ === 0) {
+              yield* Effect.addFinalizer(() =>
+                Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+              );
+            }
+            return Workflows.disabled;
+          }),
+        ),
+    );
+
+    yield* Effect.gen(function* () {
+      const workflows = yield* Workflows.Workflows;
+      const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      const saving = yield* Effect.forkChild(definitions.save("greet.ts", greet("hi")));
+      yield* Deferred.await(closing);
+
+      const answered = yield* Effect.all([
+        workflows.list(),
+        workflows.deliver({
+          hookId: "h",
+          token: "t",
+          request: { method: "POST", headers: {}, query: "", body: "" },
+        }),
+      ]).pipe(
+        Effect.timeoutOption("1 second"),
+        Effect.raceFirst(Effect.forever(TestClock.adjust("100 millis"))),
+        Effect.ensuring(Deferred.succeed(release, undefined)),
+      );
+      assert.isTrue(Option.isSome(answered));
+      yield* Fiber.join(saving);
+    }).pipe(Effect.provide(runtime), Effect.scoped);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("a file that never finishes loading is given up on, and later files still load", () =>
