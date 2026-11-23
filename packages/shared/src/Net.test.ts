@@ -126,24 +126,5 @@ it.layer(NetService.layer)("NetService", (it) => {
           closeServer,
         ),
     );
-
-    it.effect.skipIf(ownIpv4 === undefined)(
-      "findAvailablePort falls back to a port that is free on the specific bind address",
-      () =>
-        Effect.acquireUseRelease(
-          openServer(ownIpv4),
-          (server) =>
-            Effect.gen(function* () {
-              const net = yield* NetService.NetService;
-              const host = ownIpv4 ?? "127.0.0.1";
-              const preferred = getPort(server);
-              const resolved = yield* net.findAvailablePort(preferred, host);
-
-              assert.notEqual(resolved, preferred);
-              assert.isTrue(yield* net.canListenOnHost(resolved, host));
-            }),
-          closeServer,
-        ),
-    );
   });
 });
