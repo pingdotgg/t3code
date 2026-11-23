@@ -27,6 +27,8 @@ import {
   listedWorkflowRuns,
   workflowRunLists,
   workflowRunNow,
+  workflowKindCounts,
+  workflowRunAsksKind,
   workflowTriggerLine,
   type WorkflowListTab,
   type WorkflowRunNode,
@@ -35,6 +37,9 @@ import {
 
 const WORKFLOWS_GUIDE_URL = "https://github.com/pingdotgg/t3code/blob/main/docs/user/workflows.md";
 const EVERY_WORKFLOW = "";
+const EVERY_KIND = "";
+const OTHER_KIND = "other";
+const kindValue = (kind: string | null) => (kind === null ? OTHER_KIND : `kind:${kind}`);
 const TABS: ReadonlyArray<{ readonly value: WorkflowListTab; readonly label: string }> = [
   {
     value: "needs-you",
@@ -96,6 +101,7 @@ export function WorkflowRunsView({
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const [pickedTab, setPickedTab] = useState<WorkflowListTab | null>(null);
   const [workflow, setWorkflow] = useState(EVERY_WORKFLOW);
+  const [pickedKind, setPickedKind] = useState(EVERY_KIND);
   const gt = useGT();
   const m = useMessages();
   const [showSkipped, setShowSkipped] = useState(false);
@@ -218,8 +224,25 @@ export function WorkflowRunsView({
   const tab =
     pickedTab ??
     (selectedRunId === null || holds(opening) ? opening : holds("running") ? "running" : "all");
-  const listed = lists[tab].filter(
+  const inWorkflow = lists[tab].filter(
     (node) => section === null || workflowRunInvolves(node, section.name),
+  );
+  const kinds = tab === "needs-you" ? workflowKindCounts(snapshot.workflows, inWorkflow) : [];
+  // Only a list that asks some kind of question is worth sorting by kind.
+  const showKinds = kinds.some((entry) => entry.kind !== null);
+  // A kind with nothing left to answer shows everything, not an empty list.
+  const kind = showKinds ? kinds.find((entry) => kindValue(entry.kind) === pickedKind) : undefined;
+  const listed =
+    kind === undefined
+      ? inWorkflow
+      : inWorkflow.filter((node) => workflowRunAsksKind(node, kind.kind));
+  const kindLabel = (entry: (typeof kinds)[number]) => (
+    <span className="flex min-w-0 flex-1 items-center gap-2">
+      <span className="min-w-0 flex-1 truncate">
+        {entry.label ?? gt("Other", { $context: "questions a workflow asked without a kind" })}
+      </span>
+      <span className="shrink-0 text-muted-foreground tabular-nums">{entry.count}</span>
+    </span>
   );
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -274,6 +297,33 @@ export function WorkflowRunsView({
                         <WorkflowChip name={candidate.name} />
                         {candidate.name}
                       </span>
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            {showKinds ? (
+              <Select
+                value={kind === undefined ? EVERY_KIND : kindValue(kind.kind)}
+                onValueChange={(value) => setPickedKind(value ?? EVERY_KIND)}
+              >
+                <SelectTrigger
+                  size="sm"
+                  aria-label={gt("Kind of question", {
+                    $context: "picker that filters waiting runs by the kind of question they ask",
+                  })}
+                >
+                  <SelectValue>
+                    {kind === undefined ? gt("Every kind of question") : kindLabel(kind)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value={EVERY_KIND}>
+                    <T>Every kind of question</T>
+                  </SelectItem>
+                  {kinds.map((entry) => (
+                    <SelectItem key={kindValue(entry.kind)} value={kindValue(entry.kind)}>
+                      {kindLabel(entry)}
                     </SelectItem>
                   ))}
                 </SelectPopup>

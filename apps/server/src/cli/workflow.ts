@@ -98,6 +98,10 @@ const listCommand = Command.make("list", {
     ),
     Flag.optional,
   ),
+  tag: Flag.String("tag").pipe(
+    Flag.withDescription("Only runs that gave themselves this tag."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List workflow runs, newest first."),
@@ -113,10 +117,13 @@ const listCommand = Command.make("list", {
           },
           RunsResult,
         );
+        const tag = flags.tag;
         // A workflow skips what was never its to do, and that is most of what a trigger brings.
-        const listed = Option.isSome(flags.status)
-          ? runs
-          : runs.filter((run) => run.status !== "skipped" || run.parentRunId !== null);
+        const listed = (
+          Option.isSome(flags.status)
+            ? runs
+            : runs.filter((run) => run.status !== "skipped" || run.parentRunId !== null)
+        ).filter((run) => Option.isNone(tag) || (run.tags ?? []).includes(tag.value));
         if (flags.json) return yield* printJson(listed);
         for (const run of listed) yield* Console.log(runLine(run));
       }),
@@ -276,8 +283,21 @@ const signalCommand = Command.make("signal", {
   ),
 );
 
+const questionKind = (question: Workflows.WorkflowQuestion) => {
+  const { request } = question;
+  const kind =
+    typeof request === "object" && request !== null && !Array.isArray(request)
+      ? (request as { readonly kind?: unknown }).kind
+      : undefined;
+  return typeof kind === "string" ? kind : undefined;
+};
+
 const questionsCommand = Command.make("questions", {
   ...projectLocationFlags,
+  kind: Flag.String("kind").pipe(
+    Flag.withDescription("Only questions of this kind, as the workflow's `asks` names it."),
+    Flag.optional,
+  ),
   json: jsonFlag,
 }).pipe(
   Command.withDescription("List the questions runs are waiting on a person to answer."),
@@ -285,11 +305,15 @@ const questionsCommand = Command.make("questions", {
     withThreadTools(
       flags,
       Effect.fn("cli.workflow.questions")(function* (tools) {
-        const { questions } = yield* tools.call(
+        const { questions: all } = yield* tools.call(
           "t3_workflow",
           { action: "questions" },
           QuestionsResult,
         );
+        const kind = flags.kind;
+        const questions = Option.isSome(kind)
+          ? all.filter((question) => questionKind(question) === kind.value)
+          : all;
         if (flags.json) return yield* printJson(questions);
         for (const question of questions) {
           yield* Console.log(`${question.runId}  ${question.name}`);

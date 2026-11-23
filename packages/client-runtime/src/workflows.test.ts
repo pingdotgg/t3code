@@ -19,8 +19,10 @@ import {
   workflowAnswer,
   workflowChip,
   workflowFlowFocus,
+  workflowKindCounts,
   workflowPausedBeat,
   workflowResultLines,
+  workflowRunAsksKind,
   workflowRunInvolves,
   workflowRunLists,
   workflowRunNow,
@@ -230,6 +232,46 @@ describe("the list of runs", () => {
       ),
     ).all;
     expect(ids(invoked.filter((node) => workflowRunInvolves(node, "check")))).toEqual(["parent"]);
+  });
+
+  it("counts what waits on a person by the kind of question, in the order declared", () => {
+    const workflows = [
+      {
+        name: "triage",
+        version: 1,
+        triggers: [],
+        asks: [
+          { kind: "feature", label: "Feature wanted?" },
+          { kind: "intended", label: "Bug or intended?" },
+        ],
+      },
+    ];
+    const groups = groupWorkflowRuns(
+      workflows,
+      [
+        run("a", { workflow: "triage" }),
+        run("b", { workflow: "triage" }),
+        run("c", { workflow: "triage" }),
+        run("stuck", { status: "paused" }),
+        run("plain"),
+      ],
+      [
+        question("a", { title: "Want it?", kind: "intended" }),
+        question("b", { title: "Want it?", kind: "intended" }),
+        question("c", { title: "Want it?", kind: "unlisted" }),
+        question("plain"),
+      ],
+    );
+    const needsYou = workflowRunLists(groups)["needs-you"];
+    expect(workflowKindCounts(workflows, needsYou)).toEqual([
+      { kind: "intended", label: "Bug or intended?", count: 2 },
+      { kind: "unlisted", label: "unlisted", count: 1 },
+      { kind: null, label: null, count: 2 },
+    ]);
+    const ids = (kind: string | null) =>
+      needsYou.filter((node) => workflowRunAsksKind(node, kind)).map((node) => node.run.runId);
+    expect(ids("intended").toSorted()).toEqual(["a", "b"]);
+    expect(ids(null).toSorted()).toEqual(["plain", "stuck"]);
   });
 
   it("leaves out what a workflow skipped, but not a skipped step of another run", () => {

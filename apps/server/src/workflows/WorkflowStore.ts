@@ -39,6 +39,7 @@ export interface RunRow {
   readonly version: number | bigint;
   readonly engine_tag: string;
   readonly title: string;
+  readonly tags_json: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
   readonly result_json: string | null;
@@ -185,6 +186,7 @@ export class WorkflowStore extends Context.Service<
       result: Schema.Json,
     ) => Effect.Effect<boolean>;
     readonly runTitle: (runId: string, title: string) => Effect.Effect<void>;
+    readonly runTags: (runId: string, tags: ReadonlyArray<string>) => Effect.Effect<void>;
     /** Marks the step running and returns how many times it has now been started. */
     readonly stepStarted: (
       runId: string,
@@ -566,6 +568,12 @@ export const make = Effect.gen(function* () {
       yield* write(
         runId,
         sql`UPDATE workflow_runs SET title = ${title.slice(0, 200)} WHERE run_id = ${runId}`,
+      );
+    }),
+    runTags: Effect.fn("WorkflowStore.runTags")(function* (runId, tags) {
+      yield* write(
+        runId,
+        sql`UPDATE workflow_runs SET tags_json = ${jsonText(tags)} WHERE run_id = ${runId}`,
       );
     }),
     stepStarted: Effect.fn("WorkflowStore.stepStarted")(function* (runId, name, kind) {

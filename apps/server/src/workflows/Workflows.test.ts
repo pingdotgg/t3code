@@ -22,9 +22,21 @@ import * as TestClock from "effect/testing/TestClock";
 import { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
 import { issues, pullRequests } from "./forgeApi.ts";
 import { cancel, runs, signalAll, start } from "./stepServices.ts";
-import { type InRun, invoke, skip, sleep, step, stop, title, wait, workflow } from "./workflow.ts";
+import {
+  type InRun,
+  invoke,
+  skip,
+  sleep,
+  step,
+  stop,
+  tags,
+  title,
+  wait,
+  workflow,
+} from "./workflow.ts";
 import { type AgentResult, WorkflowAgentError, WorkflowAgents } from "./WorkflowAgents.ts";
 import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
+import WorkflowRunTagsMigration from "../persistence/Migrations/112_WorkflowRunTags.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -354,6 +366,21 @@ const fix = workflow(
         ...(payload.reshape === true ? { model: { instanceId: "codex", model: "gpt" } } : {}),
       });
       return `${written.value.branch}: ${landed.value}`;
+    }),
+);
+
+/** Tags itself and asks a question of the kind it is started with, declared or not. */
+const sorter = workflow(
+  "sorter",
+  {
+    version: 1,
+    payload: Schema.Struct({ kind: Schema.String }),
+    asks: { feature: "Feature wanted?", intended: "Bug or intended?" },
+  },
+  (payload) =>
+    Effect.gen(function* () {
+      yield* tags(["pr", "backlog", "pr"]);
+      yield* ask("sort", { kind: payload.kind, title: "Wanted?", choices: ["Yes", "No"] });
     }),
 );
 
@@ -691,7 +718,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflows-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(WorkflowsMigration, database);
+  yield* Effect.provide(Effect.andThen(WorkflowsMigration, WorkflowRunTagsMigration), database);
   const counts = yield* Ref.make<Record<string, number>>({});
   const failures = yield* Ref.make(0);
   const latch: Latch = {
@@ -708,6 +735,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     land,
     ...definitions(counts, failures, latch),
     fix,
+    sorter,
     ...triggered,
     ...family,
     ...control,
@@ -1800,6 +1828,65 @@ it.effect("cancelling a run stops its agent, and a turn a person stopped is not 
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
+
+it.effect(
+  "a question carries its declared kind and a run its tags, and an undeclared kind pauses",
+  () =>
+    Effect.gen(function* () {
+      const { boot } = yield* harness();
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const first = Option.getOrThrow(yield* Stream.runHead(workflows.watch));
+          assert.deepStrictEqual(first.workflows.find((each) => each.name === "sorter")?.asks, [
+            { kind: "feature", label: "Feature wanted?" },
+            { kind: "intended", label: "Bug or intended?" },
+          ]);
+          // A workflow that declares no kinds says none.
+          assert.notProperty(
+            first.workflows.find((each) => each.name === "review"),
+            "asks",
+          );
+          const { runId } = yield* workflows.start(
+            "sorter",
+            { kind: "feature" },
+            { idempotencyKey: "s1" },
+          );
+          const asked = yield* workflows.waitFor(runId, (run) => run.detail === "sort");
+          assert.deepStrictEqual(asked.tags, ["pr", "backlog"]);
+          const [question] = yield* workflows.questions;
+          assert.deepStrictEqual(question?.request, {
+            title: "Wanted?",
+            choices: ["Yes", "No"],
+            kind: "feature",
+          });
+
+          const typo = yield* workflows.start(
+            "sorter",
+            { kind: "feture" },
+            { idempotencyKey: "s2" },
+          );
+          const paused = yield* workflows.waitFor(typo.runId, status("paused"));
+          assert.include(paused.detail, `kind "feture", which workflow sorter does not declare`);
+          assert.include(paused.detail, `It declares "feature", "intended".`);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it("a workflow's asks must give every kind a label", () => {
+  for (const asks of [{}, { feature: "" }, ["feature"]]) {
+    assert.throws(
+      () =>
+        workflow(
+          "bad",
+          { version: 1, payload: Schema.Struct({}), asks: asks as never },
+          () => Effect.void,
+        ),
+      `workflow("bad")'s asks names each kind of question with its label`,
+    );
+  }
+});
 
 it.effect("a watcher is sent the runs again when one changes", () =>
   Effect.gen(function* () {

@@ -60,6 +60,8 @@ export class RunContext extends Context.Service<
   {
     readonly runId: string;
     readonly workflow: string;
+    /** The kinds of question the workflow declares in `asks`. */
+    readonly asks: ReadonlyArray<string>;
     readonly store: WorkflowStore.WorkflowStore["Service"];
     /** Names used so far in this pass over the body: two steps with one name would share a result. */
     readonly names: Set<string>;
@@ -605,6 +607,31 @@ export const title = (
   }).pipe(Effect.orDie);
 };
 
+/**
+ * Tag the run, to filter runs by. Called again, the later tags replace the earlier ones.
+ */
+export const tags = (
+  values: ReadonlyArray<string>,
+  ...rest: ReadonlyArray<never>
+): Effect.Effect<void, never, InRun> => {
+  if (
+    !Array.isArray(values) ||
+    rest.length > 0 ||
+    values.some((value) => typeof value !== "string" || value.trim() === "")
+  ) {
+    throw new Error('tags takes one list of words, as in tags(["pr", "backlog"]).');
+  }
+  const kept = [...new Set(values.map((value) => value.trim()))];
+  return Effect.flatMap(RunContext, (current) => {
+    let n = 0;
+    while (current.names.has(`tags/${n}`)) n++;
+    const name = `tags/${n}`;
+    return Effect.flatMap(claim(name), (run) =>
+      Activity.make({ name, execute: run.store.runTags(run.runId, kept) }),
+    );
+  }).pipe(Effect.orDie);
+};
+
 // The defaults are every workflow: a registry holds workflows of every payload and result type.
 export interface WorkflowDefinition<P = never, A = unknown> {
   /** Types only: what a run is started with and what it returns, for `start` and `invoke`. */
@@ -615,6 +642,8 @@ export interface WorkflowDefinition<P = never, A = unknown> {
   readonly returns: Schema.Codec<unknown, unknown>;
   /** How long a paused run rests before it is resumed by itself, per pause in a row. */
   readonly resumeAfter: ReadonlyArray<Duration.Input>;
+  /** The kinds of question its `ask`s may have, in the order a list shows them. */
+  readonly asks: ReadonlyArray<{ readonly kind: string; readonly label: string }>;
   readonly triggers: ReadonlyArray<ScheduleTrigger | WebhookTrigger | OpenedTrigger>;
   /** Fails with the reason as text: by here nothing reads the error but a person. */
   readonly onEnd:
@@ -725,6 +754,8 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     readonly payload: Schema.Codec<P, PI>;
     readonly returns?: Schema.Codec<A, AI>;
     readonly resumeAfter?: ReadonlyArray<Duration.Input>;
+    /** The kinds of question it asks, each with what a list calls it: `{ feature: "Feature wanted?" }`. */
+    readonly asks?: Readonly<Record<string, string>>;
     /** What starts a run by itself. Each must give what `payload` takes. */
     readonly triggers?: ReadonlyArray<Trigger<P>>;
     /**
@@ -744,14 +775,30 @@ export const workflow = <P, PI, A = void, AI = void, EndError = never>(
     "payload",
     "returns",
     "resumeAfter",
+    "asks",
     "triggers",
     "onEnd",
   ]);
+  checkAsks(name, options.asks);
   // Read once now, so a duration that does not parse fails the file and not a paused run later.
   for (const rest of options.resumeAfter ?? [])
     durationOf(`workflow("${name}")'s resumeAfter`, rest);
   checkTriggers(name, options.triggers ?? []);
   return definitionOf(name, options, body);
+};
+
+const checkAsks = (name: string, asks: unknown) => {
+  if (asks === undefined) return;
+  const entries = typeof asks === "object" && asks !== null ? Object.entries(asks) : [];
+  if (
+    Array.isArray(asks) ||
+    entries.length === 0 ||
+    entries.some(([, label]) => typeof label !== "string" || label.trim() === "")
+  ) {
+    throw new Error(
+      `workflow("${name}")'s asks names each kind of question with its label, as in { feature: "Feature wanted?" }.`,
+    );
+  }
 };
 
 const definitionOf = <P, PI, A, AI, EndError>(
@@ -767,6 +814,7 @@ const definitionOf = <P, PI, A, AI, EndError>(
   // surprise, and a value that is not JSON pauses the run with the reason.
   returns: (options.returns ?? ANY_JSON) as Schema.Codec<unknown, unknown>,
   resumeAfter: options.resumeAfter ?? DEFAULT_RESUME_AFTER,
+  asks: Object.entries(options.asks ?? {}).map(([kind, label]) => ({ kind, label })),
   triggers: options.triggers ?? [],
   onEnd:
     options.onEnd === undefined
@@ -864,6 +912,7 @@ export const layerDefinition = (definition: WorkflowDefinition, engine: EngineWo
           RunContext.of({
             runId,
             workflow: definition.name,
+            asks: definition.asks.map((ask) => ask.kind),
             store,
             names: new Set(),
             forStep: (name) => forStep(store, keyValues, link, forge, runId, name),

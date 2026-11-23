@@ -246,6 +246,56 @@ export function workflowRunInvolves(node: WorkflowRunNode, workflow: string): bo
   );
 }
 
+/** The kind a question was asked as, or null for one without. */
+function workflowQuestionKind(question: WorkflowQuestion): string | null {
+  const kind = field(question.request, "kind");
+  return typeof kind === "string" && kind !== "" ? kind : null;
+}
+
+const kindsOf = (node: WorkflowRunNode): ReadonlyArray<string | null> => [
+  ...node.questions.map(workflowQuestionKind),
+  ...node.children.flatMap(kindsOf),
+];
+
+/** Does the run wait on a question of `kind`, itself or below it; null is one without a kind. */
+export function workflowRunAsksKind(node: WorkflowRunNode, kind: string | null): boolean {
+  const kinds = kindsOf(node);
+  // A paused run asks nothing, and waits on a person all the same.
+  return kind === null ? kinds.length === 0 || kinds.includes(null) : kinds.includes(kind);
+}
+
+export interface WorkflowKindCount {
+  /** Null for questions without a kind, and runs that wait on a person without a question. */
+  readonly kind: string | null;
+  /** What the workflow calls the kind; null for those without one. */
+  readonly label: string | null;
+  readonly count: number;
+}
+
+/**
+ * The kinds the runs in `nodes` ask, each with how many of them do: in the order the workflows
+ * declare them, then any kind no registered workflow declares, then those without a kind.
+ */
+export function workflowKindCounts(
+  workflows: ReadonlyArray<WorkflowSummary>,
+  nodes: ReadonlyArray<WorkflowRunNode>,
+): ReadonlyArray<WorkflowKindCount> {
+  const labels = new Map<string, string>();
+  for (const workflow of workflows) {
+    for (const ask of workflow.asks ?? []) {
+      if (!labels.has(ask.kind)) labels.set(ask.kind, ask.label);
+    }
+  }
+  const asked = new Set(nodes.flatMap(kindsOf).filter((kind) => kind !== null));
+  const kinds = [...labels.keys(), ...[...asked].filter((kind) => !labels.has(kind))];
+  const counts: WorkflowKindCount[] = kinds.flatMap((kind) => {
+    const count = nodes.filter((node) => workflowRunAsksKind(node, kind)).length;
+    return count === 0 ? [] : [{ kind, label: labels.get(kind) ?? kind, count }];
+  });
+  const other = nodes.filter((node) => workflowRunAsksKind(node, null)).length;
+  return other === 0 ? counts : [...counts, { kind: null, label: null, count: other }];
+}
+
 /** The list to open on: what waits on a person, else what is under way, else everything. */
 export function defaultWorkflowListTab(groups: WorkflowRunGroups): WorkflowListTab {
   if (groups.needsYou.length > 0) return "needs-you";

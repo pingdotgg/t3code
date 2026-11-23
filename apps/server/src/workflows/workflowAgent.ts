@@ -12,6 +12,7 @@ import { stepReferences } from "./runReferences.ts";
 import {
   claim,
   type InRun,
+  RunContext,
   journaled,
   jsonSchemaOf,
   type StepFailed,
@@ -408,13 +409,14 @@ export const agent = Object.assign(orPause, {
 /**
  * A question a person answers with one of `choices`; `None` when the timeout passes first. The run
  * holds nothing while it waits. `data` is the same facts as the title, for whatever lays the
- * question out.
+ * question out. `kind`, one the workflow declares in `asks`, is what lists filter questions by.
  */
 export const ask = <const Choices extends ReadonlyArray<string>>(
   name: string,
   options: {
     readonly title: string;
     readonly choices: Choices;
+    readonly kind?: string;
     readonly data?: Schema.Json;
     readonly timeout?: Parameters<typeof waitAs>[2]["timeout"];
   },
@@ -423,8 +425,19 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
   never,
   InRun
 > =>
-  Effect.suspend(() => {
-    checkOptions(`ask("${name}")`, options, ["title", "choices", "data", "timeout"]);
+  Effect.flatMap(RunContext, (run) => {
+    checkOptions(`ask("${name}")`, options, ["title", "choices", "kind", "data", "timeout"]);
+    if (options.kind !== undefined && !run.asks.includes(options.kind)) {
+      return Effect.die(
+        new Error(
+          `ask("${name}") has kind ${JSON.stringify(options.kind)}, which workflow ${run.workflow} does not declare. ${
+            run.asks.length === 0
+              ? "Declare its kinds in the workflow's `asks`."
+              : `It declares ${run.asks.map((kind) => JSON.stringify(kind)).join(", ")}.`
+          }`,
+        ),
+      );
+    }
     return Effect.orDie(
       waitAs("ask", name, {
         returns: Schema.Struct({
@@ -435,6 +448,7 @@ export const ask = <const Choices extends ReadonlyArray<string>>(
         request: {
           title: options.title,
           choices: [...options.choices],
+          ...(options.kind === undefined ? {} : { kind: options.kind }),
           ...(options.data === undefined ? {} : { data: options.data }),
         },
       }),

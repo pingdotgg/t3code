@@ -168,6 +168,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     resumesAt: resumes,
     parentRunId: row.parent_run_id,
     parentStep: row.parent_wait,
+    tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
     startedAt: row.started_at,
     updatedAt: row.updated_at,
     endedAt: row.ended_at,
@@ -754,7 +755,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const found = latest(name);
       return found === undefined
         ? []
-        : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
+        : [
+            {
+              name,
+              version: found[0].version,
+              triggers: found[0].triggers.map(triggerText),
+              ...(found[0].asks.length === 0 ? {} : { asks: found[0].asks }),
+            },
+          ];
     },
   );
   const snapshot = Effect.all({

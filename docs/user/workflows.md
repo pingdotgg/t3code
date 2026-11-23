@@ -46,11 +46,11 @@ Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and res
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
-t3 workflow list [--status paused]
+t3 workflow list [--status paused] [--tag <tag>]
 t3 workflow show <run>
 t3 workflow resume <run>
 t3 workflow cancel <run> [--reason '<why>']
-t3 workflow questions
+t3 workflow questions [--kind <kind>]
 t3 workflow signal '{"choice":"yes"}' --run <run> --wait <name>
 t3 workflow signal '<json>' --workflow <name> --channel <channel>
 t3 workflow hooks
@@ -68,13 +68,13 @@ Every start needs a `--key`: starting twice with the same key returns the same r
 
 ## Follow runs in the app
 
-Open the Workflows page with **Open workflows** in the command palette of the web or desktop app; the entry shows once a connected server has workflows on. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads). The issues and pull requests a run touched show as chips under its title and on the steps that touched them; a chip opens the item beside the run, in a tab next to any agent transcripts you opened.
+Open the Workflows page with **Open workflows** in the command palette of the web or desktop app; the entry shows once a connected server has workflows on. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), narrow **Needs you** by the kind of question when a workflow declares kinds (`asks: { feature: "Feature wanted?" }` on the workflow, `kind: "feature"` on each `ask`; questions without one are under **Other**), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads). The issues and pull requests a run touched show as chips under its title and on the steps that touched them; a chip opens the item beside the run, in a tab next to any agent transcripts you opened.
 
 ### Agent threads
 
 Each `agent` step runs in an ordinary thread, left out of thread lists (including `t3 thread list`). Open it from the run to watch it live, read its transcript, or send follow-up messages; the thread links back to the run.
 
-An `agent` step can launch a new thread with its own `workspace` (such as a worktree), `runtimeMode`, `interactionMode`, `title`, and typed `returns`, or continue an earlier step's thread. Runs can set their display name with `title(text)`. An `agent` step can also target a project on a [linked environment](remote-access.md#link-another-environment) (requires **Settings → Labs → Linked environments**); the run itself stays on the server that started it.
+An `agent` step can launch a new thread with its own `workspace` (such as a worktree), `runtimeMode`, `interactionMode`, `title`, and typed `returns`, or continue an earlier step's thread. Runs can set their display name with `title(text)` and tag themselves with `tags([...])` for `t3 workflow list --tag`. An `agent` step can also target a project on a [linked environment](remote-access.md#link-another-environment) (requires **Settings → Labs → Linked environments**); the run itself stays on the server that started it.
 
 ### Failures, pause, and cancel
 
