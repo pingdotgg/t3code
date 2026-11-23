@@ -2831,6 +2831,92 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "asks the user a Command Code question in full access instead of picking its first option",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* openClaudeReplaySession(
+          [
+            ...claudeFrames.open.map((entry) =>
+              entry.frame.method === "initialize" && entry.type === "emit_inbound"
+                ? {
+                    ...entry,
+                    frame: {
+                      ...entry.frame,
+                      result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+                    },
+                  }
+                : entry,
+            ),
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/prompt", params: "<any>" },
+            },
+            // Command Code 1.93 sends ask_user_question as a permission request whose
+            // options are the question's answers, each marked allow_once.
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "request",
+                method: "session/request_permission",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  toolCall: {
+                    toolCallId: "question_1",
+                    title: "Style: How should I answer?",
+                    kind: "other",
+                    status: "pending",
+                    rawInput: {
+                      question: "How should I answer?",
+                      options: ["Concise (Recommended)", "Detailed"],
+                    },
+                  },
+                  options: [
+                    { optionId: "option_0", name: "Concise (Recommended)", kind: "allow_once" },
+                    { optionId: "option_1", name: "Detailed", kind: "allow_once" },
+                  ],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "session/request_permission",
+                result: "<any>",
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            claudeFrames.closeRequest,
+            claudeFrames.closed,
+          ],
+          undefined,
+          false,
+          { source: "local", commandPath: "/usr/local/bin/cmd", commandArgs: ["acp"] },
+          undefined,
+          "full-access",
+        );
+        yield* session.runtime.startTurn(session.turnInput(1)).pipe(Effect.forkScoped);
+        const seen = yield* session.until(
+          (event) =>
+            event.type === "turn.terminal" ||
+            (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"),
+        );
+        assert.equal(
+          seen.at(-1)?.type,
+          "runtime_request.updated",
+          "Full access must not answer the user's question for them",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("approves Devin's plan without choosing a bypass option it lists first", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession(
