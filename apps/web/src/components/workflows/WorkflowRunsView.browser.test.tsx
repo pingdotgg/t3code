@@ -60,6 +60,7 @@ const state = vi.hoisted(() => ({
   commands: [] as Array<readonly [label: string | undefined, input: unknown]>,
   permitted: true,
   detailError: null as string | null,
+  linked: [] as ReadonlyArray<string>,
 }));
 const canOperate = Atom.make(true);
 const cannotOperate = Atom.make(false);
@@ -75,6 +76,7 @@ function setup(
   state.commands = [];
   state.permitted = true;
   state.detailError = null;
+  state.linked = [];
 }
 
 const environment = { environmentId, label: "Laptop" };
@@ -124,6 +126,15 @@ vi.mock(import("../../state/use-atom-command"), async (original) => ({
       state.commands.push([options.label, value.input]);
       return Promise.resolve({ _tag: "Success", value: undefined });
     }) as never,
+}));
+vi.mock(import("../../state/peerLinks"), async (original) => ({
+  ...(await original()),
+  useLinkedEnvironments: ((id: EnvironmentId | null) =>
+    new Map(
+      id === environmentId
+        ? state.linked.map((link) => [EnvironmentId.make(link), "Build box"])
+        : [],
+    )) as never,
 }));
 vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
@@ -419,6 +430,41 @@ describe("WorkflowRunsView", () => {
     await expect
       .element(screen.getByRole("button", { name: "Cancel run" }))
       .not.toBeInTheDocument();
+  });
+
+  it("opens an agent's thread on an environment this server links to", async () => {
+    setup(
+      {
+        runs: [run({ runId: "fix", title: "Fix", status: "completed", endedAt: at(12) })],
+        questions: [],
+      },
+      {
+        fix: [
+          step({
+            name: "implement",
+            kind: "agent",
+            threadId: "thread-2",
+            environmentId: "build-box",
+          }),
+        ],
+      },
+    );
+    state.linked = ["build-box"];
+    const thread = vi.fn();
+    await using screen = await render(page("fix", { thread }));
+
+    await screen
+      .getByRole("navigation", { name: "Steps so far" })
+      .getByRole("button", { name: /implement/ })
+      .click();
+    const implement = screen.getByRole("region", { name: "implement" });
+    await expect.element(implement).toMatchTextContent(/on Build box/);
+    await expect.element(implement).not.toMatchTextContent(/Thread on build-box/);
+    await implement.getByRole("button", { name: "Transcript" }).click();
+    expect(thread).toHaveBeenCalledWith("fix", {
+      threadId: "thread-2",
+      environmentId: "build-box",
+    });
   });
 
   it("opens an invoked run from its parent's story", async () => {
