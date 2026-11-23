@@ -98,7 +98,8 @@ interface WheelChase {
 const wheelChases = new Map<HTMLElement, WheelChase>();
 let wheelChaseFrame: number | null = null;
 let reducedMotion: MediaQueryList | null = null;
-const wheelStream = { last: Number.NEGATIVE_INFINITY, direct: false };
+const wheelStreams = new WeakMap<Window, { last: number; direct: boolean }>();
+const DISPLAY_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
 
 function stepWheelChases(time: number): void {
   wheelChaseFrame = null;
@@ -138,18 +139,27 @@ function wheelSource(event: WheelEvent): "notched" | "trackpad" | "either" {
     ? [event.deltaX, event.deltaY, wheelDeltaX, wheelDeltaY]
     : [event.deltaY, event.deltaX, wheelDeltaY, wheelDeltaX];
   if (other !== 0 || otherLegacy !== 0) return "trackpad";
-  const ratio = window.devicePixelRatio;
-  const zoomed = !Number.isInteger(ratio) && wholeTicks((legacy * ratio) / 120);
-  if (!wholeTicks(legacy / 120) && !zoomed) return "trackpad";
   if (Math.abs(legacy + delta) <= 1) return "trackpad";
-  return Math.abs(legacy + 3 * delta) <= 1 ? "either" : "notched";
+  if (Math.abs(legacy + 3 * delta) <= 1) {
+    return wholeTicks(legacy / 120) ? "either" : "trackpad";
+  }
+  if (wholeTicks(legacy / 120)) return "notched";
+  const ratio = (event.view ?? window).devicePixelRatio || 1;
+  const zoomed = DISPLAY_SCALES.some((scale) => wholeTicks((legacy * ratio) / (120 * scale)));
+  return zoomed ? "notched" : "trackpad";
 }
 
 function easesWheel(event: WheelEvent): boolean {
-  if (event.timeStamp - wheelStream.last > WHEEL_STREAM_IDLE_MS) wheelStream.direct = false;
-  wheelStream.last = event.timeStamp;
-  if (wheelSource(event) === "trackpad") wheelStream.direct = true;
-  return !wheelStream.direct;
+  const view = event.view ?? window;
+  let stream = wheelStreams.get(view);
+  if (!stream) {
+    stream = { last: Number.NEGATIVE_INFINITY, direct: false };
+    wheelStreams.set(view, stream);
+  }
+  if (event.timeStamp - stream.last > WHEEL_STREAM_IDLE_MS) stream.direct = false;
+  stream.last = event.timeStamp;
+  if (wheelSource(event) === "trackpad") stream.direct = true;
+  return !stream.direct;
 }
 
 export function wheelScrollTarget(
