@@ -627,6 +627,21 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         );
         expect(yield* pending()).toBe(false);
 
+        // A tool call or its result with no model response after it: the next reply is in flight.
+        const toolCall = JSON.stringify({
+          step_index: 2,
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          tool_calls: [{ name: "write_to_file", args: { TargetFile: '"/project/notes.txt"' } }],
+        });
+        yield* write(["logs", "transcript.jsonl"], `${toolCall}\n`);
+        expect(yield* pending()).toBe(true);
+        yield* write(
+          ["logs", "transcript.jsonl"],
+          `${toolCall}\n${JSON.stringify({ step_index: 3, type: "GENERIC", status: "DONE", content: "edited" })}\n`,
+        );
+        expect(yield* pending()).toBe(true);
+
         // A trailing waking SYSTEM_MESSAGE (even past a >64 KiB prefix) means the reply is in flight.
         const filler = JSON.stringify({
           step_index: 0,
