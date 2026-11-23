@@ -3967,8 +3967,44 @@ describe("v2 run and attempt history", () => {
       ],
     });
     const resultIndex = tailRows.findIndex((row) => row.id === "interrupt-result");
-    expect(tailRows[resultIndex]).toMatchObject({ precedesPrompt: true });
-    expect(tailRows[resultIndex - 1]).toMatchObject({ turnTailBelow: true });
+    expect(tailRows.map((row) => row.id)).toEqual([
+      "reply",
+      "interrupt-result",
+      "assistant-meta:reply",
+      "next-prompt",
+    ]);
+    expect(tailRows[resultIndex - 1]).toMatchObject({
+      kind: "message",
+      showAssistantMeta: false,
+      assistantMetaBelow: true,
+    });
+    expect(tailRows[resultIndex]?.precedesPrompt).toBeFalsy();
+    // Without a reply above it, the interrupt result itself keeps the turn gap before the next prompt.
+    const workOnlyInterrupted = deriveMessagesTimelineRows({
+      ...input,
+      turnWorkFold: false,
+      timelineEntries: [
+        input.timelineEntries[1]!,
+        input.timelineEntries[2]!,
+        {
+          id: "next-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:04Z",
+          message: {
+            id: MessageId.make("next-prompt"),
+            role: "user",
+            text: "Keep going",
+            runId: null,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:04Z",
+            updatedAt: "2026-01-01T00:00:04Z",
+          },
+        },
+      ],
+    });
+    expect(workOnlyInterrupted.find((row) => row.id === "interrupt-result")).toMatchObject({
+      precedesPrompt: true,
+    });
     const stoppedRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {
@@ -6947,6 +6983,134 @@ describe("slash command prompts", () => {
       expect(commandOf(rowsFor([prompt(text)])), text).toBeUndefined();
     }
   });
+});
+
+it("moves a reply footer below trailing notices, notifications, and interrupt rows in the same run", () => {
+  const run1 = RunId.make("run-1");
+  const run2 = RunId.make("run-2");
+  const run3 = RunId.make("run-3");
+  const run4 = RunId.make("run-4");
+  const at = (sec: number) => `2026-09-20T12:00:${String(sec).padStart(2, "0")}Z`;
+  const user = (id: string, runId: RunId, sec: number) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at(sec),
+    message: {
+      id: MessageId.make(id),
+      role: "user" as const,
+      text: id,
+      runId,
+      streaming: false,
+      createdAt: at(sec),
+      updatedAt: at(sec),
+    },
+  });
+  const assistant = (id: string, runId: RunId, sec: number) => ({
+    id,
+    kind: "message" as const,
+    createdAt: at(sec),
+    message: {
+      id: MessageId.make(id),
+      role: "assistant" as const,
+      text: id,
+      runId,
+      streaming: false,
+      createdAt: at(sec),
+      updatedAt: at(sec),
+    },
+  });
+  const notice = (id: string, runId: RunId, sec: number) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at(sec),
+    entry: {
+      id,
+      createdAt: at(sec),
+      runId,
+      label: `Notice ${id}`,
+      tone: "info" as const,
+      itemType: "system_notice" as const,
+    },
+  });
+  const notification = (id: string, runId: RunId, sec: number) => ({
+    id,
+    kind: "work" as const,
+    createdAt: at(sec),
+    entry: {
+      id,
+      createdAt: at(sec),
+      runId,
+      label: `Notification ${id}`,
+      tone: "info" as const,
+      itemType: "notification" as const,
+    },
+  });
+  const input = {
+    timelineEntries: [
+      // Run 1: reply + two trailing notices + next prompt
+      user("u1", run1, 1),
+      assistant("a1", run1, 2),
+      notice("n1", run1, 3),
+      notice("n2", run1, 4),
+      // Run 2: notice before reply (unchanged) + trailing notification of same run
+      user("u2", run2, 5),
+      notice("n-pre", run2, 6),
+      assistant("a2", run2, 7),
+      notification("notif-tail", run2, 8),
+      // Run 3: reply followed immediately by a different run's notification (must NOT move a3's footer)
+      user("u3", run3, 9),
+      assistant("a3", run3, 10),
+      notification("notif-run4", run4, 11),
+      assistant("a4", run4, 12),
+    ],
+    latestRun: {
+      runId: run4,
+      status: "completed" as const,
+      startedAt: at(11),
+      completedAt: at(12),
+    },
+    isWorking: false,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
+
+  const first = deriveMessagesTimelineRowsWithState(input);
+  expect(first.rows.map((row) => row.id)).toEqual([
+    "u1",
+    "a1",
+    "n1",
+    "n2",
+    "assistant-meta:a1",
+    "u2",
+    "n-pre",
+    "a2",
+    "notif-tail",
+    "assistant-meta:a2",
+    "u3",
+    "a3",
+    "notif-run4",
+    "a4",
+  ]);
+  expect(first.rows.find((row) => row.id === "a1")).toMatchObject({
+    showAssistantMeta: false,
+    assistantMetaBelow: true,
+  });
+  expect(first.rows.find((row) => row.id === "n1")).toMatchObject({
+    continuesWorkLog: true,
+  });
+  expect(first.rows.find((row) => row.id === "n1")?.precedesPrompt).toBeFalsy();
+  expect(first.rows.find((row) => row.id === "n2")?.continuesWorkLog).toBeFalsy();
+  expect(first.rows.find((row) => row.id === "n2")?.precedesPrompt).toBeFalsy();
+  expect(first.rows.find((row) => row.id === "a3")).toMatchObject({
+    showAssistantMeta: true,
+  });
+
+  // Unchanged rebuild keeps exact row identities.
+  const second = deriveMessagesTimelineRowsWithState(input, first);
+  expect(second.rows).toBe(first.rows);
+  for (const [index, row] of first.rows.entries()) {
+    expect(second.rows[index]).toBe(row);
+  }
 });
 
 describe("workEntryReadOutput", () => {

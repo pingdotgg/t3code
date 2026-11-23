@@ -101,7 +101,9 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             onOpenTurnDiff={ctx.onOpenTurnDiff}
           />
         ) : null}
-        {!row.showAssistantMeta && row.projectedItem?.item.status === "interrupted" ? (
+        {!row.showAssistantMeta &&
+        !row.assistantMetaBelow &&
+        row.projectedItem?.item.status === "interrupted" ? (
           <div className="mt-1.5 flex">
             <AssistantStatusBadge status="interrupted" />
           </div>

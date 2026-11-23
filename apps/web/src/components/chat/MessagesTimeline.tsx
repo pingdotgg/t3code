@@ -1967,7 +1967,6 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   : (row.kind === "message" &&
                         row.message.role === "assistant" &&
                         !row.showAssistantMeta) ||
-                      row.turnTailBelow ||
                       row.kind === "worktree-setup" ||
                       row.kind === "event" ||
                       row.kind === "attempt-fold" ||
