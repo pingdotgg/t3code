@@ -12,7 +12,9 @@ use gpui_kit::{
 };
 
 use super::color::hsla;
-use super::composer_state::{ProjectPickerItem, ProjectPickerRow, project_picker_rows};
+use super::composer_state::{
+    ProjectPickerItem, ProjectPickerRow, new_thread_draft_key, project_picker_rows,
+};
 use super::{
     CHAT_CONTENT_MAX_WIDTH_PX, CHAT_LANE_PADDING_X_PX, ChatEvent, ChatView, DraftViewInfo, icons,
 };
@@ -79,6 +81,32 @@ impl DraftHeroState {
 }
 
 impl ChatView {
+    /// The picker moves the draft to `project_id` (`DraftHeroHeadline` `selectProject`). Content
+    /// follows; an empty draft stays and the project's own draft shows. Returns `true` when the
+    /// content moved. Call before the app swaps in the new [`DraftViewInfo`].
+    pub(crate) fn retarget_draft_project(
+        &mut self,
+        project_id: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let Some(draft) = &self.draft else {
+            return false;
+        };
+        let key = new_thread_draft_key(&draft.environment_id, project_id);
+        self.composer
+            .update(cx, |c, cx| c.retarget_draft_key(&key, cx))
+    }
+
+    /// Clears the shown draft once it is sent or discarded (`clearDraftThread`). Call before the
+    /// app swaps out the [`DraftViewInfo`].
+    pub(crate) fn discard_draft(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(draft) = &self.draft else {
+            return;
+        };
+        let key = new_thread_draft_key(&draft.environment_id, &draft.project_id);
+        self.composer.update(cx, |c, _| c.discard_draft_key(&key));
+    }
+
     fn draft_picker_rows(&self, cx: &Context<'_, Self>) -> Vec<ProjectPickerRow> {
         let Some(draft) = &self.draft else {
             return Vec::new();

@@ -60,8 +60,9 @@ use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_mode
 use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
 use super::composer_state::{
-    ComposerDraft, ComposerDraftStore, PromptHistoryEntry, PromptHistoryPosition,
-    composer_placeholder, prompt_length_message, step_prompt_history,
+    ComposerDraft, ComposerDraftStore, ComposerPendingRequest, ComposerSendAction,
+    PromptHistoryEntry, PromptHistoryPosition, composer_placeholder, composer_send_action,
+    prompt_length_message, step_prompt_history,
 };
 use super::icons;
 use crate::a11y::ConnA11yExt as _;
@@ -155,6 +156,10 @@ pub(crate) enum ComposerEvent {
         /// Steer or queue while a turn runs (`resolveComposerDispatchMode`).
         dispatch: SendDispatch,
     },
+    /// Answer the active pending question with `text`; blank uses its selected option.
+    AnswerQuestion {
+        text: String,
+    },
     /// `Resume thread`: continue an interrupted thread (`useComposerResume`).
     Resume,
     /// `Implement in a new thread` from the plan follow-up split button.
@@ -206,6 +211,8 @@ pub(crate) struct Composer {
     /// Latest proposed plan markdown while the plan follow-up prompt shows.
     plan_follow_up: Option<String>,
     can_resume: bool,
+    /// The pending approval or question a send answers instead of starting a turn.
+    pending_request: ComposerPendingRequest,
     send_disabled_reason: Option<String>,
     environment_unavailable: bool,
     preparing_worktree: bool,
@@ -349,6 +356,7 @@ impl Composer {
             alternate_modifier: false,
             plan_follow_up: None,
             can_resume: false,
+            pending_request: ComposerPendingRequest::default(),
             send_disabled_reason: None,
             environment_unavailable: false,
             preparing_worktree: false,
@@ -502,6 +510,27 @@ impl Composer {
         }
     }
 
+    /// Sets the pending approval or question a send answers.
+    pub(crate) fn set_pending_request(
+        &mut self,
+        pending: ComposerPendingRequest,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.pending_request != pending {
+            self.pending_request = pending;
+            cx.notify();
+        }
+    }
+
+    /// Conn steers over pending approvals, since a send declines them to redirect the agent.
+    fn effective_follow_up(&self) -> FollowUpBehavior {
+        if self.pending_request.approval {
+            FollowUpBehavior::Steer
+        } else {
+            self.follow_up
+        }
+    }
+
     /// Sets the send-blocking status shown on the disabled send button.
     pub(crate) fn set_send_status(
         &mut self,
@@ -589,6 +618,12 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self.drafts.take_discarded() {
+            self.attachments.clear();
+            self.textarea
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.on_draft_changed(cx);
+        }
         if self.drafts.active_key() == key {
             return;
         }
@@ -608,6 +643,18 @@ impl Composer {
             input.set_value(next.text, window, cx);
         });
         self.on_draft_changed(cx);
+    }
+
+    /// Moves the live draft to `key` when it has content (the hero's project picker). Returns
+    /// `true` when it moved; an empty draft stays, and the next sync shows `key`'s own draft.
+    pub(crate) fn retarget_draft_key(&mut self, key: &str, cx: &mut Context<'_, Self>) -> bool {
+        let empty = self.attachments.is_empty() && self.textarea.read(cx).value().trim().is_empty();
+        self.drafts.retarget(key, empty)
+    }
+
+    /// Drops `key`'s draft once it is sent or discarded (`clearDraftThread`).
+    pub(crate) fn discard_draft_key(&mut self, key: &str) {
+        self.drafts.discard(key);
     }
 
     /// Replaces the thread's recallable sent prompts.
@@ -1354,6 +1401,24 @@ impl Composer {
             return;
         }
         let trimmed = raw.trim().to_owned();
+        let action = if self.editing_queued.is_some() {
+            ComposerSendAction::Message
+        } else {
+            composer_send_action(&self.pending_request, trimmed.is_empty())
+        };
+        match action {
+            ComposerSendAction::Blocked => return,
+            ComposerSendAction::AnswerQuestion => {
+                self.textarea
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.active_trigger = None;
+                self.dismissed_trigger_text = None;
+                cx.emit(ComposerEvent::AnswerQuestion { text: raw });
+                cx.notify();
+                return;
+            }
+            ComposerSendAction::Message | ComposerSendAction::RedirectApprovals => {}
+        }
         let still_uploading = self
             .attachments
             .iter()
@@ -1413,7 +1478,7 @@ impl Composer {
         }
         let dispatch = resolve_dispatch_mode(
             self.working,
-            self.follow_up,
+            self.effective_follow_up(),
             true,
             alternate.unwrap_or(self.alternate_modifier),
         );
@@ -2084,7 +2149,7 @@ impl Render for Composer {
             && !self.catalog_loading
             && self.catalog_error.is_none()
             && self.catalog.providers.is_empty();
-        let placeholder = composer_placeholder(provider_unavailable);
+        let placeholder = composer_placeholder(&self.pending_request, provider_unavailable);
         if self.applied_placeholder != placeholder {
             self.applied_placeholder = placeholder;
             self.textarea.update(cx, |input, cx| {
@@ -2102,8 +2167,15 @@ impl Render for Composer {
             .iter()
             .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
         let has_non_empty_text = !self.textarea.read(cx).value().trim().is_empty();
+        let send_action = composer_send_action(&self.pending_request, !has_non_empty_text);
+        let choice_only = self
+            .pending_request
+            .question
+            .is_some_and(|q| !q.allow_custom_answer);
         let has_sendable = if is_editing_queued {
             has_non_empty_text && !is_uploading
+        } else if self.pending_request.question.is_some() {
+            send_action == ComposerSendAction::AnswerQuestion
         } else {
             (has_non_empty_text || has_ready_attachments) && !is_uploading
         };
@@ -2258,7 +2330,7 @@ impl Render for Composer {
             can_operate_thread: true,
             is_running: self.working && !self.is_draft,
             can_interrupt: self.working && !self.is_draft,
-            follow_up: self.follow_up,
+            follow_up: self.effective_follow_up(),
             can_steer: true,
             alternate_modifier: self.alternate_modifier,
             show_plan_follow_up: self.plan_follow_up.is_some() && !is_editing_queued,
@@ -2585,6 +2657,7 @@ impl Render for Composer {
             .child(
                 div().px(px(12.0)).pt(px(14.0)).pb(px(6.0)).child(
                     Textarea::new(&self.textarea)
+                        .disabled(choice_only)
                         .with_size(Size::XSmall)
                         .appearance(false)
                         .bordered(false)
@@ -2820,7 +2893,7 @@ impl Render for Composer {
                     runtime_options: &runtime_options,
                     permissions_open: self.picker_permissions_open,
                     permission_preview: self.permission_preview,
-                    follow_up: self.follow_up,
+                    follow_up: self.effective_follow_up(),
                 },
                 cx,
             );

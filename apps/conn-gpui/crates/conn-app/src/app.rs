@@ -113,8 +113,9 @@ pub(crate) struct ConnApp {
     scratch_workspace_root: Option<String>,
     /// Project id returned by `projects.ensureScratch`, before the shell lists it.
     scratch_project_id: Option<String>,
-    /// The new-thread draft left by opening a thread, restored by the next new thread.
-    parked_draft: Option<DraftThreadState>,
+    /// Each project's new-thread draft left behind, by project id; its text and attachments wait
+    /// in the composer's draft store. The next new thread in that project restores it.
+    parked_drafts: HashMap<String, DraftThreadState>,
     /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
     right_panel_open_tabs: Vec<PanelSurface>,
     /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
@@ -423,7 +424,7 @@ impl ConnApp {
             draft: None,
             scratch_workspace_root: None,
             scratch_project_id: None,
-            parked_draft: None,
+            parked_drafts: HashMap::new(),
             right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
             right_panel_file: None,
             right_panel_add_menu_open: false,
@@ -810,6 +811,12 @@ impl ConnApp {
                 })
                 .collect();
             crate::chat::DraftViewInfo {
+                environment_id: self
+                    .orbit
+                    .active_server_id
+                    .clone()
+                    .or_else(|| self.server_url.clone())
+                    .unwrap_or_default(),
                 project_id: draft.project_id.clone(),
                 project_title: project
                     .map(|p| p.title.clone())
@@ -1114,7 +1121,7 @@ impl ConnApp {
         if let Some(draft) = self.draft.take()
             && !draft.launching
         {
-            self.parked_draft = Some(draft);
+            self.parked_drafts.insert(draft.project_id.clone(), draft);
         }
         if conn_client::perf::enabled()
             && self.layout.selected_thread_id.as_deref() != Some(thread_id.as_str())
@@ -1337,10 +1344,17 @@ impl ConnApp {
         }
         self.layout.selected_project_id = Some(project_id.clone());
         self.layout.selected_thread_id = None;
-        // Coming back to the same project's draft keeps its model, modes and workspace choice.
-        self.draft = Some(match self.parked_draft.take() {
-            Some(parked) if parked.project_id == project_id => parked,
-            _ => DraftThreadState {
+        // Each project keeps its own draft: coming back restores its model, modes and workspace
+        // choice (the composer's draft store restores the text).
+        if let Some(current) = self.draft.take()
+            && !current.launching
+        {
+            self.parked_drafts
+                .insert(current.project_id.clone(), current);
+        }
+        self.draft = Some(match self.parked_drafts.remove(&project_id) {
+            Some(parked) => parked,
+            None => DraftThreadState {
                 project_id,
                 model_instance_id,
                 model_slug,
@@ -1365,9 +1379,11 @@ impl ConnApp {
 
     /// Discards the active new-thread draft and falls back to the most recent active thread.
     pub(crate) fn cancel_new_thread(&mut self, cx: &mut Context<'_, Self>) {
-        if self.draft.take().is_none() {
+        if self.draft.is_none() {
             return;
         }
+        self.chat.update(cx, |chat, cx| chat.discard_draft(cx));
+        self.draft = None;
         self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         let initial = self
             .shell
@@ -1383,15 +1399,35 @@ impl ConnApp {
         cx.notify();
     }
 
-    /// Changes the target project of the active new-thread draft.
+    /// Changes the target project of the active new-thread draft, as Conn's picker does
+    /// (`DraftHeroHeadline` `selectProject`). A draft with text or attachments moves to the
+    /// project and replaces that project's own draft. An empty draft stays where it was, and the
+    /// project's own draft shows.
     pub(crate) fn set_draft_project(&mut self, project_id: String, cx: &mut Context<'_, Self>) {
-        let Some(draft) = &mut self.draft else {
+        let Some(draft) = &self.draft else {
             return;
         };
         if draft.launching || draft.project_id == project_id {
             return;
         }
-        draft.project_id = project_id.clone();
+        let moved = self
+            .chat
+            .update(cx, |chat, cx| chat.retarget_draft_project(&project_id, cx));
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        let own = self.parked_drafts.remove(&project_id).filter(|_| !moved);
+        let next = own.unwrap_or_else(|| DraftThreadState {
+            project_id: project_id.clone(),
+            branch: None,
+            worktree_path: None,
+            ..draft.clone()
+        });
+        let previous = std::mem::replace(draft, next);
+        if !moved {
+            self.parked_drafts
+                .insert(previous.project_id.clone(), previous);
+        }
         self.layout.selected_project_id = Some(project_id);
         self.sync_chat(cx);
         cx.notify();
@@ -1832,6 +1868,7 @@ impl ConnApp {
                             state.apply_projection(res.projection, res.sequence);
                             app.threads.insert(final_thread_id.clone(), state);
                         }
+                        app.chat.update(cx, |chat, cx| chat.discard_draft(cx));
                         app.draft = None;
                         app.layout.selected_project_id = Some(project_id.clone());
                         app.layout.selected_thread_id = Some(final_thread_id.clone());
@@ -1898,6 +1935,31 @@ impl ConnApp {
             return;
         };
         let thread = self.threads.get(&thread_id);
+        // A message sent over pending approvals declines them first to redirect the agent
+        // (`declinePendingApprovals`).
+        let approvals: Vec<String> = thread
+            .map(|t| {
+                t.entries
+                    .iter()
+                    .filter_map(|entry| match entry {
+                        conn_state::TimelineEntry::Approval { id, .. } => {
+                            t.approval_requests.get(id).cloned()
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut declines = Vec::with_capacity(approvals.len());
+        for request_id in &approvals {
+            match crate::commands::respond_approval(&thread_id, request_id, "decline") {
+                Ok(command) => declines.push(command),
+                Err(e) => {
+                    eprintln!("send: could not build runtime-request.respond: {e}");
+                    return;
+                }
+            }
+        }
         let working = thread.is_some_and(|t| t.working);
         // Steer the running turn when asked (`steer_active`); otherwise queue after it.
         let steer_target = if working && dispatch == crate::chat::SendDispatch::Steer {
@@ -1926,15 +1988,32 @@ impl ConnApp {
         let send_window = window.map(|w| w.window_handle());
         let fallback_text = text;
         cx.spawn(async move |this, cx| {
-            if let Err(err) = connection.dispatch_command(command).await {
-                let msg = crate::commands::format_client_error(&err);
+            let mut result = Ok(());
+            for decline in declines {
+                if let Err(err) = connection.dispatch_command(decline).await {
+                    result = Err(format!(
+                        "Could not decline the approval: {}",
+                        crate::commands::format_client_error(&err)
+                    ));
+                    break;
+                }
+            }
+            if result.is_ok()
+                && let Err(err) = connection.dispatch_command(command).await
+            {
+                result = Err(format!(
+                    "Send failed: {}",
+                    crate::commands::format_client_error(&err)
+                ));
+            }
+            if let Err(msg) = result {
                 eprintln!("send: dispatchCommand failed: {msg}");
                 let _ = this.update(cx, |app, cx| {
                     if app.connection_gen != generation {
                         return;
                     }
                     app.chat.update(cx, |chat, cx| {
-                        chat.set_error(Some(format!("Send failed: {msg}")), cx);
+                        chat.set_error(Some(msg), cx);
                     });
                     if let Some(win) = send_window {
                         let chat = app.chat.clone();

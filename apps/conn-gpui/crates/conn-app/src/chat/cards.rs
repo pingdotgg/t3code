@@ -29,6 +29,7 @@ use gpui_kit::{
 };
 
 use super::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
+use super::composer_state::{ComposerPendingRequest, PendingQuestion};
 use super::{
     BODY_FONT_PX, BODY_LINE_HEIGHT_PX, ChatEvent, ChatView, MONO_FONT_FAMILY, UI_FONT_PX,
     UI_LINE_HEIGHT_PX, icons, markdown,
@@ -691,6 +692,51 @@ impl ChatView {
         })
         .detach();
         cx.notify();
+    }
+
+    /// The pending approval and active question a composer send answers.
+    pub(super) fn composer_pending_request(&self) -> ComposerPendingRequest {
+        let question = self.pending_question_id.as_deref().and_then(|entry_id| {
+            let questions = self.user_input_questions(entry_id)?.1;
+            let state = self.user_input_cards.get(entry_id);
+            let index = state
+                .map_or(0, |s| s.question_index)
+                .min(questions.len().saturating_sub(1));
+            let question = questions.get(index)?;
+            let draft = state.and_then(|s| s.drafts.get(&question.id));
+            Some(PendingQuestion {
+                allow_custom_answer: question.allow_custom_answer,
+                has_options: !question.options.is_empty(),
+                answered: question.resolve_answer(draft).is_some(),
+            })
+        });
+        ComposerPendingRequest {
+            approval: self.pending_approval,
+            question,
+        }
+    }
+
+    /// Answers the active pending question from the composer: typed text becomes its answer,
+    /// blank keeps the selected option, then the card moves on or submits
+    /// (`onChangeActivePendingUserInputCustomAnswer` + `onAdvanceActivePendingUserInput`).
+    pub(super) fn answer_pending_question(&mut self, text: &str, cx: &mut Context<'_, Self>) {
+        let Some(entry_id) = self.pending_question_id.clone() else {
+            return;
+        };
+        let Some((_, questions)) = self.user_input_questions(&entry_id) else {
+            return;
+        };
+        let state = self
+            .user_input_cards
+            .entry(entry_id.clone())
+            .or_insert_with(UserInputCardState::new);
+        let index = state.question_index.min(questions.len().saturating_sub(1));
+        if let Some(question) = questions.get(index)
+            && !text.trim().is_empty()
+        {
+            self.set_user_input_custom(&entry_id, question, text, cx);
+        }
+        self.advance_user_input(&entry_id, cx);
     }
 
     /// Dismisses a message-mode question (`thread.user-input.dismiss`).
