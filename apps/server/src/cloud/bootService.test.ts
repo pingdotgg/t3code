@@ -1313,7 +1313,7 @@ process.disconnect();
       yield* service.install();
       const path = yield* Path.Path;
       const linkDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-symlink-home-" });
-      const aliasDir = path.join(linkDir, "alias");
+      const aliasDir = path.join(linkDir, "a$$b");
       yield* fs.symlink(baseDir, aliasDir);
 
       const alias = yield* makeService(undefined, "1.2.3", aliasDir);

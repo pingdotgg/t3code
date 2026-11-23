@@ -1604,7 +1604,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     // Another spelling of this home is current; repairing it would flip the unit between spellings.
     const thisHomeUnit =
       installedBaseDir !== undefined && otherBaseDir === undefined
-        ? unit.replaceAll(installedBaseDir, input.baseDir)
+        ? unit.replaceAll(installedBaseDir, () => input.baseDir)
         : unit;
     const normalizeUnit = (contents: string) =>
       manager.kind === "launchd"
