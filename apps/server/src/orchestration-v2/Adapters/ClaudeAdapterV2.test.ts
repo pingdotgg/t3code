@@ -19798,6 +19798,128 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a background subagent's card on the turn that launched it", () =>
+    Effect.gen(function* () {
+      const FIRST_TASK = "task-card-turn-a";
+      const FIRST_TOOL = "toolu-card-turn-a";
+      const SECOND_TASK = "task-card-turn-b";
+      const SECOND_TOOL = "toolu-card-turn-b";
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-card-turn-1"),
+          text: "Audit in the background.",
+          attachments: [],
+        }),
+      );
+      for (const frame of [
+        makeSubagentTaskStartedFrame({
+          taskId: FIRST_TASK,
+          toolUseId: FIRST_TOOL,
+          uuid: "00000000-0000-4000-8000-000000000a51",
+        }),
+        makeSubagentTaskStartedFrame({
+          taskId: SECOND_TASK,
+          toolUseId: SECOND_TOOL,
+          uuid: "00000000-0000-4000-8000-000000000a52",
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [
+            { task_id: FIRST_TASK, task_type: "local_agent", description: "Audit" },
+            { task_id: SECOND_TASK, task_type: "local_agent", description: "Audit" },
+          ],
+          uuid: "00000000-0000-4000-8000-000000000a53",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000a54",
+          result: "Auditing in the background.",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(1);
+
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeSubagentNotificationFrame({
+          taskId: FIRST_TASK,
+          toolUseId: FIRST_TOOL,
+          summary: "Audit done.",
+          uuid: "00000000-0000-4000-8000-000000000a55",
+        }),
+      );
+      yield* harness.awaitContinuation(1);
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-card-turn-2"),
+          text: "Background task completed.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_progress",
+          task_id: SECOND_TASK,
+          description: "Reading the last commits",
+          uuid: "00000000-0000-4000-8000-000000000a56",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        makeSubagentNotificationFrame({
+          taskId: SECOND_TASK,
+          toolUseId: SECOND_TOOL,
+          summary: "Audit done.",
+          uuid: "00000000-0000-4000-8000-000000000a57",
+        }),
+        makeResultFrame({
+          uuid: "00000000-0000-4000-8000-000000000a58",
+          result: "Both auditors finished.",
+        }),
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* harness.awaitTerminal(2);
+
+      const cards = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+          ? [event.turnItem]
+          : [],
+      );
+      const turnIds = harness.events.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      );
+      assert.equal(new Set(turnIds).size, 2);
+      assert.equal(new Set(cards.map((card) => card.subagentId)).size, 2);
+      assert.equal(cards.filter((card) => card.status === "completed").length, 2);
+      assert.deepEqual(
+        [...new Set(cards.map((card) => card.providerTurnId))],
+        [cards[0]?.providerTurnId],
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // Claude reports a background subagent `completed` when its turn ends while
   // its own background shell still runs. When that shell finishes, Claude
   // resumes the subagent with a new task_started for the same task and launch
