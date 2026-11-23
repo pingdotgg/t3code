@@ -2791,15 +2791,12 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               .join(":"),
           };
     // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
+    const shellCommand = candidate.shell.includes("/")
+      ? path.resolve(session.cwd, candidate.shell)
+      : candidate.shell;
     const executable =
       platform !== "win32"
-        ? resolveExecutable(
-            candidate.shell.includes("/")
-              ? path.resolve(session.cwd, candidate.shell)
-              : candidate.shell,
-            platform,
-            lookupEnv,
-          )
+        ? yield* Effect.promise(async () => resolveExecutable(shellCommand, platform, lookupEnv))
         : candidate.shell;
     if (executable === undefined) {
       return yield* trySpawn(
@@ -3968,9 +3965,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const hasActiveSubprocess = Effect.fn("terminal.hasActiveSubprocess")(function* (input: {
     readonly threadId: string;
   }) {
+    // Settling closes stopOnSettle sessions, so their work must not hold settlement back.
     const running = (yield* sessionsForThread(input.threadId)).filter(
       (session): session is TerminalSessionState & { pid: number } =>
-        session.status === "running" && Number.isInteger(session.pid),
+        session.status === "running" && Number.isInteger(session.pid) && !session.stopOnSettle,
     );
     if (running.length === 0) return false;
     const { inspector } = yield* acquireSubprocessInspector(
