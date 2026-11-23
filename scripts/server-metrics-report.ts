@@ -393,10 +393,11 @@ export function heapGrowth(
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
 }
 
+const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 const spellings: ReadonlyArray<(path: string) => string> = [
   (path) => path,
-  // JSON stores a backslash doubled and escapes a quote.
-  (path) => path.replaceAll("\\", "\\\\").replaceAll('"', '\\"'),
+  // Inside a JSON string, with every escape JSON applies: backslashes, quotes, control characters.
+  (path) => encodeJsonString(path).slice(1, -1),
   (path) => path.replaceAll("\\", "/"),
 ];
 

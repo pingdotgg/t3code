@@ -265,6 +265,11 @@ describe("pathSpellings", () => {
       '/mnt/dev/quote"repo',
       ['/mnt/dev/quote"repo', '/mnt/dev/quote\\"repo'],
     ],
+    [
+      "a path with a control character, escaped the way JSON stores it",
+      "/mnt/dev/new\nline",
+      ["/mnt/dev/new\nline", "/mnt/dev/new\\nline"],
+    ],
   ])("%s", (_name, path, spellings) => {
     expect(pathSpellings(path)).toEqual(spellings);
   });
