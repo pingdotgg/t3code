@@ -58,6 +58,21 @@ describe("desktop update button state", () => {
     );
   });
 
+  it("shows the install failure after the desktop returns to downloaded", () => {
+    // reduceDesktopUpdateStateOnInstallFailure: a refused macOS install prompt lands here.
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "downloaded",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+      message: "Desktop updater install operation reported an error.",
+      errorContext: "install",
+      canRetry: true,
+    };
+    expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
+    expect(getDesktopUpdateButtonTooltip(state)).toBe("Install failed for 1.1.0. Click to retry.");
+  });
+
   it("never calls a build on the other track up to date", () => {
     // A Stable build whose switch to Nightly did not finish; the updater discards every release.
     const state: DesktopUpdateState = {
