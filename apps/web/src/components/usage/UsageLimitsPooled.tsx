@@ -612,7 +612,7 @@ function PoolWindowCard({
 }) {
   const m = useMessages();
   const gt = useGT();
-  const nextReset = pool.resets[0];
+  const nextReset = pool.resets.find((reset) => reset.at >= now);
   return (
     <div className="grid items-center gap-x-6 gap-y-3 rounded-lg border border-border/60 p-4 md:grid-cols-[11rem_minmax(0,1fr)]">
       <div className="flex flex-col gap-1">

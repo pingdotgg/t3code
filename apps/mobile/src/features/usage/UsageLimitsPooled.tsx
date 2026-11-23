@@ -21,6 +21,7 @@ import {
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { Fragment, type ReactNode, useId, useState } from "react";
 import { Pressable, View } from "react-native";
+import { useNowMinuteMs } from "../../lib/clock";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { Defs, Path, Pattern, Rect, Svg } from "react-native-svg";
@@ -195,24 +196,23 @@ function PoolWindowCard({
   const inlineLabels = wide && segmentWidth >= 96;
   const inlineReset = wide && segmentWidth >= 150;
   const inlineName = wide && segmentWidth >= 220;
-  const nextReset = pool.resets[0];
+  const nextReset = pool.resets.find((reset) => reset.at >= now);
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsUsageAccount", {
       accountKey: account.key,
       windowId: pool.id,
       windowKind: pool.kind,
       environmentIds,
-      now,
     });
   const summary = (
     <>
       <View className={wide ? "gap-1" : "flex-row items-start justify-between gap-3"}>
-        <View className="gap-1">
+        <View className={wide ? "gap-1" : "min-w-0 flex-1 gap-1"}>
           {label !== null ? (
             <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
-            <Text className="text-sm text-foreground-muted">
+            <Text className="min-w-0 shrink text-sm leading-(--text-3xl--line-height) text-foreground-muted">
               {pool.members.length > 1 ? (
                 <T>
                   <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
@@ -605,13 +605,13 @@ type AccountScreenProps = StaticScreenProps<{
   windowId: string;
   windowKind: LimitPoolWindow["kind"];
   environmentIds: readonly string[] | null;
-  now: number;
 }>;
 
 export function UsageLimitAccountScreen({ route }: AccountScreenProps) {
   const insets = useSafeAreaInsets();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
-  const { accountKey, windowId, windowKind, environmentIds, now } = route.params;
+  const { accountKey, windowId, windowKind, environmentIds } = route.params;
+  const now = useNowMinuteMs();
   const selectedIds =
     environmentIds === null ? null : new Set(environmentIds.map((id) => EnvironmentId.make(id)));
   const selected =

@@ -66,10 +66,11 @@ const fakeAppImage = (canMount = true, app = REPORTER) => {
   return { root, image, appImage, shim };
 };
 
-// Stays up after a signal until the test lets it finish, like a server shutting down.
+// Stays up after a signal until the test lets it finish, like a server shutting down. A group
+// signal and the launcher's forwarded one can both arrive; a re-run trap would read stdin's EOF.
 const SLOW_SERVER = [
   "#!/bin/sh",
-  "trap 'echo stopping >&3; read go; echo \"stopped $go\" >&3; exit 7' TERM HUP",
+  'trap \'trap "" TERM HUP; echo stopping >&3; read go; echo "stopped $go" >&3; exit 7\' TERM HUP',
   "echo ready",
   "while :; do sleep 0.05; done",
   "",

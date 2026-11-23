@@ -248,32 +248,35 @@ it.effect("finds no common folder for two Windows drives instead of climbing for
   }).pipe(Effect.provide(NodePath.layerWin32)),
 );
 
-it.live("gives two creations on one branch a folder each", () =>
-  withState((state) =>
-    Effect.gen(function* () {
-      const { fileSystem, path, tmp, repository } = yield* fixture;
-      const api = yield* repository("shop/api");
-      state.workspaceRoot = path.join(tmp, "shop");
-      state.trackedFolders = tracked(api);
+it.live.each([{ projectIsRepository: false }, { projectIsRepository: true }])(
+  "gives two creations on one branch a folder each, project is a repository=$projectIsRepository",
+  ({ projectIsRepository }) =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, tmp, repository } = yield* fixture;
+        const shop = projectIsRepository ? yield* repository("shop") : path.join(tmp, "shop");
+        const api = yield* repository("shop/api");
+        state.workspaceRoot = shop;
+        state.trackedFolders = tracked(api);
 
-      // Git gives the branch to one of them; the other's rollback must leave that one's folder.
-      const exits = yield* Effect.all(
-        [Effect.exit(create("feature")), Effect.exit(create("feature"))],
-        {
-          concurrency: 2,
-        },
-      );
+        // Git gives the branch to one of them; the other's rollback must leave that one's folder.
+        const exits = yield* Effect.all(
+          [Effect.exit(create("feature")), Effect.exit(create("feature"))],
+          {
+            concurrency: 2,
+          },
+        );
 
-      const created = exits.flatMap((exit) =>
-        Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
-      );
-      assert.isAtLeast(created.length, 1);
-      assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
-      for (const taskFolder of created) {
-        assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
-      }
-    }),
-  ),
+        const created = exits.flatMap((exit) =>
+          Exit.isSuccess(exit) ? [exit.value.taskFolder] : [],
+        );
+        assert.isAtLeast(created.length, 1);
+        assert.equal(new Set(created.map((taskFolder) => taskFolder.root)).size, created.length);
+        for (const taskFolder of created) {
+          assert.isTrue(yield* fileSystem.exists(path.join(taskFolder.root, "api", "README.md")));
+        }
+      }),
+    ),
 );
 
 it.live.each([{ projectIsRepository: true }, { projectIsRepository: false }])(
