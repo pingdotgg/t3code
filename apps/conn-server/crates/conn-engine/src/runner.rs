@@ -337,12 +337,14 @@ impl Inner {
     ) {
         let (thread, run) = (thread_id.to_owned(), run_id.to_owned());
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
-        let held_on_failure = failure
-            .as_ref()
-            .is_some_and(|f| f["class"] != "validation_error");
-        let usage_limited = failure
-            .as_ref()
-            .is_some_and(|f| f["class"] == "usage_limit");
+        // A usage limit writes no hold: starting checks the limited provider instead
+        // (`usageLimitHoldsQueue`), so work on another provider can still start.
+        let held_on_failure = failure.as_ref().is_some_and(|f| {
+            !matches!(
+                f["class"].as_str(),
+                Some("validation_error" | "usage_limit")
+            )
+        });
         let checkpointing = self.checkpoints.is_some();
         let inner = self.clone();
         let next = self
@@ -376,13 +378,7 @@ impl Inner {
                 // late end of a run that already ended (a start failing after Force stop)
                 // holds nothing.
                 if held_on_failure && ended {
-                    // A usage limit holds everything (`usageLimitHoldsQueue` comes first).
-                    let held = if usage_limited {
-                        Held::All
-                    } else {
-                        Held::ExceptBufferedWakes
-                    };
-                    hold_queued(tx, &thread_id, held)?;
+                    hold_queued(tx, &thread_id, Held::ExceptBufferedWakes)?;
                 }
                 // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
                 // admitted meanwhile runs after it and sees the run completed. The capture ends
@@ -394,6 +390,9 @@ impl Inner {
                     }]
                 } else {
                     let mut effects = crate::families::on_run_end(tx, &thread_id, &run_id)?;
+                    if status == "completed" {
+                        crate::commands::release_unattended_holds(tx, &thread_id, &run_id)?;
+                    }
                     effects.extend(start_next_queued(tx, &thread_id, None)?);
                     effects
                 };

@@ -6045,18 +6045,20 @@ async fn a_provider_failure_holds_messages_and_starts_a_buffered_wake() {
     dispatch(&engine, server).await;
     drop(gate);
     run_to_end(&engine, "t1", "run:t1:1").await;
-    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    run_to_end(&engine, "t1", "run:t1:3").await;
+    // The wake completed without a Stop: nobody reviews the server's wake, so it goes next
+    // (T3's `releaseUnattendedHolds`); the user's message stays held.
+    let p = run_to_end(&engine, "t1", "run:t1:4").await;
     assert_eq!(
         run_statuses(&p),
         [
             ("run:t1:1".into(), "failed".into()),
             ("run:t1:2".into(), "queued".into()),
             ("run:t1:3".into(), "completed".into()),
-            ("run:t1:4".into(), "queued".into()),
+            ("run:t1:4".into(), "completed".into()),
         ]
     );
     assert_eq!(p["runs"][1]["queueHeld"], true);
-    assert_eq!(p["runs"][3]["queueHeld"], true);
 }
 
 /// A pending async question on t1 (`responseCapability: message`), as T3's
@@ -6255,22 +6257,119 @@ async fn a_second_buffered_wake_drains_past_a_held_queue() {
     }
 }
 
-/// Gate finding 4: a usage limit holds everything queued, provider wakes too: T3 checks
-/// `usageLimitHoldsQueue` before a provider failure lets a wake start.
+/// Round-2 gate finding 4: a usage limit blocks only its own provider's queued work, in queue
+/// order (T3's `usageLimitHoldsQueue` at automatic start and at `queue.resume`).
 #[tokio::test(flavor = "current_thread")]
-async fn a_usage_limit_starts_nothing_queued() {
-    let db = TempDb::new("usage-limit-wake");
-    let (engine, _) = open(&db);
+async fn a_usage_limit_blocks_only_its_provider() {
+    let on = |instance: &str, id: &str, text: &str| {
+        let mut m = queued(id, text);
+        m["modelSelection"] = json!({"instanceId": instance, "model": "m"});
+        m
+    };
+    // Limited Claude, with Claude work queued first: nothing starts on its own, and resuming
+    // is refused while the limit stands.
+    let db = TempDb::new("usage-limit-same");
+    let (engine, _, _) = open_two(&db);
     dispatch(&engine, create("t1", "create")).await;
     let hold = gate(&engine);
     dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
-    dispatch(&engine, queued("b", "Queued by the user")).await;
+    dispatch(&engine, on("claudeAgent", "b", "Queued for Claude")).await;
     dispatch(&engine, provider_wake("wake", "Background task completed.")).await;
     drop(hold);
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["runs"][0]["status"], "failed");
     for id in ["b", "wake"] {
         assert_eq!(run_for(&p, id)["status"], "queued", "{id}");
+    }
+    let resume = json!({"type":"queue.resume","commandId":"resume","threadId":"t1"});
+    assert!(matches!(
+        engine.dispatch(from_json(resume).unwrap()).await,
+        Err(EngineError::Rejected(_))
+    ));
+    drop(engine);
+
+    // Limited Claude, with Codex work queued first: the Codex run starts.
+    let db = TempDb::new("usage-limit-other");
+    let (engine, _, codex) = open_two(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let hold = gate(&engine);
+    dispatch(&engine, message("t1", "a", "fail-usage-limit")).await;
+    dispatch(&engine, on("codex", "b", "Queued for Codex")).await;
+    drop(hold);
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_for(&p, "b")["status"], "completed");
+    assert_eq!(count(&codex.sessions), 1);
+}
+
+/// Round-2 gate finding 1: after a failed worktree setup the thread has no checkout of its
+/// own, so an async answer and a provider wake wait held instead of starting in the project
+/// root (T3's `worktreeMissingRun` and `worktreeSetupPending`).
+#[tokio::test(flavor = "current_thread")]
+async fn work_after_a_failed_worktree_setup_waits() {
+    let db = TempDb::new("worktree-setup-failed");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    dispatch(&engine, message("t1", "a", "fail")).await;
+    let mut failed = run_to_end(&engine, "t1", "run:t1:1").await["runs"][0].clone();
+    // As T3 records it, and as `t3_import` copies it.
+    failed["workspacePreparation"] = json!({"type": "worktree"});
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            tx.append(crate::store::Draft::new("t1", "run.updated", failed))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    dispatch(&engine, provider_wake("wake", "Background task completed.")).await;
+    let p = projection(&engine, "t1").await;
+    for id in ["async-answer:t1:request", "wake"] {
+        assert_eq!(run_for(&p, id)["status"], "queued", "{id}: {}", p["runs"]);
         assert_eq!(run_for(&p, id)["queueHeld"], true, "{id}");
     }
+}
+
+/// Round-2 gate finding 2: on a session without live steering the answer queues behind work
+/// already waiting, instead of a declined steer putting it first.
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_answer_queues_in_order_on_a_session_without_steering() {
+    let db = TempDb::new("async-answer-no-steering");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent").without_steering());
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "a", "hang")).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(&engine, queued("b", "Queued by the user")).await;
+    seed_async_question(&engine).await;
+    dispatch(&engine, async_answer("answer")).await;
+    // A declined steer would queue the answer only after its delivery effect ran.
+    let answer = loop {
+        let item = next(&mut stream).await;
+        let payload = &item["event"]["payload"];
+        if item["event"]["type"] == "run.created"
+            && payload["userMessageId"] == "async-answer:t1:request"
+        {
+            break payload.clone();
+        }
+        if item["event"]["type"] == "run.updated"
+            && payload["userMessageId"] == "async-answer:t1:request"
+            && payload["status"] == "queued"
+        {
+            break payload.clone();
+        }
+    };
+    let p = projection(&engine, "t1").await;
+    let b = run_for(&p, "b");
+    assert_eq!(answer["status"], "queued");
+    assert!(
+        answer["queuePosition"].as_u64() > b["queuePosition"].as_u64(),
+        "answer {answer} b {b}"
+    );
 }

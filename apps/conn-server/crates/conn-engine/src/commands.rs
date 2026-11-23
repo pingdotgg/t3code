@@ -454,16 +454,30 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             c.dispatch_mode.kind
         ));
     }
+    // After a failed or stopped worktree setup, work waits for a worktree rather than start
+    // in the project checkout (`worktreeMissingRun`).
+    let worktree_missing = matches!(
+        c.dispatch_mode.kind.as_str(),
+        "queue_after_active" | "start_immediately"
+    ) && active_run(tx, &c.thread_id)?.is_none()
+        && is_null(&thread, "worktreePath")
+        && latest_executed_run(tx, &c.thread_id)?.is_some_and(|run| failed_worktree_setup(&run));
     let (delivery, interrupt) = delivery(tx, &c)?;
     if let Delivery::Steer(target) = delivery {
         return steer_into(tx, &c, &target);
     }
+    let delivery = match delivery {
+        Delivery::Start if worktree_missing => Delivery::Queue { first: false },
+        other => other,
+    };
+    let setup_pending = worktree_setup_pending(tx, &c.thread_id)?;
     // A client send releases a queue that Stop or a failure held; server messages, such as
     // an async answer, scheduled tasks and steer follow-ups do not (`sentByUserFromClient`).
     if c.created_by == "user"
         && matches!(c.creation_source.as_str(), "web" | "mobile")
         && c.steer_follow_up_of_run_id.is_none()
         && c.scheduled_task_id.is_none()
+        && !setup_pending
     {
         release_held(tx, &c.thread_id)?;
     }
@@ -533,6 +547,7 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     // the active run (`wakeSkipsHold`): it replays output the CLI already produced.
     let wake_skips_hold = c.created_by == "agent"
         && c.creation_source == "provider"
+        && !setup_pending
         && match active_run(tx, &c.thread_id)? {
             Some(active) => {
                 interrupt_request(tx, &c.thread_id, active["id"].as_str().unwrap_or_default())?
@@ -540,11 +555,12 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             }
             None => false,
         };
-    let held = queued
-        && !wake_skips_hold
-        && queued_runs(tx, &c.thread_id)?
-            .iter()
-            .any(|r| r["queueHeld"] == true);
+    let held = worktree_missing
+        || (queued
+            && !wake_skips_hold
+            && queued_runs(tx, &c.thread_id)?
+                .iter()
+                .any(|r| r["queueHeld"] == true));
     let mut run = json!({
         "id": run_id,
         "threadId": c.thread_id,
@@ -878,6 +894,41 @@ fn steer_into(tx: &mut Tx<'_>, c: &MessageDispatch, target: &Value) -> Outcome {
     }])
 }
 
+/// `releaseUnattendedHolds`: a hold waits for a person to review what they queued. Nobody
+/// reviews what agents, the server or scheduled tasks queued, so the thread's newest run
+/// completing without a Stop releases those, before the next run is picked.
+pub(crate) fn release_unattended_holds(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    completed_run_id: &str,
+) -> StoreResult<()> {
+    let held: Vec<Value> = queued_runs(tx, thread_id)?
+        .into_iter()
+        .filter(|run| run["queueHeld"] == true)
+        .collect();
+    if held.is_empty()
+        || latest_executed_run(tx, thread_id)?.is_none_or(|run| run["id"] != completed_run_id)
+        || interrupt_request(tx, thread_id, completed_run_id)?.is_some()
+        || worktree_setup_pending(tx, thread_id)?
+    {
+        return Ok(());
+    }
+    for mut run in held {
+        let message = match run["userMessageId"].as_str() {
+            Some(id) => tx.entity(thread_id, "messages", id)?,
+            None => None,
+        };
+        let unattended =
+            message.is_some_and(|m| m["createdBy"] != "user" || !is_null(&m, "scheduledTaskId"));
+        if unattended {
+            run["queueHeld"] = json!(false);
+            let id = run["id"].as_str().unwrap_or_default().to_owned();
+            tx.append(Draft::new(thread_id, "run.updated", run).run(Some(&id)))?;
+        }
+    }
+    Ok(())
+}
+
 /// Clears `queueHeld` on every queued run.
 fn release_held(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<bool> {
     let mut released = false;
@@ -936,6 +987,110 @@ pub(crate) fn hold_queued(tx: &mut Tx<'_>, thread_id: &str, held: Held) -> Store
 
 /// Starts the next queued run when nothing is active (`startNextQueuedRun`). `only` picks one
 /// queued run, as `queued-run.start` does. Returns the effect that starts it.
+/// `latestExecutedRun`: the run that ran last. Unfinished runs count as latest, then by end
+/// time, then by ordinal; queued runs and runs cancelled before they started do not count.
+pub(crate) fn latest_executed_run(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Option<Value>> {
+    let key = |run: &Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    Ok(tx
+        .entities(thread_id, "runs")?
+        .into_iter()
+        .filter(|run| {
+            run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key))
+}
+
+/// A run whose worktree setup failed or was stopped, on a thread with no checkout of its own:
+/// work started now would run in the project checkout (`worktreeSetupPending`). Runs imported
+/// from T3 carry `workspacePreparation`.
+fn failed_worktree_setup(run: &Value) -> bool {
+    matches!(run["status"].as_str(), Some("failed" | "interrupted"))
+        && run["workspacePreparation"]["type"] == "worktree"
+}
+
+/// `worktreeSetupPending`.
+pub(crate) fn worktree_setup_pending(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(false);
+    };
+    Ok(is_null(&thread, "worktreePath")
+        && tx
+            .entities(thread_id, "runs")?
+            .iter()
+            .any(failed_worktree_setup))
+}
+
+/// `usageLimitHoldsQueue`: the provider instance's last run failed on its usage limit, and
+/// that is still the thread's last run, or (with `now`) its reset is still ahead.
+pub(crate) fn usage_limit_holds(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    instance: &str,
+    now: Option<&str>,
+) -> StoreResult<bool> {
+    let runs = tx.entities(thread_id, "runs")?;
+    let key = |run: &&Value| {
+        (
+            run["completedAt"]
+                .as_str()
+                .map_or("\u{10FFFF}".to_owned(), str::to_owned),
+            run["ordinal"].as_u64().unwrap_or(0),
+        )
+    };
+    let Some(limited) = runs
+        .iter()
+        .filter(|run| {
+            run["providerInstanceId"] == instance
+                && run["status"] != "queued"
+                && !(run["status"] == "cancelled" && is_null(run, "startedAt"))
+        })
+        .max_by_key(key)
+        .filter(|run| run["status"] == "failed")
+    else {
+        return Ok(false);
+    };
+    let run_id = limited["id"].as_str().unwrap_or_default();
+    let failure = tx
+        .entities_where(thread_id, "turnItems", "runId", run_id)?
+        .into_iter()
+        .filter(|item| {
+            item["type"] == "error"
+                && item["status"] == "failed"
+                && item["nodeId"] == limited["rootNodeId"]
+        })
+        .max_by(|a, b| {
+            let at = |i: &Value| i["updatedAt"].as_str().unwrap_or_default().to_owned();
+            at(a).cmp(&at(b))
+        })
+        .map(|item| item["failure"].clone());
+    let Some(failure) = failure.filter(|f| f["class"] == "usage_limit") else {
+        return Ok(false);
+    };
+    if latest_executed_run(tx, thread_id)?.is_some_and(|latest| latest["id"] == run_id) {
+        return Ok(true);
+    }
+    Ok(match (now, failure["resetAt"].as_str()) {
+        (Some(now), Some(reset)) => {
+            match (
+                crate::time::millis_from_iso(reset),
+                crate::time::millis_from_iso(now),
+            ) {
+                (Some(reset), Some(now)) => reset > now,
+                _ => false,
+            }
+        }
+        _ => false,
+    })
+}
+
 pub(crate) fn start_next_queued(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -944,6 +1099,7 @@ pub(crate) fn start_next_queued(
     if active_run(tx, thread_id)?.is_some() {
         return Ok(None);
     }
+    let user_started = only.is_some();
     let Some(thread) = tx.thread(thread_id)? else {
         return Ok(None);
     };
@@ -988,6 +1144,13 @@ pub(crate) fn start_next_queued(
         }
         break run;
     };
+    // A limited provider would fail and use up every waiting message; the queue keeps its
+    // order and waits (`usageLimitHoldsQueue`).
+    let now = (!user_started).then(|| tx.now().to_owned());
+    let instance = run["providerInstanceId"].as_str().unwrap_or_default();
+    if usage_limit_holds(tx, thread_id, instance, now.as_deref())? {
+        return Ok(None);
+    }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
     let now = tx.now().to_owned();
@@ -1081,7 +1244,20 @@ fn queued_run_start(tx: &mut Tx<'_>, command: Value) -> Outcome {
 
 fn queue_resume(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
-    live_thread(tx, &c.thread_id)?;
+    let thread = live_thread(tx, &c.thread_id)?;
+    let next = queued_runs(tx, &c.thread_id)?.into_iter().next();
+    let instance = next
+        .as_ref()
+        .and_then(|run| run["providerInstanceId"].as_str())
+        .or_else(|| thread["modelSelection"]["instanceId"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    if usage_limit_holds(tx, &c.thread_id, &instance, None)? {
+        return reject("Continue the limited thread before resuming its queue.");
+    }
+    if worktree_setup_pending(tx, &c.thread_id)? {
+        return reject("Retry worktree setup or choose a workspace before resuming the queue.");
+    }
     release_held(tx, &c.thread_id)?;
     Ok(start_next_queued(tx, &c.thread_id, None)?
         .into_iter()
@@ -1736,6 +1912,27 @@ fn async_reply(
     Ok(replies.join("\n\n"))
 }
 
+/// Whether the provider session the run's provider thread is on steers a running turn.
+fn session_steers(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let Some(provider_thread) = run["providerThreadId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerThreads", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    let Some(session) = provider_thread["providerSessionId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "providerSessions", id))
+        .transpose()?
+        .flatten()
+    else {
+        return Ok(false);
+    };
+    Ok(session["capabilities"]["turns"]["supportsActiveSteering"] == true)
+}
+
 /// Sends the async answer as the user's message: it steers the active run, or queues or
 /// starts a turn, with a stable id so a second answer cannot add another.
 fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Outcome {
@@ -1748,6 +1945,11 @@ fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Out
             .iter()
             .any(|turn| turn["nodeId"] == run["rootNodeId"])
             .then_some(run),
+        _ => None,
+    };
+    // Only a session that steers live takes it into the turn (`supportsActiveSteering`).
+    let running = match running {
+        Some(run) if session_steers(tx, &c.thread_id, &run)? => Some(run),
         _ => None,
     };
     let dispatch_mode = match running {

@@ -309,11 +309,15 @@ impl Provider for FakeProvider {
                     }
                 });
             }
+            let mut capabilities = conn_provider::testing::session_capabilities();
+            if !self.steering {
+                capabilities["turns"]["supportsActiveSteering"] = json!(false);
+            }
             Ok(OpenedSession {
                 provider_session: from_json(json!({
                     "id": input.provider_session_id, "driver": "claudeAgent",
                     "providerInstanceId": self.id, "status": "ready",
-                    "cwd": input.runtime_policy.cwd, "model": null, "capabilities": conn_provider::testing::session_capabilities(),
+                    "cwd": input.runtime_policy.cwd, "model": null, "capabilities": capabilities,
                     "createdAt": now_iso(), "updatedAt": now_iso(), "lastError": null,
                 }))
                 .map_err(|e| ProviderError::Protocol {
