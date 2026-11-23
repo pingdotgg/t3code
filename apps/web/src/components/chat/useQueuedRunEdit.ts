@@ -17,6 +17,7 @@ import {
   type ResponseContextRecord,
   type EnvironmentId,
   type MessageId,
+  type ModelSelection,
   type OrchestrationMessageContext,
   type PreviewAnnotationPayload,
   type RunId,
@@ -93,6 +94,7 @@ const queuedRunEdits = makeQueuedRunEditStore<EditingQueuedRun>({
 });
 
 interface QueuedRunEditContent {
+  readonly modelSelection: ModelSelection;
   readonly prompt: string;
   readonly images: ReadonlyArray<ComposerImageAttachment>;
   readonly files: ReadonlyArray<ComposerFileAttachment>;
@@ -177,6 +179,7 @@ async function submitQueuedRunEdit(input: {
         threadId: editing.threadId,
         runId: editing.runId,
         text: restoreAttachmentOnlyBootstrapPrompt(editText, uploads.length > 0),
+        modelSelection: content.modelSelection,
         edit: {
           messageId: editing.messageId,
           attachments: uploads,
@@ -252,8 +255,11 @@ export function useQueuedRunEdit(input: {
   const clearEditDraft = (runId: RunId) => {
     const target = queuedRunEditDraftId(routeThreadRef, runId);
     // A save in flight still sends these uploads.
-    if (isSaving) useComposerDraftStore.getState().clearComposerContent(target);
-    else discardQueuedEditDraft(target);
+    if (isSaving) {
+      const store = useComposerDraftStore.getState();
+      store.clearComposerContent(target);
+      store.clearDraftThread(target);
+    } else discardQueuedEditDraft(target);
   };
 
   const beginEdit = useStableCallback((request: EditQueuedRunRequest) => {
@@ -273,6 +279,9 @@ export function useQueuedRunEdit(input: {
     const store = useComposerDraftStore.getState();
     store.clearComposerContent(target);
     store.setPrompt(target, text);
+    const run = serverProjection?.runs.find((run) => run.id === request.runId);
+    if (run)
+      store.setModelSelection(target, run.modelSelection, { explicit: true, replaceOptions: true });
     store.setThreadContexts(
       target,
       records.filter((record): record is ThreadContextRecord => record.kind === "thread"),
@@ -416,6 +425,8 @@ export function useQueuedRunEdit(input: {
     const draftBeforeSave = useComposerDraftStore.getState().getComposerDraft(draftTarget);
     const draftChanged = () =>
       appAtomRegistry.get(queuedRunEdits.atom)[editKey] !== editing ||
+      draftBeforeSave?.modelSelectionByProvider !==
+        useComposerDraftStore.getState().getComposerDraft(draftTarget)?.modelSelectionByProvider ||
       composerDraftContentChanged(
         draftBeforeSave,
         useComposerDraftStore.getState().getComposerDraft(draftTarget),

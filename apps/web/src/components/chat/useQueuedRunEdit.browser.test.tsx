@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   ChatAttachmentId,
   MessageId,
+  ProviderInstanceId,
   RunId,
   ThreadId,
   type ScopedThreadRef,
@@ -33,6 +34,7 @@ import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attach
 interface RunStatus {
   readonly id: RunId;
   readonly status: string;
+  readonly modelSelection?: { readonly instanceId: ProviderInstanceId; readonly model: string };
   readonly activeAttemptId?: string;
 }
 
@@ -130,7 +132,10 @@ function Harness(props: {
     routeThreadRef: props.threadRef,
     threadDraftTarget: props.threadRef,
     activeThreadId: props.threadRef.threadId,
-    serverProjection: projection([{ id: RUN, status: props.runStatus }], props.messages),
+    serverProjection: projection(
+      [{ id: RUN, status: props.runStatus, modelSelection: savedContent("").modelSelection }],
+      props.messages,
+    ),
     promptRef: { current: "" },
     composerRef: { current: null },
   });
@@ -205,6 +210,7 @@ async function beginChangedEdit(hook: { current: HookResult | null }) {
 }
 
 const savedContent = (prompt: string) => ({
+  modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
   prompt,
   images: [],
   files: [],

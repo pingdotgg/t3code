@@ -1,6 +1,7 @@
 import type {
   ChatAttachment,
   MessageId,
+  ModelSelection,
   OrchestrationMessageContext,
   RunId,
   UploadChatAttachment,
@@ -26,9 +27,11 @@ import {
   mergeComposerDraftContent,
   setComposerDraftContext,
   setComposerDraftText,
+  updateComposerDraftSettings,
 } from "./use-composer-drafts";
 
 export interface QueuedRunEdit {
+  readonly modelSelection?: ModelSelection;
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
@@ -124,6 +127,8 @@ export function beginQueuedRunEdit(
   const originalText = stripAttachmentOnlyBootstrapPrompt(edit.originalText);
   clearComposerDraft(draftKey);
   setComposerDraftText(draftKey, originalText);
+  if (edit.modelSelection)
+    updateComposerDraftSettings(draftKey, { modelSelection: edit.modelSelection });
   setComposerDraftContext(draftKey, edit.context);
   queuedRunEdits.begin(
     threadKey,

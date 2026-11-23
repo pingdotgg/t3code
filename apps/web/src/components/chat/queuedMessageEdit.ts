@@ -22,6 +22,7 @@ export function discardQueuedEditDraft(target: ComposerThreadTarget): void {
     }
   }
   store.clearComposerContent(target);
+  store.clearDraftThread(target);
 }
 
 export function recoverQueuedMessageEdit(input: {
@@ -45,6 +46,7 @@ export function recoverQueuedMessageEdit(input: {
   if (recovery === "kept") {
     store.moveComposerContent(input.editTarget, input.threadTarget);
     store.clearComposerContent(input.editTarget);
+    store.clearDraftThread(input.editTarget);
   } else {
     discardQueuedEditDraft(input.editTarget);
   }
