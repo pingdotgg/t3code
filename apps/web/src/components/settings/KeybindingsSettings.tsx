@@ -101,14 +101,20 @@ import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
+function KeybindingPill({
+  shortcut,
+  title,
+}: {
+  shortcut: KeybindingShortcut;
+  title?: string | undefined;
+}) {
   const isMac = navigator.platform.toLowerCase().includes("mac");
   const parts = shortcutToKeybindingParts(shortcut);
   const modifierParts = parts.slice(0, -1);
   const keyPart = parts.at(-1);
 
   return (
-    <KbdGroup>
+    <KbdGroup title={title}>
       {modifierParts.map((part) => (
         <Kbd key={part}>
           {part === "mod"
@@ -1327,6 +1333,12 @@ interface NewKeybindingProps {
   onCancel: () => void;
 }
 
+interface CommandPickerShortcut {
+  readonly id: string;
+  readonly shortcut: KeybindingShortcut;
+  readonly when: string;
+}
+
 function NewKeybindingCommandSelect({
   draft,
   commandOptions,
@@ -1340,14 +1352,12 @@ function NewKeybindingCommandSelect({
 }) {
   const gt = useGT();
   const m = useMessages();
-  const shortcutsByCommand = new Map<
-    KeybindingCommand,
-    Array<{ id: string; label: string; when: string }>
-  >();
+  const shortcutsByCommand = new Map<KeybindingCommand, Array<CommandPickerShortcut>>();
   for (const row of allRows) {
-    for (const label of row.previewLabels) {
+    for (const [index, shortcut] of row.previewShortcuts.entries()) {
+      const label = row.previewLabels[index] ?? formatShortcutLabel(shortcut);
       const shortcuts = shortcutsByCommand.get(row.command) ?? [];
-      shortcuts.push({ id: `${row.id}:${label}`, label, when: row.when });
+      shortcuts.push({ id: `${row.id}:${label}`, shortcut, when: row.when });
       shortcutsByCommand.set(row.command, shortcuts);
     }
   }
@@ -1377,27 +1387,61 @@ function NewKeybindingCommandSelect({
           aria-label={gt("Search", { $context: "search field placeholder" })}
         />
         <ComboboxEmpty>{gt("No results found.")}</ComboboxEmpty>
-        <ComboboxList>
-          {(command: KeybindingCommandOption) => {
-            const shortcuts = shortcutsByCommand.get(command);
+        <Tooltip<KeybindingCommand>>
+          {({ payload }) => {
+            const tooltipShortcuts = payload ? shortcutsByCommand.get(payload)?.slice(1) : null;
             return (
-              <ComboboxItem key={command} value={command}>
-                <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
-                  <span>{commandLabel(command, m)}</span>
-                  {shortcuts && (
-                    <span className="flex shrink-0 flex-col items-end gap-1">
-                      {shortcuts.map((shortcut) => (
-                        <Kbd key={shortcut.id} title={shortcut.when || undefined}>
-                          {shortcut.label}
-                        </Kbd>
+              <>
+                <ComboboxList>
+                  {(command: KeybindingCommandOption) => {
+                    const shortcuts = shortcutsByCommand.get(command);
+                    const firstShortcut = shortcuts?.[0];
+                    const extraCount = shortcuts ? shortcuts.length - 1 : 0;
+                    return (
+                      <ComboboxItem key={command} value={command}>
+                        <div className="flex min-w-0 flex-1 items-center justify-between gap-3">
+                          <span className="min-w-0 truncate">{commandLabel(command, m)}</span>
+                          {firstShortcut ? (
+                            <span className="flex shrink-0 items-center gap-1.5">
+                              <KeybindingPill
+                                shortcut={firstShortcut.shortcut}
+                                title={firstShortcut.when || undefined}
+                              />
+                              {extraCount > 0 ? (
+                                <TooltipTrigger
+                                  payload={command}
+                                  render={<Badge variant="secondary" />}
+                                >
+                                  +{extraCount}
+                                </TooltipTrigger>
+                              ) : null}
+                            </span>
+                          ) : null}
+                        </div>
+                      </ComboboxItem>
+                    );
+                  }}
+                </ComboboxList>
+                <TooltipPopup side="top">
+                  {tooltipShortcuts && tooltipShortcuts.length > 0 ? (
+                    <div className="flex flex-col gap-1">
+                      {tooltipShortcuts.map((entry) => (
+                        <div key={entry.id} className="flex items-center justify-between gap-2">
+                          <KeybindingPill shortcut={entry.shortcut} />
+                          {entry.when ? (
+                            <span className="font-mono text-caption text-muted-foreground">
+                              {entry.when}
+                            </span>
+                          ) : null}
+                        </div>
                       ))}
-                    </span>
-                  )}
-                </div>
-              </ComboboxItem>
+                    </div>
+                  ) : null}
+                </TooltipPopup>
+              </>
             );
           }}
-        </ComboboxList>
+        </Tooltip>
       </ComboboxPopup>
     </Combobox>
   );

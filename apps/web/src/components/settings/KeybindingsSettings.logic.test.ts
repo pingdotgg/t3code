@@ -97,9 +97,19 @@ describe("KeybindingsSettings.logic", () => {
       const binding = compileResolvedKeybindingsConfig([{ command, key: "mod+enter" }]);
       const labels = (mode: "enter" | "mod-enter" | "mod-enter-multiline") =>
         buildKeybindingRows(binding, "Win32", mode)[0]?.previewLabels;
+      const shortcuts = (mode: "enter" | "mod-enter" | "mod-enter-multiline") =>
+        buildKeybindingRows(binding, "Win32", mode)[0]?.previewShortcuts.map(
+          shortcutToKeybindingParts,
+        );
       expect(labels("enter")).toEqual(["Ctrl+Enter"]);
       expect(labels("mod-enter")).toEqual(["Ctrl+Shift+Enter"]);
       expect(labels("mod-enter-multiline")).toEqual(["Ctrl+Enter", "Ctrl+Shift+Enter"]);
+      expect(shortcuts("enter")).toEqual([["mod", "enter"]]);
+      expect(shortcuts("mod-enter")).toEqual([["mod", "shift", "enter"]]);
+      expect(shortcuts("mod-enter-multiline")).toEqual([
+        ["mod", "enter"],
+        ["mod", "shift", "enter"],
+      ]);
     }
     const shiftedBindings = compileResolvedKeybindingsConfig([
       { command: "chat.new", key: "mod+shift+enter" },
@@ -258,6 +268,11 @@ describe("KeybindingsSettings.logic", () => {
       "shift",
       "+",
     ]);
+    expect(
+      buildKeybindingRows(
+        compileResolvedKeybindingsConfig([{ command: "preview.zoomIn", key: "mod++" }]),
+      )[0]?.previewShortcuts.map(shortcutToKeybindingParts),
+    ).toEqual([["mod", "+"]]);
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {
