@@ -1389,8 +1389,19 @@ export const layer = Layer.effect(
       Option.none(),
     );
 
-    const refreshAllUsageLimits = Effect.fn("refreshAllUsageLimits")(function* () {
-      const claimed = yield* Ref.modify(
+    const runAllUsageLimits = syncLiveSourcesAndContinue.pipe(
+      Effect.andThen(Ref.get(liveSubsRef)),
+      Effect.flatMap((instances) =>
+        Effect.forEach(instances.values(), (instance) => refreshOneUsage(instance), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
+      ),
+    );
+
+    // Claim and fork together: an interrupt between them would leave a completion nobody settles.
+    const claimUsageLimitsRefresh = Effect.uninterruptibleMask((restore) =>
+      Ref.modify(
         refreshUsageLimitsInFlightRef,
         (
           inFlight,
@@ -1404,24 +1415,24 @@ export const layer = Layer.effect(
           const completion = Deferred.makeUnsafe<void>();
           return [{ owner: true, completion }, Option.some(completion)];
         },
-      );
-      if (claimed.owner) {
-        yield* syncLiveSourcesAndContinue.pipe(
-          Effect.andThen(Ref.get(liveSubsRef)),
-          Effect.flatMap((instances) =>
-            Effect.forEach(instances.values(), (instance) => refreshOneUsage(instance), {
-              concurrency: "unbounded",
-              discard: true,
-            }),
-          ),
-          Effect.onExit((exit) =>
-            Ref.set(refreshUsageLimitsInFlightRef, Option.none()).pipe(
-              Effect.andThen(Deferred.done(claimed.completion, exit)),
-            ),
-          ),
-          Effect.forkDetach,
-        );
-      }
+      ).pipe(
+        Effect.tap((claimed) =>
+          claimed.owner
+            ? restore(runAllUsageLimits).pipe(
+                Effect.onExit((exit) =>
+                  Ref.set(refreshUsageLimitsInFlightRef, Option.none()).pipe(
+                    Effect.andThen(Deferred.done(claimed.completion, exit)),
+                  ),
+                ),
+                Effect.forkDetach,
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+
+    const refreshAllUsageLimits = Effect.fn("refreshAllUsageLimits")(function* () {
+      const claimed = yield* claimUsageLimitsRefresh;
       yield* Deferred.await(claimed.completion);
     });
 
