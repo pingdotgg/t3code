@@ -1074,9 +1074,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       );
     if (
       checkpoint === undefined ||
-      // Missing snapshots support conversation rewind only.
+      // Missing or failed snapshots support conversation rewind only.
       (checkpoint.status !== "ready" &&
-        !(input.restoreFiles === false && checkpoint.status === "missing"))
+        !(input.restoreFiles === false && checkpoint.status !== "stale"))
     ) {
       const target =
         input.checkpointId === undefined
