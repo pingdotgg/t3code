@@ -1,5 +1,6 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import {
   type ProviderApprovalDecision,
   type ResponseContextRecord,
@@ -120,6 +121,7 @@ export interface TimelineRowActivityState {
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
+  providerStarting: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   /** The setup card is on screen with its own header, so the working row steps aside. */
   worktreeSetupCardOwnsHeader: boolean;
   latestRunId: RunId | null;
