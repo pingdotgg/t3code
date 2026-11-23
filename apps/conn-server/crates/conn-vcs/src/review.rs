@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     error::{VcsError, VcsResult},
-    process::{GitCommand, OnLimit, ProcessError},
+    process::{GitCommand, GitOutput, OnLimit, ProcessError},
     repo::{self, PROBE_TIMEOUT, git},
 };
 
@@ -967,13 +967,7 @@ async fn working_text_as_git_diffs_it(root: &Path, path: &str, text: String) -> 
     .allow_exit(&[1])
     .run()
     .await;
-    // As T3, a lookup that exits other than 1 (a malformed `GIT_CONFIG`) keeps the text read.
-    let filters = match filters {
-        Ok(out) => out,
-        Err(ProcessError::Exit { .. }) => return Ok(text),
-        Err(error) => return Err(error.into()),
-    };
-    if filters.code != 1 || !filters.stdout.is_empty() {
+    if !no_unspecified_filter(filters)? {
         return Ok(text);
     }
     // Git's conversion of a keyword that cannot overlap shows whether it collapses this path.
@@ -989,6 +983,17 @@ async fn working_text_as_git_diffs_it(root: &Path, path: &str, text: String) -> 
     } else {
         text
     })
+}
+
+/// Whether the `filter.unspecified.*` lookup found no such filter: exit 1 with nothing listed.
+/// As T3, another completed exit (a malformed `GIT_CONFIG`) keeps the text read, and a lookup
+/// that does not finish (a timeout or a signal) fails the request.
+fn no_unspecified_filter(lookup: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
+    match lookup {
+        Ok(out) => Ok(out.code == 1 && out.stdout.is_empty()),
+        Err(error) if error.is_completed_exit() => Ok(false),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Git's ident clean step (`ident_to_git` in convert.c): `$Id:` up to the next `$` on the
@@ -1208,6 +1213,51 @@ mod tests {
             ("é $Id: ü $ é", "é $Id$ é"),
         ] {
             assert_eq!(collapse_ident_keywords(text), expected, "{text:?}");
+        }
+    }
+
+    /// T3's `allowNonZeroExit` lookup: a completed exit other than 1 keeps the text read, and
+    /// a lookup that a signal ends propagates the interruption.
+    #[tokio::test]
+    async fn filter_lookup_keeps_text_only_after_a_completed_exit() {
+        let exited = |code| {
+            Ok(GitOutput {
+                code,
+                ..GitOutput::default()
+            })
+        };
+        assert_eq!(no_unspecified_filter(exited(1)), Ok(true));
+        assert_eq!(no_unspecified_filter(exited(0)), Ok(false));
+        let malformed = ProcessError::Exit {
+            context: crate::process::ProcessContext {
+                operation: "GitVcsDriver.getReviewDiffFileContents.workingTree.ident",
+                command: "git config".into(),
+                cwd: "/repo".into(),
+                argument_count: 4,
+            },
+            code: 128,
+            stderr: "fatal: bad config line 1 in file malformed-config\n".into(),
+            stderr_truncated: false,
+        };
+        assert_eq!(no_unspecified_filter(Err(malformed)), Ok(false));
+        #[cfg(unix)]
+        {
+            let signalled = GitCommand::host_cli(
+                "test.signalled",
+                "sh",
+                Path::new("/"),
+                ["-c", "kill -TERM $$"],
+            )
+            .allow_exit(&[1])
+            .run()
+            .await;
+            let Err(error) = signalled.clone() else {
+                panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+            };
+            assert_eq!(
+                no_unspecified_filter(signalled),
+                Err(VcsError::Process(error))
+            );
         }
     }
 
