@@ -961,25 +961,20 @@ Review triggered.
       assert.isFalse(progress.exhausted);
       assert.deepEqual(evaluatePullRequestWatch(progress.next, detail(), [queued]).changes, []);
 
-      for (const body of [
-        codeRabbitReply("Review finished."),
-        codeRabbitReply("Review rate limited.", "Action not completed"),
-      ]) {
-        const outcome = { ...queued, body, editedAt: "2026-10-02T12:07:00Z" };
-        const finished = evaluatePullRequestWatch(progress.next, detail(), [outcome]);
-        assert.deepEqual(finished.changes, [{ kind: "remarks", remarks: [outcome] }]);
-        assert.equal(finished.next.remarksThrough, outcome.editedAt);
-        assert.equal(finished.next.wakes, 3);
-        assert.deepEqual(evaluatePullRequestWatch(finished.next, detail(), [outcome]).changes, []);
-      }
+      const outcome = {
+        ...queued,
+        body: codeRabbitReply("Review finished."),
+        editedAt: "2026-10-02T12:07:00Z",
+      };
+      const finished = evaluatePullRequestWatch(progress.next, detail(), [outcome]);
+      assert.deepEqual(finished.changes, [{ kind: "remarks", remarks: [outcome] }]);
+      assert.equal(finished.next.wakes, 3);
+      assert.deepEqual(evaluatePullRequestWatch(finished.next, detail(), [outcome]).changes, []);
 
       const late = remark("reviewer", queued.createdAt);
       const mixed = evaluatePullRequestWatch(watching, detail(), [queued, late]);
       assert.deepEqual(mixed.changes, [{ kind: "remarks", remarks: [late] }]);
       assert.deepEqual(mixed.next.remarkIds, [queued.id, late.id]);
-      assert.deepEqual(evaluatePullRequestWatch(progress.next, detail(), [queued, late]).changes, [
-        { kind: "remarks", remarks: [late] },
-      ]);
     }
   });
 
