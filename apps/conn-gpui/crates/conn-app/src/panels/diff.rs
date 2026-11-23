@@ -656,7 +656,10 @@ impl DiffPanel {
                         menu = menu.child(
                             h_flex()
                                 .id(SharedString::from(format!("diff-scope-commit-{short_sha}")))
-                                .a11y_button(format!("panel.diff.scope-commit.{short_sha}"), format!("Commit {short_sha}"))
+                                .a11y_button(
+                                    format!("panel.diff.scope-commit.{short_sha}"),
+                                    format!("Commit {short_sha}"),
+                                )
                                 .h(px(26.0))
                                 .px(px(8.0))
                                 .gap(px(6.0))
@@ -761,7 +764,10 @@ impl DiffPanel {
                     menu = menu.child(
                         h_flex()
                             .id(SharedString::from(format!("diff-scope-turn-{turn}")))
-                            .a11y_button(format!("panel.diff.scope-turn.{turn}"), format!("Turn {turn}"))
+                            .a11y_button(
+                                format!("panel.diff.scope-turn.{turn}"),
+                                format!("Turn {turn}"),
+                            )
                             .h(px(26.0))
                             .px(px(8.0))
                             .gap(px(6.0))
@@ -899,7 +905,10 @@ impl DiffPanel {
                     menu = menu.child(
                         h_flex()
                             .id(SharedString::from(format!("diff-base-ref-{ref_name}")))
-                            .a11y_button(format!("panel.diff.base-ref.{ref_name}"), ref_name.to_string())
+                            .a11y_button(
+                                format!("panel.diff.base-ref.{ref_name}"),
+                                ref_name.to_string(),
+                            )
                             .h(px(26.0))
                             .px(px(8.0))
                             .gap(px(6.0))
@@ -1047,7 +1056,10 @@ impl DiffPanel {
                             .child(
                                 div()
                                     .id("diff-mode-toggle-btn")
-                                    .a11y_button("panel.diff.mode-toggle", "Toggle split or unified diff")
+                                    .a11y_button(
+                                        "panel.diff.mode-toggle",
+                                        "Toggle split or unified diff",
+                                    )
                                     .size(px(TOOLBAR_BTN_SIZE_PX))
                                     .rounded(px(9999.0))
                                     .flex()

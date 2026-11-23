@@ -3,8 +3,10 @@
 //! read the response. Requests persist per project, as Conn's `t3code:api-requests:v1`.
 
 use crate::a11y::ConnA11yExt as _;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use conn_desktop::api_request::ApiResponse;
 use conn_desktop::api_request::response_view::{
@@ -24,6 +26,7 @@ use gpui_kit::{
     SharedString, Styled, Subscription, Window, div, px,
 };
 
+use super::laravel_toolbar::LaravelToolbar;
 use super::chrome::{
     self, ConnTooltipExt as _, MenuEntry, MenuRow, SectionTab, UI_LINE_HEIGHT_PX, UI_TEXT_PX,
     XS_LINE_HEIGHT_PX, XS_TEXT_PX,
@@ -52,6 +55,10 @@ pub(crate) struct ApiPanel {
     editor_tab: &'static str,
     response_tab: &'static str,
     menu: Option<OpenMenu>,
+    /// The Laravel debug bar under the response (`BrowserLaravelToolbar` of `ApiPanel.tsx`).
+    laravel_toolbar: Entity<LaravelToolbar>,
+    /// The panel's area above the bar, for the bar's flyout.
+    area: Rc<Cell<Option<conn_web::Rect>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -108,6 +115,10 @@ impl ApiPanel {
                 );
             }
         });
+        let area = Rc::new(Cell::new(None));
+        let laravel_toolbar = cx.new(|cx| {
+            LaravelToolbar::new(tokens.clone(), Rc::new(RefCell::new(None)), area.clone(), cx)
+        });
         Self {
             tokens,
             project_key: None,
@@ -119,11 +130,29 @@ impl ApiPanel {
             editor_tab: "headers",
             response_tab: "body",
             menu: None,
+            laravel_toolbar,
+            area,
             _subscriptions: vec![url_sub, body_sub],
         }
     }
 
+    /// The debug bar entity, for the host to follow its events.
+    pub(crate) fn laravel_toolbar(&self) -> Entity<LaravelToolbar> {
+        self.laravel_toolbar.clone()
+    }
+
+    /// The workspace root: the debug bar opens source files only inside it.
+    pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar.update(cx, |bar, cx| bar.set_project_root(root.map(PathBuf::from), cx));
+    }
+
+    /// The Conn server the thread runs on: the debug bar changes only its Orbit Instance.
+    pub(crate) fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar.update(cx, |bar, cx| bar.set_environment(environment_id, cx));
+    }
+
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
+        self.laravel_toolbar.update(cx, |bar, cx| bar.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }
@@ -136,6 +165,9 @@ impl ApiPanel {
         self.project_key = project_key;
         if let Some(key) = &self.project_key {
             self.store.ensure_request(key, None);
+            // One history per project, as `api:{projectKey}` tabs of the web store.
+            let tab = format!("api:{key}");
+            self.laravel_toolbar.update(cx, |bar, cx| bar.set_tab_key(&tab, cx));
         }
         self.synced_request = None;
         self.menu = None;
@@ -255,6 +287,7 @@ impl ApiPanel {
         let Some(key) = self.project_key.clone() else {
             return;
         };
+        let draft = self.selected().cloned();
         let Some((id, request)) = self.store.begin_send(&key) else {
             return;
         };
@@ -268,6 +301,11 @@ impl ApiPanel {
                 Err(error) => ApiResponse::failure(url, error.to_string(), 0.0),
             };
             let _ = this.update(cx, |panel, cx| {
+                if let Some(draft) = &draft {
+                    panel
+                        .laravel_toolbar
+                        .update(cx, |bar, cx| bar.receive_api_response(draft, &response, cx));
+                }
                 panel.store.finish_send(&id, response);
                 cx.notify();
             });
@@ -816,8 +854,11 @@ impl Render for ApiPanel {
         let toolbar = self.render_toolbar(&request, cx);
         let editor = self.render_editor(&request, window, cx);
         let response = self.render_response(&request, cx);
+        let bar = self.laravel_toolbar.read(cx).is_visible().then(|| self.laravel_toolbar.clone());
+        let area = self.area.clone();
         v_flex()
             .id("api-panel")
+            .relative()
             .a11y_group("panel.api", "API")
             .size_full()
             .on_key_down(cx.listener(|p, event: &KeyDownEvent, _, cx| {
@@ -838,6 +879,23 @@ impl Render for ApiPanel {
             .child(toolbar)
             .child(editor)
             .child(response)
+            .children(bar)
+            // The flyout may use the panel's height above the bar.
+            .child(
+                gpui_kit::canvas(
+                    move |bounds, _window, _cx| {
+                        area.set(Some(conn_web::Rect {
+                            x: f32::from(bounds.origin.x),
+                            y: f32::from(bounds.origin.y),
+                            width: f32::from(bounds.size.width),
+                            height: f32::from(bounds.size.height) - 48.0,
+                        }));
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .into_any_element()
     }
 }

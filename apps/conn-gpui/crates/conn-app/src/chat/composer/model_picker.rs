@@ -12,7 +12,7 @@ use gpui_kit::{
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 
-use super::super::color::{hsla, hsla_alpha};
+use super::super::color::{hsla, hsla_alpha, opaque};
 use super::super::icons;
 use super::Composer;
 use super::actions::FollowUpBehavior;
@@ -26,6 +26,8 @@ use crate::panels::chrome::ConnTooltipExt as _;
 const PICKER_RADIUS_PX: f32 = 12.0;
 /// Row corner radius matching Conn's `rounded-lg` (`8px`).
 const PICKER_ROW_RADIUS_PX: f32 = 8.0;
+/// Provider and favorites glyphs: the rail and the model rows draw them the same size (#327).
+const PROVIDER_ICON_PX: f32 = 16.0;
 /// Popup width matching `max-w-90` (`360px`).
 const PICKER_WIDTH_PX: f32 = 360.0;
 /// Fixed docked popup height matching `h-86.5` (`346px`).
@@ -69,13 +71,35 @@ pub(super) struct ModelPickerView<'a> {
     pub(super) follow_up: FollowUpBehavior,
 }
 
+impl<'a> ModelPickerView<'a> {
+    /// The model whose traits (the effort column and the speed segments) the picker shows: the
+    /// selected model while its provider's tab, Favorites or a search is showing. On another
+    /// provider's tab the selected model's options do not apply (Codex's Ultrafast on Grok's
+    /// tab), so there are none (Nick, #333).
+    fn traits_model(&self) -> Option<&'a ModelOption> {
+        let selected = self.selected?;
+        let browsing = self
+            .selected_provider
+            .filter(|tab| *tab != FAVORITES_TAB)
+            .filter(|_| self.query.trim().is_empty());
+        shows_selected_traits(&selected.instance_id, browsing).then_some(selected)
+    }
+}
+
+/// Whether the selected model's traits show: it belongs to the provider tab being browsed, or no
+/// provider tab is (Favorites, a search, or the picker's default tab, which is the selected one).
+fn shows_selected_traits(selected_instance: &str, browsing_instance: Option<&str>) -> bool {
+    browsing_instance.is_none_or(|tab| tab == selected_instance)
+}
+
 /// Renders Conn's docked model picker: model list, effort column (`w-48`), and picker footer.
 pub(super) fn render_model_picker(
     view: &ModelPickerView<'_>,
     cx: &mut Context<'_, Composer>,
 ) -> AnyElement {
     let tokens = view.tokens;
-    let glass_bg = hsla(tokens.shell_overlay);
+    // Opaque: no backdrop blur to hide the chat behind the glass (Nick, #332).
+    let glass_bg = opaque(tokens.shell_overlay);
     let glass_divider = hsla(tokens.glass_divider);
     let highlight_bg = hsla(tokens.shell_highlight);
     let fg = hsla(tokens.foreground);
@@ -148,17 +172,10 @@ pub(super) fn render_model_picker(
             .on_click(cx.listener(|composer, _, _, cx| {
                 composer.select_picker_provider(FAVORITES_TAB.to_owned(), cx);
             }))
-            .child(icons::icon(ICON_STAR, 18.0, star_color));
+            .child(icons::icon(ICON_STAR, PROVIDER_ICON_PX, star_color));
+        // The active provider takes the selected-model highlight, not a side bar (Nick, #311).
         if favorites_tab {
-            favorites_btn = favorites_btn.child(
-                div()
-                    .absolute()
-                    .right(px(0.0))
-                    .w(px(3.0))
-                    .h(px(20.0))
-                    .rounded_full()
-                    .bg(hsla(tokens.primary)),
-            );
+            favorites_btn = favorites_btn.bg(highlight_bg);
         }
         rail = rail.child(favorites_btn);
 
@@ -188,7 +205,7 @@ pub(super) fn render_model_picker(
                 .rounded(px(6.0))
                 .child(crate::icons::provider_mark(
                     &provider.driver,
-                    18.0,
+                    PROVIDER_ICON_PX,
                     icon_color,
                 ));
             let mut btn = if disabled {
@@ -202,15 +219,7 @@ pub(super) fn render_model_picker(
             };
 
             if is_selected {
-                btn = btn.child(
-                    div()
-                        .absolute()
-                        .right(px(0.0))
-                        .w(px(3.0))
-                        .h(px(20.0))
-                        .rounded_full()
-                        .bg(hsla(tokens.primary)),
-                );
+                btn = btn.bg(highlight_bg);
             }
             rail = rail.child(btn);
         }
@@ -357,7 +366,7 @@ pub(super) fn render_model_picker(
                 }))
                 .child(crate::icons::provider_mark(
                     &model.driver,
-                    16.0,
+                    PROVIDER_ICON_PX,
                     if is_active { fg } else { muted },
                 ));
 
@@ -564,13 +573,16 @@ fn render_effort_column(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
     let tokens = view.tokens;
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
-    let divider = hsla_alpha(tokens.border, 0.70);
+    // The provider rail's separator: lighter than the surface (Nick, #311).
+    let divider = hsla(tokens.glass_divider);
     let row_hover = hsla_alpha(tokens.foreground, 0.09);
-    let controls = view.selected.map(ModelOption::column_controls);
-    let model_label = view
-        .selected
-        .map(ModelOption::trigger_label)
-        .unwrap_or_else(|| view.active_model.to_owned());
+    let traits_model = view.traits_model();
+    let controls = traits_model.map(ModelOption::column_controls);
+    let model_label = match (traits_model, view.selected) {
+        (Some(model), _) => model.trigger_label(),
+        (None, Some(_)) => String::new(),
+        (None, None) => view.active_model.to_owned(),
+    };
 
     let header = div().flex_none().px(px(12.0)).pt(px(10.0)).child(
         div()
@@ -614,6 +626,7 @@ fn render_effort_column(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
         .pt(px(10.0))
         .pb(px(6.0));
 
+    let off_tab = traits_model.is_none() && view.selected.is_some();
     let no_effort = || {
         div()
             .flex()
@@ -622,10 +635,14 @@ fn render_effort_column(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
             .px(px(8.0))
             .text_size(px(13.0))
             .text_color(muted)
-            .child("No effort levels")
+            .child(if off_tab {
+                "Select a model"
+            } else {
+                "No effort levels"
+            })
     };
 
-    match (view.selected, controls.as_ref()) {
+    match (traits_model, controls.as_ref()) {
         (Some(model), Some(c)) if c.effort.is_some() || !c.others.is_empty() => {
             if let Some(effort) = c.effort {
                 rows = rows.children(render_effort_rows(
@@ -917,7 +934,8 @@ fn render_picker_footer(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
     let tokens = view.tokens;
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
-    let divider = hsla_alpha(tokens.border, 0.70);
+    // The provider rail's separator: lighter than the surface (Nick, #311).
+    let divider = hsla(tokens.glass_divider);
     let row_hover = hsla_alpha(tokens.foreground, 0.09);
 
     let mut footer = div()
@@ -933,7 +951,7 @@ fn render_picker_footer(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
         .bg(hsla_alpha(tokens.muted, 0.40))
         .rounded_b(px(PICKER_RADIUS_PX));
 
-    if let Some(model) = view.selected {
+    if let Some(model) = view.traits_model() {
         let controls = model.column_controls();
         let mut segments: Vec<(String, String, serde_json::Value, bool, Option<String>)> =
             Vec::new();
@@ -1130,4 +1148,23 @@ fn segment(
         .when(index + 1 == count, |el| el.rounded_r(px(6.0)))
         .when(checked, |el| el.bg(checked_bg))
         .hover(move |s| s.text_color(fg))
+}
+
+#[cfg(test)]
+mod traits_tests {
+    use super::shows_selected_traits;
+
+    /// The selected model's traits show on its own provider's tab and on provider-less views.
+    #[test]
+    fn traits_follow_the_provider_being_browsed() {
+        assert!(shows_selected_traits("codex", Some("codex")));
+        assert!(
+            !shows_selected_traits("codex", Some("grok")),
+            "no Ultrafast on Grok's tab"
+        );
+        assert!(
+            shows_selected_traits("codex", None),
+            "Favorites, search, default tab"
+        );
+    }
 }

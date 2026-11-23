@@ -290,7 +290,8 @@ fn render_settings_menu(
                      disabled: bool,
                      on_press: Rc<dyn Fn(&mut Window, &mut App)>| {
         let mut row = h_flex()
-            .id(SharedString::from(id))
+            .id(SharedString::from(id.clone()))
+            .a11y_switch(format!("panel.tasks.setting.{id}"), label, checked)
             .w_full()
             .min_h(px(28.0))
             .px(px(8.0))
@@ -516,7 +517,10 @@ fn render_task_card(
         let on_pr = Rc::clone(&callbacks.on_open_pr);
         h_flex()
             .id(SharedString::from(format!("tasks-card-pr-{task_id}")))
-            .a11y_button(format!("panel.tasks.card-pr.{task_id}"), "Open pull request")
+            .a11y_button(
+                format!("panel.tasks.card-pr.{task_id}"),
+                "Open pull request",
+            )
             .flex_shrink_0()
             .items_center()
             .gap(px(4.0))

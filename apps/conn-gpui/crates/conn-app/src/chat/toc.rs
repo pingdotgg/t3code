@@ -29,8 +29,15 @@ const MAX_VISIBLE_TICKS: usize = 36;
 const TICK_ROW_HEIGHT_PX: f32 = 10.0;
 
 /// Tick length spring: critically damped (`damping = 2 * sqrt(stiffness * mass)`), natural
-/// frequency 27 rad/s, so a length change settles in about 150 ms like web's `duration-150`.
-const TICK_SPRING: SpringConfig = SpringConfig::new(729.0, 54.0, 1.0);
+/// frequency 54 rad/s, so a length change settles in about 75 ms. That is twice as fast as web's
+/// `duration-150` (Nick, #304).
+const TICK_SPRING: SpringConfig = SpringConfig::new(2916.0, 108.0, 1.0);
+
+/// Prev/next chevron buttons are 20px boxes. Their glyph is centred on the idle tick, which
+/// starts at the rail's left edge and is 8px wide, so the box starts `4 - 10` px left of it.
+const NAV_BUTTON_PX: f32 = 20.0;
+const IDLE_TICK_WIDTH_PX: f32 = 8.0;
+const NAV_BUTTON_LEFT_PX: f32 = IDLE_TICK_WIDTH_PX / 2.0 - NAV_BUTTON_PX / 2.0;
 
 /// Fisheye width curve matching `TimelineMinimap.tsx` (`w-6` = 24px scaled by `1.0 / 0.667 / 0.417 / 0.333`).
 #[must_use]
@@ -119,10 +126,12 @@ pub(super) fn render_toc_overlay(
         let mut btn = div()
             .id(id)
             .a11y_button(ax_id, label)
+            // Centre the chevron over an idle tick (`x = 0..8`), not over the 30px rail (#312).
+            .ml(px(NAV_BUTTON_LEFT_PX))
             .flex()
             .items_center()
             .justify_center()
-            .size(px(20.0))
+            .size(px(NAV_BUTTON_PX))
             .rounded(px(6.0))
             .child(icons::icon(
                 icon_path,
@@ -337,8 +346,9 @@ pub(super) fn render_scroll_to_bottom_pill(
     // Web's `Button variant="glass"` (`surface-glass`): `--background` at `--glass-opacity` (80%),
     // `border-border/60`, and on hover only the border firms up. The fill must not change on
     // hover, or the text behind shows through more than at rest. GPUI has no per-element backdrop
-    // blur (gpui-kit#3598), so the fill stays opaque until it lands (Nick, 2026-11-23).
-    let bg = hsla(tokens.background);
+    // blur (gpui-kit#3598), so the fill stays opaque until it lands (Nick, 2026-11-23). It shares
+    // the composer card's fill so the two floating surfaces match (Nick, #341).
+    let (bg, _) = super::composer::composer_surface_colors(tokens);
     let border = hsla_alpha(tokens.border, 0.60);
     let hover_border = hsla(tokens.border);
     let fg = hsla(tokens.foreground);
@@ -400,6 +410,25 @@ mod tests {
         assert_eq!(sampled.last().copied(), Some(119));
         assert!(sampled.contains(&37), "active turn must be visible on rail");
         assert!(sampled.len() <= MAX_VISIBLE_TICKS);
+    }
+
+    /// The tick spring is critically damped (no overshoot) and twice as fast as web's 150ms:
+    /// natural frequency 54 rad/s, damping ratio 1.
+    #[test]
+    fn tick_spring_is_critically_damped_and_75ms() {
+        let (omega, zeta) = TICK_SPRING.canonical();
+        assert!((omega - 54.0).abs() < 1e-3);
+        assert!((zeta - 1.0).abs() < 1e-3);
+        // A critically damped spring is within 2% of its target after about 4 / omega seconds.
+        assert!(4.0 / omega < 0.08);
+    }
+
+    /// The chevron's centre sits over the centre of an idle tick.
+    #[test]
+    fn nav_chevron_is_centred_on_an_idle_tick() {
+        assert_eq!(IDLE_TICK_WIDTH_PX, tick_width_for_distance(None));
+        let chevron_centre = NAV_BUTTON_LEFT_PX + NAV_BUTTON_PX / 2.0;
+        assert_eq!(chevron_centre, tick_width_for_distance(None) / 2.0);
     }
 
     #[test]

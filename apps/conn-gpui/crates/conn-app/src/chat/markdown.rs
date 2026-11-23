@@ -1252,14 +1252,14 @@ fn build_styled_text_with_targets(
     for span in spans {
         let target = if let Some(url) = &span.link {
             if file_links_enabled
-                && let Some(rel) = resolve_clickable_file_path(url, workspace_root)
+                && let Some(rel) = resolve_clickable_file_link(url, workspace_root)
             {
                 Some(ClickTarget::WorkspaceFile(rel))
             } else {
                 Some(ClickTarget::Url(url.clone()))
             }
         } else if span.style.code && file_links_enabled {
-            resolve_clickable_file_path(&span.text, workspace_root).map(ClickTarget::WorkspaceFile)
+            resolve_clickable_file_link(&span.text, workspace_root).map(ClickTarget::WorkspaceFile)
         } else {
             None
         };
@@ -1415,6 +1415,38 @@ fn resolve_clickable_file_path(raw: &str, workspace_root: Option<&str>) -> Optio
     looks_like_file_path(rel).then(|| rel.to_owned())
 }
 
+/// Like [`resolve_clickable_file_path`], but keeps where the link points: `path:line` when the
+/// link has a `:line[:column]` suffix or an `#L10` fragment. The Files panel opens the file at
+/// that line (`revealLine`).
+fn resolve_clickable_file_link(raw: &str, workspace_root: Option<&str>) -> Option<String> {
+    let path = resolve_clickable_file_path(raw, workspace_root)?;
+    let trimmed = raw.trim();
+    let without_scheme = trimmed.strip_prefix("file://").unwrap_or(trimmed);
+    let (before_fragment, fragment) = match without_scheme.split_once('#') {
+        Some((before, fragment)) => (before, Some(fragment)),
+        None => (without_scheme, None),
+    };
+    let from_suffix = {
+        let rest = &before_fragment[strip_line_col_suffix(before_fragment).len()..];
+        rest.trim_start_matches(':')
+            .split(':')
+            .next()
+            .and_then(|n| n.parse::<usize>().ok())
+    };
+    let from_fragment = fragment
+        .and_then(|f| f.strip_prefix('L'))
+        .map(|f| {
+            f.chars()
+                .take_while(char::is_ascii_digit)
+                .collect::<String>()
+        })
+        .and_then(|n| n.parse::<usize>().ok());
+    match from_suffix.or(from_fragment).filter(|line| *line > 0) {
+        Some(line) => Some(format!("{path}:{line}")),
+        None => Some(path),
+    }
+}
+
 fn strip_line_col_suffix(path: &str) -> &str {
     let mut current = path;
     for _ in 0..2 {
@@ -1516,6 +1548,20 @@ mod tests {
             blocks.get(1),
             Some(MarkdownBlock::CodeBlock { language: Some(lang), .. }) if lang == "rust"
         ));
+    }
+
+    #[test]
+    fn clickable_file_links_keep_their_line() {
+        let link = |raw| resolve_clickable_file_link(raw, Some("/repo"));
+        assert_eq!(link("src/a.rs:42:10").as_deref(), Some("src/a.rs:42"));
+        assert_eq!(link("src/a.rs:7").as_deref(), Some("src/a.rs:7"));
+        assert_eq!(
+            link("file:///repo/Cargo.toml#L10-L20").as_deref(),
+            Some("Cargo.toml:10")
+        );
+        assert_eq!(link("src/a.rs").as_deref(), Some("src/a.rs"));
+        assert_eq!(link("src/a.rs:0").as_deref(), Some("src/a.rs"));
+        assert_eq!(link("https://example.com/a.rs"), None);
     }
 
     #[test]

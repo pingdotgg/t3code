@@ -76,7 +76,10 @@ pub(crate) fn render_connection_menu(
             list = list.child(
                 h_flex()
                     .id(SharedString::from(format!("db-conn-item-{id}")))
-                    .a11y_button(format!("panel.database.connection.{id}"), "Database connection")
+                    .a11y_button(
+                        format!("panel.database.connection.{id}"),
+                        "Database connection",
+                    )
                     .w_full()
                     .min_h(px(28.0))
                     .px(px(8.0))
@@ -315,7 +318,10 @@ pub(crate) fn render_rows_grid(tokens: &Tokens, result: &DatabaseQueryResult) ->
     for (row_index, row) in result.rows.iter().enumerate() {
         let mut line = h_flex()
             .id(SharedString::from(format!("db-row-{row_index}")))
-            .a11y_group(format!("panel.database.row.{row_index}"), format!("Result row {}", row_index + 1))
+            .a11y_group(
+                format!("panel.database.row.{row_index}"),
+                format!("Result row {}", row_index + 1),
+            )
             .w_full()
             .min_w(px(total_width))
             .items_center()

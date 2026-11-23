@@ -140,7 +140,10 @@ pub(super) fn render_setup_wizard(
 
         let mut step_btn = h_flex()
             .id(SharedString::from(format!("device-setup-step-{idx}")))
-            .a11y_group(format!("panel.device.setup-step.{idx}"), format!("Setup step {}", idx + 1))
+            .a11y_group(
+                format!("panel.device.setup-step.{idx}"),
+                format!("Setup step {}", idx + 1),
+            )
             .flex_1()
             .min_w_0()
             .items_center()
