@@ -1908,6 +1908,11 @@ it.effect(
           ]);
           assert.deepStrictEqual(yield* find("by-other-tag", { tag: "nope" }), []);
           assert.deepStrictEqual(yield* find("by-kind", { kind: "feature" }), ["s1 pr,backlog"]);
+          // A person's list finds them by tag too, before it is cut to its limit.
+          assert.deepStrictEqual(
+            (yield* workflows.list({ tag: "backlog" })).map((run) => run.runId),
+            [typo.runId, runId],
+          );
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

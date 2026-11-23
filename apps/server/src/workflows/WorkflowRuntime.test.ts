@@ -313,6 +313,34 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a file whose ask names a kind its workflow does not declare does not load", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    const triage = (kind: string) => `const { workflow, step, ask } = T3;
+export default workflow(
+  "triage",
+  { version: 1, payload: Schema.Struct({}), asks: { feature: "Feature wanted?" } },
+  Effect.fn(function* () {
+    yield* step("look", { returns: Schema.Number }, Effect.succeed(1));
+    yield* ask("decide", { kind: "${kind}", title: "Wanted?", choices: ["Yes", "No"] });
+  }),
+);
+`;
+    yield* fileSystem.writeFileString(at("typo.ts"), triage("feture"));
+    const refused = yield* WorkflowRuntime.loadDefinitions(at("typo.ts")).pipe(Effect.flip);
+    assert.include(
+      String(refused.cause),
+      'An ask on line 7 has kind "feture", which workflow triage does not declare',
+    );
+    yield* fileSystem.writeFileString(at("fine.ts"), triage("feature"));
+    const loaded = yield* WorkflowRuntime.loadDefinitions(at("fine.ts"));
+    assert.deepStrictEqual(
+      loaded.map((definition) => definition.name),
+      ["triage"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a file that never finishes loading is given up on, and later files still load", () =>
   Effect.gen(function* () {
     const { at, fileSystem } = yield* setup();

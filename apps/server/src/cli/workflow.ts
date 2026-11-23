@@ -114,6 +114,7 @@ const listCommand = Command.make("list", {
           {
             action: "list",
             ...(Option.isSome(flags.status) ? { status: flags.status.value } : {}),
+            ...(Option.isSome(flags.tag) ? { tag: flags.tag.value } : {}),
           },
           RunsResult,
         );

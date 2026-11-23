@@ -30,8 +30,10 @@ import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
 import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { useEnvironments } from "../../state/environments";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 const TABS = [
   {
@@ -187,7 +189,11 @@ const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
   const [tab, setTab] = useState<WorkflowListTab | null>(null);
-  const [pickedKind, setPickedKind] = useState(EVERY_KIND);
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const pickedKind =
+    (AsyncResult.isSuccess(preferences) ? preferences.value.workflowsQuestionKind : undefined) ??
+    EVERY_KIND;
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
@@ -299,7 +305,7 @@ export function WorkflowsScreen() {
                     state: kind?.kind === entry.kind ? ("on" as const) : ("off" as const),
                   })),
                 ]}
-                onSelect={setPickedKind}
+                onSelect={(id) => void savePreferences({ workflowsQuestionKind: id })}
               />
             </View>
           ) : null}

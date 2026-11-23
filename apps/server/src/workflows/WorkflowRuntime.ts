@@ -32,6 +32,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { undeclaredAskKindProblem } from "./askKinds.ts";
 import { engineTag, text, type WorkflowDefinition } from "./workflow.ts";
 import type * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowAgentThreads from "./WorkflowAgentThreads.ts";
@@ -213,6 +214,14 @@ export const loadDefinitions = Effect.fn("WorkflowRuntime.loadDefinitions")(func
       module,
       cause: "Something it exports is not a workflow. Export only what `T3.workflow` returned.",
     });
+  }
+  const source = yield* Effect.tryPromise({
+    try: () => NodeFS.promises.readFile(file, "utf8"),
+    catch: (cause) => new WorkflowDefinitionsLoadError({ module, cause }),
+  });
+  const undeclared = undeclaredAskKindProblem(source, definitions);
+  if (undeclared !== undefined) {
+    return yield* new WorkflowDefinitionsLoadError({ module, cause: undeclared });
   }
   return definitions;
 });

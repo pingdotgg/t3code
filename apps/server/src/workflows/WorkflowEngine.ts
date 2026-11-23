@@ -1003,6 +1003,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       };
     }),
     list: Effect.fn("Workflows.list")(function* (filter) {
+      if (filter?.tag !== undefined) {
+        return (yield* store.runsWhere({ status: filter.status, tag: filter.tag })).map(toRun);
+      }
       return (yield* store.runs(filter?.status)).map(toRun);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (runId, done) {

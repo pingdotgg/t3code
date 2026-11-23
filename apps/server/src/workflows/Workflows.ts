@@ -107,6 +107,8 @@ export class Workflows extends Context.Service<
     >;
     readonly list: (filter?: {
       readonly status?: WorkflowStore.WorkflowRunStatus;
+      /** Only runs that gave themselves this tag, looked for before the list's limit. */
+      readonly tag?: string;
     }) => Effect.Effect<ReadonlyArray<WorkflowStore.WorkflowRun>, WorkflowInputError>;
     /** The run once `done` holds for it. Looks now, then on every change to the run. */
     readonly waitFor: (

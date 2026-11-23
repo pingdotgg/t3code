@@ -34,6 +34,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
     idempotencyKey: Schema.optional(TrimmedNonEmptyString),
     runId: Schema.optional(TrimmedNonEmptyString),
     status: Schema.optional(WorkflowRunStatus),
+    tag: Schema.optional(TrimmedNonEmptyString),
     wait: Schema.optional(ExactName),
     key: Schema.optional(ExactName),
     channel: Schema.optional(TrimmedNonEmptyString),

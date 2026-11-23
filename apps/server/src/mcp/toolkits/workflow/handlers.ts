@@ -33,7 +33,10 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
         if (input.action === "list") {
           return {
             runs: yield* workflows
-              .list(input.status === undefined ? {} : { status: input.status })
+              .list({
+                ...(input.status === undefined ? {} : { status: input.status }),
+                ...(input.tag === undefined ? {} : { tag: input.tag }),
+              })
               .pipe(Effect.mapError(refused)),
           };
         }
