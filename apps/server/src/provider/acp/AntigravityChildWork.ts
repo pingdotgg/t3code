@@ -839,7 +839,7 @@ export const readAntigravitySwarmMemberWork = Effect.fn("readAntigravitySwarmMem
           { conversationId: input.conversationId },
           input.prompt,
           TRANSCRIPT_BYTE_CAP,
-        );
+        ).catch(() => undefined);
         return [
           {
             conversationId: input.conversationId,

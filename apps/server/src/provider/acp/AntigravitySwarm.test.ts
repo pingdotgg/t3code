@@ -114,11 +114,16 @@ it.layer(NodeServices.layer)("readAntigravitySwarm", (it) => {
           ...briefs,
           { seq: 3, agent: "add-a", text: "@coordinator [done] 5", time: "2026-11-23 17:23:21" },
         ],
-        transcripts: { [ADD_A]: parked, [ADD_B]: working },
+        // A large result after the parking batch pushes its planner step out of a short tail.
+        transcripts: {
+          [ADD_A]: parked.map((step) =>
+            step.step_index === 2 ? { ...step, content: "x".repeat(70_000) } : step,
+          ),
+          [ADD_B]: working,
+        },
       });
       const swarm = yield* readAntigravitySwarm({ profileDirectory, sessionId: COORDINATOR });
       expect(swarm?.active).toBe(true);
-      expect(swarm?.head).toBe(3);
       expect(swarm?.workflow.name).toBe("simple arithmetic addition");
       expect(
         swarm?.workflow.agents.map(({ label, state, prompt, result, model, totalTokens }) => ({

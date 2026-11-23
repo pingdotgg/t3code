@@ -15,12 +15,13 @@ import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityPro
 const NATIVE_ID = /^[A-Za-z0-9-]{1,64}$/;
 const MAX_ROSTER_BYTES = 256 * 1024;
 const BOARD_TAIL_BYTES = 512 * 1024;
-const TRANSCRIPT_TAIL_BYTES = 64 * 1024;
+const TRANSCRIPT_TAIL_BYTES = [64 * 1024, 1024 * 1024];
 const MAX_MEMBERS = 64;
 const TEXT_CAP = 4_000;
 // The swarm's own helpers, not task workers; the board view leaves them out the same way.
 const SUPPORT_ROLE = /^(narrator|monitor)(-\d+)?$/;
-const DONE_MARK = /\[done\]/i;
+// Workers open a final result with `[done]`, after the @mention that wakes its reader.
+const DONE_MARK = /^(?:@[A-Za-z0-9._-]+\s+)*\[done\]/i;
 
 /** Native task id T3 gives a swarm, so its record survives every turn of the coordinator thread. */
 export const antigravitySwarmTaskId = (sessionId: string) => `swarm:${sessionId}`;
@@ -71,8 +72,8 @@ const Step = Schema.Struct({
   status: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
   created_at: Schema.optional(Schema.String),
-  input_tokens: Schema.optional(Schema.Number),
-  output_tokens: Schema.optional(Schema.Number),
+  input_tokens: Schema.optional(Schema.Unknown),
+  output_tokens: Schema.optional(Schema.Unknown),
   tool_calls: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String }))),
 });
 type Step = typeof Step.Type;
@@ -90,13 +91,14 @@ async function readTail(
     const stat = await handle.stat();
     if (!stat.isFile()) return undefined;
     const start = Math.max(0, stat.size - maxBytes);
-    const buffer = Buffer.alloc(stat.size - start);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
-    const text = buffer.toString("utf8", 0, bytesRead);
-    // A cut first line is not a whole record.
-    return start === 0
-      ? { text, whole: true }
-      : { text: text.slice(text.indexOf("\n") + 1), whole: false };
+    // One byte before the window tells a record boundary from a cut record.
+    const readStart = Math.max(0, start - 1);
+    const buffer = Buffer.alloc(stat.size - readStart);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, readStart);
+    const bytes = buffer.subarray(0, bytesRead);
+    if (start === 0) return { text: bytes.toString("utf8"), whole: true };
+    const newline = bytes.indexOf(0x0a);
+    return { text: newline === -1 ? "" : bytes.toString("utf8", newline + 1), whole: false };
   } finally {
     await handle.close();
   }
@@ -120,6 +122,9 @@ function epochMillis(value: string | undefined): number | undefined {
   const millis = Date.parse(value.includes("T") ? value : value.replace(" ", "T"));
   return Number.isFinite(millis) ? millis : undefined;
 }
+
+const tokenCount = (value: unknown) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
 
 const capText = (value: string) =>
   value.length <= TEXT_CAP ? value : `${value.slice(0, TEXT_CAP)}…`;
@@ -163,14 +168,21 @@ async function readActivity(
     "file",
   );
   if (file === undefined) return undefined;
-  const tail = await readTail(file.path, TRANSCRIPT_TAIL_BYTES).catch(() => undefined);
+  let tail: Awaited<ReturnType<typeof readTail>>;
+  let steps: ReadonlyArray<Step> = [];
+  // A large tool result can push the planner step that called it out of a short tail.
+  for (const bytes of TRANSCRIPT_TAIL_BYTES) {
+    tail = await readTail(file.path, bytes).catch(() => undefined);
+    if (tail === undefined) return undefined;
+    steps = lines(tail.text, decodeStep);
+    if (tail.whole || steps.some((step) => step.type !== "GENERIC")) break;
+  }
   if (tail === undefined) return undefined;
-  const steps = lines(tail.text, decodeStep);
   const last = steps.at(-1);
   let tokens = 0;
   let toolCalls = 0;
   for (const step of steps) {
-    tokens += (step.input_tokens ?? 0) + (step.output_tokens ?? 0);
+    tokens += tokenCount(step.input_tokens) + tokenCount(step.output_tokens);
     toolCalls += step.tool_calls?.length ?? 0;
   }
   return {
@@ -208,8 +220,6 @@ export interface AntigravitySwarmSnapshot {
   readonly prompt: string;
   /** True while any worker still works; parked and killed workers do not count. */
   readonly active: boolean;
-  /** Board head, so callers can skip unchanged snapshots cheaply. */
-  readonly head: number;
 }
 
 /**
@@ -230,10 +240,11 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
       brainFile(input.sessionId, "swarm", "members.json"),
       "file",
     );
-    if (rosterFile === undefined || rosterFile.info.size > MAX_ROSTER_BYTES) return undefined;
-    const roster = Option.getOrUndefined(
-      decodeRoster(await NodeFSP.readFile(rosterFile.path, "utf8")),
-    );
+    if (rosterFile === undefined) return undefined;
+    // The cap holds at read time; a roster that outgrew it is not parsed cut.
+    const rosterText = await readTail(rosterFile.path, MAX_ROSTER_BYTES);
+    if (rosterText?.whole !== true) return undefined;
+    const roster = Option.getOrUndefined(decodeRoster(rosterText.text));
     if (roster === undefined) return undefined;
     const coordinator = Object.entries(roster.members).find(
       ([, member]) => member.role === "coordinator",
@@ -308,9 +319,11 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
       const resultText = (activity?.failed ?? result?.text)?.trim();
       const startedAt = activity?.startedAt ?? epochMillis(brief?.time);
       const completedAt =
-        state === "completed" || state === "failed"
-          ? (epochMillis(result?.time) ?? activity?.lastAt)
-          : undefined;
+        state === "failed"
+          ? activity?.lastAt
+          : state === "completed"
+            ? (epochMillis(result?.time) ?? activity?.lastAt)
+            : undefined;
       const model = memberModel(member);
       agents.push({
         index,
@@ -339,7 +352,6 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         .flatMap((agent) => (agent.prompt === undefined ? [] : [`@${agent.label} ${agent.prompt}`]))
         .join("\n\n"),
       active,
-      head: board.at(-1)?.seq ?? 0,
     };
   };
   // An unreadable board means no swarm view this poll; the next poll reads again.

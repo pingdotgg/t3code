@@ -2491,7 +2491,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           status: "completed",
           rawInput,
         }) as const;
-      const { startTurn, until, throughPromptSettled, scheduledFinalizes } =
+      const { startTurn, until, throughPromptSettled, scheduledFinalizes, send } =
         yield* openSessionWithRunningCommand({}, undefined, undefined, {
           profileDirectory: profile,
           initialToolCalls: [
@@ -2506,10 +2506,12 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
             ? [event.subagent]
             : [],
         );
-      const prompt = [
-        ...(yield* throughPromptSettled),
-        ...(yield* until((event) => workflows([event]).length > 0)),
-      ];
+      const settled = yield* throughPromptSettled;
+      // The first board read can land before or after the reply settles.
+      const prompt =
+        workflows(settled).length > 0
+          ? settled
+          : [...settled, ...(yield* until((event) => workflows([event]).length > 0))];
       const running = workflows(prompt).at(-1);
       assert.equal(running?.status, "running");
       assert.equal(running?.workflow?.name, "Compute 6*7");
@@ -2520,6 +2522,15 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.isFalse(
         JSON.stringify(prompt).includes("Run swarm"),
         "swarm calls fold into the workflow instead of showing as tools",
+      );
+      assert.isTrue(
+        prompt.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === running?.childThreadId &&
+            event.message.workflowScript === true,
+        ),
+        "the swarm's thread opens on its plan, like a workflow",
       );
 
       yield* writeLines(brain("mock-session-1", "swarm", "board.jsonl"), [
@@ -2561,6 +2572,17 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         ),
         "the worker's result reaches its own thread",
       );
+
+      // A later turn that checks on the swarm takes its card and announces its worker threads,
+      // so that run routes their updates.
+      yield* startTurn(2, false);
+      yield* send(swarmCall("call_status", { action: "status" }));
+      const later = yield* until((event) => workflows([event]).length > 0);
+      assert.equal(workflows(later).at(-1)?.runId, "run-antigravity-wake-2");
+      const announced = yield* until(
+        (event) => event.type === "app_thread.created" && event.appThread.id === memberThread,
+      );
+      assert.isNotEmpty(announced);
     }).pipe(Effect.provide(layerSession)),
   );
 
