@@ -75,11 +75,10 @@ import { StatusDot } from "../ui/status-dot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button, ContentButton } from "../ui/button";
-import { FloatingToolbar } from "../ui/floating-toolbar";
+import { Group, GroupSeparator } from "../ui/group";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Separator } from "../ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildFleetGraph,
@@ -1055,35 +1054,35 @@ function FleetCanvas({
           <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
           <div className="flex shrink-0 items-center gap-2">
             <FleetAttention graph={graph} />
-            <FloatingToolbar density="compact">
+            <Group>
               <Button
                 size="icon-xs"
-                variant="ghost"
+                variant="secondary"
                 aria-label={gt("Zoom out")}
                 onClick={() => zoom(0.8)}
               >
                 <MinusIcon />
               </Button>
-              <Separator orientation="vertical" className="h-3.5" />
+              <GroupSeparator />
               <Button
                 size="icon-xs"
-                variant="ghost"
+                variant="secondary"
                 aria-label={gt("Zoom in")}
                 onClick={() => zoom(1.25)}
               >
                 <PlusIcon />
               </Button>
-              <Separator orientation="vertical" className="h-3.5" />
+              <GroupSeparator />
               <Button
                 size="icon-xs"
-                variant="ghost"
+                variant="secondary"
                 aria-label={gt("Fit the map to view")}
                 disabled={held === null}
                 onClick={fit}
               >
                 <MaximizeIcon />
               </Button>
-            </FloatingToolbar>
+            </Group>
           </div>
         </div>
       </div>
