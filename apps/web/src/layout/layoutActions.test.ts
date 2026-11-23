@@ -16,7 +16,11 @@ vi.mock(import("../state/entities"), async (original) => ({
 
 import { useClosedViewStore } from "../closedViewStore";
 import { planNextReopen, reopenClosedView } from "../reopenClosedView";
-import { closeLayoutTabByUser, closeOtherLayoutTabsByUser } from "./layoutActions";
+import {
+  closeLayoutTabByUser,
+  closeOtherLayoutTabsByUser,
+  toggleFocusedLayoutFill,
+} from "./layoutActions";
 import {
   createLayoutState,
   findLayoutTab,
@@ -40,8 +44,12 @@ const other: LayoutTabContent = {
 };
 
 function setup(contents: ReadonlyArray<LayoutTabContent>) {
-  const original = useLayoutStore.getState().layout;
-  useLayoutStore.setState({ layout: createLayoutState() });
+  const original = useLayoutStore.getState();
+  useLayoutStore.setState({
+    layout: createLayoutState(),
+    maximizedTabId: null,
+    filledContentKeys: new Set(),
+  });
   for (const content of contents) {
     useLayoutStore.getState().openTab(content, { placement: "active-pane", position: "end" });
   }
@@ -60,7 +68,7 @@ function setup(contents: ReadonlyArray<LayoutTabContent>) {
         .filter((content) => content.kind === "chat"),
     [Symbol.dispose]: () => {
       unsubscribe();
-      useLayoutStore.setState({ layout: original });
+      useLayoutStore.setState(original);
     },
   };
 }
@@ -133,6 +141,29 @@ describe("reopening a closed list page", () => {
     expect(reopened.tab.content).toEqual(content);
     expect([reopened.pane.id, reopened.tabIndex]).toEqual([page.pane.id, page.tabIndex]);
     expect(selectFocusedTab(useLayoutStore.getState().layout)?.id).toBe(reopened.tab.id);
+  });
+});
+
+describe("toggleFocusedLayoutFill", () => {
+  it("restores a filled thread when returning to its tab and lets it unfill", () => {
+    using layout = setup([parent, other]);
+    const store = useLayoutStore.getState();
+    const tabId = layout.tabOf(parent)!.id;
+    store.focusTab(tabId);
+    toggleFocusedLayoutFill();
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    store.focusTab(layout.tabOf(other)!.id);
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    store.focusTab(tabId);
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    toggleFocusedLayoutFill();
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    toggleFocusedLayoutFill();
+    store.replaceTabContent(tabId, subagent);
+    expect(useLayoutStore.getState().maximizedTabId).toBeNull();
+    store.replaceTabContent(tabId, parent);
+    expect(useLayoutStore.getState().maximizedTabId).toBe(tabId);
+    toggleFocusedLayoutFill();
   });
 });
 
