@@ -16,9 +16,15 @@ import { extractOpenCodeElicitationForm } from "./opencodeAcp.ts";
 import {
   copilotClientCapabilitiesMeta,
   extractCopilotSubagentUpdate,
+  isCopilotAcpSettings,
   isCopilotLostSessionError,
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
+import {
+  discoverCopilotSkills,
+  isCopilotBuiltinCommandCollision,
+  leadingCopilotSkillMention,
+} from "./copilotSkills.ts";
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
@@ -38,6 +44,7 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -193,6 +200,8 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const runtimeCoordinator = Option.getOrUndefined(
     yield* Effect.serviceOption(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator),
   );
+  const fileSystem = Option.getOrUndefined(yield* Effect.serviceOption(FileSystem.FileSystem));
+  const path = Option.getOrUndefined(yield* Effect.serviceOption(Path.Path));
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
@@ -210,11 +219,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       /^opencode(?:-v2)?(\.exe|\.cmd)?$/i.test(
         options.settings.commandPath.split(/[\\/]/).pop() ?? "",
       ));
-  // Local installs launch the `copilot` binary directly with no registry id.
-  const isCopilot =
-    registryAgentId === "github-copilot-cli" ||
-    (options.settings.source === "local" &&
-      /^copilot(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  const isCopilot = isCopilotAcpSettings(options.settings);
   const isKimi =
     registryAgentId === "kimi-code" ||
     (options.settings.source === "local" &&
@@ -341,6 +346,45 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           enablePostSettleContinuation: true,
           // session/new reports a built-in default, not the model Copilot runs (github/copilot-cli#5363).
           alwaysSetModel: true,
+          // Copilot expands only a leading `/name`, while the `$` picker inserts `$name` from
+          // `copilot skill list --json`. Ask that catalog again so non-skill `$` text and built-in
+          // command collisions are left alone.
+          rewriteUserText: Effect.fnUntraced(
+            function* (text: string, turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+              const mention = leadingCopilotSkillMention(text);
+              if (mention === undefined) return text;
+              if (runtimeCoordinator !== undefined) {
+                const commands = yield* runtimeCoordinator.getAvailableCommands(options.instanceId);
+                if (
+                  Option.isSome(commands) &&
+                  isCopilotBuiltinCommandCollision(mention.name, commands.value.slashCommands)
+                ) {
+                  return text;
+                }
+              }
+              let discovery = discoverCopilotSkills({
+                settings: options.settings,
+                environment: options.environment,
+                ...(turnInput.runtimePolicy.cwd ? { cwd: turnInput.runtimePolicy.cwd } : {}),
+              }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+              if (fileSystem !== undefined) {
+                discovery = discovery.pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                );
+              }
+              if (path !== undefined) {
+                discovery = discovery.pipe(Effect.provideService(Path.Path, path));
+              }
+              const skills = yield* discovery;
+              return skills.some(
+                (skill) =>
+                  skill.enabled && skill.userInvocable !== false && skill.name === mention.name,
+              )
+                ? `/${mention.name}${mention.rest}`
+                : text;
+            },
+            (effect, text) => effect.pipe(Effect.orElseSucceed(() => text)),
+          ),
         }),
     mcpOverHttp: useHttpMcpServers,
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
