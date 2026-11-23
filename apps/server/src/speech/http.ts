@@ -151,6 +151,13 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "unloadModel",
+        Effect.fn("environment.voice.unloadModel")(function* (args) {
+          yield* guard(args.endpoint.name, AuthSettingsWriteScope);
+          yield* speech.unloadModel().pipe(mapSpeechError);
+        }),
+      )
+      .handle(
         "models",
         Effect.fn("environment.voice.models")(function* (args) {
           yield* guard(args.endpoint.name);

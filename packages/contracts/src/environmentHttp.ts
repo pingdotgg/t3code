@@ -911,6 +911,13 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.post("unloadModel", "/api/voice/models/unload", {
+      headers: OptionalBearerHeaders,
+      success: Schema.Void,
+      error: [...EnvironmentScopedOperationErrors, EnvironmentRequestInvalidError],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.get("models", "/api/voice/models", {
       headers: OptionalBearerHeaders,
       query: { benchmarks: Schema.optionalKey(Schema.Literal("1")) },

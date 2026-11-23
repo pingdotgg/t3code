@@ -78,7 +78,9 @@ matching the selected environment's transcription backend. Recommendations use
 the same reference tier for every selected language. Choose **All languages** to
 browse without a language preference. Filtering does not switch your model.
 
-**Advanced** controls GPU or CPU use and when an idle model is unloaded. With hardware set to
+**Advanced** controls GPU or CPU use and when an idle model is unloaded. On web and desktop, choose
+**Unload now** to release the speech model from memory while the engine is idle. The model stays
+downloaded and selected, and loads again when you next transcribe. With hardware set to
 **Auto**, a recording that fails on the GPU is retried once on that same
 environment's CPU; a GPU you picked yourself reports the error instead. Nothing
 is ever retried on another environment. Models marked **Live preview** show

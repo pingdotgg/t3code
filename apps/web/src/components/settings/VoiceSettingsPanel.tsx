@@ -8,6 +8,7 @@ import {
   linkEnvironmentSpeechModels,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
+  unloadEnvironmentSpeechModel,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
 } from "@t3tools/client-runtime/voice-input";
@@ -790,6 +791,69 @@ function useVoiceModels(prepared: PreparedConnection | null) {
 
 type VoiceModels = ReturnType<typeof useVoiceModels>;
 
+function SpeechModelMemoryRow({
+  prepared,
+  catalog: { controlsDisabled, run },
+}: {
+  prepared: PreparedConnection;
+  catalog: VoiceModels;
+}) {
+  const gt = useGT();
+  const [loadState, setLoadState] = useState<
+    Extract<EnvironmentSpeechStatus, { supported: true }>["modelLoadState"] | null
+  >();
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- model memory changes on the environment while Advanced is open
+  useEffect(() => {
+    if (controlsDisabled) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    let timer: number | undefined;
+    const poll = async () => {
+      const next = await runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared), {
+        signal,
+      }).catch(() => null);
+      if (signal.aborted) return;
+      setLoadState(next?.supported ? (next.modelLoadState ?? null) : null);
+      timer = window.setTimeout(() => void poll(), 1_000);
+    };
+    void poll();
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [controlsDisabled, prepared]);
+
+  const description =
+    loadState === "busy"
+      ? gt("The speech engine is busy.")
+      : loadState === "unloaded"
+        ? gt("No speech model is loaded.")
+        : loadState === null
+          ? gt("Model memory status is unavailable.")
+          : gt("The model reloads the next time you transcribe.");
+  return (
+    <SettingsRow
+      title={gt("Model memory")}
+      description={<span aria-live="polite">{description}</span>}
+      control={
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={controlsDisabled || loadState !== "loaded"}
+          onClick={() => {
+            setLoadState(undefined);
+            void run(gt("Could not unload the model"), () =>
+              runEnvironmentSpeech(unloadEnvironmentSpeechModel(prepared)),
+            );
+          }}
+        >
+          <T>Unload now</T>
+        </Button>
+      }
+    />
+  );
+}
+
 function AdvancedSpeechSettings({
   prepared,
   catalog,
@@ -901,6 +965,9 @@ function AdvancedSpeechSettings({
           </Select>
         }
       />
+      {supported.modelLoadState !== undefined && (
+        <SpeechModelMemoryRow prepared={prepared} catalog={catalog} />
+      )}
     </AdvancedSettings>
   );
 }

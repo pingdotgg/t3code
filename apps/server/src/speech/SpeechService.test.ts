@@ -583,9 +583,34 @@ it.effect("unloads after the chosen idle period and reloads on the next recordin
     expect(native.dispose).not.toHaveBeenCalled();
     yield* TestClock.adjust(1);
     expect(native.dispose).toHaveBeenCalledOnce();
+    expect(yield* speech.status).toMatchObject({ modelLoadState: "unloaded" });
     yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
     expect(loadNative).toHaveBeenCalledTimes(2);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "manually unloads the worker and keeps the selected model installed for the next run",
+  () =>
+    Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      yield* speech.updateModelUnloadTimeout("never");
+      yield* speech.selectModel("fallback-model");
+      yield* speech.prepareModel;
+      expect(yield* speech.status).toMatchObject({ modelLoadState: "loaded" });
+
+      yield* speech.unloadModel();
+      yield* speech.unloadModel();
+      expect(native.dispose).toHaveBeenCalledOnce();
+      expect(yield* speech.status).toMatchObject({
+        state: "ready",
+        modelId: "fallback-model",
+        modelLoadState: "unloaded",
+        modelUnloadTimeout: "never",
+      });
+      expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
+      expect(loadNative).toHaveBeenCalledTimes(2);
+    }).pipe(Effect.provide(layer)),
 );
 
 it.effect.each([
@@ -665,6 +690,9 @@ it.effect("holds model ownership until the stream scope closes and preserves sil
       const stream = yield* speech.startStream(DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS);
       const busy = yield* Effect.result(speech.selectModel("fallback-model"));
       expect(Result.isFailure(busy) && busy.failure).toMatchObject({ _tag: "SpeechBusyError" });
+      expect(yield* speech.status).toMatchObject({ modelLoadState: "busy" });
+      const unload = yield* Effect.result(speech.unloadModel());
+      expect(Result.isFailure(unload) && unload.failure).toMatchObject({ _tag: "SpeechBusyError" });
       yield* stream.feed(new Uint8Array(new Float32Array(160).buffer));
       expect(native.feed.mock.calls[0]?.[0]).toHaveLength(160);
       expect(yield* stream.finish).toBe("hello");

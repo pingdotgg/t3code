@@ -28,6 +28,7 @@ export {
   postProcessEnvironmentTranscript,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
+  unloadEnvironmentSpeechModel,
   transcribeEnvironmentPcm,
   updateEnvironmentSpeechAcceleration,
   updateEnvironmentSpeechModelUnloadTimeout,
