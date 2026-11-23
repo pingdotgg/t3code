@@ -3,6 +3,7 @@ import { RelayMobileClientId } from "@t3tools/contracts/relay";
 import * as Layer from "effect/Layer";
 
 import { loadOrCreateProofKey } from "./dpop";
+import { resolveCloudPublicConfig } from "./publicConfig";
 import { managedRelayAccessTokenStore } from "./managedRelayTokenStore";
 
 const layerRelayDpopSigner = DpopProof.layerSigner({
@@ -13,6 +14,7 @@ const layerRelayDpopSigner = DpopProof.layerSigner({
 export const layer = (relayUrl: string) =>
   ManagedRelay.layer({
     relayUrl,
+    backgroundRelayUrl: resolveCloudPublicConfig().relay.backgroundUrl ?? undefined,
     clientId: RelayMobileClientId,
     accessTokenStore: managedRelayAccessTokenStore,
   }).pipe(Layer.provideMerge(layerRelayDpopSigner));
