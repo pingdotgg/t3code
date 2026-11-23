@@ -620,6 +620,8 @@ pub struct ProviderGroup {
     pub auth_type: Option<String>,
     /// `auth.canLogout`.
     pub can_logout: Option<bool>,
+    /// Models this provider's CLI is too old to run (`updateRequiredModels`).
+    pub update_required: Vec<UpdateRequiredModel>,
     /// `auth.label`, a product or plan name.
     pub auth_label: Option<String>,
     /// The installed CLI's version.
@@ -968,6 +970,16 @@ impl ModelCatalog {
                     .map(str::to_owned),
                 auth_type: item.auth.r#type.clone(),
                 can_logout: item.auth.can_logout,
+                update_required: item
+                    .update_required_models
+                    .iter()
+                    .flatten()
+                    .map(|model| UpdateRequiredModel {
+                        slug: model.slug.clone(),
+                        name: model.name.clone(),
+                        min_version: model.min_version.clone(),
+                    })
+                    .collect(),
                 auth_label: item.auth.label.clone(),
                 version: item.version.clone(),
                 has_setup: item.driver == "antigravity"
@@ -1221,6 +1233,218 @@ fn humanize_slug(driver: &str) -> String {
         .join(" ")
 }
 
+/// A model that needs a newer provider CLI (`updateRequiredModels`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateRequiredModel {
+    pub slug: String,
+    pub name: String,
+    pub min_version: String,
+}
+
+/// `parseSemver`: `major.minor.patch` with an optional `-prerelease`, `v` and build metadata
+/// ignored. A short version is padded with zeros.
+fn parse_semver(value: &str) -> Option<(u64, u64, u64, Vec<String>)> {
+    let trimmed = value.trim();
+    let without_build = trimmed.split('+').next().unwrap_or("");
+    let (main, prerelease) = without_build
+        .split_once('-')
+        .map_or((without_build, ""), |(main, pre)| (main, pre));
+    let mut segments: Vec<&str> = main
+        .split('.')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    while !segments.is_empty() && segments.len() < 3 {
+        segments.push("0");
+    }
+    let [major, minor, patch] = segments.as_slice() else {
+        return None;
+    };
+    let number = |s: &str| {
+        let s = s.strip_prefix('v').unwrap_or(s);
+        (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    Some((
+        number(major)?,
+        number(minor)?,
+        number(patch)?,
+        prerelease
+            .split('.')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    ))
+}
+
+/// `compareSemverVersions`: negative, zero or positive. A version that does not parse sorts
+/// as text after one that does.
+#[must_use]
+pub fn compare_semver(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (Some(l), Some(r)) = (parse_semver(left), parse_semver(right)) else {
+        return left.cmp(right);
+    };
+    let by_number = (l.0, l.1, l.2).cmp(&(r.0, r.1, r.2));
+    if by_number != Ordering::Equal {
+        return by_number;
+    }
+    match (l.3.is_empty(), r.3.is_empty()) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (false, false) => {}
+    }
+    for (a, b) in l.3.iter().zip(&r.3) {
+        let numeric = |s: &str| {
+            s.chars()
+                .all(|c| c.is_ascii_digit())
+                .then(|| s.parse::<u64>().ok())
+                .flatten()
+        };
+        let order = match (numeric(a), numeric(b)) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.cmp(b),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    l.3.len().cmp(&r.3.len())
+}
+
+/// `formatConjunctionList` in English: `A`, `A and B`, `A, B, and C`.
+fn conjunction_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
+impl ProviderGroup {
+    /// `formatProviderUpdateRequiredNotice`: the models this provider's CLI is too old for,
+    /// narrowed by the picker's search `query`, and the version that runs them.
+    #[must_use]
+    pub fn update_required_notice(&self, query: &str) -> Option<String> {
+        let query = query.trim().to_lowercase();
+        let models: Vec<&UpdateRequiredModel> = self
+            .update_required
+            .iter()
+            .filter(|model| {
+                query.is_empty()
+                    || model.name.to_lowercase().contains(&query)
+                    || model.slug.to_lowercase().contains(&query)
+            })
+            .collect();
+        let first = models.first()?;
+        let min_version = models
+            .iter()
+            .fold(first.min_version.as_str(), |highest, model| {
+                if compare_semver(&model.min_version, highest).is_gt() {
+                    model.min_version.as_str()
+                } else {
+                    highest
+                }
+            });
+        let version = if min_version.starts_with('v') {
+            min_version.to_owned()
+        } else {
+            format!("v{min_version}")
+        };
+        let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
+        let names = conjunction_list(&names);
+        Some(if self.driver == "codex" {
+            format!("Update the Codex CLI to {version} or newer to use {names}.")
+        } else {
+            let provider = if self.driver == "claudeAgent" {
+                "Claude Code".to_owned()
+            } else {
+                format_driver_name(&self.driver)
+            };
+            format!("Update {provider} to {version} or newer to use {names}.")
+        })
+    }
+}
+
+/// Which provider a composer sends with, and where `Open provider settings` leads when none
+/// is usable (`resolveComposerProviderSelection`, `ChatComposer.tsx:934-945`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProviderSelection {
+    /// The usable instance, if any.
+    pub selected: Option<String>,
+    /// No instance is usable: the footer offers `Open provider settings`.
+    pub none_available: bool,
+    /// The instance the footer's setup button opens: the one asked for, else the first
+    /// instance that has a setup path. `None` disables the button.
+    pub setup_instance: Option<String>,
+}
+
+impl ModelCatalog {
+    /// `resolveComposerProviderSelection`: `candidates` are the instances the thread, its draft
+    /// and its project ask for, in order. The first enabled, available candidate wins; else a
+    /// ready instance of the requested driver, then any ready one, then any enabled and
+    /// available one that has not failed.
+    #[must_use]
+    pub fn resolve_selection(&self, candidates: &[Option<&str>]) -> ProviderSelection {
+        let entries = self.all_groups();
+        let selectable = |group: &&ProviderGroup| group.enabled && group.available;
+        let requested = candidates.iter().flatten().next().copied();
+        let requested_driver = requested
+            .and_then(|id| entries.iter().find(|g| g.instance_id == id))
+            .or_else(|| entries.first())
+            .map(|group| group.driver.as_str());
+        let pick = |pool: &[&ProviderGroup]| -> Option<String> {
+            pool.iter()
+                .find(|group| group.ready)
+                .or_else(|| {
+                    pool.iter()
+                        .find(|g| selectable(g) && g.status != ServerProviderState::Error)
+                })
+                .map(|group| group.instance_id.clone())
+        };
+        let selected = candidates
+            .iter()
+            .flatten()
+            .find_map(|id| {
+                entries
+                    .iter()
+                    .find(|g| g.instance_id == *id && selectable(g))
+                    .map(|g| g.instance_id.clone())
+            })
+            .or_else(|| {
+                let same_driver: Vec<&ProviderGroup> = entries
+                    .iter()
+                    .copied()
+                    .filter(|g| Some(g.driver.as_str()) == requested_driver)
+                    .collect();
+                pick(&same_driver)
+            })
+            .or_else(|| pick(&entries));
+        let none_available = selected.is_none();
+        let setup_instance = none_available
+            .then(|| {
+                requested.map(str::to_owned).or_else(|| {
+                    entries
+                        .iter()
+                        .find(|g| g.has_setup)
+                        .map(|g| g.instance_id.clone())
+                })
+            })
+            .flatten();
+        ProviderSelection {
+            selected,
+            none_available,
+            setup_instance,
+        }
+    }
+}
+
 /// One provider instance as the server lists it, for clients that only need to name it (the
 /// iOS thread rows, the sidebar). Custom instance ids are `${driver}_${slug}`, so the driver
 /// cannot be guessed from the id: look it up with [`ModelCatalog::driver_for_instance`].
@@ -1408,13 +1632,15 @@ pub struct ServerConfigChange {
     pub providers_changed: bool,
     /// The scratch root or a capability the client reads differs.
     pub config_changed: bool,
+    /// `settingsUpdated` (or a snapshot) brought different settings.
+    pub settings_changed: bool,
 }
 
 impl ServerConfigChange {
     /// True when anything a view reads changed.
     #[must_use]
     pub fn any(self) -> bool {
-        self.providers_changed || self.config_changed
+        self.providers_changed || self.config_changed || self.settings_changed
     }
 }
 
@@ -1427,6 +1653,7 @@ impl ServerConfigChange {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServerConfigState {
     providers: Vec<ServerProvidersItemItem>,
+    settings: Option<conn_contract::ServerSettings>,
     catalog: ModelCatalog,
     scratch_workspace_root: Option<String>,
     model_catalog_refresh: bool,
@@ -1451,10 +1678,45 @@ impl ServerConfigState {
         self.loaded
     }
 
-    /// The parsed provider catalog.
+    /// The parsed provider catalog, as enabled on the machine (no project in scope).
     #[must_use]
     pub fn catalog(&self) -> &ModelCatalog {
         &self.catalog
+    }
+
+    /// The server's settings: provider instances, project overrides and the rest. `None` until
+    /// a snapshot arrived.
+    #[must_use]
+    pub fn settings(&self) -> Option<&conn_contract::ServerSettings> {
+        self.settings.as_ref()
+    }
+
+    /// The catalog with each instance enabled as `project_id` sees it
+    /// (`providerInstanceEntriesFor` -> `applyProviderInstanceSettings`): a project's override,
+    /// else the machine setting. A server that sends no `providerInstances` keeps the flags
+    /// of its snapshot.
+    #[must_use]
+    pub fn catalog_for_project(&self, project_id: Option<&str>) -> ModelCatalog {
+        let items: Vec<Option<ServerProvidersItemItem>> = self
+            .providers
+            .iter()
+            .map(|provider| {
+                let mut provider = provider.clone();
+                if let Some(settings) = self
+                    .settings
+                    .as_ref()
+                    .filter(|settings| settings.provider_instances.is_some())
+                {
+                    provider.enabled = crate::provider_settings::resolve_project_instance_enabled(
+                        settings,
+                        project_id,
+                        &provider.instance_id,
+                    );
+                }
+                Some(provider)
+            })
+            .collect();
+        ModelCatalog::from_providers(&items)
     }
 
     /// One provider as the server sent it.
@@ -1490,8 +1752,10 @@ impl ServerConfigState {
                 let next = apply_provider_deltas(&self.providers, &deltas.payload.providers);
                 self.set_providers(next)
             }
+            ServerConfigStreamEvent::SettingsUpdated(updated) => {
+                self.set_settings(updated.payload.settings)
+            }
             ServerConfigStreamEvent::KeybindingsUpdated(_)
-            | ServerConfigStreamEvent::SettingsUpdated(_)
             | ServerConfigStreamEvent::EnvironmentThemesUpdated(_)
             | ServerConfigStreamEvent::UsageLimitSourcesUpdated(_) => ServerConfigChange::default(),
         }
@@ -1507,7 +1771,13 @@ impl ServerConfigState {
             || refresh != self.model_catalog_refresh;
         self.scratch_workspace_root = scratch;
         self.model_catalog_refresh = refresh;
+        let settings_changed = self.settings.as_ref() != Some(&config.settings);
+        self.settings = Some(config.settings.clone());
         let mut change = self.set_providers(config.providers.iter().flatten().cloned().collect());
+        if settings_changed && !change.providers_changed {
+            self.catalog = self.catalog_for_project(None);
+        }
+        change.settings_changed = settings_changed;
         change.config_changed = config_changed;
         if !was_loaded {
             change.providers_changed = true;
@@ -1520,12 +1790,24 @@ impl ServerConfigState {
         if next == self.providers {
             return ServerConfigChange::default();
         }
-        let items: Vec<Option<ServerProvidersItemItem>> = next.iter().cloned().map(Some).collect();
-        self.catalog = ModelCatalog::from_providers(&items);
         self.providers = next;
+        self.catalog = self.catalog_for_project(None);
         ServerConfigChange {
             providers_changed: true,
-            config_changed: false,
+            ..ServerConfigChange::default()
+        }
+    }
+
+    /// `settingsUpdated`: new settings can switch instances on or off.
+    fn set_settings(&mut self, settings: conn_contract::ServerSettings) -> ServerConfigChange {
+        if self.settings.as_ref() == Some(&settings) {
+            return ServerConfigChange::default();
+        }
+        self.settings = Some(settings);
+        self.catalog = self.catalog_for_project(None);
+        ServerConfigChange {
+            settings_changed: true,
+            ..ServerConfigChange::default()
         }
     }
 }
@@ -1667,6 +1949,16 @@ mod live_tests {
         antigravity["models"] = json!([{
             "slug": "gemini-4-neon", "name": "Gemini 4 Neon", "isCustom": false, "capabilities": null
         }]);
+        // Settings turn it on; its provider entry follows once a session started.
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerInstances"]["antigravity"] =
+            json!({ "driver": "antigravity", "enabled": true });
+        let change = state.apply(event(json!({
+            "version": 1,
+            "type": "settingsUpdated",
+            "payload": { "settings": settings }
+        })));
+        assert!(change.settings_changed && !change.providers_changed);
         let change = state.apply(event(json!({
             "version": 1,
             "type": "providerStatuses",
@@ -1736,6 +2028,8 @@ mod live_tests {
             .as_array_mut()
             .expect("array");
         providers.push(work);
+        snapshot["config"]["settings"]["providerInstances"]["codex_work"] =
+            json!({ "driver": "codex" });
         state.apply(event(snapshot));
         let catalog = state.catalog();
         assert_eq!(catalog.driver_for_instance("codex_work"), Some("codex"));
@@ -1834,6 +2128,142 @@ mod live_tests {
         let banner = banner_for(codex).expect("raised");
         assert_eq!(banner.message, "Sign in via the CLI to authenticate again.");
         assert!(!banner.offers_setup);
+    }
+
+    #[test]
+    fn update_required_models_name_the_version_that_runs_them() {
+        let with_models = |id: &str, models: Value| {
+            let mut provider = provider_json(id);
+            provider["updateRequiredModels"] = models;
+            let item: ServerProvidersItemItem =
+                serde_json::from_value(provider).expect("provider decodes");
+            ModelCatalog::from_providers(&[Some(item)])
+                .providers
+                .remove(0)
+        };
+        let codex = with_models(
+            "codex",
+            json!([
+                { "slug": "gpt-7", "name": "GPT-7", "minVersion": "0.170.0" },
+                { "slug": "gpt-7-pro", "name": "GPT-7 Pro", "minVersion": "v0.171.2" },
+            ]),
+        );
+        assert_eq!(
+            codex.update_required_notice("").as_deref(),
+            Some("Update the Codex CLI to v0.171.2 or newer to use GPT-7 and GPT-7 Pro.")
+        );
+        assert_eq!(
+            codex.update_required_notice(" pro ").as_deref(),
+            Some("Update the Codex CLI to v0.171.2 or newer to use GPT-7 Pro.")
+        );
+        assert_eq!(codex.update_required_notice("sonnet"), None);
+        let claude = with_models(
+            "claudeAgent",
+            json!([
+                { "slug": "a", "name": "A", "minVersion": "2.1.0" },
+                { "slug": "b", "name": "B", "minVersion": "2.0.0" },
+                { "slug": "c", "name": "C", "minVersion": "2.0.5" },
+            ]),
+        );
+        assert_eq!(
+            claude.update_required_notice("").as_deref(),
+            Some("Update Claude Code to v2.1.0 or newer to use A, B, and C.")
+        );
+    }
+
+    #[test]
+    fn semver_compares_numbers_then_prereleases() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(compare_semver("0.171.2", "0.170.9"), Greater);
+        assert_eq!(compare_semver("v1.2", "1.2.0"), Equal);
+        assert_eq!(compare_semver("1.0.0-rc.1", "1.0.0"), Less);
+        assert_eq!(compare_semver("1.0.0-rc.2", "1.0.0-rc.10"), Less);
+        assert_eq!(compare_semver("1.0.0+build", "1.0.0"), Equal);
+    }
+
+    fn settings_event(codex: bool, claude: bool) -> ServerConfigStreamEvent {
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerInstances"]["codex"] = json!({ "driver": "codex", "enabled": codex });
+        settings["providerInstances"]["claudeAgent"] =
+            json!({ "driver": "claudeAgent", "enabled": claude });
+        event(
+            json!({ "version": 1, "type": "settingsUpdated", "payload": { "settings": settings } }),
+        )
+    }
+
+    #[test]
+    fn the_composer_provider_falls_back_and_then_offers_setup() {
+        let mut state = loaded();
+        let pick = |state: &ServerConfigState, candidates: &[Option<&str>]| {
+            state.catalog().resolve_selection(candidates)
+        };
+        assert_eq!(
+            pick(&state, &[Some("claudeAgent")]).selected.as_deref(),
+            Some("claudeAgent")
+        );
+        assert_eq!(
+            pick(&state, &[None, Some("antigravity")])
+                .selected
+                .as_deref(),
+            Some("codex"),
+            "a disabled instance gives way to the first ready one"
+        );
+        state.apply(settings_event(false, false));
+        let none = pick(&state, &[Some("codex")]);
+        assert!(none.none_available && none.selected.is_none());
+        assert_eq!(
+            none.setup_instance.as_deref(),
+            Some("codex"),
+            "the one asked for"
+        );
+        let anything = pick(&state, &[]);
+        assert!(anything.none_available);
+        assert_eq!(
+            anything.setup_instance.as_deref(),
+            Some("antigravity"),
+            "else the first instance with a setup path"
+        );
+    }
+
+    #[test]
+    fn a_project_override_switches_an_instance_off_for_that_project() {
+        let mut state = loaded();
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["projectSettingsOverrides"] = json!({
+            "p1": { "providerInstances": { "codex": { "enabled": false } } }
+        });
+        state.apply(event(json!({
+            "version": 1, "type": "settingsUpdated", "payload": { "settings": settings }
+        })));
+        let ready = |catalog: &ModelCatalog| -> Vec<String> {
+            catalog
+                .providers
+                .iter()
+                .filter(|g| g.ready)
+                .map(|g| g.instance_id.clone())
+                .collect()
+        };
+        assert_eq!(ready(state.catalog()), ["codex", "claudeAgent"]);
+        assert_eq!(
+            ready(&state.catalog_for_project(Some("p1"))),
+            ["claudeAgent"]
+        );
+        assert_eq!(
+            ready(&state.catalog_for_project(Some("p2"))),
+            ["codex", "claudeAgent"]
+        );
+    }
+
+    #[test]
+    fn a_server_without_provider_instances_keeps_its_own_enabled_flags() {
+        let mut snapshot = snapshot_json();
+        snapshot["config"]["settings"]
+            .as_object_mut()
+            .expect("settings")
+            .remove("providerInstances");
+        let mut state = ServerConfigState::new();
+        state.apply(event(snapshot));
+        assert_eq!(state.catalog().providers.len(), 2);
     }
 
     #[test]

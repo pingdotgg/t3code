@@ -332,6 +332,16 @@ impl RightPanel {
         cx.notify();
     }
 
+    /// Hands the live server config to the surfaces that read its settings.
+    pub fn set_server_config(
+        &mut self,
+        config: std::sync::Arc<conn_state::providers::ServerConfigState>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.device
+            .update(cx, |panel, cx| panel.set_server_config(config, cx));
+    }
+
     /// Updates theme tokens across the tab strip and every right-panel surface.
     pub fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
         self.tokens = tokens.clone();

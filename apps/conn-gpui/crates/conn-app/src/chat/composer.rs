@@ -255,6 +255,10 @@ pub(crate) struct Composer {
     model_search_input: Entity<InputState>,
     /// The live `subscribeServerConfig` projection, shared with the app.
     config: Arc<ServerConfigState>,
+    /// The catalog as the thread's project sees it: that project's instance overrides applied.
+    catalog: conn_state::providers::ModelCatalog,
+    /// The project whose provider overrides apply (`providerInstanceEntriesFor(projectId)`).
+    project_id: Option<String>,
     /// A `modelCatalogOnly` refresh is in flight (Conn single-flights it).
     catalog_refresh_in_flight: bool,
     selected_instance_id: Option<String>,
@@ -297,7 +301,7 @@ impl fmt::Debug for Composer {
             .field("selected_model", &self.selected_model)
             .field("model_picker_open", &self.model_picker_open)
             .field("active_trigger", &self.active_trigger)
-            .field("providers", &self.config.catalog().providers.len())
+            .field("providers", &self.catalog.providers.len())
             .finish_non_exhaustive()
     }
 }
@@ -408,6 +412,8 @@ impl Composer {
             textarea,
             model_search_input,
             config: Arc::new(ServerConfigState::new()),
+            catalog: conn_state::providers::ModelCatalog::default(),
+            project_id: None,
             catalog_refresh_in_flight: false,
             selected_instance_id: None,
             selected_driver: None,
@@ -818,8 +824,7 @@ impl Composer {
         Option<serde_json::Map<String, serde_json::Value>>,
     )> {
         if let Some(opt) = self
-            .config
-            .catalog()
+            .catalog
             .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
         {
             return Some((
@@ -839,8 +844,7 @@ impl Composer {
                 self.selected_options.clone(),
             ));
         }
-        self.config
-            .catalog()
+        self.catalog
             .default_model()
             .map(|opt| (opt.instance_id.clone(), opt.slug.clone(), None))
     }
@@ -888,8 +892,34 @@ impl Composer {
         cx: &mut Context<'_, Self>,
     ) {
         self.config = config;
+        self.refresh_catalog(cx);
+    }
+
+    /// The project whose provider overrides apply (`projectSettingsOverrides`).
+    pub(crate) fn set_project_id(
+        &mut self,
+        project_id: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.project_id != project_id {
+            self.project_id = project_id;
+            self.refresh_catalog(cx);
+        }
+    }
+
+    /// The provider catalog this composer reads.
+    pub(crate) fn catalog(&self) -> &conn_state::providers::ModelCatalog {
+        &self.catalog
+    }
+
+    /// Re-derives the catalog for the project. An unset model follows the catalog's default.
+    fn refresh_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        let catalog = self.config.catalog_for_project(self.project_id.as_deref());
+        if catalog != self.catalog {
+            self.catalog = catalog;
+        }
         if (self.selected_instance_id.is_none() || self.selected_model == "Default model")
-            && let Some(default_opt) = self.config.catalog().default_model().cloned()
+            && let Some(default_opt) = self.catalog.default_model().cloned()
         {
             self.selected_instance_id = Some(default_opt.instance_id);
             self.selected_driver = Some(default_opt.driver);
@@ -1758,8 +1788,7 @@ impl Composer {
 
     /// The selected model from the catalog, when known.
     fn selected_model_option(&self) -> Option<&ModelOption> {
-        self.config
-            .catalog()
+        self.catalog
             .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
     }
 
@@ -1776,8 +1805,7 @@ impl Composer {
             .selected_model_option()
             .map(|m| m.instance_id.as_str())
             .or(self.selected_instance_id.as_deref())?;
-        self.config
-            .catalog()
+        self.catalog
             .providers
             .iter()
             .find(|p| p.instance_id == instance)
@@ -1939,7 +1967,7 @@ impl Composer {
         model: String,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(opt) = self.config.catalog().find_model(Some(&instance_id), &model) {
+        if let Some(opt) = self.catalog.find_model(Some(&instance_id), &model) {
             self.selected_driver = Some(opt.driver.clone());
         }
         let same_model = self.selected_instance_id.as_deref() == Some(instance_id.as_str())
@@ -2102,17 +2130,12 @@ impl Composer {
                 .as_deref()
                 .or(self.selected_instance_id.as_deref())
                 .or_else(|| {
-                    self.config
-                        .catalog()
+                    self.catalog
                         .picker_providers()
                         .next()
                         .map(|p| p.instance_id.as_str())
                 });
-            let count = self
-                .config
-                .catalog()
-                .filtered_models(effective, &query)
-                .len();
+            let count = self.catalog.filtered_models(effective, &query).len();
             if count > 0 {
                 self.picker_highlighted_index =
                     step_index(self.picker_highlighted_index, delta, count);
@@ -2146,15 +2169,13 @@ impl Composer {
             .as_deref()
             .or(self.selected_instance_id.as_deref())
             .or_else(|| {
-                self.config
-                    .catalog()
+                self.catalog
                     .picker_providers()
                     .next()
                     .map(|p| p.instance_id.as_str())
             });
         let picked = self
-            .config
-            .catalog()
+            .catalog
             .filtered_models(effective, &query)
             .get(self.picker_highlighted_index)
             .map(|m| (m.instance_id.clone(), m.slug.clone()));
@@ -2312,6 +2333,51 @@ impl Composer {
             .into_any_element()
     }
 
+    /// `Open provider settings`: the footer's stand-in for the model controls while no provider
+    /// is usable (`ComposerControlsBar.tsx:254-269`). Without an instance to set up it only says
+    /// `No provider available`.
+    fn render_provider_unavailable(
+        &self,
+        setup_instance: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let tokens = self.tokens.clone();
+        let fg = hsla(tokens.foreground);
+        let muted = hsla(tokens.muted_foreground);
+        let hover = hsla(tokens.shell_highlight);
+        let label = if setup_instance.is_some() {
+            "Open provider settings"
+        } else {
+            "No provider available"
+        };
+        let base = div()
+            .id("composer-provider-unavailable")
+            .a11y_button("composer.provider-unavailable", label)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .h(px(FOOTER_CONTROL_HEIGHT_PX))
+            .px(px(8.0))
+            .rounded(px(8.0))
+            .text_size(px(13.0))
+            .line_height(px(20.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(muted)
+            .child(icons::icon(icons::ERROR_CIRCLE, 16.0, muted))
+            .child(label);
+        match setup_instance {
+            Some(instance_id) => base
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover).text_color(fg))
+                .on_click(cx.listener(move |composer, _, _, cx| {
+                    composer.open_provider_setup(instance_id.clone(), cx);
+                }))
+                .into_any_element(),
+            None => base.opacity(0.5).into_any_element(),
+        }
+    }
+
     /// Permission modes the selected provider supports.
     fn runtime_mode_options(&self) -> Vec<footer::RuntimeModeOption> {
         compatible_runtime_modes(
@@ -2323,9 +2389,14 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        // `noProviderAvailable` (`ChatComposer.tsx:934-945`): no instance is usable for this
+        // composer. Until the first config arrives the catalog is merely unknown.
+        let provider_selection = self
+            .catalog
+            .resolve_selection(&[self.selected_instance_id.as_deref()]);
         let provider_unavailable = self.connection.is_some()
             && self.config.is_loaded()
-            && self.config.catalog().providers.is_empty();
+            && provider_selection.none_available;
         let placeholder = composer_placeholder(&self.pending_request, provider_unavailable);
         if self.applied_placeholder != placeholder {
             self.applied_placeholder = placeholder;
@@ -2875,9 +2946,17 @@ impl Render for Composer {
                             .justify_end()
                             .gap(px(4.0))
                             .min_w_0()
-                            .child(model_trigger)
-                            .when_some(permissions_chip, |el, chip| el.child(chip))
-                            .when_some(mode_toggle, |el, toggle| el.child(toggle))
+                            .when(!provider_unavailable, |el| {
+                                el.child(model_trigger)
+                                    .when_some(permissions_chip, |el, chip| el.child(chip))
+                                    .when_some(mode_toggle, |el, toggle| el.child(toggle))
+                            })
+                            .when(provider_unavailable, |el| {
+                                el.child(self.render_provider_unavailable(
+                                    provider_selection.setup_instance.clone(),
+                                    cx,
+                                ))
+                            })
                             .when_some(context_meter, |el, meter| el.child(meter))
                             .when_some(dictation_badge, |el, badge| el.child(badge))
                             .child(mic_btn)
@@ -3056,7 +3135,7 @@ impl Render for Composer {
             let query = self.model_search_input.read(cx).value().to_string();
             let popup = render_model_picker(
                 &ModelPickerView {
-                    catalog: self.config.catalog(),
+                    catalog: &self.catalog,
                     loading: !self.config.is_loaded(),
                     active_instance_id: self.selected_instance_id.as_deref(),
                     active_model: &self.selected_model,

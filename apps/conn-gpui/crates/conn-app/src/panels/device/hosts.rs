@@ -46,7 +46,7 @@ pub(super) enum HostConfigScreen {
     Simlock(SimlockHostForm),
 }
 
-/// Saved host lists fetched via `server.getConfig`.
+/// Saved host lists from the live server config's settings.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SavedHostConfigs {
     pub(super) ssh_hosts: Vec<SshDeviceHostConfig>,

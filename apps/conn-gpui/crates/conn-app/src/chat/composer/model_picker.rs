@@ -385,6 +385,40 @@ pub(super) fn render_model_picker(
             )
         });
 
+    // `updateRequiredNotices`: for the selected provider, or every provider while searching.
+    let update_notices: Vec<(String, String)> = view
+        .catalog
+        .picker_providers()
+        .filter(|provider| {
+            is_searching || Some(provider.instance_id.as_str()) == effective_provider
+        })
+        .filter_map(|provider| {
+            provider
+                .update_required_notice(view.query)
+                .map(|notice| (provider.instance_id.clone(), notice))
+        })
+        .collect();
+    let right_column =
+        right_column.children(update_notices.into_iter().map(|(instance_id, notice)| {
+            div()
+                .id(SharedString::from(format!(
+                    "composer.model-picker.update-required.{instance_id}"
+                )))
+                .a11y_group(
+                    format!("composer.model-picker.update-required.{instance_id}"),
+                    notice.clone(),
+                )
+                .flex_none()
+                .border_t_1()
+                .border_color(glass_divider)
+                .px(px(12.0))
+                .py(px(8.0))
+                .text_size(px(13.0))
+                .line_height(px(18.0))
+                .text_color(muted)
+                .child(notice)
+        }));
+
     content = content.child(right_column);
 
     let row = div()

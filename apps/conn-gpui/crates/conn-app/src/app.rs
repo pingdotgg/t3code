@@ -988,6 +988,7 @@ impl ConnApp {
             }
             chat.set_shell_availability(has_projects, connected, cx);
             chat.set_draft(draft_view, cx);
+            chat.set_project_id(project_id.clone(), cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
             chat.set_branch_context(branch_context, cx);
@@ -1195,6 +1196,9 @@ impl ConnApp {
         let config = std::sync::Arc::clone(&self.server_config);
         self.chat.update(cx, |chat, cx| {
             chat.set_server_config(std::sync::Arc::clone(&config), cx)
+        });
+        self.right_panel.update(cx, |panel, cx| {
+            panel.set_server_config(std::sync::Arc::clone(&config), cx)
         });
         if let Some(modal) = &self.settings_modal {
             modal.update(cx, |modal, cx| modal.set_server_config(config, cx));

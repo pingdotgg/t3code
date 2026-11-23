@@ -1,30 +1,32 @@
-//! Settings → Providers: provider status and the sign-in flow behind `Open provider setup`
-//! (`ProviderSettingsPanel.tsx`, `ProviderSetupSection.tsx`, `ProviderAuthenticationSection.tsx`).
+//! Settings → Providers: the provider instances, their editor, and the sign-in flow behind
+//! `Open provider setup` (`ProviderSettingsPanel.tsx`, `ProviderInstanceCard.tsx`,
+//! `ProviderSetupSection.tsx`, `ProviderAuthenticationSection.tsx`).
 //!
-//! One row per provider instance: its status line and `Refresh`. The instance picked by
-//! `Open provider setup` opens its Account row below, driven by `provider.auth.subscribe` and the
-//! `provider.auth.*` calls: sign in (browser, device code, credentials or terminal), cancel,
-//! change account and sign out.
+//! One row per provider instance: its status line, an enable switch, `Edit`, `Refresh` and
+//! `Delete` or `Reset`. `Add provider` creates an instance. The edited instance opens its
+//! identity, Setup (the Account row, driven by `provider.auth.subscribe` and the
+//! `provider.auth.*` calls), Runtime and Environment sections; `editor.rs` holds the settings
+//! writes.
 //!
-//! Drift from Conn: no instance editor (add, remove, rename, model lists) and no `Enable` button
-//! for a disabled instance; those write `providerInstances` settings, which this client does not
-//! edit yet. A sign-in terminal shows its output as plain text with a one-line input, since there
-//! is no terminal emulator for a remote stream.
+//! Drift from Conn: a sign-in terminal shows its output as plain text with a one-line input, since
+//! there is no terminal emulator for a remote stream. The accent color is a `#rrggbb` field, not a
+//! color plane.
+
+mod editor;
 
 use std::collections::HashSet;
 use std::sync::Arc;
 
 use conn_client::{Connection, StreamId};
 use conn_state::provider_auth::{
-    AuthFlow, AuthInteraction, AuthPanel, ProviderSummary, StatusKey, is_web_url,
-    plain_terminal_output,
+    AuthFlow, AuthInteraction, AuthPanel, StatusKey, is_web_url, plain_terminal_output,
 };
 use conn_state::providers::{ProviderGroup, ServerConfigState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity, FontWeight,
+    AnyElement, App, AppContext as _, ClickEvent, ClipboardItem, Context, Entity,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
 };
@@ -76,6 +78,13 @@ pub(crate) struct ProvidersView {
     credential_inputs: Vec<(String, Entity<InputState>)>,
     credential_for: Option<String>,
     _subscriptions: Vec<Subscription>,
+    /// The inputs of the instance being edited.
+    editor: Option<editor::Editor>,
+    /// The Add provider form, while open.
+    adding: Option<editor::AddForm>,
+    write: editor::WriteState,
+    /// The instance whose removal or reset waits for a second click.
+    confirm_remove: Option<String>,
 }
 
 impl ProvidersView {
@@ -110,6 +119,10 @@ impl ProvidersView {
             credential_inputs: Vec::new(),
             credential_for: None,
             _subscriptions: vec![terminal_sub],
+            editor: None,
+            adding: None,
+            write: editor::WriteState::default(),
+            confirm_remove: None,
         }
     }
 
@@ -142,7 +155,7 @@ impl ProvidersView {
         cx.notify();
     }
 
-    /// `Open provider setup`: open the Account row of `instance_id`.
+    /// `Open provider setup`: open the editor, with its Account row, of `instance_id`.
     pub(crate) fn focus_provider(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
         self.select(Some(instance_id), cx);
     }
@@ -516,103 +529,6 @@ impl ProvidersView {
             .child(text.into())
     }
 
-    fn provider_row(&self, group: &ProviderGroup, cx: &mut Context<'_, Self>) -> AnyElement {
-        let tokens = &self.tokens;
-        let summary = ProviderSummary::of(group);
-        let id = group.instance_id.clone();
-        let name = group.display_name.clone();
-        let selected = self.selected.as_deref() == Some(id.as_str());
-        let has_setup = group.has_setup || group.can_authenticate.is_some();
-        let refreshing = self.refreshing.contains(&id);
-        let title = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.0))
-            .child(crate::icons::provider_mark(
-                &group.driver,
-                16.0,
-                hsla(tokens.foreground),
-            ))
-            .child(
-                div()
-                    .size(px(8.0))
-                    .rounded_full()
-                    .bg(self.dot_color(summary.key)),
-            )
-            .child(div().child(name.clone()))
-            .when_some(group.version.clone(), |el, version| {
-                el.child(
-                    div()
-                        .text_size(px(12.0))
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(hsla(tokens.muted_foreground_raised))
-                        .child(format!("v{version}")),
-                )
-            });
-        let description = match &summary.detail {
-            Some(detail) => format!("{} \u{b7} {detail}", summary.headline),
-            None => summary.headline.clone(),
-        };
-        let select_id = id.clone();
-        let refresh_id = id.clone();
-        let mut trailing = div().flex().flex_row().items_center().gap(px(8.0));
-        if has_setup {
-            trailing = trailing.child(self.button(
-                format!("settings.providers.{id}.setup"),
-                if selected { "Hide account" } else { "Account" },
-                false,
-                Some(cx.listener(move |view, _, _, cx| {
-                    let next = (view.selected.as_deref() != Some(select_id.as_str()))
-                        .then(|| select_id.clone());
-                    view.select(next, cx);
-                })),
-            ));
-        }
-        trailing = trailing.child(self.button(
-            format!("settings.providers.{id}.refresh"),
-            if refreshing {
-                "Refreshing..."
-            } else {
-                "Refresh"
-            },
-            false,
-            (!refreshing).then(|| {
-                cx.listener(move |view, _, _, cx| view.refresh(Some(refresh_id.clone()), cx))
-            }),
-        ));
-        div()
-            .id(SharedString::from(format!("settings.providers.{id}")))
-            .a11y_group(format!("settings.providers.{id}"), name)
-            .flex()
-            .flex_row()
-            .items_start()
-            .justify_between()
-            .gap(px(16.0))
-            .w_full()
-            .px(px(14.0))
-            .py(px(12.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(2.0))
-                    .child(
-                        div()
-                            .text_size(px(self.geometry.ui_font_size_px))
-                            .line_height(px(self.geometry.ui_line_height_px))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(hsla(tokens.foreground))
-                            .child(title),
-                    )
-                    .child(self.muted_line(description)),
-            )
-            .child(div().flex_shrink_0().child(trailing))
-            .into_any_element()
-    }
-
     /// The Account row of the selected provider (`ProviderAuthenticationSection`).
     fn account_rows(
         &mut self,
@@ -927,6 +843,7 @@ impl Render for ProvidersView {
         let groups = config.catalog().all_groups();
         let tokens = self.tokens.clone();
         let geometry = self.geometry;
+        self.ensure_editor(window, cx);
 
         let mut page = div()
             .id("settings-providers-page")
@@ -937,45 +854,78 @@ impl Render for ProvidersView {
 
         let refreshing_all = self.refreshing_all;
         let header = settings_row(
-            "Refresh providers",
-            Some("Check every provider again, including its models."),
-            self.button(
-                "settings.providers.refresh-all".to_owned(),
-                if refreshing_all {
-                    "Refreshing..."
-                } else {
-                    "Refresh all"
-                },
-                false,
-                (!refreshing_all).then(|| cx.listener(|view, _, _, cx| view.refresh(None, cx))),
-            ),
+            "Providers",
+            Some("Check every provider again, including its models, or add another."),
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8.0))
+                .child(
+                    self.button(
+                        "settings.providers.add".to_owned(),
+                        "Add provider",
+                        false,
+                        (self.adding.is_none() && config.settings().is_some()).then(|| {
+                            cx.listener(|view, _, window, cx| view.open_add_form(window, cx))
+                        }),
+                    ),
+                )
+                .child(self.button(
+                    "settings.providers.refresh-all".to_owned(),
+                    if refreshing_all {
+                        "Refreshing..."
+                    } else {
+                        "Refresh all"
+                    },
+                    false,
+                    (!refreshing_all).then(|| cx.listener(|view, _, _, cx| view.refresh(None, cx))),
+                ))
+                .into_any_element(),
             &tokens,
             &geometry,
         );
         let mut rows = vec![header];
-        if groups.is_empty() {
-            let text = if config.is_loaded() {
-                "This server lists no providers."
-            } else {
-                "Waiting for the server to report its providers."
-            };
-            rows.push(self.note_row(text.to_owned(), false, "settings.providers.empty"));
+        match config.settings() {
+            None => {
+                rows.push(self.note_row(
+                    "Waiting for the server to report its providers.".to_owned(),
+                    false,
+                    "settings.providers.empty",
+                ));
+            }
+            Some(settings) => {
+                let show_cursor = config.provider("cursor").is_some();
+                let instance_rows = conn_state::provider_settings::instance_rows(
+                    settings,
+                    show_cursor,
+                    self.selected.as_deref(),
+                );
+                if instance_rows.is_empty() {
+                    rows.push(self.note_row(
+                        "This server lists no providers.".to_owned(),
+                        false,
+                        "settings.providers.empty",
+                    ));
+                }
+                for row in &instance_rows {
+                    let group = groups.iter().find(|g| g.instance_id == row.instance_id);
+                    rows.push(self.instance_row(row, group.copied(), cx));
+                }
+            }
         }
-        for group in &groups {
-            rows.push(self.provider_row(group, cx));
+        if let Some(error) = self.write_error_row() {
+            rows.push(error);
+        }
+        if let Some(add) = self.add_form_section(cx) {
+            page = page.child(add);
         }
         page = page.child(settings_section("Providers", rows, &tokens, &geometry));
 
-        if let Some(selected) = self.selected.clone()
-            && let Some(group) = groups.iter().find(|g| g.instance_id == selected)
-        {
-            let account = self.account_rows(group, window, cx);
-            page = page.child(settings_section(
-                &format!("{} setup", group.display_name),
-                account,
-                &tokens,
-                &geometry,
-            ));
+        if let Some(selected) = self.selected.clone() {
+            let group = groups.iter().find(|g| g.instance_id == selected).copied();
+            for section in self.editor_sections(group, window, cx) {
+                page = page.child(section);
+            }
         }
         page
     }

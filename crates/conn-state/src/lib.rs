@@ -16,6 +16,7 @@ mod discard_undo;
 mod drafts;
 mod layout;
 pub mod provider_auth;
+pub mod provider_settings;
 pub mod providers;
 mod scheduled;
 mod shell;

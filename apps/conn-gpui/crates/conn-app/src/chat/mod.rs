@@ -845,6 +845,16 @@ impl ChatView {
 
     /// Sets the model display label shown in the composer footer.
     /// Sets the project root used to shorten tool row paths.
+    /// The project whose provider overrides apply to the composer (`projectSettingsOverrides`).
+    pub(crate) fn set_project_id(
+        &mut self,
+        project_id: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.set_project_id(project_id, cx));
+    }
+
     pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
         if self.workspace_root != root {
             self.composer
