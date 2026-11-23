@@ -61,6 +61,15 @@ const WorkingPoint = Schema.Struct({
 });
 export type WorkingPoint = typeof WorkingPoint.Type;
 
+const Reconnect = Schema.Struct({
+  clients: Schema.Number,
+  threadsPerClient: Schema.optional(Schema.Number),
+  /** Drop to every subscription delivering its snapshot again. */
+  resubscribedMs: Schema.Number,
+  loopDelayP99Ms: Schema.Number,
+  loopDelayMaxMs: Schema.Number,
+});
+
 /** One pass over the scenarios. */
 export const Measured = Schema.Struct({
   /** What else the machine was doing during the pass; never compared, only warned about. */
@@ -77,13 +86,10 @@ export const Measured = Schema.Struct({
     Schema.Struct({
       /** The quiet window by subscribed thread count. */
       attached: Schema.Record(Schema.String, Window),
-      /** Every client drops and reconnects at once. */
-      storm: Schema.Struct({
-        clients: Schema.Number,
-        resubscribedMs: Schema.Number,
-        loopDelayP99Ms: Schema.Number,
-        loopDelayMaxMs: Schema.Number,
-      }),
+      /** A user's few devices, each holding the shell, VCS status and threads, drop and reconnect. */
+      reconnect: Schema.optional(Reconnect),
+      /** With --stress: 20 clients holding one thread each drop and reconnect at once. */
+      storm: Schema.optional(Reconnect),
     }),
   ),
   /**
@@ -265,7 +271,9 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
   informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
   informational(/^(streaming|pipeline)\.gcPauseMs$/),
-  informational(/^(pipeline\.loopDelayMaxMs|clients\.storm\.loopDelayP99Ms|quiet\.cpuPct)$/),
+  informational(
+    /^(pipeline\.loopDelayMaxMs|clients\.(storm|reconnect)\.loopDelayP99Ms|quiet\.cpuPct)$/,
+  ),
   informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
   informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
   informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
@@ -294,7 +302,8 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   { pattern: /^firstWord\./, floor: 600, gate: true },
   { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },
   { pattern: /^pipeline\.(toRequestMs\.p90|msPerTurn)$/, floor: 600, gate: true },
-  { pattern: /^clients\.storm\.resubscribedMs$/, floor: 200, gate: true },
+  // The reconnect had no A/A run yet and takes the storm's floors.
+  { pattern: /^clients\.(storm|reconnect)\.resubscribedMs$/, floor: 200, gate: true },
   { pattern: /^rest\.cpuPct$/, floor: 1, gate: true },
   { pattern: /cpuPct$/, floor: 3.5, gate: true },
   { pattern: /^(rest|quiet)\.wakeupsPerSec$/, floor: 12, gate: true },
@@ -328,6 +337,7 @@ const isMetric = (metric: string) =>
     metric === "busy.projects" ||
     metric === "busy.ballastMB" ||
     metric.endsWith(".clients") ||
+    metric.endsWith(".threadsPerClient") ||
     metric.endsWith(".threads") ||
     metric === "busy.largeThread.messages" ||
     metric.startsWith("scaling.points")
