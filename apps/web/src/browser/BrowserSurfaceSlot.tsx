@@ -204,6 +204,7 @@ export function BrowserSurfaceSlot(props: {
       const key = `${width}:${height}:${shown}:${presentation.cornerRadius}:${presentation.zIndex}`;
       const presentationChanged = key !== presented;
       // Position alone reaches the store once it settles; size and visibility at once.
+      let ownsSurface = true;
       if (presentationChanged || phase !== "frame") {
         const box = {
           x: Math.round(rect.x),
@@ -214,13 +215,17 @@ export function BrowserSurfaceSlot(props: {
         if (!lease.present(box, shown, presentation.cornerRadius, presentation.zIndex)) {
           // Another slot took the tab (the mini player); a visible one takes it back,
           // but not every frame, so two never trade it back and forth.
-          if (!shown || phase === "frame") return false;
-          lease.release();
-          lease = acquireBrowserSurface(tabId, fitSourceContent);
-          lease.present(box, shown, presentation.cornerRadius, presentation.zIndex);
+          if (!shown || phase === "frame") {
+            ownsSurface = false;
+          } else {
+            lease.release();
+            lease = acquireBrowserSurface(tabId, fitSourceContent);
+            lease.present(box, shown, presentation.cornerRadius, presentation.zIndex);
+          }
         }
-        presented = key;
+        if (ownsSurface) presented = key;
       }
+      if (!ownsSurface && !aboveWebviewRef.current) return false;
       const scale = rect.width / width;
       const clips = resolveClipPaths(rect, scale, ancestors);
       const next: BrowserSurfacePlacement = {
@@ -239,7 +244,7 @@ export function BrowserSurfaceSlot(props: {
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
       const aboveClipChanged = placedAboveClip !== clips.above;
-      if (moved || phase !== "frame") lease.place(next);
+      if (ownsSurface && (moved || phase !== "frame")) lease.place(next);
       if (
         aboveWebviewRef.current &&
         (moved || aboveClipChanged || presentationChanged || phase !== "frame")

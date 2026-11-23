@@ -25,6 +25,7 @@ import { deviceEnvironment } from "../../state/device";
 import { ChatCanvas } from "../chat/ChatCanvas";
 import { createChatCanvasStore } from "../chat/canvasStore";
 import { deviceStreamScreenAtom } from "../device/deviceStreamSession";
+import { acquireBrowserSurface } from "../../browser/browserSurfaceStore";
 import { PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX } from "./previewMiniPlayerLayout";
 import { ThreadPreviewMiniPlayer, useThreadPreviewCanvasSource } from "./ThreadPreviewMiniPlayer";
 
@@ -192,6 +193,25 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
   });
   isolatedPane.style.left = "0";
   await act(() => window.dispatchEvent(new Event("resize")));
+
+  // While another slot owns the tab and this slot is not shown, portaled controls still follow moves.
+  const runtimeTabId = isolatedPane
+    .querySelector("[data-browser-surface-slot]")!
+    .getAttribute("data-browser-surface-slot")!;
+  const otherLease = acquireBrowserSurface(runtimeTabId);
+  using _otherLease = { [Symbol.dispose]: () => otherLease.release() };
+  await act(() =>
+    usePreviewMiniPlayerStore.getState().move(threadRef, "browser:tab-1", { x: 24, y: 24 }),
+  );
+  await vi.waitFor(() => {
+    const movedPlayer = isolatedPane
+      .querySelector("[data-preview-mini-player]")!
+      .getBoundingClientRect();
+    const movedPortal = handle.parentElement!.parentElement!.getBoundingClientRect();
+    expect(Math.abs(movedPortal.left - movedPlayer.left)).toBeLessThan(1);
+    expect(Math.abs(movedPortal.top - movedPlayer.top)).toBeLessThan(1);
+  });
+  otherLease.release();
 
   // Touch: tapping the handle toggles the pill closed, and pressing a pill button keeps it open.
   using _capture = vi
