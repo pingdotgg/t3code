@@ -3596,6 +3596,306 @@ export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAp
   }
 }
 
+export class MacUpdateZipTimestampError extends Schema.TaggedError<MacUpdateZipTimestampError>()(
+  "MacUpdateZipTimestampError",
+  {
+    zipPath: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Invalid macOS update zip ${this.zipPath}: ${this.reason}`;
+  }
+}
+
+const ZIP_LOCAL_HEADER_SIGNATURE = 0x04034b50;
+const ZIP_EOCD_SIGNATURE = 0x06054b50;
+const ZIP64_EOCD_LOCATOR_SIGNATURE = 0x07064b50;
+const ZIP64_EOCD_SIGNATURE = 0x06064b50;
+const ZIP_CD_HEADER_SIGNATURE = 0x02014b50;
+const ZIP64_EXTRA_ID = 0x0001;
+// Squirrel.Mac extracts update zips with `ditto -x -k`, which streams local file headers
+// and ignores both 7-Zip's NTFS (0x000a) and Info-ZIP's UT (0x5455) extra fields, honoring
+// only Info-ZIP's UX extra field (0x5855) for UTC timestamps.
+const ZIP_UNIX_TIMESTAMP_EXTRA_ID = 0x5855;
+
+function inspectZipExtraField(
+  view: DataView,
+  start: number,
+  length: number,
+): { readonly hasUnixUtc: boolean; readonly extraIds: ReadonlyArray<string> } {
+  const extraIds: string[] = [];
+  let hasUnixUtc = false;
+  let ex = start;
+  const end = start + length;
+  while (ex + 4 <= end) {
+    const headerId = view.getUint16(ex, true);
+    const dataSize = view.getUint16(ex + 2, true);
+    if (ex + 4 + dataSize > end) break;
+    extraIds.push(`0x${headerId.toString(16).padStart(4, "0")}`);
+    if (headerId === ZIP_UNIX_TIMESTAMP_EXTRA_ID && dataSize >= 8) {
+      hasUnixUtc = true;
+    }
+    ex += 4 + dataSize;
+  }
+  return { hasUnixUtc, extraIds };
+}
+
+function resolveLocalHeaderOffset(
+  cdView: DataView,
+  cursor: number,
+  extraStart: number,
+  extraLen: number,
+): number | null {
+  const rawOffset = cdView.getUint32(cursor + 42, true);
+  if (rawOffset !== 0xffffffff) {
+    return rawOffset;
+  }
+  const uncompressedSize = cdView.getUint32(cursor + 24, true);
+  const compressedSize = cdView.getUint32(cursor + 20, true);
+  let fieldOffset = 0;
+  if (uncompressedSize === 0xffffffff) fieldOffset += 8;
+  if (compressedSize === 0xffffffff) fieldOffset += 8;
+  let ex = extraStart;
+  const end = extraStart + extraLen;
+  while (ex + 4 <= end) {
+    const headerId = cdView.getUint16(ex, true);
+    const dataSize = cdView.getUint16(ex + 2, true);
+    if (ex + 4 + dataSize > end) break;
+    if (headerId === ZIP64_EXTRA_ID && fieldOffset + 8 <= dataSize) {
+      return Number(cdView.getBigUint64(ex + 4 + fieldOffset, true));
+    }
+    ex += 4 + dataSize;
+  }
+  return null;
+}
+
+function findZipCentralDirectory(
+  tail: Uint8Array,
+  tailStartOffset: number,
+  fileSize: number,
+):
+  | {
+      readonly ok: true;
+      readonly cdOffset: number;
+      readonly cdSize: number;
+      readonly entryCount: number;
+    }
+  | { readonly ok: false; readonly reason: string } {
+  const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
+  let eocdIndex = -1;
+  for (let i = tail.byteLength - 22; i >= 0; i -= 1) {
+    if (view.getUint32(i, true) === ZIP_EOCD_SIGNATURE) {
+      const commentLength = view.getUint16(i + 20, true);
+      if (i + 22 + commentLength === tail.byteLength) {
+        eocdIndex = i;
+        break;
+      }
+    }
+  }
+  if (eocdIndex === -1) {
+    return { ok: false, reason: "missing ZIP end-of-central-directory record" };
+  }
+  let entryCount = view.getUint16(eocdIndex + 10, true);
+  let cdSize = view.getUint32(eocdIndex + 12, true);
+  let cdOffset = view.getUint32(eocdIndex + 16, true);
+  const needsZip64 = entryCount === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff;
+  if (needsZip64) {
+    const locatorIndex = eocdIndex - 20;
+    if (locatorIndex < 0 || view.getUint32(locatorIndex, true) !== ZIP64_EOCD_LOCATOR_SIGNATURE) {
+      return { ok: false, reason: "missing ZIP64 end-of-central-directory locator" };
+    }
+    const zip64Offset = Number(view.getBigUint64(locatorIndex + 8, true));
+    const zip64Index = zip64Offset - tailStartOffset;
+    if (
+      zip64Index < 0 ||
+      zip64Index + 56 > tail.byteLength ||
+      view.getUint32(zip64Index, true) !== ZIP64_EOCD_SIGNATURE
+    ) {
+      return { ok: false, reason: "unreadable ZIP64 end-of-central-directory record" };
+    }
+    entryCount = Number(view.getBigUint64(zip64Index + 32, true));
+    cdSize = Number(view.getBigUint64(zip64Index + 40, true));
+    cdOffset = Number(view.getBigUint64(zip64Index + 48, true));
+  }
+  if (cdOffset < 0 || cdSize < 0 || cdOffset + cdSize > fileSize) {
+    return { ok: false, reason: "central directory bounds exceed file size" };
+  }
+  return { ok: true, cdOffset, cdSize, entryCount };
+}
+
+async function readExact(
+  handle: NodeFSP.FileHandle,
+  length: number,
+  position: number,
+): Promise<Buffer | null> {
+  const buf = Buffer.allocUnsafe(length);
+  let offset = 0;
+  while (offset < length) {
+    const { bytesRead } = await handle.read(buf, offset, length - offset, position + offset);
+    if (bytesRead === 0) return null;
+    offset += bytesRead;
+  }
+  return buf;
+}
+
+export const validateMacUpdateZipTimestamps = Effect.fn(
+  "desktopArtifact.validateMacUpdateZipTimestamps",
+)(function* (zipPath: string) {
+  const failure = yield* Effect.tryPromise({
+    try: async () => {
+      const handle = await NodeFSP.open(zipPath, "r");
+      try {
+        const stat = await handle.stat();
+        const tailLength = Math.min(stat.size, 65_557 + 76);
+        const tailStartOffset = stat.size - tailLength;
+        const tail = await readExact(handle, tailLength, tailStartOffset);
+        if (tail === null) {
+          return "short read while scanning ZIP end-of-central-directory";
+        }
+
+        const cd = findZipCentralDirectory(tail, tailStartOffset, stat.size);
+        if (!cd.ok) {
+          return cd.reason;
+        }
+        if (cd.entryCount === 0) {
+          return "archive contains no entries";
+        }
+
+        const cdBuf = await readExact(handle, cd.cdSize, cd.cdOffset);
+        if (cdBuf === null) {
+          return "short read while reading ZIP central directory";
+        }
+        const cdView = new DataView(cdBuf.buffer, cdBuf.byteOffset, cdBuf.byteLength);
+        const decoder = new TextDecoder();
+
+        let cursor = 0;
+        let seenEntries = 0;
+        let checkedEntries = 0;
+        while (cursor < cdBuf.byteLength && seenEntries < cd.entryCount) {
+          if (
+            cursor + 46 > cdBuf.byteLength ||
+            cdView.getUint32(cursor, true) !== ZIP_CD_HEADER_SIGNATURE
+          ) {
+            return `corrupt central directory header at offset ${String(cursor)}`;
+          }
+          const versionMadeBy = cdView.getUint16(cursor + 4, true);
+          const nameLen = cdView.getUint16(cursor + 28, true);
+          const extraLen = cdView.getUint16(cursor + 30, true);
+          const commentLen = cdView.getUint16(cursor + 32, true);
+          const externalAttr = cdView.getUint32(cursor + 38, true);
+          const extraStart = cursor + 46 + nameLen;
+          const nextCursor = extraStart + extraLen + commentLen;
+          if (nextCursor > cdBuf.byteLength) {
+            return `truncated central directory entry at offset ${String(cursor)}`;
+          }
+
+          // Symlinks are recreated at extraction time and `ditto -c -k` omits 0x5855 on them.
+          const isUnixSymlink =
+            versionMadeBy >> 8 === 3 && ((externalAttr >>> 16) & 0o170000) === 0o120000;
+          if (!isUnixSymlink) {
+            checkedEntries += 1;
+            const entryName = decoder.decode(cdBuf.subarray(cursor + 46, cursor + 46 + nameLen));
+            const cdExtra = inspectZipExtraField(cdView, extraStart, extraLen);
+            if (!cdExtra.hasUnixUtc) {
+              const found = cdExtra.extraIds.length > 0 ? cdExtra.extraIds.join(", ") : "none";
+              return `entry "${entryName}" central directory header is missing Info-ZIP UX UTC extra field 0x5855 (found: ${found}); ditto -x -k will interpret its UTC DOS timestamp as local time`;
+            }
+
+            const localOffset = resolveLocalHeaderOffset(cdView, cursor, extraStart, extraLen);
+            if (localOffset === null || localOffset < 0 || localOffset + 30 > stat.size) {
+              return `entry "${entryName}" has invalid local file header offset`;
+            }
+            const localHeaderBuf = await readExact(handle, 30, localOffset);
+            if (localHeaderBuf === null) {
+              return `entry "${entryName}" has truncated local file header at offset ${String(localOffset)}`;
+            }
+            const localHeaderView = new DataView(
+              localHeaderBuf.buffer,
+              localHeaderBuf.byteOffset,
+              localHeaderBuf.byteLength,
+            );
+            if (localHeaderView.getUint32(0, true) !== ZIP_LOCAL_HEADER_SIGNATURE) {
+              return `entry "${entryName}" has corrupt local file header at offset ${String(localOffset)}`;
+            }
+            const localNameLen = localHeaderView.getUint16(26, true);
+            const localExtraLen = localHeaderView.getUint16(28, true);
+            const localExtraOffset = localOffset + 30 + localNameLen;
+            if (localExtraOffset + localExtraLen > stat.size) {
+              return `entry "${entryName}" has truncated local file header extra field`;
+            }
+            const localExtraBuf =
+              localExtraLen > 0
+                ? await readExact(handle, localExtraLen, localExtraOffset)
+                : Buffer.alloc(0);
+            if (localExtraBuf === null) {
+              return `entry "${entryName}" has truncated local file header extra field`;
+            }
+            const localExtra = inspectZipExtraField(
+              new DataView(
+                localExtraBuf.buffer,
+                localExtraBuf.byteOffset,
+                localExtraBuf.byteLength,
+              ),
+              0,
+              localExtraLen,
+            );
+            if (!localExtra.hasUnixUtc) {
+              const found =
+                localExtra.extraIds.length > 0 ? localExtra.extraIds.join(", ") : "none";
+              return `entry "${entryName}" local file header is missing Info-ZIP UX UTC extra field 0x5855 (found: ${found}); ditto -x -k will interpret its UTC DOS timestamp as local time`;
+            }
+          }
+          cursor = nextCursor;
+          seenEntries += 1;
+        }
+        if (seenEntries !== cd.entryCount || cursor !== cdBuf.byteLength) {
+          return `central directory truncated (parsed ${String(seenEntries)}/${String(cd.entryCount)} entries, ${String(cursor)}/${String(cdBuf.byteLength)} bytes)`;
+        }
+        if (checkedEntries === 0) {
+          return "archive contains no regular file or directory entries";
+        }
+        return null;
+      } finally {
+        await handle.close();
+      }
+    },
+    catch: (cause) =>
+      new MacUpdateZipTimestampError({
+        zipPath,
+        reason: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+  if (failure !== null) {
+    return yield* new MacUpdateZipTimestampError({ zipPath, reason: failure });
+  }
+});
+
+const validateMacUpdateZips = Effect.fn("desktopArtifact.validateMacUpdateZips")(function* (input: {
+  readonly stageDistDir: string;
+  readonly expectZip: boolean;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const zipPaths = (yield* fs.readDirectory(input.stageDistDir))
+    .filter((entry) => entry.endsWith(".zip"))
+    .map((entry) => path.join(input.stageDistDir, entry));
+  if (input.expectZip && zipPaths.length === 0) {
+    return yield* new MacUpdateZipTimestampError({
+      zipPath: input.stageDistDir,
+      reason: "expected at least one macOS update .zip archive in stage dist directory",
+    });
+  }
+  for (const zipPath of zipPaths) {
+    yield* validateMacUpdateZipTimestamps(zipPath);
+  }
+  if (zipPaths.length > 0) {
+    yield* Effect.log(
+      `[desktop-artifact] Validated macOS update zip UTC timestamps (${String(zipPaths.length)} archive(s)).`,
+    );
+  }
+});
+
 export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMacPackagedPayload")(
   function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
     const fs = yield* FileSystem.FileSystem;
@@ -4165,6 +4465,12 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
   if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
     yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
+  }
+  if (options.platform === "mac" && hostPlatform === "darwin") {
+    yield* validateMacUpdateZips({
+      stageDistDir,
+      expectZip: options.target === "dmg" || options.target === "zip",
+    });
   }
 
   const copiedArtifacts = yield* copyDesktopBuildArtifacts(

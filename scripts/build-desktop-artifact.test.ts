@@ -50,9 +50,11 @@ import {
   LinuxBrowserSecretHostError,
   LinuxPackagedAppMissingError,
   MacPackagedAppMissingError,
+  MacUpdateZipTimestampError,
   stageBrowserSecret,
   validateLinuxPackagedPayload,
   validateMacPackagedPayload,
+  validateMacUpdateZipTimestamps,
   validateWindowsPackagedPayload,
   verifyPackagedBundleIsSelfContained,
   WindowsPrimaryNativeProbeError,
@@ -1972,5 +1974,101 @@ it.effect.skipIf(!symlinksSupported)("preserves relative links when replacing di
     yield* copyDesktopBuildArtifacts(stage, output, true);
     assert.equal(yield* fs.readLink(path.join(output, app, "Current")), "New.plist");
     assert.equal(yield* fs.readFileString(path.join(output, app, "Current")), "rebuilt-app");
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+function buildSyntheticZip(
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly localExtra: Buffer;
+    readonly cdExtra?: Buffer;
+    readonly versionMadeBy?: number;
+    readonly externalAttr?: number;
+  }>,
+): Buffer {
+  const locals: Buffer[] = [];
+  const cds: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const nameBuf = Buffer.from(entry.name, "utf8");
+    const cdExtra = entry.cdExtra ?? entry.localExtra;
+    const localHeader = Buffer.alloc(30 + nameBuf.length + entry.localExtra.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(nameBuf.length, 26);
+    localHeader.writeUInt16LE(entry.localExtra.length, 28);
+    nameBuf.copy(localHeader, 30);
+    entry.localExtra.copy(localHeader, 30 + nameBuf.length);
+    locals.push(localHeader);
+
+    const cdHeader = Buffer.alloc(46 + nameBuf.length + cdExtra.length);
+    cdHeader.writeUInt32LE(0x02014b50, 0);
+    cdHeader.writeUInt16LE(entry.versionMadeBy ?? 20, 4);
+    cdHeader.writeUInt16LE(20, 6);
+    cdHeader.writeUInt16LE(nameBuf.length, 28);
+    cdHeader.writeUInt16LE(cdExtra.length, 30);
+    cdHeader.writeUInt32LE(entry.externalAttr ?? 0, 38);
+    cdHeader.writeUInt32LE(offset, 42);
+    nameBuf.copy(cdHeader, 46);
+    cdExtra.copy(cdHeader, 46 + nameBuf.length);
+    cds.push(cdHeader);
+
+    offset += localHeader.length;
+  }
+
+  const cdBytes = Buffer.concat(cds);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cdBytes.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+
+  return Buffer.concat([...locals, cdBytes, eocd]);
+}
+
+function makeZipExtraField(headerId: number, payloadLength: number): Buffer {
+  const buf = Buffer.alloc(4 + payloadLength);
+  buf.writeUInt16LE(headerId, 0);
+  buf.writeUInt16LE(payloadLength, 2);
+  return buf;
+}
+
+it.effect("validateMacUpdateZipTimestamps requires Info-ZIP UX extra field 0x5855", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mac-zip-ts-" });
+
+    const validZip = path.join(root, "valid.zip");
+    yield* fs.writeFile(
+      validZip,
+      buildSyntheticZip([
+        { name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra: makeZipExtraField(0x5855, 8) },
+        {
+          name: "T3 Code.app/Contents/Frameworks/Foo.framework/Versions/Current",
+          localExtra: Buffer.alloc(0),
+          versionMadeBy: 0x031e,
+          externalAttr: (0o120755 << 16) >>> 0,
+        },
+      ]),
+    );
+    yield* validateMacUpdateZipTimestamps(validZip);
+
+    for (const [label, localExtra, cdExtra] of [
+      ["ntfs-only", makeZipExtraField(0x000a, 32), makeZipExtraField(0x000a, 32)],
+      ["ut-only", makeZipExtraField(0x5455, 5), makeZipExtraField(0x5455, 5)],
+      ["truncated-ux", makeZipExtraField(0x5855, 4), makeZipExtraField(0x5855, 4)],
+      ["cd-only-ux", Buffer.alloc(0), makeZipExtraField(0x5855, 8)],
+    ] as const) {
+      const badZip = path.join(root, `${label}.zip`);
+      yield* fs.writeFile(
+        badZip,
+        buildSyntheticZip([{ name: "T3 Code.app/Contents/MacOS/T3 Code", localExtra, cdExtra }]),
+      );
+      const err = yield* validateMacUpdateZipTimestamps(badZip).pipe(Effect.flip);
+      assert.instanceOf(err, MacUpdateZipTimestampError);
+      assert.include(err.message, "0x5855");
+    }
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
