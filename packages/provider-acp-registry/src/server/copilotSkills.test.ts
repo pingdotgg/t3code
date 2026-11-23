@@ -28,7 +28,7 @@ import {
   decodeCopilotSkillList,
   discoverCopilotSkills,
   filterCopilotSlashCommands,
-  isCopilotBuiltinCommandCollision,
+  isCopilotAdvertisedSkill,
   leadingCopilotSkillMention,
 } from "./copilotSkills.ts";
 
@@ -409,8 +409,8 @@ describe("filterCopilotSlashCommands and applyCopilotDiscoveredSkills", () => {
     },
   ];
 
-  it("removes skill-backed slash commands while preserving built-ins with colliding names", () => {
-    expect(filterCopilotSlashCommands(slashCommands, skills)).toEqual([
+  it("drops all skill-hinted slash commands while preserving built-ins", () => {
+    expect(filterCopilotSlashCommands(slashCommands)).toEqual([
       { name: "compact", description: "Compact context" },
       { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
       { name: "env", description: "Show environment" },
@@ -418,23 +418,22 @@ describe("filterCopilotSlashCommands and applyCopilotDiscoveredSkills", () => {
     ]);
   });
 
-  it("detects built-in slash command collisions without matching skill-backed commands", () => {
-    expect(isCopilotBuiltinCommandCollision("plan", slashCommands)).toBe(true);
-    expect(isCopilotBuiltinCommandCollision("env", slashCommands)).toBe(true);
-    expect(isCopilotBuiltinCommandCollision("deploy", slashCommands)).toBe(false);
-    expect(isCopilotBuiltinCommandCollision("unknown", slashCommands)).toBe(false);
+  it("matches only session-advertised skill commands without matching built-ins", () => {
+    expect(isCopilotAdvertisedSkill("deploy", slashCommands)).toBe(true);
+    expect(isCopilotAdvertisedSkill("review", slashCommands)).toBe(true);
+    expect(isCopilotAdvertisedSkill("plan", slashCommands)).toBe(false);
+    expect(isCopilotAdvertisedSkill("env", slashCommands)).toBe(false);
+    expect(isCopilotAdvertisedSkill("unknown", slashCommands)).toBe(false);
   });
 
-  it("applies discovered skills and filtered slash commands to a provider snapshot", () => {
-    const provider = makeProviderSnapshot({ slashCommands });
-    const updated = applyCopilotDiscoveredSkills(provider, skills);
+  it("marks skills colliding with built-in slash commands as non-user-invocable", () => {
+    const updated = applyCopilotDiscoveredSkills(makeProviderSnapshot({ slashCommands }), skills);
 
-    expect(updated.skills).toEqual(skills);
-    expect(updated.slashCommands).toEqual([
-      { name: "compact", description: "Compact context" },
-      { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
-      { name: "env", description: "Show environment" },
-      { name: "help", description: "Show help" },
+    expect(updated.skills).toEqual([
+      skills[0],
+      skills[1],
+      { ...skills[2]!, userInvocable: false },
+      { ...skills[3]!, userInvocable: false },
     ]);
   });
 });
@@ -674,66 +673,79 @@ describe("discoverCopilotSkills", () => {
     }),
   );
 
-  it.effect("marks skills whose SKILL.md frontmatter sets user-invocable: false", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-copilot-skills-" });
-      const hiddenDir = path.join(tempDir, "hidden-skill");
-      const visibleDir = path.join(tempDir, "visible-skill");
-      yield* fs.makeDirectory(hiddenDir, { recursive: true });
-      yield* fs.makeDirectory(visibleDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(hiddenDir, "SKILL.md"),
-        "---\nname: hidden-skill\nuser-invocable: false\n---\nHidden instructions.\n",
-      );
-      yield* fs.writeFileString(
-        path.join(visibleDir, "SKILL.md"),
-        "---\nname: visible-skill\nuser-invocable: true\n---\nVisible instructions.\n",
-      );
+  it.effect(
+    "parses top-level YAML user-invocable: false across BOM, quoted keys, nested metadata, descriptions, and .md directories",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-copilot-skills-" });
+        const fixtures = [
+          {
+            name: "hidden-skill",
+            dir: "hidden-skill",
+            source: "builtin",
+            content: "---\nname: hidden-skill\nuser-invocable: false\n---\nHidden instructions.\n",
+          },
+          {
+            name: "bom-quoted-hidden",
+            dir: "bom-quoted-hidden.md",
+            source: "project",
+            content:
+              '\uFEFF---\nname: bom-quoted-hidden\n"user-invocable": false\n---\nHidden with BOM and quoted key.\n',
+          },
+          {
+            name: "nested-visible",
+            dir: "nested-visible",
+            source: "project",
+            content:
+              "---\nname: nested-visible\ndescription: |\n  example:\n  user-invocable: false\nmetadata:\n  user-invocable: false\n---\nVisible instructions.\n",
+          },
+          {
+            name: "visible-skill",
+            dir: "visible-skill",
+            source: "project",
+            content: "---\nname: visible-skill\nuser-invocable: true\n---\nVisible instructions.\n",
+          },
+        ] as const;
 
-      const stdout = JSON.stringify([
-        {
-          name: "hidden-skill",
-          description: "Not user invocable.",
-          source: "builtin",
-          path: hiddenDir,
-          enabled: true,
-        },
-        {
-          name: "visible-skill",
-          description: "User invocable.",
-          source: "project",
-          path: visibleDir,
-          enabled: true,
-        },
-      ]);
+        const payload = [];
+        for (const fixture of fixtures) {
+          const skillDir = path.join(tempDir, fixture.dir);
+          yield* fs.makeDirectory(skillDir, { recursive: true });
+          yield* fs.writeFileString(path.join(skillDir, "SKILL.md"), fixture.content);
+          payload.push({
+            name: fixture.name,
+            description: fixture.name,
+            source: fixture.source,
+            path: skillDir,
+            enabled: true,
+          });
+        }
 
-      const skills = yield* discoverCopilotSkills({
-        settings: copilotSettings,
-        cwd: tempDir,
-      }).pipe(
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, makeResolvedCatalog({})),
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner({ stdout })),
-      );
+        const skills = yield* discoverCopilotSkills({
+          settings: copilotSettings,
+          cwd: tempDir,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, makeResolvedCatalog({})),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            makeSpawner({ stdout: JSON.stringify(payload) }),
+          ),
+        );
 
-      expect(skills).toEqual([
-        {
-          name: "hidden-skill",
-          description: "Not user invocable.",
-          path: hiddenDir,
-          scope: "system",
-          enabled: true,
-          userInvocable: false,
-        },
-        {
-          name: "visible-skill",
-          description: "User invocable.",
-          path: visibleDir,
-          scope: "project",
-          enabled: true,
-        },
-      ]);
-    }).pipe(Effect.provide(NodeServices.layer)),
+        expect(
+          skills.map((skill) => ({
+            name: skill.name,
+            scope: skill.scope,
+            userInvocable: skill.userInvocable,
+          })),
+        ).toEqual([
+          { name: "bom-quoted-hidden", scope: "project", userInvocable: false },
+          { name: "hidden-skill", scope: "system", userInvocable: false },
+          { name: "nested-visible", scope: "project", userInvocable: undefined },
+          { name: "visible-skill", scope: "project", userInvocable: undefined },
+        ]);
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

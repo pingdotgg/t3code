@@ -59,6 +59,7 @@ import {
   makeTurnInput,
 } from "./AcpAdapterV2.testkit.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver } from "@t3tools/provider-acp-registry/server";
 import {
   ACP_REGISTRY_PROVIDER,
@@ -4087,14 +4088,36 @@ describe("AcpRegistryAdapterV2", () => {
             return realSpawner.spawn(command);
           });
 
-          const turns = [
-            "$deploy ship it",
-            "$disabled ship it",
-            "$hidden ship it",
-            "$missing ship it",
-            "please run $deploy",
-            "$plan study schedule",
-          ] as const;
+          const host = yield* ProviderHost.ProviderHost;
+          const screenshotAttachment = {
+            type: "image" as const,
+            id: "att-greendale-shot",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          };
+          const screenshotPath = host.resolveAttachmentPath(screenshotAttachment)!;
+          yield* fileSystem.writeFile(screenshotPath, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+          const turns: ReadonlyArray<{
+            readonly text: string;
+            readonly attachments?: ReadonlyArray<typeof screenshotAttachment>;
+          }> = [
+            { text: "$deploy ship it" },
+            { text: "$disabled ship it" },
+            { text: "$hidden ship it" },
+            { text: "$missing ship it" },
+            { text: "please run $deploy" },
+            { text: "$plan study schedule" },
+            { text: "$deploy inspect shot", attachments: [screenshotAttachment] },
+            { text: "$deploy", attachments: [screenshotAttachment] },
+            { text: "describe shot", attachments: [screenshotAttachment] },
+            { text: "/plan inspect shot", attachments: [screenshotAttachment] },
+            {
+              text: "/Users/troy/project is where I took this screenshot",
+              attachments: [screenshotAttachment],
+            },
+          ];
 
           const transcript = yield* decodeAcpReplayTranscript(
             {
@@ -4106,7 +4129,7 @@ describe("AcpRegistryAdapterV2", () => {
                 request("initialize"),
                 respond("initialize", {
                   protocolVersion: 1,
-                  agentCapabilities: { loadSession: true },
+                  agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
                   authMethods: [],
                 }),
                 request("session/new"),
@@ -4129,6 +4152,16 @@ describe("AcpRegistryAdapterV2", () => {
                           {
                             name: "deploy",
                             description: "Deploy Greendale app",
+                            input: { hint: "instructions for the skill" },
+                          },
+                          {
+                            name: "disabled",
+                            description: "Disabled skill",
+                            input: { hint: "instructions for the skill" },
+                          },
+                          {
+                            name: "hidden",
+                            description: "Non-user-invocable skill",
                             input: { hint: "instructions for the skill" },
                           },
                         ],
@@ -4215,19 +4248,45 @@ describe("AcpRegistryAdapterV2", () => {
           });
           yield* Deferred.await(commandsReady);
 
+          // Shared runtimeCoordinator receives built-ins only so session skills cannot leak across workspaces.
+          assert.deepEqual(
+            Option.getOrThrow(yield* runtimeCoordinator.getAvailableCommands(instanceId)),
+            {
+              slashCommands: [
+                { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+              ],
+              skills: [],
+            },
+          );
+
           const now = yield* DateTime.now;
-          const runPrompt = (ordinal: number, messageText: string) =>
+          const runPrompt = (
+            ordinal: number,
+            turn: {
+              readonly text: string;
+              readonly attachments?: ReadonlyArray<typeof screenshotAttachment>;
+            },
+          ) =>
             Effect.gen(function* () {
+              const base = makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal,
+                messageText: turn.text,
+              });
               yield* runtime.startTurn(
-                makeTurnInput({
-                  threadId,
-                  providerThread,
-                  instanceId,
-                  runtimePolicy,
-                  now,
-                  ordinal,
-                  messageText,
-                }),
+                turn.attachments === undefined
+                  ? base
+                  : {
+                      ...base,
+                      message: {
+                        ...base.message,
+                        attachments: [...turn.attachments],
+                      },
+                    },
               );
               while (true) {
                 const event = yield* Queue.take(events);
@@ -4239,41 +4298,493 @@ describe("AcpRegistryAdapterV2", () => {
             });
 
           // 1. Enabled user-invocable skill rewrites to a native slash command without instruction wrapping.
-          const deployPrompt = yield* runPrompt(1, turns[0]);
+          const deployPrompt = yield* runPrompt(1, turns[0]!);
           assert.deepEqual(deployPrompt, [{ type: "text", text: "/deploy ship it" }]);
           assert.deepEqual(skillListSpawns, [
             { args: ["skill", "list", "--json"], cwd: replayDir },
           ]);
 
           // 2. Disabled skill stays unchanged (and receives T3 instruction wrapping on first non-slash turn).
-          const disabledPrompt = yield* runPrompt(2, turns[1]);
+          const disabledPrompt = yield* runPrompt(2, turns[1]!);
           assert.equal(disabledPrompt.length, 2);
           assert.include(disabledPrompt[0]?.text ?? "", "<user_request>\n$disabled ship it\n");
           assert.notInclude(disabledPrompt[0]?.text ?? "", "/disabled");
 
           // 3. `user-invocable: false` SKILL.md stays unchanged.
-          const hiddenPrompt = yield* runPrompt(3, turns[2]);
+          const hiddenPrompt = yield* runPrompt(3, turns[2]!);
           assert.deepEqual(hiddenPrompt, [{ type: "text", text: "$hidden ship it" }]);
-
-          // 4. Unknown skill stays unchanged.
-          const missingPrompt = yield* runPrompt(4, turns[3]);
-          assert.deepEqual(missingPrompt, [{ type: "text", text: "$missing ship it" }]);
 
           const spawnsBeforeFastPaths = skillListSpawns.length;
           const resolvesBeforeFastPaths = resolveCalls.length;
 
+          // 4. Unknown skill not advertised by the active session skips discovery and stays unchanged.
+          const missingPrompt = yield* runPrompt(4, turns[3]!);
+          assert.deepEqual(missingPrompt, [{ type: "text", text: "$missing ship it" }]);
+          assert.equal(skillListSpawns.length, spawnsBeforeFastPaths);
+          assert.equal(resolveCalls.length, resolvesBeforeFastPaths);
+
           // 5. Non-leading `$deploy` skips discovery and stays unchanged.
-          const nonLeadingPrompt = yield* runPrompt(5, turns[4]);
+          const nonLeadingPrompt = yield* runPrompt(5, turns[4]!);
           assert.deepEqual(nonLeadingPrompt, [{ type: "text", text: "please run $deploy" }]);
           assert.equal(skillListSpawns.length, spawnsBeforeFastPaths);
           assert.equal(resolveCalls.length, resolvesBeforeFastPaths);
 
           // 6. `$plan` collides with ACP built-in `/plan` (`hint: "prompt"`), so it skips discovery and stays unchanged.
-          const collidingPrompt = yield* runPrompt(6, turns[5]);
+          const collidingPrompt = yield* runPrompt(6, turns[5]!);
           assert.deepEqual(collidingPrompt, [{ type: "text", text: "$plan study schedule" }]);
           assert.equal(skillListSpawns.length, spawnsBeforeFastPaths);
           assert.equal(resolveCalls.length, resolvesBeforeFastPaths);
+
+          // 7. Rewritten `$deploy` with an image attachment sends one ACP text block with the saved path.
+          const deployWithImage = yield* runPrompt(7, turns[6]!);
+          assert.equal(deployWithImage.length, 1);
+          assert.equal(deployWithImage[0]?.type, "text");
+          assert.isTrue((deployWithImage[0]?.text ?? "").startsWith("/deploy inspect shot\n\n"));
+          assert.include(deployWithImage[0]?.text ?? "", screenshotPath);
+
+          // 8. Rewritten `$deploy` without arguments puts the attachment reference in its arguments.
+          const bareDeployWithImage = yield* runPrompt(8, turns[7]!);
+          assert.equal(bareDeployWithImage.length, 1);
+          assert.equal(bareDeployWithImage[0]?.type, "text");
+          assert.isTrue((bareDeployWithImage[0]?.text ?? "").startsWith("/deploy [Attached image"));
+          assert.include(bareDeployWithImage[0]?.text ?? "", screenshotPath);
+
+          // 9. Normal prompts with an image attachment still include the native ACP image block.
+          const normalWithImage = yield* runPrompt(9, turns[8]!);
+          assert.deepEqual(
+            normalWithImage.map((block) => block.type),
+            ["text", "image"],
+          );
+
+          // 10. Direct advertised slash command with an image attachment uses one text block.
+          const advertisedSlashWithImage = yield* runPrompt(10, turns[9]!);
+          assert.equal(advertisedSlashWithImage.length, 1);
+          assert.equal(advertisedSlashWithImage[0]?.type, "text");
+          assert.isTrue(
+            (advertisedSlashWithImage[0]?.text ?? "").startsWith("/plan inspect shot\n\n"),
+          );
+          assert.include(advertisedSlashWithImage[0]?.text ?? "", screenshotPath);
+
+          // 11. Ordinary text starting with `/` (like a file path) keeps its native image block.
+          const slashPathWithImage = yield* runPrompt(11, turns[10]!);
+          assert.deepEqual(
+            slashPathWithImage.map((block) => block.type),
+            ["text", "image"],
+          );
         }).pipe(Effect.provide(Layer.mergeAll(layerTest, AcpRegistryRuntimeCoordinator.layer))),
+    );
+
+    it.effect(
+      "waits for the first active-session advertisement when discovery finishes first, falls back on timeout, and clears stale advertisements on runtime restart",
+      () =>
+        Effect.gen(function* () {
+          const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-copilot-skill-ordering-",
+          });
+          const scriptPath = yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          );
+          const deployDir = path.join(replayDir, "skills", "deploy");
+          const envSkillDir = path.join(replayDir, "skills", "env");
+          yield* fileSystem.makeDirectory(deployDir, { recursive: true });
+          yield* fileSystem.makeDirectory(envSkillDir, { recursive: true });
+          const fakeCopilotCommand = "/fake/greendale/copilot";
+          const skillListStdout = JSON.stringify([
+            {
+              name: "deploy",
+              description: "Deploy Greendale app",
+              source: "project",
+              path: deployDir,
+              enabled: true,
+            },
+            {
+              name: "env",
+              description: "Project skill colliding with built-in /env",
+              source: "project",
+              path: envSkillDir,
+              enabled: true,
+            },
+          ]);
+
+          const mockCatalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+            search: () => Effect.die("unused search"),
+            prepare: () => Effect.die("unused prepare"),
+            inspect: () => Effect.die("unused inspect"),
+            uninstallManagedBinary: () => Effect.die("unused uninstall"),
+            resolve: (_settings, cwd, environment) =>
+              Effect.succeed({
+                distribution: "local",
+                spawn: {
+                  command: fakeCopilotCommand,
+                  args: ["--acp"],
+                  cwd,
+                  ...(environment ? { env: environment } : {}),
+                },
+              }),
+          };
+
+          const discoveryCompleted = yield* Queue.unbounded<void>();
+          const skillStatsDone = yield* Queue.unbounded<string>();
+          const trackedFileSystem: FileSystem.FileSystem = {
+            ...fileSystem,
+            stat: (targetPath) =>
+              fileSystem
+                .stat(targetPath)
+                .pipe(
+                  Effect.tap(() =>
+                    targetPath === deployDir || targetPath === envSkillDir
+                      ? Queue.offer(skillStatsDone, targetPath)
+                      : Effect.void,
+                  ),
+                ),
+          };
+          const awaitSkillDiscoveryDone = Effect.gen(function* () {
+            yield* Queue.take(discoveryCompleted);
+            yield* Queue.take(skillStatsDone);
+            yield* Queue.take(skillStatsDone);
+          });
+          const skillSpawner = ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === fakeCopilotCommand) {
+              return Effect.succeed(
+                ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(43),
+                  exitCode: Queue.offer(discoveryCompleted, undefined).pipe(
+                    Effect.as(ChildProcessSpawner.ExitCode(0)),
+                  ),
+                  isRunning: Effect.succeed(false),
+                  kill: () => Effect.void,
+                  unref: Effect.succeed(Effect.void),
+                  stdin: Sink.drain,
+                  stdout: Stream.encodeText(Stream.make(skillListStdout)),
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                }),
+              );
+            }
+            return realSpawner.spawn(command);
+          });
+
+          const host = yield* ProviderHost.ProviderHost;
+          const screenshotAttachment = {
+            type: "image" as const,
+            id: "att-greendale-late-shot",
+            name: "shot.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+          };
+          const screenshotPath = host.resolveAttachmentPath(screenshotAttachment)!;
+          yield* fileSystem.writeFile(screenshotPath, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+
+          const gate = makeProviderReplayGate(["late-commands"]);
+          const process2Gate = makeProviderReplayGate(["reloaded-commands"]);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              gate.releaseAll();
+              process2Gate.releaseAll();
+            }),
+          );
+
+          // Process 1 emits available_commands_update AFTER Turn 1 discovery finishes (S9),
+          // handles Turn 2 (`$env` colliding with built-in `/env`, no runtimeCoordinator),
+          // then fails Turn 3 with Copilot's lost-session error to force a process restart.
+          const process1 = [
+            request("initialize"),
+            respond("initialize", {
+              protocolVersion: 1,
+              agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
+              authMethods: [],
+            }),
+            request("session/new"),
+            respond("session/new", { sessionId: "copilot-session" }),
+            {
+              type: "emit_inbound",
+              label: "late-commands",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "copilot-session",
+                  update: {
+                    sessionUpdate: "available_commands_update",
+                    availableCommands: [
+                      {
+                        name: "deploy",
+                        description: "Deploy Greendale app",
+                        input: { hint: "instructions for the skill" },
+                      },
+                      { name: "env", description: "Show environment" },
+                    ],
+                  },
+                },
+              },
+            },
+            request("session/prompt"),
+            respond("session/prompt", { stopReason: "end_turn" }),
+            request("session/prompt"),
+            respond("session/prompt", { stopReason: "end_turn" }),
+            request("session/prompt"),
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                error: {
+                  code: -32603,
+                  message: "session event delivery failed: session not found: copilot-session",
+                },
+              },
+            },
+          ];
+
+          // Process 2 reloads the SAME "copilot-session" without advertising commands yet (S5),
+          // then advertises `/plan` after Turn 5 starts to exercise S10, and handles Turn 6 (`/unknown`).
+          const process2 = [
+            request("initialize"),
+            respond("initialize", {
+              protocolVersion: 1,
+              agentCapabilities: { loadSession: true, promptCapabilities: { image: true } },
+              authMethods: [],
+            }),
+            request("session/new"),
+            respond("session/new", { sessionId: "replacement-bootstrap" }),
+            request("session/load"),
+            respond("session/load", {}),
+            request("session/prompt"),
+            respond("session/prompt", { stopReason: "end_turn" }),
+            {
+              type: "emit_inbound",
+              label: "reloaded-commands",
+              frame: {
+                kind: "notification",
+                method: "session/update",
+                params: {
+                  sessionId: "copilot-session",
+                  update: {
+                    sessionUpdate: "available_commands_update",
+                    availableCommands: [
+                      { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+                    ],
+                  },
+                },
+              },
+            },
+            request("session/prompt"),
+            respond("session/prompt", { stopReason: "end_turn" }),
+            request("session/prompt"),
+            respond("session/prompt", { stopReason: "end_turn" }),
+          ];
+
+          const sentPrompts: Array<OutboundPrompt> = [];
+          let spawned = 0;
+          const instanceId = ProviderInstanceId.make("copilot-skill-ordering");
+          // Deliberately omit AcpRegistryRuntimeCoordinator from the environment.
+          const adapter = yield* makeAcpRegistryAdapterV2({
+            selfInvocation: yield* resolveSelfInvocation(),
+            instanceId,
+            settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "github-copilot-cli" }),
+            environment: {},
+            makeRuntime: (runtimeInput) =>
+              Effect.gen(function* () {
+                const index = spawned++;
+                const transcript = yield* decodeAcpReplayTranscript(
+                  {
+                    provider: ACP_REGISTRY_PROVIDER,
+                    protocol: "acp.ndjson-jsonrpc",
+                    version: "1",
+                    scenario: `copilot-skill-ordering-${index}`,
+                    entries: (index === 0 ? process1 : process2) as never,
+                  },
+                  ACP_REGISTRY_PROVIDER,
+                ).pipe(Effect.orDie);
+                return yield* makeAcpReplayRuntime({
+                  transcript,
+                  statusPath: path.join(replayDir, `status-${index}.json`),
+                  scriptPath,
+                  childProcessSpawner: realSpawner,
+                  fileSystem,
+                  replayGate: index === 0 ? gate : process2Gate,
+                })({
+                  ...runtimeInput,
+                  protocolLogging: {
+                    logIncoming: false,
+                    logOutgoing: true,
+                    logger: (event) => {
+                      if (event.stage !== "raw" || typeof event.payload !== "string") {
+                        return Effect.void;
+                      }
+                      const decoded = decodeOutboundSessionPrompt(JSON.parse(event.payload));
+                      if (Option.isSome(decoded)) {
+                        sentPrompts.push(decoded.value.params.prompt);
+                      }
+                      return Effect.void;
+                    },
+                  },
+                });
+              }),
+          }).pipe(
+            Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, mockCatalog),
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, skillSpawner),
+            Effect.provideService(FileSystem.FileSystem, trackedFileSystem),
+          );
+
+          const threadId = ThreadId.make("thread-copilot-skill-ordering");
+          const modelSelection = { instanceId, model: "default" } as const;
+          const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            cwd: replayDir,
+          });
+          const runtime = yield* adapter.openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("session-copilot-skill-ordering"),
+            modelSelection,
+            runtimePolicy,
+          });
+          const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) => Queue.offer(events, event)),
+            Effect.forkScoped,
+          );
+          const providerThread = yield* runtime.ensureThread({
+            threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const now = yield* DateTime.now;
+          const awaitTerminal = Effect.gen(function* () {
+            while (true) {
+              const event = yield* Queue.take(events);
+              if (event.type === "turn.terminal") {
+                return event;
+              }
+            }
+          });
+
+          // 1. Start `$deploy` BEFORE available_commands_update arrives; release the advertisement
+          // only after CLI discovery finishes and prove the rewrite still succeeds.
+          const turn1Fiber = yield* runtime
+            .startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal: 1,
+                messageText: "$deploy ship it",
+              }),
+            )
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          yield* awaitSkillDiscoveryDone;
+          gate.release("late-commands");
+          yield* Fiber.join(turn1Fiber);
+          assert.equal((yield* awaitTerminal).status, "completed");
+          assert.deepEqual(sentPrompts.at(-1), [{ type: "text", text: "/deploy ship it" }]);
+
+          // 2. Built-in `/env` advertised without runtimeCoordinator keeps `$env` literal.
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal: 2,
+              messageText: "$env check vars",
+            }),
+          );
+          assert.equal((yield* awaitTerminal).status, "completed");
+          assert.include(sentPrompts.at(-1)?.[0]?.text ?? "", "$env check vars");
+          assert.notInclude(sentPrompts.at(-1)?.[0]?.text ?? "", "/env");
+
+          // 3. Trigger Copilot lost-session restart.
+          yield* runtime.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              runtimePolicy,
+              now,
+              ordinal: 3,
+              messageText: "trigger restart",
+            }),
+          );
+          assert.equal((yield* awaitTerminal).status, "failed");
+
+          // 4. Replacement process reloads the SAME "copilot-session" without advertising commands.
+          // Stale pre-restart `deploy` advertisement must not be reused; timeout falls back to literal.
+          const turn4Fiber = yield* runtime
+            .startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                now,
+                ordinal: 4,
+                messageText: "$deploy after restart",
+              }),
+            )
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          yield* awaitSkillDiscoveryDone;
+          yield* TestClock.adjust("2 seconds");
+          yield* Fiber.join(turn4Fiber);
+          assert.equal((yield* awaitTerminal).status, "completed");
+          assert.equal(spawned, 2);
+          assert.include(sentPrompts.at(-1)?.[0]?.text ?? "", "$deploy after restart");
+          assert.notInclude(sentPrompts.at(-1)?.[0]?.text ?? "", "/deploy");
+
+          // 5. Direct `/plan` with an image on the newly loaded session waits for its advertisement
+          // and sends a single ACP text block once `/plan` is advertised.
+          const turn5Base = makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 5,
+            messageText: "/plan inspect shot",
+          });
+          const turn5Fiber = yield* runtime
+            .startTurn({
+              ...turn5Base,
+              message: { ...turn5Base.message, attachments: [screenshotAttachment] },
+            })
+            .pipe(Effect.forkScoped({ startImmediately: true }));
+          yield* Effect.yieldNow;
+          process2Gate.release("reloaded-commands");
+          yield* Fiber.join(turn5Fiber);
+          assert.equal((yield* awaitTerminal).status, "completed");
+          assert.equal(sentPrompts.at(-1)?.length, 1);
+          assert.equal(sentPrompts.at(-1)?.[0]?.type, "text");
+          assert.isTrue((sentPrompts.at(-1)?.[0]?.text ?? "").startsWith("/plan inspect shot\n\n"));
+          assert.include(sentPrompts.at(-1)?.[0]?.text ?? "", screenshotPath);
+
+          // 6. An unrecognized `/unknown` command with an image keeps the native ACP image block.
+          const turn6Base = makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal: 6,
+            messageText: "/unknown inspect shot",
+          });
+          yield* runtime.startTurn({
+            ...turn6Base,
+            message: { ...turn6Base.message, attachments: [screenshotAttachment] },
+          });
+          assert.equal((yield* awaitTerminal).status, "completed");
+          assert.deepEqual(
+            sentPrompts.at(-1)?.map((block) => block.type),
+            ["text", "image"],
+          );
+        }).pipe(Effect.provide(layerTest)),
     );
 
     it.effect("does not rewrite leading $skills for non-Copilot ACP Registry agents", () =>

@@ -22,7 +22,8 @@ import {
 } from "./copilotAcp.ts";
 import {
   discoverCopilotSkills,
-  isCopilotBuiltinCommandCollision,
+  filterCopilotSlashCommands,
+  isCopilotAdvertisedSkill,
   leadingCopilotSkillMention,
 } from "./copilotSkills.ts";
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
@@ -346,22 +347,24 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           enablePostSettleContinuation: true,
           // session/new reports a built-in default, not the model Copilot runs (github/copilot-cli#5363).
           alwaysSetModel: true,
-          // Copilot expands only a leading `/name`, while the `$` picker inserts `$name` from
-          // `copilot skill list --json`. Ask that catalog again so non-skill `$` text and built-in
-          // command collisions are left alone. Untraced: runs per-turn inside startTurn's span and
-          // delegates to discoverCopilotSkills (which owns its own span) only on a leading mention.
+          // Copilot expands only a leading `/name` sent as one text block. Verify both CLI
+          // invocability and the active session's skill advertisement right before rewriting.
+          // Untraced: runs inside startTurn's span; discoverCopilotSkills owns its own span.
+          singleTextBlockForNativeSlashCommand: true,
           rewriteUserText: Effect.fnUntraced(
-            function* (text: string, turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            function* (
+              text: string,
+              turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+              context,
+            ) {
               const mention = leadingCopilotSkillMention(text);
               if (mention === undefined) return text;
-              if (runtimeCoordinator !== undefined) {
-                const commands = yield* runtimeCoordinator.getAvailableCommands(options.instanceId);
-                if (
-                  Option.isSome(commands) &&
-                  isCopilotBuiltinCommandCollision(mention.name, commands.value.slashCommands)
-                ) {
-                  return text;
-                }
+              const initialCommands = yield* context.getAvailableCommands;
+              if (
+                Option.isSome(initialCommands) &&
+                !isCopilotAdvertisedSkill(mention.name, initialCommands.value)
+              ) {
+                return text;
               }
               let discovery = discoverCopilotSkills({
                 settings: options.settings,
@@ -377,10 +380,17 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                 discovery = discovery.pipe(Effect.provideService(Path.Path, path));
               }
               const skills = yield* discovery;
-              return skills.some(
-                (skill) =>
-                  skill.enabled && skill.userInvocable !== false && skill.name === mention.name,
-              )
+              if (
+                !skills.some(
+                  (skill) =>
+                    skill.enabled && skill.userInvocable !== false && skill.name === mention.name,
+                )
+              ) {
+                return text;
+              }
+              const latestCommands = yield* context.waitForAvailableCommands;
+              return Option.isSome(latestCommands) &&
+                isCopilotAdvertisedSkill(mention.name, latestCommands.value)
                 ? `/${mention.name}${mention.rest}`
                 : text;
             },
@@ -392,11 +402,18 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
-            runtimeCoordinator.publishAvailableCommands(
+          onAvailableCommandsUpdate: (commands) => {
+            const normalized = normalizeAcpRegistryCommands(commands);
+            return runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
-              normalizeAcpRegistryCommands(commands),
-            ),
+              isCopilot
+                ? {
+                    slashCommands: filterCopilotSlashCommands(normalized.slashCommands),
+                    skills: [],
+                  }
+                : normalized,
+            );
+          },
           // A new Copilot session starts at its own effort, not the one the composer shows.
           ...(isCopilot
             ? {

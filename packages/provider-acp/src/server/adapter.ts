@@ -439,7 +439,21 @@ export interface AcpAdapterV2Flavor {
   readonly rewriteUserText?: (
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+    context: {
+      readonly getAvailableCommands: Effect.Effect<
+        Option.Option<ReadonlyArray<EffectAcpSchema.AvailableCommand>>
+      >;
+      readonly waitForAvailableCommands: Effect.Effect<
+        Option.Option<ReadonlyArray<EffectAcpSchema.AvailableCommand>>
+      >;
+    },
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+  /**
+   * Some ACP servers (GitHub Copilot CLI) only expand native slash commands when
+   * `session/prompt` carries a single text block, dropping expansion if image blocks
+   * are also sent. Attachment file references remain in the text block.
+   */
+  readonly singleTextBlockForNativeSlashCommand?: boolean;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly supportsNativeGoals?: Effect.Effect<boolean>;
@@ -2418,8 +2432,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             currentTurn.appContextCommittedSequence.clear();
           }
         });
-        const advertisedCommandNames = yield* SubscriptionRef.make(
-          new Map<string, ReadonlySet<string>>(),
+        const advertisedCommands = yield* SubscriptionRef.make(
+          new Map<
+            string,
+            {
+              readonly generation: number;
+              readonly commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
+            }
+          >(),
         );
         const compactsContext =
           flavor.supportsCompaction === true ||
@@ -7260,16 +7280,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
               if (notification.update.sessionUpdate === "available_commands_update") {
                 const sessionId = rawNotification.sessionId;
-                const advertisedCommands = notification.update.availableCommands;
-                yield* SubscriptionRef.update(advertisedCommandNames, (current) => {
+                const commands = notification.update.availableCommands;
+                const generation = yield* Ref.get(runtimeCallbackGeneration);
+                yield* SubscriptionRef.update(advertisedCommands, (current) => {
                   const updated = new Map(current);
-                  updated.set(
-                    sessionId,
-                    new Set(advertisedCommands.map((command) => command.name.trim().toLowerCase())),
-                  );
+                  updated.set(sessionId, { generation, commands });
                   return updated;
                 });
-                yield* flavor.onAvailableCommandsUpdate?.(advertisedCommands) ?? Effect.void;
+                yield* flavor.onAvailableCommandsUpdate?.(commands) ?? Effect.void;
               }
               if (
                 notification.update.sessionUpdate === "config_option_update" ||
@@ -9218,6 +9236,50 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             );
         });
 
+        const readSessionAvailableCommands = (
+          commandsBySession: ReadonlyMap<
+            string,
+            {
+              readonly generation: number;
+              readonly commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>;
+            }
+          >,
+          sessionId: string,
+          generation: number,
+        ): ReadonlyArray<EffectAcpSchema.AvailableCommand> | undefined => {
+          const entry = commandsBySession.get(sessionId);
+          return entry !== undefined && entry.generation === generation
+            ? entry.commands
+            : undefined;
+        };
+
+        // Untraced per-turn lookups inside resolvePromptParts and startTurnUnlocked's spans.
+        const getSessionAvailableCommands = Effect.fnUntraced(function* (sessionId: string) {
+          const generation = yield* Ref.get(runtimeCallbackGeneration);
+          const commandsBySession = yield* SubscriptionRef.get(advertisedCommands);
+          return Option.fromNullishOr(
+            readSessionAvailableCommands(commandsBySession, sessionId, generation),
+          );
+        });
+
+        const waitForSessionAvailableCommands = Effect.fnUntraced(function* (sessionId: string) {
+          const generation = yield* Ref.get(runtimeCallbackGeneration);
+          return yield* SubscriptionRef.changes(advertisedCommands).pipe(
+            Stream.map((commandsBySession) =>
+              readSessionAvailableCommands(commandsBySession, sessionId, generation),
+            ),
+            Stream.filter((commands) => commands !== undefined),
+            Stream.runHead,
+            Effect.timeoutOption(ACP_LOADED_COMMANDS_WAIT),
+            Effect.map(Option.flatten),
+          );
+        });
+
+        const leadingSlashCommandName = (text: string): string | undefined => {
+          const match = /^\s*\/([^\s/]+)(?:\s|$)/u.exec(text);
+          return match?.[1]?.toLowerCase();
+        };
+
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
@@ -9232,24 +9294,54 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             flavor.rewriteUserText === undefined
               ? turnInput.message.text
               : yield* flavor
-                  .rewriteUserText(turnInput.message.text, turnInput)
+                  .rewriteUserText(turnInput.message.text, turnInput, {
+                    getAvailableCommands: getSessionAvailableCommands(sessionId),
+                    waitForAvailableCommands: waitForSessionAvailableCommands(sessionId),
+                  })
                   .pipe(
                     Effect.provideService(
                       ChildProcessSpawner.ChildProcessSpawner,
                       childProcessSpawner,
                     ),
                   );
-          const messageText = yield* providerMessageTextWithAttachmentPaths({
+          const rawMessageText = yield* providerMessageTextWithAttachmentPaths({
             text: userText,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
-          const attachmentBlocks = yield* promptAttachmentBlocks(
-            messageText,
-            turnInput.message.attachments,
-          );
+          const isRewrittenSlashCommand =
+            userText !== turnInput.message.text && isNativeSlashCommand;
+          const commandName = leadingSlashCommandName(userText);
+          const sessionAdvertisedCommands =
+            flavor.singleTextBlockForNativeSlashCommand === true &&
+            !isRewrittenSlashCommand &&
+            turnInput.message.attachments.length > 0 &&
+            commandName !== undefined
+              ? yield* waitForSessionAvailableCommands(sessionId)
+              : Option.none<ReadonlyArray<EffectAcpSchema.AvailableCommand>>();
+          const isAdvertisedSlashCommand =
+            commandName !== undefined &&
+            Option.exists(sessionAdvertisedCommands, (commands) =>
+              commands.some((command) => command.name.trim().toLowerCase() === commandName),
+            );
+          const singleTextBlockSlashCommand =
+            flavor.singleTextBlockForNativeSlashCommand === true &&
+            (isRewrittenSlashCommand || isAdvertisedSlashCommand);
+          // Keep attachment file references inside the slash command's arguments when the
+          // command itself had no arguments, so single-line parsers still extract the command name.
+          const trimmedCommand = userText.trim();
+          const messageText =
+            singleTextBlockSlashCommand &&
+            turnInput.message.attachments.length > 0 &&
+            !/\s/.test(trimmedCommand) &&
+            rawMessageText.startsWith(`${userText}\n\n`)
+              ? `${trimmedCommand} ${rawMessageText.slice(userText.length + 2)}`
+              : rawMessageText;
+          const attachmentBlocks = singleTextBlockSlashCommand
+            ? []
+            : yield* promptAttachmentBlocks(messageText, turnInput.message.attachments);
           // Read delivery state after the awaits above, so a compaction that lands
           // while the prompt is prepared still resends the notes in this prompt.
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
@@ -9329,6 +9421,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(deliveredAppContext, new Map());
           yield* Ref.set(compactionMarkers, new Map());
           yield* Ref.set(completedCompactionIds, new Set());
+          yield* SubscriptionRef.set(advertisedCommands, new Map());
           yield* Ref.set(snapshot, emptySnapshotState());
           return true;
         });
@@ -9698,20 +9791,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             // Checked after activation: a loaded session advertises its own commands.
             const compactionSetup = yield* Ref.get(activeSessionSetup);
-            const sessionCommandNames =
+            const sessionCommands =
               flavor.compactViaAdvertisedCommand === true && isCompactionMessage(turnInput.message)
-                ? yield* SubscriptionRef.changes(advertisedCommandNames).pipe(
-                    Stream.map((names) => names.get(requestedSessionId)),
-                    Stream.filter((names) => names !== undefined),
-                    Stream.runHead,
-                    Effect.timeoutOption(ACP_LOADED_COMMANDS_WAIT),
-                    Effect.map(Option.flatten),
-                  )
-                : Option.none<ReadonlySet<string>>();
+                ? yield* waitForSessionAvailableCommands(requestedSessionId)
+                : Option.none<ReadonlyArray<EffectAcpSchema.AvailableCommand>>();
             if (
               isCompactionMessage(turnInput.message) &&
               ((flavor.compactViaAdvertisedCommand === true &&
-                !Option.exists(sessionCommandNames, (names) => names.has("compact"))) ||
+                !Option.exists(sessionCommands, (commands) =>
+                  commands.some((command) => command.name.trim().toLowerCase() === "compact"),
+                )) ||
                 (flavor.compactSession !== undefined &&
                   (compactionSetup === null ||
                     !flavor.compactSession.supported(compactionSetup.initializeResult))))

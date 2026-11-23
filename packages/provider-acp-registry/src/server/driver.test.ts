@@ -13,6 +13,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +23,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -1238,7 +1240,10 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         const modelsPath = path.join(directory, "models.json");
         const commandsPath = path.join(directory, "commands.json");
         yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["copilot-model"]));
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["copilot-model", "copilot-model-b"]),
+        );
         yield* fileSystem.writeFileString(
           commandsPath,
           JSON.stringify([
@@ -1299,6 +1304,13 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
                 path: "/home/troy/.copilot/skills/deploy",
                 enabled: true,
               },
+              {
+                name: "server-cwd-project-skill",
+                description: "Server cwd project skill must stay out of machine snapshot",
+                source: "project",
+                path: "/srv/t3code/.github/skills/server-cwd-project-skill",
+                enabled: true,
+              },
             ]),
           };
         });
@@ -1340,14 +1352,18 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         expect(machineSnapshot.slashCommands.map((command) => command.name)).toEqual([
           "compact",
           "plan",
-          "workspace-only",
         ]);
 
         const workspaceSnapshot = yield* instance.snapshotForCwd!("/workspaces/greendale");
-        expect(workspaceSnapshot.skills.map((skill) => skill.name)).toEqual([
-          "deploy",
-          "plan",
-          "workspace-only",
+        expect(
+          workspaceSnapshot.skills.map((skill) => ({
+            name: skill.name,
+            userInvocable: skill.userInvocable,
+          })),
+        ).toEqual([
+          { name: "deploy", userInvocable: undefined },
+          { name: "plan", userInvocable: false },
+          { name: "workspace-only", userInvocable: undefined },
         ]);
         expect(workspaceSnapshot.slashCommands).toEqual([
           { name: "compact", description: "Compact context" },
@@ -1378,22 +1394,32 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         const agentPath = path.join(directory, "agent.mjs");
         const modelsPath = path.join(directory, "models.json");
         yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["copilot-model"]));
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["copilot-model", "copilot-model-b"]),
+        );
         const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
 
         let skillPayload = JSON.stringify([
           {
             name: "deploy",
             description: "Deploy app",
-            source: "project",
-            path: "/workspaces/greendale/.github/skills/deploy",
+            source: "personal",
+            path: "/home/troy/.copilot/skills/deploy",
             enabled: true,
           },
           {
             name: "plan",
             description: "Custom plan skill",
+            source: "personal",
+            path: "/home/troy/.copilot/skills/plan",
+            enabled: true,
+          },
+          {
+            name: "host-cwd-project",
+            description: "Server cwd project skill",
             source: "project",
-            path: "/workspaces/greendale/.github/skills/plan",
+            path: "/srv/t3code/.github/skills/host-cwd-project",
             enabled: true,
           },
         ]);
@@ -1444,13 +1470,26 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
               description: "Deploy skill",
               input: { hint: "instructions for the skill" },
             },
+            {
+              name: "other-workspace-skill",
+              description: "Skill from another workspace",
+              input: { hint: "instructions for the skill" },
+            },
             { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
             { name: "review", description: "Review changes" },
           ],
           skills: [],
         });
         const afterLive = Option.getOrThrow(yield* Fiber.join(liveUpdated));
-        expect(afterLive.skills.map((skill) => skill.name)).toEqual(["deploy", "plan"]);
+        expect(
+          afterLive.skills.map((skill) => ({
+            name: skill.name,
+            userInvocable: skill.userInvocable,
+          })),
+        ).toEqual([
+          { name: "deploy", userInvocable: undefined },
+          { name: "plan", userInvocable: false },
+        ]);
         expect(afterLive.slashCommands).toEqual([
           { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
           { name: "review", description: "Review changes" },
@@ -1470,8 +1509,15 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
           {
             name: "audit",
             description: "Audit workspace",
+            source: "personal",
+            path: "/home/troy/.copilot/skills/audit",
+            enabled: true,
+          },
+          {
+            name: "host-cwd-project-2",
+            description: "Server cwd project skill",
             source: "project",
-            path: "/workspaces/greendale/.github/skills/audit",
+            path: "/srv/t3code/.github/skills/host-cwd-project-2",
             enabled: true,
           },
         ]);
@@ -1543,6 +1589,251 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         expect(resolvedCwds).not.toContain("/workspaces/greendale");
         expect(afterUnpreparedCheck.installed).toBe(false);
         expect(afterUnpreparedCheck.slashCommandsPending).toBeUndefined();
+      }),
+  );
+
+  it.effect(
+    "shares one in-flight Copilot machine skill probe and discards stale probes after cache invalidation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-copilot-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["copilot-model", "copilot-model-b"]),
+        );
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+        const staleSkillDir = path.join(directory, "stale-skill");
+        yield* fileSystem.makeDirectory(staleSkillDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(staleSkillDir, "SKILL.md"),
+          "---\nname: stale-skill\ndescription: Stale inventory\n---\nStale body.\n",
+        );
+
+        const firstProbeStarted = yield* Deferred.make<void>();
+        const releaseFirstProbe = yield* Deferred.make<void>();
+        const liveWatcherJoinedFirstProbe = yield* Deferred.make<void>();
+        const part1WatcherDrained = yield* Deferred.make<void>();
+        const secondProbeStarted = yield* Deferred.make<void>();
+        const releaseSecondProbe = yield* Deferred.make<void>();
+        const secondEnrichmentCompleted = yield* Deferred.make<void>();
+        const thirdProbeStarted = yield* Deferred.make<void>();
+        let machineProbeSpansStarted = 0;
+        let enrichSpansStarted = 0;
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            if (options.name === "AcpRegistryDriver.probeMachineCopilotSkills") {
+              machineProbeSpansStarted += 1;
+              const ordinal = machineProbeSpansStarted;
+              if (ordinal === 2) {
+                Deferred.doneUnsafe(liveWatcherJoinedFirstProbe, Effect.void);
+              }
+              if (ordinal === 3) {
+                const end = span.end.bind(span);
+                span.end = (time, exit) => {
+                  end(time, exit);
+                  Deferred.doneUnsafe(part1WatcherDrained, Effect.void);
+                };
+              }
+            } else if (options.name === "AcpRegistryDriver.enrichProviderCached") {
+              enrichSpansStarted += 1;
+              const ordinal = enrichSpansStarted;
+              const end = span.end.bind(span);
+              span.end = (time, exit) => {
+                end(time, exit);
+                if (ordinal === 2) {
+                  Deferred.doneUnsafe(secondEnrichmentCompleted, Effect.void);
+                }
+              };
+            }
+            return span;
+          },
+        });
+        let probeSpawns = 0;
+        const baseSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (command._tag === "StandardCommand" && command.args[0] === "skill") {
+            probeSpawns += 1;
+            const callNumber = probeSpawns;
+            return Effect.gen(function* () {
+              if (callNumber === 1) {
+                yield* Deferred.succeed(firstProbeStarted, undefined);
+              } else if (callNumber === 2) {
+                yield* Deferred.succeed(secondProbeStarted, undefined);
+              } else if (callNumber === 3) {
+                yield* Deferred.succeed(thirdProbeStarted, undefined);
+              }
+              const makeSkillJson = (name: string, skillPath: string) =>
+                JSON.stringify([
+                  {
+                    name,
+                    description: `${name} inventory`,
+                    source: "personal",
+                    path: skillPath,
+                    enabled: true,
+                  },
+                ]);
+              const stdout =
+                callNumber === 1
+                  ? Stream.fromEffect(
+                      Deferred.await(releaseFirstProbe).pipe(
+                        Effect.as(makeSkillJson("initial-skill", path.join(directory, "initial"))),
+                      ),
+                    )
+                  : callNumber === 2
+                    ? Stream.fromEffect(
+                        Deferred.await(releaseSecondProbe).pipe(
+                          Effect.as(makeSkillJson("stale-skill", staleSkillDir)),
+                        ),
+                      )
+                    : Stream.make(makeSkillJson("fresh-skill", path.join(directory, "fresh")));
+              const exitCode =
+                callNumber === 1
+                  ? Deferred.await(releaseFirstProbe).pipe(
+                      Effect.as(ChildProcessSpawner.ExitCode(0)),
+                    )
+                  : callNumber === 2
+                    ? Deferred.await(releaseSecondProbe).pipe(
+                        Effect.as(ChildProcessSpawner.ExitCode(0)),
+                      )
+                    : Effect.succeed(ChildProcessSpawner.ExitCode(0));
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(callNumber),
+                exitCode,
+                isRunning: Effect.succeed(false),
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                stdin: Sink.drain,
+                stdout: Stream.encodeText(stdout),
+                stderr: Stream.empty,
+                all: Stream.empty,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              });
+            });
+          }
+          return baseSpawner.spawn(command);
+        });
+
+        yield* Effect.gen(function* () {
+          const instance = yield* AcpRegistryDriver.create({
+            instanceId: identity.instanceId,
+            displayName: "GitHub Copilot",
+            enabled: true,
+            environment: [],
+            config: decodeSettings({ agentId: "github-copilot-cli" }),
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+              ...catalogWithInspection({
+                status: "ready",
+                agentId: "github-copilot-cli",
+                version: "1.0.114",
+                distribution: "npx",
+              }),
+              resolve: () =>
+                Effect.succeed({
+                  distribution: "npx" as const,
+                  spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+                }),
+            }),
+          );
+
+          // 1. Enrichment #1 starts probe #1. The live watcher receives `compact` and joins probe #1
+          // without spawning a second CLI process. While that SAME watcher stays alive and blocked on
+          // probe #1, `review` supersedes `compact`; releasing probe #1 must publish `review`, not `compact`.
+          const observedCommandSnapshots: Array<ReadonlyArray<string>> = [];
+          const reviewPublished = yield* instance.snapshot.streamChanges.pipe(
+            Stream.tap((snapshot) =>
+              Effect.sync(() => {
+                if (snapshot.slashCommands.length > 0) {
+                  observedCommandSnapshots.push(snapshot.slashCommands.map((c) => c.name));
+                }
+              }),
+            ),
+            Stream.filter(
+              (snapshot) =>
+                snapshot.skills.some((skill) => skill.name === "initial-skill") &&
+                snapshot.slashCommands.some((command) => command.name === "review"),
+            ),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* instance.snapshot.refresh;
+          yield* Deferred.await(firstProbeStarted);
+          yield* coordinator.publishAvailableCommands(identity.instanceId, {
+            slashCommands: [{ name: "compact", description: "Compact context" }],
+            skills: [],
+          });
+          yield* Deferred.await(liveWatcherJoinedFirstProbe);
+          expect(probeSpawns).toBe(1);
+          yield* coordinator.publishAvailableCommands(identity.instanceId, {
+            slashCommands: [{ name: "review", description: "Review changes" }],
+            skills: [],
+          });
+          yield* Deferred.succeed(releaseFirstProbe, undefined);
+          const afterSharedProbe = Option.getOrThrow(yield* Fiber.join(reviewPublished));
+          expect(afterSharedProbe.skills.map((skill) => skill.name)).toEqual(["initial-skill"]);
+          expect(afterSharedProbe.slashCommands.map((command) => command.name)).toEqual(["review"]);
+          expect(observedCommandSnapshots).not.toContainEqual(["compact"]);
+          expect(probeSpawns).toBe(1);
+          yield* Deferred.await(part1WatcherDrained);
+
+          // 2. Start enrichment #2 (probe #2 with real SKILL.md on disk) while the live watcher is
+          // idle, invalidate while probe #2 is still blocked, and let live command discovery
+          // complete probe #3 (`fresh-skill`) first. Then release probe #2 and await its full
+          // `enrichProviderCached` completion before asserting `fresh-skill` survives.
+          yield* instance.invalidateCaches ?? Effect.void;
+          yield* coordinator.clearAvailableCommands(identity.instanceId);
+          yield* instance.snapshot.refresh;
+          yield* Deferred.await(secondProbeStarted);
+
+          const freshPublished = yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) =>
+                snapshot.skills.some((skill) => skill.name === "fresh-skill") &&
+                snapshot.slashCommands.some((command) => command.name === "help"),
+            ),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* instance.invalidateCaches ?? Effect.void;
+          yield* coordinator.publishAvailableCommands(identity.instanceId, {
+            slashCommands: [{ name: "help", description: "Show help" }],
+            skills: [],
+          });
+          yield* Deferred.await(thirdProbeStarted);
+          expect(probeSpawns).toBe(3);
+
+          const freshSnapshot = Option.getOrThrow(yield* Fiber.join(freshPublished));
+          expect(freshSnapshot.skills.map((skill) => skill.name)).toEqual(["fresh-skill"]);
+          expect(yield* Deferred.isDone(secondEnrichmentCompleted)).toBe(false);
+
+          yield* Deferred.succeed(releaseSecondProbe, undefined);
+          yield* Deferred.await(secondEnrichmentCompleted);
+
+          const statusPublished = yield* instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) =>
+              snapshot.slashCommands.some((command) => command.name === "status"),
+            ),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+          yield* coordinator.publishAvailableCommands(identity.instanceId, {
+            slashCommands: [{ name: "status", description: "Show status" }],
+            skills: [],
+          });
+          const finalSnapshot = Option.getOrThrow(yield* Fiber.join(statusPublished));
+          expect(probeSpawns).toBe(3);
+          expect(finalSnapshot.skills.map((skill) => skill.name)).toEqual(["fresh-skill"]);
+          expect(finalSnapshot.slashCommands.map((command) => command.name)).toEqual(["status"]);
+        }).pipe(Effect.withTracer(tracer));
       }),
   );
 });

@@ -14,6 +14,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -697,22 +698,39 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       });
     // Refreshes rebuild the snapshot from the probe, so per-model options
     // learned from earlier sessions are kept here.
+    const driverScope = yield* Effect.scope;
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const discoveredCopilotSkills = yield* Ref.make<{
+    type MachineCopilotSkillsState = {
       readonly generation: number;
       readonly skills: Option.Option<ReadonlyArray<ServerProviderSkill>>;
-    }>({ generation: 0, skills: Option.none() });
+      readonly inFlight: Option.Option<{
+        readonly generation: number;
+        readonly completion: Deferred.Deferred<Option.Option<ReadonlyArray<ServerProviderSkill>>>;
+      }>;
+    };
+    type MachineCopilotSkillsClaim =
+      | {
+          readonly _tag: "join";
+          readonly inFlight: NonNullable<
+            Option.Option.Value<MachineCopilotSkillsState["inFlight"]>
+          >;
+        }
+      | {
+          readonly _tag: "hit";
+          readonly generation: number;
+          readonly skills: Option.Option<ReadonlyArray<ServerProviderSkill>>;
+        }
+      | { readonly _tag: "run"; readonly generation: number };
+    const discoveredCopilotSkills = yield* Ref.make<MachineCopilotSkillsState>({
+      generation: 0,
+      skills: Option.none(),
+      inFlight: Option.none(),
+    });
     const clearDiscoveredCopilotSkills = Ref.update(discoveredCopilotSkills, (current) => ({
       generation: current.generation + 1,
       skills: Option.none(),
+      inFlight: Option.none(),
     }));
-    const commitDiscoveredCopilotSkills = (
-      generation: number,
-      skills: ReadonlyArray<ServerProviderSkill>,
-    ) =>
-      Ref.update(discoveredCopilotSkills, (current) =>
-        current.generation === generation ? { ...current, skills: Option.some(skills) } : current,
-      );
     const discoverCopilotSkillsFor = (cwd: string) =>
       discoverCopilotSkills({
         settings: effectiveConfig,
@@ -724,6 +742,84 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       );
+    // Shares one in-flight machine skill probe between enrichment and live command updates so an
+    // older probe cannot overwrite a newer generation in the cache or published snapshot.
+    const probeMachineCopilotSkills = Effect.fn("AcpRegistryDriver.probeMachineCopilotSkills")(
+      function* (mode: "cached" | "fresh") {
+        const claimed = yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const completion =
+              yield* Deferred.make<Option.Option<ReadonlyArray<ServerProviderSkill>>>();
+            const decision = yield* Ref.modify(
+              discoveredCopilotSkills,
+              (current): readonly [MachineCopilotSkillsClaim, MachineCopilotSkillsState] => {
+                if (Option.isSome(current.inFlight)) {
+                  return [{ _tag: "join", inFlight: current.inFlight.value }, current];
+                }
+                if (mode === "cached" && Option.isSome(current.skills)) {
+                  return [
+                    {
+                      _tag: "hit",
+                      generation: current.generation,
+                      skills: current.skills,
+                    },
+                    current,
+                  ];
+                }
+                const generation = current.generation + 1;
+                return [
+                  { _tag: "run", generation },
+                  {
+                    ...current,
+                    generation,
+                    inFlight: Option.some({ generation, completion }),
+                  },
+                ];
+              },
+            );
+            if (decision._tag !== "run") {
+              return decision;
+            }
+            const { generation } = decision;
+            const runProbe = discoverCopilotSkillsFor(host.paths.cwd).pipe(
+              // Keep project-scoped skills out of the machine catalog so other workspaces never inherit host.paths.cwd's skills.
+              Effect.map((skills) => skills.filter((skill) => skill.scope !== "project")),
+              Effect.option,
+              Effect.onExit((exit) => {
+                const skills =
+                  exit._tag === "Success"
+                    ? exit.value
+                    : Option.none<ReadonlyArray<ServerProviderSkill>>();
+                return Ref.update(discoveredCopilotSkills, (current) => {
+                  const nextInFlight =
+                    Option.isSome(current.inFlight) &&
+                    current.inFlight.value.completion === completion
+                      ? Option.none()
+                      : current.inFlight;
+                  if (current.generation !== generation) {
+                    return nextInFlight === current.inFlight
+                      ? current
+                      : { ...current, inFlight: nextInFlight };
+                  }
+                  return {
+                    ...current,
+                    inFlight: nextInFlight,
+                    ...(Option.isSome(skills) ? { skills } : {}),
+                  };
+                }).pipe(Effect.andThen(Deferred.succeed(completion, skills)), Effect.asVoid);
+              }),
+            );
+            yield* Effect.forkIn(runProbe, driverScope, { startImmediately: true });
+            return { _tag: "join" as const, inFlight: { generation, completion } };
+          }),
+        );
+        if (claimed._tag === "hit") {
+          return { generation: claimed.generation, skills: claimed.skills };
+        }
+        const skills = yield* Deferred.await(claimed.inFlight.completion);
+        return { generation: claimed.inFlight.generation, skills };
+      },
+    );
     const applyLiveConfiguration = (
       provider: ServerProvider,
       configuration: AcpRegistryLiveConfiguration,
@@ -746,17 +842,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       if (!isCopilot) {
         return applyAcpRegistryAvailableCommands(provider, commands);
       }
-      const effectiveSkills =
-        provider.skills.length > 0
-          ? provider.skills
-          : Option.getOrElse(cachedSkills, () => provider.skills);
+      const effectiveSkills = Option.getOrElse(cachedSkills, () => provider.skills);
       return Option.match(commands, {
         onNone: () => applyCopilotDiscoveredSkills(provider, effectiveSkills),
-        onSome: ({ slashCommands }) => ({
-          ...provider,
-          slashCommands: filterCopilotSlashCommands(slashCommands, effectiveSkills),
-          skills: effectiveSkills,
-        }),
+        onSome: ({ slashCommands }) =>
+          applyCopilotDiscoveredSkills({ ...provider, slashCommands }, effectiveSkills),
       });
     };
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
@@ -817,15 +907,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.provideService(SecureRandom.SecureRandom, random),
       );
       if (!isCopilot || !enriched.installed) {
-        return enriched;
+        return { provider: enriched, skillGeneration: undefined };
       }
-      const { generation } = yield* Ref.get(discoveredCopilotSkills);
-      const skills = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(Effect.option);
-      if (Option.isNone(skills)) {
-        return enriched;
+      const { generation: skillGeneration, skills } = yield* probeMachineCopilotSkills("fresh");
+      const currentSkills = yield* Ref.get(discoveredCopilotSkills);
+      if (Option.isNone(skills) || currentSkills.generation !== skillGeneration) {
+        return {
+          provider: {
+            ...enriched,
+            slashCommands: filterCopilotSlashCommands(enriched.slashCommands),
+          },
+          skillGeneration,
+        };
       }
-      yield* commitDiscoveredCopilotSkills(generation, skills.value);
-      return applyCopilotDiscoveredSkills(enriched, skills.value);
+      return {
+        provider: applyCopilotDiscoveredSkills(enriched, skills.value),
+        skillGeneration,
+      };
     });
     const enrichmentCache = yield* Ref.make<AcpRegistryEnrichmentCache>({
       generation: 0,
@@ -854,27 +952,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         return {
           provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
           generation: cacheState.generation,
+          skillGeneration: undefined,
         };
       }
-      const enriched = yield* enrichProvider;
+      const { provider: enriched, skillGeneration } = yield* enrichProvider;
       if (effectiveConfig.source === "local" && enriched.status === "ready") {
         yield* Ref.set(reportedLocalVersion, enriched.version);
       }
       if (enriched.status === "ready") {
         const completedAt = yield* Clock.currentTimeMillis;
-        yield* Ref.update(enrichmentCache, (current) =>
-          current.generation === cacheState.generation
-            ? {
-                ...current,
-                entry: {
-                  provider: enriched,
-                  expiresAt: completedAt + acpRegistryProbeTtlMs(enriched),
-                },
-              }
-            : current,
-        );
+        const skillGenerationCurrent =
+          skillGeneration === undefined ||
+          (yield* Ref.get(discoveredCopilotSkills)).generation === skillGeneration;
+        if (skillGenerationCurrent) {
+          yield* Ref.update(enrichmentCache, (current) =>
+            current.generation === cacheState.generation
+              ? {
+                  ...current,
+                  entry: {
+                    provider: enriched,
+                    expiresAt: completedAt + acpRegistryProbeTtlMs(enriched),
+                  },
+                }
+              : current,
+          );
+        }
       }
-      return { provider: enriched, generation: cacheState.generation };
+      return { provider: enriched, generation: cacheState.generation, skillGeneration };
     });
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<
@@ -906,15 +1010,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.void,
-              onSome: ({ provider, generation }) =>
+              onSome: ({ provider, generation, skillGeneration }) =>
                 liveSnapshotSemaphore.withPermit(
-                  Ref.get(enrichmentCache).pipe(
-                    Effect.flatMap((current) =>
-                      current.generation === generation
-                        ? withLiveRuntimeState(provider).pipe(Effect.flatMap(publishSnapshot))
-                        : Effect.void,
-                    ),
-                  ),
+                  Effect.gen(function* () {
+                    const current = yield* Ref.get(enrichmentCache);
+                    if (current.generation !== generation) return;
+                    if (
+                      skillGeneration !== undefined &&
+                      (yield* Ref.get(discoveredCopilotSkills)).generation !== skillGeneration
+                    ) {
+                      return;
+                    }
+                    yield* publishSnapshot(yield* withLiveRuntimeState(provider));
+                  }),
                 ),
             }),
           ),
@@ -938,25 +1046,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ),
               );
             }
-            const cachedState = yield* Ref.get(discoveredCopilotSkills);
-            if (Option.isNone(cachedState.skills)) {
-              const discovered = yield* discoverCopilotSkillsFor(host.paths.cwd).pipe(
-                Effect.option,
-              );
-              if (Option.isSome(discovered)) {
-                yield* commitDiscoveredCopilotSkills(cachedState.generation, discovered.value);
-              }
-            }
+            const { generation: skillGeneration } = yield* probeMachineCopilotSkills("cached");
             yield* liveSnapshotSemaphore.withPermit(
               Effect.gen(function* () {
+                const latestCommands =
+                  yield* runtimeCoordinator.value.getAvailableCommands(instanceId);
+                if (Option.isNone(latestCommands)) return;
                 const current = yield* getSnapshot;
-                const cachedSkills = (yield* Ref.get(discoveredCopilotSkills)).skills;
-                const effectiveSkills = Option.getOrElse(cachedSkills, () => current.skills);
-                yield* publishSnapshot({
-                  ...current,
-                  skills: effectiveSkills,
-                  slashCommands: filterCopilotSlashCommands(slashCommands, effectiveSkills),
-                });
+                const skillState = yield* Ref.get(discoveredCopilotSkills);
+                const effectiveSkills =
+                  skillState.generation === skillGeneration
+                    ? Option.getOrElse(skillState.skills, () => current.skills)
+                    : Option.getOrElse(skillState.skills, () => []);
+                yield* publishSnapshot(
+                  applyCopilotDiscoveredSkills(
+                    { ...current, slashCommands: latestCommands.value.slashCommands },
+                    effectiveSkills,
+                  ),
+                );
               }),
             );
           }),
@@ -1194,6 +1301,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
                 invalidateEnrichmentCache.pipe(
+                  Effect.andThen(clearDiscoveredCopilotSkills),
                   Effect.andThen(
                     Option.isSome(runtimeCoordinator)
                       ? Effect.all(

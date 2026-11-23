@@ -9,6 +9,7 @@ import {
   spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { fromYaml } from "@t3tools/shared/schemaYaml";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -24,8 +25,6 @@ const COPILOT_SKILLS_PROBE_TIMEOUT_MS = 4_000;
 const COPILOT_SKILL_LIST_ARGS = ["skill", "list", "--json"] as const;
 const COPILOT_SKILL_COMMAND_HINT = "instructions for the skill";
 const FRONTMATTER_PATTERN = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---(?:[ \t]*(?:\r?\n|$))/u;
-const USER_INVOCABLE_FALSE_PATTERN =
-  /^[ \t]*user-invocable[ \t]*:[ \t]*(?:false|no|off)[ \t]*(?:#.*)?$/imu;
 // The composer's chip rule, anchored to the message start, so `$25` never names a skill.
 const LEADING_SKILL_MENTION = new RegExp(`^\\s*${SKILL_MENTION_PATTERN.source}`, "u");
 
@@ -41,6 +40,9 @@ const decodeCopilotRawSkillList = Schema.decodeUnknownOption(
   Schema.fromJsonString(Schema.Array(Schema.Unknown)),
 );
 const decodeCopilotRawSkillEntry = Schema.decodeUnknownOption(CopilotRawSkillEntry);
+const decodeSkillFrontmatter = Schema.decodeUnknownOption(
+  fromYaml(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 export class CopilotSkillsProbeError extends Schema.TaggedError<
   CopilotSkillsProbeError,
@@ -73,7 +75,7 @@ function normalizeCopilotSkillScope(source: string | undefined): string | undefi
     return undefined;
   }
   const normalized = trimmed.toLowerCase();
-  if (normalized === "project") {
+  if (normalized === "project" || normalized.startsWith("project-")) {
     return "project";
   }
   if (normalized === "personal" || normalized.startsWith("personal-")) {
@@ -121,50 +123,61 @@ export function decodeCopilotSkillList(
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function isCopilotSkillSlashCommand(command: ServerProviderSlashCommand): boolean {
+interface CopilotCommandLike {
+  readonly name: string;
+  readonly input?: { readonly hint?: string | null | undefined } | null | undefined;
+}
+
+function isCopilotSkillSlashCommand(command: Pick<CopilotCommandLike, "input">): boolean {
   return command.input?.hint?.trim().toLowerCase() === COPILOT_SKILL_COMMAND_HINT;
 }
 
-/** True when ACP advertises a built-in slash command with the same name as a skill (e.g. `/plan`). */
-export function isCopilotBuiltinCommandCollision(
+/** True when the active Copilot ACP session advertises `skillName` as a skill (not a built-in). */
+export function isCopilotAdvertisedSkill(
   skillName: string,
-  slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
+  commands: ReadonlyArray<CopilotCommandLike>,
 ): boolean {
   const normalized = skillName.trim().toLowerCase();
-  return slashCommands.some(
+  return commands.some(
     (command) =>
-      command.name.trim().toLowerCase() === normalized && !isCopilotSkillSlashCommand(command),
+      command.name.trim().toLowerCase() === normalized && isCopilotSkillSlashCommand(command),
   );
 }
 
+/** Keeps only Copilot's built-in slash commands so session-scoped skills never leak across workspaces. */
 export function filterCopilotSlashCommands(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
-  skills: ReadonlyArray<ServerProviderSkill>,
 ): ReadonlyArray<ServerProviderSlashCommand> {
-  if (skills.length === 0) {
-    return slashCommands;
-  }
-  const skillNames = new Set(skills.map((skill) => skill.name.trim().toLowerCase()));
-  return slashCommands.filter(
-    (command) =>
-      !(isCopilotSkillSlashCommand(command) && skillNames.has(command.name.trim().toLowerCase())),
-  );
+  return slashCommands.filter((command) => !isCopilotSkillSlashCommand(command));
 }
 
 export function applyCopilotDiscoveredSkills(
   provider: ServerProvider,
   skills: ReadonlyArray<ServerProviderSkill>,
 ): ServerProvider {
+  const slashCommands = filterCopilotSlashCommands(provider.slashCommands);
+  const builtinNames = new Set(slashCommands.map((command) => command.name.trim().toLowerCase()));
   return {
     ...provider,
-    skills,
-    slashCommands: filterCopilotSlashCommands(provider.slashCommands, skills),
+    slashCommands,
+    // A skill sharing a built-in command name cannot be invoked via `/name`, so keep the built-in selectable.
+    skills:
+      builtinNames.size === 0
+        ? skills
+        : skills.map((skill) =>
+            skill.userInvocable !== false && builtinNames.has(skill.name.trim().toLowerCase())
+              ? { ...skill, userInvocable: false }
+              : skill,
+          ),
   };
 }
 
 function isSkillFrontmatterNonUserInvocable(contents: string): boolean {
-  const match = FRONTMATTER_PATTERN.exec(contents);
-  return match?.[1] !== undefined && USER_INVOCABLE_FALSE_PATTERN.test(match[1]);
+  const normalized = contents.charCodeAt(0) === 0xfeff ? contents.slice(1) : contents;
+  const match = FRONTMATTER_PATTERN.exec(normalized);
+  if (match?.[1] === undefined) return false;
+  const parsed = decodeSkillFrontmatter(match[1]);
+  return Option.isSome(parsed) && parsed.value["user-invocable"] === false;
 }
 
 // Untraced helper: runs within discoverCopilotSkills's span to annotate frontmatter per skill.
@@ -180,17 +193,18 @@ const annotateCopilotSkillInvocability = Effect.fnUntraced(function* (
   const pathService = path.value;
   return yield* Effect.forEach(
     skills,
-    (skill) => {
-      const skillFile = skill.path.toLowerCase().endsWith(".md")
-        ? skill.path
-        : pathService.join(skill.path, "SKILL.md");
-      return fs.readFileString(skillFile).pipe(
+    (skill) =>
+      fs.stat(skill.path).pipe(
+        Effect.flatMap((info) =>
+          fs.readFileString(
+            info.type === "Directory" ? pathService.join(skill.path, "SKILL.md") : skill.path,
+          ),
+        ),
         Effect.map((contents) =>
           isSkillFrontmatterNonUserInvocable(contents) ? { ...skill, userInvocable: false } : skill,
         ),
         Effect.orElseSucceed(() => skill),
-      );
-    },
+      ),
     { concurrency: 8 },
   );
 });
