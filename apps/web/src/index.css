@@ -2728,6 +2728,10 @@ html[data-theme-backdrop="active"] #root > :not([data-theme-backdrop-canvas]) {
 
 html[data-theme-backdrop="active"] [data-slot="sidebar-wrapper"],
 html[data-theme-backdrop="active"] main[data-slot="sidebar-inset"],
+html[data-theme-backdrop="active"] main[data-slot="sidebar-inset"] > div,
+html[data-theme-backdrop="active"] [data-chat-layout],
+html[data-theme-backdrop="active"] [data-chat-column],
+html[data-theme-backdrop="active"] [data-chat-canvas],
 html[data-theme-backdrop="active"] [data-workspace-area="conversation"],
 html[data-theme-backdrop="active"] .messages-timeline-scroll {
   background: transparent !important;
