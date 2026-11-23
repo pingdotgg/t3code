@@ -2563,6 +2563,8 @@
   ],
   "5bbac0e5afeec779": "Aktueller Thread",
   "33c7e68fca089036": "Thread, {title}",
+  "b1febbf515492b89": "Archivierter Thread, {title}",
+  "bdf1da12f5b664bb": "Archiviert. Öffnet das Archiv, wo du ihn aus dem Archiv holen kannst.",
   "b4b98a0287c282e2": "Auf einem anderen Rechner, daher kann der Agent dieses Rechners es nicht lesen. Entferne es oder wechsle zum Senden zurück.",
   "c6196d99000642b4": "Thread öffnen",
   "34cc63390ad793cc": "Thread wählen",

@@ -2562,6 +2562,8 @@
   ],
   "5bbac0e5afeec779": "Thread atual",
   "33c7e68fca089036": "Thread, {title}",
+  "b1febbf515492b89": "Thread arquivada, {title}",
+  "bdf1da12f5b664bb": "Arquivada. Abre o arquivo, onde você pode desarquivá-la.",
   "b4b98a0287c282e2": "Está em outra máquina, então o agente desta máquina não consegue lê-lo. Remova-o ou volte para enviar.",
   "c6196d99000642b4": "Abrir thread",
   "34cc63390ad793cc": "Escolha uma thread",

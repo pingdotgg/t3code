@@ -9647,13 +9647,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly thread_id: ThreadId;
         readonly title: string;
         readonly project_id: ProjectId;
+        readonly archived_at: string | null;
       }>`
-        SELECT thread_id, title, project_id
+        SELECT thread_id, title, project_id, archived_at
         FROM orchestration_v2_projection_threads
         WHERE deleted_at IS NULL AND thread_id IN ${sql.in(threadIds)}
       `;
       return Object.fromEntries(
-        rows.map((row) => [row.thread_id, { title: row.title, projectId: row.project_id }]),
+        rows.map((row) => [
+          row.thread_id,
+          { title: row.title, projectId: row.project_id, archived: row.archived_at !== null },
+        ]),
       );
     }, Effect.mapError(shellSnapshotReadError));
 

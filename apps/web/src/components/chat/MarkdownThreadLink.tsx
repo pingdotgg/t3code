@@ -5,6 +5,7 @@ import { MessagesSquareIcon } from "lucide-react";
 import {
   formatHostedThreadLink,
   guessThreadLinkRef,
+  isArchivedThreadLinkTarget,
   threadLinkCandidates,
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
@@ -137,6 +138,7 @@ export function MarkdownThreadLink(props: {
     <ThreadContextChip
       record={{ ...ref, title }}
       projectId={resolved?.metadata.projectId ?? null}
+      archived={isArchivedThreadLinkTarget(resolved?.metadata)}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
     />
   );

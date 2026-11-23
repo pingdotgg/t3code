@@ -67,7 +67,10 @@ vi.mock(import("../../state/orchestration"), () => ({
 
 function setup() {
   const reply = Atom.make<
-    AsyncResult.AsyncResult<Record<string, { title: string; projectId: ProjectId | null }>, string>
+    AsyncResult.AsyncResult<
+      Record<string, { title: string; projectId: ProjectId | null; archived?: boolean }>,
+      string
+    >
   >(AsyncResult.initial());
   state.reply = reply;
   state.linked = new Map();
@@ -156,6 +159,29 @@ it.each([
         expect(screen.router?.state.location.pathname).toBe("/environment/older-thread"),
       );
     }
+    const target = encoded ? ThreadId.make("older-thread") : threadId;
+    await act(() =>
+      registry.set(
+        reply,
+        AsyncResult.success({
+          [target]: {
+            title: "Older essay",
+            projectId: ProjectId.make("essay-project"),
+            archived: true,
+          },
+        }),
+      ),
+    );
+    // An archived thread has no page, so its link is marked and opens the archive instead.
+    const archived = screen.getByRole("link", { name: "Archived thread, Older essay" });
+    await expect.element(archived).toBeVisible();
+    await expect
+      .element(screen.getByRole("img", { name: "Essays project icon" }))
+      .not.toBeInTheDocument();
+    await archived.click();
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/settings/archived"),
+    );
     await act(() => registry.set(reply, AsyncResult.success({})));
     if (legacy) {
       const remote = screen.getByRole("link", { name: "Thread, Remote thread" });

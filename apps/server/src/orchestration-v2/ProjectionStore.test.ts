@@ -2190,10 +2190,12 @@ const threadWorktreePathsIncludeArchivedOnRequest = Effect.gen(function* () {
       [ThreadId.make("thread:active")]: {
         title: "Title for thread:active",
         projectId: ProjectId.make("project:worktree-paths"),
+        archived: false,
       },
       [ThreadId.make("thread:archived")]: {
         title: "Title for thread:archived",
         projectId: ProjectId.make("project:worktree-paths"),
+        archived: true,
       },
     },
   );

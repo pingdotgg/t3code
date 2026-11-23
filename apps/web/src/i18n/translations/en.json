@@ -2562,6 +2562,8 @@
   ],
   "5bbac0e5afeec779": "Current thread",
   "33c7e68fca089036": "Thread, {title}",
+  "b1febbf515492b89": "Archived thread, {title}",
+  "bdf1da12f5b664bb": "Archived. Opens the archive, where you can unarchive it.",
   "b4b98a0287c282e2": "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
   "c6196d99000642b4": "Open thread",
   "34cc63390ad793cc": "Choose a thread",

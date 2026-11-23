@@ -4169,6 +4169,8 @@ export const OrchestrationV2ThreadTitles = Schema.Record(ThreadId, Schema.String
 export const OrchestrationV2ThreadLinkMetadata = Schema.Struct({
   title: Schema.String,
   projectId: Schema.NullOr(ProjectId),
+  /** Absent from servers that predate it. */
+  archived: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2ThreadLinkMetadata = typeof OrchestrationV2ThreadLinkMetadata.Type;
 

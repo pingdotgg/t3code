@@ -20,6 +20,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   guessThreadLinkRef,
   hasThreadLinks,
+  isArchivedThreadLinkTarget,
   parseThreadLinkHref,
   threadLinkCandidates,
   threadLinkRefs,
@@ -120,6 +121,8 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
         ),
         () => null,
       )?.[ref.threadId];
+    // Archived targets keep the plain thread icon, so a list of links shows which are archived.
+    if (isArchivedThreadLinkTarget(metadata)) return null;
     const project = metadata?.projectId
       ? get(
           environmentProjects.projectAtom({

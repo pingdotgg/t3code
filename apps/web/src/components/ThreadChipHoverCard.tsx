@@ -1,6 +1,6 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import { CircleAlertIcon, GitBranchIcon } from "lucide-react";
+import { ArchiveIcon, CircleAlertIcon, GitBranchIcon } from "lucide-react";
 import { useGT } from "gt-react";
 
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
@@ -20,6 +20,7 @@ export function ThreadChipHoverCard(props: {
   project: ChipProject | null;
   shell: EnvironmentThreadShell | null;
   unreadable: boolean;
+  archived?: boolean;
 }) {
   const gt = useGT();
   const { shell } = props;
@@ -82,6 +83,14 @@ export function ThreadChipHoverCard(props: {
             {gt(
               "On another machine, so this machine's agent can't read it. Remove it or switch back to send.",
             )}
+          </div>
+        </div>
+      ) : null}
+      {props.archived ? (
+        <div className="flex min-w-0 items-start gap-2 text-muted-foreground">
+          <ArchiveIcon aria-hidden className="mt-0.5 size-3 shrink-0 stroke-current" />
+          <div className="min-w-0 flex-1 wrap-break-word">
+            {gt("Archived. Opens the archive, where you can unarchive it.")}
           </div>
         </div>
       ) : null}

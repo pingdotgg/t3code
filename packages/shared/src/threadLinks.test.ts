@@ -8,6 +8,7 @@ import {
   formatThreadLink,
   guessThreadLinkRef,
   hostedThreadLink,
+  isArchivedThreadLinkTarget,
   parseThreadLinkHref,
   threadLinkCandidates,
   threadLinkRefs,
@@ -296,5 +297,17 @@ describe("hosted thread links", () => {
         expected === undefined ? [] : [ref("there", "t1")],
       );
     }
+  });
+});
+
+describe("archived thread link targets", () => {
+  it("reads archived state from a loaded shell or from link metadata", () => {
+    expect(isArchivedThreadLinkTarget({ archivedAt: "2026-11-20T00:00:00.000Z" })).toBe(true);
+    expect(isArchivedThreadLinkTarget({ archivedAt: null })).toBe(false);
+    expect(isArchivedThreadLinkTarget({ archived: true })).toBe(true);
+    expect(isArchivedThreadLinkTarget({ archived: false })).toBe(false);
+    // Servers that predate the flag leave it out.
+    expect(isArchivedThreadLinkTarget({})).toBe(false);
+    expect(isArchivedThreadLinkTarget(null)).toBe(false);
   });
 });

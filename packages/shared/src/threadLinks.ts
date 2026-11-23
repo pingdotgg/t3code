@@ -70,6 +70,21 @@ function parseHostedThreadLink(href: string): ThreadLink | null {
  * The ids as written. Thread ids can hold percent escapes of their own, so they are not decoded,
  * except in a hosted link, which escapes them itself.
  */
+/**
+ * Whether a link's target is archived, from a loaded thread shell or from link metadata.
+ * Archived targets have no page to open, so clients show them apart from live ones.
+ */
+export function isArchivedThreadLinkTarget(
+  target:
+    | { readonly archivedAt: string | null }
+    | { readonly archived?: boolean }
+    | null
+    | undefined,
+): boolean {
+  if (!target) return false;
+  return "archivedAt" in target ? target.archivedAt !== null : target.archived === true;
+}
+
 export function parseThreadLinkHref(href: string): ThreadLink | null {
   if (href.startsWith(HOSTED_PREFIX)) return parseHostedThreadLink(href);
   if (href.startsWith(V1_PREFIX)) {

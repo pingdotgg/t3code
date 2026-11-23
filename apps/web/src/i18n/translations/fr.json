@@ -2562,6 +2562,8 @@
   ],
   "5bbac0e5afeec779": "Fil actuel",
   "33c7e68fca089036": "Fil, {title}",
+  "b1febbf515492b89": "Fil archivé, {title}",
+  "bdf1da12f5b664bb": "Archivé. Ouvre les archives, où vous pouvez le désarchiver.",
   "b4b98a0287c282e2": "Sur une autre machine, l’agent de cette machine ne peut donc pas le lire. Retirez-le ou revenez en arrière pour envoyer.",
   "c6196d99000642b4": "Ouvrir le fil",
   "34cc63390ad793cc": "Choisir un fil",
