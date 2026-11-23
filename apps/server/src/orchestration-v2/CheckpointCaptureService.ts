@@ -263,7 +263,7 @@ export const layer: Layer.Layer<
           }
           // A Stop accepted once the provider's turn had ended stored only its request: the
           // terminal already wrote `waiting`. That Stop still wins, and gets its result here.
-          const stopSignals = stoppedNow
+          const stopSignals = !legacyWaiting
             ? []
             : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
                 turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
