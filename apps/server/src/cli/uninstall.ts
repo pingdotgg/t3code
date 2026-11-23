@@ -75,7 +75,8 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   const realVersionsDir = yield* fs
     .realPath(versionsDir)
     .pipe(Effect.orElseSucceed(() => versionsDir));
-  // The link's own text keeps a pruned (dangling) target; the real path sees through a
+  const scriptTarget = platform === "win32" ? undefined : yield* readPosixLauncherTarget(launcher);
+  // The link or script text keeps a pruned (dangling) target; the real path sees through a
   // symlinked T3 home.
   const targets =
     platform === "win32"
@@ -91,7 +92,10 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
             Effect.orElseSucceed(() => undefined),
           ),
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
-          yield* readPosixLauncherTarget(launcher),
+          scriptTarget,
+          scriptTarget !== undefined
+            ? yield* fs.realPath(scriptTarget).pipe(Effect.orElseSucceed(() => undefined))
+            : undefined,
         ];
   return targets.some(
     (target) =>
