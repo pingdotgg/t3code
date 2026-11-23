@@ -291,8 +291,13 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => ({
       linkedEnvironments: settings.linkedEnvironmentsEnabled,
       agentFeedback: settings.agentFeedback.mode,
+      workflows: settings.workflowsEnabled,
     })),
-    Effect.orElseSucceed(() => ({ linkedEnvironments: false, agentFeedback: "off" as const })),
+    Effect.orElseSucceed(() => ({
+      linkedEnvironments: false,
+      agentFeedback: "off" as const,
+      workflows: false,
+    })),
   );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
@@ -366,7 +371,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const asked = withModeLimit(withSenderThread(invocation, request), request);
     if (asked === undefined) return invalidModeLimit;
     const limited = McpInvocationContext.withRuntimeModeCeiling(asked, runtimeModeCeiling);
-    const { linkedEnvironments, agentFeedback } = yield* settingsFlags;
+    const { linkedEnvironments, agentFeedback, workflows } = yield* settingsFlags;
     if (limited.client?.linked === true && !linkedEnvironments) return linkedEnvironmentsOff;
     const origin = Option.getOrUndefined(Option.map(requestUrl(request), (url) => url.origin));
     const forge =
@@ -377,6 +382,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       ...limited,
       linkedEnvironments,
       agentFeedback,
+      workflows,
       origin,
       ...(forge === undefined ? {} : { forge }),
     };
@@ -1549,8 +1555,13 @@ export const layerMilestoneEvents = Layer.effectDiscard(
     for (const options of events.threads) {
       yield* McpServer.registerEvent({ ...options, annotations });
     }
+    // Listed only while Labs → Workflows is on, since no run can reach them otherwise.
+    const workflowAnnotations = Context.make(
+      McpSchema.EnabledWhen,
+      McpInvocationContext.hiddenUnlessWorkflowEvents,
+    );
     for (const options of events.workflows) {
-      yield* McpServer.registerEvent({ ...options, annotations });
+      yield* McpServer.registerEvent({ ...options, annotations: workflowAnnotations });
     }
   }),
 ).pipe(
