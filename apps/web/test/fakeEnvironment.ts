@@ -21,6 +21,7 @@ import {
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
+  type ServerConfigStreamEvent,
   type VcsStatusStreamEvent,
   type ModelSelection,
   type OrchestrationProjectShell,
@@ -450,18 +451,13 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
     }),
   );
 
-type ServerConfigSnapshot = {
-  readonly version: 1;
-  readonly type: "snapshot";
-  readonly config: ServerConfig;
-};
-const serverConfigSnapshot = (): ServerConfigSnapshot => ({
+const serverConfigSnapshot = (): ServerConfigStreamEvent => ({
   version: 1,
   type: "snapshot",
   config: serverConfig(),
 });
 // The app's connection outlives a test, so a later test's config reaches it as a new snapshot.
-const serverConfigSubscribers = new Set<Queue.Queue<ServerConfigSnapshot>>();
+const serverConfigSubscribers = new Set<Queue.Queue<ServerConfigStreamEvent>>();
 const subscribeServerConfig = () =>
   subscribe([serverConfigSnapshot()], (queue) => {
     serverConfigSubscribers.add(queue);
