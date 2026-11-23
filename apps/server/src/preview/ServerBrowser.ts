@@ -44,6 +44,7 @@ import {
   type PreviewNavStatus,
   type PreviewSessionSnapshot,
   type PreviewViewportSetting,
+  PREVIEW_TITLE_WATCH_OBJECT_GROUP,
   ThreadId,
   SERVER_BROWSER_AUTOMATION_CLIENT_ID,
   type PreviewAppearancePreference,
@@ -808,6 +809,7 @@ const make = Effect.gen(function* () {
         contextId: watch.contextId,
         expression: titleChange(title),
         awaitPromise: true,
+        objectGroup: PREVIEW_TITLE_WATCH_OBJECT_GROUP,
       })
       .then(
         ({ exceptionDetails }) => exceptionDetails === undefined,

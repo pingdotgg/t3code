@@ -4,6 +4,7 @@ import {
   DesktopBrowserCommand,
   DesktopBrowserEvent,
   type DesktopBrowserEvent as DesktopBrowserEventType,
+  PREVIEW_TITLE_WATCH_OBJECT_GROUP,
   type PreviewAutomationLoadError,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -549,6 +550,13 @@ export const make = Effect.gen(function* () {
             if (tab.screencasts.size > 0) return Promise.resolve({});
           }
           if (annotated(method)) return Promise.reject(new Error(ANNOTATING_MESSAGE));
+          // Pending until the title changes, it would hold focus and painting for as long as the page lives.
+          if (
+            method === "Runtime.evaluate" &&
+            params["objectGroup"] === PREVIEW_TITLE_WATCH_OBJECT_GROUP
+          ) {
+            return send(method, params, sessionId);
+          }
           // A person's input through a viewer, or Playwright's own housekeeping, is not the agent's.
           if (AGENT_INPUT_METHOD.test(method)) {
             if (owner === undefined || !streamingOwners.has(owner)) {
