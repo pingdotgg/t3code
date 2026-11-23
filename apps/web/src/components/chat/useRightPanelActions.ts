@@ -31,6 +31,7 @@ import { addBrowserSurface } from "../preview/addBrowserSurface";
 import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
+import { floatsOnPanelClose } from "../preview/floatOnPanelClose";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
 import type { threadPullRequestPanelTarget } from "../pullRequest/pullRequestDetail.logic";
 import type { useDeviceState } from "../../state/device";
@@ -179,9 +180,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const closePreviewPanel = () => {
     if (activeThreadRef) {
       if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
-        usePreviewMiniPlayerStore
-          .getState()
-          .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
+        const tabId = activeRightPanelSurface.resourceId;
+        if (floatsOnPanelClose(activePreviewState.sessions[tabId]?.navStatus)) {
+          usePreviewMiniPlayerStore
+            .getState()
+            .open(activeThreadRef, browserMiniPlayerSource(tabId));
+        }
       } else if (activeRightPanelSurface?.kind === "device" && activeRightPanelSurface.target) {
         floatDeviceSurface(
           activeThreadRef,
