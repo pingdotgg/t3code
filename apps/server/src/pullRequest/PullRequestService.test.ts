@@ -2277,6 +2277,43 @@ it.effect("rejects a different Forgejo HTTP port for an HTTP checkout", () =>
   }),
 );
 
+it.effect("reads a linked merge request on the port of its GitLab HTTP checkout", () =>
+  Effect.gen(function* () {
+    const hosts: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "gitlab",
+          title: "gitlab",
+          workspaceRoot: "/gitlab",
+          repository: "group/project",
+          provider: "gitlab",
+          host: "10.129.10.143",
+          remoteUrl: "http://10.129.10.143:9999/group/project.git",
+        }),
+      ],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequest: (input) =>
+            Effect.sync(() => {
+              hosts.push(input.host);
+              return hostedChangeRequest("");
+            }),
+        }),
+      ],
+    });
+    // A thread's saved link, as linking the MR's URL stores it: the host without its port.
+    yield* service.detail({
+      projectId: "gitlab" as ProjectId,
+      host: "10.129.10.143",
+      repository: "group/project",
+      number: 123,
+      allowStale: false,
+    });
+    assert.deepStrictEqual(hosts, ["10.129.10.143:9999"]);
+  }),
+);
+
 it.effect("resolves a project's repository identity when its shell has none cached", () =>
   Effect.gen(function* () {
     const resolved = project({
