@@ -646,6 +646,34 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("keeps a persisted T3 Connect token whose ticket answers after three seconds", () =>
+    Effect.gen(function* () {
+      // Over T3 Connect each request can take seconds on a slow network; that says nothing about the token.
+      const ticket = Promise.withResolvers<Response>();
+      const harness = yield* makeHarness({
+        initialToken: persistedToken(),
+        descriptor: DESCRIPTOR,
+        responses: [() => ticket.promise],
+      });
+
+      const authorized = yield* Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        const authorizing = yield* remote
+          .authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust("4 seconds");
+        ticket.resolve(websocketTicket("cached-ticket"));
+        return yield* Fiber.join(authorizing);
+      }).pipe(Effect.provide(Layer.merge(harness.layer, TestClock.layer())));
+
+      expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(0);
+      expect((yield* Ref.get(harness.tokens)).get(ENVIRONMENT_ID)?.accessToken).toBe(
+        "cached-access-token",
+      );
+    }),
+  );
+
   it.effect("uses the T3 Connect token on a learned direct address without the relay", () =>
     Effect.gen(function* () {
       const cached = new TokenStore.RemoteDpopAccessToken({

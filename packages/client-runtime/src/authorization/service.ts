@@ -127,6 +127,9 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
+// A direct address that stalls frees the attempt quickly. T3 Connect keeps the default remote
+// timeout: a request through it can take seconds on a slow network, and giving up there
+// discards a valid token and repeats the whole relay mint.
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
@@ -718,7 +721,10 @@ export const make = Effect.gen(function* () {
     });
     let selected = yield* getDpopToken(input);
     if (selected.fromCache) {
-      const cachedSocket = yield* openSocket(selected, CACHED_ENDPOINT_SOCKET_TIMEOUT_MS);
+      const cachedSocket = yield* openSocket(
+        selected,
+        endpoint === undefined ? undefined : CACHED_ENDPOINT_SOCKET_TIMEOUT_MS,
+      );
       if (Result.isSuccess(cachedSocket)) {
         yield* assertSession(selected.identity);
         return cachedSocket.success;
