@@ -9,12 +9,28 @@ import {
   type ServerMetrics,
 } from "./server-metrics-report.ts";
 
-type Quiet = { cpuPct: number; wakeupsPerSec: number | null; rssPeakMB: number };
+type Quiet = {
+  cpuPct: number;
+  wakeupsPerSec: number | null;
+  rssPeakMB: number;
+  loopDelayP99Ms?: number;
+  loopDelayMaxMs?: number;
+  gcPauseMs?: number;
+};
+const loopAtRest = {
+  loopDelayP50Ms: 0.1,
+  loopDelayP99Ms: 1.5,
+  loopDelayMaxMs: 8,
+  gcCount: 12,
+  gcPauseMs: 6,
+};
 const meta = { commit: "abc", platform: "linux-x64", noAgentScope: true };
 const quietRuns = (...runs: Quiet[]) =>
   ({
     meta,
-    runs: runs.map((quiet) => ({ quiet: { ...quiet, rssMB: 500, heapAfterGcMB: 200 } })),
+    runs: runs.map((quiet) => ({
+      quiet: { ...loopAtRest, ...quiet, rssMB: 500, heapAfterGcMB: 200 },
+    })),
   }) satisfies ServerMetrics;
 const base: Quiet = { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500 };
 const cpuRuns = (...values: number[]) =>
@@ -26,6 +42,10 @@ describe("compareMetrics", () => {
     ["a large relative change under the 1 point CPU floor", { cpuPct: 0.9 }, [], []],
     ["RSS growth under the 15 MB floor", { rssPeakMB: 512 }, [], []],
     ["RSS growth past it", { rssPeakMB: 585 }, ["quiet.rssPeakMB"], []],
+    ["a doubled p99 loop delay under the 5 ms floor", { loopDelayP99Ms: 3 }, [], []],
+    ["a p99 loop delay past it", { loopDelayP99Ms: 40 }, ["quiet.loopDelayP99Ms"], []],
+    ["one longer stall under the 20 ms max floor", { loopDelayMaxMs: 25 }, [], []],
+    ["GC pauses past the 10 ms floor", { gcPauseMs: 30 }, ["quiet.gcPauseMs"], []],
     [
       "an improvement past the floors",
       { cpuPct: 0.1, wakeupsPerSec: 7, rssPeakMB: 400 },
@@ -57,7 +77,7 @@ describe("compareMetrics", () => {
   it("counts how many metrics both sides share", () => {
     const startupOnly: ServerMetrics = { meta, runs: [{ startup: { readyMs: 9_000 } }] };
     expect(compareMetrics(startupOnly, quietRuns(base)).compared).toBe(0);
-    expect(compareMetrics(quietRuns(base), quietRuns(base)).compared).toBe(5);
+    expect(compareMetrics(quietRuns(base), quietRuns(base)).compared).toBe(10);
   });
 });
 

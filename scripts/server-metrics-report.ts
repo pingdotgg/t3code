@@ -7,6 +7,13 @@ const Window = Schema.Struct({
   rssPeakMB: Schema.Number,
   rssMB: Schema.Number,
   heapAfterGcMB: Schema.Number,
+  /** Event-loop delay past the 10 ms sampling interval, from a histogram inside the server. */
+  loopDelayP50Ms: Schema.Number,
+  loopDelayP99Ms: Schema.Number,
+  loopDelayMaxMs: Schema.Number,
+  /** GC events and their summed pause in the window, from a `gc` PerformanceObserver. */
+  gcCount: Schema.Number,
+  gcPauseMs: Schema.Number,
 });
 export type Window = typeof Window.Type;
 const Spread = Schema.Struct({ median: Schema.Number, p90: Schema.Number });
@@ -143,6 +150,11 @@ function noiseFloor(metric: string) {
   if (metric.endsWith("cpuPct")) return 1;
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
+  if (metric.endsWith("loopDelayP50Ms")) return 2;
+  if (metric.endsWith("loopDelayP99Ms")) return 5;
+  if (metric.endsWith("loopDelayMaxMs")) return 20;
+  if (metric.endsWith("gcPauseMs")) return 10;
+  if (metric.endsWith("gcCount")) return 20;
   return 300;
 }
 
