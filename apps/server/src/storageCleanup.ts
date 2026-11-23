@@ -1105,9 +1105,10 @@ const make = Effect.gen(function* () {
   // metadata then cannot be deleted, no checkout is left for a sweep to find and Git may no longer
   // list the worktree, so the leftover is written down here and retried until it is gone.
   const leftoversPath = path.join(config.stateDir, "storage-cleanup-leftovers.json");
+  // Only a missing file is empty: an unreadable one may hold records a write would replace.
   const readLeftovers = fs.readFileString(leftoversPath).pipe(
+    Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed("[]")),
     Effect.flatMap(decodeWorktreeLeftovers),
-    Effect.orElseSucceed(() => []),
   );
   const writeLeftovers = (
     leftovers: ReadonlyArray<{
@@ -2073,7 +2074,26 @@ const make = Effect.gen(function* () {
     yield* cleanCheckpointRefs().pipe(
       Effect.catch((cause) => Effect.logWarning("checkpoint ref cleanup failed", { cause })),
     );
-    yield* retryLeftovers(entries);
+    yield* retryLeftovers(entries).pipe(
+      Effect.catch((error) =>
+        Effect.gen(function* () {
+          entries.push({
+            kind: "worktree",
+            outcome: "failed",
+            reason: `Could not read the record of leftover git metadata: ${cleanupFailureReason(error)}`,
+            path: leftoversPath,
+            projectPath: null,
+            threadId: null,
+            threadTitle: null,
+            bytes: null,
+            files: null,
+          });
+          yield* Effect.logWarning("storage cleanup could not read leftover git metadata", {
+            error,
+          });
+        }),
+      ),
+    );
     const deletedWorktrees = yield* cleanWorktrees(serverSettings, now, entries, trigger).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {

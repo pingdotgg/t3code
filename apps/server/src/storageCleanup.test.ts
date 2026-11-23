@@ -3019,6 +3019,13 @@ describe("storage cleanup reports and local file policies", () => {
         ]);
         expect(yield* fixture.fs.exists(adminDir)).toBe(false);
         expect((yield* fixture.service.runNow).entries).toEqual([]);
+        // An unreadable record may still name leftovers, so it is reported and kept as it is.
+        const record = `${fixture.config.stateDir}/storage-cleanup-leftovers.json`;
+        yield* fixture.fs.writeFileString(record, "{");
+        expect((yield* fixture.service.runNow).entries).toEqual([
+          expect.objectContaining({ path: record, outcome: "failed" }),
+        ]);
+        expect(yield* fixture.fs.readFileString(record)).toBe("{");
       }),
     ),
   );
