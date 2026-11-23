@@ -67,7 +67,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { BackgroundThreadContext } from "./backgroundThread";
+import { HiddenThreadContext } from "./backgroundThread";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
@@ -76,6 +76,7 @@ import { useStableCallback } from "../../hooks/useStableCallback";
  * and the stash shortcut. Its state lives here so the composer body only wires it up.
  */
 export function useComposerStash(input: {
+  readonly shortcutTargetRef?: RefObject<HTMLElement | null>;
   readonly environmentId: EnvironmentId;
   readonly composerDraftTarget: ChatComposerProps["composerDraftTarget"];
   readonly promptRef: ChatComposerProps["promptRef"];
@@ -106,6 +107,7 @@ export function useComposerStash(input: {
   readonly expandMobileComposer: () => void;
 }) {
   const {
+    shortcutTargetRef,
     environmentId,
     composerDraftTarget,
     promptRef,
@@ -784,7 +786,7 @@ export function useComposerStash(input: {
   });
   // Capture phase while the composer is mounted, so Mod+S never reaches the browser's save
   // dialog even when a focused widget (the model picker search) stops the key.
-  const backgroundThread = use(BackgroundThreadContext);
+  const hiddenThread = use(HiddenThreadContext);
   const readShortcutContext = useStableCallback(() => ({
     terminalOpen: Boolean(
       selectThreadTerminalUiState(
@@ -795,16 +797,19 @@ export function useComposerStash(input: {
   }));
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the capture-phase stash shortcut with the command registry while the composer is mounted
   useEffect(() => {
-    if (backgroundThread) return;
+    if (hiddenThread) return;
     return registerCommands(
       { "composer.stash": handleStashShortcut },
       {
         capture: true,
         context: readShortcutContext,
-        when: (event) => !isInSideChatPane(event.target),
+        when: ({ target }) =>
+          shortcutTargetRef
+            ? target instanceof Node && shortcutTargetRef.current?.contains(target) === true
+            : !isInSideChatPane(target),
       },
     );
-  }, [backgroundThread, handleStashShortcut, readShortcutContext]);
+  }, [hiddenThread, shortcutTargetRef, handleStashShortcut, readShortcutContext]);
 
   return {
     stashQueue,

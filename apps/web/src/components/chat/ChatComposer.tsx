@@ -2614,6 +2614,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     deleteStashEntryStable,
     toggleStashMenuStable,
   } = useComposerStash({
+    ...(backgroundThread ? { shortcutTargetRef: composerFormRef } : {}),
     environmentId,
     composerDraftTarget,
     promptRef,
