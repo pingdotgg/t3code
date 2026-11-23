@@ -231,7 +231,7 @@ export function WorkflowsPage() {
                       environmentId}
                   </SelectValue>
                 </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectPopup>
                   {connected.map((environment) => (
                     <SelectItem key={environment.environmentId} value={environment.environmentId}>
                       {environment.label}
