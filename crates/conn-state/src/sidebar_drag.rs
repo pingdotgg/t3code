@@ -451,6 +451,23 @@ pub fn drop_released(
     membership_changed || foreign_key_landed || all_landed
 }
 
+/// `orderItemsByPreferredIds`: the ids in `preferred` order first (those `ids` holds), then the
+/// rest as they were. A drop keeps its destination in the order it made until the server's keys
+/// land.
+#[must_use]
+pub fn order_by_preferred(ids: &[String], preferred: &[String]) -> Vec<String> {
+    let held: HashSet<&String> = ids.iter().collect();
+    let mut emitted: HashSet<&String> = HashSet::new();
+    let mut ordered: Vec<String> = Vec::with_capacity(ids.len());
+    for id in preferred {
+        if held.contains(id) && emitted.insert(id) {
+            ordered.push(id.clone());
+        }
+    }
+    ordered.extend(ids.iter().filter(|id| !emitted.contains(id)).cloned());
+    ordered
+}
+
 /// A row's painted extent, top to bottom, in window coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Extent {
@@ -462,6 +479,64 @@ impl Extent {
     fn center(self) -> f32 {
         f32::midpoint(self.top, self.bottom)
     }
+}
+
+/// The painted extent of every item of `items` as the list rests, from the rows' painted extents
+/// (`rows`) and the Settled header's. A marker has no height at rest: it sits where the row
+/// before it ends, and the Settled header keeps its own extent.
+#[must_use]
+pub fn item_extents(
+    items: &[ListItem],
+    rows: &HashMap<String, Extent>,
+    first_row_top: f32,
+    settled_header: Option<Extent>,
+) -> Vec<Extent> {
+    let mut cursor = first_row_top;
+    items
+        .iter()
+        .map(|item| match item {
+            ListItem::Thread { id, .. } => match rows.get(id) {
+                Some(extent) => {
+                    cursor = extent.bottom;
+                    *extent
+                }
+                None => Extent {
+                    top: cursor,
+                    bottom: cursor,
+                },
+            },
+            ListItem::Marker(Marker::SettledHeader) => match settled_header {
+                Some(extent) => {
+                    cursor = extent.bottom;
+                    extent
+                }
+                None => Extent {
+                    top: cursor,
+                    bottom: cursor,
+                },
+            },
+            ListItem::Marker(_) => Extent {
+                top: cursor,
+                bottom: cursor,
+            },
+        })
+        .collect()
+}
+
+/// `.sidebar-drag-boundary-label` of the Pinned divider: `top-1 h-4` below where the divider sits.
+#[must_use]
+pub fn boundary_label_extent(divider: Extent) -> Extent {
+    Extent {
+        top: divider.top + 4.0,
+        bottom: divider.top + 20.0,
+    }
+}
+
+/// `restrictBelowSidebarLabel`: the lowest the held row's centre may sit above the Pinned label,
+/// so the row never rides over it (`label_top` is the top of the first marker).
+#[must_use]
+pub fn min_held_center(label_top: f32, held_height: f32) -> f32 {
+    label_top + BOUNDARY_LABEL_HEIGHT_PX + held_height / 2.0
 }
 
 /// What the collision detector reads for one pointer position.
@@ -1066,6 +1141,57 @@ mod tests {
         );
         assert_eq!(thread_section(&active), Section::Pinned);
         assert_eq!(active.pin_order_key, Some(Some("c".to_owned())));
+    }
+
+    #[test]
+    fn markers_sit_where_the_row_before_them_ends_and_the_settled_header_keeps_its_extent() {
+        let items = items();
+        let mut rows = HashMap::new();
+        let mut top = 10.0;
+        for item in &items {
+            if let ListItem::Thread { id, .. } = item {
+                rows.insert(
+                    id.clone(),
+                    Extent {
+                        top,
+                        bottom: top + 40.0,
+                    },
+                );
+                top += 41.0;
+            }
+        }
+        let header = Extent {
+            top: 300.0,
+            bottom: 332.0,
+        };
+        let extents = item_extents(&items, &rows, 10.0, Some(header));
+        assert_eq!(extents.len(), items.len());
+        let at = |marker: Marker| {
+            items
+                .iter()
+                .position(|item| *item == ListItem::Marker(marker))
+                .unwrap()
+        };
+        assert_eq!(extents[at(Marker::PinnedHeader)].top, 10.0);
+        let divider = extents[at(Marker::PinnedDivider)];
+        assert_eq!(divider.top, divider.bottom);
+        assert_eq!(divider.top, rows["p2"].bottom);
+        assert_eq!(extents[at(Marker::SettledHeader)], header);
+        assert_eq!(extents[at(Marker::SettledPlaceholder)].top, header.bottom);
+        assert_eq!(extents[index_of(&items, "a2")], rows["a2"]);
+        let label = boundary_label_extent(divider);
+        assert_eq!(label.bottom - label.top, 16.0);
+        assert_eq!(min_held_center(10.0, 40.0), 54.0);
+    }
+
+    #[test]
+    fn a_held_destination_order_leads_and_unknown_rows_follow() {
+        let ids = ids(&["a", "b", "c", "d"]);
+        assert_eq!(
+            order_by_preferred(&ids, &["c".to_owned(), "gone".to_owned(), "a".to_owned()]),
+            ["c", "a", "b", "d"]
+        );
+        assert_eq!(order_by_preferred(&ids, &[]), ["a", "b", "c", "d"]);
     }
 
     #[test]

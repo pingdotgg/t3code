@@ -408,7 +408,7 @@ pub fn next_shown_order(
     let keys: Vec<String> = kept.iter().cloned().chain(rest).collect();
     let shown = keys
         .len()
-        .min(limit + LATE_ROOM)
+        .min(limit.saturating_add(LATE_ROOM))
         .min(limit.max(kept.len() + arrived.min(LATE_ROOM)));
     if shown == previous.shown && keys == previous.keys {
         return previous.clone();
@@ -643,6 +643,11 @@ mod tests {
         // A row that left the answer leaves the list.
         let gone = next_shown_order(Some(&late), "q", &keys(&["a", "c"]), 3);
         assert_eq!(gone.keys, ["a", "c"]);
+        // No limit (Conn passes `Infinity`) shows every row, and a later answer does not overflow.
+        let all = next_shown_order(None, "q", &keys(&["a", "b"]), usize::MAX);
+        assert_eq!(all.shown, 2);
+        let more = next_shown_order(Some(&all), "q", &keys(&["a", "b", "c"]), usize::MAX);
+        assert_eq!(more.shown, 3);
     }
 
     #[test]

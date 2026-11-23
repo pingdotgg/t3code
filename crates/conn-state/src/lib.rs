@@ -84,8 +84,8 @@ pub use crate::order_keys::{
     top_of_pinned_run_key,
 };
 pub use crate::settled_shelf::{
-    MoreState, SETTLED_TAIL_INITIAL_COUNT, SETTLED_TAIL_PAGE_COUNT, SettledTail, ShelfInput,
-    ShelfView, SidebarPrefs, more_label, shelf_view,
+    MoreState, SETTLED_MORE_ROW, SETTLED_TAIL_INITIAL_COUNT, SETTLED_TAIL_PAGE_COUNT, SettledTail,
+    ShelfInput, ShelfView, SidebarPrefs, more_label, shelf_view,
 };
 pub use crate::shell::{
     OLDER_SETTLED_PAGE_SIZE, OlderPageRequest, OlderSettledCut, OlderSettledView, PageStatus,

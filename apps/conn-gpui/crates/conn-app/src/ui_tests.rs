@@ -246,13 +246,7 @@ fn kitchen_sink_shell() -> ShellState {
         }),
     ];
 
-    ShellState {
-        projects: vec![project],
-        threads,
-        archived_threads: Vec::new(),
-        sequence: Some(100),
-        synchronized: true,
-    }
+    ShellState::from_parts(vec![project], threads, Vec::new(), Some(100))
 }
 
 fn kitchen_sink_thread() -> ThreadState {

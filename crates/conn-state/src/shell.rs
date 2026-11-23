@@ -277,6 +277,26 @@ pub struct ShellState {
 }
 
 impl ShellState {
+    /// A shell holding `threads`, as a snapshot at `sequence` would leave it, for fixtures.
+    #[must_use]
+    pub fn from_parts(
+        projects: Vec<ProjectShell>,
+        threads: Vec<ThreadShell>,
+        archived_threads: Vec<ThreadShell>,
+        sequence: Option<i64>,
+    ) -> Self {
+        let mut state = Self {
+            projects,
+            threads,
+            archived_threads,
+            sequence,
+            synchronized: true,
+            ..Self::default()
+        };
+        state.refresh_derived();
+        state
+    }
+
     /// Applies one `subscribeShell` stream item.
     pub fn apply(&mut self, item: ShellStreamItem) -> ShellChange {
         match item {
@@ -459,6 +479,7 @@ impl ShellState {
         self.threads
             .iter()
             .chain(self.archived_threads.iter())
+            .chain(self.older.threads.iter())
             .find(|t| t.id == thread_id)
     }
 
@@ -559,11 +580,11 @@ impl ShellState {
             .filter(|t| t.deleted_at.is_none() && self.is_listed(t) && !Self::is_settled(t))
     }
 
-    /// Top-level settled threads: the settled rows of `threads`, the archived ones and the older
-    /// settled pages read so far, as far as the shelf lists them (`isListedSettledThread`),
+    /// Top-level settled threads the client holds, whether the shelf lists them yet or not: the
+    /// settled rows of `threads`, the archived ones and the older settled pages read so far,
     /// newest settle first (`sortSettledThreads`).
     #[must_use]
-    pub fn top_level_settled_threads(&self) -> Vec<&ThreadShell> {
+    pub fn all_settled_threads(&self) -> Vec<&ThreadShell> {
         let mut out: Vec<&ThreadShell> = self
             .threads
             .iter()
@@ -579,9 +600,17 @@ impl ShellState {
                     .iter()
                     .filter(|t| t.deleted_at.is_none() && self.is_listed(t)),
             )
-            .filter(|t| self.is_listed_settled(t))
             .collect();
         out.sort_by(|left, right| compare_settled(left, right));
+        out
+    }
+
+    /// The settled threads the shelf may list: those at or above its frontier
+    /// (`isListedSettledThread`).
+    #[must_use]
+    pub fn top_level_settled_threads(&self) -> Vec<&ThreadShell> {
+        let mut out = self.all_settled_threads();
+        out.retain(|t| self.is_listed_settled(t));
         out
     }
 
@@ -763,6 +792,10 @@ impl ShellState {
         let Some(thread) = self.find_thread(thread_id) else {
             return ThreadActivity::Idle;
         };
+        // A subagent's or side chat's request needs the user whatever the parent itself is doing.
+        if self.requests.contains_key(thread_id) {
+            return ThreadActivity::NeedsAttention;
+        }
         thread_activity(thread)
     }
 
@@ -945,6 +978,9 @@ mod tests {
             Some(PendingSubagentRequest::Approval)
         );
         assert_eq!(state.subagent_request("leaf"), None);
+        // A request one of its subagents makes needs the user whatever the parent itself is doing.
+        assert_eq!(state.activity("root"), ThreadActivity::NeedsAttention);
+        assert_eq!(state.activity("mid"), ThreadActivity::NeedsAttention);
     }
 
     #[test]

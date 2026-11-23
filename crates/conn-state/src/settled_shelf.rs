@@ -4,6 +4,9 @@
 
 use serde_json::{Value, json};
 
+/// Key of the shelf's `Show more` row (`data-sidebar-row="settled:more"`).
+pub const SETTLED_MORE_ROW: &str = "shelf:settled:more";
+
 /// `SETTLED_TAIL_INITIAL_COUNT`: rows shown when the shelf opens.
 pub const SETTLED_TAIL_INITIAL_COUNT: usize = 10;
 /// `SETTLED_TAIL_PAGE_COUNT`: rows one `Show more` adds.
@@ -33,6 +36,16 @@ impl SettledTail {
             self.count = SETTLED_TAIL_INITIAL_COUNT;
         }
         self.count
+    }
+
+    /// Rows shown under `scope_key`, without starting the scope (for readers that cannot mutate).
+    #[must_use]
+    pub fn count_in(&self, scope_key: &str) -> usize {
+        if self.scope_key == scope_key {
+            self.count
+        } else {
+            SETTLED_TAIL_INITIAL_COUNT
+        }
     }
 
     /// `showMoreSettled`.
@@ -232,6 +245,16 @@ mod tests {
         assert_eq!(tail.count_for("all"), 35);
         assert_eq!(tail.count_for("project"), 10);
         assert_eq!(tail.count_for("all"), 10);
+    }
+
+    #[test]
+    fn a_reader_sees_the_count_of_its_scope_without_starting_it() {
+        let mut tail = SettledTail::default();
+        tail.count_for("all");
+        tail.show_more();
+        assert_eq!(tail.count_in("all"), 35);
+        assert_eq!(tail.count_in("project"), 10);
+        assert_eq!(tail.count_in("all"), 35, "asking did not change the scope");
     }
 
     #[test]
