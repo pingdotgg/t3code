@@ -24,8 +24,13 @@ export function SettingsDisclosureHeader({
     >
       {label ? (
         <CollapsibleTrigger
-          className="absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           aria-label={label}
+          render={
+            <button
+              type="button"
+              className="absolute inset-0 rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            />
+          }
         />
       ) : null}
       <div className="pointer-events-none relative min-w-0 flex-1 space-y-1 [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
