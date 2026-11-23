@@ -28,6 +28,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as EventStore from "./EventStore.ts";
 import * as TestClock from "effect/testing/TestClock";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -1759,6 +1760,110 @@ it.effect("an unanswered Stop is flagged until Force stop ends the run with its 
     });
     assert.lengthOf(late.storedEvents, 0);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([true, false])(
+  "settling an interrupt ends a run its provider finished only when Stop was accepted (%s)",
+  (stopAccepted) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make(`thread:stop-waiting-run:${stopAccepted}`);
+      yield* createWatchingThread(threadId, 8);
+      yield* send(threadId, "work", "start_immediately");
+      const now = yield* DateTime.now;
+      const started = yield* orchestrator.getThreadProjection(threadId);
+      const run = started.runs[0]!;
+      const attempt = started.attempts[0]!;
+      const rootNode = started.nodes.find((node) => node.id === run.rootNodeId)!;
+      const providerThreadId = run.providerThreadId!;
+      const providerTurnId = ProviderTurnId.make("provider-turn:stop-waiting-run");
+      const apply = (event: Omit<OrchestrationV2DomainEvent, "id" | "threadId">) =>
+        projections.apply({
+          ...event,
+          id: EventId.make(`event:stop-waiting-run:${event.type}`),
+          threadId,
+        } as OrchestrationV2DomainEvent);
+      // The provider's completed terminal landed after Stop: the run waits for its checkpoint.
+      yield* apply({
+        type: "run.updated",
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "waiting", startedAt: now, activeAttemptId: attempt.id },
+      });
+      yield* apply({
+        type: "node.updated",
+        runId: run.id,
+        nodeId: rootNode.id,
+        occurredAt: now,
+        payload: { ...rootNode, status: "waiting" },
+      });
+      yield* apply({
+        type: "run-attempt.updated",
+        occurredAt: now,
+        payload: { ...attempt, status: "completed", startedAt: now, completedAt: now },
+      });
+      yield* apply({
+        type: "provider-turn.updated",
+        occurredAt: now,
+        payload: {
+          id: providerTurnId,
+          providerThreadId,
+          nodeId: rootNode.id,
+          runAttemptId: attempt.id,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      if (stopAccepted) {
+        yield* apply({
+          type: "turn-item.updated",
+          runId: run.id,
+          occurredAt: now,
+          payload: {
+            id: IdAllocator.derive.runSignalTurnItem({
+              runId: run.id,
+              signal: "interrupt-request",
+            }),
+            threadId,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1_000,
+            status: "completed",
+            title: "Interrupt requested",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "run_interrupt_request",
+            message: "Stopped by user",
+          },
+        });
+      }
+
+      yield* orchestrator.dispatch({
+        type: "thread.background-work.settle",
+        commandId: CommandId.make(`stop-waiting-run:${stopAccepted}:settle`),
+        threadId,
+        providerThreadId,
+        providerTurnId,
+      });
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        settled.runs.map((candidate) => candidate.status),
+        [stopAccepted ? "interrupted" : "waiting"],
+      );
+      assert.equal(
+        settled.turnItems.some((item) => item.type === "run_interrupt_result"),
+        stopAccepted,
+      );
+    }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect.each(["Stop", "Force stop"] as const)(
