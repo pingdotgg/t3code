@@ -1094,6 +1094,11 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
       }),
     ).check(Schema.isMaxLength(32)),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * The slow step a provider is in while it starts a turn, such as `plugins`. A string, because
+   * clients already released reject a literal they do not know; they show the ones they do.
+   */
+  startupPhase: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
