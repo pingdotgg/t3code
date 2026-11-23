@@ -8,6 +8,7 @@ import { isMacPlatform } from "~/lib/utils";
 import { render } from "../../../test/render";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { dispatchPreviewAction } from "../preview/previewActionBus";
+import { writeExpandedDirectories } from "./fileTreeExpansion";
 
 const entries: readonly ProjectEntry[] = [
   { path: "src", kind: "directory" },
@@ -54,11 +55,39 @@ function findTreeRow(path: string): HTMLElement | null {
   return null;
 }
 
+function findTreeScroller(): HTMLElement | null {
+  for (const host of document.querySelectorAll("*")) {
+    const scroller = host.shadowRoot?.querySelector<HTMLElement>(
+      "[data-file-tree-virtualized-scroll]",
+    );
+    if (scroller) return scroller;
+  }
+  return null;
+}
+
+function isTreeRowInView(path: string): boolean {
+  const rowRect = findTreeRow(path)?.getBoundingClientRect();
+  const scrollerRect = findTreeScroller()?.getBoundingClientRect();
+  return (
+    rowRect !== undefined &&
+    scrollerRect !== undefined &&
+    rowRect.top >= scrollerRect.top &&
+    rowRect.bottom <= scrollerRect.bottom
+  );
+}
+
+function sizedContainer(): HTMLElement {
+  const container = document.createElement("div");
+  container.style.cssText = "display:flex;flex-direction:column;height:300px;width:300px";
+  return container;
+}
+
 function withDirectoryListing(listing: readonly ProjectEntry[]): Disposable {
   directory.entries = listing;
   return {
     [Symbol.dispose]: () => {
       directory.entries = entries;
+      directory.ready = true;
     },
   };
 }
@@ -133,6 +162,10 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+
+    // The selection stays put, so reopening the selected file must not depend on a selection change.
+    row.click();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(2));
   });
 
   it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {
@@ -288,5 +321,68 @@ describe("FileBrowserPanel", () => {
     await using _second = await render(panel());
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+  });
+  describe("revealing a folder while folders above it are still loading", () => {
+    const roots = Array.from({ length: 12 }, (_, index): ProjectEntry => {
+      return { path: `d${String(index).padStart(2, "0")}`, kind: "directory" };
+    });
+    const listing = (parent: string, count: number) =>
+      Array.from({ length: count }, (_, index): ProjectEntry => {
+        return { path: `${parent}/f${String(index).padStart(3, "0")}.ts`, kind: "file" };
+      });
+    const renderPanel = (cwd: string) => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd={cwd}
+        projectName="repo"
+        selectedPath="d09"
+        selectedPathRevealId={1}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    // The tree mounts empty and measures itself before the first listing arrives, as it does for real.
+    async function renderRevealedPanel(cwd: string) {
+      writeExpandedDirectories(`env-files:${cwd}`, ["d01/", "d01/sub/"]);
+      directory.ready = false;
+      await using stack = new AsyncDisposableStack();
+      const screen = stack.use(await render(renderPanel(cwd), { container: sizedContainer() }));
+      directory.entries = roots;
+      directory.ready = true;
+      await screen.rerender(renderPanel(cwd));
+      await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
+      stack.move();
+      return screen;
+    }
+
+    it("keeps the revealed folder in view as restored folders above it load", async () => {
+      const cwd = "/repo-reveal-follows-loading";
+      using _listing = withDirectoryListing([]);
+      await using screen = await renderRevealedPanel(cwd);
+
+      // d01 lists after the reveal and holds another restored folder, which lists in turn.
+      directory.entries = [...roots, ...listing("d01", 60), { path: "d01/sub", kind: "directory" }];
+      await screen.rerender(renderPanel(cwd));
+      await vi.waitFor(() => expect(findTreeScroller()!.scrollHeight).toBeGreaterThan(60 * 24));
+      directory.entries = [...directory.entries, ...listing("d01/sub", 60)];
+      await screen.rerender(renderPanel(cwd));
+
+      await vi.waitFor(() => expect(isTreeRowInView("d09/")).toBe(true));
+    });
+
+    it("leaves the scroll position alone once the user scrolls the tree", async () => {
+      const cwd = "/repo-reveal-user-scroll";
+      using _listing = withDirectoryListing([]);
+      await using screen = await renderRevealedPanel(cwd);
+
+      const scroller = findTreeScroller()!;
+      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, composed: true }));
+      scroller.scrollTop = 0;
+      directory.entries = [...roots, ...listing("d01", 60)];
+      await screen.rerender(renderPanel(cwd));
+      await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(60 * 24));
+
+      expect(scroller.scrollTop).toBe(0);
+    });
   });
 });

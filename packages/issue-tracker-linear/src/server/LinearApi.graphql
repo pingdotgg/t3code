@@ -60,7 +60,6 @@ fragment LinearIssue on Issue {
   number
   title
   url
-  description
   createdAt
   updatedAt
   completedAt
@@ -96,6 +95,9 @@ query T3Viewer {
   viewer {
     ...LinearUser
   }
+  organization {
+    urlKey
+  }
   teams(first: 250) {
     nodes {
       id
@@ -119,6 +121,7 @@ query T3Issues($first: Int!, $after: String, $filter: IssueFilter!, $orderBy: Pa
 query T3Issue($id: String!, $comments: Int!) {
   issue(id: $id) {
     ...LinearIssue
+    description
     team {
       states(first: 100) {
         nodes {
