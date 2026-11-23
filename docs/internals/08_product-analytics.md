@@ -29,7 +29,8 @@ an authenticated connection does not count as product use.
 - Payloads stay strictly to product metadata, closed contract enums, and normalized measurements:
   never attach prompts, file paths, credentials, raw provider payloads, device names, conversation
   IDs, or user-named provider instance IDs. Model IDs are reported as the provider used them,
-  including custom models; known aliases and routed IDs map to one catalog slug.
+  including custom models; known aliases and routed IDs map to one catalog slug, and a model
+  that is a file path reports only its file name.
 - The sole exception is opt-in `agent.feedback`, which
   [`FeedbackService`](../../apps/server/src/feedback/FeedbackService.ts) scrubs of paths, private
   values, and secret-shaped strings, and only attaches bounded conversation traces when the user

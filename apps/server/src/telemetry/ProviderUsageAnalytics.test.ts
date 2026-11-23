@@ -332,9 +332,12 @@ describe("provider usage reporting", () => {
     expect(local).not.toHaveProperty("effort");
   });
 
-  it("maps provider catalog aliases to their slug", () => {
+  it("maps provider catalog aliases to their slug and file paths to their file name", () => {
     expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
     expect(label("antigravity-default")).toBe("gemini-4-neon");
+    expect(label("/Users/jane/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
+    expect(label("~/models/qwen-coder.gguf")).toBe("qwen-coder.gguf");
+    expect(label("C:\\Users\\jane\\qwen-coder.gguf")).toBe("qwen-coder.gguf");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

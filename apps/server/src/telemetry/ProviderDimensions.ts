@@ -25,6 +25,8 @@ export function providerDimensions(
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
+// Absolute, home-relative, or Windows paths, such as a local GGUF file. Directories can name the user.
+const FILE_PATH = /^(?:[/~]|[A-Za-z]:[\\/])|\\/u;
 
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
@@ -37,7 +39,8 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
 /**
  * The model name analytics reports. A routed id, alias, or dated snapshot that the
  * bundled manifest or a provider's model list knows, such as `anthropic/claude-opus-5-5`
- * or `antigravity-default`, maps to its catalog slug. Any other id is reported as is.
+ * or `antigravity-default`, maps to its catalog slug. A file path reports only its file
+ * name. Any other id is reported as is.
  */
 export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: string): string {
   const leaf = model.slice(model.lastIndexOf("/") + 1);
@@ -54,7 +57,7 @@ export function modelLabel(providers: ReadonlyArray<ServerProvider>, model: stri
     );
     if (match !== undefined) return match.slug;
   }
-  return model;
+  return FILE_PATH.test(model) ? model.slice(model.search(/[^/\\]*$/u)) : model;
 }
 
 /** The thread fields agent analytics reads. Ids are used for lookups, never reported. */
