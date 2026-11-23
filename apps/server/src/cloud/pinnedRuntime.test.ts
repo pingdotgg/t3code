@@ -152,6 +152,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         },
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(firstChunk);
+      // Nothing is staged mid-download, so an age-based prune elsewhere cannot remove it.
+      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
       yield* Fiber.interrupt(install);
       assert.deepEqual(progress.at(-1), { stage: "download", received: 4, total: undefined });
       assert.isTrue(progress.every((event) => event.stage === "download"));
@@ -726,6 +728,46 @@ it.layer(NodeServices.layer)("prunePinnedRuntimes", (it) => {
         "2.0.0",
         "other",
       ]);
+    }),
+  );
+
+  it.effect("removes the runtime a committed update replaced", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir } = yield* setup(["1.0.0", "1.1.0"]);
+      yield* fs.writeFileString(
+        path.join(baseDir, "runtime", "service-state.json"),
+        JSON.stringify({
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.1.0",
+          update: { id: "u", fromVersion: "1.0.0", targetVersion: "1.1.0", status: "committed" },
+        }),
+      );
+
+      const removed = yield* prunePinnedRuntimes({ baseDir, keep: ["1.1.0"] }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner("p1\nftxt\nn/bin/sh\n")),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      assert.deepEqual(removed, ["1.0.0"]);
+    }),
+  );
+
+  it.effect("removes a staging directory an interrupted install abandoned long ago", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { baseDir, versionsDir, install } = yield* setup(["1.0.0"]);
+      yield* install(".staging-abc", "never");
+      yield* fs.utimes(path.join(versionsDir, ".staging-abc"), 0, 0);
+
+      yield* prunePinnedRuntimes({ baseDir, keep: ["1.0.0"] }).pipe(
+        Effect.provideService(ProcessRunner.ProcessRunner, lsofRunner("p1\nftxt\nn/bin/sh\n")),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
+      assert.deepEqual(yield* fs.readDirectory(versionsDir), ["1.0.0"]);
     }),
   );
 

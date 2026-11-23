@@ -1,4 +1,4 @@
-import { NodeHttpServer, NodeSocket, NodeSocketServer } from "@effect/platform-node"
+import { NodeHttpServer, NodeSocket, NodeSocketServer, NodeWorker } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Ref, Schedule, Schema, Stream } from "effect"
 import { Entity, EntityProxy, EntityProxyServer, Sharding } from "effect/cluster"
@@ -6,8 +6,13 @@ import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/ht
 import type * as NetAddress from "effect/net/NetAddress"
 import { Rpc, RpcClient, RpcGroup, RpcSerialization, RpcServer, RpcTest } from "effect/rpc"
 import { SocketServer } from "effect/socket"
+import { SharedMemory } from "effect/workers"
+import * as ChildProcess from "node:child_process"
+import { fileURLToPath } from "node:url"
+import * as WorkerThreads from "node:worker_threads"
 import { e2eSuite, UsersClient } from "./fixtures/rpc-e2e.ts"
 import { RpcLayer, User } from "./fixtures/rpc-schemas.ts"
+import { Compute } from "./fixtures/shared-memory-rpc.ts"
 
 describe("RpcServer", () => {
   describe("request defect isolation over HTTP", () => {
@@ -438,4 +443,33 @@ describe("RpcServer", () => {
       { timeout: 30_000 }
     )
   })
+})
+
+describe("shared memory over worker RPC", () => {
+  const fixture = new URL("./fixtures/shared-memory-worker.ts", import.meta.url)
+  const threads = RpcClient.layerProtocolWorker({ size: 2 }).pipe(
+    Layer.provide(NodeWorker.layer(() => new WorkerThreads.Worker(fixture, { execArgv: [] })))
+  )
+  const childProcess = RpcClient.layerProtocolWorker({ size: 1 }).pipe(
+    Layer.provide(NodeWorker.layer(() => ChildProcess.fork(fileURLToPath(fixture), { execArgv: [] })))
+  )
+
+  it.live("worker threads write into the caller's shared array", () =>
+    Effect.gen(function*() {
+      const client = yield* RpcClient.make(Compute)
+      const data = SharedMemory.make(Int32Array, 4)
+      yield* Effect.forEach([[0, 2], [2, 4]], ([from, to]) => client.Fill({ data, from, to }), {
+        concurrency: "unbounded"
+      })
+      assert.deepStrictEqual(Array.from(data), [0, 2, 4, 6])
+    }).pipe(Effect.provide(threads)), { timeout: 30_000 })
+
+  it.live("a child process rejects a shared array instead of copying it", () =>
+    Effect.gen(function*() {
+      const client = yield* RpcClient.make(Compute)
+      const data = SharedMemory.make(Int32Array, 4)
+      const exit = yield* Effect.exit(client.Fill({ data, from: 0, to: 4 }))
+      assert.isTrue(Exit.isFailure(exit) && String(exit.cause).includes("Expected Int32Array in shared memory"))
+      assert.deepStrictEqual(Array.from(data), [0, 0, 0, 0])
+    }).pipe(Effect.provide(childProcess)), { timeout: 30_000 })
 })

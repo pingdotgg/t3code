@@ -47,16 +47,17 @@ export type IsoDateTime = typeof IsoDateTime.Type;
 
 export const ForwardCompatibleOptional = <Value extends Schema.Top>(value: Value) => {
   const decodeValue = Schema.decodeUnknownOption(value as never);
-  return Schema.optionalKey(
-    Schema.Unknown.pipe(
-      Schema.decodeTo(
-        Schema.UndefinedOr(value),
-        SchemaTransformation.transform<Value["Encoded"] | undefined, unknown>({
-          decode: (raw) =>
-            Option.isSome(decodeValue(raw)) ? (raw as Value["Encoded"]) : undefined,
-          encode: (raw) => raw,
-        }),
-      ),
+  // Unreadable values drop the key: an own undefined property is not JSON and fails RPC encoding.
+  return Schema.optionalKey(Schema.Unknown).pipe(
+    Schema.decodeTo(
+      Schema.optionalKey(Schema.UndefinedOr(value)),
+      SchemaTransformation.transformOptional<Value["Encoded"] | undefined, unknown>({
+        decode: (raw) =>
+          Option.isSome(raw) && Option.isSome(decodeValue(raw.value))
+            ? Option.some(raw.value as Value["Encoded"])
+            : Option.none(),
+        encode: (raw) => (Option.isSome(raw) && raw.value !== undefined ? raw : Option.none()),
+      }),
     ),
   );
 };
@@ -94,11 +95,18 @@ export const OmittedWhenNull = <Value extends Schema.Top>(value: Value) => {
   );
 };
 
+const UnknownArrayElement = Schema.Unknown.pipe(
+  Schema.decodeTo(Schema.Undefined, {
+    decode: SchemaGetter.succeed(undefined),
+    encode: SchemaGetter.passthrough(),
+  }),
+);
+
 /** Prefer {@link ForwardCompatibleUnion} for tagged unions so malformed known members still fail. */
 export const ForwardCompatibleArray = <Element extends Schema.Top>(element: Element) =>
+  // Exit derives its wire codec from the encoded shape, which keeps the union but drops recovery middleware.
   Schema.Array(
-    Schema.UndefinedOr(element).pipe(
-      Schema.catchDecoding(() => Effect.succeedSome(undefined)),
+    Schema.Union([element, UnknownArrayElement]).pipe(
       Schema.catchEncoding(() => Effect.succeedSome(undefined)),
     ),
   ).pipe(

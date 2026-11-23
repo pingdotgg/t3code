@@ -231,6 +231,7 @@ export const make = Effect.gen(function* () {
       issues: true,
       linkedThreadRefreshes: true,
       issueLinkedThreads: true,
+      issueTrackerAccounts: true,
       sideChats: true,
       vcsBranchStatus: true,
       inlineMessageContext: true,
@@ -297,11 +298,15 @@ export const make = Effect.gen(function* () {
       peerLinks: true,
       mcpModeLimitHeader: true,
       linkFence: true,
+      linkThreadStream: true,
+      linkClientPairing: true,
+      linkPairingForLink: true,
       mcpApprovalCodes: true,
       peerLinkPairingCodes: true,
       mcpHostedApproval: true,
       shellThreadFamilies: true,
       shellOlderSettled: true,
+      agentFeedback: true,
     },
   };
 
