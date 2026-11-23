@@ -19,7 +19,6 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1077,11 +1076,16 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           const rest = yield* server.measure(30);
           const shell = yield* loadShell(server, 5);
           const traffic = yield* gitTraffic(server);
-          const loop = yield* Effect.forkScoped(traffic);
-          yield* Effect.sleep(Duration.seconds(5));
-          const git = yield* server.measure(30);
-          yield* profile(server, "busyGit");
-          yield* Fiber.interrupt(loop);
+          // The traffic only ends by failing, which then fails the window instead of thinning it.
+          const git = yield* Effect.raceFirst(
+            Effect.gen(function* () {
+              yield* Effect.sleep(Duration.seconds(5));
+              const window = yield* server.measure(30);
+              yield* profile(server, "busyGit");
+              return window;
+            }),
+            traffic,
+          );
           measured.busy = {
             readyMs: server.readyMs,
             projects: server.roots.length,
@@ -1363,8 +1367,10 @@ const runCommand = Command.make(
     );
     if (input.repeat < 1)
       return yield* new MetricsError({ message: "--repeat must be at least 1" });
-    const options = yield* withSeed(yield* toRunOptions(input, checkout, profileDir), input);
-    const meta = yield* metaFor(options);
+    const unseeded = yield* toRunOptions(input, checkout, profileDir);
+    // Checks the machine before seeding, which takes minutes.
+    const meta = yield* metaFor(unseeded);
+    const options = yield* withSeed(unseeded, input);
     const runs: Measured[] = [];
     let last: Effect.Success<ReturnType<typeof runOnce>> | undefined;
     for (let index = 0; index < input.repeat; index++) {
@@ -1408,11 +1414,16 @@ const abCommand = Command.make(
     const path = yield* Path.Path;
     const outDir = path.resolve(input.outDir);
     yield* fs.makeDirectory(outDir, { recursive: true });
-    const sides = [
-      yield* withSeed(yield* toRunOptions(input, input.checkoutA, undefined), input),
-      yield* withSeed(yield* toRunOptions(input, input.checkoutB, undefined), input),
+    const unseeded = [
+      yield* toRunOptions(input, input.checkoutA, undefined),
+      yield* toRunOptions(input, input.checkoutB, undefined),
     ] as const;
-    const metas = [yield* metaFor(sides[0]), yield* metaFor(sides[1])] as const;
+    // Checks the machine before seeding, which takes minutes.
+    const metas = [yield* metaFor(unseeded[0]), yield* metaFor(unseeded[1])] as const;
+    const sides = [
+      yield* withSeed(unseeded[0], input),
+      yield* withSeed(unseeded[1], input),
+    ] as const;
     const runs: [Measured[], Measured[]] = [[], []];
     for (let round = 0; round < input.rounds; round++) {
       // A B, then B A, so a drift in machine load lands on both sides.

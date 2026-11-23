@@ -125,6 +125,35 @@ describe("compareMetrics", () => {
   });
 });
 
+describe("compareMetrics on the busy shell snapshot", () => {
+  const window = { cpuPct: 1, wakeupsPerSec: 10, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 };
+  const busyRun = (shellMs: number, shellKB: number) =>
+    ({
+      meta,
+      runs: [
+        {
+          busy: {
+            readyMs: 8_000,
+            projects: 9,
+            ballastMB: 768,
+            rest: window,
+            shellMs: { median: shellMs, p90: shellMs },
+            shellKB,
+            git: window,
+          },
+        },
+      ],
+    }) satisfies ServerMetrics;
+  it.each([
+    ["40 ms slower, under the 50 ms floor", busyRun(230, 100), []],
+    ["150 ms slower, past it", busyRun(340, 100), ["busy.shellMs.median", "busy.shellMs.p90"]],
+    ["15 KB larger, under the 20 KB floor", busyRun(190, 115), []],
+    ["40 KB larger, past it", busyRun(190, 140), ["busy.shellKB"]],
+  ])("%s", (_name, after, regressed) => {
+    expect(compareMetrics(busyRun(190, 100), after).regressed).toEqual(regressed);
+  });
+});
+
 describe("heapGrowth", () => {
   it("lists only constructors that grew, small growth included", () => {
     const before = new Map([
