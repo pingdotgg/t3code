@@ -540,10 +540,13 @@ describe("sidebar drag projection", () => {
           : rect,
       ),
     };
-    const project = (strategyInput: Parameters<typeof createSidebarSortingStrategy>[0]) => {
+    const project = (
+      strategyInput: Parameters<typeof createSidebarSortingStrategy>[0],
+      layoutArgs = args,
+    ) => {
       const strategy = createSidebarSortingStrategy(strategyInput);
       return new Map(
-        items.map((item, index) => [sidebarListItemId(item), strategy({ ...args, index })]),
+        items.map((item, index) => [sidebarListItemId(item), strategy({ ...layoutArgs, index })]),
       );
     };
     // A flat shelf shrinks by the lifted row, so its header drops a row.
@@ -553,6 +556,21 @@ describe("sidebar drag projection", () => {
     const shelf = project({ ...input, settledShelfRows: 8.5 });
     expect(shelf.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
     expect(shelf.get("s1")).toEqual({ ...stationary, y: -37 });
+    // Scrolled to its 137px end, the shorter shelf can scroll only 100px, so the rows below the
+    // lifted one stay put instead of leaving a gap under the last row.
+    const atEnd = project(
+      { ...input, settledShelfRows: 8.5 },
+      {
+        ...args,
+        rects: args.rects.map((rect, index) =>
+          index > items.indexOf(settledHeader)
+            ? { ...rect, top: rect.top - 137, bottom: rect.bottom - 137 }
+            : rect,
+        ),
+      },
+    );
+    expect(atEnd.get("s1")).toEqual(stationary);
+    expect(atEnd.get("s11")).toEqual(stationary);
   });
 
   it("keeps a collapsed settled target without inserting a hidden row", () => {

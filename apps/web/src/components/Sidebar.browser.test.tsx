@@ -1,6 +1,10 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  buildProjectGroups,
+  selectProjectGroupingSettings,
+} from "@t3tools/client-runtime/state/project-grouping";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -27,6 +31,7 @@ import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/en
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useUiStateStore } from "../uiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
@@ -437,9 +442,10 @@ describe("sidebar settled pagination", () => {
     threads.unshift(threadShell(activeProject.id, 100));
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    // The open thread is settled, so the collapsed shelf keeps listing it.
     vi.mocked(useThreadRouteTarget).mockReturnValue({
       kind: "server",
-      threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+      threadRef: { environmentId: activeProject.environmentId, threadId: threads[1]!.id },
     });
     vi.mocked(useHandleNewThread).mockReturnValue({
       activeDraftThread: null,
@@ -489,14 +495,26 @@ describe("sidebar settled pagination", () => {
     await vi.waitFor(() => expect(settledRows()).toBe(50));
     scroller.scrollTop = 300;
     scroller.dispatchEvent(new Event("scroll"));
+    const shelfScroller = () =>
+      screen.container
+        .querySelector('[data-thread-item*="settled-"]')!
+        .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
     await act(() => shelf.click());
     expect(shelf.isConnected).toBe(true);
+    expect(settledRows()).toBe(1);
+    // The one-row scroller clamps its offset to 0 without losing the expanded one.
+    shelfScroller().dispatchEvent(new Event("scroll"));
     await act(() => shelf.click());
     expect(settledRows()).toBe(50);
-    const reopened = screen.container
-      .querySelector('[data-thread-item*="settled-"]')!
-      .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    expect(reopened).not.toBe(scroller);
-    expect(reopened.scrollTop).toBe(300);
+    expect(shelfScroller().scrollTop).toBe(300);
+    // Another project scope lists other threads, so its shelf starts at the top.
+    const [group] = buildProjectGroups({
+      projects: [activeProject],
+      settings: selectProjectGroupingSettings(getClientSettings()),
+    });
+    stack.defer(() => useUiStateStore.getState().setSidebarProjectScopeKeys([]));
+    await act(() => useUiStateStore.getState().setSidebarProjectScopeKeys([group!.key]));
+    await vi.waitFor(() => expect(settledRows()).toBe(25));
+    expect(shelfScroller().scrollTop).toBe(0);
   });
 });

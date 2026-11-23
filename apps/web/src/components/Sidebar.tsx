@@ -84,6 +84,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 import { createPortal } from "react-dom";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
@@ -378,6 +379,50 @@ function SettledShelfPager({ onReachEnd }: { readonly onReachEnd: () => void }) 
     );
   }, []);
   return <li ref={ref} aria-hidden className="h-px shrink-0 list-none" />;
+}
+
+interface SettledShelfScroll {
+  readonly scopeKey: string | null;
+  readonly top: number;
+}
+
+/**
+ * The Settled shelf's scroller, mounted per project scope and expansion. An expanded one returns
+ * to its scope's last offset. A collapsed one lists only the open thread, so its clamped offset
+ * is not kept.
+ */
+function SettledShelfScrollArea(props: {
+  readonly saved: RefObject<SettledShelfScroll>;
+  readonly scopeKey: string | null;
+  readonly expanded: boolean;
+  readonly children: ReactNode;
+}) {
+  const { saved, scopeKey, expanded } = props;
+  const attachRoot = (root: HTMLDivElement) => {
+    const viewport = expanded
+      ? root.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]')
+      : null;
+    if (viewport === null) return undefined;
+    if (saved.current.scopeKey === scopeKey) viewport.scrollTop = saved.current.top;
+    const remember = () => {
+      saved.current = { scopeKey, top: viewport.scrollTop };
+    };
+    viewport.addEventListener("scroll", remember, { passive: true });
+    return () => viewport.removeEventListener("scroll", remember);
+  };
+  return (
+    <ScrollArea
+      ref={attachRoot}
+      subtleScrollbars
+      scrollFade
+      chainVerticalScroll
+      // Rows provide keyboard access, as in the sidebar's own scroll area.
+      viewportTabIndex={-1}
+      style={{ maxHeight: `calc(${SETTLED_SHELF_ROWS} * 2.25rem)` }}
+    >
+      {props.children}
+    </ScrollArea>
+  );
 }
 
 const inboxReturns = createInboxReturnTracker();
@@ -1102,7 +1147,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // The Settled shelf scrolls on its own, so its rows get their own motion and shift guard.
   const settledMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const settledShiftGuardRef = useRef<ReturnType<typeof createSidebarShiftGuard> | null>(null);
-  const settledScrollTopRef = useRef(0);
+  const settledScrollRef = useRef<SettledShelfScroll>({ scopeKey: null, top: 0 });
   const [dragState, setDragState] = useState<{
     readonly activeKey: string;
     readonly activeSection: SidebarSection;
@@ -1796,15 +1841,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     motion.update(false);
     const shiftGuard = createSidebarShiftGuard(node);
     settledShiftGuardRef.current = shiftGuard;
-    // Reopening the shelf returns to where it was scrolled; collapsing unmounts the scroller.
-    const viewport = node.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
-    const rememberScroll = () => {
-      settledScrollTopRef.current = viewport?.scrollTop ?? 0;
-    };
-    if (viewport !== null) viewport.scrollTop = settledScrollTopRef.current;
-    viewport?.addEventListener("scroll", rememberScroll, { passive: true });
     return () => {
-      viewport?.removeEventListener("scroll", rememberScroll);
       motion.dispose();
       shiftGuard.dispose();
       if (settledMotionRef.current === motion) settledMotionRef.current = null;
@@ -3861,13 +3898,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         const shelf =
                           settledRows.length > 0 || settledEnd !== null ? (
                             <div className="mt-px">
-                              <ScrollArea
-                                subtleScrollbars
-                                scrollFade
-                                chainVerticalScroll
-                                // Rows provide keyboard access, as in the sidebar's own scroll area.
-                                viewportTabIndex={-1}
-                                style={{ maxHeight: `calc(${SETTLED_SHELF_ROWS} * 2.25rem)` }}
+                              <SettledShelfScrollArea
+                                key={`${projectScopeKey ?? ""}:${settledShelfExpanded}`}
+                                saved={settledScrollRef}
+                                scopeKey={projectScopeKey}
+                                expanded={settledShelfExpanded}
                               >
                                 <ul
                                   ref={attachSettledListRef}
@@ -3877,7 +3912,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   {settledRows}
                                   {settledEnd}
                                 </ul>
-                              </ScrollArea>
+                              </SettledShelfScrollArea>
                               {/* The header's drag transform would anchor a fixed overlay to it. */}
                               {overlayDragKey !== null && threadByKey.has(overlayDragKey)
                                 ? createPortal(

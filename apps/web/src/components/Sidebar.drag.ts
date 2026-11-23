@@ -307,6 +307,11 @@ export function createSidebarSortingStrategy(input: {
               Math.max(0, projectedSettledHeight - shelfCap),
           )
         : 0;
+    // A shelf that loses rows scrolls back to its new end, as the browser clamps it on drop.
+    const projectedScroll =
+      input.settledShelfRows === undefined
+        ? settledScroll
+        : Math.min(settledScroll, Math.max(0, projectedSettledHeight - shelfCap));
     const result = items.map(() => hidden);
     let top = rects[0].top;
     let headerShift = 0;
@@ -321,7 +326,7 @@ export function createSidebarSortingStrategy(input: {
         let y = top - rect.top;
         if (index === headerIndex) headerShift = y;
         else if (isSettledRow(item)) {
-          y -= settledScroll + (input.settledShelfRows === undefined ? 0 : headerShift);
+          y -= projectedScroll + (input.settledShelfRows === undefined ? 0 : headerShift);
         }
         result[index] = { ...stationary, y };
       }
