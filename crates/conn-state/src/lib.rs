@@ -16,11 +16,13 @@ pub mod conn_tools;
 pub mod custom_model_editor;
 mod discard_undo;
 mod drafts;
+pub mod environments;
 mod layout;
 pub mod model_preferences;
 mod order_keys;
 pub mod provider_auth;
 pub mod provider_settings;
+pub mod project_groups;
 pub mod project_settings;
 pub mod providers;
 mod scheduled;
@@ -29,6 +31,8 @@ mod shell;
 mod sidebar;
 pub mod sidebar_drag;
 mod sidebar_nav;
+pub mod sidebar_rows;
+pub mod terminal_settings;
 #[cfg(test)]
 mod test_threads;
 #[cfg(feature = "testkit")]
@@ -89,9 +93,9 @@ pub use crate::settled_shelf::{
     ShelfInput, ShelfView, SidebarPrefs, more_label, shelf_view,
 };
 pub use crate::shell::{
-    OLDER_SETTLED_PAGE_SIZE, OlderPageRequest, OlderSettledCut, OlderSettledView, PageStatus,
-    PendingSubagentRequest, SettledCursor, ShellChange, ShellState, ThreadActivity,
-    is_listed_lineage, is_older_settled,
+    ChildApprovalThread, OLDER_SETTLED_PAGE_SIZE, OlderPageRequest, OlderSettledCut,
+    OlderSettledView, PageStatus, PendingSubagentRequest, SettledCursor, ShellChange, ShellState,
+    ThreadActivity, is_listed_lineage, is_older_settled,
 };
 pub use crate::sidebar::{
     DRAFT_STATUS_LABEL, DraftRowKey, SidebarDraft, SidebarDraftRow, draft_has_content,
@@ -109,9 +113,10 @@ pub use crate::sidebar_nav::{
     thread_traversal_key, traversal_order, tree_key, tree_step,
 };
 pub use crate::thread::{
-    EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,
-    SecretRequestStatus, SubagentModel, ThreadContextWindowSnapshot, ThreadState, TimelineEntry,
-    TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
+    ApprovalDetails, ChildApproval, EntryTiming, ItemStatus, PendingApproval, PendingRequest,
+    RunStatus, RunTiming, SecretRequestStatus, SubagentModel, ThreadContextWindowSnapshot,
+    ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus, child_approvals,
+    parse_iso8601_epoch_ms, request_kind_label, turn_item_detail,
 };
 pub use crate::timeline::{
     LocalDateTime, PLAN_PREVIEW_MAX_LINES, SubagentTone, TurnCheckpointFile, TurnDiffRow,
@@ -119,6 +124,6 @@ pub use crate::timeline::{
     UserInputQuestion, build_turn_diff_tree, build_user_input_answers, collapsed_plan_preview,
     flatten_turn_diff_tree, format_chat_timestamp_tooltip, format_day_aware_timestamp,
     format_duration, format_subagent_display_title, normalize_plan_markdown_for_export,
-    plan_can_collapse, proposed_plan_title, strip_displayed_plan_markdown, subagent_detail,
-    subagent_settled, subagent_status_visual,
+    plain_subagent_detail, plan_can_collapse, proposed_plan_title, strip_displayed_plan_markdown,
+    subagent_detail, subagent_detail_markdown, subagent_settled, subagent_status_visual,
 };
