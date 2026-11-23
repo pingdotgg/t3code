@@ -34,6 +34,7 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffFileStat,
   type ReviewDiffPreviewSource,
+  trimAsciiWhitespace,
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
@@ -452,8 +453,8 @@ function parseUpstreamRefByFirstSeparator(
     return null;
   }
 
-  const remoteName = upstreamRef.slice(0, separatorIndex).trim();
-  const branchName = upstreamRef.slice(separatorIndex + 1).trim();
+  const remoteName = upstreamRef.slice(0, separatorIndex);
+  const branchName = upstreamRef.slice(separatorIndex + 1);
   if (remoteName.length === 0 || branchName.length === 0) {
     return null;
   }
@@ -467,13 +468,13 @@ function parseUpstreamRefByFirstSeparator(
 
 function parseTrackingBranchByUpstreamRef(stdout: string, upstreamRef: string): string | null {
   for (const line of stdout.split("\n")) {
-    const trimmedLine = line.trim();
+    const trimmedLine = trimAsciiWhitespace(line);
     if (trimmedLine.length === 0) {
       continue;
     }
     const [branchNameRaw, upstreamBranchRaw = ""] = trimmedLine.split("\t");
-    const branchName = branchNameRaw?.trim() ?? "";
-    const candidateUpstreamRef = upstreamBranchRaw.trim();
+    const branchName = branchNameRaw ?? "";
+    const candidateUpstreamRef = upstreamBranchRaw;
     if (branchName.length === 0 || candidateUpstreamRef.length === 0) {
       continue;
     }
@@ -490,7 +491,7 @@ function deriveLocalBranchNameFromRemoteRef(branchName: string): string | null {
   if (separatorIndex <= 0 || separatorIndex === branchName.length - 1) {
     return null;
   }
-  const localBranch = branchName.slice(separatorIndex + 1).trim();
+  const localBranch = branchName.slice(separatorIndex + 1);
   return localBranch.length > 0 ? localBranch : null;
 }
 
@@ -592,19 +593,19 @@ function classifyGitFailure(stderr: string): GitCommandFailureReason | null {
 // `--short` and `--abbrev-ref` print `heads/<name>` when a tag shares the branch's name, so
 // branch reads take the full ref and strip the prefix themselves.
 function branchNameFromHeadRef(value: string): string | null {
-  const ref = value.trim();
+  const ref = trimAsciiWhitespace(value);
   return ref.startsWith("refs/heads/") && ref.length > "refs/heads/".length
     ? ref.slice("refs/heads/".length)
     : null;
 }
 
 function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string): string | null {
-  const trimmed = value.trim();
+  const trimmed = trimAsciiWhitespace(value);
   const prefix = `refs/remotes/${remoteName}/`;
   if (!trimmed.startsWith(prefix)) {
     return null;
   }
-  const refName = trimmed.slice(prefix.length).trim();
+  const refName = trimmed.slice(prefix.length);
   return refName.length > 0 && refName !== "HEAD" ? refName : null;
 }
 
@@ -1472,7 +1473,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       ["rev-parse", "--symbolic-full-name", "@{upstream}"],
       true,
-    ).pipe(Effect.map((stdout) => stdout.trim().replace(/^refs\/(?:remotes|heads)\//, "")));
+    ).pipe(
+      Effect.map((stdout) => trimAsciiWhitespace(stdout).replace(/^refs\/(?:remotes|heads)\//, "")),
+    );
 
     if (upstreamRef.length === 0 || upstreamRef === "@{upstream}") {
       return null;
@@ -2056,7 +2059,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         cwd,
         ["symbolic-ref", "--quiet", "HEAD"],
         true,
-      ).pipe(Effect.map((stdout) => stdout.trim())));
+      ).pipe(Effect.map(trimAsciiWhitespace)));
     if (headRef.length === 0) return undefined;
     const upstreamRemote = yield* executeGit(
       "GitVcsDriver.refreshStatusUpstreamIfStale.upstreamRemote",
@@ -2065,7 +2068,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       { allowNonZeroExit: true },
     );
     if (upstreamRemote.exitCode !== 0) return undefined;
-    const remoteName = upstreamRemote.stdout.trim();
+    const remoteName = trimAsciiWhitespace(upstreamRemote.stdout);
     // Empty means no upstream; `.` means the upstream is a local branch.
     if (remoteName.length === 0 || remoteName === ".") return remoteName;
     const gitCommonDir = yield* resolveGitCommonDir(cwd);
@@ -2202,7 +2205,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       ["config", "--get", `branch.${refName}.pushRemote`],
       true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+    ).pipe(Effect.map(trimAsciiWhitespace));
     if (branchPushRemote.length > 0) {
       return branchPushRemote;
     }
@@ -2212,7 +2215,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       ["config", "--get", "remote.pushDefault"],
       true,
-    ).pipe(Effect.map((stdout) => stdout.trim()));
+    ).pipe(Effect.map(trimAsciiWhitespace));
     return pushDefaultRemote.length > 0 ? pushDefaultRemote : null;
   });
 
@@ -2351,7 +2354,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "--symbolic-full-name", `${refName}@{upstream}`],
       { allowNonZeroExit: true },
     );
-    const comparisonRef = upstream.stdout.trim();
+    const comparisonRef = trimAsciiWhitespace(upstream.stdout);
     if (upstream.exitCode !== 0 || !comparisonRef.startsWith("refs/remotes/")) return null;
     return { baseRef: comparisonRef.slice("refs/remotes/".length), comparisonRef };
   });
@@ -2665,7 +2668,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       headRef = "";
     } else {
       branch = branchNameFromHeadRef(branchResult.stdout);
-      headRef = branchResult.stdout.trim();
+      headRef = trimAsciiWhitespace(branchResult.stdout);
     }
     let upstreamRemoteName: string | undefined;
     if (refreshUpstream) {
@@ -2945,13 +2948,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         continue;
       }
       if (line.startsWith("# branch.head ")) {
-        const value = line.slice("# branch.head ".length).trim();
+        const value = trimAsciiWhitespace(line.slice("# branch.head ".length));
         // `(unknown)` is printed while HEAD names no resolvable branch, e.g. mid-`git clone`.
         refName = value === "(detached)" || value === "(unknown)" ? null : value;
         continue;
       }
       if (line.startsWith("# branch.upstream ")) {
-        const value = line.slice("# branch.upstream ".length).trim();
+        const value = trimAsciiWhitespace(line.slice("# branch.upstream ".length));
         upstreamRef = value.length > 0 ? value : null;
         continue;
       }
@@ -4031,7 +4034,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           cwd,
           ["config", "--get-all", `branch.${refName}.merge`],
           true,
-        ).pipe(Effect.map((stdout) => stdout.trim().split("\n").filter(Boolean))),
+        ).pipe(Effect.map((stdout) => trimAsciiWhitespace(stdout).split("\n").filter(Boolean))),
         runGitStdout(
           "GitVcsDriver.pullCurrentBranch.currentBranch",
           cwd,
@@ -5233,7 +5236,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const readConfigValue: GitVcsDriver.GitVcsDriver["Service"]["readConfigValue"] = (cwd, key) =>
     runGitStdout("GitVcsDriver.readConfigValue", cwd, ["config", "--get", key], true).pipe(
-      Effect.map((stdout) => stdout.trim()),
+      Effect.map(trimAsciiWhitespace),
       Effect.map((trimmed) => (trimmed.length > 0 ? trimmed : null)),
     );
 
@@ -5279,7 +5282,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       input.cwd,
       ["rev-parse", "--symbolic-full-name", startPoint],
       { allowNonZeroExit: true },
-    ).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")));
+    ).pipe(
+      Effect.map((result) => (result.exitCode === 0 ? trimAsciiWhitespace(result.stdout) : "")),
+    );
     if (!startRef.startsWith("refs/remotes/")) return;
     yield* executeGitWithStableDiagnostics(
       `${operation}.track`,
@@ -5326,7 +5331,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ? { baseRef: `refs/remotes/${remoteName}/${refName}`, branchName: refName }
         : null;
     }
-    const ref = result.stdout.trim();
+    const ref = trimAsciiWhitespace(result.stdout);
     if (ref.startsWith("refs/heads/")) {
       const branchName = ref.slice("refs/heads/".length);
       return { baseRef: ref, branchName };
@@ -6897,7 +6902,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",
         "--show-current",
-      ]).pipe(Effect.map((stdout) => stdout.trim() || null));
+      ]).pipe(Effect.map((stdout) => trimAsciiWhitespace(stdout) || null));
 
       return { refName };
     },
@@ -6937,7 +6942,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map((stdout) => {
         const branchNames: Array<string> = [];
         for (const line of stdout.split("\n")) {
-          const branchName = line.trim();
+          const branchName = trimAsciiWhitespace(line);
           if (branchName.length > 0) {
             branchNames.push(branchName);
           }
