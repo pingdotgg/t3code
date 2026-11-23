@@ -44,12 +44,8 @@ const engineering: IssueAutomationRule = {
   mappings: { "state-done": "settle" },
 };
 
-function setup(
-  options: {
-    readonly rules?: ReadonlyArray<IssueAutomationRule>;
-    readonly runtimeMode?: RuntimeMode;
-  } = {},
-) {
+function setup(options: { readonly rules?: ReadonlyArray<IssueAutomationRule> } = {}) {
+  const thread: { runtimeMode: RuntimeMode } = { runtimeMode: "full-access" };
   const tracker: { connected: boolean; beforeStates: Effect.Effect<void> } = {
     connected: true,
     beforeStates: Effect.void,
@@ -122,9 +118,7 @@ function setup(
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) =>
-            Effect.succeed(
-              liveThreadShell(id, { runtimeMode: options.runtimeMode ?? "full-access" }),
-            ),
+            Effect.succeed(liveThreadShell(id, { runtimeMode: thread.runtimeMode })),
         }),
         Sqlite.layerMemory,
         NodeCrypto.layer,
@@ -166,7 +160,7 @@ function setup(
     Effect.flatMap((settings) => settings.getSettings),
     Effect.map((settings) => settings.issueThreadAutomationRules),
   );
-  return { tracker, layer, tools, storedRules };
+  return { tracker, thread, layer, tools, storedRules };
 }
 
 describe("issue rule toolkit handlers", () => {
@@ -334,16 +328,22 @@ describe("issue rule toolkit handlers", () => {
   );
 
   it.effect("refuses a write from a caller that may not change environment settings", () => {
-    const { layer, tools, storedRules } = setup({ runtimeMode: "approval-required" });
+    const { tracker, thread, layer, tools, storedRules } = setup();
     return Effect.gen(function* () {
       const call = yield* tools;
-      const error = yield* call("set_issue_status_rule", {
+      const write = call("set_issue_status_rule", {
         tracker: LINEAR,
         containerId: "team-eng",
         statuses: { Done: "settle" },
       }).pipe(Effect.flip);
-      expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "capability_denied" });
-      expect(error.message).toContain("full-access");
+      // The caller leaves Full access while the tracker read is in flight.
+      tracker.beforeStates = Effect.sync(() => {
+        thread.runtimeMode = "approval-required";
+      });
+      for (const error of [yield* write, yield* write]) {
+        expect(error).toMatchObject({ _tag: "OrchestratorMcpFailure", code: "capability_denied" });
+        expect(error.message).toContain("full-access");
+      }
       expect(yield* storedRules).toEqual([]);
     }).pipe(Effect.provide(layer));
   });

@@ -63,13 +63,20 @@ export class IssueThreadAutomationService extends Context.Service<
     readonly save: (
       input: IssueAutomationSaveInput,
     ) => Effect.Effect<IssueAutomationOverview, IssueAutomationError>;
-    /** Applies the change to the rule as stored when it runs, so overlapping edits all land. */
-    readonly edit: (input: IssueAutomationEdit) => Effect.Effect<
+    /**
+     * Applies the change to the rule as stored when it runs, so overlapping edits all land.
+     * `beforeWrite` runs in the save lock right before a write; its failure writes nothing.
+     */
+    readonly edit: <E, R>(
+      input: IssueAutomationEdit,
+      beforeWrite: Effect.Effect<unknown, E, R>,
+    ) => Effect.Effect<
       {
         readonly overview: IssueAutomationOverview;
         readonly catalog: Result.Result<IssueAutomationCatalog, IssueAutomationError>;
       },
-      IssueAutomationError
+      IssueAutomationError | E,
+      R
     >;
     /** Reads every linked issue's status once and organizes the threads whose issues moved. */
     readonly sweep: Effect.Effect<void, IssueAutomationError>;
@@ -264,82 +271,88 @@ const make = Effect.gen(function* () {
     Effect.mapError(wrap("save")),
   );
 
-  const edit = Effect.fn("IssueThreadAutomationService.edit")(
-    function* (input: IssueAutomationEdit) {
-      const { tracker, containerId } = input;
-      const read = yield* catalog({ tracker, containerId }).pipe(Effect.result);
-      yield* saveLock.withPermit(
-        Effect.gen(function* () {
-          const stored = (yield* settings.getSettings).issueThreadAutomationRules;
-          const existing = stored.find(
-            (rule) => rule.tracker === tracker && rule.containerId === containerId,
-          );
-          if (input.remove === true) {
-            if (existing === undefined) return;
-            return yield* settings.updateSettings({
-              issueThreadAutomationRules: stored.filter((rule) => rule !== existing),
-            });
-          }
-          const reached =
-            read._tag === "Success" &&
-            (existing === undefined || sameWorkspace(read.success.workspace, existing.workspace))
-              ? read.success
-              : undefined;
-          const unreachable =
-            read._tag === "Failure"
-              ? read.failure
-              : new IssueAutomationError({
-                  operation: "save",
-                  detail: "The connected account is in another workspace.",
-                });
-          const base: IssueAutomationRule | undefined =
-            existing ??
-            (reached === undefined
-              ? undefined
-              : {
-                  id: yield* random.uuidV4().pipe(Effect.orDie),
-                  enabled: true,
-                  tracker,
-                  workspace: reached.workspace,
-                  containerId,
-                  containerName:
-                    reached.containers.find((container) => container.id === containerId)?.name ??
-                    containerId,
-                  mappings: {},
-                });
-          if (base === undefined || (reached === undefined && input.statuses !== undefined))
-            return yield* unreachable;
-          const rule = {
-            ...base,
-            enabled: input.enabled ?? base.enabled,
-            mappings: yield* applyStatuses(
-              base.mappings,
-              input.statuses ?? {},
-              reached?.states ?? [],
+  // Settings errors are wrapped where they occur, so `beforeWrite`'s own error passes through.
+  const edit: IssueThreadAutomationService["Service"]["edit"] = Effect.fn(
+    "IssueThreadAutomationService.edit",
+  )(function* (input, beforeWrite) {
+    const { tracker, containerId } = input;
+    const read = yield* catalog({ tracker, containerId }).pipe(Effect.result);
+    yield* saveLock.withPermit(
+      Effect.gen(function* () {
+        const stored = (yield* settings.getSettings.pipe(Effect.mapError(wrap("save"))))
+          .issueThreadAutomationRules;
+        const existing = stored.find(
+          (rule) => rule.tracker === tracker && rule.containerId === containerId,
+        );
+        const write = (rules: ReadonlyArray<IssueAutomationRule>) =>
+          beforeWrite.pipe(
+            Effect.andThen(
+              settings
+                .updateSettings({ issueThreadAutomationRules: rules })
+                .pipe(Effect.mapError(wrap("save"))),
             ),
-          };
-          // Every save starts a new baseline, so an unchanged rule is not saved again.
-          if (
-            base === existing &&
-            rule.enabled === existing.enabled &&
-            sameMappings(rule.mappings, existing.mappings)
-          )
-            return;
-          // Like save, a rule the connection cannot reach can only be switched off.
-          if (reached === undefined && rule.enabled) return yield* unreachable;
-          const saved = { ...rule, generation: yield* newCommandId };
-          yield* settings.updateSettings({
-            issueThreadAutomationRules:
-              existing === undefined
-                ? [...stored, saved]
-                : stored.map((candidate) => (candidate === existing ? saved : candidate)),
-          });
-        }),
-      );
-      return { overview: yield* overview, catalog: read };
-    },
-    Effect.mapError(wrap("save")),
-  );
+          );
+        if (input.remove === true) {
+          if (existing === undefined) return;
+          return yield* write(stored.filter((rule) => rule !== existing));
+        }
+        const reached =
+          read._tag === "Success" &&
+          (existing === undefined || sameWorkspace(read.success.workspace, existing.workspace))
+            ? read.success
+            : undefined;
+        const unreachable =
+          read._tag === "Failure"
+            ? read.failure
+            : new IssueAutomationError({
+                operation: "save",
+                detail: "The connected account is in another workspace.",
+              });
+        const base: IssueAutomationRule | undefined =
+          existing ??
+          (reached === undefined
+            ? undefined
+            : {
+                id: yield* random.uuidV4().pipe(Effect.orDie),
+                enabled: true,
+                tracker,
+                workspace: reached.workspace,
+                containerId,
+                containerName:
+                  reached.containers.find((container) => container.id === containerId)?.name ??
+                  containerId,
+                mappings: {},
+              });
+        if (base === undefined || (reached === undefined && input.statuses !== undefined))
+          return yield* unreachable;
+        const rule = {
+          ...base,
+          enabled: input.enabled ?? base.enabled,
+          mappings: yield* applyStatuses(
+            base.mappings,
+            input.statuses ?? {},
+            reached?.states ?? [],
+          ),
+        };
+        // Every save starts a new baseline, so an unchanged rule is not saved again.
+        if (
+          base === existing &&
+          rule.enabled === existing.enabled &&
+          sameMappings(rule.mappings, existing.mappings)
+        )
+          return;
+        // Like save, a rule the connection cannot reach can only be switched off.
+        if (reached === undefined && rule.enabled) return yield* unreachable;
+        const saved = { ...rule, generation: yield* newCommandId };
+        yield* write(
+          existing === undefined
+            ? [...stored, saved]
+            : stored.map((candidate) => (candidate === existing ? saved : candidate)),
+        );
+      }),
+    );
+    return { overview: yield* overview, catalog: read };
+  });
 
   /** One read per rule: each issue's status id by key, or null when the read failed. */
   const readStatuses = Effect.fn("IssueThreadAutomationService.readStatuses")(function* (

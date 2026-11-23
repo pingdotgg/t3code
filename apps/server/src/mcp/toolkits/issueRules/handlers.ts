@@ -58,10 +58,11 @@ const make = Effect.gen(function* () {
         return view(input.tracker, overview, catalog, input.containerId);
       }),
     ),
-    set_issue_status_rule: McpToolAccess.writesEnvironment((input) =>
+    set_issue_status_rule: McpToolAccess.writesEnvironment((input, check) =>
       Effect.gen(function* () {
         yield* McpInvocationContext.requireMcpCapability("issues");
-        const { overview, catalog } = yield* automation.edit(input);
+        // The caller's turn may have ended, or its modes changed, during the tracker read.
+        const { overview, catalog } = yield* automation.edit(input, check);
         return view(input.tracker, overview, catalog, input.containerId);
       }),
     ),
