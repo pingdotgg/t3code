@@ -354,7 +354,7 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
-import { resolveThreadSyncPhase } from "../threadSync";
+import { resolveThreadSyncPhase, threadSyncLabel } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
 import {
   deriveLatestContextWindowSnapshot,
@@ -1271,6 +1271,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeEnvironmentUnavailable =
     activeEnvironment !== null && activeEnvironment.connection.phase !== "connected";
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
+  // A cached copy can be behind the server, so a send waits until the thread is live.
+  // An unreachable environment keeps its own notice and send rules.
+  const threadCatchingUp = threadSyncPhase === "syncing" && !activeEnvironmentUnavailable;
   const activeEnvironmentUnavailableState = (() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
       return null;
@@ -3861,9 +3864,11 @@ export default function ChatView(props: ChatViewProps) {
                                           ? gt("Sending feedback")
                                           : threadDetailLoading
                                             ? gt("Messages loading")
-                                            : worktreeSetupBlocksSend
-                                              ? gt("Preparing worktree")
-                                              : projectCloneSendBlockReason
+                                            : threadCatchingUp
+                                              ? threadSyncLabel("syncing", messages)
+                                              : worktreeSetupBlocksSend
+                                                ? gt("Preparing worktree")
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={
