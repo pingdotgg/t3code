@@ -42,7 +42,7 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   again. A command that writes nothing answers its own thread's latest sequence.
 - Thread setters record their event even when nothing changes, as T3's deciders do.
   `thread.auto-settle` refuses a thread set active or changed after its snapshot, then
-  settles. `thread.visit` keeps the later visit and records `thread.visit-recorded`.
+  settles. A settle whose `expectedLatestRunId` is not the latest run is refused. `thread.visit` keeps the later visit and records `thread.visit-recorded`.
 - The receipts' high-water mark reads an index. Opening the engine off the runtime thread
   is #261's.
 
@@ -50,6 +50,7 @@ Proof: `a_fork_receipt_belongs_to_its_target_thread`,
 `receipts_from_before_owners_name_them_or_refuse`,
 `a_repin_records_its_event_and_a_quiet_stop_answers_its_thread`,
 `a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
+`a_settle_for_a_stale_run_is_refused`,
 `a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
 `the_receipt_high_water_reads_an_index`, `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
 `a_retried_command_returns_its_receipt` (T3's own tests, ported),

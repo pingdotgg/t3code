@@ -588,6 +588,44 @@ async fn auto_settle_rechecks_the_thread_against_its_snapshot() {
     );
 }
 
+/// A settle sent for a run that is no longer the thread's latest is refused, as T3's
+/// (`expectedLatestRunId`, every run by ordinal); a thread with no run has none to match.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settle_for_a_stale_run_is_refused() {
+    let db = TempDb::new("stale-settle");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let settle = |id: &str, run: &str| json!({"type": "thread.settle", "commandId": id, "threadId": "t1", "expectedLatestRunId": run});
+    let refused = rejection(&engine, settle("s0", "run:t1:1")).await;
+    assert!(
+        refused.contains("The thread received another run before settlement."),
+        "{refused}"
+    );
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    for (command, text) in [("c2", "first"), ("c3", "second")] {
+        dispatch(&engine, message("t1", command, text)).await;
+        until_run_ends(&mut thread).await;
+    }
+    let refused = rejection(&engine, settle("s1", "run:t1:1")).await;
+    assert!(
+        refused.contains("The thread received another run before settlement."),
+        "{refused}"
+    );
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(
+        shell["threads"][0]["settledOverride"],
+        Value::Null,
+        "not settled"
+    );
+    dispatch(&engine, settle("s2", "run:t1:2")).await;
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["settledOverride"], "settled");
+}
+
 /// `thread.visit` as T3's: a visit older than the stored one keeps the later time and records
 /// nothing; a newer one records `thread.visit-recorded`, not a copy of the thread.
 #[tokio::test(flavor = "current_thread")]

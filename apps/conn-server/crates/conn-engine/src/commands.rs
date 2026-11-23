@@ -2340,14 +2340,14 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
     }
     refuse_archived(tx, &command)?;
+    // T3 compares every run, queued ones too, and refuses when the latest is another.
     if let Some(expected) = command["expectedLatestRunId"].as_str() {
         let latest = tx
             .entities(&thread_id, "runs")?
             .into_iter()
-            .filter(|r| r["status"] != "queued")
             .max_by_key(|r| r["ordinal"].as_u64().unwrap_or(0));
-        if latest.is_some_and(|r| r["id"] != expected) {
-            return Ok(vec![]);
+        if latest.is_none_or(|r| r["id"] != expected) {
+            return reject("The thread received another run before settlement.");
         }
     }
     if active_run(tx, &thread_id)?.is_some() {
