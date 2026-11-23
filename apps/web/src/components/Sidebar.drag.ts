@@ -19,6 +19,60 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
     item.marker === "snoozed-header" ||
     item.marker === "settled-header");
 
+const SCROLL_VIEWPORT = '[data-slot="scroll-area-viewport"]';
+
+/** A scroll area inside the sidebar's own, such as the Settled shelf's. */
+export function isNestedSidebarScroller(element: Element) {
+  return element.parentElement?.closest(SCROLL_VIEWPORT) != null;
+}
+
+/** Keeps the lifted row inside the sidebar's scroll area; a nested shelf scroller would trap it. */
+export const restrictToSidebarViewport: Modifier = ({
+  transform,
+  draggingNodeRect,
+  scrollableAncestors,
+  scrollableAncestorRects,
+}) => {
+  const bounds =
+    scrollableAncestorRects[
+      scrollableAncestors.findIndex((element) => !isNestedSidebarScroller(element))
+    ];
+  if (!draggingNodeRect || !bounds) return transform;
+  const y = Math.min(
+    Math.max(transform.y, bounds.top - draggingNodeRect.top),
+    bounds.top + bounds.height - draggingNodeRect.bottom,
+  );
+  const x = Math.min(
+    Math.max(transform.x, bounds.left - draggingNodeRect.left),
+    bounds.left + bounds.width - draggingNodeRect.right,
+  );
+  return { ...transform, x, y };
+};
+
+/**
+ * Leaves out rows a nested scroller has scrolled out of view. Their rects still overlap the
+ * rows around the scroller, so they would otherwise win collisions there.
+ */
+export function excludeScrolledOutRows(detect: CollisionDetection): CollisionDetection {
+  return (args) => {
+    const bounds = new Map<Element, DOMRect>();
+    const droppableContainers = args.droppableContainers.filter((container) => {
+      const scroller = container.node.current?.parentElement?.closest(SCROLL_VIEWPORT);
+      if (!scroller || !isNestedSidebarScroller(scroller)) return true;
+      let visible = bounds.get(scroller);
+      if (visible === undefined) {
+        visible = scroller.getBoundingClientRect();
+        bounds.set(scroller, visible);
+      }
+      const rect = args.droppableRects.get(container.id);
+      if (!rect) return false;
+      const middle = rect.top + rect.height / 2;
+      return middle >= visible.top && middle <= visible.bottom;
+    });
+    return detect({ ...args, droppableContainers });
+  };
+}
+
 export function restrictBelowSidebarLabel(
   { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
   offset: number,
@@ -98,6 +152,11 @@ export function createSidebarSortingStrategy(input: {
   settledVisibleCount?: number;
   routeThreadKey?: string | null;
   snoozedThreadCount?: number;
+  /**
+   * Rows the Settled shelf's own scroller shows. Its rows then sit inside the Settled header's
+   * element, move with it, and fill no more than this many rows of the list.
+   */
+  settledShelfRows?: number;
   cardHeight?: number;
   slimHeight?: number;
   boundaryLabelHeight?: number;
@@ -208,19 +267,49 @@ export function createSidebarSortingStrategy(input: {
             ? fallback
             : (rect?.height ?? fallback);
     });
+    const isSettledRow = (item: SidebarListItem | undefined) =>
+      item?.kind === "thread" && item.section === "settled";
+    const headerIndex = indices.get(sidebarMarkerId("settled-header"));
+    const headerRect = headerIndex === undefined ? undefined : rects[headerIndex];
+    const firstSettledRect = rects[items.findIndex(isSettledRow)];
+    const lastSettledRect = rects[items.findLastIndex(isSettledRow)];
+    // Settled rows scroll in their own shelf right below the header, so their rects sit that
+    // scroll offset above where the projection lays them out.
+    const settledScroll =
+      headerRect && firstSettledRect
+        ? Math.max(0, headerRect.bottom + 1 - firstSettledRect.top)
+        : 0;
+    const shelfCap =
+      input.settledShelfRows === undefined
+        ? Number.POSITIVE_INFINITY
+        : input.settledShelfRows * slimHeight;
+    const settledHeight =
+      firstSettledRect && lastSettledRect ? lastSettledRect.bottom - firstSettledRect.top : 0;
+    const projectedSettledHeight = projected.reduce(
+      (sum, item, index) => (isSettledRow(item) ? sum + heights[index]! + 1 : sum),
+      -1,
+    );
     const firstShelf = items.findIndex(isShelfHeader);
     const shelfRect = rects[firstShelf];
     const beforeShelf = rects[firstShelf - 1];
     const lastRect = rects.at(-1);
+    const listBottom =
+      firstSettledRect && isSettledRow(items.at(-1))
+        ? firstSettledRect.top + settledScroll + Math.min(settledHeight, shelfCap)
+        : lastRect?.bottom;
     let shelfSpace =
-      shelfRect && beforeShelf && lastRect && shelfRect.top > beforeShelf.bottom + 1
+      shelfRect && beforeShelf && listBottom !== undefined && shelfRect.top > beforeShelf.bottom + 1
         ? Math.max(
             0,
-            lastRect.bottom - rects[0].top - heights.reduce((sum, height) => sum + height + 1, -1),
+            listBottom -
+              rects[0].top -
+              heights.reduce((sum, height) => sum + height + 1, -1) +
+              Math.max(0, projectedSettledHeight - shelfCap),
           )
         : 0;
     const result = items.map(() => hidden);
     let top = rects[0].top;
+    let headerShift = 0;
     for (const [projectedIndex, item] of projected.entries()) {
       if (isShelfHeader(item)) {
         top += shelfSpace;
@@ -228,7 +317,14 @@ export function createSidebarSortingStrategy(input: {
       }
       const index = indices.get(sidebarListItemId(item));
       const rect = index === undefined ? undefined : rects[index];
-      if (index !== undefined && rect) result[index] = { ...stationary, y: top - rect.top };
+      if (index !== undefined && rect) {
+        let y = top - rect.top;
+        if (index === headerIndex) headerShift = y;
+        else if (isSettledRow(item)) {
+          y -= settledScroll + (input.settledShelfRows === undefined ? 0 : headerShift);
+        }
+        result[index] = { ...stationary, y };
+      }
       top += heights[projectedIndex]! + 1;
     }
     result[activeIndex] = stationary;

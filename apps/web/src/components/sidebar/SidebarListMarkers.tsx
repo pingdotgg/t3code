@@ -14,6 +14,12 @@ function SortableSidebarMarker(props: {
   marker: SidebarListMarker;
   className?: string;
   children?: ReactNode;
+  /**
+   * Rides along with the marker's drag transforms without counting toward its measured rect.
+   * Pass null rather than undefined while empty, so the marker keeps its element and focus.
+   */
+  below?: ReactNode | undefined;
+  belowClassName?: string | undefined;
   revealOverflow?: boolean;
   "data-testid"?: string;
 }) {
@@ -28,17 +34,32 @@ function SortableSidebarMarker(props: {
       node.current?.firstElementChild?.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }, [node, props.revealOverflow, transform?.y]);
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    transition: props.marker.endsWith("-placeholder") ? "none" : transition,
+    visibility: transform?.scaleY === 0 ? ("hidden" as const) : undefined,
+  };
+  if (props.below !== undefined) {
+    return (
+      <li
+        data-thread-selection-safe
+        className={cn("list-none", props.belowClassName)}
+        style={style}
+      >
+        <div ref={setNodeRef} data-testid={props["data-testid"]} className={props.className}>
+          {props.children}
+        </div>
+        {props.below}
+      </li>
+    );
+  }
   return (
     <li
       ref={setNodeRef}
       data-thread-selection-safe
       data-testid={props["data-testid"]}
       className={cn("list-none", props.className)}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition: props.marker.endsWith("-placeholder") ? "none" : transition,
-        visibility: transform?.scaleY === 0 ? "hidden" : undefined,
-      }}
+      style={style}
     >
       {props.children}
     </li>
@@ -119,6 +140,8 @@ export function SidebarSectionHeader(props: {
   dragging?: boolean;
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
+  /** The shelf's rows, when they scroll on their own below the header. */
+  below?: ReactNode | undefined;
 }) {
   const shelf =
     props.marker === "working-header"
@@ -130,7 +153,9 @@ export function SidebarSectionHeader(props: {
     <SortableSidebarMarker
       marker={props.marker}
       data-testid={`sidebar-${props.marker}`}
-      className={cn("relative mx-0.5 h-8", props.className)}
+      className={cn("relative mx-0.5 h-8", props.below === undefined && props.className)}
+      belowClassName={props.className}
+      below={props.below}
     >
       <CollapsibleSectionHeader
         data-sidebar-row={`shelf:${shelf}`}

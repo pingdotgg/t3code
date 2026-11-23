@@ -486,14 +486,18 @@ const SIDEBAR_SORTABLE_DRAG_ENABLED = { draggable: false } as const;
 // Takes the row's props rather than a render function: a closure from the
 // sidebar body is new on every sidebar render, which rebuilt the bag and
 // re-rendered every memoized row with it.
-export function SortableThreadRow(
-  props: Omit<SidebarThreadRowProps, "sortable"> & {
-    sortableId: string;
-    sortableDisabled: boolean;
-    contextDrag: boolean;
-  },
-) {
-  const { sortableId, sortableDisabled, contextDrag, ...rowProps } = props;
+type SortableThreadRowProps = Omit<SidebarThreadRowProps, "sortable"> & {
+  sortableId: string;
+  sortableDisabled: boolean;
+  contextDrag: boolean;
+  /** The drag overlay draws this row while it is lifted, so the source holds its place unseen. */
+  lifted?: boolean;
+};
+
+const LIFTED_SOURCE_TRANSFORM = { x: 0, y: 0, scaleX: 1, scaleY: 0 };
+
+export function SortableThreadRow(props: SortableThreadRowProps) {
+  const { sortableId, sortableDisabled, contextDrag, lifted = false, ...rowProps } = props;
   const canOperateThread = useEnvironmentScope(
     rowProps.thread.environmentId,
     AuthOrchestrationOperateScope,
@@ -511,24 +515,53 @@ export function SortableThreadRow(
   const bag = {
     listeners,
     setNodeRef,
-    transform: contextDrag ? null : transform,
+    transform: lifted ? LIFTED_SOURCE_TRANSFORM : contextDrag ? null : transform,
     transition: contextDrag && isDragging ? "transform 150ms ease-out" : transition,
-    isDragging: isDragging && !contextDrag,
+    isDragging: isDragging && !contextDrag && !lifted,
   };
-  // The sidebar arranges rows from quiet shells, which hold still while a
-  // thread streams; reading the live shell here re-renders only this row.
-  const liveThread = useThreadShell(
-    scopeThreadRef(rowProps.thread.environmentId, rowProps.thread.id),
-  );
-  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
-  const thread =
-    liveThread === null
-      ? rowProps.thread
-      : rowProps.thread.runtime !== null
-        ? asLaunchingThread(liveThread)
-        : liveThread;
+  const thread = useArrangedLiveThread(rowProps.thread);
   // Keyed by variant so a card/slim switch remounts the row.
   return <SidebarThreadRow key={rowProps.variant} {...rowProps} thread={thread} sortable={bag} />;
+}
+
+const noopNodeRef = () => {};
+
+/** The lifted copy of a row inside the drag overlay; it registers nothing with dnd-kit. */
+export function DragOverlayThreadRow(props: SortableThreadRowProps) {
+  const {
+    sortableId: _sortableId,
+    sortableDisabled: _sortableDisabled,
+    contextDrag: _contextDrag,
+    lifted: _lifted,
+    revealRef: _revealRef,
+    ...rowProps
+  } = props;
+  const thread = useArrangedLiveThread(rowProps.thread);
+  return (
+    <SidebarThreadRow
+      {...rowProps}
+      thread={thread}
+      sortable={{
+        listeners: undefined,
+        setNodeRef: noopNodeRef,
+        transform: null,
+        transition: undefined,
+        isDragging: true,
+      }}
+    />
+  );
+}
+
+// The sidebar arranges rows from quiet shells, which hold still while a
+// thread streams; reading the live shell here re-renders only this row.
+function useArrangedLiveThread(arranged: SidebarThreadSummary) {
+  const liveThread = useThreadShell(scopeThreadRef(arranged.environmentId, arranged.id));
+  // A runtime on the arranged copy but not the run-less live shell is the list's launch overlay.
+  return liveThread === null
+    ? arranged
+    : arranged.runtime !== null
+      ? asLaunchingThread(liveThread)
+      : liveThread;
 }
 export type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
 const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {

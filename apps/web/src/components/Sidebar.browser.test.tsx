@@ -1,7 +1,6 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
@@ -35,10 +34,6 @@ import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
 
-vi.mock(import("../state/olderSettledShelf"), async (original) => {
-  const actual = await original();
-  return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
-});
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
@@ -420,7 +415,7 @@ describe("sidebar thread menu", () => {
 });
 
 describe("sidebar settled pagination", () => {
-  it("keeps the viewport in place when showing more settled threads", async () => {
+  it("pages in settled threads at the end of their scroller and starts over when reopened", async () => {
     using stack = new DisposableStack();
     const style = document.createElement("style");
     style.textContent = appCss;
@@ -428,15 +423,6 @@ describe("sidebar settled pagination", () => {
     stack.defer(() => style.remove());
     const focusController = createWorkspaceFocusController(document);
     stack.defer(() => focusController.dispose());
-    let loading = false;
-    const originalShelf = vi.mocked(shelfHooks.useOlderSettledShelf).getMockImplementation()!;
-    using _shelf = vi.spyOn(shelfHooks, "useOlderSettledShelf").mockImplementation((input) => ({
-      ...originalShelf(input),
-      loading,
-      retry: () => {
-        loading = true;
-      },
-    }));
     const activeProject = project("active");
     const threads = Array.from({ length: 70 }, (_, index) =>
       makeThreadFixture({
@@ -481,7 +467,7 @@ describe("sidebar settled pagination", () => {
     await using screen = await render(
       <SidebarProvider
         {...workspaceAreaProps("sidebar", 0, "Threads")}
-        style={{ height: 400, minHeight: 400 }}
+        style={{ height: 800, minHeight: 800 }}
       >
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
       </SidebarProvider>,
@@ -490,26 +476,20 @@ describe("sidebar settled pagination", () => {
       '[data-sidebar-row="shelf:settled"]',
     )!;
     if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
-    const more = screen.getByRole("button", { name: "Show 25 more", exact: true });
-    await expect.element(more).toBeInTheDocument();
-    const moreButton = more.element() as HTMLButtonElement;
-    const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
-    viewport.style.height = "300px";
-    viewport.style.maxHeight = "300px";
-    moreButton.scrollIntoView({ block: "nearest" });
-    const before = viewport.scrollTop;
-    expect(before).toBeGreaterThan(0);
-    moreButton.focus({ preventScroll: true });
-    await act(() => moreButton.click());
-    await expect
-      .element(screen.getByRole("button", { name: "Loading", exact: true }))
-      .toBeInTheDocument();
-    await expect
-      .element(screen.getByRole("button", { name: "Loading", exact: true }))
-      .toHaveFocus();
-    expect(viewport.scrollTop).toBe(before);
-    const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
-    await act(() => moreButton.click());
-    expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+    const settledRows = () =>
+      screen.container.querySelectorAll('[data-thread-item*="settled-"]').length;
+    await vi.waitFor(() => expect(settledRows()).toBe(25));
+    const scroller = screen.container
+      .querySelector('[data-thread-item*="settled-"]')!
+      .closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    // The shelf scrolls on its own, inside the sidebar's scroll area.
+    expect(scroller.parentElement!.closest('[data-slot="scroll-area-viewport"]')).not.toBeNull();
+    expect(scroller.scrollHeight).toBeGreaterThan(scroller.clientHeight);
+    await act(() => scroller.scrollTo({ top: scroller.scrollHeight }));
+    await vi.waitFor(() => expect(settledRows()).toBe(50));
+    await act(() => shelf.click());
+    expect(shelf.isConnected).toBe(true);
+    await act(() => shelf.click());
+    await vi.waitFor(() => expect(settledRows()).toBe(25));
   });
 });

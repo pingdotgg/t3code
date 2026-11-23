@@ -491,6 +491,70 @@ describe("sidebar drag projection", () => {
     expect(result.get("s")?.y).toBe(13);
   });
 
+  it("moves rows in a scrolled Settled shelf as it moves them unscrolled", () => {
+    const items = [
+      pinnedHeader,
+      thread("p", "pinned"),
+      divider,
+      thread("a", "active"),
+      settledHeader,
+      thread("s1", "settled"),
+      thread("s2", "settled"),
+      thread("s3", "settled"),
+    ];
+    const strategy = createSidebarSortingStrategy({
+      items,
+      settledOrder: ["a", "s1", "s2", "s3"],
+      settledExpanded: true,
+    });
+    const unscrolled = layout(items, "a", "s2");
+    // The shelf's own scroller has scrolled its rows 50px up.
+    const scrolled = {
+      ...unscrolled,
+      rects: unscrolled.rects.map((rect, index) =>
+        items[index]?.kind === "thread" && items[index].section === "settled"
+          ? { ...rect, top: rect.top - 50, bottom: rect.bottom - 50 }
+          : rect,
+      ),
+    };
+    const project = (args: typeof unscrolled) =>
+      items.map((_, index) => strategy({ ...args, index }));
+    expect(project(scrolled)).toEqual(project(unscrolled));
+  });
+
+  it("holds a full Settled shelf still and moves its rows with the header", () => {
+    const settled = Array.from({ length: 12 }, (_, index) => thread(`s${index}`, "settled"));
+    const items = [pinnedHeader, divider, thread("a1", "active"), settledHeader, ...settled];
+    const input = {
+      items,
+      settledOrder: settled.map((item) => sidebarListItemId(item)),
+      settledExpanded: true,
+    };
+    const unspaced = layout(items, "s0", "a1");
+    // 100px of free space sits above the bottom-anchored shelf.
+    const args = {
+      ...unspaced,
+      rects: unspaced.rects.map((rect, index) =>
+        index >= items.indexOf(settledHeader)
+          ? { ...rect, top: rect.top + 100, bottom: rect.bottom + 100 }
+          : rect,
+      ),
+    };
+    const project = (strategyInput: Parameters<typeof createSidebarSortingStrategy>[0]) => {
+      const strategy = createSidebarSortingStrategy(strategyInput);
+      return new Map(
+        items.map((item, index) => [sidebarListItemId(item), strategy({ ...args, index })]),
+      );
+    };
+    // A flat shelf shrinks by the lifted row, so its header drops a row.
+    expect(project(input).get(sidebarMarkerId("settled-header"))?.y).toBe(37);
+    // A scroller still full after losing the row keeps its height, so the header stays, and the
+    // rows inside it move relative to the header: the next row closes the gap.
+    const shelf = project({ ...input, settledShelfRows: 8.5 });
+    expect(shelf.get(sidebarMarkerId("settled-header"))?.y).toBe(0);
+    expect(shelf.get("s1")).toEqual({ ...stationary, y: -37 });
+  });
+
   it("keeps a collapsed settled target without inserting a hidden row", () => {
     const items = [
       pinnedHeader,

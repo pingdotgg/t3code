@@ -26,6 +26,7 @@ function ScrollArea({
   scrollFadePadding = true,
   scrollbarGutter = false,
   hideScrollbars = false,
+  subtleScrollbars = false,
   chainVerticalScroll = false,
   observeContent = false,
   radius = "inherit",
@@ -36,6 +37,8 @@ function ScrollArea({
   scrollFadePadding?: boolean;
   scrollbarGutter?: boolean;
   hideScrollbars?: boolean;
+  /** Thinner, fainter scrollbars that show only while the area scrolls, not on hover. */
+  subtleScrollbars?: boolean;
   chainVerticalScroll?: boolean;
   observeContent?: boolean;
   radius?: "inherit" | "none";
@@ -76,8 +79,8 @@ function ScrollArea({
       </ScrollAreaPrimitive.Viewport>
       {!hideScrollbars && (
         <>
-          <ScrollBar orientation="vertical" />
-          <ScrollBar orientation="horizontal" />
+          <ScrollBar orientation="vertical" subtle={subtleScrollbars} />
+          <ScrollBar orientation="horizontal" subtle={subtleScrollbars} />
           <ScrollAreaPrimitive.Corner data-slot="scroll-area-corner" />
         </>
       )}
@@ -88,12 +91,16 @@ function ScrollArea({
 function ScrollBar({
   className,
   orientation = "vertical",
+  subtle = false,
   ...props
-}: ScrollAreaPrimitive.Scrollbar.Props) {
+}: ScrollAreaPrimitive.Scrollbar.Props & { subtle?: boolean }) {
   return (
     <ScrollAreaPrimitive.Scrollbar
       className={cn(
-        "flex opacity-0 transition-opacity delay-300 data-[orientation=horizontal]:mx-1 data-[orientation=horizontal]:mb-px data-[orientation=horizontal]:h-1.5 data-[orientation=vertical]:my-1 data-[orientation=vertical]:mr-px data-[orientation=vertical]:w-1.5 data-[orientation=horizontal]:flex-col data-hovering:opacity-100 data-scrolling:opacity-100 data-hovering:delay-0 data-scrolling:delay-0 data-hovering:duration-100 data-scrolling:duration-100",
+        "flex opacity-0 transition-opacity delay-300 data-[orientation=horizontal]:mx-1 data-[orientation=horizontal]:mb-px data-[orientation=vertical]:my-1 data-[orientation=vertical]:mr-px data-[orientation=horizontal]:flex-col data-scrolling:delay-0 data-scrolling:duration-100",
+        subtle
+          ? "data-[orientation=horizontal]:h-1 data-[orientation=vertical]:w-1 data-scrolling:opacity-60"
+          : "data-[orientation=horizontal]:h-1.5 data-[orientation=vertical]:w-1.5 data-hovering:opacity-100 data-scrolling:opacity-100 data-hovering:delay-0 data-hovering:duration-100",
         className,
       )}
       data-slot="scroll-area-scrollbar"
