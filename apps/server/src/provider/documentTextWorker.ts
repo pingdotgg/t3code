@@ -631,7 +631,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       new Map(
         [...all(read(name), "Relationship")]
           .filter((rel) => rel.attrs.TargetMode !== "External")
-          .map((rel) => [rel.attrs.Id, rel.attrs.Target]),
+          .map((rel) => [rel.attrs.Id, rel.attrs]),
       );
     if (extension === ".docx") {
       // The package relationship names the main part; Word for the web saves word/document2.xml.
@@ -682,14 +682,18 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       );
       const cellFormats = styles ? all(styles, "cellXfs").next().value : undefined;
       const formats = cellFormats ? children(cellFormats) : [];
-      const strings = files.has("xl/sharedStrings.xml")
-        ? [...all(read("xl/sharedStrings.xml"), "si")]
-        : [];
-      const populatedStrings = strings.map(hasCellText);
       const rels = relations("xl/_rels/workbook.xml.rels");
+      const sharedTarget = [...rels.values()].find((rel) =>
+        rel.Type?.endsWith("/sharedStrings"),
+      )?.Target;
+      const sharedPath = sharedTarget
+        ? NodePath.posix.resolve("/xl", sharedTarget).slice(1)
+        : "xl/sharedStrings.xml";
+      const strings = files.has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
+      const populatedStrings = strings.map(hasCellText);
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
-        const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id);
+        const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
         if (!target) {
           skip(`sheet relationship ${sheet.attrs.name}`);
           continue;
@@ -764,7 +768,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       let index = 0;
       for (const slide of children(slideList).filter((node) => node.name === "sldId")) {
         yield `\n\n## Slide ${++index}\n`;
-        const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id);
+        const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id)?.Target;
         if (!target) {
           skip(`slide relationship ${index}`);
           continue;
