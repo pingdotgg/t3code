@@ -326,6 +326,7 @@ describe("Antigravity model catalog", () => {
       status: "ready",
       enabled: true,
       installed: true,
+      version: null,
       auth: { status: "authenticated" },
       checkedAt: "2026-11-23T00:00:00.000Z",
       slashCommands: [],
