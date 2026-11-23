@@ -788,6 +788,55 @@ async fn a_restart_cancels_orphaned_native_subagents() {
     );
 }
 
+/// Release and recovery end a subagent thread's runless root turns and what hangs under them
+/// (`endRunlessRootTurns`), not every open row: a subagent nested there keeps its node for its
+/// own end, and a runless item outside the root turn stays too.
+#[tokio::test(flavor = "current_thread")]
+async fn a_restart_ends_only_the_runless_root_turns_of_a_subagent_thread() {
+    let db = TempDb::new("orphans-restart-root-turns");
+    {
+        let (engine, _) = open(&db);
+        dispatch(&engine, create("t1", "c1")).await;
+        seed_native_subagents(&engine, "pt:gone").await;
+        engine
+            .inner()
+            .write(|tx| {
+                use crate::store::Draft;
+                let now = tx.now().to_owned();
+                tx.append(Draft::new(
+                    "child",
+                    "node.updated",
+                    json!({"id": "node:nested", "threadId": "child", "runId": null,
+                        "kind": "subagent", "status": "running", "startedAt": now,
+                        "completedAt": null}),
+                ))?;
+                tx.append(Draft::new(
+                    "child",
+                    "turn-item.updated",
+                    json!({"id": "item:loose", "threadId": "child", "runId": null,
+                        "nodeId": null, "status": "running", "type": "command_execution",
+                        "input": "ls", "startedAt": now, "completedAt": null, "updatedAt": now}),
+                ))?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+    }
+    let (engine, _) = open(&db);
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:child-root").await,
+        "cancelled"
+    );
+    assert_eq!(
+        row_status(&engine, "child", "nodes", "node:nested").await,
+        "running"
+    );
+    assert_eq!(
+        row_status(&engine, "child", "turnItems", "item:loose").await,
+        "running"
+    );
+}
+
 /// A session whose process ends takes its native subagents with it: they end interrupted
 /// (`writeReleasedSubagentEvents` in `ProviderSessionManager.ts`).
 #[tokio::test(flavor = "current_thread")]
@@ -1219,6 +1268,26 @@ async fn a_confirmed_stop_ends_a_nested_native_subagent_and_its_thread() {
         row_status(&engine, "grandchild", "nodes", "node:grandchild-root").await,
         "interrupted"
     );
+    // Each cascade event belongs to the run that owns it; the rows keep their own `runId`
+    // (`RunExecutionService.ts`: `runId: row.runId ?? run.id`).
+    for (thread_id, event_type, id) in [
+        ("child", "subagent.updated", "node:nested"),
+        ("grandchild", "node.updated", "node:grandchild-root"),
+    ] {
+        let events = engine
+            .inner()
+            .db(move |store| store.thread_events_after(thread_id, 0, 10_000))
+            .await
+            .unwrap();
+        let (_, ended) = events
+            .iter()
+            .rev()
+            .find(|(_, e)| e["type"] == event_type && e["payload"]["id"] == id)
+            .unwrap();
+        assert_eq!(ended["payload"]["status"], "interrupted");
+        assert_eq!(ended["runId"], "run:t1:1", "{event_type} {id}");
+        assert_eq!(ended["payload"]["runId"], Value::Null, "{event_type} {id}");
+    }
 }
 
 /// The child's root turn settled while one of its items is still open: the item ends on its
@@ -1357,28 +1426,82 @@ async fn a_confirmed_stop_follows_a_long_chain_of_nested_subagents() {
 }
 
 /// The provider confirmed a Stop and its terminal waits in the channel while the pump is held
-/// by a slow write past the close's wait. The close still leaves the run to the events
-/// received before it: the run ends interrupted, not failed.
+/// by a slow write. The pump stores it in order: the run ends interrupted, not failed.
 #[tokio::test(flavor = "current_thread")]
 async fn a_close_behind_a_slow_write_keeps_a_confirmed_stop() {
-    let ended = close_behind_a_slow_write(FakeProvider::new("claudeAgent"), true).await;
+    let ended =
+        close_behind_a_slow_write(FakeProvider::new("claudeAgent"), Behind::ConfirmedStop).await;
     assert_eq!(ended, "interrupted");
 }
 
 /// No Stop: the provider's close itself ends the turn as interrupted while the pump is held by
-/// a slow write. That end comes after the close's mark, so the run is detached: it fails as a
+/// a slow write. The close names itself as the cause, so the run is detached: it fails as a
 /// session that ended during the turn.
 #[tokio::test(flavor = "current_thread")]
 async fn a_close_does_not_count_its_own_interrupt_as_a_stop() {
     let provider = FakeProvider::new("claudeAgent").with_close_interrupting();
-    let ended = close_behind_a_slow_write(provider, false).await;
+    let ended = close_behind_a_slow_write(provider, Behind::Nothing).await;
     assert_eq!(ended, "failed");
 }
 
-/// Holds the store, sends an assistant message (and with `confirmed`, a confirmed Stop) on the
-/// running turn, closes the session, then lets the store go. The run's end status.
-async fn close_behind_a_slow_write(provider: FakeProvider, confirmed: bool) -> String {
-    let db = TempDb::new(&format!("close-slow-write-{confirmed}"));
+/// A continuation request the pump read ahead and dispatched waits in the channel with the
+/// message when the session closes. The close's own interrupted end still detaches the run.
+#[tokio::test(flavor = "current_thread")]
+async fn a_close_after_a_read_ahead_continuation_detaches_the_run() {
+    let provider = FakeProvider::new("claudeAgent").with_close_interrupting();
+    let ended = close_behind_a_slow_write(provider, Behind::Continuation).await;
+    assert_eq!(ended, "failed");
+}
+
+/// A Stop the provider never confirmed is not confirmed by the close: the close's own
+/// interrupted end detaches the run, which fails.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_ended_only_by_the_close_is_not_a_confirmed_stop() {
+    let db = TempDb::new("close-unconfirmed-stop");
+    let (engine, _) = open_with(
+        &db,
+        FakeProvider::new("claudeAgent").with_close_interrupting(),
+    );
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "stuck")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    // The provider did not confirm it: the Stop is marked unresponsive.
+    loop {
+        let item = next(&mut thread).await;
+        let payload = &item["event"]["payload"];
+        if payload["type"] == "run_interrupt_request" && payload["unresponsiveAt"].is_string() {
+            break;
+        }
+    }
+    engine.inner().close_session("t1").await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "failed");
+}
+
+/// What waits in the channel behind the assistant message in [`close_behind_a_slow_write`].
+#[derive(Clone, Copy, Debug)]
+enum Behind {
+    Nothing,
+    /// The provider's confirmation of a Stop.
+    ConfirmedStop,
+    /// A continuation request, which the pump reads ahead of the message's write.
+    Continuation,
+}
+
+/// Holds the store, sends an assistant message and `behind` on the running turn, closes the
+/// session, then lets the store go. The run's end status.
+async fn close_behind_a_slow_write(provider: FakeProvider, behind: Behind) -> String {
+    let db = TempDb::new(&format!("close-slow-write-{behind:?}"));
     let (engine, provider) = open_with(&db, provider);
     dispatch(&engine, create("t1", "c1")).await;
     let mut thread = engine
@@ -1417,12 +1540,16 @@ async fn close_behind_a_slow_write(provider: FakeProvider, confirmed: bool) -> S
         "runId": "run:t1:1", "nodeId": null, "role": "assistant", "text": "x",
         "attachments": [], "streaming": false, "createdAt": now, "updatedAt": now}}),
     ];
-    if confirmed {
-        sent.push(
+    match behind {
+        Behind::Nothing => {}
+        Behind::ConfirmedStop => sent.push(
             json!({"type": "turn.terminal", "providerThreadId": provider_thread,
             "providerTurnId": "turn:run:t1:1", "runOrdinal": 1, "status": "interrupted",
             "failure": null, "threadDisposition": "reusable"}),
-        );
+        ),
+        Behind::Continuation => sent
+            .push(json!({"type": "continuation.requested", "threadId": "t1",
+            "providerThreadId": provider_thread, "detail": "Subagent completed: helper"})),
     }
     for event in sent {
         events.send(from_json(event).unwrap()).await.unwrap();

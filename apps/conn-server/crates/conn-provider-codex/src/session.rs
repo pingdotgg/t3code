@@ -626,10 +626,16 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
 /// `readThreadSnapshot`): a turn Codex reports ended ends here, and a thread Codex does not
 /// know (`thread not found:`) ends interrupted. Any other failed read is tried again. At the
 /// last of [`MAX_CHILD_CHECKS`] checks, each open child turn gets `turn/interrupt` and is read
-/// once more; a turn still running keeps its route, and its own end settles it. Every answer
+/// once more; a turn still running keeps its route, and its own end settles it. A read that
+/// fails after that is tried again once per `interval`, without another interrupt. Every answer
 /// goes through the session's inbox, so the driver applies it in order with Codex's frames.
 async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
-    for check in 1..=MAX_CHILD_CHECKS {
+    // Past the last check: the threads whose read after the interrupt failed, read again once
+    // per `interval` until Codex answers, without another interrupt.
+    let mut inconclusive: Option<Vec<String>> = None;
+    let mut check: u32 = 0;
+    loop {
+        check = check.saturating_add(1);
         tokio::time::sleep(interval).await;
         let Some(strong) = inner.upgrade() else {
             return;
@@ -638,7 +644,7 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
             return;
         }
         let last = check == MAX_CHILD_CHECKS;
-        let (server, inbox, threads) = {
+        let (server, inbox, mut threads) = {
             let state = strong.lock();
             (
                 Arc::clone(&strong.server),
@@ -647,6 +653,10 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
             )
         };
         drop(strong);
+        if let Some(retry) = &inconclusive {
+            threads.retain(|thread| retry.contains(thread));
+        }
+        let mut failed = Vec::new();
         for thread in threads {
             if last {
                 let turns: Vec<String> = inner
@@ -681,7 +691,10 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
                 }
                 Ok(answer) => ChildRead::Turns(answer),
                 // Tried again at the next check; the process's exit ends them if it stopped.
-                Err(_) => continue,
+                Err(_) => {
+                    failed.push(thread);
+                    continue;
+                }
             };
             if inbox
                 .send(SessionMsg::ChildRead { thread, read })
@@ -690,6 +703,12 @@ async fn watch_children(inner: std::sync::Weak<Inner>, interval: Duration) {
             {
                 return;
             }
+        }
+        if check >= MAX_CHILD_CHECKS {
+            if failed.is_empty() {
+                return;
+            }
+            inconclusive = Some(failed);
         }
     }
 }
@@ -847,6 +866,34 @@ async fn settle_lineage(inner: &Inner, root: &str, targets: &[(String, String, V
             .collect()
     };
     inner.deliver(outs).await;
+    // `terminateTrackedTerminals`: the lineage's background processes that Codex reported
+    // after the Stop's first snapshot, which already terminated its own.
+    let pending: Vec<(String, String)> = {
+        let mut state = inner.lock();
+        let lineage = targets
+            .iter()
+            .map(|(thread, native, done)| (thread, native, done.as_slice()))
+            .chain(
+                late.iter()
+                    .map(|(thread, native)| (thread, native, &[][..])),
+            );
+        let mut pending = Vec::new();
+        for (thread, native, done) in lineage {
+            for process in state.mapper.take_stop_processes(native) {
+                if !done.contains(&process) {
+                    pending.push((thread.clone(), process));
+                }
+            }
+        }
+        pending
+    };
+    for (thread, process) in pending {
+        let request = inner.server.request(
+            "thread/backgroundTerminals/terminate",
+            json!({"threadId": thread, "processId": process}),
+        );
+        let _ = tokio::time::timeout(CHILD_INTERRUPT_TIMEOUT, request).await;
+    }
 }
 
 /// T3's child model read: `thread/read` without turns; when that names no model,
@@ -1638,6 +1685,7 @@ impl Session for CodexSession {
             let thread = {
                 let mut state = inner.lock();
                 state.closed = true;
+                state.mapper.begin_close();
                 state.thread.clone()
             };
             if let Some((native, Some(generation))) = thread {
@@ -1748,6 +1796,30 @@ while IFS= read -r line; do
       emit '{"method":"turn/completed","params":{"threadId":"ch6","turn":{"id":"ct6","status":"completed","completedAt":4}}}'
       sleep 0.5
       emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"ch6\",\"model\":\"gpt-6-luna\",\"turns\":[{\"id\":\"ct6\",\"status\":\"inProgress\"}]}}}" ;;
+    *'"method":"turn/start"'*'flaky last read'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"ar","kind":"started","agentThreadId":"chr","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"chr","turn":{"id":"ctr","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":3}}}' ;;
+    *'"method":"thread/read"'*'"includeTurns":true'*'chr'*)
+      if [ "${intr:-0}" = 1 ] && [ "${rr:-0}" = 1 ]; then
+        emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"chr\",\"model\":\"gpt-6-luna\",\"turns\":[{\"id\":\"ctr\",\"status\":\"interrupted\"}]}}}"
+      else
+        if [ "${intr:-0}" = 1 ]; then rr=1; fi
+        emit "{\"id\":$id,\"error\":{\"code\":-32603,\"message\":\"temporary failure\"}}"
+      fi ;;
+    *'"method":"turn/interrupt"'*'"ctr"'*)
+      intr=1
+      emit "{\"id\":$id,\"result\":{}}" ;;
+    *'"method":"turn/start"'*'stop late process'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tup\",\"startedAt\":null}}}"
+      emit '{"method":"turn/started","params":{"threadId":"th1","turn":{"id":"tup","status":"inProgress","startedAt":1}}}' ;;
+    *'"method":"turn/interrupt"'*'"tup"'*)
+      emit "{\"id\":$id,\"result\":{}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tup","item":{"type":"commandExecution","id":"cmdp","command":"sleep 100","status":"inProgress","processId":"proc-late"}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tup","status":"interrupted","completedAt":3}}}' ;;
+    *'"method":"thread/backgroundTerminals/terminate"'*)
+      emit "{\"id\":$id,\"result\":{}}" ;;
     *'"method":"turn/start"'*'flaky child'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
       emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a7","kind":"started","agentThreadId":"ch7","agentPath":"/root/helper"}}}'
@@ -2526,6 +2598,84 @@ done
         })
         .await
         .expect("finished within 60 s");
+    }
+
+    /// The read after the last check's interrupt fails for a passing reason: it is read again
+    /// at the next interval, without a second interrupt, and the end Codex reports settles it.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_failed_last_read_is_read_again_without_another_interrupt() {
+        tokio::time::timeout(Duration::from_secs(60), async {
+            let provider = provider_with(CodexConfig {
+                child_check_interval: Duration::from_millis(50),
+                ..CodexConfig::default()
+            });
+            let Pair {
+                session,
+                mut events,
+                other,
+                ..
+            } = shared_pair(&provider, "flaky last read").await;
+            assert_eq!(session.close().await, Closed::RuntimeShared);
+            let rest = rest(&mut events).await;
+            assert_child_ended(&rest, "ctr", "interrupted");
+            let stdin = std::fs::read_to_string(fake_stdin()).unwrap();
+            let interrupts = stdin
+                .lines()
+                .filter(|line| {
+                    line.contains("\"method\":\"turn/interrupt\"") && line.contains("\"ctr\"")
+                })
+                .count();
+            assert_eq!(interrupts, 1, "one interrupt at the last check");
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        })
+        .await
+        .expect("finished within 60 s");
+    }
+
+    /// A background process Codex reports after the Stop took its snapshot still gets
+    /// `thread/backgroundTerminals/terminate` when the Stop settles (T3's
+    /// `terminateTrackedTerminals` in `settleInterruptedLineage`).
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stop_terminates_a_process_reported_after_its_snapshot() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let provider = provider();
+            let Pair {
+                session,
+                mut events,
+                other,
+                seen,
+                thread,
+            } = shared_pair_until(&provider, "stop late process", |e| {
+                e["type"] == "provider_turn.updated"
+                    && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "tup"
+            })
+            .await;
+            let root_turn = seen
+                .last()
+                .and_then(|e| e["providerTurn"]["id"].as_str())
+                .expect("the root's provider turn")
+                .to_owned();
+            let stopped = session
+                .interrupt_turn(InterruptInput {
+                    provider_thread: thread,
+                    provider_turn_id: root_turn.as_str().into(),
+                })
+                .await;
+            assert_eq!(stopped, Ok(()));
+            let ended = until(&mut events, "turn.terminal").await;
+            assert_eq!(ended.last().unwrap()["status"], "interrupted");
+            let stdin = std::fs::read_to_string(fake_stdin()).unwrap();
+            assert!(
+                stdin.lines().any(|line| line
+                    .contains("\"method\":\"thread/backgroundTerminals/terminate\"")
+                    && line.contains("\"proc-late\"")),
+                "the late process is terminated"
+            );
+            session.close().await;
+            other.close().await;
+        })
+        .await
+        .expect("finished within 30 s");
     }
 
     /// A child announced before its first turn ends when the process stops in that gap, and

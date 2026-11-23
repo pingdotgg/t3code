@@ -36,6 +36,9 @@ use subagents::{Selection, Sub};
 /// Native turns that ended other than completed, remembered so a late child of one is
 /// stopped (`terminalizedNonCompletedNativeTurns`).
 const STOPPED_TURNS_KEPT: usize = 64;
+/// Turns whose processes a settling Stop still has to terminate. A Stop takes them as soon as
+/// it settles, so only Stops that never settle (their session closed) leave entries behind.
+const STOP_PROCESS_TURNS_KEPT: usize = 16;
 
 pub const DRIVER: &str = "codex";
 
@@ -263,6 +266,13 @@ pub struct Mapper<E: Env> {
     /// (`deferredRootTerminals`), by native root turn, oldest first. Each entry has a running
     /// child turn, so the mapper's bounded turns bound it; the process's exit empties it.
     deferred_terminals: VecDeque<(String, Value)>,
+    /// The session began to close: a root turn ending from now on ends by the close
+    /// (`TerminalCause::SessionClosed`).
+    closing: bool,
+    /// Background processes of turns a Stop was settling when they ended, by native turn, oldest
+    /// first; at most [`STOP_PROCESS_TURNS_KEPT`]. The Stop terminates them (T3 reads
+    /// `runningCommandItemsByTurn` when it settles the lineage).
+    stop_processes: VecDeque<(String, Vec<String>)>,
 }
 
 /// A completed turn kept for its running commands, and the commands whose end already asked
@@ -405,6 +415,8 @@ impl<E: Env> Mapper<E> {
             abandoned_seq: 0,
             settled: VecDeque::new(),
             deferred_terminals: VecDeque::new(),
+            closing: false,
+            stop_processes: VecDeque::new(),
         }
     }
 
@@ -437,6 +449,7 @@ impl<E: Env> Mapper<E> {
             ("abandoned", usize::from(self.abandoned.is_some())),
             ("settled", self.settled.len()),
             ("deferred_terminals", self.deferred_terminals.len()),
+            ("stop_processes", self.stop_processes.len()),
         ]
     }
 
@@ -732,6 +745,26 @@ impl<E: Env> Mapper<E> {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    /// The session began to close: the root turns that end from now on end by the close.
+    pub fn begin_close(&mut self) {
+        self.closing = true;
+    }
+
+    /// The background processes a Stop of `native_turn` still has to terminate: those of the
+    /// turn while it runs, and those it had when it ended during the Stop.
+    pub fn take_stop_processes(&mut self, native_turn: &str) -> Vec<String> {
+        let mut processes = self.running_processes(native_turn);
+        if let Some(at) = self
+            .stop_processes
+            .iter()
+            .position(|(t, _)| t == native_turn)
+            && let Some((_, ended)) = self.stop_processes.remove(at)
+        {
+            processes.extend(ended);
+        }
+        processes
     }
 
     /// The session closed. `shared`: the app-server keeps running for other sessions, so
@@ -1743,6 +1776,21 @@ impl<E: Env> Mapper<E> {
         let Some(mut turn) = self.turns.remove(native) else {
             return;
         };
+        // A Stop settling this turn still terminates the processes it leaves running.
+        if self.interrupting.contains(native) {
+            let processes: Vec<String> = turn
+                .running_commands
+                .iter()
+                .filter_map(|c| c.process_id.clone())
+                .collect();
+            if !processes.is_empty() {
+                if self.stop_processes.len() >= STOP_PROCESS_TURNS_KEPT {
+                    self.stop_processes.pop_front();
+                }
+                self.stop_processes
+                    .push_back((native.to_owned(), processes));
+            }
+        }
         for id in std::mem::take(&mut turn.running_compactions) {
             emit_compaction(&mut turn, &id, terminal_status, &completed_at, out);
         }
@@ -1833,6 +1881,9 @@ impl<E: Env> Mapper<E> {
                 "failure": failure,
                 "threadDisposition": "reusable",
             });
+            if self.closing {
+                terminal["cause"] = json!("sessionClosed");
+            }
             // `emitOrDeferRootTerminal`: a failed root leaves its running descendants working
             // and settles without them; an interrupted one waits for them, as Stop ends the
             // whole lineage.

@@ -428,6 +428,7 @@ fn terminal(turn: &Turn, status: TurnStatus, failure: Option<Value>) -> Provider
         retry: None,
         thread_disposition: ThreadDisposition::Reusable,
         child_turns_continue: false,
+        cause: conn_provider::TerminalCause::Provider,
     })
 }
 
@@ -1160,8 +1161,13 @@ impl Session for FakeSession {
             *crate::lock(&self.after_close) = events;
         }
         Box::pin(async move {
+            // As a real adapter does, the close says it ended the turn.
             if let Some((turn, events)) = ending {
-                emit(&events, [terminal(&turn, TurnStatus::Interrupted, None)]).await;
+                let mut ended = terminal(&turn, TurnStatus::Interrupted, None);
+                if let ProviderEvent::TurnTerminal(terminal) = &mut ended {
+                    terminal.cause = conn_provider::TerminalCause::SessionClosed;
+                }
+                emit(&events, [ended]).await;
             }
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;

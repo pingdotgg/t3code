@@ -2314,6 +2314,7 @@ impl Session for ClaudeSession {
             let live = {
                 let mut state = self.inner.lock();
                 state.closed = true;
+                state.mapper.begin_close();
                 state.live.take()
             };
             if let Some(live) = live {

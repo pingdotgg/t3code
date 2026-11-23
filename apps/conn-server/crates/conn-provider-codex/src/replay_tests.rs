@@ -878,7 +878,7 @@ fn a_subagent_wakes_its_parent_only_after_a_completed_root_turn() {
 
 /// A close on an app-server that keeps serving other sessions ends the root turn but not a
 /// subagent's: the child may still run there, and the root's terminal waits for it. A close
-/// that stops the process ends both.
+/// that stops the process ends both, and its terminal names the close as its cause.
 #[test]
 fn a_shared_close_leaves_a_running_subagent_open() {
     for shared in [true, false] {
@@ -898,6 +898,7 @@ fn a_shared_close_leaves_a_running_subagent_open() {
                     "turn": {"id": "ct", "status": "inProgress", "startedAt": 1}}}),
             ],
         );
+        mapper.begin_close();
         let events: Vec<Value> = mapper
             .on_close(shared)
             .into_iter()
@@ -932,9 +933,12 @@ fn a_shared_close_leaves_a_running_subagent_open() {
         });
         assert!(root_ended, "shared={shared}: {events:?}");
         // An interrupted root's terminal waits for its running child (`emitOrDeferRootTerminal`).
-        let terminal = events
-            .iter()
-            .any(|e| e["type"] == "turn.terminal" && e["status"] == "interrupted");
+        // The close says it ended the turn, so the engine never takes it for a Stop.
+        let terminal = events.iter().any(|e| {
+            e["type"] == "turn.terminal"
+                && e["status"] == "interrupted"
+                && e["cause"] == "sessionClosed"
+        });
         assert_eq!(terminal, !shared, "shared={shared}: {events:?}");
         assert_eq!(
             ended("node.updated") || child_turn_ended,

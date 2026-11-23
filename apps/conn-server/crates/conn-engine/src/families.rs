@@ -773,21 +773,23 @@ pub(crate) fn end_run_native_subagents(
         .map(|row| (thread_id.to_owned(), row))
         .collect();
     while let Some((owner, mut row)) = pending.pop() {
+        // Every event of the cascade belongs to the run that owns it, as in T3; each row keeps
+        // its own `runId`.
+        let run = row["runId"].as_str().unwrap_or(run_id).to_owned();
         if work_active(&row) {
             let id = row["id"].as_str().unwrap_or_default().to_owned();
-            let run = row["runId"].as_str().map(str::to_owned);
             let work = row.clone();
             row["status"] = json!(status);
             row["completedAt"] = json!(now);
             row["updatedAt"] = json!(now);
             tx.append(
                 Draft::new(&owner, "subagent.updated", row)
-                    .run(run.as_deref())
+                    .run(Some(run_id))
                     .node(Some(&id)),
             )?;
             row = work;
         }
-        settle_subagent_rows(tx, &owner, &row, status, &now)?;
+        settle_subagent_rows(tx, &owner, &row, Some(&run), status, &now)?;
         let Some(child) = row["childThreadId"].as_str().map(str::to_owned) else {
             continue;
         };
@@ -796,7 +798,7 @@ pub(crate) fn end_run_native_subagents(
             continue;
         }
         owned.insert(child.clone());
-        settle_runless_work(tx, &child, Some(run_id), status, &now)?;
+        settle_owned_work(tx, &child, run_id, status, &now)?;
         pending.extend(
             tx.entities_where(&child, "subagents", "origin", "provider_native")?
                 .into_iter()
@@ -830,8 +832,8 @@ fn end_native_subagent(
     end_subagent_work(tx, thread_id, &work, status, now)
 }
 
-/// A subagent's open work: its node, its item, and its child's runless work. Only open rows
-/// change, so each settles once.
+/// A subagent's open work: its node, its item, and its child's runless root turns. Only open
+/// rows change, so each settles once.
 fn end_subagent_work(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -839,31 +841,32 @@ fn end_subagent_work(
     status: &str,
     now: &str,
 ) -> StoreResult<()> {
-    settle_subagent_rows(tx, thread_id, row, status, now)?;
+    let run = row["runId"].as_str().map(str::to_owned);
+    settle_subagent_rows(tx, thread_id, row, run.as_deref(), status, now)?;
     if let Some(child) = row["childThreadId"].as_str().filter(|c| *c != thread_id)
         && tx.thread(child)?.is_some()
     {
-        settle_runless_work(tx, child, None, status, now)?;
+        end_runless_root_turns(tx, child, status, now)?;
     }
     Ok(())
 }
 
-/// A subagent's own open node and items, each on its own.
+/// A subagent's own open node and items, each on its own, with `run` on their events.
 fn settle_subagent_rows(
     tx: &mut Tx<'_>,
     thread_id: &str,
     row: &Value,
+    run: Option<&str>,
     status: &str,
     now: &str,
 ) -> StoreResult<()> {
     let id = row["id"].as_str().unwrap_or_default().to_owned();
-    let run = row["runId"].as_str().map(str::to_owned);
     if let Some(mut node) = tx.entity(thread_id, "nodes", &id)?.filter(work_active) {
         node["status"] = json!(status);
         node["completedAt"] = json!(now);
         tx.append(
             Draft::new(thread_id, "node.updated", node)
-                .run(run.as_deref())
+                .run(run)
                 .node(Some(&id)),
         )?;
     }
@@ -876,45 +879,58 @@ fn settle_subagent_rows(
         item["updatedAt"] = json!(now);
         tx.append(
             Draft::new(thread_id, "turn-item.updated", item)
-                .run(run.as_deref())
+                .run(run)
                 .node(Some(&id)),
         )?;
     }
     Ok(())
 }
 
-/// The open work of a subagent thread the ending run owns, each row on its own: nodes and
-/// items with no run or with that run (`run`), as T3's cascade picks them, and provider turns
-/// of no run attempt. A settled item that streams stops streaming.
-fn settle_runless_work(
+/// The open work of a subagent thread the ending run (`run_id`) owns, each row on its own:
+/// nodes and items with no run or with that run, as T3's cascade picks them, and provider
+/// turns of no run attempt. Their events carry the row's run, or else the owning run
+/// (`runId: row.runId ?? run.id`). A settled item that streams stops streaming.
+fn settle_owned_work(
     tx: &mut Tx<'_>,
     thread_id: &str,
-    run: Option<&str>,
+    run_id: &str,
     status: &str,
     now: &str,
 ) -> StoreResult<()> {
-    let owned = |row: &Value| row["runId"].is_null() || run.is_some_and(|r| row["runId"] == r);
+    let owned = |row: &Value| row["runId"].is_null() || row["runId"] == run_id;
+    let run_of = |row: &Value| row["runId"].as_str().unwrap_or(run_id).to_owned();
     for mut node in open_rows(tx, thread_id, "nodes")? {
         if !owned(&node) {
             continue;
         }
-        let node_id = node["id"].as_str().unwrap_or_default().to_owned();
+        let (node_id, run) = (
+            node["id"].as_str().unwrap_or_default().to_owned(),
+            run_of(&node),
+        );
         node["status"] = json!(status);
         node["completedAt"] = json!(now);
-        tx.append(Draft::new(thread_id, "node.updated", node).node(Some(&node_id)))?;
+        tx.append(
+            Draft::new(thread_id, "node.updated", node)
+                .run(Some(&run))
+                .node(Some(&node_id)),
+        )?;
     }
     for mut item in open_rows(tx, thread_id, "turnItems")? {
         if !owned(&item) {
             continue;
         }
-        let node_id = item["nodeId"].as_str().map(str::to_owned);
+        let (node_id, run) = (item["nodeId"].as_str().map(str::to_owned), run_of(&item));
         item["status"] = json!(status);
         item["completedAt"] = json!(now);
         item["updatedAt"] = json!(now);
         if item.get("streaming").is_some() {
             item["streaming"] = json!(false);
         }
-        tx.append(Draft::new(thread_id, "turn-item.updated", item).node(node_id.as_deref()))?;
+        tx.append(
+            Draft::new(thread_id, "turn-item.updated", item)
+                .run(Some(&run))
+                .node(node_id.as_deref()),
+        )?;
     }
     for mut turn in open_rows(tx, thread_id, "providerTurns")? {
         if !turn["runAttemptId"].is_null() {
@@ -923,7 +939,59 @@ fn settle_runless_work(
         let node_id = turn["nodeId"].as_str().map(str::to_owned);
         turn["status"] = json!(status);
         turn["completedAt"] = json!(now);
-        tx.append(Draft::new(thread_id, "provider-turn.updated", turn).node(node_id.as_deref()))?;
+        tx.append(
+            Draft::new(thread_id, "provider-turn.updated", turn)
+                .run(Some(run_id))
+                .node(node_id.as_deref()),
+        )?;
+    }
+    Ok(())
+}
+
+/// `endRunlessRootTurns` (`subagentProjection.ts`): when a released or restarted session leaves
+/// a subagent thread behind, only its runless root turns end, with the runless items and
+/// provider turns attached to them. A nested subagent's own node stays for its own end.
+fn end_runless_root_turns(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    status: &str,
+    now: &str,
+) -> StoreResult<()> {
+    for mut node in open_rows(tx, thread_id, "nodes")? {
+        if node["kind"] != "root_turn" || !node["runId"].is_null() {
+            continue;
+        }
+        let node_id = node["id"].as_str().unwrap_or_default().to_owned();
+        node["status"] = json!(status);
+        node["completedAt"] = json!(now);
+        tx.append(Draft::new(thread_id, "node.updated", node).node(Some(&node_id)))?;
+        for mut item in tx.entities_where(thread_id, "turnItems", "nodeId", &node_id)? {
+            if !item["runId"].is_null() || !work_active(&item) {
+                continue;
+            }
+            let kind = item["type"].as_str().unwrap_or_default().to_owned();
+            item["status"] = json!(if status == "completed"
+                && matches!(kind.as_str(), "command_execution" | "dynamic_tool")
+            {
+                "failed"
+            } else {
+                status
+            });
+            item["completedAt"] = json!(now);
+            item["updatedAt"] = json!(now);
+            if matches!(kind.as_str(), "reasoning" | "assistant_message") {
+                item["streaming"] = json!(false);
+            }
+            tx.append(Draft::new(thread_id, "turn-item.updated", item).node(Some(&node_id)))?;
+        }
+        for mut turn in tx.entities_where(thread_id, "providerTurns", "nodeId", &node_id)? {
+            if !turn["runAttemptId"].is_null() || !work_active(&turn) {
+                continue;
+            }
+            turn["status"] = json!(status);
+            turn["completedAt"] = json!(now);
+            tx.append(Draft::new(thread_id, "provider-turn.updated", turn).node(Some(&node_id)))?;
+        }
     }
     Ok(())
 }

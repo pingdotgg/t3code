@@ -869,6 +869,27 @@ pub struct TurnTerminal {
     /// run's end leaves them open (`childTurnsContinue`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub child_turns_continue: bool,
+    /// What ended the turn. The adapter sets [`TerminalCause::SessionClosed`] on every terminal
+    /// it produces once [`Session::close`] began, so the engine never takes a close's own end
+    /// for a Stop the provider confirmed.
+    #[serde(default, skip_serializing_if = "TerminalCause::is_provider")]
+    pub cause: TerminalCause,
+}
+
+/// What ended a turn: the provider's own report, or the session's close.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TerminalCause {
+    #[default]
+    Provider,
+    /// The session's close ended the turn; the run detaches.
+    SessionClosed,
+}
+
+impl TerminalCause {
+    fn is_provider(&self) -> bool {
+        *self == Self::Provider
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1141,6 +1162,7 @@ mod tests {
                     retry: None,
                     thread_disposition: ThreadDisposition::Reusable,
                     child_turns_continue: false,
+                    cause: TerminalCause::Provider,
                 }))
                 .await
                 .map_err(|_| ProviderError::SessionStopped)
