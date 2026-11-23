@@ -58,7 +58,7 @@ openssl rand -hex 32
 # Add to .env: T3CODE_DEV_AUTH_TOKEN=<value>
 ```
 
-Restart `vp run dev --share` and open its printed pairing URL once per browser profile. Never commit or publish the token or startup URLs. Desktop and non-dev servers ignore it; see [environment auth](../internals/environment-auth.md#reusable-dev-credential).
+Restart `vp run dev --share` and open its printed pairing URL once per browser profile. Never commit or publish the token or startup URLs. Desktop and non-dev servers ignore it; see [environment auth](../internals/04.environment-auth.md#reusable-dev-credential).
 
 ## Checks
 

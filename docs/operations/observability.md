@@ -43,7 +43,7 @@ vp run dev
 - **Service names are fixed:** `t3code-server` (backend), `t3code-desktop` (Electron main, traces/logs only), and `t3code-web` (UI). `OTEL_SERVICE_NAME` is ignored—distinguish installs with `OTEL_RESOURCE_ATTRIBUTES` (e.g. `deployment.environment.name=staging`).
 - **Kill switches:** `T3CODE_OTEL_SDK_DISABLED` (outranks `OTEL_SDK_DISABLED`, accepts standard boolean spellings; `OTEL_SDK_DISABLED` only accepts `true`) disables all OTLP export in server and desktop while keeping local traces and stdout intact. `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` disables a single signal unless overridden by `T3CODE_OTLP_*_URL`.
 - **Trace tuning:** `T3CODE_TRACE_FILE`, `T3CODE_TRACE_MAX_BYTES`, `T3CODE_TRACE_MAX_FILES`, `T3CODE_TRACE_MIN_LEVEL`, `T3CODE_TRACE_TIMING_ENABLED`.
-- **Instrumentation rules:** Trace operation boundaries via `Effect.fn("Service.operation")` (see [Effect services](../internals/effect-services.md)). Put high-cardinality IDs/paths on span attributes, never on metric labels.
+- **Instrumentation rules:** Trace operation boundaries via `Effect.fn("Service.operation")` (see [Effect services](../internals/02.effect-services.md)). Put high-cardinality IDs/paths on span attributes, never on metric labels.
 
 ## Heap snapshots
 

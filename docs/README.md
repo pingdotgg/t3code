@@ -43,29 +43,26 @@ traps that the source alone does not explain. Most code changes do not need an i
 documentation update. Follow the [documentation rules](../AGENTS.md#documentation) before adding
 anything.
 
-### Architecture and boundaries
+### Internals (in reading order)
 
-- [Architecture overview](./internals/overview.md)
-- [Glossary](./internals/glossary.md)
-- [Connection runtime](./internals/connection-runtime.md)
-- [Providers](./internals/providers.md)
-- [Environment auth](./internals/environment-auth.md)
-- [Remote environments](./internals/remote.md)
-- [T3 Connect](./internals/t3-connect.md)
-- [Server updates](./internals/server-updates.md)
-- [Product analytics](./internals/product-analytics.md)
-- [Performance regression checks](./internals/performance-regressions.md)
-- [Mobile layout](./internals/mobile-layout.md)
-- [Mobile navigation](./internals/mobile-navigation.md)
-- [Mobile development lifecycle](./internals/mobile-development.md)
-
-### Conventions
-
-- [Effect services](./internals/effect-services.md)
-- [Scripts](./internals/scripts.md)
-- [Web UI](./internals/web-ui.md)
-- [Testing](./internals/testing.md)
-- [Translating the UI (i18n)](./internals/i18n.md)
+- [00 · Glossary](./internals/00.glossary.md)
+- [01 · Architecture](./internals/01.architecture.md)
+- [02 · Effect services](./internals/02.effect-services.md)
+- [03 · Providers](./internals/03.providers.md)
+- [04 · Environment auth](./internals/04.environment-auth.md)
+- [05 · Remote environments](./internals/05.remote.md)
+- [06 · T3 Connect](./internals/06.t3-connect.md)
+- [07 · Server updates](./internals/07.server-updates.md)
+- [08 · Product analytics](./internals/08.product-analytics.md)
+- [09 · Connection runtime](./internals/09.connection-runtime.md)
+- [10 · Web UI](./internals/10.web-ui.md)
+- [11 · Mobile layout](./internals/11.mobile-layout.md)
+- [12 · Mobile navigation](./internals/12.mobile-navigation.md)
+- [13 · Mobile development lifecycle](./internals/13.mobile-development.md)
+- [14 · Translating the UI (i18n)](./internals/14.i18n.md)
+- [15 · Testing](./internals/15.testing.md)
+- [16 · Performance regression checks](./internals/16.performance-regressions.md)
+- [17 · Scripts](./internals/17.scripts.md)
 
 ### Runbooks
 

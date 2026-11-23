@@ -1,6 +1,6 @@
 # T3 Connect setup
 
-Deployment and client configuration for T3 Connect. See [T3 Connect](../internals/t3-connect.md) for trust boundaries and [infra/relay/README.md](../../infra/relay/README.md#deployment) for relay provisioning.
+Deployment and client configuration for T3 Connect. See [T3 Connect](../internals/06.t3-connect.md) for trust boundaries and [infra/relay/README.md](../../infra/relay/README.md#deployment) for relay provisioning.
 
 ## Public application configuration
 
