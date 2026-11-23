@@ -142,7 +142,6 @@ export const explicitBareRepositoryEnv = (env: NodeJS.ProcessEnv, platform: Node
 
 // A failing `gc --auto` (say, missing objects) reruns after every fetch and strands a full-size
 // `tmp_pack_*` each time, so T3's frequent background Git calls could fill the disk.
-// `gc.auto` covers Git older than `maintenance.auto`.
 const SERVER_GIT_CONFIG = [
   ["safe.bareRepository", "explicit"],
   ["maintenance.auto", "false"],
