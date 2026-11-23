@@ -518,10 +518,15 @@ export const AntigravityDriver: ProviderDriver<
       const current = configOptions.find((option) => option.id === "model")?.currentValue;
       const thinking = antigravityThinkingConfig(configOptions);
       if (thinking !== undefined && typeof current === "string") {
-        for (const model of [...antigravityModelOptions(configOptions), { value: current }]) {
+        for (const model of antigravityModelOptions(configOptions)) {
           yield* runtime.setModel(model.value).pipe(Effect.ignore);
         }
-        yield* runtime.setConfigOption(thinking.id, thinking.currentValue).pipe(Effect.ignore);
+        yield* runtime
+          .setModel(current)
+          .pipe(
+            Effect.andThen(runtime.setConfigOption(thinking.id, thinking.currentValue)),
+            Effect.ignore,
+          );
       }
       yield* runtime.drainEvents;
     }, Effect.scoped);

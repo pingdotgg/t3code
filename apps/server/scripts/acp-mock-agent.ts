@@ -19,6 +19,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const antigravityResetThinking = process.env.T3_ACP_ANTIGRAVITY_RESET_THINKING === "1";
+const antigravityFailRestore = process.env.T3_ACP_ANTIGRAVITY_FAIL_RESTORE === "1";
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -905,6 +906,13 @@ const program = Effect.gen(function* () {
         currentModeId = request.value;
       }
       if (request.configId === "model" && typeof request.value === "string") {
+        if (
+          antigravityFailRestore &&
+          request.value === "gemini-test-low" &&
+          currentModelId === "gemini-test-high"
+        ) {
+          return yield* AcpError.AcpRequestError.invalidParams("Mock model restore failed");
+        }
         currentModelId = request.value;
         if (antigravityResetThinking) currentReasoning = "medium";
       }
