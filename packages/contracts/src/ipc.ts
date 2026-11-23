@@ -353,6 +353,16 @@ export const DesktopCliCommandStateSchema = Schema.Struct({
 });
 export type DesktopCliCommandState = typeof DesktopCliCommandStateSchema.Type;
 
+export const DesktopBackgroundServiceStateSchema = Schema.Struct({
+  supported: Schema.Boolean,
+  installed: Schema.Boolean,
+  running: Schema.Boolean,
+  attached: Schema.Boolean,
+  otherBaseDir: Schema.NullOr(Schema.String),
+  version: Schema.NullOr(Schema.String),
+});
+export type DesktopBackgroundServiceState = typeof DesktopBackgroundServiceStateSchema.Type;
+
 export interface DesktopUpdateActionResult {
   accepted: boolean;
   completed: boolean;
@@ -1134,6 +1144,9 @@ export interface DesktopBridge {
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
   getLocalEnvironmentEnabled: () => boolean;
   setLocalEnvironmentEnabled: (enabled: boolean) => Promise<void>;
+  getBackgroundServiceState?: () => Promise<DesktopBackgroundServiceState>;
+  enableBackgroundService?: () => Promise<DesktopBackgroundServiceState>;
+  disableBackgroundService?: () => Promise<DesktopBackgroundServiceState>;
   /** The environment ID recorded in this app's T3 home, such as its own machine's background service. */
   getHostEnvironmentId?: () => Promise<string | null>;
   getLocalEnvironmentBearerToken: () => Promise<string>;

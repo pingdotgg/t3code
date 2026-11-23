@@ -25,6 +25,7 @@ vi.mock("electron", () => ({
   BrowserWindow: { fromWebContents: ownerWindow },
 }));
 
+import * as DesktopBackgroundService from "../../backend/DesktopBackgroundService.ts";
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
@@ -95,8 +96,28 @@ const backendConfigurationLayer = Layer.succeed(
   } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
 );
 
-const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>) =>
-  Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
+const makeBackgroundServiceLayer = (
+  attached: Option.Option<DesktopBackgroundService.AttachedBackgroundService> = Option.none(),
+) =>
+  Layer.succeed(DesktopBackgroundService.DesktopBackgroundService, {
+    attached: Effect.succeed(attached),
+    tryAttach: Effect.succeed(attached),
+    clearAttached: Effect.void,
+    issueBearerToken: Effect.succeed("service-token"),
+    status: Effect.die("unexpected status"),
+    install: Effect.die("unexpected install"),
+    uninstall: Effect.die("unexpected uninstall"),
+  });
+
+const bootstrapsLayer = (
+  instances: ReadonlyArray<DesktopBackendManager.DesktopBackendInstance>,
+  attached: Option.Option<DesktopBackgroundService.AttachedBackgroundService> = Option.none(),
+) =>
+  Layer.mergeAll(
+    DesktopBackendPool.layerTest([...instances]),
+    backendConfigurationLayer,
+    makeBackgroundServiceLayer(attached),
+  );
 
 describe("getLocalEnvironmentBootstraps", () => {
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
@@ -191,6 +212,40 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
+
+  it.effect("publishes an attached local background service as the primary environment", () =>
+    Effect.gen(function* () {
+      const result = yield* getLocalEnvironmentBootstraps.handler();
+      assert.deepEqual(result, [
+        {
+          id: "primary",
+          label: "Windows",
+          runningDistro: null,
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        bootstrapsLayer(
+          [
+            {
+              ...defaultWslInstance,
+              id: DesktopBackendManager.BackendInstanceId("primary"),
+              currentConfig: Effect.succeedNone,
+            },
+          ],
+          Option.some({
+            pid: process.pid,
+            port: 3773,
+            httpBaseUrl: new URL("http://127.0.0.1:3773"),
+            serverVersion: "0.1.11",
+            label: "Windows",
+          }),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("toLocalBackendPath", () => {
@@ -214,6 +269,7 @@ describe("toLocalBackendPath", () => {
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
+          makeBackgroundServiceLayer(),
           DesktopBackendPool.layerTest([
             {
               ...defaultWslInstance,
@@ -228,6 +284,40 @@ describe("toLocalBackendPath", () => {
                 ? Option.some("/drives/c/Users/me/project")
                 : Option.none(),
           }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("returns native paths directly for an attached background service", () =>
+    Effect.gen(function* () {
+      assert.strictEqual(
+        yield* toLocalBackendPath.handler({
+          backendId: "primary",
+          path: "C:\\Users\\me\\project",
+        }),
+        "C:\\Users\\me\\project",
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          makeBackgroundServiceLayer(
+            Option.some({
+              pid: process.pid,
+              port: 3773,
+              httpBaseUrl: new URL("http://127.0.0.1:3773"),
+              serverVersion: "0.1.11",
+              label: "Windows",
+            }),
+          ),
+          DesktopBackendPool.layerTest([
+            {
+              ...defaultWslInstance,
+              id: DesktopBackendManager.BackendInstanceId("primary"),
+              currentConfig: Effect.succeedNone,
+            },
+          ]),
+          DesktopWslEnvironment.layerTest({}),
         ),
       ),
     ),

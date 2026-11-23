@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as DesktopBackgroundService from "../../backend/DesktopBackgroundService.ts";
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
@@ -154,10 +155,22 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstraps")(function* () {
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+    const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
+    const attachedService = yield* backgroundService.attached;
     const instances = yield* pool.list;
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
+    if (Option.isSome(attachedService)) {
+      bootstraps.push({
+        id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+        label: attachedService.value.label,
+        runningDistro: null,
+        httpBaseUrl: attachedService.value.httpBaseUrl.href,
+        wsBaseUrl: toWebSocketBaseUrl(attachedService.value.httpBaseUrl),
+      });
+    }
     for (const instance of instances) {
       const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+      if (isPrimary && Option.isSome(attachedService)) continue;
       const config = yield* instance.currentConfig;
       const snapshot = yield* instance.snapshot;
       if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
@@ -287,6 +300,10 @@ export const toLocalBackendPath = DesktopIpc.makeIpcMethod({
   payload: Schema.Struct({ backendId: Schema.String, path: Schema.String }),
   result: Schema.NullOr(Schema.String),
   handler: Effect.fn("desktop.ipc.window.toLocalBackendPath")(function* ({ backendId, path }) {
+    if (backendId === PRIMARY_LOCAL_ENVIRONMENT_ID) {
+      const attached = yield* (yield* DesktopBackgroundService.DesktopBackgroundService).attached;
+      if (Option.isSome(attached)) return path;
+    }
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const instance = yield* pool.get(DesktopBackendManager.BackendInstanceId(backendId));
     if (Option.isNone(instance)) return null;

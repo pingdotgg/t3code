@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as NetService from "@t3tools/shared/Net";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -21,6 +22,7 @@ import * as DesktopCliCommand from "./DesktopCliCommand.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as PreviewPasskeys from "../preview/Passkeys.ts";
+import * as DesktopBackgroundService from "../backend/DesktopBackgroundService.ts";
 import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopHomeOwner from "../backend/DesktopHomeOwner.ts";
@@ -235,6 +237,21 @@ const startLocalBackend = Effect.gen(function* () {
   }
 
   yield* DesktopBackendPool.recoverLocalBackend;
+  const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
+  if (!(settings.wslOnly && settings.wslBackendEnabled)) {
+    const attachedService = yield* backgroundService.tryAttach;
+    if (Option.isSome(attachedService)) {
+      yield* DesktopCliShim.install;
+      yield* desktopWindow.handleBackendReady(attachedService.value.httpBaseUrl);
+      yield* SubscriptionRef.set(state.primaryBackendStartup, { _tag: "Ready" });
+      yield* Effect.forkScoped(
+        (yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth).getBearerToken.pipe(
+          Effect.ignore,
+        ),
+      );
+      return true;
+    }
+  }
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
@@ -347,11 +364,14 @@ const bootstrap = Effect.fn("desktop.bootstrap")(function* (backendStarted: bool
   }
 
   const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+  const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
+  const attachedService = yield* backgroundService.attached;
   const config = yield* primaryBackend.currentConfig;
   if (
-    !environment.isDevelopment &&
-    Option.isSome(config) &&
-    Option.isNone(config.value.preflightFailure)
+    Option.isSome(attachedService) ||
+    (!environment.isDevelopment &&
+      Option.isSome(config) &&
+      Option.isNone(config.value.preflightFailure))
   ) {
     yield* desktopWindow.ensureMain;
   }

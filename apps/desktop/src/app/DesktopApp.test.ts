@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
@@ -37,6 +38,7 @@ import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
+import * as DesktopBackgroundService from "../backend/DesktopBackgroundService.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
@@ -87,11 +89,18 @@ interface StubbedDesktop {
   readonly flushRendererHistory?: Effect.Effect<void>;
   readonly tokenRequested?: Deferred.Deferred<void>;
   readonly activationStarted?: Deferred.Deferred<void>;
+  readonly attachedBackgroundService?: DesktopBackgroundService.AttachedBackgroundService;
 }
 
 const runStubbedDesktop = (stub: StubbedDesktop) =>
   Effect.gen(function* () {
     const quitting = yield* Ref.make(false);
+    const primaryBackendStartup = yield* SubscriptionRef.make<DesktopState.PrimaryBackendStartup>({
+      _tag: "Starting",
+    });
+    const attachedRef = yield* Ref.make(
+      Option.none<DesktopBackgroundService.AttachedBackgroundService>(),
+    );
     const runApp = DesktopApp.program
       .pipe(
         Effect.provide(NodeCrypto.layer),
@@ -168,6 +177,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         } as DesktopSnapShot.DesktopSnapShot["Service"]),
         Effect.provideService(DesktopState.DesktopState, {
           quitting,
+          primaryBackendStartup,
         } as DesktopState.DesktopState["Service"]),
         Effect.provideService(DesktopWindow.DesktopWindow, {
           ensureMain: stub
@@ -176,7 +186,23 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           createMainIfBackendReady: stub
             .record("window")
             .pipe(Effect.andThen(Deferred.succeed(stub.windowStarted, undefined))),
+          handleBackendReady: () => stub.record("backend-ready"),
         } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        Effect.provideService(DesktopBackgroundService.DesktopBackgroundService, {
+          attached: Ref.get(attachedRef),
+          tryAttach:
+            stub.attachedBackgroundService === undefined
+              ? Effect.succeedNone
+              : Ref.set(attachedRef, Option.some(stub.attachedBackgroundService)).pipe(
+                  Effect.andThen(stub.record("attach-service")),
+                  Effect.as(Option.some(stub.attachedBackgroundService)),
+                ),
+          clearAttached: Ref.set(attachedRef, Option.none()),
+          issueBearerToken: Effect.succeed("service-token"),
+          status: Effect.die("unexpected status"),
+          install: Effect.die("unexpected install"),
+          uninstall: Effect.die("unexpected uninstall"),
+        }),
         Effect.provideService(DesktopBackendPool.DesktopBackendPool, {
           primary: Effect.succeed({
             start: stub.record("backend"),
@@ -386,4 +412,40 @@ it.effect(
         "startup left the t3 <dir> control socket closed",
       );
     }).pipe(Effect.provide(Layer.mergeAll(DesktopShutdown.layer, NodeServices.layer))),
+);
+
+it.effect(
+  "attaches to a running local background service without starting or stopping an embedded backend",
+  () =>
+    Effect.gen(function* () {
+      const windowStarted = yield* Deferred.make<void>();
+      const tokenRequested = yield* Deferred.make<void>();
+      const events: string[] = [];
+      const app = yield* runStubbedDesktop({
+        localEnvironmentEnabled: true,
+        environment: { isPackaged: false },
+        fileSystem: FileSystem.layerNoop({}),
+        record: (event) =>
+          Effect.sync(() => {
+            events.push(event);
+          }),
+        windowStarted,
+        tokenRequested,
+        registerLinuxUrlHandler: Effect.void,
+        attachedBackgroundService: {
+          pid: process.pid,
+          port: 3773,
+          httpBaseUrl: new URL("http://127.0.0.1:3773"),
+          serverVersion: "0.1.11",
+          label: "Windows",
+        },
+      });
+      yield* Deferred.await(windowStarted);
+      yield* Deferred.await(tokenRequested);
+      assert.include(events, "attach-service");
+      assert.include(events, "backend-ready");
+      assert.notInclude(events, "backend");
+      yield* (yield* DesktopShutdown.DesktopShutdown).request;
+      yield* Fiber.join(app);
+    }).pipe(Effect.provide(DesktopShutdown.layer)),
 );

@@ -5612,5 +5612,7 @@
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
   "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
   "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "4d6d41e54272fac2": "Keep awake when plugged in",
+  "2795bb49eae0b8e0": "Prevent the computer from sleeping while idle on AC power so remote devices can reach it anytime."
 }

@@ -34,3 +34,62 @@ describe("KeepAwake.holdWhileWanted", () => {
     }),
   );
 });
+
+describe("KeepAwake power helpers", () => {
+  it("parses Windows ACLineStatus values", () => {
+    expect(KeepAwake.parseWindowsAcLineStatus("1\r\n")).toBe(true);
+    expect(KeepAwake.parseWindowsAcLineStatus("255\n")).toBe(true);
+    expect(KeepAwake.parseWindowsAcLineStatus("0\r\n")).toBe(false);
+    expect(KeepAwake.parseWindowsAcLineStatus("-1\r\n")).toBe(false);
+    expect(KeepAwake.parseWindowsAcLineStatus("")).toBe(false);
+  });
+
+  it("parses macOS pmset power source output", () => {
+    expect(KeepAwake.parseDarwinPowerSource("Now drawing from 'AC Power'\n")).toBe(true);
+    expect(KeepAwake.parseDarwinPowerSource("Now drawing from 'Battery Power'\n")).toBe(false);
+    expect(KeepAwake.parseDarwinPowerSource("")).toBe(false);
+  });
+
+  it("resolves Linux sysfs power supply status for desktops and laptops", () => {
+    expect(KeepAwake.resolveLinuxPowerSupplyAcPower([])).toBe(true);
+    expect(
+      KeepAwake.resolveLinuxPowerSupplyAcPower([
+        { type: "Mains\n", online: "1\n" },
+        { type: "Battery\n", online: undefined },
+      ]),
+    ).toBe(true);
+    expect(
+      KeepAwake.resolveLinuxPowerSupplyAcPower([
+        { type: "Mains\n", online: "0\n" },
+        { type: "Battery\n", online: undefined },
+      ]),
+    ).toBe(false);
+  });
+
+  it("combines active-run and plugged-in keep-awake conditions", () => {
+    expect(
+      KeepAwake.shouldHoldKeepAwake({
+        keepAwakeWhileAgentsWork: true,
+        keepAwakeWhenPluggedIn: false,
+        hasActiveRun: true,
+        onAcPower: false,
+      }),
+    ).toBe(true);
+    expect(
+      KeepAwake.shouldHoldKeepAwake({
+        keepAwakeWhileAgentsWork: false,
+        keepAwakeWhenPluggedIn: true,
+        hasActiveRun: false,
+        onAcPower: true,
+      }),
+    ).toBe(true);
+    expect(
+      KeepAwake.shouldHoldKeepAwake({
+        keepAwakeWhileAgentsWork: false,
+        keepAwakeWhenPluggedIn: true,
+        hasActiveRun: false,
+        onAcPower: false,
+      }),
+    ).toBe(false);
+  });
+});

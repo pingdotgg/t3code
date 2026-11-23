@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 
+import * as DesktopBackgroundService from "./DesktopBackgroundService.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 
 // Each /oauth/token attempt may take 10 s, so a backend busy after ready needs several attempts.
@@ -68,6 +69,7 @@ export class DesktopLocalEnvironmentAuth extends Context.Service<
 /** @public */
 export const make = Effect.gen(function* () {
   const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const backgroundService = yield* DesktopBackgroundService.DesktopBackgroundService;
   const httpClient = yield* HttpClient.HttpClient;
   const mac = yield* Mac.Mac;
   const tokenRef = yield* Ref.make(Option.none<string>());
@@ -79,6 +81,20 @@ export const make = Effect.gen(function* () {
         const cached = yield* Ref.get(tokenRef);
         if (Option.isSome(cached)) {
           return cached.value;
+        }
+
+        const attached = yield* backgroundService.attached;
+        if (Option.isSome(attached)) {
+          const token = yield* backgroundService.issueBearerToken.pipe(
+            Effect.mapError(
+              (cause) =>
+                new DesktopLocalEnvironmentAuthSessionBootstrapError({
+                  cause,
+                }),
+            ),
+          );
+          yield* Ref.set(tokenRef, Option.some(token));
+          return token;
         }
 
         const instances = yield* pool.list;

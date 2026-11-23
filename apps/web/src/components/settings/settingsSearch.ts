@@ -864,6 +864,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("caffeinate sleep prevent stay awake power laptop lid inhibit")],
   },
   {
+    id: "keep-awake-when-plugged-in",
+    title: msg("Keep awake when plugged in"),
+    to: "/settings/maintenance",
+    scope: "environment-defaults",
+    searchTerms: [
+      msg("caffeinate sleep prevent stay awake idle ac power remote connect always on"),
+    ],
+  },
+  {
     id: "background-activity",
     title: msg("Background activity"),
     to: "/settings/maintenance",
@@ -1365,6 +1374,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Local environment"),
     to: "/settings/connections",
     searchTerms: [msg("turn off on disable enable local server agents remote only restart")],
+    desktopOnly: true,
+  },
+  {
+    id: "background-service",
+    title: msg("Background service"),
+    to: "/settings/connections",
+    searchTerms: [
+      msg("keep running close window resident service daemon remote access auto start"),
+    ],
     desktopOnly: true,
   },
   {

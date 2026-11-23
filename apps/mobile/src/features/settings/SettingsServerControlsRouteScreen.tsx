@@ -595,6 +595,23 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ keepAwakeWhileAgentsWork: value })}
                     />
                   </View>
+                  <View className="border-t border-border-subtle">
+                    <SettingsSwitchRow
+                      icon="cable.connector"
+                      label={gt("Keep awake when plugged in")}
+                      subtitle={managedSubtitle(
+                        "keepAwakeWhenPluggedIn",
+                        projectSelected
+                          ? gt("Environment-wide setting. Select All projects to change it.")
+                          : gt(
+                              "Prevent the computer from sleeping while idle on AC power so remote devices can reach it anytime.",
+                            ),
+                      )}
+                      value={uniform("keepAwakeWhenPluggedIn")}
+                      disabled={disabledFor("keepAwakeWhenPluggedIn")}
+                      onValueChange={(value) => write({ keepAwakeWhenPluggedIn: value })}
+                    />
+                  </View>
                 </SettingsSection>
               </>
             ) : null}

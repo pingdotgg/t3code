@@ -18,8 +18,22 @@ import {
 } from "@t3tools/shared/desktopBootstrapToken";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as DesktopBackgroundService from "./DesktopBackgroundService.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./DesktopLocalEnvironmentAuth.ts";
+
+const unattachedBackgroundServiceLayer = Layer.succeed(
+  DesktopBackgroundService.DesktopBackgroundService,
+  {
+    attached: Effect.succeedNone,
+    tryAttach: Effect.succeedNone,
+    clearAttached: Effect.void,
+    issueBearerToken: Effect.die("unexpected background service token mint"),
+    status: Effect.die("unexpected status"),
+    install: Effect.die("unexpected install"),
+    uninstall: Effect.die("unexpected uninstall"),
+  },
+);
 
 const config = {
   executablePath: "/electron",
@@ -83,7 +97,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
         ]),
       } as unknown as DesktopBackendPool.DesktopBackendPool["Service"]);
       const layerTest = DesktopLocalEnvironmentAuth.layer.pipe(
-        Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
+        Layer.provide(
+          Layer.mergeAll(
+            layerPool,
+            unattachedBackgroundServiceLayer,
+            layerHttpClient,
+            NodeCrypto.layerMac,
+          ),
+        ),
       );
 
       const [first, second] = yield* Effect.gen(function* () {
@@ -154,7 +175,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
         }).pipe(
           Effect.provide(
             DesktopLocalEnvironmentAuth.layer.pipe(
-              Layer.provide(Layer.mergeAll(poolLayer, httpClientLayer, NodeCrypto.layerMac)),
+              Layer.provide(
+                Layer.mergeAll(
+                  poolLayer,
+                  unattachedBackgroundServiceLayer,
+                  httpClientLayer,
+                  NodeCrypto.layerMac,
+                ),
+              ),
             ),
           ),
         );
@@ -211,7 +239,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
+            Layer.provide(
+              Layer.mergeAll(
+                layerPool,
+                unattachedBackgroundServiceLayer,
+                layerHttpClient,
+                NodeCrypto.layerMac,
+              ),
+            ),
           ),
         ),
       );
@@ -257,7 +292,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
         Effect.provide(
           DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient, NodeCrypto.layerMac)),
+            Layer.provide(
+              Layer.mergeAll(
+                layerPool,
+                unattachedBackgroundServiceLayer,
+                layerHttpClient,
+                NodeCrypto.layerMac,
+              ),
+            ),
           ),
         ),
       );
@@ -269,5 +311,54 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.isTrue(Result.isSuccess(result));
       assert.strictEqual(yield* Ref.get(requestCount), 4);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("mints and caches a bearer token from an attached background service", () =>
+    Effect.gen(function* () {
+      const mintCount = yield* Ref.make(0);
+      const attachedServiceLayer = Layer.succeed(
+        DesktopBackgroundService.DesktopBackgroundService,
+        {
+          attached: Effect.succeedSome({
+            pid: process.pid,
+            port: 3773,
+            httpBaseUrl: new URL("http://127.0.0.1:3773"),
+            serverVersion: "0.1.11",
+            label: "Windows",
+          }),
+          tryAttach: Effect.succeedNone,
+          clearAttached: Effect.void,
+          issueBearerToken: Ref.updateAndGet(mintCount, (count) => count + 1).pipe(
+            Effect.as("attached-service-token"),
+          ),
+          status: Effect.die("unexpected status"),
+          install: Effect.die("unexpected install"),
+          uninstall: Effect.die("unexpected uninstall"),
+        },
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                layerPool,
+                attachedServiceLayer,
+                Layer.succeed(
+                  HttpClient.HttpClient,
+                  HttpClient.make(() => Effect.die("unexpected HTTP request")),
+                ),
+                NodeCrypto.layerMac,
+              ),
+            ),
+          ),
+        ),
+      );
+      const [first, second] = yield* Effect.all([auth.getBearerToken, auth.getBearerToken], {
+        concurrency: "unbounded",
+      });
+      assert.strictEqual(first, "attached-service-token");
+      assert.strictEqual(second, "attached-service-token");
+      assert.strictEqual(yield* Ref.get(mintCount), 1);
+    }),
   );
 });

@@ -42,6 +42,9 @@ export const GET_PRIMARY_PASTE_ENABLED_CHANNEL = "desktop:get-primary-paste-enab
 export const GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL = "desktop:get-local-environment-bootstraps";
 export const GET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:get-local-environment-enabled";
 export const SET_LOCAL_ENVIRONMENT_ENABLED_CHANNEL = "desktop:set-local-environment-enabled";
+export const GET_BACKGROUND_SERVICE_STATE_CHANNEL = "desktop:get-background-service-state";
+export const ENABLE_BACKGROUND_SERVICE_CHANNEL = "desktop:enable-background-service";
+export const DISABLE_BACKGROUND_SERVICE_CHANNEL = "desktop:disable-background-service";
 export const GET_HOST_ENVIRONMENT_ID_CHANNEL = "desktop:get-host-environment-id";
 export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
   "desktop:get-local-environment-bearer-token";

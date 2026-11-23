@@ -5620,5 +5620,7 @@
   "856812e7e1fc445e": "Tool calls in chat",
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user."
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "4d6d41e54272fac2": "Keep awake when plugged in",
+  "2795bb49eae0b8e0": "Prevent the computer from sleeping while idle on AC power so remote devices can reach it anytime."
 }

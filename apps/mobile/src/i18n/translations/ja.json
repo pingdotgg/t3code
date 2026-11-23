@@ -5592,5 +5592,7 @@
   "856812e7e1fc445e": "チャット内のツール呼び出し",
   "8d545d54c0a9e950": "エージェントが実行するコマンド、編集、検索を非表示にします。「成功したものを非表示」では失敗は表示されます。Zen では最終的な回答だけを表示します。承認、質問、エラーは常に表示されます。",
   "99d51127f573296b": "別のアカウント",
-  "8ec2c57414669b79": "2つ目の {tracker} ワークスペースまたはユーザーを接続します。"
+  "8ec2c57414669b79": "2つ目の {tracker} ワークスペースまたはユーザーを接続します。",
+  "4d6d41e54272fac2": "Keep awake when plugged in",
+  "2795bb49eae0b8e0": "Prevent the computer from sleeping while idle on AC power so remote devices can reach it anytime."
 }

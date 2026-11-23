@@ -617,6 +617,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.keepAwakeWhileAgentsWork !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork
       ? [gt("Keep awake while agents work")]
       : []),
+    ...(settings.keepAwakeWhenPluggedIn !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhenPluggedIn
+      ? [gt("Keep awake when plugged in")]
+      : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? [gt("New thread mode")]
       : []),
@@ -746,6 +749,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
+      keepAwakeWhenPluggedIn: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhenPluggedIn,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
@@ -2487,6 +2491,36 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ keepAwakeWhileAgentsWork: Boolean(checked) })
               }
               aria-label={gt("Keep awake while agents work")}
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["keepAwakeWhenPluggedIn"]}
+          {...setting("keep-awake-when-plugged-in")}
+          description={gt(
+            "Prevent the computer from sleeping while idle on AC power so remote devices can reach it anytime. Closing a laptop lid still sleeps it.",
+          )}
+          resetAction={
+            settings.keepAwakeWhenPluggedIn !== DEFAULT_UNIFIED_SETTINGS.keepAwakeWhenPluggedIn ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset keep awake when plugged in to default")}
+                onClick={() =>
+                  updateSettings({
+                    keepAwakeWhenPluggedIn: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhenPluggedIn,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["keepAwakeWhenPluggedIn"]}
+              checked={settings.keepAwakeWhenPluggedIn}
+              onCheckedChange={(checked) =>
+                updateSettings({ keepAwakeWhenPluggedIn: Boolean(checked) })
+              }
+              aria-label={gt("Keep awake when plugged in")}
             />
           }
         />

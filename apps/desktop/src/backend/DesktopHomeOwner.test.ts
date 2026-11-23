@@ -76,11 +76,37 @@ describe("DesktopHomeOwner.readLiveHomeOwner", () => {
       );
       assert.deepStrictEqual(
         owner,
-        Option.some({ pid: process.pid, port: 3790, serverVersion: "1.2.3" }),
+        Option.some({
+          pid: process.pid,
+          port: 3790,
+          origin: "http://127.0.0.1:3790",
+          serverVersion: "1.2.3",
+        }),
+      );
+      assert.strictEqual(
+        DesktopHomeOwner.resolveHomeOwnerHttpBaseUrl(Option.getOrThrow(owner)).href,
+        "http://127.0.0.1:3790/",
       );
       assert.include(
         DesktopHomeOwner.homeOwnedMessage(owner),
         `PID ${process.pid}, port 3790, version 1.2.3`,
+      );
+    }),
+  );
+
+  it.effect("falls back to loopback port URL when origin is missing or invalid", () =>
+    Effect.sync(() => {
+      assert.strictEqual(
+        DesktopHomeOwner.resolveHomeOwnerHttpBaseUrl({ pid: 1, port: 3773 }).href,
+        "http://127.0.0.1:3773/",
+      );
+      assert.strictEqual(
+        DesktopHomeOwner.resolveHomeOwnerHttpBaseUrl({
+          pid: 1,
+          port: 3773,
+          origin: "not a url",
+        }).href,
+        "http://127.0.0.1:3773/",
       );
     }),
   );

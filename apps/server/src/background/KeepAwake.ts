@@ -19,9 +19,52 @@ import * as Settings from "../serverSettings.ts";
 
 // Bridges gaps between back-to-back runs, so a long-idle machine does not sleep mid-queue.
 const RELEASE_GRACE = Duration.seconds(60);
+const AC_POWER_POLL_INTERVAL = Duration.seconds(30);
 
 // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by the calling thread until the script ends.
 const WINDOWS_HOLD_SCRIPT = `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); [Console]::Out.WriteLine()`;
+
+// GetSystemPowerStatus ACLineStatus: 0 = battery, 1 = AC, 255 = unknown (desktop without battery).
+const WINDOWS_AC_POWER_SCRIPT = `Add-Type -Name PowerStatus -Namespace T3 -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct SPS { public byte ACLineStatus; public byte BatteryFlag; public byte BatteryLifePercent; public byte SystemStatusFlag; public uint BatteryLifeTime; public uint BatteryFullLifeTime; } [DllImport("kernel32.dll")] static extern bool GetSystemPowerStatus(out SPS s); public static int ReadAcLineStatus() { SPS s; return GetSystemPowerStatus(out s) ? s.ACLineStatus : -1; }'; [Console]::Out.WriteLine([T3.PowerStatus]::ReadAcLineStatus())`;
+
+export function parseWindowsAcLineStatus(output: string): boolean {
+  const status = Number.parseInt(output.trim(), 10);
+  if (Number.isNaN(status) || status < 0) return false;
+  return status !== 0;
+}
+
+export function parseDarwinPowerSource(output: string): boolean {
+  if (output.includes("Battery Power")) return false;
+  return output.includes("AC Power");
+}
+
+export function resolveLinuxPowerSupplyAcPower(
+  supplies: ReadonlyArray<{ readonly type: string; readonly online: string | undefined }>,
+): boolean {
+  let sawBattery = false;
+  for (const supply of supplies) {
+    const kind = supply.type.trim();
+    if (kind === "Mains" && supply.online?.trim() === "1") {
+      return true;
+    }
+    if (kind === "Battery") {
+      sawBattery = true;
+    }
+  }
+  return !sawBattery;
+}
+
+export function shouldHoldKeepAwake(input: {
+  readonly keepAwakeWhileAgentsWork: boolean;
+  readonly keepAwakeWhenPluggedIn: boolean;
+  readonly hasActiveRun: boolean;
+  readonly onAcPower: boolean;
+}): boolean {
+  return (
+    (input.keepAwakeWhileAgentsWork && input.hasActiveRun) ||
+    (input.keepAwakeWhenPluggedIn && input.onAcPower)
+  );
+}
 
 /**
  * Each command writes a line to stdout once it holds its inhibitor, holds it until it exits, and
@@ -188,18 +231,111 @@ export const layer = Layer.effectDiscard(
       ),
       Stream.retry(backoff),
     );
-    const enabled = Stream.unwrap(
+    const keepAwakeSettings = Stream.unwrap(
       Effect.gen(function* () {
         const changes = yield* settings.subscribeChanges;
+        const pick = (value: {
+          readonly keepAwakeWhileAgentsWork: boolean;
+          readonly keepAwakeWhenPluggedIn: boolean;
+        }) => ({
+          keepAwakeWhileAgentsWork: value.keepAwakeWhileAgentsWork,
+          keepAwakeWhenPluggedIn: value.keepAwakeWhenPluggedIn,
+        });
         const current = yield* settings.getSettings.pipe(
-          Effect.map((value) => value.keepAwakeWhileAgentsWork),
-          Effect.orElseSucceed(() => true),
+          Effect.map(pick),
+          Effect.orElseSucceed(() => ({
+            keepAwakeWhileAgentsWork: true,
+            keepAwakeWhenPluggedIn: false,
+          })),
         );
-        return Stream.concat(
-          Stream.succeed(current),
-          Stream.map(changes, (value) => value.keepAwakeWhileAgentsWork),
-        );
+        return Stream.concat(Stream.succeed(current), Stream.map(changes, pick));
       }),
+    );
+
+    const runCommandStdout = Effect.fn("keepAwake.runCommandStdout")(function* (
+      command: string,
+      args: ReadonlyArray<string>,
+    ) {
+      return yield* Effect.gen(function* () {
+        const child = yield* spawner.spawn(
+          ChildProcess.make(command, args, {
+            detached: false,
+            shell: false,
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "ignore",
+          }),
+        );
+        const [stdout, exitCode] = yield* Effect.all(
+          [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+          { concurrency: "unbounded" },
+        );
+        return Number(exitCode) === 0 ? stdout : "";
+      }).pipe(
+        Effect.scoped,
+        Effect.orElseSucceed(() => ""),
+      );
+    });
+
+    const probeAcPower: Effect.Effect<boolean> = Effect.gen(function* () {
+      if (platform === "win32" || isWsl) {
+        const stdout = yield* runCommandStdout("powershell.exe", [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          WINDOWS_AC_POWER_SCRIPT,
+        ]);
+        return parseWindowsAcLineStatus(stdout);
+      }
+      if (platform === "darwin") {
+        const stdout = yield* runCommandStdout("pmset", ["-g", "ps"]);
+        return parseDarwinPowerSource(stdout);
+      }
+      if (platform === "linux") {
+        const root = "/sys/class/power_supply";
+        const entries = yield* fileSystem
+          .readDirectory(root)
+          .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+        const supplies = yield* Effect.forEach(
+          entries,
+          (entry) =>
+            Effect.all({
+              type: fileSystem
+                .readFileString(`${root}/${entry}/type`)
+                .pipe(Effect.orElseSucceed(() => "")),
+              online: fileSystem
+                .readFileString(`${root}/${entry}/online`)
+                .pipe(Effect.orElseSucceed(() => undefined)),
+            }),
+          { concurrency: "unbounded" },
+        );
+        return resolveLinuxPowerSupplyAcPower(supplies);
+      }
+      return false;
+    });
+
+    const pluggedInWanted = keepAwakeSettings.pipe(
+      Stream.map((value) => value.keepAwakeWhenPluggedIn),
+      Stream.changes,
+      Stream.switchMap((on) =>
+        on
+          ? Stream.concat(
+              Stream.fromEffect(probeAcPower),
+              Stream.fromSchedule(Schedule.spaced(AC_POWER_POLL_INTERVAL)).pipe(
+                Stream.mapEffect(() => probeAcPower),
+              ),
+            )
+          : Stream.succeed(false),
+      ),
+    );
+
+    const wanted = Stream.zipLatestWith(
+      Stream.zipLatestWith(keepAwakeSettings, active, (currentSettings, hasActiveRun) => ({
+        ...currentSettings,
+        hasActiveRun,
+      })),
+      pluggedInWanted,
+      (state, onAcPower) => shouldHoldKeepAwake({ ...state, onAcPower }),
     );
 
     const holdOnce = Effect.gen(function* () {
@@ -244,10 +380,9 @@ export const layer = Layer.effectDiscard(
     );
 
     yield* forkParked(
-      holdWhileWanted(
-        Stream.zipLatestWith(enabled, active, (on, busy) => on && busy),
-        hold,
-      ).pipe(Effect.catchCause((cause) => Effect.logWarning("keep-awake stopped", { cause }))),
+      holdWhileWanted(wanted, hold).pipe(
+        Effect.catchCause((cause) => Effect.logWarning("keep-awake stopped", { cause })),
+      ),
     );
   }),
 );
