@@ -204,51 +204,60 @@ fn delegated_parent(child: &Value) -> Option<(String, String)> {
     ))
 }
 
-/// The run's answer: its newest non-empty assistant text, or the failure of a failed run.
-fn run_result(tx: &Tx<'_>, thread_id: &str, run_id: &str) -> StoreResult<Option<String>> {
-    let items = tx.entities_where(thread_id, "turnItems", "runId", run_id)?;
-    let text = |types: &[&str]| {
-        items
-            .iter()
-            .rev()
-            .filter(|i| types.contains(&i["type"].as_str().unwrap_or("")))
-            .find_map(|i| {
-                i["text"]
-                    .as_str()
-                    .or(i["failure"]["message"].as_str())
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .map(str::to_owned)
-            })
+/// `resultOfRun` (`subagentProjection.ts:282`): a run's report from its turn items, `None` when
+/// it said nothing. A failed run leads with its failure, then the report it gave before failing.
+fn report_of_run(items: &[Value], run: &Value) -> Option<String> {
+    let ordinal = |item: &Value| item["ordinal"].as_u64().unwrap_or(0);
+    let text = items
+        .iter()
+        .filter(|item| item["type"] == "assistant_message")
+        .filter_map(|item| {
+            let text = item["text"]
+                .as_str()
+                .map(str::trim)
+                .filter(|t| !t.is_empty())?;
+            Some((ordinal(item), text))
+        })
+        .max_by_key(|(at, _)| *at);
+    let failure = items
+        .iter()
+        .filter(|item| run["status"] == "failed" && item["type"] == "error")
+        .max_by_key(|item| ordinal(item));
+    let Some(failure) = failure else {
+        return text.map(|(_, text)| text.to_owned());
     };
-    Ok(text(&["assistant_message"]).or_else(|| text(&["error"])))
+    let message = failure["failure"]["message"].as_str().unwrap_or_default();
+    Some(match text {
+        Some((at, report)) if at < ordinal(failure) => {
+            format!("{message}\n\nLast assistant message before the run failed:\n\n{report}")
+        }
+        _ => message.to_owned(),
+    })
 }
 
 /// `subagentResultForRun` (`subagentProjection.ts:255`): the result a task is published with.
 /// A completed run that said nothing reports the same task's earlier completed run that did;
-/// a run with no report says so.
-fn task_result(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<String> {
+/// a run with no report says so. `items` gives one run's turn items; `notice` is the run's
+/// provider stop reason.
+fn result_for_run<E>(
+    run: &Value,
+    runs: &[Value],
+    monitor: &[Value],
+    notice: Option<String>,
+    items: impl Fn(&str) -> Result<Vec<Value>, E>,
+) -> Result<String, E> {
     let run_id = run["id"].as_str().unwrap_or_default();
-    if let Some(text) = run_result(tx, thread_id, run_id)? {
+    if let Some(text) = report_of_run(&items(run_id)?, run) {
         return Ok(text);
     }
     let status = run["status"].as_str().unwrap_or("failed");
     if status != "completed" {
         return Ok(format!("Child task ended with status {status}."));
     }
-    let notice = tx
-        .entity(
-            thread_id,
-            "turnItems",
-            &format!("turn-item:{run_id}:provider-stop-reason"),
-        )?
-        .filter(|item| item["type"] == "system_notice")
-        .and_then(|item| item["message"].as_str().map(str::to_owned));
     if notice.is_none() {
-        let runs = tx.entities(thread_id, "runs")?;
-        let monitor = monitor_update_runs(tx, thread_id)?;
-        for earlier in report_runs(&runs, &monitor, run) {
-            if let Some(text) = run_result(tx, thread_id, earlier["id"].as_str().unwrap_or(""))? {
+        for earlier in report_runs(runs, monitor, run) {
+            let id = earlier["id"].as_str().unwrap_or_default();
+            if let Some(text) = report_of_run(&items(id)?, earlier) {
                 return Ok(text);
             }
         }
@@ -259,6 +268,57 @@ fn task_result(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<String>
         text.push_str(&notice);
     }
     Ok(text)
+}
+
+fn stop_notice_id(run: &Value) -> String {
+    format!(
+        "turn-item:{}:provider-stop-reason",
+        run["id"].as_str().unwrap_or_default()
+    )
+}
+
+fn notice_text(item: &Value) -> Option<String> {
+    (item["type"] == "system_notice")
+        .then(|| item["message"].as_str().map(str::to_owned))
+        .flatten()
+}
+
+/// [`result_for_run`] over the stored rows.
+fn task_result(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<String> {
+    let notice = tx
+        .entity(thread_id, "turnItems", &stop_notice_id(run))?
+        .as_ref()
+        .and_then(notice_text);
+    let runs = tx.entities(thread_id, "runs")?;
+    let monitor = monitor_update_runs(tx, thread_id)?;
+    result_for_run(run, &runs, &monitor, notice, |run_id| {
+        tx.entities_where(thread_id, "turnItems", "runId", run_id)
+    })
+}
+
+/// [`result_for_run`] over a thread projection: the result of a task whose row was published
+/// before rows kept their result.
+pub fn delegated_task_result(child: &Value, run: &Value) -> String {
+    let rows = |kind: &str| child[kind].as_array().map_or(&[][..], Vec::as_slice);
+    let items = rows("turnItems");
+    let notice = items
+        .iter()
+        .find(|item| item["id"] == stop_notice_id(run).as_str())
+        .and_then(notice_text);
+    let monitor = monitor_runs(rows("messages"));
+    let result = result_for_run(run, rows("runs"), &monitor, notice, |run_id| {
+        Ok::<_, std::convert::Infallible>(
+            items
+                .iter()
+                .filter(|item| item["runId"] == run_id)
+                .cloned()
+                .collect(),
+        )
+    });
+    match result {
+        Ok(text) => text,
+        Err(never) => match never {},
+    }
 }
 
 /// `runRanAfter`'s order: when a run ended (a run that has not ended, last), then its ordinal.
@@ -299,16 +359,20 @@ fn report_runs<'a>(runs: &'a [Value], monitor: &[Value], run: &Value) -> Vec<&'a
 
 /// `monitorUpdateRunIds`: runs that only answer a monitor update are never a task's work.
 fn monitor_update_runs(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Vec<Value>> {
-    Ok(tx
-        .entities(thread_id, "messages")?
-        .into_iter()
+    Ok(monitor_runs(&tx.entities(thread_id, "messages")?))
+}
+
+/// [`monitor_update_runs`] over a thread's messages.
+pub fn monitor_runs(messages: &[Value]) -> Vec<Value> {
+    messages
+        .iter()
         .filter(|m| {
             m["notification"]["source"]["kind"] == "monitor"
                 && m["notification"]["outcome"] == "updated"
                 && m["runId"].is_string()
         })
         .map(|m| m["runId"].clone())
-        .collect())
+        .collect()
 }
 
 /// Called in the write that ends a run. Delivers what this thread's own children left pending
@@ -841,10 +905,14 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
     Ok(effects)
 }
 
-/// Stop reaches the thread's running children too (`delegated-tasks.stop`). Their tasks end
-/// as interrupted and do not wake the stopped parent.
+/// Stop reaches every open task of the thread and the threads under it, whether or not a
+/// turn runs there (`stopDelegatedTasks`): a task waiting for its children or its background
+/// work is stopped too. Each task is marked cancelled before its work ends, so it publishes
+/// as interrupted and does not wake the stopped parent.
 pub(crate) fn stop_children(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<Vec<Effect>> {
     let mut effects = vec![];
+    // Follow-ups share their child thread; its work is stopped once.
+    let mut stopped: Vec<String> = vec![];
     for mut row in tx.entities(thread_id, "subagents")? {
         // A task in a linked environment ends here; its follower then stops it there. One
         // with its result keeps it, but its thread there may run follow-up work.
@@ -866,21 +934,138 @@ pub(crate) fn stop_children(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<Vec
         let Some(child) = row["childThreadId"].as_str().map(str::to_owned) else {
             continue;
         };
-        if row["origin"] != "app_owned" || TERMINAL.contains(&row["status"].as_str().unwrap_or(""))
-        {
+        if row["origin"] != "app_owned" || !row["completedAt"].is_null() {
             continue;
         }
-        commands::hold_queue(tx, &child)?;
-        if let Some(run) = active_run(tx, &child)? {
-            let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+        let task_id = row["id"].as_str().unwrap_or_default().to_owned();
+        if let Some(run_id) = cancelled_run(tx, &child, &task_id)? {
             row["cancelledRunId"] = json!(run_id);
             let parent_run = row["runId"].as_str().map(str::to_owned);
             tx.append(Draft::new(thread_id, "subagent.updated", row).run(parent_run.as_deref()))?;
-            effects.extend(stop_children(tx, &child)?);
-            effects.extend(commands::stop_run(tx, &child, &run, None, false)?);
         }
+        if stopped.contains(&child) {
+            continue;
+        }
+        commands::hold_queue(tx, &child)?;
+        effects.extend(commands::stop_thread_work(tx, &child, None, false)?);
+        // A task with no turn left to end publishes now; one still running, when it ends.
+        effects.extend(finalize_tasks(tx, &child)?);
+        stopped.push(child);
     }
     Ok(effects)
+}
+
+/// The run a cancel of `task_id` stops (`cancelDelegatedTask`): the follow-up's latest run,
+/// else the child's latest live turn, else the latest turn that ran.
+fn cancelled_run(tx: &Tx<'_>, child_id: &str, task_id: &str) -> StoreResult<Option<String>> {
+    const LIVE: [&str; 5] = ["preparing", "queued", "starting", "running", "waiting"];
+    let runs = tx.entities(child_id, "runs")?;
+    let monitor = monitor_update_runs(tx, child_id)?;
+    let latest = |keep: &dyn Fn(&Value) -> bool| {
+        runs.iter()
+            .filter(|run| keep(run))
+            .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
+            .and_then(|run| run["id"].as_str().map(str::to_owned))
+    };
+    let status = |run: &Value| run["status"].as_str().unwrap_or_default().to_owned();
+    Ok(latest(&|run| run["delegatedTaskId"] == task_id)
+        .or_else(|| {
+            latest(&|run| LIVE.contains(&status(run).as_str()) && !monitor.contains(&run["id"]))
+        })
+        .or_else(|| {
+            latest(&|run| {
+                TERMINAL.contains(&status(run).as_str())
+                    && !run["startedAt"].is_null()
+                    && !monitor.contains(&run["id"])
+            })
+        }))
+}
+
+/// `delegated_task.cancel`, internal (T3 `cancelDelegatedTask`, `Orchestrator.ts:16320`): Stop
+/// for a task's child, with the task's `cancelledRunId` in the same write, so its settled turn
+/// publishes as interrupted. The child and every thread under it are checked against
+/// `modeLimit` first, in this write: their user may have raised one since the caller checked.
+pub(crate) fn cancel_task(tx: &mut Tx<'_>, c: Value) -> Outcome {
+    let (parent, mut row) = task_row(tx, &c)?;
+    let task_id = row["id"].as_str().unwrap_or_default().to_owned();
+    let child = c["threadId"].as_str().unwrap_or_default().to_owned();
+    if row["childThreadId"] != child.as_str() {
+        return reject(format!("Delegated task {task_id} does not run in {child}."));
+    }
+    if let Some(refusal) = above_mode_limit(tx, &child, &c["modeLimit"], &mut vec![])? {
+        return reject(refusal);
+    }
+    if work_active(&row)
+        && row["completedAt"].is_null()
+        && let Some(run_id) = cancelled_run(tx, &child, &task_id)?
+    {
+        row["cancelledRunId"] = json!(run_id);
+        row["updatedAt"] = json!(tx.now());
+        let parent_run = row["runId"].as_str().map(str::to_owned);
+        tx.append(Draft::new(&parent, "subagent.updated", row).run(parent_run.as_deref()))?;
+    }
+    let stop = commands::handler("thread.stop").expect("thread.stop");
+    let mut effects = stop(
+        tx,
+        json!({"type": "thread.stop", "commandId": c["commandId"], "threadId": child,
+               "reason": c["reason"]}),
+    )?;
+    effects.extend(finalize_tasks(tx, &child)?);
+    Ok(effects)
+}
+
+/// The code a refused cancel starts its message with, then `": "`.
+pub(crate) const MODE_REFUSALS: [&str; 2] = [
+    "runtime_mode_escalation_denied",
+    "interaction_mode_escalation_denied",
+];
+
+/// The refusal for the first thread of `thread_id`'s family (itself, then its delegates) that
+/// runs above `limit`, as `"<code>: <message>"`. A deleted thread is passed over.
+fn above_mode_limit(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    limit: &Value,
+    seen: &mut Vec<String>,
+) -> StoreResult<Option<String>> {
+    use conn_support::modes::{interaction_rank, runtime_rank};
+    if !limit.is_object() || seen.iter().any(|id| id == thread_id) {
+        return Ok(None);
+    }
+    seen.push(thread_id.to_owned());
+    if let Some(thread) = tx.thread(thread_id)?.filter(|t| t["deletedAt"].is_null()) {
+        let runtime = thread["runtimeMode"]
+            .as_str()
+            .unwrap_or("approval-required");
+        let interaction = thread["interactionMode"].as_str().unwrap_or("default");
+        let code = if runtime_rank(runtime)
+            > runtime_rank(limit["runtimeMode"].as_str().unwrap_or_default())
+        {
+            Some(MODE_REFUSALS[0])
+        } else if interaction_rank(interaction)
+            > interaction_rank(limit["interactionMode"].as_str().unwrap_or_default())
+        {
+            Some(MODE_REFUSALS[1])
+        } else {
+            None
+        };
+        if let Some(code) = code {
+            return Ok(Some(format!(
+                "{code}: Thread {thread_id} now runs in {runtime}/{interaction} mode, above this thread's; its user changed it while the task was being cancelled."
+            )));
+        }
+    }
+    for row in tx.entities(thread_id, "subagents")? {
+        if row["origin"] != "app_owned" {
+            continue;
+        }
+        if let Some(child) = row["childThreadId"].as_str()
+            && let Some(refusal) = above_mode_limit(tx, child, limit, seen)?
+        {
+            return Ok(Some(refusal));
+        }
+    }
+    Ok(None)
 }
 
 fn task_row(tx: &Tx<'_>, c: &Value) -> Result<(String, Value), CommandError> {

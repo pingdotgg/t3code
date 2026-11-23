@@ -32,7 +32,7 @@ mod pull_request_forge;
 mod pull_requests;
 mod scheduled;
 mod secrets;
-mod tasks;
+pub(crate) mod tasks;
 mod test_logins;
 mod themes;
 mod threads;

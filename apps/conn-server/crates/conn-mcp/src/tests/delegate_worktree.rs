@@ -315,3 +315,26 @@ async fn a_refused_child_leaves_no_worktree_or_branch() {
         1
     );
 }
+
+/// `awaitTask` (`OrchestratorMcpService.ts:1984`): the wake upgrade is armed once the task
+/// exists, so a blocking worktree delegate dropped while its checkout's setup runs still
+/// upgrades the task's wake.
+#[tokio::test(flavor = "current_thread")]
+async fn a_blocking_worktree_delegate_dropped_during_setup_upgrades_the_wake() {
+    let host = GitHost::new("dropped-setup");
+    let f = fixture_with_host("delegate-worktree-dropped", Some(host.clone()));
+    git_project(&f).await;
+    let (parent, caller) = running_parent(&f).await;
+    let parent = parent["threadId"].as_str().unwrap().to_owned();
+    let mut agent = Client::open(&f.service, caller).await;
+    let reached = park_at_next("setup");
+    let wait = agent.ok(
+        "delegate_task",
+        json!({"task": "hang", "isolation": "worktree", "mode": "wait", "timeoutMs": 20000}),
+    );
+    tokio::select! {
+        task = wait => panic!("the wait ended without reaching setup: {task}"),
+        () = reached.notified() => {}
+    }
+    until_wake_upgraded(&f, &parent).await;
+}

@@ -123,16 +123,18 @@ impl WakeUpgrade {
     }
 
     /// After the read the wait returns: the upgrade runs unless that read is terminal, read
-    /// first so a result returned here never also wakes the parent.
+    /// first so a result returned here never also wakes the parent. The guard stays armed until
+    /// the upgrade commits, so a call dropped meanwhile still upgrades.
     async fn settle(mut self, cx: &Cx<'_>, read: &Value) {
-        let command = self.command.take();
-        if TERMINAL.contains(&read["status"].as_str().unwrap_or_default()) {
-            return;
-        }
-        if let Some(command) = command {
+        if !TERMINAL.contains(&read["status"].as_str().unwrap_or_default())
+            && let Some(command) = self.command.clone()
+        {
+            #[cfg(test)]
+            crate::tests::park_at("wake-upgrade").await;
             // Refused only when the task already wakes the parent.
             let _ = cx.dispatch(command).await;
         }
+        self.command = None;
     }
 }
 
@@ -281,12 +283,13 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
             json!({"type": "worktree", "baseRef": base, "startFromOrigin": false});
     }
     cx.dispatch(command).await?;
+    // Armed once the task exists, so a wait dropped during the checkout's setup still upgrades.
+    let upgrade = wait.then(|| WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id));
     if let Some((project, _)) = &isolated {
         run_setup_script(cx, &child, project).await;
     }
 
-    if wait {
-        let upgrade = WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id);
+    if let Some(upgrade) = upgrade {
         let deadline = tokio::time::Instant::now() + wait_timeout(args);
         let read = match wait_for_task(cx, &caller.thread_id, &child, &task_id, deadline).await? {
             Some(read) => read,
@@ -423,6 +426,8 @@ async fn worktree_base(cx: &Cx<'_>, parent: &Value) -> Result<(Value, String), T
 /// terminal and does not hold the child back; a failure to start it is logged, as the
 /// worktree handoff does.
 async fn run_setup_script(cx: &Cx<'_>, child: &str, project: &Value) {
+    #[cfg(test)]
+    crate::tests::park_at("setup").await;
     let Some(config) = cx.config().worktrees.as_ref() else {
         return;
     };
@@ -477,26 +482,61 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
             format!("Delegated task {task_id} has no interruptible child run."),
         ));
     }
+    // Cancelling writes to the child and every thread under it; their user may have raised
+    // one above the parent's modes since it was delegated. All are checked before anything
+    // changes, and again in the engine's write (`OrchestratorMcpService.ts:2866`).
+    let parent = cx.projection(&caller.thread_id).await?;
+    let limit = json!({
+        "runtimeMode": parent["thread"]["runtimeMode"].as_str().unwrap_or("approval-required"),
+        "interactionMode": parent["thread"]["interactionMode"].as_str().unwrap_or("default"),
+    });
+    assert_stoppable(cx, &limit, &child_id).await?;
     let key = Cx::request_key(args);
-    // Its result no longer wakes the parent; disposed first, so the cancelled end stays quiet.
-    cx.dispatch(json!({
-        "type": "delegated_task.completion-delivery.dispose",
-        "commandId": cx.stable_id("command", "cancel-task-completion-delivery", &key),
-        "parentThreadId": caller.thread_id,
-        "taskId": task_id,
-    }))
-    .await?;
     let reason = str_arg(args, "reason").unwrap_or("Cancelled by its parent agent.");
-    // A task waiting for children has no turn to stop; Stop still reaches its delegates and
+    // A task waiting for children has no turn to stop; the Stop still reaches its delegates and
     // the background work it awaits (`OrchestratorMcpService.ts:3026`).
-    if waiting || running {
-        cx.dispatch(json!({
-            "type": "thread.stop",
+    let cancelled = cx
+        .engine()
+        .cancel_delegated_task(json!({
             "commandId": cx.stable_id("command", "task-cancel", &key),
             "threadId": child_id,
+            "parentThreadId": caller.thread_id,
+            "taskId": task_id,
             "reason": reason,
+            "modeLimit": limit,
         }))
-        .await?;
+        .await;
+    match cancelled {
+        Ok(()) => {}
+        Err(conn_engine::EngineError::Rejected(error)) => {
+            let message = error["message"].as_str().unwrap_or_default();
+            return Err(match error["code"].as_str() {
+                Some("runtime_mode_escalation_denied") => {
+                    fail("runtime_mode_escalation_denied", message)
+                }
+                Some("interaction_mode_escalation_denied") => {
+                    fail("interaction_mode_escalation_denied", message)
+                }
+                _ => fail(
+                    "task_not_cancellable",
+                    format!("Unable to stop delegated task {task_id}: {message}"),
+                ),
+            });
+        }
+        Err(conn_engine::EngineError::Internal(message)) => return Err(super::internal(message)),
+    }
+    // Its result no longer wakes the parent; disposed before its queued turns are cancelled,
+    // so a follow-up that ends with them stays quiet.
+    if let Err(error) = cx
+        .dispatch(json!({
+            "type": "delegated_task.completion-delivery.dispose",
+            "commandId": cx.stable_id("command", "cancel-task-completion-delivery", &key),
+            "parentThreadId": caller.thread_id,
+            "taskId": task_id,
+        }))
+        .await
+    {
+        eprintln!("task_cancel could not dispose the delivery of {task_id}: {error:?}");
     }
     // Stop keeps the queue for Resume, so cancelling the task removes its queued turns, read
     // after the Stop.
@@ -511,6 +551,45 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .await?;
     }
     Ok(json!({"taskId": task_id, "status": "cancel_requested"}))
+}
+
+/// `assertStoppable`: `thread` and every app-owned task thread under it run within `limit`.
+async fn assert_stoppable(cx: &Cx<'_>, limit: &Value, thread: &str) -> Result<(), ToolError> {
+    let limits = super::Limits {
+        runtime_mode: limit["runtimeMode"].as_str().unwrap_or_default().to_owned(),
+        interaction_mode: limit["interactionMode"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    let mut pending = vec![thread.to_owned()];
+    let mut seen: Vec<String> = vec![];
+    while let Some(thread) = pending.pop() {
+        if seen.contains(&thread) {
+            continue;
+        }
+        let projection = match cx.projection(&thread).await {
+            Ok(projection) => projection,
+            Err(ToolError::Failure {
+                code: "thread_not_found",
+                ..
+            }) => continue,
+            Err(other) => return Err(other),
+        };
+        if projection["thread"]["deletedAt"].is_null() {
+            cx.within_limits(&limits, &projection["thread"])?;
+        }
+        pending.extend(
+            projection["subagents"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|row| row["origin"] == "app_owned")
+                .filter_map(|row| row["childThreadId"].as_str().map(str::to_owned)),
+        );
+        seen.push(thread);
+    }
+    Ok(())
 }
 
 /// The task's own queued turns in its child (`OrchestratorMcpService.ts:2947`).
@@ -579,6 +658,9 @@ async fn read_task(
         return Err(not_found());
     }
     let original = child["thread"]["forkedFrom"]["nodeId"] == task_id;
+    // A turn that only answers a monitor update is no task's work (`delegatedTaskProgress`).
+    let monitor =
+        conn_engine::monitor_runs(child["messages"].as_array().map_or(&[], Vec::as_slice));
     let mut runs: Vec<&Value> = child["runs"]
         .as_array()
         .map(|r| {
@@ -587,6 +669,7 @@ async fn read_task(
                     Some(task) => task == task_id,
                     None => original,
                 })
+                .filter(|run| !monitor.contains(&run["id"]))
                 .collect()
         })
         .unwrap_or_default();
@@ -614,11 +697,15 @@ async fn read_task(
     let terminal = TERMINAL.contains(&status);
     let terminal_run = runs.iter().rev().find(|run| !view::is_live(run)).copied();
     // `readTask`: the result the task was published with (`OrchestratorMcpService.ts:1819`);
-    // a later run in the same child never replaces it.
-    let summary = if terminal {
-        row["result"].clone()
-    } else {
-        Value::Null
+    // a later run in the same child never replaces it. A row published before rows kept their
+    // result reads it from its own last run.
+    let summary = match (terminal, &row["result"]) {
+        (false, _) => Value::Null,
+        (true, Value::Null) => json!(terminal_run.map_or_else(
+            || "Child task completed without an assistant result.".to_owned(),
+            |run| conn_engine::delegated_task_result(&child, run),
+        )),
+        (true, result) => result.clone(),
     };
     let requests: Vec<&Value> = child["runtimeRequests"]
         .as_array()
@@ -707,24 +794,29 @@ async fn acknowledge_result(cx: &Cx<'_>, parent: &Value, row: &Value) -> Result<
     ) {
         return Ok(());
     }
-    let observing = parent["runs"].as_array().and_then(|runs| {
-        runs.iter()
-            // `latestActiveRun`: a queued turn has not run, so it observed nothing.
-            .filter(|run| {
-                view::is_live(run)
-                    && run["status"] != "queued"
-                    && run["providerInstanceId"] == caller.provider_instance_id.as_str()
-            })
-            .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
-            .map(|run| run["id"].clone())
-    });
     cx.dispatch(json!({
         "type": "delegated_task.completion-delivery.acknowledge",
         "commandId": cx.stable_id("command", "task-status-acknowledge", &conn_support::uuid_v4()),
         "parentThreadId": caller.thread_id,
         "taskId": row["id"],
-        "observedByRunId": observing.unwrap_or(Value::Null),
+        "observedByRunId": observing_run(parent, caller),
     }))
     .await
     .map(|_| ())
+}
+
+/// The caller's turn that observed a result it read (`latestActiveRun`): its newest live turn,
+/// never one queued behind it, which has not run and observed nothing.
+pub(crate) fn observing_run(parent: &Value, caller: &crate::ThreadCaller) -> Value {
+    parent["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|run| {
+            view::is_live(run)
+                && run["status"] != "queued"
+                && run["providerInstanceId"] == caller.provider_instance_id.as_str()
+        })
+        .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
+        .map_or(Value::Null, |run| run["id"].clone())
 }

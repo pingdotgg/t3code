@@ -75,6 +75,7 @@ pub use engine::{
     CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
     SqliteEngine,
 };
+pub use families::{delegated_task_result, monitor_runs};
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
@@ -488,6 +489,18 @@ pub trait Engine: Send + Sync {
         Box::pin(std::future::ready(Err(
             "Tasks in linked environments are not supported.".into(),
         )))
+    }
+
+    /// `cancelDelegatedTask`: Stop for a task's child thread (`threadId`), recording the task
+    /// (`parentThreadId`, `taskId`) as cancelled in the same write. Refused, with `code`
+    /// `runtime_mode_escalation_denied` or `interaction_mode_escalation_denied`, when the child
+    /// or a thread under it runs above `modeLimit`. An internal command, so it never goes
+    /// through [`Engine::dispatch`].
+    fn cancel_delegated_task(
+        &self,
+        _command: Value,
+    ) -> BoxFuture<'_, Result<(), EngineError<Value>>> {
+        unsupported("cancelling a delegated task")
     }
 
     /// `(parentThreadId, taskId)` of each remote task a follower still owes something, at most

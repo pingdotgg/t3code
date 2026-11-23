@@ -1271,21 +1271,37 @@ fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 .command(command_id.as_deref()),
         )?;
     }
-    let children = crate::families::stop_children(tx, &c.thread_id)?;
-    let active = active_run(tx, &c.thread_id)?;
-    // With no active run, background work that outlives the latest run is the target: the
-    // provider alone knows whether work remains (`dispatchThreadStop`).
+    Ok(stop_thread_work(
+        tx,
+        &c.thread_id,
+        c.reason.as_deref(),
+        true,
+    )?)
+}
+
+/// What Stop ends in a thread: its delegates first, then its active run or, with none, the
+/// background work that outlives its latest run (`dispatchThreadStop`). `mark` records the
+/// Stop on the run, as a Stop the user asked for does.
+pub(crate) fn stop_thread_work(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    reason: Option<&str>,
+    mark: bool,
+) -> StoreResult<Vec<Effect>> {
+    let children = crate::families::stop_children(tx, thread_id)?;
+    let active = active_run(tx, thread_id)?;
+    // Only the provider knows whether background work remains, so it is asked to stop it.
     let settled = match &active {
         Some(_) => None,
-        None => crate::shell::settled_background_target(tx, &c.thread_id)?
+        None => crate::shell::settled_background_target(tx, thread_id)?
             .and_then(|(run, _)| run["id"].as_str().map(str::to_owned)),
     };
     let own = match &active {
-        Some(run) => stop_run(tx, &c.thread_id, run, c.reason.as_deref(), true)?,
+        Some(run) => stop_run(tx, thread_id, run, reason, mark)?,
         None => vec![],
     };
     let background = settled.map(|run_id| Effect::StopBackgroundWork {
-        thread_id: c.thread_id.clone(),
+        thread_id: thread_id.to_owned(),
         run_id,
     });
     Ok(children.into_iter().chain(own).chain(background).collect())

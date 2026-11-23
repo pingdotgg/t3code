@@ -4,7 +4,7 @@
 //!   that ignores `turn/interrupt`.
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
-//! - `fail`: the turn fails.
+//! - `fail`: the turn fails. `report-fail`: it says `partial report`, then fails.
 //! - `push`: a finished `git push` command row, then the turn completes.
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
@@ -841,6 +841,14 @@ impl Session for FakeSession {
                     TurnStatus::Failed,
                     Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
                 )),
+                "report-fail" => {
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "partial report", false));
+                    started.push(terminal(
+                        &turn,
+                        TurnStatus::Failed,
+                        Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
+                    ));
+                }
                 _ => {
                     let reply = format!("echo: {text}");
                     let cut = |n: usize| reply.chars().take(n).collect::<String>();
