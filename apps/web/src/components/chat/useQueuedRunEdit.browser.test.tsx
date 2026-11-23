@@ -2,6 +2,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   ChatAttachmentId,
+  ComposerContextId,
   MessageId,
   RunId,
   ThreadId,
@@ -363,22 +364,83 @@ describe("useQueuedRunEdit", () => {
     expect(draft?.environmentContexts).toEqual([machine]);
   });
 
-  it("saves only the thread mentions still in the edited message", async () => {
+  it("saves only the thread mentions and attachments still in the edited message", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const kept = threadContextRecord(THREAD_B, "Kept");
     const removed = threadContextRecord(THREAD_A, "Removed");
+    const removedImageId = ChatAttachmentId.make("server-image-removed");
+    const keptFileId = ChatAttachmentId.make("server-file-kept");
+    const removedImageContextId = ComposerContextId.make("image_local-removed");
+    const keptFileContextId = ComposerContextId.make("file_local-kept");
+    const removedImage = {
+      type: "image" as const,
+      id: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFile = {
+      type: "file" as const,
+      id: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const removedImageRecord = {
+      version: 1 as const,
+      kind: "image" as const,
+      contextId: removedImageContextId,
+      label: "image.png",
+      attachmentId: removedImageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const keptFileRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: keptFileContextId,
+      label: "legacy.pdf",
+      attachmentId: keptFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
     const messageId = MessageId.make("message-1");
-    const text = [kept, removed]
-      .map((record) => formatInlineContextReference(threadContextReference(record)))
-      .join(" and ");
-    const messages = [{ id: messageId, text, context: { version: 1, records: [kept, removed] } }];
+    const text = [
+      formatInlineContextReference(threadContextReference(kept)),
+      formatInlineContextReference(threadContextReference(removed)),
+      formatInlineContextReference({
+        kind: "image",
+        contextId: removedImageContextId,
+        label: "image.png",
+      }),
+    ].join(" and ");
+    const messages = [
+      {
+        id: messageId,
+        text,
+        context: { version: 1, records: [kept, removed, removedImageRecord, keptFileRecord] },
+      },
+    ];
     await using _screen = await render(view(THREAD_A, "queued", hook, messages));
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
+    await act(() =>
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId,
+        text,
+        attachments: [removedImage, keptFile],
+      }),
+    );
     const target = requireHook(hook).draftTarget;
-    await act(() => useComposerDraftStore.getState().setThreadContexts(target, [kept]));
+    await act(() => {
+      useComposerDraftStore.getState().setThreadContexts(target, [kept]);
+      requireHook(hook).removeEditingAttachment(removedImageId);
+    });
 
     const draft = useComposerDraftStore.getState().getComposerDraft(target);
+    expect(draft?.prompt).not.toContain(removedImageContextId);
     await requireHook(hook).saveEdit(
       { ...savedContent(draft?.prompt ?? ""), threadContexts: draft?.threadContexts ?? [] },
       () => {},
@@ -387,7 +449,11 @@ describe("useQueuedRunEdit", () => {
     expect(mocks.editQueuedRun).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          edit: expect.objectContaining({ context: { version: 1, records: [kept] } }),
+          text: draft?.prompt,
+          edit: expect.objectContaining({
+            attachments: [keptFile],
+            context: { version: 1, records: [keptFileRecord, kept] },
+          }),
         }),
       }),
     );
