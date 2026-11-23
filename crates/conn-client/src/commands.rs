@@ -17,6 +17,55 @@ fn new_id(kind: &str) -> String {
     format!("gpui-{kind}-{millis}-{n}")
 }
 
+/// What a `server.refreshProviders` call asks for. The config stream carries the result, so
+/// every call asks for no providers back (`omitProviders`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ProviderRefresh<'a> {
+    /// The model picker opened (`modelCatalogOnly`): refetch a model manifest older than a few
+    /// minutes and probe providers only when it changed. Only for a server whose
+    /// `modelCatalogRefresh` capability is set; an older one probes every provider.
+    #[default]
+    ModelCatalog,
+    /// The refresh button of a provider's banner or setup page: probe `instance_id` and bypass
+    /// its model caches (`refreshModels`).
+    Instance(&'a str),
+    /// The Providers settings refresh: probe every provider, bypass model caches and read
+    /// secret references again (`refreshModels`, `reloadSecrets`).
+    All,
+}
+
+/// The `server.refreshProviders` payload for `refresh`.
+#[must_use]
+pub fn refresh_providers_payload(
+    refresh: ProviderRefresh<'_>,
+) -> conn_contract::ServerRefreshProvidersPayload {
+    let mut payload = conn_contract::ServerRefreshProvidersPayload {
+        instance_id: None,
+        cwd: None,
+        fresh: None,
+        refresh_models: None,
+        model_catalog_only: None,
+        reload_secrets: None,
+        workspace_snapshots_on_demand: Some(true),
+        usage_limits_command: None,
+        provider_catalogs_on_demand: None,
+        omit_providers: Some(true),
+        machine_catalog: None,
+    };
+    match refresh {
+        ProviderRefresh::ModelCatalog => payload.model_catalog_only = Some(true),
+        ProviderRefresh::Instance(id) => {
+            payload.instance_id = Some(id.to_owned());
+            payload.refresh_models = Some(true);
+        }
+        ProviderRefresh::All => {
+            payload.refresh_models = Some(true);
+            payload.reload_secrets = Some(true);
+        }
+    }
+    payload
+}
+
 /// `message.dispatch`: send `text` and `attachments` to `thread_id`. While a turn runs, the
 /// message steers it when `steer_target_run_id` is set, else queues after it.
 ///
@@ -781,6 +830,31 @@ mod tests {
         assert_eq!(
             format_client_error(&err),
             "Provider instance \"codex\" is disabled."
+        );
+    }
+
+    #[test]
+    fn provider_refreshes_ask_for_what_conn_asks_for() {
+        let picker = refresh_providers_payload(ProviderRefresh::ModelCatalog);
+        assert_eq!(picker.model_catalog_only, Some(true));
+        assert_eq!(picker.instance_id, None);
+        assert_eq!(
+            picker.refresh_models, None,
+            "opening a picker never opens sessions"
+        );
+        let banner = refresh_providers_payload(ProviderRefresh::Instance("antigravity"));
+        assert_eq!(banner.instance_id.as_deref(), Some("antigravity"));
+        assert_eq!(banner.refresh_models, Some(true));
+        assert_eq!(
+            banner.reload_secrets, None,
+            "only explicit settings refreshes unlock vaults"
+        );
+        let settings = refresh_providers_payload(ProviderRefresh::All);
+        assert_eq!(settings.instance_id, None);
+        assert_eq!(settings.reload_secrets, Some(true));
+        assert!(
+            serde_json::to_value(&settings).is_ok_and(|v| v["omitProviders"] == true),
+            "the config stream carries the result"
         );
     }
 

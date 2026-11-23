@@ -3,7 +3,8 @@
 //! Styled as a floating `dropdown-glass` surface (`12px` radius, `shell_overlay` fill,
 //! `glass_divider` 1px border, `8px` row radius, `shell_highlight` hover).
 
-use conn_contract::{ProjectEntry, ProjectEntryKind, ServerProvidersItemItemSkillsItem};
+use conn_contract::{ProjectEntry, ProjectEntryKind};
+pub(crate) use conn_state::providers::SkillEntry;
 use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
@@ -269,84 +270,14 @@ pub(crate) fn replace_trigger(
     )
 }
 
-/// A provider skill offered by the `$` menu (`ServerProviderSkill`).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SkillEntry {
-    pub(crate) name: String,
-    pub(crate) display_name: Option<String>,
-    pub(crate) description: Option<String>,
-    pub(crate) short_description: Option<String>,
-    pub(crate) scope: Option<String>,
-    pub(crate) path: String,
-}
-
-impl SkillEntry {
-    /// Builds a skill entry when the skill is user invocable (`isProviderSkillUserInvocable`).
-    #[must_use]
-    pub(crate) fn from_contract(skill: &ServerProvidersItemItemSkillsItem) -> Option<Self> {
-        if !skill.enabled || skill.user_invocable == Some(false) {
-            return None;
-        }
-        Some(Self {
-            name: skill.name.clone(),
-            display_name: skill.display_name.clone(),
-            description: skill.description.clone(),
-            short_description: skill.short_description.clone(),
-            scope: skill.scope.clone(),
-            path: skill.path.clone(),
-        })
-    }
-
-    /// `formatProviderSkillDisplayName`.
-    #[must_use]
-    pub(crate) fn label(&self) -> &str {
-        self.display_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or(&self.name)
-    }
-
-    /// Row description: short description, description, `<scope> skill`, or `Run provider skill`.
-    #[must_use]
-    pub(crate) fn row_description(&self) -> String {
-        self.short_description
-            .clone()
-            .or_else(|| self.description.clone())
-            .or_else(|| self.scope.as_ref().map(|scope| format!("{scope} skill")))
-            .unwrap_or_else(|| "Run provider skill".to_owned())
-    }
-
-    /// `resolveProviderSkillSourceKind` badge label.
-    #[must_use]
-    pub(crate) fn source_label(&self) -> &'static str {
-        let path = self.path.replace('\\', "/");
-        if path.contains("/.codex/plugins/") || path.contains("/.agents/plugins/") {
-            return "App";
-        }
-        match self
-            .scope
-            .as_deref()
-            .map(|s| s.trim().to_ascii_lowercase())
-            .as_deref()
-        {
-            Some("repo" | "repository") => "Repo",
-            Some("project" | "workspace" | "local") => "Project",
-            Some("user" | "personal") => "Personal",
-            Some("system") => "System",
-            _ => "Provider",
-        }
-    }
-
-    /// `resolveProviderSkillSourceKind` badge icon.
-    fn source_icon(&self) -> &'static str {
-        match self.source_label() {
-            "App" => "superhero/apps.svg",
-            "Repo" | "Project" => ICON_FOLDER,
-            "Personal" => "superhero/user.svg",
-            "System" => "superhero/settings.svg",
-            _ => "superhero/package.svg",
-        }
+/// The superheroicons glyph of a skill's source badge (`resolveProviderSkillSourceKind`).
+fn skill_source_icon(skill: &SkillEntry) -> &'static str {
+    match skill.source_label() {
+        "App" => "superhero/apps.svg",
+        "Repo" | "Project" => ICON_FOLDER,
+        "Personal" => "superhero/user.svg",
+        "System" => "superhero/settings.svg",
+        _ => "superhero/package.svg",
     }
 }
 
@@ -574,7 +505,7 @@ pub(super) fn render_command_menu(
                                 .text_size(px(11.0))
                                 .line_height(px(14.0))
                                 .text_color(badge_fg)
-                                .child(icons::icon(skill.source_icon(), 12.0, badge_fg))
+                                .child(icons::icon(skill_source_icon(skill), 12.0, badge_fg))
                                 .child(format!("{} Skill", skill.source_label())),
                         );
                     if is_highlighted {

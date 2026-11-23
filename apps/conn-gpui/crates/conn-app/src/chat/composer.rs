@@ -25,15 +25,16 @@ pub(crate) use self::context_meter::ContextWindowSnapshot;
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::TestSupportExt as _;
 
 use conn_client::Connection;
 use conn_contract::rpc::projects::search_entries;
-use conn_contract::rpc::server::get_config;
-use conn_contract::{ChatAttachment, ProjectSearchEntriesInput, ServerProbePayload};
+use conn_contract::{ChatAttachment, ProjectSearchEntriesInput};
 use conn_desktop::operator::{DictationStart, DictationWait, OperatorClient};
+use conn_state::providers::ServerConfigState;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::component::input::{
     Enter, Escape, InputEvent, InputState, MoveDown, MoveUp, Paste, Textarea, TextareaState,
@@ -57,7 +58,7 @@ use self::menus::{
     ComposerTrigger, ComposerTriggerKind, FileMentionEntry, SkillEntry, detect_trigger,
     filter_skills, filter_slash_commands, render_command_menu, replace_trigger,
 };
-use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_model_picker};
+use self::model_picker::{ModelOption, ModelPickerView, render_model_picker};
 use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
 use super::composer_state::{
@@ -192,7 +193,8 @@ pub(crate) enum ComposerEvent {
     Branch(BranchAction),
     SlashCommand(String),
     /// `server.getConfig` loaded; carries its `scratchWorkspaceRoot`.
-    ScratchWorkspaceRoot(Option<String>),
+    /// `Open provider setup` for an instance (the picker's notice, Conn's `onOpenProviderSetup`).
+    OpenProviderSetup(String),
 }
 
 /// What the pending question's panel reads from the composer.
@@ -251,9 +253,10 @@ pub(crate) struct Composer {
     branch: branch_picker::BranchUi,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
-    catalog: ModelCatalog,
-    catalog_loading: bool,
-    catalog_error: Option<String>,
+    /// The live `subscribeServerConfig` projection, shared with the app.
+    config: Arc<ServerConfigState>,
+    /// A `modelCatalogOnly` refresh is in flight (Conn single-flights it).
+    catalog_refresh_in_flight: bool,
     selected_instance_id: Option<String>,
     selected_driver: Option<String>,
     selected_model: String,
@@ -294,7 +297,7 @@ impl fmt::Debug for Composer {
             .field("selected_model", &self.selected_model)
             .field("model_picker_open", &self.model_picker_open)
             .field("active_trigger", &self.active_trigger)
-            .field("providers", &self.catalog.providers.len())
+            .field("providers", &self.config.catalog().providers.len())
             .finish_non_exhaustive()
     }
 }
@@ -308,8 +311,7 @@ impl EventEmitter<ComposerEvent> for Composer {}
 impl Composer {
     /// Creates a new [`Composer`] entity styled with `tokens`.
     ///
-    /// When `connection` is present, immediately fetches the provider/model catalog
-    /// via `server.getConfig`.
+    /// The provider/model catalog arrives from the app's `subscribeServerConfig` stream.
     pub(crate) fn new(
         tokens: Tokens,
         connection: Option<Connection>,
@@ -371,7 +373,7 @@ impl Composer {
             );
 
         let branch = branch_picker::BranchUi::new(window, cx);
-        let mut composer = Self {
+        Self {
             tokens,
             connection,
             workspace_root: None,
@@ -405,9 +407,8 @@ impl Composer {
             branch,
             textarea,
             model_search_input,
-            catalog: ModelCatalog::default(),
-            catalog_loading: false,
-            catalog_error: None,
+            config: Arc::new(ServerConfigState::new()),
+            catalog_refresh_in_flight: false,
             selected_instance_id: None,
             selected_driver: None,
             selected_model: "Default model".to_owned(),
@@ -433,11 +434,7 @@ impl Composer {
             next_dictation_seq: 1,
             submit_after_dictation: false,
             _subscriptions: vec![textarea_sub, search_sub],
-        };
-        if composer.connection.is_some() {
-            composer.refresh_providers(cx);
         }
-        composer
     }
 
     /// Replaces active theme tokens.
@@ -449,16 +446,15 @@ impl Composer {
         cx.notify();
     }
 
-    /// Updates the server connection and fetches the provider catalog via `server.getConfig`.
+    /// Updates the server connection. The catalog follows the app's config stream.
     pub(crate) fn set_connection(
         &mut self,
         connection: Option<Connection>,
         cx: &mut Context<'_, Self>,
     ) {
         self.connection = connection;
-        if self.connection.is_some() {
-            self.refresh_providers(cx);
-        }
+        self.catalog_refresh_in_flight = false;
+        cx.notify();
     }
 
     /// Sets the workspace root used for `@` file mention searches (`projects.searchEntries`).
@@ -822,7 +818,8 @@ impl Composer {
         Option<serde_json::Map<String, serde_json::Value>>,
     )> {
         if let Some(opt) = self
-            .catalog
+            .config
+            .catalog()
             .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
         {
             return Some((
@@ -842,7 +839,8 @@ impl Composer {
                 self.selected_options.clone(),
             ));
         }
-        self.catalog
+        self.config
+            .catalog()
             .default_model()
             .map(|opt| (opt.instance_id.clone(), opt.slug.clone(), None))
     }
@@ -882,48 +880,54 @@ impl Composer {
         cx.notify();
     }
 
-    /// Fetches the provider/model list via `server.getConfig`.
-    pub(crate) fn refresh_providers(&mut self, cx: &mut Context<'_, Self>) {
-        let Some(conn) = self.connection.clone() else {
+    /// Takes the app's latest server config: the provider catalog the picker, the footer and
+    /// the `$` menu read. An unset model follows the catalog's default.
+    pub(crate) fn set_server_config(
+        &mut self,
+        config: Arc<ServerConfigState>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.config = config;
+        if (self.selected_instance_id.is_none() || self.selected_model == "Default model")
+            && let Some(default_opt) = self.config.catalog().default_model().cloned()
+        {
+            self.selected_instance_id = Some(default_opt.instance_id);
+            self.selected_driver = Some(default_opt.driver);
+            self.selected_model = default_opt.slug;
+        }
+        cx.notify();
+    }
+
+    /// A model picker opened: ask the server for newly released models
+    /// (`ProviderModelPicker.tsx` `refreshModelCatalog`). The config stream carries the result.
+    /// Only a server that advertises `modelCatalogRefresh` is asked: an older one drops the
+    /// field and probes every provider.
+    fn refresh_model_catalog(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
             return;
         };
-        self.catalog_loading = true;
-        self.catalog_error = None;
-        cx.notify();
-
+        if !self.config.supports_model_catalog_refresh() || self.catalog_refresh_in_flight {
+            return;
+        }
+        self.catalog_refresh_in_flight = true;
         cx.spawn(async move |this, cx| {
-            let res = conn
-                .call::<get_config::Payload, get_config::Success>(
-                    "server.getConfig",
-                    &ServerProbePayload {},
-                )
+            let payload = conn_client::commands::refresh_providers_payload(
+                conn_client::commands::ProviderRefresh::ModelCatalog,
+            );
+            // A failed refresh leaves the catalog as it is; the picker reports nothing, as in Conn.
+            let _ = connection
+                .call::<_, serde_json::Value>("server.refreshProviders", &payload)
                 .await;
-            let _ = this.update(cx, |composer, cx| {
-                composer.catalog_loading = false;
-                match res {
-                    Ok(config) => {
-                        cx.emit(ComposerEvent::ScratchWorkspaceRoot(
-                            config.scratch_workspace_root.clone(),
-                        ));
-                        composer.catalog = ModelCatalog::from_server_config(&config);
-                        composer.catalog_error = None;
-                        if (composer.selected_instance_id.is_none()
-                            || composer.selected_model == "Default model")
-                            && let Some(default_opt) = composer.catalog.default_model().cloned()
-                        {
-                            composer.selected_instance_id = Some(default_opt.instance_id);
-                            composer.selected_driver = Some(default_opt.driver);
-                            composer.selected_model = default_opt.slug;
-                        }
-                    }
-                    Err(err) => {
-                        composer.catalog_error = Some(err.to_string());
-                    }
-                }
-                cx.notify();
-            });
+            let _ = this.update(cx, |composer, _| composer.catalog_refresh_in_flight = false);
         })
         .detach();
+    }
+
+    /// `Open provider setup` for `instance_id`: the host opens Settings on its Providers page.
+    pub(super) fn open_provider_setup(&mut self, instance_id: String, cx: &mut Context<'_, Self>) {
+        self.model_picker_open = false;
+        cx.emit(ComposerEvent::OpenProviderSetup(instance_id));
+        cx.notify();
     }
 
     /// Toggles the floating model picker popup.
@@ -942,9 +946,7 @@ impl Composer {
                 input.set_value("", window, cx);
                 input.focus(window, cx);
             });
-            if self.catalog.providers.is_empty() && !self.catalog_loading {
-                self.refresh_providers(cx);
-            }
+            self.refresh_model_catalog(cx);
         }
         cx.notify();
     }
@@ -1751,8 +1753,16 @@ impl Composer {
 
     /// The selected model from the catalog, when known.
     fn selected_model_option(&self) -> Option<&ModelOption> {
-        self.catalog
+        self.config
+            .catalog()
             .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
+    }
+
+    /// The provider instance the composer sends with (`selectedProviderEntry`).
+    pub(crate) fn selected_provider_instance(&self) -> Option<&str> {
+        self.selected_model_option()
+            .map(|model| model.instance_id.as_str())
+            .or(self.selected_instance_id.as_deref())
     }
 
     /// The selected provider's catalog group.
@@ -1761,7 +1771,8 @@ impl Composer {
             .selected_model_option()
             .map(|m| m.instance_id.as_str())
             .or(self.selected_instance_id.as_deref())?;
-        self.catalog
+        self.config
+            .catalog()
             .providers
             .iter()
             .find(|p| p.instance_id == instance)
@@ -1923,7 +1934,7 @@ impl Composer {
         model: String,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(opt) = self.catalog.find_model(Some(&instance_id), &model) {
+        if let Some(opt) = self.config.catalog().find_model(Some(&instance_id), &model) {
             self.selected_driver = Some(opt.driver.clone());
         }
         let same_model = self.selected_instance_id.as_deref() == Some(instance_id.as_str())
@@ -2086,12 +2097,17 @@ impl Composer {
                 .as_deref()
                 .or(self.selected_instance_id.as_deref())
                 .or_else(|| {
-                    self.catalog
+                    self.config
+                        .catalog()
                         .picker_providers()
                         .next()
                         .map(|p| p.instance_id.as_str())
                 });
-            let count = self.catalog.filtered_models(effective, &query).len();
+            let count = self
+                .config
+                .catalog()
+                .filtered_models(effective, &query)
+                .len();
             if count > 0 {
                 self.picker_highlighted_index =
                     step_index(self.picker_highlighted_index, delta, count);
@@ -2125,13 +2141,15 @@ impl Composer {
             .as_deref()
             .or(self.selected_instance_id.as_deref())
             .or_else(|| {
-                self.catalog
+                self.config
+                    .catalog()
                     .picker_providers()
                     .next()
                     .map(|p| p.instance_id.as_str())
             });
         let picked = self
-            .catalog
+            .config
+            .catalog()
             .filtered_models(effective, &query)
             .get(self.picker_highlighted_index)
             .map(|m| (m.instance_id.clone(), m.slug.clone()));
@@ -2301,9 +2319,8 @@ impl Composer {
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let provider_unavailable = self.connection.is_some()
-            && !self.catalog_loading
-            && self.catalog_error.is_none()
-            && self.catalog.providers.is_empty();
+            && self.config.is_loaded()
+            && self.config.catalog().providers.is_empty();
         let placeholder = composer_placeholder(&self.pending_request, provider_unavailable);
         if self.applied_placeholder != placeholder {
             self.applied_placeholder = placeholder;
@@ -3034,9 +3051,8 @@ impl Render for Composer {
             let query = self.model_search_input.read(cx).value().to_string();
             let popup = render_model_picker(
                 &ModelPickerView {
-                    catalog: &self.catalog,
-                    loading: self.catalog_loading,
-                    error: self.catalog_error.as_deref(),
+                    catalog: self.config.catalog(),
+                    loading: !self.config.is_loaded(),
                     active_instance_id: self.selected_instance_id.as_deref(),
                     active_model: &self.selected_model,
                     selected_provider: self.picker_provider_filter.as_deref(),

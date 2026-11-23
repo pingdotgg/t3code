@@ -115,6 +115,9 @@ pub enum ClientEvent {
     /// The bearer token after a pairing-code exchange, so the app can persist it.
     BearerIssued(String),
     Shell(conn_contract::OrchestrationV2ShellStreamItem),
+    /// One `subscribeServerConfig` event: the config snapshot, then provider, settings and
+    /// keybinding changes. Auto-resubscribed on WebSocket reconnect, which sends a new snapshot.
+    ServerConfig(Box<conn_contract::ServerConfigStreamEvent>),
     Thread {
         thread_id: String,
         item: conn_contract::OrchestrationV2ThreadStreamItem,
@@ -372,6 +375,15 @@ impl Connection {
     /// the last observed sequence as `afterSequence`.
     pub fn subscribe_shell(&self) {
         let _ = self.cmd_tx.send(Command::SubscribeShell);
+    }
+
+    /// Subscribes to `subscribeServerConfig`, which sends the server config and then every
+    /// provider status change.
+    ///
+    /// Items arrive as [`ClientEvent::ServerConfig`]. Automatically resubscribes after reconnect;
+    /// the server then sends a fresh snapshot.
+    pub fn subscribe_server_config(&self) {
+        let _ = self.cmd_tx.send(Command::SubscribeServerConfig);
     }
 
     /// Subscribes to `orchestration.subscribeThread` for `thread_id`.
