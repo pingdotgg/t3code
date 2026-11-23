@@ -231,6 +231,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-stash-pulse-row: stash-pulse-row 1400ms;
   --animate-stash-pulse-row-alt: stash-pulse-row-alt 1400ms;
   --animate-stash-pulse-count: stash-pulse-count 1400ms step-start;
+  /* One-off arrivals in a workflow run's timeline; nothing here loops. */
+  --animate-step-in: step-in 180ms ease-out;
+  --animate-step-ping: step-ping 520ms ease-out;
+  --animate-check-draw: check-draw 200ms ease-out;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -343,6 +347,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  @keyframes step-ping {
+    from {
+      opacity: 0.55;
+      scale: 0.7;
+    }
+    to {
+      opacity: 0;
+      scale: 1.45;
+    }
+  }
+  @keyframes check-draw {
+    from {
+      stroke-dashoffset: 12;
     }
   }
   @keyframes status-ping {
@@ -1887,10 +1912,6 @@ code {
   margin: 0.65rem 0;
 }
 
-.chat-markdown-math-display .katex-display {
-  margin: 0;
-}
-
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -2310,6 +2331,15 @@ code {
 .chat-markdown :is(th, td) {
   max-width: 24rem;
   overflow-wrap: break-word;
+}
+
+.chat-markdown [data-markdown-math] {
+  font-weight: normal;
+  font-style: normal;
+}
+
+.chat-markdown [data-markdown-math] > svg {
+  font-size: 1.21em;
 }
 
 /* Formula cells keep their natural width and scroll with the table. */

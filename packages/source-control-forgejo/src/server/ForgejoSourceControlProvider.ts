@@ -24,6 +24,7 @@ import {
   unknownRemoteProvider,
 } from "@t3tools/source-control-core/shared/definition";
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
+import * as ForgejoChangeRequestTemplate from "./forgejoChangeRequestTemplate.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
@@ -303,7 +304,7 @@ interface UnfilteredPulls {
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
-  const { process } = yield* SourceControlHost.SourceControlHost;
+  const { git, process } = yield* SourceControlHost.SourceControlHost;
   const request = <S extends Schema.Codec<unknown, unknown, never, never>>(
     input: ForgejoCli.ForgejoApiInput,
     schema: S,
@@ -487,6 +488,11 @@ export const make = Effect.gen(function* () {
         return results;
       },
       (effect, input) => effect.pipe(mapError("listChangeRequests", input.cwd)),
+    ),
+    readChangeRequestTemplate: Effect.fn("ForgejoSourceControlProvider.readChangeRequestTemplate")(
+      function ({ cwd, treeish }) {
+        return ForgejoChangeRequestTemplate.detect(cwd, treeish, git.execute);
+      },
     ),
     getChangeRequest: Effect.fn("ForgejoSourceControlProvider.getChangeRequest")(function (input) {
       return getPull(input).pipe(
