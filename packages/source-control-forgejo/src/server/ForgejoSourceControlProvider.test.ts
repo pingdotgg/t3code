@@ -2060,9 +2060,13 @@ it.effect("reaches fj's server for a host named by an SSH config alias remote", 
   const requests: string[] = [];
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
-    for (const host of ["myforge", "forge.example.com"]) {
+    for (const [cwd, host] of [
+      ["/alias", "myforge"],
+      ["/direct", "forge.example.com"],
+      ["/ipv6", "[2001:db8::1]"],
+    ] as const) {
       const result = yield* cli.api({
-        cwd: host === "myforge" ? "/alias" : "/direct",
+        cwd,
         repository: "owner/repo",
         host,
         path: "repos/owner/repo/issues",
@@ -2072,6 +2076,7 @@ it.effect("reaches fj's server for a host named by an SSH config alias remote", 
     assert.deepStrictEqual(requests, [
       "https://forge.example.com/api/v1/repos/owner/repo/issues",
       "https://forge.example.com/api/v1/repos/owner/repo/issues",
+      "https://[2001:db8::1]/api/v1/repos/owner/repo/issues",
     ]);
     assert.notInclude(commands, "tea");
   }).pipe(
@@ -2082,7 +2087,10 @@ it.effect("reaches fj's server for a host named by an SSH config alias remote", 
         readFileString: () =>
           Effect.succeed(
             encodeJson({
-              hosts: { "forge.example.com": { type: "Application", token: "test-token" } },
+              hosts: {
+                "forge.example.com": { type: "Application", token: "test-token" },
+                "[2001:db8::1]": { type: "Application", token: "test-token" },
+              },
               aliases: { myforge: "forge.example.com" },
             }),
           ),
@@ -2104,9 +2112,12 @@ it.effect("reaches fj's server for a host named by an SSH config alias remote", 
             if (input.command === "git")
               return Effect.succeed(
                 processOutput(
-                  input.cwd === "/alias"
-                    ? "origin\tmyforge:owner/repo.git (fetch)\norigin\tmyforge:owner/repo.git (push)"
-                    : "origin\tgit@forge.example.com:owner/repo.git (fetch)",
+                  {
+                    "/alias":
+                      "origin\tmyforge:owner/repo.git (fetch)\norigin\tmyforge:owner/repo.git (push)",
+                    "/direct": "origin\tgit@forge.example.com:owner/repo.git (fetch)",
+                    "/ipv6": "origin\tssh://git@[2001:db8::1]/owner/repo.git (fetch)",
+                  }[input.cwd] ?? "",
                 ),
               );
             assert.strictEqual(input.command, "fj");

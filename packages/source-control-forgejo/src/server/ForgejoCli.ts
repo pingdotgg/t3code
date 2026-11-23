@@ -592,7 +592,7 @@ export const make = Effect.gen(function* () {
     )
       remote = {
         host: input.host.toLowerCase(),
-        hostname: input.host.split(":")[0] ?? input.host,
+        hostname: parseForgejoRemote(`https://${input.host}`)?.hostname ?? input.host.toLowerCase(),
         ssh: sshHost,
         path: remote?.path ?? "",
       };
