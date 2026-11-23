@@ -128,6 +128,25 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(ProcessRunner.layer)),
   );
 
+  it.effect("keys a remote rewritten by url.insteadOf by its configured URL", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-insteadof-test-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+      yield* git(cwd, ["config", "url.https://proxy.example/.insteadOf", "https://github.com/"]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+
+      expect(identity?.canonicalKey).toBe("github.com/owner/repo");
+      expect(identity?.provider).toBe("github");
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("keeps a literal .git in an Azure DevOps repository name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
