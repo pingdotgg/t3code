@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import type { OpenCodeSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -539,6 +540,20 @@ function subProviderLabelFor(input: {
     : label;
 }
 
+const catalogFingerprint = (models: ReadonlyArray<OpenCode2Model>) =>
+  models
+    .map((model) =>
+      JSON.stringify([
+        model.providerID,
+        model.id,
+        model.name,
+        model.providerName,
+        model.variants.map((variant) => variant.id).toSorted(),
+      ]),
+    )
+    .toSorted()
+    .join("\n");
+
 // A cold OpenCode 2.2.5 503s model reads for about a minute while its location plugins activate.
 const PLUGIN_ACTIVATION_DEADLINE = "2 minutes";
 
@@ -548,39 +563,48 @@ const isActivatingPlugins = (error: unknown): boolean =>
     ? isActivatingPlugins(error.cause)
     : isServiceUnavailable(error) && error.service === "plugin";
 
-const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
-
-/**
- * A fresh OpenCode 2.3 server lists a stable built-in snapshot until its live catalog loads, with
- * no event marking that load, so reads continue through the budget and the latest non-empty wins.
- */
+/** A cold server can list a partial catalog; two agreeing reads reduce that startup race. */
 const settleOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
-  environment: NodeJS.ProcessEnv | undefined,
+  first?: ReadonlyArray<OpenCode2Model>,
 ) =>
   Effect.suspend(() => {
-    let latest: ReadonlyArray<OpenCode2Model> | undefined;
-    return list.pipe(
-      Effect.tap((models) =>
-        Effect.sync(() => {
-          if (models.length > 0) latest = models;
-        }),
-      ),
-      Effect.repeat(Schedule.spaced("250 millis")),
-      Effect.timeoutOption(
-        resolveProviderProbeTimeoutMs(
-          "opencode",
-          OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
-          environment,
-        ),
-      ),
-      Effect.map(() => Option.fromNullishOr(latest)),
+    let previous = first && first.length > 0 ? catalogFingerprint(first) : undefined;
+    return (first ? Effect.delay(list, "250 millis") : list).pipe(
+      Effect.repeat({
+        until: (models) => {
+          const fingerprint = models.length > 0 ? catalogFingerprint(models) : undefined;
+          const settled = fingerprint !== undefined && fingerprint === previous;
+          previous = fingerprint;
+          return settled;
+        },
+        schedule: Schedule.spaced("250 millis"),
+      }),
     );
   });
+
+const OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS = 5_000;
+// A fresh OpenCode 2.3 server lists a stable built-in snapshot for seconds before its live
+// catalog, with no event marking the swap, so reads wait until a server T3 started is this old.
+const OPENCODE_2_STARTUP_CATALOG_WINDOW_MS = 5_000;
+
+const waitOutOpenCode2Startup = (serverStartedAt: Effect.Effect<number | undefined>) =>
+  serverStartedAt.pipe(
+    Effect.flatMap((startedAt) =>
+      startedAt === undefined
+        ? Effect.void
+        : Clock.currentTimeMillis.pipe(
+            Effect.flatMap((now) =>
+              Effect.sleep(Math.max(0, startedAt + OPENCODE_2_STARTUP_CATALOG_WINDOW_MS - now)),
+            ),
+          ),
+    ),
+  );
 
 export const makeOpenCode2ModelLoader = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
   environment?: NodeJS.ProcessEnv,
+  serverStartedAt: Effect.Effect<number | undefined> = Effect.undefined,
 ) =>
   Effect.sync(() => {
     let lastLoaded: ReadonlyArray<OpenCode2Model> = [];
@@ -601,8 +625,18 @@ export const makeOpenCode2ModelLoader = <E>(
         Effect.flatMap((first) =>
           Option.isNone(first)
             ? Effect.succeedNone
-            : Effect.sleep("250 millis").pipe(
-                Effect.andThen(settleOpenCode2Catalog(tracked, environment)),
+            : waitOutOpenCode2Startup(serverStartedAt).pipe(
+                Effect.andThen(
+                  settleOpenCode2Catalog(tracked, first.value).pipe(
+                    Effect.timeoutOption(
+                      resolveProviderProbeTimeoutMs(
+                        "opencode",
+                        OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+                        environment,
+                      ),
+                    ),
+                  ),
+                ),
               ),
         ),
         Effect.catch((error) =>
@@ -618,12 +652,24 @@ export const makeOpenCode2ModelLoader = <E>(
     });
   });
 
-/** None when a read fails or none lists models. */
+/** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
 export const readSettledOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
   environment?: NodeJS.ProcessEnv,
+  serverStartedAt: Effect.Effect<number | undefined> = Effect.undefined,
 ) =>
-  settleOpenCode2Catalog(list, environment).pipe(
+  waitOutOpenCode2Startup(serverStartedAt).pipe(
+    Effect.andThen(
+      settleOpenCode2Catalog(list).pipe(
+        Effect.timeoutOption(
+          resolveProviderProbeTimeoutMs(
+            "opencode",
+            OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+            environment,
+          ),
+        ),
+      ),
+    ),
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 

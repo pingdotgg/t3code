@@ -1313,7 +1313,7 @@ it.effect("lists a catalog whose cold server start outlasts the settle budget", 
     );
     const load = yield* makeOpenCode2ModelLoader(read);
     const fiber = yield* Effect.forkChild(load);
-    yield* TestClock.adjust("12 seconds");
+    yield* TestClock.adjust("10 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
   }),
 );
@@ -1334,16 +1334,32 @@ it.effect.each(["status check", "project folder"] as const)(
         { providerID: "github-copilot", id: "gemini-4-neon", name: "Gemini 4 Neon", variants: [] },
       ];
       const startedAt = yield* Clock.currentTimeMillis;
-      // OpenCode 2.3.2 serves its built-in snapshot for seconds; a slow live load outlasts 3s.
+      // OpenCode 2.3.2 serves its built-in snapshot for seconds before its live catalog.
       const read = Clock.currentTimeMillis.pipe(
         Effect.map((now) => (now - startedAt < 3_750 ? snapshot : live)),
       );
+      // T3 started this managed server just before the first read.
+      const serverStartedAt = Effect.succeed(startedAt);
       const load =
         caller === "status check"
-          ? yield* makeOpenCode2ModelLoader(read)
-          : readSettledOpenCode2Catalog(read).pipe(Effect.map(Option.getOrThrow));
+          ? yield* makeOpenCode2ModelLoader(read, undefined, serverStartedAt)
+          : readSettledOpenCode2Catalog(read, undefined, serverStartedAt).pipe(
+              Effect.map(Option.getOrThrow),
+            );
       const fiber = yield* Effect.forkChild(load);
       yield* TestClock.adjust("10 seconds");
       NodeAssert.deepEqual(yield* Fiber.join(fiber), live);
     }),
+);
+
+it.effect("settles a steady catalog from a server T3 did not just start after two reads", () =>
+  Effect.gen(function* () {
+    const catalog: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    const load = yield* makeOpenCode2ModelLoader(Effect.succeed(catalog));
+    const fiber = yield* Effect.forkChild(load);
+    yield* TestClock.adjust("250 millis");
+    NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
+  }),
 );

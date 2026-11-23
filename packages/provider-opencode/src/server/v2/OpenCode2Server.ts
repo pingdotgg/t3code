@@ -1,6 +1,7 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 // One OpenCode 2 process serves all directories; share it across instance threads.
 import type { OpenCodeClient } from "@opencode/client/effect";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,8 @@ export interface OpenCode2Connection extends OpenCode2Client.OpenCode2Api {
   readonly url: string;
   readonly version: string;
   readonly external: boolean;
+  /** When T3 started this server; only set for owned processes. */
+  readonly startedAt?: number;
   /** Only owned processes have an authoritative lifetime signal. */
   readonly processExit?: Effect.Effect<void>;
 }
@@ -129,7 +132,14 @@ export const make = Effect.fn("OpenCode2Server.make")(function* (input: {
   ) {
     const api = yield* opencode.connect({ baseUrl: url, password });
     const version = yield* verifyServer(api.client, input.environment);
-    return { ...api, url, version, external } satisfies OpenCode2Connection;
+    const startedAt = external ? undefined : yield* Clock.currentTimeMillis;
+    return {
+      ...api,
+      url,
+      version,
+      external,
+      ...(startedAt === undefined ? {} : { startedAt }),
+    } satisfies OpenCode2Connection;
   });
   let latest: OpenCode2Connection | undefined;
   const remember = (connection: OpenCode2Connection) =>

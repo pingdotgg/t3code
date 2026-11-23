@@ -397,12 +397,16 @@ export const OpenCodeDriver: ProviderDriver<
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });
+    const openCode2ServerStartedAt = openCode2Server
+      .withConnection(({ startedAt }) => Effect.succeed(startedAt))
+      .pipe(Effect.orElseSucceed(() => undefined));
     const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
       // An external server may not have the host's cwd; without a location it uses its own default.
       openCode2Server.withConnection(({ client, external }) =>
         loadOpenCode2Catalog(client, external ? undefined : host.paths.cwd),
       ),
       processEnv,
+      openCode2ServerStartedAt,
     );
     const listOpenCode2Workspace = (cwd: string) =>
       openCode2Server.withConnection(({ client, events }) =>
@@ -718,6 +722,7 @@ export const OpenCodeDriver: ProviderDriver<
                           loadOpenCode2DirectoryCatalog(client, cwd),
                         ),
                         processEnv,
+                        openCode2ServerStartedAt,
                       ).pipe(
                         Effect.map(
                           Option.map((catalog) =>

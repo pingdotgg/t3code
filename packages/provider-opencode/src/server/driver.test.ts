@@ -169,13 +169,13 @@ const makeOpenCode2ProjectInstance = (
       Stream.runCollect,
       Effect.forkChild,
     );
-    yield* TestClock.adjust("6 seconds");
+    yield* TestClock.adjust("5 seconds");
     yield* Fiber.join(ready);
-    // Catalog reads repeat through the settle budget, so let it pass on the test clock.
+    // Catalog reads repeat until two agree, so let them settle on the test clock.
     return (cwd: string) =>
       Effect.gen(function* () {
         const read = yield* Effect.forkChild(instance.snapshotForCwd!(cwd));
-        yield* TestClock.adjust("6 seconds");
+        yield* TestClock.adjust("5 seconds");
         return yield* Fiber.join(read);
       });
   });
@@ -704,7 +704,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         );
         yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseCatalog, undefined);
-        yield* TestClock.adjust("6 seconds");
+        yield* TestClock.adjust("5 seconds");
         const [failed] = Array.from(yield* Fiber.join(initial));
         assert.strictEqual(failed?.auth.status, "unknown");
         assert.deepStrictEqual(failed?.models, []);
@@ -818,7 +818,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         Effect.forkChild,
       );
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("6 seconds");
+      yield* TestClock.adjust("5 seconds");
       const [snapshot] = Array.from(yield* Fiber.join(settled));
       assert.deepStrictEqual(
         { status: snapshot?.status, message: snapshot?.message },
@@ -1103,6 +1103,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
           )
         : undefined;
       if (scenario.enabled && !scenario.unsupported) yield* Deferred.await(usageStarted);
+      // A server T3 just started is read once its startup window has passed.
       yield* TestClock.adjust("6 seconds");
       const failed = initial
         ? Array.from(yield* Fiber.join(initial))[0]
@@ -1217,7 +1218,8 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
         Effect.forkChild,
       );
       yield* Deferred.await(usageStarted);
-      yield* TestClock.adjust("6 seconds");
+      // The empty catalog of a server T3 just started times out after its startup window.
+      yield* TestClock.adjust("10 seconds");
       const [snapshot] = Array.from(yield* Fiber.join(initial));
       assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
       assert.deepStrictEqual(
