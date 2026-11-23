@@ -19,7 +19,7 @@ const TooltipProvider = TooltipPrimitive.Provider;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 
-type TrackedTooltip = { trigger: HTMLElement; actionsRef: TooltipActionsRef };
+type TrackedTooltip = { trigger: HTMLElement; owner: object; close: () => void };
 
 // The compiler freezes context values; update tracked tooltips through calls instead of shared ref writes.
 function createTooltipHoverTracker() {
@@ -30,22 +30,22 @@ function createTooltipHoverTracker() {
     if (focusScrollFrame !== null) cancelAnimationFrame(focusScrollFrame);
     focusScrollFrame = null;
   };
-  const blur = (actionsRef: TooltipActionsRef) => {
-    if (focused?.actionsRef !== actionsRef) return;
+  const blur = (owner: object) => {
+    if (focused?.owner !== owner) return;
     settleFocus();
     focused = null;
   };
-  const release = (actionsRef: TooltipActionsRef) => {
-    if (hovered?.actionsRef === actionsRef) hovered = null;
-    blur(actionsRef);
+  const release = (owner: object) => {
+    if (hovered?.owner === owner) hovered = null;
+    blur(owner);
   };
   return {
-    hover(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
-      hovered = { trigger, actionsRef };
+    hover(trigger: HTMLElement, owner: object, close: () => void) {
+      hovered = { trigger, owner, close };
     },
-    focus(trigger: HTMLElement, actionsRef: TooltipActionsRef) {
+    focus(trigger: HTMLElement, owner: object, close: () => void) {
       settleFocus();
-      focused = { trigger, actionsRef };
+      focused = { trigger, owner, close };
       // Browser focus scrolling is dispatched before the next animation frame.
       focusScrollFrame = requestAnimationFrame(() => {
         focusScrollFrame = null;
@@ -58,7 +58,9 @@ function createTooltipHoverTracker() {
       const focusScrollPending = focusScrollFrame !== null;
       settleFocus();
       const tooltips =
-        hovered?.actionsRef === focused?.actionsRef ? [focused ?? hovered] : [hovered, focused];
+        hovered?.owner === focused?.owner && hovered?.trigger === focused?.trigger
+          ? [focused ?? hovered]
+          : [hovered, focused];
       for (const tooltip of tooltips) {
         if (!tooltip) continue;
         const active = tooltip.trigger.ownerDocument.activeElement;
@@ -69,9 +71,9 @@ function createTooltipHoverTracker() {
           (!dismissFocused || focusScrollPending)
         )
           continue;
-        release(tooltip.actionsRef);
-        // Base UI also cancels delayed hover opens through this action.
-        tooltip.actionsRef.current?.close();
+        if (hovered === tooltip || hovered?.trigger === tooltip.trigger) hovered = null;
+        if (focused?.trigger === tooltip.trigger) focused = null;
+        tooltip.close();
       }
     },
   };
@@ -87,6 +89,7 @@ function TooltipScrollDismissArea({
   onKeyDownCapture,
   onPointerDownCapture,
   dismissFocused = false,
+  className,
   ...props
 }: ComponentProps<"div"> & {
   /** Also dismiss keyboard-focused tooltips when the user scrolls. */
@@ -97,6 +100,7 @@ function TooltipScrollDismissArea({
     <TooltipScrollContext value={tracker}>
       <div
         {...props}
+        className={cn("data-[workspace-focus-default]:outline-none", className)}
         onWheelCapture={(event) => {
           tracker.settleFocus();
           onWheelCapture?.(event);
@@ -152,11 +156,12 @@ function TooltipTrigger(props: TooltipPrimitive.Trigger.Props) {
       {...props}
       onMouseEnter={(event) => {
         props.onMouseEnter?.(event);
-        tracker.hover(event.currentTarget, actionsRef);
+        // Base UI also cancels delayed hover opens through this action.
+        tracker.hover(event.currentTarget, actionsRef, () => actionsRef.current?.close());
       }}
       onFocus={(event) => {
         props.onFocus?.(event);
-        tracker.focus(event.currentTarget, actionsRef);
+        tracker.focus(event.currentTarget, actionsRef, () => actionsRef.current?.close());
       }}
       onBlur={(event) => {
         props.onBlur?.(event);
@@ -225,4 +230,14 @@ function TooltipPopup({
   );
 }
 
-export { TooltipProvider, Tooltip, TooltipTrigger, TooltipPopup, TooltipScrollDismissArea };
+/** The enclosing TooltipScrollDismissArea's tracker, for triggers that bypass TooltipTrigger. */
+const useTooltipScrollTracker = () => use(TooltipScrollContext);
+
+export {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipPopup,
+  TooltipScrollDismissArea,
+  useTooltipScrollTracker,
+};
