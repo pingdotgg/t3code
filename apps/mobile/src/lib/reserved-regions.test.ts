@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   deriveBottomControlInsets,
   deriveContentSideInsets,
+  deriveSharedTopBand,
   type NativeLayoutMetrics,
 } from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
@@ -120,6 +121,45 @@ describe("content side insets around reserved regions", () => {
         ],
       }),
     ).toEqual({ left: 8, right: 72 });
+  });
+});
+
+describe("a bar sharing the top band with the system status", () => {
+  // The folded Duo with horizontal bars: its status block sits at the right of a tall top band.
+  const foldedDuo: NativeLayoutMetrics = {
+    width: 466,
+    height: 678,
+    horizontalSizeClass: "compact",
+    verticalBarEdge: "none",
+    safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+    reservedRegions: [
+      { kind: "occlusion", x: 399.67, y: 29.33, width: 37, height: 37 },
+      { kind: "occlusion", x: 266, y: 0, width: 200, height: 82 },
+    ],
+  };
+
+  it.each([
+    ["status block on the right", foldedDuo, { height: 82, left: 0, right: 200 }],
+    [
+      "status block on the left",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 0, y: 0, width: 200, height: 82 }],
+      },
+      { height: 82, left: 200, right: 0 },
+    ],
+    ["no status block (a notch or island)", { ...foldedDuo, reservedRegions: [] }, null],
+    [
+      "a block across the middle",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 133, y: 0, width: 200, height: 82 }],
+      },
+      null,
+    ],
+    ["no top safe area", { ...foldedDuo, safeArea: { ...foldedDuo.safeArea, top: 0 } }, null],
+  ])("%s", (_, metrics, expected) => {
+    expect(deriveSharedTopBand(metrics)).toEqual(expected);
   });
 });
 
