@@ -2399,7 +2399,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const emitNativeResponseLifecycle =
           options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
         const nextElicitationOrdinal = yield* Ref.make(0);
-        const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
         const snapshot = yield* Ref.make(emptySnapshotState());
 
         const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
@@ -8006,7 +8005,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(promptRuntimeInstructions, new Map());
             yield* Ref.set(compactionMarkers, new Map());
             yield* Ref.set(completedCompactionIds, new Set());
-            yield* Ref.set(providerTurns, new Map());
             yield* Ref.set(snapshot, emptySnapshotState());
             yield* continuationPermit.withPermit(
               Effect.gen(function* () {
@@ -8718,11 +8716,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* reportAgentModeChanges(context.input.threadId);
           const turn = providerTurnPayload(context, settledStatus, now);
-          yield* Ref.update(providerTurns, (current) => {
-            const updated = new Map(current);
-            updated.set(String(turn.id), turn);
-            return updated;
-          });
           yield* emitProviderEvent({
             type: "provider_turn.updated",
             driver,
@@ -9622,11 +9615,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const runningTurn = providerTurnPayload(context, "running", null);
-            yield* Ref.update(providerTurns, (current) => {
-              const updated = new Map(current);
-              updated.set(String(runningTurn.id), runningTurn);
-              return updated;
-            });
             yield* emitProviderEvent({
               type: "provider_turn.updated",
               driver,
@@ -10707,7 +10695,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       status: "idle" as const,
                       updatedAt: now,
                     },
-                    providerTurns: [...(yield* Ref.get(providerTurns)).values()],
+                    // Imports read only the transcript; turns reach orchestration as events.
+                    providerTurns: [],
                     messages,
                     reasoningMessageIds: [...state.reasoningIds],
                     runtimeRequests: [],
