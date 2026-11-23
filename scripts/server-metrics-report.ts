@@ -271,7 +271,9 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
   informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
   informational(/^(streaming|pipeline)\.gcPauseMs$/),
-  informational(/^(pipeline\.loopDelayMaxMs|clients\.storm\.loopDelayP99Ms|quiet\.cpuPct)$/),
+  informational(
+    /^(pipeline\.loopDelayMaxMs|clients\.(storm|reconnect)\.loopDelayP99Ms|quiet\.cpuPct)$/,
+  ),
   informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
   informational(/^clients\.attached\.\d+\.(cpuPct|wakeupsPerSec)$/),
   informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
@@ -300,7 +302,8 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   { pattern: /^firstWord\./, floor: 600, gate: true },
   { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },
   { pattern: /^pipeline\.(toRequestMs\.p90|msPerTurn)$/, floor: 600, gate: true },
-  { pattern: /^clients\.storm\.resubscribedMs$/, floor: 200, gate: true },
+  // The reconnect had no A/A run yet and takes the storm's floors.
+  { pattern: /^clients\.(storm|reconnect)\.resubscribedMs$/, floor: 200, gate: true },
   { pattern: /^rest\.cpuPct$/, floor: 1, gate: true },
   { pattern: /cpuPct$/, floor: 3.5, gate: true },
   { pattern: /^(rest|quiet)\.wakeupsPerSec$/, floor: 12, gate: true },
