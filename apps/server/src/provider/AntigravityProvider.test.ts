@@ -32,6 +32,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import { mergeProviderSnapshot } from "./ProviderRegistry.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -297,6 +298,68 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("plain")).toBeUndefined();
     expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
     expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+  });
+
+  it("keeps each model's probed thinking levels after a restart observes only the active model", () => {
+    const thinking = (levels: ReadonlyArray<string>) =>
+      ({
+        id: "thinking_level",
+        name: "Thinking Level",
+        category: "thought_level",
+        type: "select",
+        currentValue: "low",
+        options: levels.map((value) => ({ value, name: value })),
+      }) satisfies EffectAcpSchema.SessionConfigOption;
+    const deep = thinking(["low", "medium", "high", "xhigh"]);
+    const models = {
+      ...modelConfig,
+      currentValue: "neon",
+      options: [
+        { value: "neon", name: "Neon" },
+        { value: "carbon", name: "Carbon" },
+        { value: "fixed", name: "Fixed effort" },
+      ],
+    } satisfies EffectAcpSchema.SessionConfigOption;
+    const setup = { configOptions: [models, deep] };
+    const provider = {
+      instanceId,
+      driver,
+      status: "ready",
+      enabled: true,
+      installed: true,
+      auth: { status: "authenticated" },
+      checkedAt: "2026-11-23T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+    } as const;
+    // Sign-in or Refresh models walks every model, so each reports its own levels.
+    const probed = {
+      ...provider,
+      models: buildAntigravityModelsFromSession(
+        setup,
+        new Map([
+          ["carbon", thinking(["low", "medium", "high"])],
+          ["fixed", null],
+        ]),
+      ),
+    } satisfies ServerProvider;
+    // After a restart the provider has observed only the session's model.
+    const restarted = {
+      ...provider,
+      checkedAt: "2026-11-23T01:00:00.000Z",
+      models: buildAntigravityModelsFromSession(setup, new Map([["neon", deep]])),
+    } satisfies ServerProvider;
+
+    const merged = mergeProviderSnapshot(probed, restarted);
+    const levelsOf = (slug: string) => {
+      const descriptor = merged.models.find((model) => model.slug === slug)?.capabilities
+        ?.optionDescriptors?.[0];
+      return descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+    };
+
+    expect(levelsOf("neon")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(levelsOf("carbon")).toEqual(["low", "medium", "high"]);
+    expect(levelsOf("fixed")).toEqual([]);
   });
 });
 
