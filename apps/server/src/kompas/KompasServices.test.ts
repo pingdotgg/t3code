@@ -172,17 +172,18 @@ describe("LearningService", () => {
 });
 
 describe("PluginStore", () => {
+  const transport = {
+    type: "http" as const,
+    url: "https://mcp.exa.ai/mcp",
+    headers: { "x-api-key": "secret-key" },
+  };
   const plugin: Plugin = {
     id: "exa",
     name: "exa",
     label: "Exa",
     enabled: true,
     allConversations: false,
-    transport: {
-      type: "http",
-      url: "https://mcp.exa.ai/mcp",
-      headers: { "x-api-key": "secret-key" },
-    },
+    transport,
     disabledTools: [],
   };
 
@@ -192,7 +193,7 @@ describe("PluginStore", () => {
       yield* store.save(plugin);
       const [listed] = yield* store.list;
       assert.deepEqual(listed?.transport, {
-        ...plugin.transport,
+        ...transport,
         headers: { "x-api-key": PLUGIN_SECRET_REDACTED },
       });
       yield* store.save({ ...listed!, label: "Exa search" });

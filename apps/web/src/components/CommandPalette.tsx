@@ -265,6 +265,8 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
+import { useChatModePaletteItems } from "../kompas/paletteItems";
+import { useChatMode } from "../kompas/state";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
@@ -1860,7 +1862,12 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
+  const chatMode = useChatMode();
+  const shownActionItems = useChatModePaletteItems(actionItems);
+  const rootGroups = buildRootGroups(
+    { actionItems: shownActionItems, recentThreadItems },
+    messages,
+  );
   // Every setting goes to the palette's own matcher, so settings get the same
   // word starts and typo tolerance as threads.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
@@ -1929,11 +1936,11 @@ function OpenCommandPaletteDialog(props: {
         ? {
             allOptions: {
               rootGroups,
-              nestedItems: buildNestedSearchItems(actionItems, deferredQuery),
+              nestedItems: buildNestedSearchItems(shownActionItems, deferredQuery),
             },
           }
         : {}),
-      projectSearchItems: projectSearchItems,
+      projectSearchItems: chatMode ? [] : projectSearchItems,
       settingsSearchItems,
       threadSearchItems:
         isLinkedThreadSearch && linkedThreadSearch?.linkedThreads

@@ -8,7 +8,9 @@ import {
   type McpAppDisplayMode,
   type McpAppHost,
   type McpAppHostContext,
+  type WidgetAction,
 } from "@t3tools/client-runtime/mcp-apps";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   clampMcpAppHeight,
@@ -19,6 +21,8 @@ import {
   mcpAppFileName,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
+import { T3_WIDGET_SERVER } from "@t3tools/shared/toolOutput";
+import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, Var } from "gt-react";
 import { Minimize2Icon } from "lucide-react";
 import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
@@ -26,6 +30,7 @@ import { flushSync } from "react-dom";
 
 import { useLongLivedAssetUrl } from "~/assets/longLivedAssetUrls";
 import { APP_VERSION } from "~/branding";
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { isConfirmDialogActive, requestConfirmDialog } from "~/confirmDialog";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -169,6 +174,25 @@ export function McpAppFrame(props: {
     reportFailure: false,
   });
 
+  const navigate = useNavigate();
+  const widgetAction = (action: WidgetAction) => {
+    if (action.action === "study") {
+      void navigate({ to: "/study", search: { session: action.deckId } });
+      return;
+    }
+    const target = scopeThreadRef(props.environmentId, props.conversationThreadId);
+    const { getComposerDraft, setPrompt } = useComposerDraftStore.getState();
+    const written = getComposerDraft(target)?.prompt.trim() ?? "";
+    setPrompt(
+      target,
+      written === ""
+        ? action.text
+        : `${written}
+
+${action.text}`,
+    );
+  };
+
   // Read live values without rebuilding the host and losing the app session.
   const readLive = useStableCallback(() => ({
     theme,
@@ -180,6 +204,7 @@ export function McpAppFrame(props: {
     updateModelContext,
     displayMode,
     toolDefinition,
+    widgetAction,
   }));
   const hostRef = useRef<McpAppHost | null>(null);
 
@@ -318,6 +343,15 @@ export function McpAppFrame(props: {
         const send = readLive().props.onSendMessage;
         if (send === undefined)
           throw new McpAppHostRefusal({ message: "Messages are not available here." });
+        // T3's own widgets send only what their button says, so the click is the approval.
+        if (
+          app.server === T3_WIDGET_SERVER &&
+          document.activeElement === frameRef.current &&
+          navigator.userActivation?.isActive
+        ) {
+          await send(text);
+          return;
+        }
         const approved = await ask(
           `${m(msg("Send this message from {server}?", { server: app.server }))}\n${text}`,
         );
@@ -384,6 +418,7 @@ export function McpAppFrame(props: {
           saveBlob(new Blob([bytes.slice()], { type: mimeType }), file.name);
         }
       },
+      widgetAction: (action) => readLive().widgetAction(action),
       onRequestTeardown: () => {
         if (readLive().displayMode === "fullscreen") {
           setDisplayMode("inline");

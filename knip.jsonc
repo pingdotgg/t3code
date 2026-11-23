@@ -162,6 +162,10 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/widgets": {
+      // The build script bundles each widget by path.
+      "entry": ["src/widgets/*.ts", "scripts/build.ts"],
+    },
     "packages/effect-acp": {
       "includeEntryExports": true,
       "entry": ["test/fixtures/*.ts"],

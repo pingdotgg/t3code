@@ -748,6 +748,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("notification sound alert completion input approval desktop")],
   },
   {
+    id: "developer-mode",
+    title: msg("Developer mode"),
+    to: "/settings/general",
+    searchTerms: [msg("code git terminal diff worktree checkpoints chat")],
+  },
+  {
     id: "in-app-notifications",
     title: msg("In-app notifications"),
     to: "/settings/general",

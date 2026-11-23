@@ -1,0 +1,268 @@
+:root {
+  --bg: var(--color-background-primary, #fbfaf8);
+  --surface: var(--color-background-secondary, #fff);
+  --muted: var(--color-background-tertiary, #f5f4f0);
+  --text: var(--color-text-primary, #1c1b19);
+  --soft: var(--color-text-secondary, #66635c);
+  --line: var(--color-border-primary, #e6e3dc);
+  --accent: var(--kompas-accent, #3552d1);
+  --on-accent: var(--kompas-accent-foreground, #fff);
+  --accent-surface: var(--kompas-accent-surface, #eef0fd);
+  --good: var(--color-text-success, #1c7a4a);
+  --bad: var(--color-text-danger, #b3261e);
+  --radius: 14px;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  font:
+    15px/1.5 var(--font-sans, system-ui),
+    sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+main {
+  padding: 2px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+.card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--soft);
+  font-size: 13px;
+}
+.button {
+  font: inherit;
+  font-weight: 550;
+  min-height: 38px;
+  padding: 6px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+}
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.button.ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--soft);
+  font-size: 13px;
+  font-weight: 450;
+  padding: 4px 8px;
+  min-height: 32px;
+}
+.button:hover:not(:disabled) {
+  filter: brightness(0.97);
+}
+.button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.spread {
+  justify-content: space-between;
+}
+.soft {
+  color: var(--soft);
+  font-size: 13px;
+}
+.error {
+  color: var(--bad);
+  margin: 8px 0 0;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--muted);
+  overflow: hidden;
+}
+.progress > i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+/* Flashcards */
+.face {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 170px;
+  width: 100%;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--muted);
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+.face b {
+  font-size: 19px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.face small {
+  color: var(--soft);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+/* Quiz */
+.option.right {
+  border-color: var(--good);
+  color: var(--good);
+}
+.option.wrong {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.note {
+  background: var(--muted);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0 0;
+}
+/* Table */
+.scroll {
+  overflow: auto;
+  max-height: 460px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+th,
+td {
+  text-align: start;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+th button {
+  all: unset;
+  cursor: pointer;
+  font-weight: 600;
+}
+th button:focus-visible {
+  outline: 2px solid var(--accent);
+}
+/* Timeline */
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 18px;
+  border-inline-start: 2px solid var(--line);
+}
+.timeline li {
+  position: relative;
+  padding: 0 0 16px;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -24px;
+  top: 6px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.timeline time {
+  color: var(--soft);
+  font-size: 13px;
+}
+.timeline p {
+  margin: 2px 0 0;
+  color: var(--soft);
+}
+.plot {
+  height: 320px;
+}
+.diagram {
+  overflow: auto;
+  text-align: center;
+}
+.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.map {
+  height: 360px;
+  border-radius: 10px;
+}
+:root[data-mode="fullscreen"] .plot,
+:root[data-mode="fullscreen"] .map {
+  height: calc(100dvh - 110px);
+}
+.formula {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+.pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--muted);
+  border-radius: 12px;
+  padding: 10px 14px;
+  min-height: 74px;
+}

@@ -297,6 +297,9 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { ChatStartExtras, ChatStartHeadline } from "../kompas/ChatStart";
+import { ComposerPlugins } from "../kompas/ComposerPlugins";
+import { useChatMode, useHasPlugins } from "../kompas/state";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -1884,15 +1887,19 @@ export default function ChatView(props: ChatViewProps) {
           providerSubagentModels,
           reportedModelSelection,
         );
+  const chatMode = useChatMode();
+  const hasPlugins = useHasPlugins();
   const showComposerContextStrip =
     !embedded &&
-    shouldShowComposerContextStrip({
-      isDraftHeroState,
-      persistInActiveThreads: settings.persistComposerContextStrip,
-      hasActiveProject: activeProject !== null && !showProviderSubagentBar,
-      isGitRepo,
-      showEnvironmentIndicator: showComposerEnvironmentIndicator,
-    });
+    (chatMode
+      ? hasPlugins && activeThreadId !== null
+      : shouldShowComposerContextStrip({
+          isDraftHeroState,
+          persistInActiveThreads: settings.persistComposerContextStrip,
+          hasActiveProject: activeProject !== null && !showProviderSubagentBar,
+          isGitRepo,
+          showEnvironmentIndicator: showComposerEnvironmentIndicator,
+        }));
   const terminalShortcutLabelOptions = {
     context: {
       terminalFocus: true,
@@ -3518,7 +3525,7 @@ export default function ChatView(props: ChatViewProps) {
           state={deviceState}
         />
       )}
-      {rightPanelControlsAtRoot && !embedded ? panelLayoutControls : null}
+      {rightPanelControlsAtRoot && !embedded && !chatMode ? panelLayoutControls : null}
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-col overflow-x-hidden",
@@ -3552,15 +3559,17 @@ export default function ChatView(props: ChatViewProps) {
                 className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
               />
             ) : null}
-            {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
-            {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
+            {!rightPanelControlsAtRoot && !rightPanelControlsInPanel && !chatMode
+              ? panelLayoutControls
+              : null}
+            {inlineRightPanelOwnsTitleBar && !chatMode ? threadPanelHeaderControl : null}
             <ChatHeader
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}
               activeThreadTitle={activeThread.title}
               activeThreadLinkOrigin={activeThreadShell?.linkOrigin?.label ?? null}
-              activeProject={activeProject ?? null}
+              activeProject={chatMode ? null : (activeProject ?? null)}
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
@@ -3770,11 +3779,15 @@ export default function ChatView(props: ChatViewProps) {
                             : undefined
                         }
                       >
-                        <DraftHeroHeadline
-                          draftId={draftId}
-                          activeProjectRef={activeProjectRef}
-                          activeProjectTitle={activeProject?.title ?? null}
-                        />
+                        {chatMode ? (
+                          <ChatStartHeadline />
+                        ) : (
+                          <DraftHeroHeadline
+                            draftId={draftId}
+                            activeProjectRef={activeProjectRef}
+                            activeProjectTitle={activeProject?.title ?? null}
+                          />
+                        )}
                       </div>
                     </div>
                   ) : null}
@@ -3989,7 +4002,12 @@ export default function ChatView(props: ChatViewProps) {
                             data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                             className="relative z-0"
                           >
-                            {showComposerContextStrip && (
+                            {showComposerContextStrip && chatMode ? (
+                              <div className="pointer-events-auto">
+                                <ComposerPlugins threadId={activeThread.id} />
+                              </div>
+                            ) : null}
+                            {showComposerContextStrip && !chatMode ? (
                               <div className="pointer-events-auto">
                                 <BranchToolbar
                                   forceNewWorktree={multipleModelSelections !== null}
@@ -4047,10 +4065,15 @@ export default function ChatView(props: ChatViewProps) {
                                       })}
                                 />
                               </div>
-                            )}
+                            ) : null}
                           </div>
                         </div>
                       </ComposerSurface.Shell>
+                      {isDraftHeroState && chatMode && composerBannerItems.length === 0 ? (
+                        <div className="absolute inset-x-0 top-full [@media(max-height:44rem)]:hidden">
+                          <ChatStartExtras draftId={draftId ?? null} />
+                        </div>
+                      ) : null}
                       {isDraftHeroState && composerBannerItems.length > 0 ? (
                         // Out of flow, like the headline, so a notice never moves the centered composer.
                         // Short windows pin the composer to the bottom, where an out-of-flow notice

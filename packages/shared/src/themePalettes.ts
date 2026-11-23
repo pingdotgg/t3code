@@ -1,4 +1,6 @@
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+import { KOMPAS_THEME } from "./kompasTheme.ts";
+
+export const BUILT_IN_THEME_IDS = ["kompas", "t3-chat", "grove", "ocean", "ember", "iris"] as const;
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
@@ -911,6 +913,7 @@ export const IRIS_THEME: ThemeDefinition = {
 };
 
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
+  KOMPAS_THEME,
   T3_CHAT_THEME,
   GROVE_THEME,
   OCEAN_THEME,

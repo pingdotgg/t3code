@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./kompasTheme": {
+      "types": "./src/kompasTheme.ts",
+      "import": "./src/kompasTheme.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

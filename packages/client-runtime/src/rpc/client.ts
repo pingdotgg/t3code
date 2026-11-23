@@ -13,6 +13,7 @@ import {
   type AuthEnvironmentScope,
   type EnvironmentId,
   type ClientGuardedRpcTag,
+  KOMPAS_WS_METHODS,
   ORCHESTRATION_V2_WS_METHODS,
   WS_METHODS,
 } from "@t3tools/contracts";

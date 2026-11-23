@@ -8,10 +8,15 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
+import { useChatMode, useWorkstreamOf } from "../kompas/state";
+import { WorkstreamPanel } from "../kompas/Workstreams";
 
 function ChatRouteLayout() {
   // Render both routes here so draft promotion keeps the same ChatView mounted.
   const { shownTarget, modalOpen } = useShownThreadRouteTarget();
+  const chatMode = useChatMode();
+  const threadId = shownTarget?.kind === "server" ? shownTarget.threadRef.threadId : null;
+  const project = useWorkstreamOf(chatMode ? threadId : null);
   return (
     <>
       {shownTarget?.kind === "server" && !modalOpen ? (
@@ -23,6 +28,14 @@ function ChatRouteLayout() {
         <SidebarInset className="h-dvh" />
       ) : (
         <Outlet />
+      )}
+      {project === null || threadId === null || modalOpen ? null : (
+        <WorkstreamPanel
+          key={project.workstream.id}
+          kompas={project.kompas}
+          workstream={project.workstream}
+          threadId={threadId}
+        />
       )}
       {modalOpen ? <Outlet /> : null}
       <GlobalVoiceInputIndicator hidden={modalOpen} />

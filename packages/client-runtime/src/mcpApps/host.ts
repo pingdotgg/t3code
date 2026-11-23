@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off - The bridge runs in the client, outside an Effect runtime.
 import { MCP_APP_PROTOCOL_VERSION, type McpAppReference } from "@t3tools/shared/mcpApp";
+import { T3_WIDGET_SERVER } from "@t3tools/shared/toolOutput";
 import * as Base64 from "effect/encoding/Base64";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
@@ -79,6 +80,20 @@ export class McpAppHostRefusal extends Schema.TaggedError<McpAppHostRefusal>()(
 
 const isMcpAppHostRefusal = Schema.is(McpAppHostRefusal);
 
+export type WidgetAction =
+  | { readonly action: "draft"; readonly text: string }
+  | { readonly action: "study"; readonly deckId: string };
+
+function readWidgetAction(params: Record<PropertyKey, unknown>): WidgetAction | undefined {
+  if (params.action === "draft" && typeof params.text === "string") {
+    return { action: "draft", text: params.text };
+  }
+  if (params.action === "study" && typeof params.deckId === "string") {
+    return { action: "study", deckId: params.deckId };
+  }
+  return undefined;
+}
+
 export interface McpAppHostOptions {
   readonly app: McpAppReference;
   readonly hostVersion: string;
@@ -99,6 +114,8 @@ export interface McpAppHostOptions {
   }) => Promise<void>;
   readonly requestDisplayMode: (mode: McpAppDisplayMode) => Promise<McpAppDisplayMode>;
   readonly downloadFile: (files: ReadonlyArray<McpAppDownload>) => Promise<void>;
+  /** What only T3's own widgets may ask for. */
+  readonly widgetAction?: ((action: WidgetAction) => void) | undefined;
   readonly onRequestTeardown: () => void;
   readonly onSizeChanged: (size: { readonly width?: number; readonly height?: number }) => void;
 }
@@ -312,6 +329,16 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
           return;
         }
         answer(id, () => options.sendMessage(text).then(() => ({})));
+        return;
+      }
+      case "kompas/host": {
+        const action = readWidgetAction(params);
+        if (options.app.server !== T3_WIDGET_SERVER || action === undefined) {
+          fail(id, -32601, `Method not found: ${method}`);
+          return;
+        }
+        options.widgetAction?.(action);
+        respond(id, {});
         return;
       }
       case "ui/request-display-mode": {
@@ -570,6 +597,9 @@ export function mcpAppStyleVariables(
     ["--font-sans", pick("--font-sans")],
     ["--font-mono", pick("--font-mono")],
     ["--border-radius-md", pick("--radius")],
+    ["--kompas-accent", pick("--primary")],
+    ["--kompas-accent-foreground", pick("--primary-foreground")],
+    ["--kompas-accent-surface", pick("--accent-surface")],
   ];
   const variables: Record<string, string> = {};
   for (const [name, value] of pairs) {

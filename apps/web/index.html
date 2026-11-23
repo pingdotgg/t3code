@@ -52,6 +52,20 @@
         // Keep this small boot-time copy in sync with the built-in palettes so
         // the selected theme is visible before the app has mounted.
         const BUILT_IN_THEME_PALETTES = {
+          kompas: {
+            light: {
+              background: "#fbfaf8",
+              foreground: "#1c1b19",
+              accent: "#3552d1",
+              chrome: "#fbfaf8",
+            },
+            dark: {
+              background: "#1f1f22",
+              foreground: "#ecebe8",
+              accent: "#8fa2f5",
+              chrome: "#1f1f22",
+            },
+          },
           "t3-chat": {
             light: {
               background: "oklch(0.982446 0.010114 325.653)",
@@ -133,6 +147,7 @@
           "system",
           "light",
           "dark",
+          "kompas",
           "t3-chat",
           "grove",
           "ocean",
@@ -219,7 +234,7 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const rawTheme = window.localStorage.getItem("t3code:theme");
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",
@@ -228,9 +243,18 @@
             "t3-ember": "ember",
             "t3-iris": "iris",
           };
+          const rawThemeId = LEGACY_THEME_IDS[rawTheme] ?? rawTheme;
+          const storedTheme =
+            rawTheme !== null &&
+            (rawTheme === "light" ||
+              rawTheme === "dark" ||
+              rawTheme === "system" ||
+              BUILT_IN_THEME_MODES[rawThemeId] ||
+              findCustomTheme(rawThemeId))
+              ? rawTheme
+              : "kompas";
           const isLegacyT3ChatDark = storedTheme === "t3-chat-dark";
-          const themeId =
-            storedTheme === null ? "" : (LEGACY_THEME_IDS[storedTheme] ?? storedTheme);
+          const themeId = LEGACY_THEME_IDS[storedTheme] ?? storedTheme;
           const legacyMode = isLegacyT3ChatDark ? "dark" : null;
           const builtInModes = BUILT_IN_THEME_MODES[themeId] ?? null;
           const customTheme = builtInModes ? null : findCustomTheme(themeId);

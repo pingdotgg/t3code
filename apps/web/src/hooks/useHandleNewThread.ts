@@ -225,7 +225,11 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;
-    const defaultRuntimeMode = projectSettings.settings.defaultRuntimeMode;
+    // A conversation has no checkout to work in, so full access would only reach the user's files.
+    const defaultRuntimeMode =
+      project?.isScratch === true && projectSettings.settings.defaultRuntimeMode === "full-access"
+        ? "auto-accept-edits"
+        : projectSettings.settings.defaultRuntimeMode;
     const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: projectDefaultModelSelection ?? null,

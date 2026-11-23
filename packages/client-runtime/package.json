@@ -587,6 +587,10 @@
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"
     },
+    "./state/kompas": {
+      "types": "./src/state/kompas.ts",
+      "default": "./src/state/kompas.ts"
+    },
     "./state/mcp-apps": {
       "types": "./src/state/mcpApps.ts",
       "default": "./src/state/mcpApps.ts"

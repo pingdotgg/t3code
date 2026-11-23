@@ -110,6 +110,7 @@ import {
   rememberEnabledProjectGroupingMode,
   syncAutoSettleDaysField,
 } from "./SettingsPanels.logic";
+import { KompasSettings } from "../../kompas/KompasSettings";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
@@ -854,6 +855,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <KompasSettings />
       <SettingsSection id="notifications" title={gt("Notifications")}>
         <NotificationSettings />
         <SettingsRow

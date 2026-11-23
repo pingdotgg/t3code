@@ -7,6 +7,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { isElectron } from "../env";
 import { NoProjectsHero } from "../components/NoProjectsHero";
+import { useChatMode, useKompas, useStartConversation } from "../kompas/state";
 import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { HostedEmptyState } from "../components/HostedEmptyState";
@@ -31,7 +32,39 @@ function ChatIndexRouteView() {
     if (environments.length === 0) return <HostedEmptyState />;
   }
 
-  return <IndexDraftLanding />;
+  return <IndexLanding />;
+}
+
+function IndexLanding() {
+  const chatMode = useChatMode();
+  const kompas = useKompas();
+  if (!chatMode) return <IndexDraftLanding />;
+  return kompas === null ? null : <ConversationLanding />;
+}
+
+function ConversationLanding() {
+  const startConversation = useStartConversation();
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const startedAttemptRef = useRef<number | null>(null);
+  const start = useEffectEvent((requested: number) => {
+    if (startedAttemptRef.current === requested) return;
+    startedAttemptRef.current = requested;
+    void startConversation().then(
+      (opened) => setFailed(opened === null),
+      () => setFailed(true),
+    );
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens an empty conversation, which lives at its own route
+  useEffect(() => start(attempt), [attempt]);
+  return failed ? (
+    <DraftStartError
+      onRetry={() => {
+        setFailed(false);
+        setAttempt(attempt + 1);
+      }}
+    />
+  ) : null;
 }
 
 function IndexDraftLanding() {

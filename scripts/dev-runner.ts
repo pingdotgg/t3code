@@ -707,6 +707,10 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
     }
   }
 
+  if (!(yield* exists(path.join(repoRoot, "packages/widgets/dist/quiz.html")))) {
+    yield* runRepoScript("packages/widgets/scripts/build.ts", [], input.env);
+  }
+
   if (
     input.mode !== "dev:server" &&
     !(yield* exists(path.join(repoRoot, "apps/web/node_modules/.vite/deps/_metadata.json")))

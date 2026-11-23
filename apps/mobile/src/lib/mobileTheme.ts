@@ -37,7 +37,7 @@ export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>
 function normalizeMobileThemeId(value: unknown): MobileThemeId {
   return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
     ? (value as MobileThemeId)
-    : DEFAULT_MOBILE_THEME_ID;
+    : "kompas";
 }
 
 export function normalizeMobileThemeMode(value: unknown): MobileThemeMode {
