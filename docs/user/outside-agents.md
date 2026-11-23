@@ -135,6 +135,14 @@ Any agent that supports remote MCP servers over HTTP with OAuth can connect. Giv
 it the MCP URL and choose OAuth, and the agent finds the sign-in settings itself.
 Agents without OAuth support cannot connect.
 
+A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
+when something happens without reading threads over and over: a turn ended, an
+agent waits on a person, a guest asked something, a watched pull request woke
+its thread. Each of these is an event type it can poll or stream, narrowed to
+projects or threads. The environment keeps its latest 1,000 milestones in
+memory, so a bot that was away longer, or reconnects after a restart, is told
+some may be missing and should reread the threads it cares about.
+
 ## Scripts on the host
 
 On the machine that runs the environment, `t3 thread` uses the same tools
@@ -150,8 +158,10 @@ t3 thread list
 `.` means the project that contains the current folder, or a git worktree of
 its repository; a project id also works. A new thread uses the project's
 default model and permission mode, and runs in the project folder unless you
-pass `--worktree <base-branch>`. `send` never interrupts: a busy thread gets
-the message as its next turn. Pass `-` as the message to read it from stdin.
+pass `--worktree <base-branch>`. Its title is the message's first line, or
+`--title`; add `--generate-title` to have it named from the message, as threads
+started in the app are. `send` never interrupts: a busy thread gets the message
+as its next turn. Pass `-` as the message to read it from stdin.
 
 To choose the model, pass `--provider <instance-id> --model <slug>`. Add
 `--option id=value` for each model option, such as `--option effort=high`.

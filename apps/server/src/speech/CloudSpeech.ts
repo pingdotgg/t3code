@@ -35,7 +35,7 @@ import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import { encodeMp3, MAX_SYNTHESIS_BYTES } from "./synthesisAudio.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { requireSettingsSecret } from "../secrets/settingsSecretValue.ts";
-import { applySpeechAliases } from "./customWords.ts";
+import { applySpeechAliases, speechRecognitionWords } from "./customWords.ts";
 import { removeSpeechFillerWords } from "./fillerWords.ts";
 import { decodeSpeechPcm, SpeechInvalidAudioError } from "./SpeechService.ts";
 import { alignedWords, mp3Duration, type CharacterAlignment } from "./synthesisTimings.ts";
@@ -267,7 +267,10 @@ function elevenLabsAudioBody(
   form.set("model_id", endpoints.elevenlabs.model);
   if (language !== "auto") form.set("language_code", language);
   // Scribe accepts key terms of up to 50 characters and five words.
-  for (const { term } of options.speechCustomWords) {
+  for (const term of speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  )) {
     if (term.length <= 50 && term.split(/\s+/).length <= 5) form.append("keyterms", term);
   }
   form.set("tag_audio_events", "false");
@@ -284,7 +287,10 @@ function audioBody(
   const form = new FormData();
   form.set("model", endpoints[provider].model);
   if (language !== "auto") form.set(provider === "openai" ? "languages[]" : "language", language);
-  for (const { term } of options.speechCustomWords) {
+  for (const term of speechRecognitionWords(
+    options.speechHints,
+    options.speechCustomWords.map(({ term }) => term),
+  )) {
     if (provider === "openai" && /[<>\r\n]/.test(term)) continue;
     form.append(provider === "openai" ? "keywords[]" : "keyterm", term);
   }

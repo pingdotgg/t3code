@@ -16,10 +16,6 @@ import { VoiceSettingsPanel } from "./VoiceSettingsPanel";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
 
 vi.mock(import("../../state/session"), { spy: true });
-vi.mock("../../env", async (original) => ({
-  ...(await original<typeof import("../../env")>()),
-  isSecretsFeatureEnabled: true,
-}));
 vi.mock("../../state/environments", async (importOriginal) => {
   const presentationById = new Map();
   return {
@@ -32,6 +28,7 @@ vi.mock("../../state/environments", async (importOriginal) => {
           label: "Laptop",
           connection: { phase: "available" },
           serverConfig: {
+            featureFlags: { secretProviders: true },
             secretReferences: true,
             settings: {
               secretProviders: {

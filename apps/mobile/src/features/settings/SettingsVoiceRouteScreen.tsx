@@ -20,7 +20,8 @@ import {
   type MicrophoneKind,
   microphoneEntryKey,
 } from "../../lib/microphonePriority";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { ListRowLayout } from "../../components/ui/ListRowLayout";
 import { ListChoiceRow } from "../../components/ui/ListChoiceRow";
 import * as Dialog from "../../components/ui/Dialog";
@@ -241,7 +242,7 @@ export function SettingsVoiceRouteScreen() {
   const methodEnvironment = sheetEnvironment ?? grantEnvironment;
   const insets = useSafeAreaInsets();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const ready = AsyncResult.isSuccess(preferencesResult) && !preferencesResult.waiting;
   const entries = deviceMicrophoneOrder(
     AsyncResult.isSuccess(preferencesResult) ? preferencesResult.value.microphones : undefined,
@@ -255,8 +256,8 @@ export function SettingsVoiceRouteScreen() {
   const [drops, setDrops] = useState(0);
 
   // Transforms apply to the stored order, so a device recorded meanwhile is kept.
-  const move = (key: string, steps: number) =>
-    savePreferences({
+  const move = (key: string, steps: number) => {
+    void savePreferences({
       transform: (current) => {
         const next = [...deviceMicrophoneOrder(current.microphones)];
         const from = next.findIndex((entry) => microphoneEntryKey(entry) === key);
@@ -267,14 +268,16 @@ export function SettingsVoiceRouteScreen() {
         return { microphones: next };
       },
     });
-  const forget = (key: string) =>
-    savePreferences({
+  };
+  const forget = (key: string) => {
+    void savePreferences({
       transform: (current) => ({
         microphones: deviceMicrophoneOrder(current.microphones).filter(
           (entry) => microphoneEntryKey(entry) !== key,
         ),
       }),
     });
+  };
   const dropSteps = (from: number, translation: number) =>
     rowHeight === 0
       ? 0
