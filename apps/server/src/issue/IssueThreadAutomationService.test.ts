@@ -297,20 +297,30 @@ describe("IssueThreadAutomationService", () => {
     }).pipe(Effect.provide(database));
   });
 
-  it.effect("snoozes when one team's issue waits, and settles once both are done", () => {
-    const { state, layer } = setup([rule(), rule("team-b")], [link("ENG-1"), link("OPS-2")]);
-    state.statuses.set("team-b", [{ key: "OPS-2", stateId: "waiting" }]);
-    return Effect.gen(function* () {
-      const automation = yield* Automation.IssueThreadAutomationService;
-      yield* automation.sweep;
-      state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
-      yield* automation.sweep;
-      state.statuses.set("team-b", [{ key: "OPS-2", stateId: "done" }]);
-      yield* automation.sweep;
-      // OPS-2 is outside team-a, and ENG-1 outside team-b; neither counts as unread.
-      expect(actions(state.commands)).toEqual(["snooze", "settle"]);
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect.each([
+    { teams: "both teams", expected: ["snooze", "settle"] },
+    { teams: "team-a only", expected: [] },
+  ] as const)(
+    "snoozes when one team's issue waits, and settles once both are done, with rules for $teams",
+    ({ teams, expected }) => {
+      const { state, layer } = setup(teams === "both teams" ? [rule(), rule("team-b")] : [rule()], [
+        link("ENG-1"),
+        link("OPS-2"),
+      ]);
+      state.statuses.set("team-b", [{ key: "OPS-2", stateId: "waiting" }]);
+      return Effect.gen(function* () {
+        const automation = yield* Automation.IssueThreadAutomationService;
+        yield* automation.sweep;
+        state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
+        yield* automation.sweep;
+        state.statuses.set("team-b", [{ key: "OPS-2", stateId: "done" }]);
+        yield* automation.sweep;
+        // OPS-2 is outside team-a, and ENG-1 outside team-b; neither counts as unread. With no
+        // team-b rule, OPS-2 is in no bucket.
+        expect(actions(state.commands)).toEqual(expected);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect.each([false, true])(
     "waits for an issue missing from a read, unless the thread was organized meanwhile (%s)",
@@ -500,7 +510,14 @@ describe("IssueThreadAutomationService", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("drops a decision when its rule is removed during the status read", () => {
+  it.effect.each([
+    { change: "its rule is removed", rules: [], expected: [] },
+    {
+      change: "another workspace gets a rule",
+      rules: [rule(), rule("team-z", { workspace: "elsewhere" })],
+      expected: ["settle"],
+    },
+  ])("decides again when $change during the status read", ({ rules, expected }) => {
     const { state, layer } = setup();
     return Effect.gen(function* () {
       const automation = yield* Automation.IssueThreadAutomationService;
@@ -514,10 +531,13 @@ describe("IssueThreadAutomationService", () => {
       state.statuses.set("team-a", [{ key: "ENG-1", stateId: "done" }]);
       const sweep = yield* automation.sweep.pipe(Effect.forkChild);
       yield* Deferred.await(started);
-      yield* settings.updateSettings({ issueThreadAutomationRules: [] });
+      yield* settings.updateSettings({ issueThreadAutomationRules: rules });
       yield* Deferred.succeed(finish, undefined);
       yield* Fiber.join(sweep);
       expect(state.commands).toHaveLength(0);
+      state.beforeRead = Effect.void;
+      yield* automation.sweep;
+      expect(actions(state.commands)).toEqual(expected);
     }).pipe(Effect.provide(layer));
   });
 });

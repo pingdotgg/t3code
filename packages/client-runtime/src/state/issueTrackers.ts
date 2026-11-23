@@ -31,9 +31,14 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
     label: "environment-data:issue-trackers:automation",
     tag: WS_METHODS.issueTrackersAutomation,
   });
+  // Bumped by each credential save, so a mounted catalog drops what the old credential could reach.
+  const credentialChanges = Atom.family((_environmentId: string) =>
+    Atom.make(0).pipe(Atom.keepAlive),
+  );
   const automationCatalog = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:issue-trackers:automation-catalog",
     tag: WS_METHODS.issueTrackersAutomationCatalog,
+    refreshTrigger: ({ environmentId }) => credentialChanges(environmentId),
   });
   const refresh = (environmentId: Parameters<typeof connections>[0]["environmentId"]) =>
     connections({ environmentId, input: {} });
@@ -67,7 +72,10 @@ export function createIssueTrackerEnvironmentAtoms<R, E>(
       scheduler: commandScheduler,
       concurrency: serialPerEnvironment,
       onSettled: (target, registry) =>
-        Effect.sync(() => registry.refresh(refresh(target.environmentId))),
+        Effect.sync(() => {
+          registry.refresh(refresh(target.environmentId));
+          registry.update(credentialChanges(target.environmentId), (count) => count + 1);
+        }),
     }),
     bindProject: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issue-trackers:bind-project",
