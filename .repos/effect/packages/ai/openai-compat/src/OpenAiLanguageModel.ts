@@ -545,6 +545,10 @@ declare module "effect/ai/Response" {
        * The service tier reported by the OpenAI-compatible provider.
        */
       readonly serviceTier?: "default" | "auto" | "flex" | "scale" | "priority" | null
+      /**
+       * The refusal explanation returned instead of content.
+       */
+      readonly refusal?: string | null
     } | null
   }
 }
@@ -665,6 +669,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
         const [rawResponse, response] = yield* client.createResponse(request)
         annotateResponse(options.span, rawResponse)
         return yield* makeResponse({
+          config,
           options,
           rawResponse,
           response,
@@ -681,6 +686,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
         annotateRequest(options.span, request)
         const [response, stream] = yield* client.createResponseStream(request)
         return yield* makeStreamResponse({
+          config,
           options,
           stream,
           response,
@@ -764,7 +770,7 @@ export const withConfigOverride: {
 // =============================================================================
 
 const getSystemMessageMode = (model: string): "system" | "developer" =>
-  model.startsWith("o") ||
+  /^o\d/.test(model) ||
     model.startsWith("gpt-5") ||
     model.startsWith("codex-") ||
     model.startsWith("computer-use")
@@ -825,17 +831,28 @@ const prepareMessages = Effect.fnUntraced(
                 } else if (part.mediaType === "application/pdf") {
                   if (typeof part.data === "string" && isFileId(part.data, config)) {
                     content.push({ type: "input_file", file_id: part.data })
-                  }
-
-                  if (part.data instanceof URL) {
-                    content.push({ type: "input_file", file_url: part.data.toString() })
-                  }
-
-                  if (part.data instanceof Uint8Array) {
-                    const base64 = Base64.encode(part.data)
-                    const fileName = part.fileName ?? `part-${index}.pdf`
-                    const fileData = `data:application/pdf;base64,${base64}`
-                    content.push({ type: "input_file", filename: fileName, file_data: fileData })
+                  } else if (
+                    part.data instanceof URL || (typeof part.data === "string" && /^https?:\/\//i.test(part.data))
+                  ) {
+                    return yield* AiError.make({
+                      module: "OpenAiLanguageModel",
+                      method: "prepareMessages",
+                      reason: new AiError.InvalidUserInputError({
+                        description: "Chat Completions does not support PDF URLs. " +
+                          "Pass PDF bytes, base64 data, or a configured file ID instead."
+                      })
+                    })
+                  } else {
+                    const fileData = part.data instanceof Uint8Array
+                      ? `data:application/pdf;base64,${Base64.encode(part.data)}`
+                      : /^data:/i.test(part.data)
+                      ? part.data
+                      : `data:application/pdf;base64,${part.data}`
+                    content.push({
+                      type: "input_file",
+                      filename: part.fileName ?? `part-${index}.pdf`,
+                      file_data: fileData
+                    })
                   }
                 } else {
                   return yield* AiError.make({
@@ -966,12 +983,14 @@ type ActiveToolCall = {
 
 const makeResponse = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
+    config,
     options,
     rawResponse,
     response,
     toolNameMapper,
     toolCodecs
   }: {
+    readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
     readonly rawResponse: CreateResponse200
     readonly response: HttpClientResponse.HttpClientResponse
@@ -1008,7 +1027,7 @@ const makeResponse = Effect.fnUntraced(
         parts.push({ type: "text", text: message.content })
       }
 
-      if (message.tool_calls !== undefined) {
+      if (Predicate.isNotNullish(message.tool_calls)) {
         for (const [index, toolCall] of message.tool_calls.entries()) {
           const toolId = toolCall.id ?? `${rawResponse.id}_tool_${index}`
           const toolName = toolNameMapper.getCustomName(toolCall.function?.name ?? "unknown_tool")
@@ -1025,7 +1044,7 @@ const makeResponse = Effect.fnUntraced(
                 })
               })
           })
-          const params = yield* transformToolCallParams(options, toolName, toolParams, toolCodecs)
+          const params = yield* transformToolCallParams(config, options, toolName, toolParams, toolCodecs)
           hasToolCalls = true
           parts.push({
             type: "tool-call",
@@ -1034,7 +1053,7 @@ const makeResponse = Effect.fnUntraced(
             params,
             metadata: {
               "openai-compat": {
-                ...makeItemIdMetadata(toolCall.id),
+                ...makeItemIdMetadata(toolCall.id ?? undefined),
                 ...makeExtraContentMetadata(toolCall.extra_content ?? undefined)
               }
             }
@@ -1043,18 +1062,24 @@ const makeResponse = Effect.fnUntraced(
       }
     }
 
-    const finishReason = InternalUtilities.resolveFinishReason(
-      choice?.finish_reason,
-      hasToolCalls
-    )
-    const serviceTier = normalizeServiceTier(rawResponse.service_tier)
+    const refusal = message?.refusal
+    const hasRefusal = Predicate.isNotNullish(refusal) && refusal.length > 0
+    const finishReason = InternalUtilities.resolveFinishReason(choice?.finish_reason, hasToolCalls, hasRefusal)
+    const serviceTier = normalizeServiceTier(rawResponse.service_tier ?? undefined)
 
     parts.push({
       type: "finish",
       reason: finishReason,
       usage: getUsage(rawResponse.usage),
       response: buildHttpResponseDetails(response),
-      ...(serviceTier !== undefined && { metadata: { "openai-compat": { serviceTier } } })
+      ...((serviceTier !== undefined || hasRefusal) && {
+        metadata: {
+          "openai-compat": {
+            ...(serviceTier !== undefined && { serviceTier }),
+            ...(hasRefusal && { refusal })
+          }
+        }
+      })
     })
 
     return parts
@@ -1063,12 +1088,14 @@ const makeResponse = Effect.fnUntraced(
 
 const makeStreamResponse = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
+    config,
     options,
     stream,
     response,
     toolNameMapper,
     toolCodecs
   }: {
+    readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
     readonly stream: Stream.Stream<ResponseStreamEvent, AiError.AiError>
     readonly response: HttpClientResponse.HttpClientResponse
@@ -1081,6 +1108,7 @@ const makeStreamResponse = Effect.fnUntraced(
     let serviceTier: string | undefined = undefined
     let usage: CreateResponse200["usage"] = undefined
     let finishReason: string | null | undefined = undefined
+    let refusal = ""
     let metadataEmitted = false
     let textStarted = false
     let textId = ""
@@ -1124,7 +1152,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   })
                 })
             })
-            const params = yield* transformToolCallParams(options, toolCall.name, parsedParams, toolCodecs)
+            const params = yield* transformToolCallParams(config, options, toolCall.name, parsedParams, toolCodecs)
             parts.push({ type: "tool-params-end", id: toolCall.id })
             parts.push({
               type: "tool-call",
@@ -1142,13 +1170,21 @@ const makeStreamResponse = Effect.fnUntraced(
           }
 
           const normalizedServiceTier = normalizeServiceTier(serviceTier)
+          const hasRefusal = refusal.length > 0
           parts.push({
             type: "finish",
-            reason: InternalUtilities.resolveFinishReason(finishReason, hasToolCalls),
+            reason: InternalUtilities.resolveFinishReason(finishReason, hasToolCalls, hasRefusal),
             usage: getUsage(usage),
             response: buildHttpResponseDetails(response),
-            ...(normalizedServiceTier !== undefined
-              ? { metadata: { "openai-compat": { serviceTier: normalizedServiceTier } } }
+            ...(normalizedServiceTier !== undefined || hasRefusal
+              ? {
+                metadata: {
+                  "openai-compat": {
+                    ...(normalizedServiceTier !== undefined ? { serviceTier: normalizedServiceTier } : undefined),
+                    ...(hasRefusal ? { refusal } : undefined)
+                  }
+                }
+              }
               : undefined)
           })
           return parts
@@ -1160,7 +1196,7 @@ const makeStreamResponse = Effect.fnUntraced(
           return parts
         }
 
-        if (event.service_tier !== undefined) {
+        if (Predicate.isNotNullish(event.service_tier)) {
           serviceTier = event.service_tier
         }
         if (event.usage !== undefined && Predicate.isNotNull(event.usage)) {
@@ -1219,6 +1255,10 @@ const makeStreamResponse = Effect.fnUntraced(
             })
           }
           parts.push({ type: "text-delta", id: textId, delta: choice.delta.content })
+        }
+
+        if (Predicate.isNotNullish(choice.delta?.refusal)) {
+          refusal += choice.delta.refusal
         }
 
         if (Predicate.isNotNullish(choice.delta?.tool_calls)) {
@@ -1306,7 +1346,7 @@ const annotateResponse = (span: Span, response: CreateResponse200): void => {
     },
     openai: {
       response: {
-        serviceTier: response.service_tier as string | undefined
+        serviceTier: response.service_tier
       }
     }
   })
@@ -1372,10 +1412,14 @@ const toolParametersError = (tool: Tool.Any, error: unknown, method: string): Ai
     method
   )
 
+const getToolStrictMode = (tool: Tool.Any, config: typeof Config.Service): boolean =>
+  Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
+
 type ToolCodec = ReturnType<typeof toCodecOpenAI>["codec"]
 type ToolCodecs = ReadonlyMap<Tool.Any, ToolCodec>
 
 const transformToolCallParams = Effect.fnUntraced(function*(
+  config: typeof Config.Service,
   options: LanguageModel.ProviderOptions,
   toolName: string,
   toolParams: unknown,
@@ -1397,7 +1441,7 @@ const transformToolCallParams = Effect.fnUntraced(function*(
     })
   }
 
-  if (Tool.isDynamic(tool) && tool.jsonSchema !== undefined) {
+  if (!getToolStrictMode(tool, config) || (Tool.isDynamic(tool) && tool.jsonSchema !== undefined)) {
     return toolParams
   }
 
@@ -1408,7 +1452,10 @@ const transformToolCallParams = Effect.fnUntraced(function*(
     Schema.decodeEffect(codec)(toolParams) as Effect.Effect<unknown, Schema.SchemaError>
   ).pipe(
     Effect.flatMap((decoded) =>
-      Schema.encodeUnknownEffect(tool.parametersSchema)(decoded) as Effect.Effect<unknown, Schema.SchemaError>
+      Schema.encodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema))(decoded) as Effect.Effect<
+        unknown,
+        Schema.SchemaError
+      >
     ),
     Effect.orElseSucceed(() => toolParams)
   )
@@ -1451,18 +1498,20 @@ const prepareTools = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Too
   // Convert the tools in the toolkit to the provider-defined format
   for (const tool of allowedTools) {
     if (Tool.isUserDefined(tool) || Tool.isDynamic(tool)) {
-      const strict = Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
+      const strict = getToolStrictMode(tool, config)
       let parameters: ReturnType<typeof Tool.getJsonSchema>
       if (Tool.isDynamic(tool) && tool.jsonSchema !== undefined) {
         parameters = tool.jsonSchema
       } else {
         const prepared = yield* Effect.try({
-          try: () => toCodecOpenAI(tool.parametersSchema),
+          try: () => (strict ? toCodecOpenAI : LanguageModel.defaultCodecTransformer)(tool.parametersSchema),
           catch: (error) => toolParametersError(tool, error, "prepareTools")
         })
         parameters = prepared.jsonSchema
-        // Reused to normalize this tool's calls in the response.
-        toolCodecs.set(tool, prepared.codec)
+        if (strict) {
+          // Reused to normalize this tool's calls in the response.
+          toolCodecs.set(tool, prepared.codec)
+        }
       }
       tools.push({
         type: "function",
@@ -1704,13 +1753,14 @@ const toChatMessageContent = (
         break
       }
       case "input_file": {
-        if (part.file_url !== undefined) {
-          parts.push({ type: "text", text: part.file_url })
-        } else if (part.file_data !== undefined) {
-          parts.push({ type: "text", text: part.file_data })
-        } else if (part.file_id !== undefined) {
-          parts.push({ type: "text", text: `openai://file/${part.file_id}` })
-        }
+        parts.push({
+          type: "file",
+          file: {
+            ...(part.filename !== undefined ? { filename: part.filename } : undefined),
+            ...(part.file_data !== undefined ? { file_data: part.file_data } : undefined),
+            ...(Predicate.isNotNullish(part.file_id) ? { file_id: part.file_id } : undefined)
+          }
+        })
         break
       }
     }
