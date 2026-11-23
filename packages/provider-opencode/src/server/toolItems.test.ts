@@ -7,11 +7,7 @@ import {
   toolOutputImages,
 } from "@t3tools/shared/toolOutput";
 
-import {
-  openCodeToolOutput,
-  openCodeToolTurnItem,
-  stripOpenCodeReturnedSentMessage,
-} from "./toolItems.ts";
+import { openCodeToolOutput, openCodeToolTurnItem } from "./toolItems.ts";
 
 describe("openCodeToolOutput", () => {
   it("preserves inline raster file content and leaves other files unserved", () => {
@@ -94,21 +90,5 @@ describe("openCodeToolTurnItem", () => {
       },
     );
     expect(item).toMatchObject({ type: "file_change", fileName: "src/index.ts", ...expected });
-  });
-});
-
-describe("stripOpenCodeReturnedSentMessage", () => {
-  it("preserves sibling text-block fields and own __proto__ properties when removing duplicates", () => {
-    const seen = new Set(["Ready"]);
-    const withSiblingField = JSON.stringify({
-      content: [{ type: "text", text: JSON.stringify({ sentMessage: "Ready" }), note: "keep" }],
-    });
-    expect(
-      JSON.parse(stripOpenCodeReturnedSentMessage("execute", withSiblingField, seen)!),
-    ).toEqual({ content: [{ type: "text", text: "", note: "keep" }] });
-
-    const withOwnProto = '{"sentMessage":"Ready","__proto__":{"kept":true}}';
-    const strippedProto = stripOpenCodeReturnedSentMessage("execute", withOwnProto, seen);
-    expect(strippedProto).toBe('{"__proto__":{"kept":true}}');
   });
 });

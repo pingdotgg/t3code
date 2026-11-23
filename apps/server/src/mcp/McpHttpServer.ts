@@ -1244,6 +1244,7 @@ const withToolResultCapture = Effect.fn("McpHttpServer.withToolResultCapture")(f
       }
       return server.addTool({
         ...options,
+        // Untraced: withToolSpans already opens a span per tool call.
         handle: Effect.fnUntraced(function* (payload) {
           const scopeOption = yield* Effect.serviceOption(
             McpInvocationContext.McpInvocationContext,
