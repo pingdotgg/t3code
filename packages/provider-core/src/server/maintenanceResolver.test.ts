@@ -831,67 +831,58 @@ it.layer(
     },
   };
   for (const fixture of [
-    { name: "a launcher", npm: false, alias: false, owned: true },
-    { name: "an npm-shaped package", npm: true, alias: false, owned: true },
-    { name: "a native-looking alias", npm: false, alias: true, owned: true },
-    { name: "an unrelated npm install", npm: true, alias: false, owned: false },
-    { name: "an unrelated native install", npm: false, alias: true, owned: false },
-    { name: "an unavailable registry", npm: true, alias: false, owned: true, failedProbe: true },
+    { name: "a launcher outside the prefix's bin", npm: false, alias: true, owner: "claude-code" },
+    { name: "an unreadable registry", npm: true, alias: false, owner: null },
+    { name: "files MacPorts does not own", npm: true, alias: false, owner: "" },
   ]) {
-    it.effect.skipIf(windowsHost)(
-      `respects MacPorts ownership for ${fixture.name} under a custom prefix`,
-      () =>
-        Effect.gen(function* () {
-          const prefix = yield* makeTempDir("t3-macports-owner");
-          const port = NodePath.join(prefix, "bin", "port");
-          writeExecutable(port);
-          const real = fixture.npm
-            ? NodePath.join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")
-            : NodePath.join(prefix, "share", "claude-code", "claude");
-          const resolved = fixture.alias
-            ? NodePath.join(prefix, ".local", "bin", "claude")
-            : NodePath.join(prefix, "bin", "claude");
-          writeExecutable(real);
-          writeExecutable(resolved);
-          const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
-            binaryPath: resolved,
-            resolvedCommandPath: resolved,
-            realCommandPath: real,
-            env: { PATH: "" },
-            platform: "darwin",
-          }).pipe(
-            Effect.provideService(HostProcess.Platform, "darwin"),
-            Effect.provideService(
-              ChildProcessSpawner.ChildProcessSpawner,
-              stdoutSpawner(
-                (command, args) => {
-                  // A developer may also have the default MacPorts prefix installed.
-                  if (command === "/opt/local/bin/port") return "";
-                  expect(command).toBe(port);
-                  expect(args).toEqual(["-q", "provides", resolved, real]);
-                  return fixture.owned && !("failedProbe" in fixture) ? "claude-code\n" : "";
-                },
-                () => ("failedProbe" in fixture ? 1 : 0),
-              ),
+    it.effect.skipIf(windowsHost)(`checks MacPorts ownership for ${fixture.name}`, () =>
+      Effect.gen(function* () {
+        const prefix = yield* makeTempDir("t3-macports-owner");
+        const port = NodePath.join(prefix, "bin", "port");
+        writeExecutable(port);
+        const real = fixture.npm
+          ? NodePath.join(prefix, "lib", "node_modules", "@anthropic-ai", "claude-code", "cli.js")
+          : NodePath.join(prefix, "share", "claude-code", "claude");
+        const resolved = fixture.alias
+          ? NodePath.join(prefix, ".local", "bin", "claude")
+          : NodePath.join(prefix, "bin", "claude");
+        writeExecutable(real);
+        writeExecutable(resolved);
+        const capabilities = yield* resolvePackageManagedProviderMaintenance(claudeUpdate, {
+          binaryPath: resolved,
+          resolvedCommandPath: resolved,
+          realCommandPath: real,
+          env: { PATH: "" },
+          platform: "darwin",
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (command, args) => {
+                expect(command).toBe(port);
+                expect(args).toEqual(["provides", resolved, real]);
+                return [resolved, real]
+                  .map((file) =>
+                    fixture.owner
+                      ? `${file} is provided by: ${fixture.owner}\n`
+                      : `${file} is not provided by a MacPorts port.\n`,
+                  )
+                  .join("");
+              },
+              () => (fixture.owner === null ? 1 : 0),
             ),
+          ),
+        );
+        if (fixture.owner === "") {
+          expect(capabilities.update?.lockKey).toBe(`npm-global:${normalizeCommandPath(prefix)}`);
+        } else {
+          expect(capabilities.update).toBeNull();
+          expect(capabilities.manualCommand).toBe(
+            fixture.owner ? `sudo port upgrade ${fixture.owner}` : undefined,
           );
-          if (fixture.owned) {
-            expect(capabilities.update).toBeNull();
-            expect(capabilities.packageName).toBe(claudeUpdate.npmPackageName);
-            expect(
-              createProviderVersionAdvisory({
-                driver: claudeUpdate.provider,
-                currentVersion: "1.0.0",
-                latestVersion: "2.0.0",
-                maintenanceCapabilities: capabilities,
-              }),
-            ).toMatchObject({ canUpdate: false, status: "behind_latest" });
-          } else {
-            expect(capabilities.update?.lockKey).toBe(
-              fixture.npm ? `npm-global:${normalizeCommandPath(prefix)}` : "claudeAgent-native",
-            );
-          }
-        }),
+        }
+      }),
     );
   }
   const resolveInstall = (input: {
