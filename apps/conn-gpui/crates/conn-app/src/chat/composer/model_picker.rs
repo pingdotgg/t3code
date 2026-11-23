@@ -5,7 +5,8 @@
 //! `glass_divider` 1px border, `8px` row radius, `shell_highlight` hover).
 
 use conn_contract::{
-    ServerConfig, ServerProviderState, ServerProvidersItemItem, ServerProvidersItemItemModelsItem,
+    ServerConfig, ServerProviderAuthStatus, ServerProviderState, ServerProvidersItemItem,
+    ServerProvidersItemItemAvailability, ServerProvidersItemItemModelsItem,
     ServerProvidersItemItemModelsItemCapabilitiesOptionDescriptorsItem as OptionDescriptor,
 };
 use conn_theme::Tokens;
@@ -37,6 +38,8 @@ const PICKER_WIDTH_PX: f32 = 360.0;
 const PICKER_MAX_HEIGHT_PX: f32 = 346.0;
 /// Left provider sidebar width matching `w-11` (`44px`).
 const SIDEBAR_WIDTH_PX: f32 = 44.0;
+/// `ANTIGRAVITY_DEFAULT_MODEL`: a placeholder slug Conn never lists as a model.
+const ANTIGRAVITY_DEFAULT_MODEL: &str = "antigravity-default";
 /// Docked effort column width (`w-48`).
 const EFFORT_COLUMN_WIDTH_PX: f32 = 192.0;
 /// Superheroicons concepts for `ZapIcon` and `ListPlus`.
@@ -551,7 +554,18 @@ pub(crate) struct ProviderGroup {
     pub(crate) driver: String,
     pub(crate) display_name: String,
     pub(crate) enabled: bool,
+    /// `isProviderInstancePickerReady`: only a ready provider lists its models.
     pub(crate) ready: bool,
+    /// `availability` is not `unavailable`.
+    pub(crate) available: bool,
+    pub(crate) installed: bool,
+    pub(crate) status: ServerProviderState,
+    /// The server's own status line (`snapshot.message`).
+    pub(crate) message: Option<String>,
+    /// `auth.status` is `unauthenticated`.
+    pub(crate) unauthenticated: bool,
+    /// `hasProviderSetup`: Antigravity always, any other provider when `setup.canAuthenticate`.
+    pub(crate) has_setup: bool,
     pub(crate) models: Vec<ModelOption>,
     /// User-invocable provider skills for the `$` menu.
     pub(crate) skills: Vec<SkillEntry>,
@@ -559,6 +573,132 @@ pub(crate) struct ProviderGroup {
     pub(crate) supported_runtime_modes: Vec<String>,
     /// True when the provider advertises `/compact` (`providerSupportsManualCompaction`).
     pub(crate) supports_compact: bool,
+}
+
+/// `isProviderInstancePickerReady`: an enabled, available instance whose status is ready. A
+/// warning still offers the models of sub-providers that report no problem of their own.
+fn picker_ready(
+    enabled: bool,
+    available: bool,
+    status: ServerProviderState,
+    models: &[ModelOption],
+    usable_sub_providers: &[&str],
+) -> bool {
+    if !enabled || !available {
+        return false;
+    }
+    match status {
+        ServerProviderState::Ready => true,
+        ServerProviderState::Warning => models.iter().any(|model| {
+            model
+                .sub_provider
+                .as_deref()
+                .is_some_and(|sub| usable_sub_providers.contains(&sub))
+        }),
+        ServerProviderState::Error | ServerProviderState::Disabled => false,
+    }
+}
+
+/// `sortProviderInstanceEntries`: each driver's default instance first (its id is the driver
+/// kind), then its custom instances, drivers in the order the server lists them.
+fn order_provider_groups(groups: Vec<ProviderGroup>) -> Vec<ProviderGroup> {
+    let mut buckets: Vec<(String, Vec<ProviderGroup>)> = Vec::new();
+    for group in groups {
+        match buckets
+            .iter_mut()
+            .find(|(driver, _)| *driver == group.driver)
+        {
+            Some((_, bucket)) => bucket.push(group),
+            None => buckets.push((group.driver.clone(), vec![group])),
+        }
+    }
+    buckets
+        .into_iter()
+        .flat_map(|(_, mut bucket)| {
+            bucket.sort_by_key(|group| group.instance_id != group.driver);
+            bucket
+        })
+        .collect()
+}
+
+impl ProviderGroup {
+    /// `shouldOfferModelPickerSetup`: a provider the user can still set up stays selectable in
+    /// the rail while it lists no usable model.
+    #[must_use]
+    pub(crate) fn offers_setup(&self) -> bool {
+        self.enabled
+            && self.status != ServerProviderState::Disabled
+            && self.has_setup
+            && (!self.ready
+                || !self.installed
+                || self.unauthenticated
+                || self.models.iter().all(is_synthetic_default))
+    }
+
+    /// A rail icon Conn dims and blocks (`opacity-50 cursor-not-allowed`): not ready and nothing
+    /// to set up.
+    #[must_use]
+    pub(crate) fn rail_disabled(&self) -> bool {
+        !self.ready && !self.offers_setup()
+    }
+
+    /// The rail icon's tooltip and accessible label (`describeUnavailableInstance`): the name
+    /// while ready, else why the provider is not.
+    #[must_use]
+    pub(crate) fn rail_label(&self) -> String {
+        let label = &self.display_name;
+        if self.ready {
+            return label.clone();
+        }
+        if (!self.enabled && self.available) || self.status == ServerProviderState::Disabled {
+            return format!("{label}: Disabled in settings.");
+        }
+        if self.status == ServerProviderState::Ready && self.available {
+            return label.clone();
+        }
+        let prefix = match self.status {
+            ServerProviderState::Error => "Unavailable",
+            ServerProviderState::Warning => "Limited",
+            ServerProviderState::Ready | ServerProviderState::Disabled => "Not ready",
+        };
+        match &self.message {
+            Some(message) => format!("{label}: {prefix}. {message}"),
+            None => format!("{label}: {prefix}."),
+        }
+    }
+
+    /// What the list says in place of "No models found" while a set-up-able provider is
+    /// selected (`getProviderStatusMessage`). The server's own line comes first.
+    #[must_use]
+    pub(crate) fn setup_notice(&self) -> Option<String> {
+        if !self.offers_setup() {
+            return None;
+        }
+        if let Some(message) = &self.message {
+            return Some(message.clone());
+        }
+        let name = &self.display_name;
+        Some(if !self.installed {
+            format!("{name} is not on this environment's PATH. Orbit installs it.")
+        } else if self.unauthenticated {
+            "Sign in via the CLI to authenticate again.".to_owned()
+        } else {
+            match self.status {
+                ServerProviderState::Ready => {
+                    "No models are available for this provider.".to_owned()
+                }
+                ServerProviderState::Error => format!("{name} provider is unavailable."),
+                ServerProviderState::Warning | ServerProviderState::Disabled => {
+                    format!("{name} provider has limited availability.")
+                }
+            }
+        })
+    }
+}
+
+/// Conn's synthetic `antigravity-default` option names no model, so the picker never lists it.
+fn is_synthetic_default(model: &ModelOption) -> bool {
+    model.driver == "antigravity" && model.slug == ANTIGRAVITY_DEFAULT_MODEL
 }
 
 /// Parsed provider and model catalog from `server.getConfig`.
@@ -588,13 +728,29 @@ impl ModelCatalog {
                 .filter(|s| !s.trim().is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| format_driver_name(&item.driver));
-            let ready =
-                item.enabled && item.installed && matches!(item.status, ServerProviderState::Ready);
-            let models = item
+            let available = !matches!(
+                item.availability,
+                Some(ServerProvidersItemItemAvailability::Unavailable)
+            );
+            let models: Vec<ModelOption> = item
                 .models
                 .iter()
                 .map(|m| model_option_from_contract(item, &display_name, m))
                 .collect();
+            let usable_sub_providers: Vec<&str> = item
+                .sub_providers
+                .iter()
+                .flatten()
+                .filter(|sub| sub.unavailable_reason.is_none())
+                .map(|sub| sub.name.as_str())
+                .collect();
+            let ready = picker_ready(
+                item.enabled,
+                available,
+                item.status,
+                &models,
+                &usable_sub_providers,
+            );
             let skills = item
                 .skills
                 .iter()
@@ -619,13 +775,35 @@ impl ModelCatalog {
                 display_name,
                 enabled: item.enabled,
                 ready,
+                available,
+                installed: item.installed,
+                status: item.status,
+                message: item
+                    .message
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_owned),
+                unauthenticated: matches!(
+                    item.auth.status,
+                    ServerProviderAuthStatus::Unauthenticated
+                ),
+                has_setup: item.driver == "antigravity"
+                    || item.setup.as_ref().is_some_and(|s| s.can_authenticate),
                 models,
                 skills,
                 supported_runtime_modes,
                 supports_compact,
             });
         }
-        Self { providers: groups }
+        Self {
+            providers: order_provider_groups(groups),
+        }
+    }
+
+    /// The rail's providers (`isProviderInstancePickerVisible`): every enabled instance.
+    pub(crate) fn picker_providers(&self) -> impl Iterator<Item = &ProviderGroup> {
+        self.providers.iter().filter(|p| p.enabled)
     }
 
     /// Returns the preferred default model across available providers:
@@ -698,10 +876,21 @@ impl ModelCatalog {
             .find(alias)
     }
 
+    /// Every model the picker lists (`flatModels`): those of ready providers, minus Conn's
+    /// synthetic Antigravity default.
+    fn pickable_models(&self) -> impl Iterator<Item = &ModelOption> {
+        self.providers
+            .iter()
+            .filter(|p| p.ready)
+            .flat_map(|p| p.models.iter())
+            .filter(|m| !is_synthetic_default(m))
+    }
+
     /// Returns the models visible for the active provider tab and search query.
     ///
     /// When `query` is non-empty, searches across all providers (matching `ModelPickerContent.tsx`).
     /// When `query` is empty, filters to `selected_provider` (or all providers if `None`).
+    /// A provider that is not ready lists no model, as in Conn.
     #[must_use]
     pub(crate) fn filtered_models(
         &self,
@@ -712,9 +901,7 @@ impl ModelCatalog {
         if !trimmed.is_empty() {
             let needle = trimmed.to_ascii_lowercase();
             return self
-                .providers
-                .iter()
-                .flat_map(|p| p.models.iter())
+                .pickable_models()
                 .filter(|m| {
                     m.name.to_ascii_lowercase().contains(&needle)
                         || m.slug.to_ascii_lowercase().contains(&needle)
@@ -731,13 +918,13 @@ impl ModelCatalog {
         if let Some(id) = selected_provider
             && let Some(group) = self.providers.iter().find(|p| p.instance_id == id)
         {
-            return group.models.iter().collect();
+            return self
+                .pickable_models()
+                .filter(|m| m.instance_id == group.instance_id)
+                .collect();
         }
 
-        self.providers
-            .iter()
-            .flat_map(|p| p.models.iter())
-            .collect()
+        self.pickable_models().collect()
     }
 }
 
@@ -795,14 +982,57 @@ fn model_option_from_contract(
     }
 }
 
+/// A driver's label when the server sends no display name: the provider package's `label`, else
+/// `formatProviderDriverKindLabel` (`fooBar` -> `Foo Bar`).
 fn format_driver_name(driver: &str) -> String {
     match driver {
         "claudeAgent" => "Claude".to_owned(),
         "codex" => "Codex".to_owned(),
         "antigravity" => "Antigravity".to_owned(),
         "opencode" => "OpenCode".to_owned(),
-        other => other.to_owned(),
+        "grok" => "Grok".to_owned(),
+        "cursor" => "Cursor".to_owned(),
+        "kiro" => "Kiro".to_owned(),
+        "pi" => "Pi".to_owned(),
+        "muse" => "Muse Code".to_owned(),
+        "fx" => "fx".to_owned(),
+        "acpRegistry" => "ACP Registry".to_owned(),
+        other => title_case_driver(other),
     }
+}
+
+fn title_case_driver(driver: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let mut word = String::new();
+    let mut previous_lower = false;
+    for c in driver.chars() {
+        if c == '_' || c == '-' || c.is_whitespace() {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+            previous_lower = false;
+            continue;
+        }
+        if c.is_ascii_uppercase() && previous_lower && !word.is_empty() {
+            words.push(std::mem::take(&mut word));
+        }
+        word.push(c);
+        previous_lower = c.is_ascii_lowercase();
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+        .iter()
+        .map(|w| {
+            let mut chars = w.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Parameters for rendering the docked model picker popup.
@@ -840,17 +1070,25 @@ pub(super) fn render_model_picker(
     let muted = hsla(tokens.muted_foreground);
 
     let is_searching = !view.query.trim().is_empty();
-    let show_sidebar = !is_searching && view.catalog.providers.len() > 1;
+    let show_sidebar = !is_searching && view.catalog.picker_providers().count() > 1;
     let effective_provider = view
         .selected_provider
         .or(view.active_instance_id)
         .or_else(|| {
             view.catalog
-                .providers
-                .first()
+                .picker_providers()
+                .next()
                 .map(|p| p.instance_id.as_str())
         });
     let models = view.catalog.filtered_models(effective_provider, view.query);
+    let setup_notice = (!is_searching && models.is_empty())
+        .then(|| {
+            view.catalog
+                .picker_providers()
+                .find(|p| Some(p.instance_id.as_str()) == effective_provider)
+                .and_then(ProviderGroup::setup_notice)
+        })
+        .flatten();
 
     let mut content = div()
         .flex()
@@ -872,15 +1110,23 @@ pub(super) fn render_model_picker(
             .border_color(glass_divider)
             .bg(hsla_alpha(tokens.muted, 0.30));
 
-        for provider in &view.catalog.providers {
+        for provider in view.catalog.picker_providers() {
             let is_selected = effective_provider == Some(provider.instance_id.as_str());
             let provider_id = provider.instance_id.clone();
             let icon_color = if is_selected { fg } else { muted };
-            let mut btn = div()
+            let disabled = provider.rail_disabled();
+            let label = provider.rail_label();
+            let btn = div()
                 .id(SharedString::from(format!(
                     "model-picker-provider-{}",
                     provider.instance_id
                 )))
+                .a11y_tab(
+                    format!("composer.model-picker.provider.{}", provider.instance_id),
+                    label.clone(),
+                    is_selected,
+                )
+                .conn_tooltip(label, tokens)
                 .relative()
                 .flex()
                 .items_center()
@@ -888,16 +1134,20 @@ pub(super) fn render_model_picker(
                 .w_full()
                 .h(px(36.0))
                 .rounded(px(6.0))
-                .cursor_pointer()
-                .hover(move |s| s.bg(highlight_bg))
-                .on_click(cx.listener(move |composer, _, _, cx| {
-                    composer.select_picker_provider(provider_id.clone(), cx);
-                }))
                 .child(crate::icons::provider_mark(
                     &provider.driver,
                     18.0,
                     icon_color,
                 ));
+            let mut btn = if disabled {
+                btn.opacity(0.5).cursor_not_allowed()
+            } else {
+                btn.cursor_pointer()
+                    .hover(move |s| s.bg(highlight_bg))
+                    .on_click(cx.listener(move |composer, _, _, cx| {
+                        composer.select_picker_provider(provider_id.clone(), cx);
+                    }))
+            };
 
             if is_selected {
                 btn = btn.child(
@@ -968,7 +1218,7 @@ pub(super) fn render_model_picker(
                 .text_color(hsla(tokens.destructive))
                 .child(err.to_owned()),
         );
-    } else if models.is_empty() {
+    } else if models.is_empty() && setup_notice.is_none() {
         list = list.child(
             div()
                 .px(px(10.0))
@@ -1085,7 +1335,30 @@ pub(super) fn render_model_picker(
         .min_w_0()
         .overflow_hidden()
         .child(search_row)
-        .child(list);
+        .child(list)
+        .when_some(setup_notice, |column, notice| {
+            column.child(
+                div()
+                    .id("composer.model-picker.provider-notice")
+                    .a11y_group("composer.model-picker.provider-notice", notice.clone())
+                    .flex_none()
+                    .max_h(px(176.0))
+                    .overflow_hidden()
+                    .p(px(8.0))
+                    .border_t_1()
+                    .border_color(glass_divider)
+                    .child(
+                        div()
+                            .px(px(4.0))
+                            .py(px(6.0))
+                            .text_size(px(12.0))
+                            .line_height(px(16.5))
+                            .line_clamp(3)
+                            .text_color(muted)
+                            .child(notice),
+                    ),
+            )
+        });
 
     content = content.child(right_column);
 
@@ -1812,6 +2085,119 @@ mod tests {
             searched[0].instance_id, "claude-1",
             "search finds claude model"
         );
+    }
+
+    /// What the live server sends for Antigravity before any session started: installed, signed
+    /// in unchecked, a warning with the account message, and no models.
+    fn unchecked_antigravity() -> Option<ServerProvidersItemItem> {
+        let mut provider = sample_provider("antigravity", "antigravity", "Antigravity", vec![]);
+        if let Some(p) = provider.as_mut() {
+            p.status = ServerProviderState::Warning;
+            p.auth.status = ServerProviderAuthStatus::Unknown;
+            p.message =
+                Some("Antigravity is installed. Google account access is not checked yet.".into());
+        }
+        provider
+    }
+
+    #[test]
+    fn rail_lists_antigravity_and_grok_in_server_order_like_conn() {
+        let providers = vec![
+            sample_provider(
+                "claudeAgent",
+                "claudeAgent",
+                "Claude",
+                vec![("opus", "Opus")],
+            ),
+            sample_provider("codex", "codex", "Codex", vec![("gpt-6", "GPT-6")]),
+            unchecked_antigravity(),
+            sample_provider("grok", "grok", "Grok", vec![("grok-4.7", "Grok 4.7")]),
+        ];
+        let catalog = ModelCatalog::from_providers(&providers);
+        let rail: Vec<_> = catalog
+            .picker_providers()
+            .map(|p| p.driver.as_str())
+            .collect();
+        assert_eq!(rail, ["claudeAgent", "codex", "antigravity", "grok"]);
+
+        let grok = catalog.filtered_models(Some("grok"), "");
+        assert_eq!(grok.len(), 1, "Grok lists its models");
+        assert_eq!(grok[0].driver, "grok", "kept as its own driver");
+    }
+
+    #[test]
+    fn unchecked_antigravity_says_why_instead_of_no_models() {
+        let catalog = ModelCatalog::from_providers(&[unchecked_antigravity()]);
+        let group = &catalog.providers[0];
+        assert!(!group.ready, "a warning without sub-providers is not ready");
+        assert!(group.offers_setup(), "Antigravity always has a setup path");
+        assert!(!group.rail_disabled(), "so its rail icon stays selectable");
+        assert!(catalog.filtered_models(Some("antigravity"), "").is_empty());
+        let notice = "Antigravity is installed. Google account access is not checked yet.";
+        assert_eq!(group.setup_notice().as_deref(), Some(notice));
+        assert_eq!(
+            group.rail_label(),
+            format!("Antigravity: Limited. {notice}"),
+            "the tooltip carries the reason, as Conn's describeUnavailableInstance"
+        );
+    }
+
+    #[test]
+    fn unready_provider_without_setup_is_dimmed_and_lists_no_models() {
+        let mut codex = sample_provider("codex", "codex", "Codex", vec![("gpt-6", "GPT-6")]);
+        if let Some(p) = codex.as_mut() {
+            p.status = ServerProviderState::Error;
+            p.message = Some("codex is not logged in".into());
+        }
+        let catalog = ModelCatalog::from_providers(&[codex]);
+        let group = &catalog.providers[0];
+        assert!(
+            group.rail_disabled(),
+            "nothing to set up: blocked like Conn"
+        );
+        assert_eq!(
+            group.rail_label(),
+            "Codex: Unavailable. codex is not logged in"
+        );
+        assert_eq!(group.setup_notice(), None);
+        assert!(catalog.filtered_models(None, "gpt").is_empty());
+    }
+
+    #[test]
+    fn disabled_providers_stay_off_the_rail_and_defaults_lead_their_driver() {
+        let mut off = sample_provider("grok", "grok", "Grok", vec![("grok-4.7", "Grok 4.7")]);
+        if let Some(p) = off.as_mut() {
+            p.enabled = false;
+        }
+        let providers = vec![
+            sample_provider(
+                "codex-work",
+                "codex",
+                "Codex Work",
+                vec![("gpt-6", "GPT-6")],
+            ),
+            sample_provider(
+                "claudeAgent",
+                "claudeAgent",
+                "Claude",
+                vec![("opus", "Opus")],
+            ),
+            sample_provider("codex", "codex", "Codex", vec![("gpt-6", "GPT-6")]),
+            off,
+        ];
+        let catalog = ModelCatalog::from_providers(&providers);
+        let rail: Vec<_> = catalog
+            .picker_providers()
+            .map(|p| p.instance_id.as_str())
+            .collect();
+        assert_eq!(rail, ["codex", "codex-work", "claudeAgent"]);
+    }
+
+    #[test]
+    fn driver_labels_fall_back_like_conn() {
+        assert_eq!(format_driver_name("grok"), "Grok");
+        assert_eq!(format_driver_name("someNewAgent"), "Some New Agent");
+        assert_eq!(format_driver_name("open_router"), "Open Router");
     }
 
     fn option(driver: &str, name: &str, descriptors: Vec<ModelOptionDescriptor>) -> ModelOption {

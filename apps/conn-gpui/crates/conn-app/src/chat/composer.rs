@@ -1932,8 +1932,8 @@ impl Composer {
                 .or(self.selected_instance_id.as_deref())
                 .or_else(|| {
                     self.catalog
-                        .providers
-                        .first()
+                        .picker_providers()
+                        .next()
                         .map(|p| p.instance_id.as_str())
                 });
             let count = self.catalog.filtered_models(effective, &query).len();
@@ -1971,8 +1971,8 @@ impl Composer {
             .or(self.selected_instance_id.as_deref())
             .or_else(|| {
                 self.catalog
-                    .providers
-                    .first()
+                    .picker_providers()
+                    .next()
                     .map(|p| p.instance_id.as_str())
             });
         let picked = self

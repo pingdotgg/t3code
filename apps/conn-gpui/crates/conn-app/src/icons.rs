@@ -157,6 +157,8 @@ pub(crate) fn provider_mark(provider: &str, size_px: f32, fallback: Hsla) -> Any
         )
     } else if lower.contains("codex") || lower.contains("openai") || lower.contains("gpt") {
         ("brand/openai.svg", fallback)
+    } else if lower.contains("grok") {
+        ("brand/grok.svg", fallback)
     } else {
         ("superhero/agent.svg", fallback)
     };
