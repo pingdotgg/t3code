@@ -1197,6 +1197,52 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   });
   const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
 
+  // git-lfs's clean filter copies each file into lfs/tmp and leaves the copy when it is killed.
+  // Entries that appear while staging fails are recorded, and the next capture removes those still
+  // unchanged: this capture's Git processes have exited by then, while a concurrent git-lfs process
+  // still using one would have renamed it away or written to it in the meantime.
+  const strandedLfsTemp = new Map<string, Map<string, string>>();
+  const lfsTempEntries = (directory: string) =>
+    fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  const lfsTempSignature = (file: string) =>
+    fileSystem.stat(file).pipe(
+      Effect.map((info) =>
+        info.type === "File" && Option.isSome(info.mtime)
+          ? `${info.size}:${info.mtime.value.getTime()}`
+          : undefined,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+  const removeStrandedLfsTemp = Effect.fn("GitVcsDriver.removeStrandedLfsTemp")(function* (
+    directory: string,
+  ) {
+    const stranded = strandedLfsTemp.get(directory);
+    if (stranded === undefined) return;
+    strandedLfsTemp.delete(directory);
+    yield* Effect.forEach(
+      stranded,
+      ([name, signature]) =>
+        Effect.gen(function* () {
+          const file = path.join(directory, name);
+          if ((yield* lfsTempSignature(file)) === signature)
+            yield* fileSystem.remove(file).pipe(Effect.ignore);
+        }),
+      { discard: true },
+    );
+  });
+  const recordStrandedLfsTemp = Effect.fn("GitVcsDriver.recordStrandedLfsTemp")(function* (
+    directory: string,
+    before: ReadonlySet<string>,
+  ) {
+    const stranded = strandedLfsTemp.get(directory) ?? new Map<string, string>();
+    for (const name of yield* lfsTempEntries(directory)) {
+      if (before.has(name)) continue;
+      const signature = yield* lfsTempSignature(path.join(directory, name));
+      if (signature !== undefined) stranded.set(name, signature);
+    }
+    if (stranded.size > 0) strandedLfsTemp.set(directory, stranded);
+  });
+
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
@@ -1558,6 +1604,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               () => Effect.void,
             ),
           );
+        const lfsTemp = path.join(gitCommonDir, "lfs", "tmp");
+        yield* removeStrandedLfsTemp(lfsTemp);
+        const lfsTempBefore = new Set(yield* lfsTempEntries(lfsTemp));
         const stagingAt = yield* Clock.currentTimeMillis;
         yield* stageFiles([]).pipe(
           Effect.catchTags({
@@ -1614,6 +1663,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
+          // Runs after a failed or interrupted add's process group has been killed and awaited.
+          Effect.onError(() => recordStrandedLfsTemp(lfsTemp, lfsTempBefore)),
         );
 
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
