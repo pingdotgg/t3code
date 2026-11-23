@@ -37,6 +37,13 @@ heap, and first-request latency against a fake Anthropic API and the real `claud
   isolated runs.
 - Use `scaling` to separate per-thread cost from fixed server overhead, and `--soak <minutes>` to
   spot rising heap slopes (leaks).
+- Steer server work by `working`: many worktree threads editing files at once with one client
+  subscribed to all of them. Turns per minute that stay flat as threads are added mean the
+  server, not the agents, is the bottleneck.
+- Upper bounds no user hits daily, such as 20 clients reconnecting at once, run only with
+  `--stress`; the default reconnect is a user's 3 devices holding 10 threads each.
+- `--quick` shortens every window for a per-PR or nightly check; `compare` refuses to mix quick
+  and full runs. `server-metrics --help` says which scenario to trust for what.
 - Test macOS, Windows, and Linux with `--no-agent-scope`: Linux systemd agent scopes mask
   per-process polling paths that other platforms run.
 
