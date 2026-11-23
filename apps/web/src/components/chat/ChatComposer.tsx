@@ -1,6 +1,5 @@
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
-import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
@@ -37,7 +36,6 @@ import type {
   EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
-  ProviderApprovalDecision,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerProvider,
@@ -466,10 +464,6 @@ export interface ChatComposerProps {
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
-  onRespondToApproval?: (
-    requestId: RuntimeRequestId,
-    decision: ProviderApprovalDecision,
-  ) => Promise<unknown>;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   onHeldRequestIdsChange: (requestIds: ReadonlySet<string>) => void;
@@ -3775,16 +3769,6 @@ export function ChatComposer(props: ChatComposerProps) {
         onSubmit={submitComposerStable}
         onPrevious={onPreviousActivePendingUserInputQuestion}
         onWriteAnswer={focusComposer}
-      />
-    ) : activePendingApproval && props.onRespondToApproval ? (
-      <ComposerApprovalPanel
-        key={activePendingApproval.requestId}
-        approval={activePendingApproval}
-        workspaceRoot={gitCwd ?? undefined}
-        count={pendingApprovals.length}
-        disabled={!canOperateThread}
-        isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
-        onRespond={props.onRespondToApproval}
       />
     ) : null;
 

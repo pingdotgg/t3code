@@ -4131,7 +4131,6 @@ export default function ChatView(props: ChatViewProps) {
                                 supportsPullRequests ? activeProjectRepository : null
                               }
                               threadPullRequests={(activeThreadShell ?? activeThread)?.pullRequests}
-                              onRespondToApproval={onRespondToApprovalStable}
                               requestCardHost={composerRequestCardHost}
                               stashHost={composerStashHost}
                               trayControlsHost={composerTrayControlsHost}
