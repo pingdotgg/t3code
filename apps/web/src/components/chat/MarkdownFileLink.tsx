@@ -352,7 +352,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
       {...nativeDrag}
       kind={chipKind}
       dir="ltr"
-      render={<a href={href} draggable={layoutDragThreadRef ? false : undefined} />}
+      render={<a href={href} {...(layoutDragThreadRef ? { draggable: false } : {})} />}
       className={MARKDOWN_FILE_LINK_CLASS_NAME}
       data-markdown-copy={copyMarkdown}
       onClick={(event) => {
