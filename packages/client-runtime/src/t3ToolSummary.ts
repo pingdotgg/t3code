@@ -1207,6 +1207,23 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "sandbox": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Used Sandbox controls {count} time} other {Used Sandbox controls {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to use Sandbox controls {count} time} other {Tried to use Sandbox controls {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
     case "capabilities": {
       const count = selected.length;
       label = done

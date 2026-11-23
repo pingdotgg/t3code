@@ -4,7 +4,7 @@
 # The version is upstream's preview form, `<core>-preview.<date>.<run>`. A desktop build with such a
 # version gets no update feed (isDesktopPreviewVersion in scripts/build-desktop-artifact.ts), so
 # the apps never replace themselves, and the app installs the server archive of that same version
-# from this repository's releases (apps/desktop/src/ssh/remoteServerOverrides.ts).
+# from this repository's releases (packages/ssh/src/remoteServerOverrides.ts).
 #
 # Packaging is upstream's release-desktop.yml, called once per target as release.yml does: it
 # needs only the `js-bundle` artifact built here, and skips signing without the secrets.

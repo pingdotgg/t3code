@@ -19,8 +19,9 @@ publishes that build as the release, under the version it was built with, withou
 It refuses a run that did not build `main`'s commit.
 
 The desktop app installs the server on an SSH host from this repository's releases, choosing the
-release that matches its own version (`apps/desktop/src/ssh/remoteServerOverrides.ts`). So the
-fork's server changes reach Sandboxes, and an app always gets the server built with it.
+release that matches its own version, and a host's T3 server installs its own release in its
+agentctl Sandboxes (`packages/ssh/src/remoteServerOverrides.ts`). So the fork's server changes
+reach Sandboxes, and an app always gets the server built with it.
 
 Nothing is signed. The apps carry no update feed, so they never replace themselves; installing a
 newer release is running the install script again.
@@ -94,16 +95,18 @@ node scripts/fork/seed-sandbox-server.ts --run <run id> --agent <name>
 ```
 
 It downloads the archive for the Sandbox's platform with `gh` and unpacks it over the
-`agentctl-<name>` SSH alias where the SSH installer keeps runtimes, so the app finds it installed
-and downloads nothing. Start the app, such as `vp run dev:desktop` in the branch's checkout, with
-`T3CODE_REMOTE_SERVER_VERSION` set to the run's version, which `--run <run id>` alone prints. A
-Sandbox the app creates needs the script run once it is Ready; until then the app retries.
+`agentctl-<name>` SSH alias where the SSH installer keeps runtimes, so the host's T3 server finds
+it installed and downloads nothing. Start the app, such as `vp run dev:desktop` in the branch's
+checkout, with `T3CODE_REMOTE_SERVER_VERSION` set to the run's version, which `--run <run id>`
+alone prints; its server inherits it. A Sandbox created from it needs the script run once it is
+Ready; until then the server retries.
 
 ## Development builds
 
-For `vp run dev:desktop`, or to try another server, set these before starting the app:
+For `vp run dev:desktop` or `vp run dev`, or to try another server, set these before starting
+the app or server:
 
-- `T3CODE_REMOTE_SERVER_VERSION`: the release SSH hosts install, such as
+- `T3CODE_REMOTE_SERVER_VERSION`: the release SSH hosts and agentctl Sandboxes install, such as
   `0.0.46-preview.20261011.3`.
 - `T3CODE_REMOTE_SERVER_RELEASE_BASE_URL`: where release archives are downloaded from, such as
   `https://github.com/pingdotgg/t3code/releases/download` for upstream's.

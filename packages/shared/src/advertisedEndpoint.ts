@@ -20,6 +20,14 @@ export interface CreateAdvertisedEndpointInput {
   readonly description?: string;
 }
 
+/**
+ * Resolves a server path such as `/api/...` below the directory of an environment's base URL,
+ * which a relaying host may serve under a path of its own.
+ */
+export function environmentServerUrl(baseUrl: string, serverPath: string): URL {
+  return new URL(serverPath.replace(/^\/+/u, ""), new URL(".", baseUrl));
+}
+
 export function normalizeHttpBaseUrl(rawValue: string): string {
   const url = new URL(rawValue);
   if (url.protocol === "ws:") {

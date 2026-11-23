@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Försökte använda webbläsaren {count} gång} other {Försökte använda webbläsaren {count} gånger}}",
   "af1b652f5e54202b": "{count, plural, one {Använde enhetskontroller {count} gång} other {Använde enhetskontroller {count} gånger}}",
   "0141195cbbe0e4ca": "{count, plural, one {Försökte använda enhetsstyrning {count} gång} other {Försökte använda enhetsstyrning {count} gånger}}",
+  "dec927dd8c5e1991": "{count, plural, one {Använde Sandbox-kontroller {count} gång} other {Använde Sandbox-kontroller {count} gånger}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Försökte använda Sandbox-kontroller {count} gång} other {Försökte använda Sandbox-kontroller {count} gånger}}",
   "4d411db1abd4feff": "{count, plural, one {Kontrollerade orkestreringsfunktioner {count} gång} other {Kontrollerade orkestreringsfunktioner {count} gånger}}",
   "44ea53e1df760a86": "{count, plural, one {Försökte kontrollera orkestreringsfunktioner {count} gång} other {Försökte kontrollera orkestreringsfunktioner {count} gånger}}",
   "b5ab4f13edefadf7": "{count, plural, one {Läste {count} tråd} other {Läste {count} trådar}}",

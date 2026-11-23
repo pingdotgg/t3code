@@ -173,6 +173,8 @@ import {
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
+import { NewSandboxEmptyStateButton } from "../sandboxes/SandboxSidebarButtons";
+import { SandboxSidebarProgress } from "../sandboxes/SandboxSidebarProgress";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
@@ -3240,6 +3242,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         }
       >
         <SidebarGroup className="flex-1" role="presentation">
+          {!isSearchingThreads ? <SandboxSidebarProgress /> : null}
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
               <TooltipProvider
@@ -3347,6 +3350,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     <PlusIcon className="-mx-0.5 size-3" />
                     <T>Add project</T>
                   </button>
+                  <NewSandboxEmptyStateButton />
                 </>
               ) : scopedProjectGroups.length > 0 ? (
                 <>

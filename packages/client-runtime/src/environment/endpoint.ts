@@ -1,9 +1,6 @@
+import { environmentServerUrl } from "@t3tools/shared/advertisedEndpoint";
+
 export * from "@t3tools/shared/advertisedEndpoint";
 
-export const environmentEndpointUrl = (httpBaseUrl: string, pathname: string): string => {
-  const url = new URL(httpBaseUrl);
-  url.pathname = pathname;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-};
+export const environmentEndpointUrl = (httpBaseUrl: string, pathname: string): string =>
+  environmentServerUrl(httpBaseUrl, pathname).toString();

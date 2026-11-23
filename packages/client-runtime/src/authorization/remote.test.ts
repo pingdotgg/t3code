@@ -213,6 +213,27 @@ describe("remote environment authorization", () => {
     }),
   );
 
+  it.effect("keeps an environment's base path for its ticket and socket", () =>
+    Effect.gen(function* () {
+      const fetch = recordedFetch(
+        Response.json({ ticket: "ws-ticket", expiresAt: "2026-05-01T12:05:00.000Z" }),
+      );
+
+      const url = yield* resolveRemoteWebSocketConnectionUrl({
+        wsBaseUrl: "ws://host.example.com:3773/sandbox/worker-1/",
+        httpBaseUrl: "http://host.example.com:3773/sandbox/worker-1/",
+        bearerToken: "bearer-token",
+      }).pipe(provideRemoteHttp(fetch.fetchFn));
+
+      expectFetchCall(fetch.calls, 1, {
+        url: "http://host.example.com:3773/sandbox/worker-1/api/auth/websocket-ticket/rpc",
+        method: "POST",
+        headers: { authorization: "Bearer bearer-token" },
+      });
+      expect(url).toBe("ws://host.example.com:3773/sandbox/worker-1/ws?wsTicket=ws-ticket");
+    }),
+  );
+
   it.effect("binds a DPoP client's rpc ticket to its key and proves the upgrade", () =>
     Effect.gen(function* () {
       const fetch = recordedFetch(

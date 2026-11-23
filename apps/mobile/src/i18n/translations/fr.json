@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Tentative d’utiliser le navigateur {count} fois} other {Tentative d’utiliser le navigateur {count} fois}}",
   "af1b652f5e54202b": "{count, plural, one {Contrôles de l’appareil utilisés {count} fois} other {Contrôles de l’appareil utilisés {count} fois}}",
   "0141195cbbe0e4ca": "{count, plural, one {Tentative d’utiliser les commandes de l’appareil {count} fois} other {Tentative d’utiliser les commandes de l’appareil {count} fois}}",
+  "dec927dd8c5e1991": "{count, plural, one {Commandes de Sandbox utilisées {count} fois} other {Commandes de Sandbox utilisées {count} fois}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Tentative d’utiliser les commandes de Sandbox {count} fois} other {Tentative d’utiliser les commandes de Sandbox {count} fois}}",
   "4d411db1abd4feff": "{count, plural, one {Capacités d’orchestration vérifiées {count} fois} other {Capacités d’orchestration vérifiées {count} fois}}",
   "44ea53e1df760a86": "{count, plural, one {Tentative de vérifier les capacités d’orchestration {count} fois} other {Tentative de vérifier les capacités d’orchestration {count} fois}}",
   "b5ab4f13edefadf7": "{count, plural, one {{count} fil lu} other {{count} fils lus}}",

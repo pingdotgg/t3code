@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Versucht, den Browser {count}-mal zu verwenden} other {Versucht, den Browser {count}-mal zu verwenden}}",
   "af1b652f5e54202b": "{count, plural, one {Gerätesteuerung {count}-mal verwendet} other {Gerätesteuerung {count}-mal verwendet}}",
   "0141195cbbe0e4ca": "{count, plural, one {Versucht, die Gerätesteuerung {count}-mal zu verwenden} other {Versucht, die Gerätesteuerung {count}-mal zu verwenden}}",
+  "dec927dd8c5e1991": "{count, plural, one {Sandbox-Steuerung {count}-mal verwendet} other {Sandbox-Steuerung {count}-mal verwendet}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Versucht, die Sandbox-Steuerung {count}-mal zu verwenden} other {Versucht, die Sandbox-Steuerung {count}-mal zu verwenden}}",
   "4d411db1abd4feff": "{count, plural, one {Orchestrierungsfunktionen {count}-mal geprüft} other {Orchestrierungsfunktionen {count}-mal geprüft}}",
   "44ea53e1df760a86": "{count, plural, one {Versucht, Orchestrierungsfunktionen {count}-mal zu prüfen} other {Versucht, Orchestrierungsfunktionen {count}-mal zu prüfen}}",
   "b5ab4f13edefadf7": "{count, plural, one {{count} Thread gelesen} other {{count} Threads gelesen}}",

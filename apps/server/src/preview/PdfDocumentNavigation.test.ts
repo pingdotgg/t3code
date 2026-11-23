@@ -1,7 +1,7 @@
 import type { CDPSession } from "playwright-core";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { installPdfDocumentNavigation } from "./PdfDocumentNavigation.ts";
+import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
 const source = "https://environment.test/api/assets/signed-token/files/Study%20guide.PDF";
 
@@ -57,6 +57,15 @@ function fixture(nativePdfViewer = false) {
 }
 
 describe("PDF document navigation", () => {
+  it.each([
+    ["http://127.0.0.1:3773/api/assets/token/guide.pdf", true],
+    ["https://host.test/sandbox/worker-1/api/assets/token/guide.PDF", true],
+    ["https://host.test/api/assets/token/index.html", false],
+    ["https://example.com/paper.pdf", false],
+  ])("treats %s as a PDF asset: %s", (url, expected) => {
+    expect(isPdfAssetUrl(url)).toBe(expected);
+  });
+
   it("escapes filenames in the browser document", async () => {
     const test = fixture();
     await installPdfDocumentNavigation(test.cdp);

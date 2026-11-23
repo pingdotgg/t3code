@@ -16,6 +16,8 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
+import { useSandboxBanner } from "../../sandboxes/sandboxBanner";
+import { sandboxForTarget } from "@t3tools/client-runtime/sandboxes";
 import {
   useEnvironmentDisconnectDelay,
   useEnvironmentStateHeldFor,
@@ -115,7 +117,9 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     disconnectDelayElapsed &&
     activeEnvironment !== null &&
     activeEnvironment.entry.target._tag !== "PrimaryConnectionTarget" &&
-    !isDesktopLocalConnectionTarget(activeEnvironment.entry.target);
+    !isDesktopLocalConnectionTarget(activeEnvironment.entry.target) &&
+    // A Sandbox is managed from its own lifecycle; stopping it is the way out.
+    sandboxForTarget(activeEnvironment.entry.target) === null;
   const [disconnectingEnvironment, setDisconnectingEnvironment] = useState(false);
   const handleDisconnectActiveEnvironment = async (environmentId: EnvironmentId) => {
     setDisconnectingEnvironment(true);
@@ -162,6 +166,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   const serverUpdateFailureDismissed =
     serverUpdateState === dismissedServerUpdateState ||
     isServerUpdateFailureDismissed(serverUpdateState);
+  const sandboxBanner = useSandboxBanner(activeEnvironmentUnavailableState?.environmentId ?? null);
   return (() => {
     const items: ComposerBannerStackItem[] = [];
     const updateRunning = serverUpdateState.status === "running";
@@ -195,7 +200,9 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
       activeEnvironmentUnavailableState !== null &&
       unavailableConnection !== null &&
       !suppressUnavailableBanner;
-    if (showUnavailableBanner) {
+    if (sandboxBanner !== null && unavailableConnection && !suppressUnavailableBanner) {
+      items.push(sandboxBanner);
+    } else if (showUnavailableBanner) {
       items.push({
         id: `environment-unavailable:${activeEnvironmentUnavailableState.environmentId}`,
         variant: unavailableConnection.phase === "error" ? "error" : "warning",

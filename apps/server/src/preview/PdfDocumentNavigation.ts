@@ -6,7 +6,8 @@ const escapeHtml = (value: string) =>
 
 export const isPdfAssetUrl = (url: string) => {
   const { pathname } = new URL(url);
-  return pathname.startsWith("/api/assets/") && /\.pdf$/i.test(pathname);
+  // Below a base path too, as when the client reaches this server through a relay.
+  return /\/api\/assets\/.*\.pdf$/i.test(pathname);
 };
 
 export async function installPdfDocumentNavigation(cdp: CDPSession) {

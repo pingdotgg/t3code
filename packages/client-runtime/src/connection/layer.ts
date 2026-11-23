@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 
+import type { PlatformConnectionRegistration } from "./catalog.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as ConnectionDriver from "./driver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
@@ -15,6 +16,7 @@ import * as PlatformConnectionSource from "../platform/source.ts";
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
+import * as SandboxEnvironments from "../sandboxes/environments.ts";
 
 export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscoveredCompatibility")(
   function* () {
@@ -82,17 +84,35 @@ export function layerWithOptions(options: RpcSession.RpcSessionOptions) {
     RelayEnvironmentDiscovery.layer,
     layerOnboarding,
     ConnectionResolver.layer,
+    SandboxEnvironments.layer,
   );
   const layerConnectionStartup = Layer.effectDiscard(
     Effect.gen(function* () {
       const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
       const platformSource = yield* PlatformConnectionSource.PlatformConnectionSource;
+      const sandboxes = yield* SandboxEnvironments.SandboxEnvironments;
       yield* watchDiscoveredCompatibility().pipe(Effect.forkScoped);
       yield* registry.start;
+      // A host's Sandboxes join the platform's environments; either may change first.
+      const platformRegistrations = yield* SubscriptionRef.make<
+        ReadonlyArray<PlatformConnectionRegistration>
+      >([]);
       yield* platformSource.registrations.pipe(
-        Stream.runForEach(registry.reconcilePlatform),
+        Stream.runForEach((registrations) =>
+          SubscriptionRef.set(platformRegistrations, registrations),
+        ),
         Effect.forkScoped,
       );
+      yield* Stream.zipLatest(
+        SubscriptionRef.changes(platformRegistrations),
+        SubscriptionRef.changes(sandboxes.registrations),
+      ).pipe(
+        Stream.runForEach(([platform, sandboxRegistrations]) =>
+          registry.reconcilePlatform([...platform, ...sandboxRegistrations]),
+        ),
+        Effect.forkScoped,
+      );
+      yield* SandboxEnvironments.watchSandboxEnvironments().pipe(Effect.forkScoped);
     }).pipe(Effect.withSpan("clientRuntime.connection.application.start")),
   );
   return layerConnectionStartup.pipe(

@@ -591,6 +591,42 @@ it.effect("reads one stored link without asking the peer", () =>
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("moves a link to the peer's new address, keeping its token, and only to that peer", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const b = yield* serveB(box);
+      const a = yield* makeA(laptop);
+      const pairing = yield* b.auth.issuePairingCredential();
+      // Loopback is this machine, unless this server forwarded it to the peer itself.
+      const forward = b.url.replace("127.0.0.1", "localhost");
+      yield* a.links.link(
+        {
+          url: forward,
+          pairingCode: pairing.credential,
+          access: "auto",
+          expectedEnvironmentId: box.environmentId,
+        },
+        { ownForward: true },
+      );
+      const before = Option.getOrThrow(yield* a.links.get(box.environmentId));
+      expect(before.urls).toEqual([new URL(forward).origin]);
+
+      expect(yield* a.links.relocate(box.environmentId, [b.url])).toBe(true);
+      const after = Option.getOrThrow(yield* a.links.get(box.environmentId));
+      expect(after.urls).toEqual([new URL(b.url).origin]);
+      expect(after.expiresAt).toEqual(before.expiresAt);
+      yield* probe(a);
+      const own = yield* a.links.relocate(box.environmentId, [forward]).pipe(Effect.flip);
+      expect(own.message).toContain("is this machine");
+
+      yield* Ref.set(b.descriptor, descriptorOf("environment-impostor", "Impostor"));
+      yield* a.links.relocate(box.environmentId, [b.url]).pipe(Effect.flip);
+      expect(Option.getOrThrow(yield* a.links.get(box.environmentId)).urls).toEqual(after.urls);
+      expect(yield* a.links.relocate(laptop.environmentId, [b.url])).toBe(false);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("a linked peer that is renamed shows its new name", () =>
   Effect.scoped(
     Effect.gen(function* () {

@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, other {尝试使用浏览器 {count} 次}}",
   "af1b652f5e54202b": "{count, plural, other {已使用设备控制 {count} 次}}",
   "0141195cbbe0e4ca": "{count, plural, other {尝试使用设备控制 {count} 次}}",
+  "dec927dd8c5e1991": "{count, plural, other {已使用 Sandbox 控制 {count} 次}}",
+  "0e5b0a6c216ba544": "{count, plural, other {尝试使用 Sandbox 控制 {count} 次}}",
   "4d411db1abd4feff": "{count, plural, other {已检查编排能力 {count} 次}}",
   "44ea53e1df760a86": "{count, plural, other {尝试检查编排能力 {count} 次}}",
   "b5ab4f13edefadf7": "{count, plural, other {已读取 {count} 个会话}}",

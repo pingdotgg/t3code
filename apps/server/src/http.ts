@@ -58,6 +58,7 @@ import {
   MCP_HTTP_PATH,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
+import { parseRelayPath } from "./agentctl/AgentctlSandboxRelay.ts";
 
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
@@ -424,7 +425,9 @@ const requestPath = (request: HttpServerRequest.HttpServerRequest) => {
 
 // Signed URLs carry bearer tokens in the path, which URL param redaction cannot reach.
 const isSignedUrlRequest = (request: HttpServerRequest.HttpServerRequest) => {
-  const path = requestPath(request);
+  // A Sandbox's signed URLs reach it through this host's relay, below `/sandbox/<name>`.
+  const fullPath = requestPath(request);
+  const path = parseRelayPath(fullPath)?.path ?? fullPath;
   return (
     path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
     path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||

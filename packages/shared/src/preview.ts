@@ -1,6 +1,7 @@
 import type { BrowserSearchEngine } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { environmentServerUrl } from "./advertisedEndpoint.ts";
 import { isLocalLoopbackHost } from "./hostClassification.ts";
 
 const TAB_ID_PREFIX = "tab_";
@@ -11,13 +12,17 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
   try {
     const url = new URL(rawUrl);
     const baseUrl = new URL(httpBaseUrl);
-    if (
-      (url.protocol !== "http:" && url.protocol !== "https:") ||
-      !url.pathname.startsWith("/api/assets/") ||
-      !/\.pdf$/i.test(url.pathname)
-    ) {
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || !/\.pdf$/i.test(url.pathname)) {
       return null;
     }
+    // Already below this environment's base path, as a relayed environment's assets are.
+    if (
+      url.origin === baseUrl.origin &&
+      url.pathname.startsWith(`${new URL(".", baseUrl).pathname}api/assets/`)
+    ) {
+      return url.href;
+    }
+    if (!url.pathname.startsWith("/api/assets/")) return null;
     // Any site can serve a page at this path; one the client embedded would run in the user's
     // own browser instead of the preview's. Only this environment's assets are loaded here.
     if (
@@ -29,7 +34,7 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
-    return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
+    return environmentServerUrl(httpBaseUrl, `${url.pathname}${url.search}${url.hash}`).href;
   } catch {
     return null;
   }

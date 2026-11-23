@@ -7,6 +7,7 @@ import {
   type ProjectCloneSnapshot,
   WS_METHODS,
 } from "@t3tools/contracts";
+import { environmentServerUrl } from "@t3tools/shared/advertisedEndpoint";
 import { mediaMimeTypeFromExtension } from "@t3tools/shared/mediaPreview";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
@@ -57,9 +58,14 @@ function parseAssetCollectionKey(
   }
 }
 
+// The server names its own paths from its root, which is the base URL's directory.
 export function resolveAssetUrl(httpBaseUrl: string, relativeUrl: string): string | null {
   try {
-    return new URL(relativeUrl, httpBaseUrl).toString();
+    return (
+      relativeUrl.startsWith("/") && !relativeUrl.startsWith("//")
+        ? environmentServerUrl(httpBaseUrl, relativeUrl)
+        : new URL(relativeUrl, httpBaseUrl)
+    ).toString();
   } catch {
     return null;
   }
@@ -285,7 +291,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     const asset = yield* registry
       .run(local.environmentId, mint(local.environmentId, input))
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));
-    return { ...asset, relativeUrl: new URL(asset.relativeUrl, local.httpBaseUrl).href };
+    return {
+      ...asset,
+      relativeUrl: resolveAssetUrl(local.httpBaseUrl, asset.relativeUrl) ?? asset.relativeUrl,
+    };
   });
   const createUrl = createEnvironmentQueryAtomFamily(runtime, {
     label: "environment-data:assets:create-url",

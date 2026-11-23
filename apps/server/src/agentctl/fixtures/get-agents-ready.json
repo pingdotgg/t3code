@@ -1,0 +1,135 @@
+[
+  {
+    "apiVersion": "agents.platform/v1alpha1",
+    "kind": "Agent",
+    "metadata": {
+      "name": "worker",
+      "generation": 3
+    },
+    "spec": {
+      "sandbox": {
+        "image": {
+          "type": "build",
+          "context": ".",
+          "dockerfile": "Dockerfile"
+        },
+        "platform": {
+          "os": "linux"
+        },
+        "resources": {
+          "cpu": "4",
+          "memory": "6Gi",
+          "rootFilesystem": {
+            "capacity": "32Gi",
+            "mode": "direct"
+          }
+        },
+        "initSystem": "image",
+        "mounts": [
+          {
+            "type": "tmpfs",
+            "target": "/tmp",
+            "capacity": "2Gi"
+          }
+        ]
+      },
+      "home": {
+        "source": "home"
+      },
+      "instructions": [
+        {
+          "source": "instructions.md"
+        }
+      ],
+      "harnesses": [
+        {
+          "type": "claudeCode",
+          "auth": "mediated",
+          "default": true,
+          "defaults": {
+            "model": "opus"
+          }
+        },
+        {
+          "type": "codex",
+          "auth": "mediated",
+          "optional": true
+        }
+      ],
+      "environment": [
+        {
+          "name": "GIT_USER_NAME"
+        },
+        {
+          "name": "GIT_USER_EMAIL"
+        }
+      ],
+      "secrets": [
+        {
+          "environment": "GITHUB_TOKEN",
+          "placeholder": "github_pat_AGENT_MEDIATED_GITHUB_TOKEN",
+          "allowedHosts": ["github.com", "api.github.com", "gist.github.com", "uploads.github.com"]
+        }
+      ],
+      "access": [
+        {
+          "type": "ssh"
+        },
+        {
+          "type": "vnc"
+        }
+      ],
+      "network": {
+        "mode": "mediated",
+        "allow": "all",
+        "deny": ["metadata.google.internal"]
+      }
+    },
+    "status": {
+      "observedGeneration": 3,
+      "sandbox": {
+        "state": "materialized",
+        "provider": "microsandbox",
+        "id": "2b925bf8-36d8-4c7e-b2b3-93a6ec243fec",
+        "harnesses": ["claudeCode"]
+      },
+      "conditions": [
+        {
+          "type": "SandboxReady",
+          "status": "True",
+          "reason": "SandboxRunning",
+          "lastTransitionTime": "2026-10-10T16:28:32.743422188Z"
+        },
+        {
+          "type": "SandboxResponsive",
+          "status": "True",
+          "reason": "HeartbeatAdvancing",
+          "lastTransitionTime": "2026-10-10T16:28:32.743422188Z"
+        },
+        {
+          "type": "SshReady",
+          "status": "True",
+          "reason": "ServerRunning",
+          "lastTransitionTime": "2026-10-10T16:28:32.743422188Z"
+        },
+        {
+          "type": "VncReady",
+          "status": "True",
+          "reason": "BridgeListening",
+          "lastTransitionTime": "2026-10-10T16:28:32.743422188Z"
+        },
+        {
+          "type": "Ready",
+          "status": "True",
+          "reason": "SandboxReady",
+          "lastTransitionTime": "2026-10-10T16:28:32.743422188Z"
+        }
+      ],
+      "provenance": {
+        "sourceDirectory": "/home/user/agents/worker",
+        "manifestPath": "/home/user/agents/worker/agent.nested.yaml",
+        "envFile": "/home/user/worker.env"
+      }
+    }
+  }
+]

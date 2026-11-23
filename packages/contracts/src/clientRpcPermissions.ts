@@ -86,6 +86,14 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.peerLinksUnlink]: AuthAccessWriteScope,
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
+  [WS_METHODS.agentctlStartSandbox]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentctlStopSandbox]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentctlDeleteSandbox]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentctlCreateSandbox]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentctlMarkSettingsSeeded]: AuthOrchestrationOperateScope,
+  [WS_METHODS.agentctlAddManifestRoot]: AuthSettingsWriteScope,
+  [WS_METHODS.agentctlRemoveManifestRoot]: AuthSettingsWriteScope,
+  [WS_METHODS.agentctlPullManifestRoots]: AuthSettingsWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

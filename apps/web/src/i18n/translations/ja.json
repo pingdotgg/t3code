@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, other {ブラウザーを {count} 回使用しようとしました}}",
   "af1b652f5e54202b": "{count, plural, other {デバイス操作を {count} 回使用しました}}",
   "0141195cbbe0e4ca": "{count, plural, other {デバイスの操作を {count} 回使用しようとしました}}",
+  "dec927dd8c5e1991": "{count, plural, other {Sandbox の操作を {count} 回使用しました}}",
+  "0e5b0a6c216ba544": "{count, plural, other {Sandbox の操作を {count} 回使用しようとしました}}",
   "4d411db1abd4feff": "{count, plural, other {オーケストレーションの機能を {count} 回確認しました}}",
   "44ea53e1df760a86": "{count, plural, other {オーケストレーションの機能を {count} 回確認しようとしました}}",
   "b5ab4f13edefadf7": "{count, plural, other {{count} 件のスレッドを読み取りました}}",

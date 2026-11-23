@@ -66,6 +66,17 @@ describe("folderDropTarget", () => {
       { wslBackendId: "wsl:Ubuntu" },
     ],
     [
+      "a Sandbox its loopback host relays",
+      {
+        ...thinClient,
+        connection: savedServer(
+          "http://127.0.0.1:3773/sandbox/nested/",
+          "agentctl:host-env:nested:sandbox-env",
+        ),
+      },
+      "remote",
+    ],
+    [
       "an SSH forward on loopback",
       {
         ...thinClient,

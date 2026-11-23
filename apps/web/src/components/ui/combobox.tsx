@@ -216,6 +216,20 @@ function ComboboxItem({
   );
 }
 
+function ComboboxGroup(props: ComboboxPrimitive.Group.Props) {
+  return <ComboboxPrimitive.Group data-slot="combobox-group" {...props} />;
+}
+
+function ComboboxGroupLabel({ className, ...props }: ComboboxPrimitive.GroupLabel.Props) {
+  return (
+    <ComboboxPrimitive.GroupLabel
+      className={cn("px-2 pt-2 pb-1 font-medium text-muted-foreground text-xs", className)}
+      data-slot="combobox-group-label"
+      {...props}
+    />
+  );
+}
+
 function ComboboxEmpty({ className, ...props }: ComboboxPrimitive.Empty.Props) {
   return (
     <ComboboxPrimitive.Empty
@@ -278,6 +292,8 @@ export {
   ComboboxTrigger,
   ComboboxPopup,
   ComboboxItem,
+  ComboboxGroup,
+  ComboboxGroupLabel,
   ComboboxEmpty,
   ComboboxList,
   ComboboxListVirtualized,

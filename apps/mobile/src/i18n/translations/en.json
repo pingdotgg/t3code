@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Tried to use browser {count} time} other {Tried to use browser {count} times}}",
   "af1b652f5e54202b": "{count, plural, one {Used device controls {count} time} other {Used device controls {count} times}}",
   "0141195cbbe0e4ca": "{count, plural, one {Tried to use device controls {count} time} other {Tried to use device controls {count} times}}",
+  "dec927dd8c5e1991": "{count, plural, one {Used Sandbox controls {count} time} other {Used Sandbox controls {count} times}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Tried to use Sandbox controls {count} time} other {Tried to use Sandbox controls {count} times}}",
   "4d411db1abd4feff": "{count, plural, one {Checked orchestration capabilities {count} time} other {Checked orchestration capabilities {count} times}}",
   "44ea53e1df760a86": "{count, plural, one {Tried to check orchestration capabilities {count} time} other {Tried to check orchestration capabilities {count} times}}",
   "b5ab4f13edefadf7": "{count, plural, one {Read {count} thread} other {Read {count} threads}}",

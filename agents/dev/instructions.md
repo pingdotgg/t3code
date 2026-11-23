@@ -88,6 +88,9 @@ To test a sync's build before `main` moves, against a nested Agent (see the `age
 Node 26 and `vp` (Vite+) are installed, and Rust and ImageMagick for desktop builds. Run `vp i` in
 a new checkout or worktree before anything else.
 
+The installed `gh` supports `gh pr create --attach <path>` and `gh pr edit <number> --attach <path>`
+for uploading PR images and videos without a browser login. Repeat `--attach` for multiple files.
+
 ## Live T3 Code state
 
 `~/.t3` in this Sandbox may belong to a T3 Code server that the developer's own T3 Code app

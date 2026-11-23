@@ -160,6 +160,16 @@ export const transcribeCloudPcm = (
   );
 };
 
+/**
+ * The ticket path is `api/auth/websocket-ticket/media` below the server's base, which for a
+ * Sandbox is a path on its host, so the stream resolves below that base, not the origin's root.
+ */
+export const speechStreamUrl = (ticketUrl: string) => {
+  const url = new URL(`../../..${SPEECH_STREAM_PATH}`, ticketUrl);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return url;
+};
+
 export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
   let endpoint = prepared.httpBaseUrl;
   return request({
@@ -173,8 +183,7 @@ export const getEnvironmentSpeechStreamUrl = (prepared: PreparedConnection) => {
     run: ({ client, headers }) => client.webSocketTicketFor({ headers, params: { use: "media" } }),
   }).pipe(
     Effect.map(({ ticket }) => {
-      const url = new URL(SPEECH_STREAM_PATH, endpoint);
-      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      const url = speechStreamUrl(endpoint);
       url.searchParams.set("wsTicket", Redacted.value(ticket));
       return url.toString();
     }),

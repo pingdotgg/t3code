@@ -24,6 +24,7 @@
 - [Remote access](./user/remote-access.md)
 - [Guest links](./user/guest-links.md)
 - [T3 Connect troubleshooting](./user/t3-connect-troubleshooting.md)
+- [agentctl Sandboxes](./user/agentctl-sandboxes.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 - [Running in the background](./user/background-service.md)
 - [Updating T3 Code](./user/updating.md)
@@ -60,6 +61,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Mobile development lifecycle](./internals/mobile-development.md)
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
+- [agentctl Sandboxes](./internals/agentctl-sandboxes.md)
 - [Voice input](./internals/voice-input.md)
 
 ### Runbooks

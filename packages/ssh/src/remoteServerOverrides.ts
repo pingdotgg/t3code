@@ -1,4 +1,4 @@
-import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
+import type { RemoteT3RunnerOptions } from "./tunnel.ts";
 import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

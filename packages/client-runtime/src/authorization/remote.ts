@@ -268,10 +268,12 @@ export const issueRemoteDpopWebSocketTicket = Effect.fn(
   );
 });
 
+// A base ending in `/` names the environment's root, which may sit under a path; any other path is
+// already the socket.
 function rpcSocketUrl(wsBaseUrl: string): URL {
   const url = new URL(wsBaseUrl);
-  if (url.pathname === "" || url.pathname === "/") {
-    url.pathname = "/ws";
+  if (url.pathname === "" || url.pathname.endsWith("/")) {
+    url.pathname = `${url.pathname}ws`;
   }
   return url;
 }

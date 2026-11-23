@@ -595,6 +595,8 @@ export default defineConfig({
           "**/{test-fixtures,*TestFixtures}.ts",
           "apps/mobile/src/features/development/**",
           "packages/client-runtime/src/rpc/**",
+          // The fork's Sandboxes UI is English in every locale.
+          "apps/web/src/sandboxes/**",
         ],
         rules: { "t3code/no-untranslated-copy": "error" },
       },

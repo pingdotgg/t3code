@@ -31,7 +31,28 @@ import {
   createAssetEnvironmentAtoms,
   createProjectFaviconUrlAtomFamily,
   makeRevisionedAssetUrlFamily,
+  resolveAssetUrl,
 } from "./assets.ts";
+
+describe("resolveAssetUrl", () => {
+  it("serves the server's root paths below the environment's base path", () => {
+    expect(
+      resolveAssetUrl("http://host.test:3773/sandbox/worker-1/", "/api/assets/token/a.png?v=2"),
+    ).toBe("http://host.test:3773/sandbox/worker-1/api/assets/token/a.png?v=2");
+    expect(resolveAssetUrl("https://remote.test", "/api/assets/token/a.png")).toBe(
+      "https://remote.test/api/assets/token/a.png",
+    );
+  });
+
+  it("leaves absolute URLs alone", () => {
+    expect(resolveAssetUrl("http://host.test/sandbox/worker-1/", "https://cdn.test/a.png")).toBe(
+      "https://cdn.test/a.png",
+    );
+    expect(resolveAssetUrl("http://host.test/sandbox/worker-1/", "//cdn.test/a.png")).toBe(
+      "http://cdn.test/a.png",
+    );
+  });
+});
 
 describe("project favicon URL cache", () => {
   it("does not reuse another environment, workspace, or selected icon's cached URL", () => {

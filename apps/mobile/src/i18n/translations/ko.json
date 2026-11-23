@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, other {브라우저 사용 {count}회 시도함}}",
   "af1b652f5e54202b": "{count, plural, other {기기 제어 {count}번 사용함}}",
   "0141195cbbe0e4ca": "{count, plural, other {기기 제어 사용 {count}회 시도함}}",
+  "dec927dd8c5e1991": "{count, plural, other {Sandbox 제어 {count}번 사용함}}",
+  "0e5b0a6c216ba544": "{count, plural, other {Sandbox 제어 사용 {count}회 시도함}}",
   "4d411db1abd4feff": "{count, plural, other {오케스트레이션 기능 {count}회 확인함}}",
   "44ea53e1df760a86": "{count, plural, other {오케스트레이션 기능 확인 {count}회 시도함}}",
   "b5ab4f13edefadf7": "{count, plural, other {스레드 {count}개를 읽음}}",

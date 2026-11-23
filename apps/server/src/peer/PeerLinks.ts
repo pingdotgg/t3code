@@ -95,7 +95,10 @@ export class PeerLinks extends Context.Service<
   {
     /** Whether the Linked environments beta (Settings → Labs) is on here. */
     readonly enabled: Effect.Effect<boolean>;
-    readonly link: (input: PeerLinkCreateInput) => Effect.Effect<PeerLink, PeerLinkError>;
+    readonly link: (
+      input: PeerLinkCreateInput,
+      options?: PeerLinkAddressOptions,
+    ) => Effect.Effect<PeerLink, PeerLinkError>;
     /**
      * Links like `link`, except that a machine whose link has not expired is
      * left as it is, with its pairing code unused.
@@ -108,6 +111,15 @@ export class PeerLinks extends Context.Service<
     readonly get: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<Option.Option<PeerLink>, PeerLinkError>;
+    /**
+     * Moves a link to the addresses among `urls` that answer as its peer, keeping its token.
+     * False when there is no link to move.
+     */
+    readonly relocate: (
+      environmentId: EnvironmentId,
+      urls: ReadonlyArray<string>,
+      options?: PeerLinkAddressOptions,
+    ) => Effect.Effect<boolean, PeerLinkError>;
     /** Forgets the link here. The peer still lists the session until it is revoked there. */
     readonly unlink: (environmentId: EnvironmentId) => Effect.Effect<boolean, PeerLinkError>;
     /** An address that answers as the linked peer, with its token, ready to call. */
@@ -221,6 +233,15 @@ const probeFailure = (
     message: `${origin} answered, but not as a T3 Code environment this version understands.`,
   });
 };
+
+/** For server-side callers only; clients cannot set these. */
+export interface PeerLinkAddressOptions {
+  /**
+   * The addresses are a loopback forward this server opened to the peer itself, such as an SSH
+   * tunnel to an agentctl Sandbox, so loopback there is the peer rather than anything local.
+   */
+  readonly ownForward?: boolean;
+}
 
 /** Whether a host is this machine's own loopback. Tests serve their peers there, so they narrow it. */
 export const LoopbackHost = Context.Reference<(host: string) => boolean>(
@@ -445,6 +466,7 @@ const make = Effect.gen(function* () {
     urls: ReadonlyArray<string>,
     environmentId: EnvironmentId,
     name: string,
+    options?: PeerLinkAddressOptions,
   ) {
     const checked = yield* Effect.forEach(
       urls,
@@ -452,7 +474,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const origin = yield* peerOrigin(url);
           // Loopback is this machine, where anything may answer as the one picked.
-          if (isOwnLoopback(new URL(origin).hostname)) {
+          if (options?.ownForward !== true && isOwnLoopback(new URL(origin).hostname)) {
             return yield* new PeerLinkError({
               reason: "unreachable",
               message: `${origin} is this machine, not ${name}.`,
@@ -500,6 +522,7 @@ const make = Effect.gen(function* () {
   const linkWith = Effect.fn("PeerLinks.link")(function* (
     input: PeerLinkCreateInput,
     keepLinked: boolean,
+    options?: PeerLinkAddressOptions,
   ) {
     if (!(yield* enabled)) {
       return yield* new PeerLinkError({ reason: "disabled", message: LINKED_ENVIRONMENTS_OFF });
@@ -514,6 +537,7 @@ const make = Effect.gen(function* () {
             urls,
             input.expectedEnvironmentId,
             input.expectedLabel ?? input.expectedEnvironmentId,
+            options,
           );
     const row = yield* readRow(peer.environmentId);
     const stored = Option.isSome(row) ? yield* toLink(row.value) : undefined;
@@ -599,8 +623,8 @@ const make = Effect.gen(function* () {
     return { link: linked, alreadyLinked: false };
   });
 
-  const link: PeerLinks["Service"]["link"] = (input) =>
-    linkWith(input, false).pipe(Effect.map((result) => result.link));
+  const link: PeerLinks["Service"]["link"] = (input, options) =>
+    linkWith(input, false, options).pipe(Effect.map((result) => result.link));
   const linkUnlessLinked: PeerLinks["Service"]["linkUnlessLinked"] = (input) =>
     linkWith(input, true);
 
@@ -646,6 +670,20 @@ const make = Effect.gen(function* () {
         }),
       ),
     );
+
+  const relocate: PeerLinks["Service"]["relocate"] = Effect.fn("PeerLinks.relocate")(
+    function* (environmentId, urls, options) {
+      const link = yield* get(environmentId);
+      if (Option.isNone(link)) return false;
+      const { origins } = yield* answeringAs(urls, environmentId, link.value.label, options);
+      const urlsJson = yield* encodeUrls(origins).pipe(Effect.catch(failStorage));
+      yield* sql`
+        UPDATE peer_environment_links SET urls_json = ${urlsJson}
+        WHERE environment_id = ${environmentId}
+      `.pipe(Effect.catch(failStorage));
+      return true;
+    },
+  );
 
   const unlink: PeerLinks["Service"]["unlink"] = Effect.fn("PeerLinks.unlink")(
     function* (environmentId) {
@@ -751,6 +789,7 @@ const make = Effect.gen(function* () {
     linkUnlessLinked,
     list,
     get,
+    relocate,
     unlink,
     resolve,
     recordOutcome,

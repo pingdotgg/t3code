@@ -397,11 +397,14 @@ export default defineConfig(({ command }) => {
             // Share prefixes with the backend catch-all so the proxy and 404 lists cannot drift.
             proxy: Object.fromEntries(
               DEV_PROXIED_PATH_PREFIXES.map((prefix) => [
-                prefix,
+                // A bare prefix would also take the /sandboxes page.
+                prefix === "/sandbox" ? "^/sandbox/" : prefix,
                 {
                   target: devProxyTarget,
                   changeOrigin: !DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES.has(prefix),
-                  ...(prefix === "/ws" || prefix === "/api" ? { ws: true } : {}),
+                  ...(prefix === "/ws" || prefix === "/api" || prefix === "/sandbox"
+                    ? { ws: true }
+                    : {}),
                 },
               ]),
             ),

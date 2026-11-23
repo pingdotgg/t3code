@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  BoxIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -13,6 +19,7 @@ import {
   type HistoryDirection,
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../../state/server";
+import { useOffersSandboxes } from "../../sandboxes/useSandboxes";
 import { cn } from "../../lib/utils";
 import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
@@ -226,6 +233,7 @@ function SidebarUtilityItem({
 }
 
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
+  const offersSandboxes = useOffersSandboxes();
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
   const gt = useGT();
@@ -305,6 +313,17 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label={gt("Usage")}
             onClick={handleUsageClick}
           />
+          {offersSandboxes ? (
+            <SidebarUtilityItem
+              icon={<BoxIcon />}
+              // oxlint-disable-next-line t3code/no-untranslated-copy -- the fork's Sandboxes UI is English
+              label="Sandboxes"
+              onClick={() => {
+                closeMobileSidebar();
+                void navigate({ to: "/sandboxes" });
+              }}
+            />
+          ) : null}
         </>
       )}
       <SidebarThreadUndoNotice />

@@ -340,6 +340,22 @@ import {
   DeviceShutdownInput,
 } from "./device.ts";
 import {
+  AgentctlActionResult,
+  AgentctlCreateSandboxInput,
+  AgentctlManifestRoot,
+  AgentctlManifestRootInput,
+  AgentctlMarkSettingsSeededInput,
+  AgentctlPullManifestRootsInput,
+  AgentctlPullResult,
+  AgentctlManifestRootError,
+  AgentctlSandboxError,
+  AgentctlSandboxManifest,
+  AgentctlSandboxNameInput,
+  AgentctlSandboxPairing,
+  AgentctlSandboxSettings,
+  AgentctlSandboxesSnapshot,
+} from "./agentctl.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -531,6 +547,20 @@ export const WS_METHODS = {
   deviceDetail: "device.detail",
   deviceAction: "device.action",
 
+  agentctlStartSandbox: "agentctl.startSandbox",
+  agentctlStopSandbox: "agentctl.stopSandbox",
+  agentctlDeleteSandbox: "agentctl.deleteSandbox",
+  agentctlCreateSandbox: "agentctl.createSandbox",
+  agentctlPairSandbox: "agentctl.pairSandbox",
+  agentctlMarkSettingsSeeded: "agentctl.markSettingsSeeded",
+  agentctlListManifests: "agentctl.listManifests",
+  agentctlListManifestRoots: "agentctl.listManifestRoots",
+  agentctlRefreshManifestRoots: "agentctl.refreshManifestRoots",
+  agentctlGetSettings: "agentctl.getSettings",
+  agentctlAddManifestRoot: "agentctl.addManifestRoot",
+  agentctlRemoveManifestRoot: "agentctl.removeManifestRoot",
+  agentctlPullManifestRoots: "agentctl.pullManifestRoots",
+
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverGetNpmRelease: "server.getNpmRelease",
@@ -667,6 +697,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeAgentctlSandboxes: "subscribeAgentctlSandboxes",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1945,6 +1976,88 @@ const WsDeviceActionRpc = Rpc.make(WS_METHODS.deviceAction, {
   error: Schema.Union([DeviceError, EnvironmentAuthorizationError]),
 });
 
+const agentctlRpc = <
+  const Tag extends string,
+  Payload extends Schema.Top,
+  Success extends Schema.Top,
+>(
+  tag: Tag,
+  payload: Payload,
+  success: Success,
+) => Rpc.make(tag, { payload, success, error: EnvironmentAuthorizationError });
+
+const WsAgentctlStartSandboxRpc = agentctlRpc(
+  WS_METHODS.agentctlStartSandbox,
+  AgentctlSandboxNameInput,
+  AgentctlActionResult,
+);
+const WsAgentctlStopSandboxRpc = agentctlRpc(
+  WS_METHODS.agentctlStopSandbox,
+  AgentctlSandboxNameInput,
+  AgentctlActionResult,
+);
+const WsAgentctlDeleteSandboxRpc = agentctlRpc(
+  WS_METHODS.agentctlDeleteSandbox,
+  AgentctlSandboxNameInput,
+  AgentctlActionResult,
+);
+const WsAgentctlCreateSandboxRpc = agentctlRpc(
+  WS_METHODS.agentctlCreateSandbox,
+  AgentctlCreateSandboxInput,
+  AgentctlActionResult,
+);
+const WsAgentctlPairSandboxRpc = Rpc.make(WS_METHODS.agentctlPairSandbox, {
+  payload: AgentctlSandboxNameInput,
+  success: AgentctlSandboxPairing,
+  error: Schema.Union([AgentctlSandboxError, EnvironmentAuthorizationError]),
+});
+const WsAgentctlMarkSettingsSeededRpc = agentctlRpc(
+  WS_METHODS.agentctlMarkSettingsSeeded,
+  AgentctlMarkSettingsSeededInput,
+  Schema.Void,
+);
+const WsAgentctlListManifestsRpc = agentctlRpc(
+  WS_METHODS.agentctlListManifests,
+  Schema.Struct({}),
+  Schema.Array(AgentctlSandboxManifest),
+);
+const WsAgentctlListManifestRootsRpc = agentctlRpc(
+  WS_METHODS.agentctlListManifestRoots,
+  Schema.Struct({}),
+  Schema.Array(AgentctlManifestRoot),
+);
+const WsAgentctlRefreshManifestRootsRpc = agentctlRpc(
+  WS_METHODS.agentctlRefreshManifestRoots,
+  Schema.Struct({}),
+  Schema.Array(AgentctlManifestRoot),
+);
+const WsAgentctlGetSettingsRpc = agentctlRpc(
+  WS_METHODS.agentctlGetSettings,
+  Schema.Struct({}),
+  AgentctlSandboxSettings,
+);
+const WsAgentctlAddManifestRootRpc = Rpc.make(WS_METHODS.agentctlAddManifestRoot, {
+  payload: AgentctlManifestRootInput,
+  success: AgentctlSandboxSettings,
+  error: Schema.Union([AgentctlManifestRootError, EnvironmentAuthorizationError]),
+});
+const WsAgentctlRemoveManifestRootRpc = agentctlRpc(
+  WS_METHODS.agentctlRemoveManifestRoot,
+  AgentctlManifestRootInput,
+  AgentctlSandboxSettings,
+);
+const WsAgentctlPullManifestRootsRpc = agentctlRpc(
+  WS_METHODS.agentctlPullManifestRoots,
+  AgentctlPullManifestRootsInput,
+  AgentctlPullResult,
+);
+const WsSubscribeAgentctlSandboxesRpc = Rpc.make(WS_METHODS.subscribeAgentctlSandboxes, {
+  payload: Schema.Struct({}),
+  success: AgentctlSandboxesSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   payload: Schema.Struct({}),
   success: DeviceServiceState,
@@ -2463,6 +2576,20 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsAgentctlStartSandboxRpc,
+  WsAgentctlStopSandboxRpc,
+  WsAgentctlDeleteSandboxRpc,
+  WsAgentctlCreateSandboxRpc,
+  WsAgentctlPairSandboxRpc,
+  WsAgentctlMarkSettingsSeededRpc,
+  WsAgentctlListManifestsRpc,
+  WsAgentctlListManifestRootsRpc,
+  WsAgentctlRefreshManifestRootsRpc,
+  WsAgentctlGetSettingsRpc,
+  WsAgentctlAddManifestRootRpc,
+  WsAgentctlRemoveManifestRootRpc,
+  WsAgentctlPullManifestRootsRpc,
+  WsSubscribeAgentctlSandboxesRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

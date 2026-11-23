@@ -19,6 +19,7 @@ import {
   environmentMcpUrl,
   presentConnectionState,
 } from "./presentation.ts";
+import { sandboxConnectionId } from "../sandboxes/environments.ts";
 
 const TARGET = new BearerConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -118,6 +119,26 @@ describe("connection presentation", () => {
         relayHttpBaseUrl: "https://tunnel.example.test",
       }),
     ).toBe("https://tunnel.example.test/mcp");
+    expect(
+      environmentMcpUrl({
+        entry,
+        connectedTarget: relay,
+        relayHttpBaseUrl: "http://host.example.test/sandbox/worker-1/",
+      }),
+    ).toBe("http://host.example.test/sandbox/worker-1/mcp");
+  });
+
+  it("offers no MCP URL for a Sandbox behind its host's relay", () => {
+    const target = new BearerConnectionTarget({
+      environmentId: TARGET.environmentId,
+      label: "worker-1",
+      connectionId: sandboxConnectionId(
+        EnvironmentId.make("host"),
+        "worker-1",
+        TARGET.environmentId,
+      ),
+    });
+    expect(environmentMcpUrl({ entry: { ...ENTRY, target } })).toBeNull();
   });
 
   it("distinguishes initial connection, reconnect, and retry errors", () => {

@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Intentó usar el navegador {count} vez} other {Intentó usar el navegador {count} veces}}",
   "af1b652f5e54202b": "{count, plural, one {Se usaron los controles del dispositivo {count} vez} other {Se usaron los controles del dispositivo {count} veces}}",
   "0141195cbbe0e4ca": "{count, plural, one {Intentó usar los controles del dispositivo {count} vez} other {Intentó usar los controles del dispositivo {count} veces}}",
+  "dec927dd8c5e1991": "{count, plural, one {Se usaron los controles de Sandbox {count} vez} other {Se usaron los controles de Sandbox {count} veces}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Intentó usar los controles de Sandbox {count} vez} other {Intentó usar los controles de Sandbox {count} veces}}",
   "4d411db1abd4feff": "{count, plural, one {Consultó las capacidades de orquestación {count} vez} other {Consultó las capacidades de orquestación {count} veces}}",
   "44ea53e1df760a86": "{count, plural, one {Intentó consultar las capacidades de orquestación {count} vez} other {Intentó consultar las capacidades de orquestación {count} veces}}",
   "b5ab4f13edefadf7": "{count, plural, one {Leyó {count} hilo} other {Leyó {count} hilos}}",

@@ -86,6 +86,7 @@ export type T3McpToolSummaryAction =
   | "ci-rerun"
   | "browser"
   | "device"
+  | "sandbox"
   | "html-preview"
   | "html-render"
   | "send-to-user";
@@ -350,6 +351,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "device",
   ),
   device_close: tool(["Close", "Closing", "Closed", "a device"], "device", "device"),
+  t3_sandbox_list: tool(["List", "Listing", "Listed", "Sandboxes"], "sandbox"),
+  t3_sandbox_start: tool(["Start", "Starting", "Started", "a Sandbox"], "sandbox"),
+  t3_sandbox_stop: tool(["Stop", "Stopping", "Stopped", "a Sandbox"], "sandbox"),
+  t3_sandbox_create: tool(["Create", "Creating", "Created", "a Sandbox"], "sandbox"),
+  t3_sandbox_delete: tool(["Delete", "Deleting", "Deleted", "a Sandbox"], "sandbox"),
   run_scheduled_task_now: tool(
     ["Run", "Running", "Requested a run of", "a scheduled task"],
     "schedule-run",

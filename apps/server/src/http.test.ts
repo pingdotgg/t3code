@@ -212,6 +212,8 @@ describe("untraced requests", () => {
             HttpServerResponse.empty(),
           );
           yield* router.add("POST", `${WEBHOOK_ROUTE_PREFIX}/*`, HttpServerResponse.empty());
+          // Stands in for the Sandbox relay.
+          yield* router.add("*", "/sandbox/*", HttpServerResponse.empty());
           yield* router.add("GET", "/api/environment", HttpServerResponse.empty());
         }),
       ).pipe(Layer.provide(ServerHttp.layerUnloggedSignedRequests));
@@ -233,6 +235,8 @@ describe("untraced requests", () => {
         HttpClientRequest.post(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/payload.signature?v=1`),
         HttpClientRequest.post(`${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
         HttpClientRequest.head(`${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
+        HttpClientRequest.get(`/sandbox/worker-1${ASSET_ROUTE_PREFIX}/payload.signature/image.png`),
+        HttpClientRequest.post(`/sandbox/worker-1${WEBHOOK_ROUTE_PREFIX}/task-1/webhook-token`),
       ]) {
         expect((yield* client.execute(request)).status).toBe(204);
       }

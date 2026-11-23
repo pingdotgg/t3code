@@ -375,6 +375,10 @@
       "types": "./src/state/issueTrackers.ts",
       "default": "./src/state/issueTrackers.ts"
     },
+    "./state/sandboxes": {
+      "types": "./src/state/sandboxes.ts",
+      "default": "./src/state/sandboxes.ts"
+    },
     "./state/source-control": {
       "types": "./src/state/sourceControl.ts",
       "default": "./src/state/sourceControl.ts"
@@ -638,6 +642,18 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./sandboxes": {
+      "types": "./src/sandboxes/environments.ts",
+      "default": "./src/sandboxes/environments.ts"
+    },
+    "./sandboxes/projects": {
+      "types": "./src/sandboxes/projects.ts",
+      "default": "./src/sandboxes/projects.ts"
+    },
+    "./sandboxes/settings-seed": {
+      "types": "./src/sandboxes/settingsSeed.ts",
+      "default": "./src/sandboxes/settingsSeed.ts"
     }
   },
   "scripts": {

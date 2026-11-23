@@ -273,6 +273,8 @@
   "f6db6c7f14e0e68a": "{count, plural, one {Tentou usar o navegador {count} vez} other {Tentou usar o navegador {count} vezes}}",
   "af1b652f5e54202b": "{count, plural, one {Usou os controles do dispositivo {count} vez} other {Usou os controles do dispositivo {count} vezes}}",
   "0141195cbbe0e4ca": "{count, plural, one {Tentou usar os controles do dispositivo {count} vez} other {Tentou usar os controles do dispositivo {count} vezes}}",
+  "dec927dd8c5e1991": "{count, plural, one {Usou os controles de Sandbox {count} vez} other {Usou os controles de Sandbox {count} vezes}}",
+  "0e5b0a6c216ba544": "{count, plural, one {Tentou usar os controles de Sandbox {count} vez} other {Tentou usar os controles de Sandbox {count} vezes}}",
   "4d411db1abd4feff": "{count, plural, one {Verificou os recursos de orquestração {count} vez} other {Verificou os recursos de orquestração {count} vezes}}",
   "44ea53e1df760a86": "{count, plural, one {Tentou verificar os recursos de orquestração {count} vez} other {Tentou verificar os recursos de orquestração {count} vezes}}",
   "b5ab4f13edefadf7": "{count, plural, one {Leu {count} thread} other {Leu {count} threads}}",
