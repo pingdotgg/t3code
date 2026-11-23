@@ -1,5 +1,4 @@
 import * as Schema from "effect/Schema";
-import { compareSemverVersions } from "@t3tools/shared/semver";
 
 export const ANTIGRAVITY_CLI_MANIFEST_BASE =
   "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests";
@@ -36,7 +35,6 @@ export function parseAntigravityCliRelease(
   const decoded = decodeManifest(value);
   if (decoded._tag === "None" || antigravityCliTarget(platform, arch, musl) === null) return null;
   const manifest = decoded.value;
-  if (compareSemverVersions(manifest.version, "1.5.0") < 0) return null;
   const os = platform === "darwin" ? "mac" : platform === "win32" ? "windows" : "linux";
   const cpu = arch === "x64" ? "x64" : "arm64";
   const suffix = platform === "linux" && musl ? "_musl" : "";
