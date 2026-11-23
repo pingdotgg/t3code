@@ -5452,7 +5452,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               previous?.itemOrdinal ??
               (yield* resolveItemOrdinal(context, codexFailureItemKey(context)));
             const state: ActiveCodexProviderRetry = {
-              id: codexFailureItemId(context),
+              id: previous === undefined ? codexFailureItemId(context) : previous.id,
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
@@ -6699,6 +6699,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           yield* emitProviderEvent(current);
           if (current.status === "failed" && current.failure.class === "usage_limit") {
             const item = makeProviderFailureTurnItem({
+              ...(current.failureItemId === undefined ? {} : { id: current.failureItemId }),
               driver: CODEX_PROVIDER,
               threadId: context.input.threadId,
               runId: context.input.runId,
@@ -7441,7 +7442,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 itemOrdinal:
                   previous?.itemOrdinal ??
                   (yield* resolveItemOrdinal(context, codexFailureItemKey(context))),
-                id: codexFailureItemId(context),
+                id: previous === undefined ? codexFailureItemId(context) : previous.id,
                 startedAt: previous?.startedAt ?? now,
               };
               yield* Ref.update(providerRetries, (current) =>
