@@ -88,7 +88,10 @@ export function SidebarDragBoundary(props: {
       className="pointer-events-none relative mx-0.5 -mb-px h-0"
     >
       {props.visible ? (
-        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
+        <div
+          data-sidebar-drag-boundary
+          className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2"
+        >
           <span
             className={cn(
               "shrink-0 text-xs font-medium",
@@ -110,8 +113,16 @@ export function SidebarDragBoundary(props: {
   );
 }
 
+const SECTION_BY_HEADER = {
+  "pinned-header": "pinned",
+  "pinned-divider": "recent",
+  "working-header": "working",
+  "snoozed-header": "snoozed",
+  "settled-header": "settled",
+} as const;
+
 export function SidebarSectionHeader(props: {
-  marker: "working-header" | "snoozed-header" | "settled-header";
+  marker: keyof typeof SECTION_BY_HEADER;
   label: string;
   /** A muted trailing count. */
   count: number;
@@ -120,12 +131,7 @@ export function SidebarSectionHeader(props: {
   isDropTarget?: boolean;
   toggle: { expanded: boolean; onToggle: () => void };
 }) {
-  const shelf =
-    props.marker === "working-header"
-      ? "working"
-      : props.marker === "snoozed-header"
-        ? "snoozed"
-        : "settled";
+  const shelf = SECTION_BY_HEADER[props.marker];
   return (
     <SortableSidebarMarker
       marker={props.marker}
@@ -134,6 +140,8 @@ export function SidebarSectionHeader(props: {
     >
       <CollapsibleSectionHeader
         data-sidebar-row={`shelf:${shelf}`}
+        // Collision detection reads the Recent header as the Pinned/Recent boundary.
+        data-sidebar-drag-boundary={props.marker === "pinned-divider" ? "" : undefined}
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
         tone={props.isDropTarget ? "accent" : props.dragging ? "emphasized" : "muted"}

@@ -46,7 +46,7 @@ export function createSidebarCollisionDetection(
     const source = items?.find((item) => item.kind === "thread" && item.key === args.active.id);
     const boundary = args.droppableContainers
       .find((container) => container.id === sidebarMarkerId("pinned-divider"))
-      ?.node.current?.querySelector(".sidebar-drag-boundary-label")
+      ?.node.current?.querySelector("[data-sidebar-drag-boundary]")
       ?.getBoundingClientRect();
     if (items && boundary && source?.kind === "thread" && pointer) {
       boundarySection ??= source.section === "pinned" ? "pinned" : "active";
@@ -201,7 +201,7 @@ export function createSidebarSortingStrategy(input: {
       const moved = item.kind === "thread" && item.key === active.key;
       return item.kind === "marker" &&
         (item.marker === "pinned-header" || item.marker === "pinned-divider")
-        ? labelHeight
+        ? Math.max(labelHeight, rect?.height ?? 0)
         : item.kind === "marker" && item.marker.endsWith("placeholder")
           ? slimHeight
           : moved

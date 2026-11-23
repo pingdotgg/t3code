@@ -26,6 +26,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  withCollapsedSectionOrders,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1203,6 +1204,40 @@ describe("Working shelf (beta)", () => {
         activeOrder: ["a1", "a2", "p1"],
       });
       expect(resolveSidebarDropVerb("active", "working")).toBeNull();
+    });
+
+    it("keeps a collapsed section's hidden rows in order around the drop", () => {
+      // Pinned is collapsed to the route row p2; Recent is collapsed to nothing.
+      const collapsed: readonly SidebarListItem[] = [
+        marker("pinned-header"),
+        row("p2", "pinned"),
+        marker("pinned-divider"),
+        marker("active-placeholder"),
+        row("a9", "active"),
+        marker("settled-header"),
+      ];
+      const full = { pinned: ["p1", "p2", "p3"], active: ["a1", "a2", "a9"] };
+      const drop = (activeKey: string, overId: string) =>
+        withCollapsedSectionOrders(
+          resolveSidebarDropTarget(collapsed, activeKey, overId)!,
+          activeKey,
+          full,
+        );
+      expect(drop("a9", "p2")).toEqual({
+        section: "pinned",
+        pinnedOrder: ["p1", "a9", "p2", "p3"],
+        activeOrder: ["a1", "a2"],
+      });
+      expect(drop("p2", "a9")).toEqual({
+        section: "active",
+        pinnedOrder: ["p1", "p3"],
+        activeOrder: ["a1", "a2", "a9", "p2"],
+      });
+      // An expanded section passes through unchanged.
+      const target = resolveSidebarDropTarget(items, "p1", "a2")!;
+      expect(
+        withCollapsedSectionOrders(target, "p1", { pinned: ["p1"], active: ["a1", "a2"] }),
+      ).toEqual(target);
     });
 
     it.each([

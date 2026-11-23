@@ -283,6 +283,30 @@ export function resolveSidebarDropTarget(
   return { section, pinnedOrder, activeOrder };
 }
 
+// A collapsed section lists only some rows; the drop keeps the hidden rows' order and lands the moved row beside its visible neighbor.
+export function withCollapsedSectionOrders(
+  target: SidebarDropTarget,
+  movedKey: string,
+  full: { readonly pinned: readonly string[]; readonly active: readonly string[] },
+): SidebarDropTarget {
+  const restore = (visible: readonly string[], fullOrder: readonly string[]) => {
+    const visibleKeys = new Set(visible);
+    if (fullOrder.every((key) => key === movedKey || visibleKeys.has(key))) return visible;
+    const order = fullOrder.filter((key) => key !== movedKey);
+    const movedIndex = visible.indexOf(movedKey);
+    if (movedIndex === -1) return order;
+    const before = order.indexOf(visible[movedIndex - 1] ?? "");
+    const after = order.indexOf(visible[movedIndex + 1] ?? "");
+    order.splice(before !== -1 ? before + 1 : after !== -1 ? after : order.length, 0, movedKey);
+    return order;
+  };
+  return {
+    section: target.section,
+    pinnedOrder: restore(target.pinnedOrder, full.pinned),
+    activeOrder: restore(target.activeOrder, full.active),
+  };
+}
+
 type SidebarThreadDropPlan =
   | { readonly kind: "none" }
   | {
