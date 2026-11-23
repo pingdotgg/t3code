@@ -3717,7 +3717,6 @@
   "a5bbe09b0c89d86c": "Coalescing runs the latest payload when the window from the first delivery closes. Empty keys run normally.",
   "0e2233fb297f7c07": "Intervals must be at least 1 minute. Update this interval before saving.",
   "5910fee0e62286fd": "This task previously ran more than once per minute. Saving requires an interval of at least 1 minute.",
-  "831c6136a8c83755": "Time uses the environment's time zone, which may differ from your phone's.",
   "377aa4ea24aa0c3b": "Save the task to get its webhook URL.",
   "b10990191d5d5b76": "Signature check configured on desktop/web.",
   "adae883fd7189da7": "Loading tasks…",
@@ -5622,8 +5621,8 @@
   "99d51127f573296b": "Another account",
   "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
   "737fe0615966aee3": "Each machine's time zone",
-  "2feeb988e0a5feeb": "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs.",
   "a54e0232b776cce4": "{description} This device is in {zone}.",
   "044286af877f7f1e": "Time zone",
-  "ea8f3f3e5ae5568d": "Use {zone}"
+  "ea8f3f3e5ae5568d": "Use {zone}",
+  "74fceabf33743812": "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs."
 }

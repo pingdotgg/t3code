@@ -3710,7 +3710,6 @@
   "a5bbe09b0c89d86c": "Le regroupement exécute la dernière charge utile quand la fenêtre ouverte par la première livraison se ferme. Les clés vides s’exécutent normalement.",
   "0e2233fb297f7c07": "Les intervalles doivent être d’au moins 1 minute. Modifiez cet intervalle avant d’enregistrer.",
   "5910fee0e62286fd": "Cette tâche s’exécutait auparavant plus d’une fois par minute. L’enregistrement nécessite un intervalle d’au moins 1 minute.",
-  "831c6136a8c83755": "L’heure suit le fuseau horaire de l’environnement, qui peut différer de celui de votre téléphone.",
   "377aa4ea24aa0c3b": "Enregistrez la tâche pour obtenir son URL de webhook.",
   "b10990191d5d5b76": "Vérification de signature configurée sur bureau/web.",
   "adae883fd7189da7": "Chargement des tâches…",
@@ -5614,8 +5613,8 @@
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
   "737fe0615966aee3": "Fuseau horaire de chaque machine",
-  "2feeb988e0a5feeb": "Les tâches quotidiennes et hebdomadaires s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions.",
   "a54e0232b776cce4": "{description} Cet appareil est dans le fuseau {zone}.",
   "044286af877f7f1e": "Fuseau horaire",
-  "ea8f3f3e5ae5568d": "Utiliser {zone}"
+  "ea8f3f3e5ae5568d": "Utiliser {zone}",
+  "74fceabf33743812": "Les tâches quotidiennes et hebdomadaires de tous les environnements connectés s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions."
 }

@@ -3715,7 +3715,6 @@
   "a5bbe09b0c89d86c": "Beim Zusammenfassen wird die neueste Payload ausgeführt, wenn das Zeitfenster ab der ersten Zustellung endet. Leere Schlüssel werden normal ausgeführt.",
   "0e2233fb297f7c07": "Intervalle müssen mindestens 1 Minute betragen. Passe dieses Intervall vor dem Speichern an.",
   "5910fee0e62286fd": "Diese Aufgabe lief bisher mehr als einmal pro Minute. Zum Speichern ist ein Intervall von mindestens 1 Minute nötig.",
-  "831c6136a8c83755": "Die Uhrzeit verwendet die Zeitzone der Umgebung, die von der deines Smartphones abweichen kann.",
   "377aa4ea24aa0c3b": "Speichere die Aufgabe, um ihre Webhook-URL zu erhalten.",
   "b10990191d5d5b76": "Signaturprüfung auf Desktop/Web konfiguriert.",
   "adae883fd7189da7": "Aufgaben werden geladen…",
@@ -5620,8 +5619,8 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "737fe0615966aee3": "Zeitzone des jeweiligen Rechners",
-  "2feeb988e0a5feeb": "Tägliche und wöchentliche Aufgaben laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen.",
   "a54e0232b776cce4": "{description} Dieses Gerät befindet sich in {zone}.",
   "044286af877f7f1e": "Zeitzone",
-  "ea8f3f3e5ae5568d": "{zone} verwenden"
+  "ea8f3f3e5ae5568d": "{zone} verwenden",
+  "74fceabf33743812": "Tägliche und wöchentliche Aufgaben auf allen verbundenen Umgebungen laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen."
 }

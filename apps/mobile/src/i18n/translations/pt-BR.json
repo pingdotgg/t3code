@@ -3710,7 +3710,6 @@
   "a5bbe09b0c89d86c": "O agrupamento executa o payload mais recente quando a janela iniciada pela primeira entrega fecha. Chaves vazias executam normalmente.",
   "0e2233fb297f7c07": "Os intervalos devem ser de pelo menos 1 minuto. Atualize este intervalo antes de salvar.",
   "5910fee0e62286fd": "Esta tarefa já foi executada mais de uma vez por minuto. Para salvar, é necessário um intervalo de pelo menos 1 minuto.",
-  "831c6136a8c83755": "O horário usa o fuso horário do ambiente, que pode ser diferente do seu celular.",
   "377aa4ea24aa0c3b": "Salve a tarefa para obter a URL do webhook.",
   "b10990191d5d5b76": "Verificação de assinatura configurada no desktop/web.",
   "adae883fd7189da7": "Carregando tarefas…",
@@ -5614,8 +5613,8 @@
   "99d51127f573296b": "Outra conta",
   "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
   "737fe0615966aee3": "Fuso horário de cada máquina",
-  "2feeb988e0a5feeb": "Tarefas diárias e semanais são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções.",
   "a54e0232b776cce4": "{description} Este dispositivo está em {zone}.",
   "044286af877f7f1e": "Fuso horário",
-  "ea8f3f3e5ae5568d": "Usar {zone}"
+  "ea8f3f3e5ae5568d": "Usar {zone}",
+  "74fceabf33743812": "Tarefas diárias e semanais em todos os ambientes conectados são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções."
 }

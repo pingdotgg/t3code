@@ -1425,46 +1425,53 @@ export const layer = Layer.effect(
       ),
     );
 
-    // A future fixed-time run is the next occurrence after now, so recomputing it is a no-op
-    // unless the zone changed: then it moves to the same wall-clock time in the new zone.
+    // A stored fixed-time run that is not an occurrence of its schedule in `zone` was set in
+    // another zone, so it moves to the next occurrence there. Running rows settle on completion.
     const moveFixedTimeRunsToZone = Effect.fn("ScheduledTaskService.moveFixedTimeRunsToZone")(
       function* (zone: DateTime.TimeZone) {
         const now = yield* DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone));
         const rows = yield* sql<ScheduledTaskRow>`
           SELECT * FROM scheduled_tasks
-          WHERE enabled = 1 AND next_run_at > ${iso(now)}
+          WHERE enabled = 1 AND next_run_at IS NOT NULL AND last_run_status <> 'running'
         `;
-        let moved = false;
         for (const row of rows) {
           const decoded = yield* Effect.result(decodeRow(row));
           if (Result.isFailure(decoded) || decoded.success.schedule.type !== "fixed_time") continue;
           const task = decoded.success;
-          const next = nextRunAt(task, now);
-          if (next === task.nextRunAt) continue;
-          const updated = yield* sql`
+          const dueAt = DateTime.makeZoned(task.nextRunAt ?? "", { timeZone: zone });
+          if (
+            Option.isSome(dueAt) &&
+            nextRunAt(task, DateTime.subtract(dueAt.value, { milliseconds: 1 })) === task.nextRunAt
+          )
+            continue;
+          yield* sql`
             UPDATE scheduled_tasks
-            SET next_run_at = ${next}, updated_at = ${iso(now)}
+            SET next_run_at = ${nextRunAt(task, now)}, updated_at = ${iso(now)}
             WHERE task_id = ${task.id} AND next_run_at IS ${task.nextRunAt}
-            RETURNING task_id
           `;
-          moved ||= updated.length > 0;
         }
-        if (moved) yield* dueTasks.invalidate;
       },
-      Effect.catch((cause) =>
-        Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
-      ),
+      sql.withTransaction,
     );
 
     const settingsChanges = yield* serverSettings.subscribeChanges;
     let appliedZone = yield* currentZone;
-    yield* moveFixedTimeRunsToZone(appliedZone);
+    yield* moveFixedTimeRunsToZone(appliedZone).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
+      ),
+    );
     yield* Stream.runForEach(settingsChanges, (settings) => {
       const zone = scheduleZone(settings.scheduledTaskTimeZone);
       if (DateTime.zoneToString(zone) === DateTime.zoneToString(appliedZone)) return Effect.void;
-      appliedZone = zone;
       // Republish even when no run moved: lists carry the zone label.
-      return moveFixedTimeRunsToZone(zone).pipe(Effect.andThen(notifyChanged));
+      return moveFixedTimeRunsToZone(zone).pipe(
+        Effect.tap(() => Effect.sync(() => (appliedZone = zone))),
+        Effect.andThen(notifyChanged),
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
+        ),
+      );
     }).pipe(Effect.forkIn(serviceScope));
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());

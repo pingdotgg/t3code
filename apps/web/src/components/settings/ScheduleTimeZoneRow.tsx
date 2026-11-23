@@ -3,8 +3,16 @@ import {
   scheduleTimeZoneChoices,
   schedulesDifferFromDevice,
 } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
+
+import { useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { useEnvironmentsWithScope } from "../../state/session";
 
 import { Button } from "../ui/button";
 import {
@@ -20,28 +28,34 @@ import {
 import { SelectButton } from "../ui/select";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
-import {
-  useScopedSettings,
-  useScopedSettingsMixed,
-  useUpdateScopedSettings,
-} from "./useScopedSettings";
 
 const zoneName = (zone: string) => zone.replaceAll("_", " ");
 
 /**
- * Picks the zone daily and weekly tasks run in. `scheduleZones` are the zones the scoped
- * environments report, so a traveler sees when their schedules no longer match this device.
+ * Picks the zone daily and weekly tasks run in on every connected environment, whatever the
+ * page's scope: a traveler moves all their schedules at once. `scheduleZones` are the zones
+ * those environments report, so the row can say when they no longer match this device.
  */
 export function ScheduleTimeZoneRow({
+  environments,
   scheduleZones,
 }: {
+  readonly environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly serverConfig: { readonly settings: ServerSettings } | null;
+  }>;
   readonly scheduleZones: ReadonlyArray<string | undefined>;
 }) {
   const gt = useGT();
   const setting = useSearchableSetting();
-  const saved = useScopedSettings((settings) => settings.scheduledTaskTimeZone);
-  const mixed = useScopedSettingsMixed(["scheduledTaskTimeZone"]);
-  const updateSettings = useUpdateScopedSettings();
+  const zones = environments.map(
+    (environment) => environment.serverConfig?.settings.scheduledTaskTimeZone ?? "",
+  );
+  const saved = zones[0] ?? "";
+  const mixed = zones.some((zone) => zone !== saved);
+  const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
+  const canWrite = environments.some((environment) => writable.has(environment.environmentId));
+  const updateSettings = useUpdatePrimarySettings();
   const { contains } = useComboboxFilter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -56,14 +70,14 @@ export function ScheduleTimeZoneRow({
 
   return (
     <SettingsRow
-      serverScoped
       settingKeys={["scheduledTaskTimeZone"]}
+      mixed={mixed}
       {...setting("schedule-time-zone")}
       description={gt(
-        "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs.",
+        "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
       )}
       status={
-        schedulesDifferFromDevice(scheduleZones, device) ? (
+        canWrite && schedulesDifferFromDevice(scheduleZones, device) ? (
           <span className="flex flex-wrap items-center gap-2" role="status">
             <T>
               This device is in <Var>{zoneName(device)}</Var>.
@@ -77,7 +91,7 @@ export function ScheduleTimeZoneRow({
         ) : null
       }
       resetAction={
-        saved !== "" || mixed ? (
+        canWrite && (saved !== "" || mixed) ? (
           <SettingResetButton
             ariaLabel={gt("Reset schedule time zone to default")}
             onClick={() => save("")}
@@ -91,6 +105,7 @@ export function ScheduleTimeZoneRow({
           filter={null}
           autoHighlight
           open={open}
+          disabled={!canWrite}
           onOpenChange={(next) => {
             setOpen(next);
             if (!next) setQuery("");

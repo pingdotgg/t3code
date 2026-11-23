@@ -495,7 +495,9 @@ export function SettingsScheduledTasksRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
-        {selectedTargets.length > 0 ? <ScheduleTimeZoneSection targets={selectedTargets} /> : null}
+        {availableTargets.length > 0 ? (
+          <ScheduleTimeZoneSection targets={availableTargets} />
+        ) : null}
         {visibleEnvironments.length > 0 ? (
           visibleEnvironments.map((environment) => (
             <EnvironmentTasks
@@ -535,7 +537,7 @@ export function SettingsScheduledTasksRouteScreen() {
 
 const zoneName = (zone: string) => zone.replaceAll("_", " ");
 
-/** Daily and weekly tasks follow this zone; travelers move them to where this phone is. */
+/** Daily and weekly tasks on every connected environment follow this zone, whatever the filter. */
 function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly SettingsTarget[] }) {
   const gt = useGT();
   const writable = useEnvironmentsWithScope(targets, AuthSettingsWriteScope);
@@ -544,17 +546,18 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
   const saved = uniformMobileSetting(scoped, "scheduledTaskTimeZone");
   const device = deviceTimeZone();
   const machine = gt("Each machine's time zone");
-  const canWrite = targets.every((target) => writable.has(target.environmentId));
+  const canWrite = targets.some((target) => writable.has(target.environmentId));
   const description = gt(
-    "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs.",
+    "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
   );
   const save = (zone: string) =>
     void writeSettings(
       scoped,
-      targets.map((target) => ({
-        environmentId: target.environmentId,
-        patch: { scheduledTaskTimeZone: zone },
-      })),
+      targets.flatMap((target) =>
+        writable.has(target.environmentId)
+          ? [{ environmentId: target.environmentId, patch: { scheduledTaskTimeZone: zone } }]
+          : [],
+      ),
     );
   return (
     <SettingsSection
@@ -1525,11 +1528,6 @@ function TaskForm({
             />
           </View>
         </SettingsSection>
-        {draft.schedule.mode === "fixed_time" ? (
-          <Text className="px-2 text-sm text-foreground-muted">
-            <T>Time uses the environment's time zone, which may differ from your phone's.</T>
-          </Text>
-        ) : null}
       </View>
       <Button
         tone="primary"

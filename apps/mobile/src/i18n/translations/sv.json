@@ -3716,7 +3716,6 @@
   "a5bbe09b0c89d86c": "Sammanslagning kör den senaste nyttolasten när fönstret från den första leveransen stängs. Tomma nycklar körs som vanligt.",
   "0e2233fb297f7c07": "Intervall måste vara minst 1 minut. Uppdatera intervallet innan du sparar.",
   "5910fee0e62286fd": "Uppgiften kördes tidigare mer än en gång per minut. För att spara krävs ett intervall på minst 1 minut.",
-  "831c6136a8c83755": "Tiden använder miljöns tidszon, som kan skilja sig från telefonens.",
   "377aa4ea24aa0c3b": "Spara uppgiften för att få dess webhook-URL.",
   "b10990191d5d5b76": "Signaturkontroll konfigurerad på skrivbordet/webben.",
   "adae883fd7189da7": "Läser in uppgifter…",
@@ -5620,8 +5619,8 @@
   "99d51127f573296b": "Ett konto till",
   "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
   "737fe0615966aee3": "Varje dators tidszon",
-  "2feeb988e0a5feeb": "Dagliga och veckovisa uppgifter körs vid sin angivna tid i den här tidszonen. Om du ändrar den flyttas kommande körningar.",
   "a54e0232b776cce4": "{description} Den här enheten är i {zone}.",
   "044286af877f7f1e": "Tidszon",
-  "ea8f3f3e5ae5568d": "Använd {zone}"
+  "ea8f3f3e5ae5568d": "Använd {zone}",
+  "74fceabf33743812": "Dagliga och veckovisa uppgifter i alla anslutna miljöer körs vid sin angivna tid i den här tidszonen. Om du ändrar den flyttas kommande körningar."
 }

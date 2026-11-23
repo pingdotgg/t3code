@@ -2,6 +2,7 @@ import { RegistryContext } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
+  DEFAULT_SERVER_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
   ProjectId,
@@ -62,6 +63,7 @@ const state = vi.hoisted(() => ({
   secondary: false,
   remove: vi.fn(),
   reportedZone: undefined as string | undefined,
+  readOnly: false,
   updateSettings: vi.fn(),
 }));
 const secondaryId = EnvironmentId.make("secondary");
@@ -73,6 +75,7 @@ function setup() {
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.secondary = false;
   state.reportedZone = undefined;
+  state.readOnly = false;
   state.updateSettings.mockReset();
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -87,6 +90,8 @@ function secondaryEnvironment() {
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
+  useEnvironmentsWithScope: ((environments: ReadonlyArray<{ environmentId: EnvironmentId }>) =>
+    new Set(state.readOnly ? [] : environments.map((entry) => entry.environmentId))) as never,
 }));
 
 function environment() {
@@ -95,7 +100,10 @@ function environment() {
     label: "Laptop",
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
-      ? { environment: { platform: "linux", capabilities: { oneTimeSchedules: true } } }
+      ? {
+          environment: { platform: "linux", capabilities: { oneTimeSchedules: true } },
+          settings: DEFAULT_SERVER_SETTINGS,
+        }
       : null,
   };
 }
@@ -147,10 +155,7 @@ vi.mock(import("../../state/server"), async (original) => {
     },
   };
 });
-vi.mock(import("./useScopedSettings"), async (original) => ({
-  ...(await original()),
-  useUpdateScopedSettings: (() => state.updateSettings) as never,
-}));
+
 vi.mock(import("../../state/threads"), async (original) => {
   const actual = await original();
   return {
@@ -175,6 +180,10 @@ vi.mock(import("../../state/environments"), async (original) => ({
   ...(await original()),
   useEnvironment: ((id: EnvironmentId) =>
     id === secondaryId ? secondaryEnvironment() : environment()) as never,
+  useEnvironments: (() => ({
+    isReady: true,
+    environments: state.secondary ? [environment(), secondaryEnvironment()] : [environment()],
+  })) as never,
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
@@ -183,6 +192,7 @@ vi.mock(import("../../state/entities"), async (original) => ({
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
+  useUpdatePrimarySettings: (() => state.updateSettings) as never,
 }));
 
 describe("ScheduledTasksSettings", () => {
@@ -231,6 +241,23 @@ describe("ScheduledTasksSettings", () => {
       .toHaveTextContent(`This device is in ${deviceName}.Use ${deviceName}`);
     await screen.getByRole("button", { name: `Use ${deviceName}` }).click();
     expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith({ scheduledTaskTimeZone: device });
+  });
+
+  it("offers no time zone change on a connection that cannot write settings", async () => {
+    setup();
+    state.readOnly = true;
+    state.reportedZone = deviceTimeZone() === "Asia/Tokyo" ? "America/Denver" : "Asia/Tokyo";
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("combobox", { name: "Schedule time zone" }))
+      .toBeDisabled();
+    await expect.element(screen.getByText(/This device is in/)).not.toBeInTheDocument();
   });
 
   it("hides the time zone prompt when schedules already run in this device's zone", async () => {

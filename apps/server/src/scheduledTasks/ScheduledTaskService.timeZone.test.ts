@@ -133,3 +133,25 @@ it.effect("moves pending daily runs on startup when the zone changed while stopp
     expect(restarted.tasks[0]?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("does not dispatch an old-zone run that is due at startup in a new zone", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* service.upsert(
+        yield* task("scheduled-task:daily", { type: "fixed_time", timeOfDay: "09:00" }),
+      );
+    }).pipe(Effect.provide(serviceLayer("America/Denver")));
+
+    // Back at 09:03 Denver, inside the missed-run grace, but now on Tokyo time (00:03).
+    yield* TestClock.setTime(Date.parse("2026-07-01T15:03:00.000Z"));
+    const [restarted] = yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      yield* TestClock.adjust("6 seconds");
+      return (yield* service.list()).tasks;
+    }).pipe(Effect.provide(serviceLayer("Asia/Tokyo")));
+    expect(restarted?.lastRunStatus).toBe("never");
+    expect(restarted?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

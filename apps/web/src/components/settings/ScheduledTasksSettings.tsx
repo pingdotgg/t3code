@@ -37,6 +37,7 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
@@ -66,6 +67,7 @@ import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   useEnvironment,
   useEnvironmentHttpBaseUrl,
+  useEnvironments,
   type EnvironmentPresentation,
 } from "../../state/environments";
 import {
@@ -467,11 +469,10 @@ export function ScheduledTasksSettings(target: {
   const permittedEnvironments = connectedEnvironments.filter(
     (_entry, index) => createPermissions[index],
   );
-  const readyEnvironmentIds = connectedEnvironments.flatMap((entry) =>
-    entry.serverConfig === null ? [] : [entry.environmentId],
-  );
+  // The schedule zone follows the traveler on every environment, not just the scoped ones.
+  const zoneEnvironments = useEnvironments().environments.filter(supportsSharedSettingsSync);
   const scheduleZones = useAtomValue(
-    scheduledTasksListAtom(environmentIdsKey(readyEnvironmentIds)),
+    scheduledTasksListAtom(environmentIdsKey(zoneEnvironments.map((entry) => entry.environmentId))),
   ).map((query) => AsyncResult.getOrElse(query, () => null)?.timeZone);
   const creationEnvironment =
     permittedEnvironments.find(
@@ -497,9 +498,9 @@ export function ScheduledTasksSettings(target: {
           </Button>
         }
       >
-        {scope.kind !== "unavailable" && readyEnvironmentIds.length > 0 ? (
+        {zoneEnvironments.length > 0 ? (
           <SettingsGroup className="mb-8">
-            <ScheduleTimeZoneRow scheduleZones={scheduleZones} />
+            <ScheduleTimeZoneRow environments={zoneEnvironments} scheduleZones={scheduleZones} />
           </SettingsGroup>
         ) : null}
         {scope.kind === "unavailable" ? (

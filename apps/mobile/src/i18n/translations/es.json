@@ -3710,7 +3710,6 @@
   "a5bbe09b0c89d86c": "La agrupación ejecuta la carga más reciente cuando se cierra la ventana abierta por la primera entrega. Las claves vacías se ejecutan con normalidad.",
   "0e2233fb297f7c07": "Los intervalos deben ser de al menos 1 minuto. Actualiza este intervalo antes de guardar.",
   "5910fee0e62286fd": "Esta tarea se ejecutaba antes más de una vez por minuto. Para guardar se requiere un intervalo de al menos 1 minuto.",
-  "831c6136a8c83755": "La hora usa la zona horaria del entorno, que puede ser distinta de la de tu teléfono.",
   "377aa4ea24aa0c3b": "Guarda la tarea para obtener su URL de webhook.",
   "b10990191d5d5b76": "Comprobación de firma configurada en el escritorio o la web.",
   "adae883fd7189da7": "Cargando tareas…",
@@ -5614,8 +5613,8 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "737fe0615966aee3": "Zona horaria de cada máquina",
-  "2feeb988e0a5feeb": "Las tareas diarias y semanales se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones.",
   "a54e0232b776cce4": "{description} Este dispositivo está en {zone}.",
   "044286af877f7f1e": "Zona horaria",
-  "ea8f3f3e5ae5568d": "Usar {zone}"
+  "ea8f3f3e5ae5568d": "Usar {zone}",
+  "74fceabf33743812": "Las tareas diarias y semanales de todos los entornos conectados se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones."
 }
