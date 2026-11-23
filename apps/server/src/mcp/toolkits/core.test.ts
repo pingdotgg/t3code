@@ -78,7 +78,7 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   const text = result.content[0];
   return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
 };
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
 const decodeThreadReadResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadReadResult);
@@ -384,11 +384,30 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
       expect(yield* byPath(name, scope), name).toContain("only full-access threads");
       expect(yield* byPath(name, fullAccess), name).toContain("not a readable HTML document");
     }
+    const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+    const sent = yield* server
+      .callTool({
+        name: "send_to_user",
+        arguments: { message: "Draft:\n\n> Ready to merge." },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(
+      sentMessageFromToolItem({ toolName: "t3-code.send_to_user", output: sent.structuredContent }),
+    ).toBe("Draft:\n\n> Ready to merge.");
+    expect(
+      yield* mcpSessions.takeSentMessage(scope.thread!.threadId, "Draft:\n\n> Ready to merge."),
+    ).toBe("Draft:\n\n> Ready to merge.");
+    expect(
+      yield* mcpSessions.takeSentMessage(scope.thread!.threadId, "Draft:\n\n> Ready to merge."),
+    ).toBeUndefined();
   }).pipe(
     Effect.provide(
-      McpHttpServer.layerHtmlToolkit.pipe(
+      Layer.mergeAll(McpHttpServer.layerHtmlToolkit, McpHttpServer.layerMessageToolkit).pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
-        Layer.provide(McpProviderSessions.layer),
+        Layer.provideMerge(McpProviderSessions.layer),
         Layer.provide(PreviewBrowser.layer),
         Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-html-render-" })),
         Layer.provide(

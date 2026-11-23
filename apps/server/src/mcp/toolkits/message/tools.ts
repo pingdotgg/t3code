@@ -1,4 +1,5 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
+import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { SEND_TO_USER_MAX_LENGTH, SEND_TO_USER_TOOL_NAME } from "@t3tools/shared/toolOutput";
 import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
@@ -25,6 +26,7 @@ const SendToUserTool = Tool.make(SEND_TO_USER_TOOL_NAME, {
   failureMode: "return",
   dependencies: [
     McpInvocationContext.McpInvocationContext,
+    McpProviderSessions.McpProviderSessions,
     ThreadManagementService.ThreadManagementService,
   ],
 })
