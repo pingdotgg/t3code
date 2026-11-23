@@ -2429,6 +2429,141 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // Frames and files as agy 1.5.14 wrote them for `/swarm`: the coordinator's `swarm` calls
+  // arrive as `Run swarm`, and workers report only on the board below its session.
+  it.effect("shows a swarm as one workflow that runs until its workers park", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-antigravity-swarm-",
+      });
+      const brain = (conversationId: string, ...rest: ReadonlyArray<string>) =>
+        path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          conversationId,
+          ".system_generated",
+          ...rest,
+        );
+      const writeLines = (file: string, values: ReadonlyArray<unknown>) =>
+        fileSystem
+          .makeDirectory(path.dirname(file), { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fileSystem.writeFileString(
+                file,
+                values.map((value) => JSON.stringify(value)).join("\n") + "\n",
+              ),
+            ),
+          );
+      yield* fileSystem.makeDirectory(brain("mock-session-1", "swarm"), { recursive: true });
+      yield* fileSystem.writeFileString(
+        brain("mock-session-1", "swarm", "members.json"),
+        JSON.stringify({
+          title: "Compute 6*7",
+          members: {
+            coordinator: { conversation_id: "mock-session-1", role: "coordinator" },
+            "mul-a": { conversation_id: "worker-1", role: "worker", model: "gemini-test-low" },
+          },
+        }),
+      );
+      const brief = {
+        seq: 1,
+        agent: "coordinator",
+        text: "@mul-a Compute 6*7.",
+        time: "2026-11-23 17:23:18",
+        kind: "brief",
+      };
+      yield* writeLines(brain("mock-session-1", "swarm", "board.jsonl"), [brief]);
+      const transcript = brain("worker-1", "logs", "transcript.jsonl");
+      yield* writeLines(transcript, [
+        { step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE" },
+        { step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", tool_calls: [{ name: "x" }] },
+      ]);
+      const swarmCall = (toolCallId: string, rawInput: Record<string, unknown>) =>
+        ({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          kind: "other",
+          title: "Run swarm",
+          status: "completed",
+          rawInput,
+        }) as const;
+      const { startTurn, until, throughPromptSettled, scheduledFinalizes } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          profileDirectory: profile,
+          initialToolCalls: [
+            swarmCall("call_title", { action: "title", title: "Compute 6*7" }),
+            swarmCall("call_add", { action: "add", name: "mul-a", brief: "Compute 6*7." }),
+          ],
+        });
+      yield* startTurn(1, false);
+      const workflows = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.workflow !== undefined
+            ? [event.subagent]
+            : [],
+        );
+      const prompt = [
+        ...(yield* throughPromptSettled),
+        ...(yield* until((event) => workflows([event]).length > 0)),
+      ];
+      const running = workflows(prompt).at(-1);
+      assert.equal(running?.status, "running");
+      assert.equal(running?.workflow?.name, "Compute 6*7");
+      assert.deepEqual(
+        running?.workflow?.agents.map(({ label, state, prompt: brief }) => [label, state, brief]),
+        [["mul-a", "running", "Compute 6*7."]],
+      );
+      assert.isFalse(
+        JSON.stringify(prompt).includes("Run swarm"),
+        "swarm calls fold into the workflow instead of showing as tools",
+      );
+
+      yield* writeLines(brain("mock-session-1", "swarm", "board.jsonl"), [
+        brief,
+        { seq: 2, agent: "mul-a", text: "@coordinator [done] 42", time: "2026-11-23 17:23:21" },
+      ]);
+      yield* writeLines(transcript, [
+        { step_index: 0, type: "SYSTEM_MESSAGE", status: "DONE" },
+        {
+          step_index: 1,
+          type: "PLANNER_RESPONSE",
+          status: "DONE",
+          tool_calls: [{ name: "post_message" }, { name: "swarm_wait" }],
+        },
+        { step_index: 2, type: "GENERIC", status: "DONE" },
+        { step_index: 3, type: "GENERIC", status: "DONE" },
+      ]);
+      // One poll reads the parked worker; the idle swarm then schedules the turn's end.
+      yield* TestClock.adjust("2 seconds");
+      const parkedRun = yield* until((event) => workflows([event]).at(-1)?.status === "completed");
+      yield* Queue.take(scheduledFinalizes);
+      yield* TestClock.adjust("5 seconds");
+      const run = [...parkedRun, ...(yield* until((event) => event.type === "turn.terminal"))];
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      const done = workflows(run).at(-1);
+      assert.equal(done?.status, "completed");
+      assert.deepEqual(
+        done?.workflow?.agents.map(({ state, result }) => [state, result]),
+        [["completed", "@coordinator [done] 42"]],
+      );
+      const memberThread = done?.workflow?.agents[0]?.childThreadId;
+      assert.isTrue(
+        run.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.threadId === memberThread &&
+            event.message.text === "@coordinator [done] 42",
+        ),
+        "the worker's result reaches its own thread",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect.each([
     // session/cancel ends the agent's commands, so only Stop may send it.
     { ending: "Stop", cancels: 1, status: "interrupted" },

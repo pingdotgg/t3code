@@ -121,6 +121,17 @@ which children a batch started, the view says so. See
 [agent work](./thread-sidebar.md#inspect-agent-work) for where to inspect
 activity.
 
+### Swarms
+
+Start a swarm with `/swarm <task>`. The thread shows it as one workflow, titled with
+the swarm's name, with a row for each worker: its brief, model, state, and the
+result it posted. Open a worker to read its brief and result, and select **Work**
+to see its recent steps. The run stays open while any worker is still working.
+
+Talk to the swarm through the thread; the coordinator relays your messages to
+the workers. **Stop** ends the coordinator's turn but does not remove workers; ask
+the coordinator to remove them. The swarm's narrator and monitor are not shown.
+
 ## Accounts and removal
 
 Add an Antigravity provider instance for each Google account in

@@ -1,5 +1,7 @@
 import {
   isProviderNativeSubagentThread,
+  type OrchestrationV2Subagent,
+  type ThreadId,
   OrchestrationV2GetNativeChildWorkError,
   type OrchestrationV2GetNativeChildWorkInput,
   type OrchestrationV2GetNativeChildWorkResult,
@@ -11,7 +13,10 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
-import { readAntigravityChildWork } from "../provider/acp/AntigravityChildWork.ts";
+import {
+  readAntigravityChildWork,
+  readAntigravitySwarmMemberWork,
+} from "../provider/acp/AntigravityChildWork.ts";
 import { resolveAntigravityInstanceDirectories } from "../provider/antigravityAuthSupport.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -36,6 +41,42 @@ const make = Effect.gen(function* () {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
 
+  const profileOf = (providerInstanceId: OrchestrationV2Subagent["providerInstanceId"]) =>
+    resolveAntigravityInstanceDirectories(stateDir, providerInstanceId).pipe(
+      Effect.provideService(Digest.Digest, digest),
+      Effect.provideService(Path.Path, path),
+      Effect.map((directories) => directories.profile),
+    );
+
+  // A swarm worker's thread hangs off the swarm's thread; the workflow record names its session.
+  const swarmMemberWork = Effect.fn("NativeChildWorkQuery.swarmMemberWork")(function* (
+    memberThreadId: ThreadId,
+    swarmThreadId: ThreadId,
+    member: OrchestrationV2Subagent,
+  ) {
+    const { thread: swarmThread } = yield* threads.getThreadRecords(swarmThreadId, []);
+    const rootThreadId = swarmThread.lineage.parentThreadId;
+    if (rootThreadId === null) return NO_CHILDREN;
+    const { subagents } = yield* threads.getThreadRecords(rootThreadId, ["subagents"]);
+    const swarm = subagents.find(
+      (candidate) =>
+        candidate.childThreadId === swarmThreadId &&
+        candidate.driver === "antigravity" &&
+        candidate.providerInstanceId === member.providerInstanceId,
+    );
+    const agent = swarm?.workflow?.agents.find(
+      (candidate) => candidate.childThreadId === memberThreadId,
+    );
+    if (agent?.agentId === undefined) return NO_CHILDREN;
+    const children = yield* readAntigravitySwarmMemberWork({
+      profileDirectory: yield* profileOf(member.providerInstanceId),
+      conversationId: agent.agentId,
+      role: agent.label,
+      prompt: agent.prompt ?? member.prompt,
+    });
+    return { children };
+  });
+
   const getNativeChildWork = Effect.fn("NativeChildWorkQuery.getNativeChildWork")(
     function* (input: OrchestrationV2GetNativeChildWorkInput) {
       const { thread } = yield* threads.getThreadRecords(input.threadId, []);
@@ -53,6 +94,9 @@ const make = Effect.gen(function* () {
         (candidate) => candidate.id === subagentId && candidate.childThreadId === thread.id,
       );
       const nativeTaskId = subagent?.nativeTaskRef?.nativeId;
+      if (subagent?.driver === "antigravity" && subagent.runId === null) {
+        return yield* swarmMemberWork(thread.id, parentThreadId, subagent);
+      }
       if (
         subagent?.driver !== "antigravity" ||
         subagent.origin !== "provider_native" ||
@@ -93,12 +137,8 @@ const make = Effect.gen(function* () {
       if (!rootSessionId || providerThread?.providerInstanceId !== subagent.providerInstanceId) {
         return NO_CHILDREN;
       }
-      const directories = yield* resolveAntigravityInstanceDirectories(
-        stateDir,
-        subagent.providerInstanceId,
-      ).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
       const children = yield* readAntigravityChildWork({
-        profileDirectory: directories.profile,
+        profileDirectory: yield* profileOf(subagent.providerInstanceId),
         rootSessionId,
         nativeTaskId,
         launch: { title: subagent.title, prompt: subagent.prompt },

@@ -136,3 +136,89 @@ it.layer(
     }),
   );
 });
+
+const memberThreadId = ThreadId.make("thread-swarm-member");
+const swarmThreadId = ThreadId.make("thread-swarm");
+// A swarm worker's thread hangs off the swarm thread, whose workflow names the worker's session.
+const swarmRecords = (threadId: string) =>
+  threadId === memberThreadId
+    ? {
+        thread: {
+          id: memberThreadId,
+          creationSource: "provider",
+          lineage: { parentThreadId: swarmThreadId, relationshipToParent: "subagent" },
+          forkedFrom: { type: "node", nodeId: "member-node" },
+        },
+      }
+    : threadId === swarmThreadId
+      ? {
+          thread: { id: swarmThreadId, lineage: { parentThreadId: "thread-root" } },
+          subagents: [
+            {
+              id: "member-node",
+              childThreadId: memberThreadId,
+              driver: "antigravity",
+              providerInstanceId: instanceId,
+              runId: null,
+              prompt: "Read it",
+            },
+          ],
+        }
+      : {
+          subagents: [
+            {
+              childThreadId: swarmThreadId,
+              driver: "antigravity",
+              providerInstanceId: instanceId,
+              workflow: {
+                phases: [],
+                agents: [
+                  {
+                    index: 0,
+                    label: "reader",
+                    state: "completed",
+                    agentId: CHILD,
+                    childThreadId: memberThreadId,
+                    prompt: "Read README.md and report the marker",
+                  },
+                ],
+              },
+            },
+          ],
+        };
+
+it.layer(
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeCrypto.layer,
+    ServerConfig.layerTest(process.cwd(), { prefix: "native-swarm-work-" }).pipe(
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  ),
+)("NativeChildWorkQuery swarm", (it) => {
+  it.effect("reads a swarm worker's own transcript", () =>
+    Effect.gen(function* () {
+      const { stateDir } = yield* ServerConfig.ServerConfig;
+      const { profile } = yield* resolveAntigravityInstanceDirectories(stateDir, instanceId);
+      yield* makeProfile({ profile, steps: () => [] });
+      const children = yield* Effect.gen(function* () {
+        const query = yield* NativeChildWorkQuery.NativeChildWorkQuery;
+        return (yield* query.getNativeChildWork({ threadId: memberThreadId })).children;
+      }).pipe(
+        Effect.provide(
+          NativeChildWorkQuery.layer.pipe(
+            Layer.provide(
+              Layer.mock(ThreadManagement.ThreadManagementService)({
+                getThreadRecords: (threadId) => Effect.succeed(swarmRecords(threadId) as never),
+              }),
+            ),
+          ),
+        ),
+      );
+      expect(children.map(({ conversationId, role }) => [conversationId, role])).toEqual([
+        [CHILD, "reader"],
+      ]);
+      expect(children[0]?.steps?.at(-1)?.text).toBe("marker 4242 found");
+    }),
+  );
+});

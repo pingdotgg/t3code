@@ -37,6 +37,11 @@ import {
   readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import {
+  antigravitySwarmTaskId,
+  isAntigravitySwarmToolCall,
+  readAntigravitySwarm,
+} from "../../provider/acp/AntigravitySwarm.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -317,6 +322,23 @@ export function makeAntigravityAcpAdapterFlavor(
               profileDirectory,
               sessionId,
             }),
+          nativeWorkflow: {
+            isTool: isAntigravitySwarmToolCall,
+            read: (sessionId: string) =>
+              readAntigravitySwarm({ profileDirectory, sessionId }).pipe(
+                Effect.map((swarm) =>
+                  swarm === undefined
+                    ? undefined
+                    : {
+                        nativeTaskId: antigravitySwarmTaskId(sessionId),
+                        title: swarm.workflow.name ?? "Swarm",
+                        prompt: swarm.prompt,
+                        workflow: swarm.workflow,
+                        active: swarm.active,
+                      },
+                ),
+              ),
+          },
         }),
   };
 }

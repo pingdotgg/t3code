@@ -820,3 +820,37 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
     }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   },
 );
+
+/** A swarm worker's own transcript; the board, not a launching tool call, proves it belongs. */
+export const readAntigravitySwarmMemberWork = Effect.fn("readAntigravitySwarmMemberWork")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly conversationId: string;
+    readonly role: string;
+    readonly prompt: string;
+  }) {
+    if (!NATIVE_ID.test(input.conversationId)) return [];
+    return yield* Effect.tryPromise({
+      try: async (): Promise<ReadonlyArray<OrchestrationV2NativeChildWork>> => {
+        const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+        if (profileRoot === undefined) return [];
+        const transcript = await readChildTranscript(
+          profileRoot,
+          { conversationId: input.conversationId },
+          input.prompt,
+          TRANSCRIPT_BYTE_CAP,
+        );
+        return [
+          {
+            conversationId: input.conversationId,
+            role: input.role,
+            prompt: input.prompt,
+            steps: transcript?.steps ?? null,
+            truncated: transcript?.truncated ?? false,
+          },
+        ];
+      },
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    });
+  },
+);
