@@ -132,15 +132,17 @@ struct AppContextState {
 }
 
 impl AppContextState {
-    /// The entries the native thread has not yet seen with their current text.
+    /// The entries the native thread has not yet seen with their current text. A steer also
+    /// counts what its running turn offered.
     fn unseen<'a>(
         &self,
         native: &str,
         entries: &'a [conn_provider::AppContextEntry],
+        with_offer: bool,
     ) -> Vec<&'a conn_provider::AppContextEntry> {
-        let seen = self
-            .delivered
-            .as_ref()
+        let offered = self.offered.as_ref().filter(|_| with_offer);
+        let seen = offered
+            .or(self.delivered.as_ref())
             .filter(|(id, _)| id == native)
             .map(|(_, seen)| seen);
         entries
@@ -161,6 +163,13 @@ impl AppContextState {
         self.delivered = None;
         self.offered = None;
     }
+}
+
+fn offer_of(entries: &[conn_provider::AppContextEntry]) -> HashMap<String, String> {
+    entries
+        .iter()
+        .map(|e| (e.key.clone(), e.text.clone()))
+        .collect()
 }
 
 /// Prepends MCP app notes to the prompt as quoted app data (`withClaudeAppContext`). A slash
@@ -1422,16 +1431,9 @@ impl ClaudeSession {
                 .as_ref()
                 .map(|l| l.native_thread_id.clone())
                 .unwrap_or_default();
-            let unseen = state.app_context.unseen(&native, &input.app_context);
+            let unseen = state.app_context.unseen(&native, &input.app_context, false);
             let (content, offered) = with_app_context(content, &unseen);
-            state.app_context.offered = offered.then(|| {
-                let offer = input
-                    .app_context
-                    .iter()
-                    .map(|e| (e.key.clone(), e.text.clone()))
-                    .collect();
-                (native, offer)
-            });
+            state.app_context.offered = offered.then(|| (native, offer_of(&input.app_context)));
             (outs, query, uuid, content)
         };
         inner.deliver(Some(&query), outs).await;
@@ -1954,7 +1956,7 @@ impl Session for ClaudeSession {
             let text = catalog::prompt_text(&input.message.text, effort.as_deref());
             let content = self.content(&text, &input.message.attachments).await;
             let uuid = SystemEnv.uuid();
-            let (query, outs) = {
+            let (query, outs, content) = {
                 let mut state = self.inner.lock();
                 let query = state
                     .live
@@ -1968,7 +1970,17 @@ impl Session for ClaudeSession {
                 let outs = state
                     .mapper
                     .steer_sent(&uuid, input.message.message_id.as_str());
-                (query, outs)
+                let native = state
+                    .live
+                    .as_ref()
+                    .map(|l| l.native_thread_id.clone())
+                    .unwrap_or_default();
+                let unseen = state.app_context.unseen(&native, &input.app_context, true);
+                let (content, offered) = with_app_context(content, &unseen);
+                if offered {
+                    state.app_context.offered = Some((native, offer_of(&input.app_context)));
+                }
+                (query, outs, content)
             };
             self.inner.deliver(Some(&query), outs).await;
             let offered = query

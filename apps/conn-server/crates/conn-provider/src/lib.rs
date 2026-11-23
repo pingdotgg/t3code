@@ -740,6 +740,9 @@ pub struct SteerInput {
     pub provider_turn_id: ProviderTurnId,
     pub message: TurnMessage,
     pub model_selection: Option<ModelSelection>,
+    /// `appContext`: the thread's MCP app notes; a steer sends those the native thread has
+    /// not seen with their current text.
+    pub app_context: Vec<AppContextEntry>,
 }
 
 /// `ProviderAdapterV2HistoricalContext` for one native thread: the history items as Codex's

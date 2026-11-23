@@ -1861,6 +1861,10 @@ impl Inner {
                         attachments: from_json(message["attachments"].clone()).unwrap_or_default(),
                     },
                     model_selection: None,
+                    app_context: self
+                        .app_context(thread_id.clone())
+                        .await
+                        .unwrap_or_default(),
                 })
                 .await
                 .is_ok(),

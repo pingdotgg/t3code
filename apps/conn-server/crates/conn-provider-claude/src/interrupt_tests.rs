@@ -358,6 +358,7 @@ async fn a_steer_during_a_cold_start_waits_for_the_query() {
                         attachments: vec![],
                     },
                     model_selection: None,
+                    app_context: vec![],
                 })
                 .await
         },
@@ -928,10 +929,49 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
     );
 
     // Compaction dropped it from the history, so it goes again.
+    set_frames(serde_json::json!([]));
     session
         .start_turn(with_note(4, "After compaction?"))
         .await
         .unwrap();
     assert!(last_input().to_string().contains("PROJ-42"));
+    let turn_id = running_turn_id(&mut events).await;
+
+    // A steer sends what the running turn has not offered, once (T3's steer path).
+    let steer = |text: &str, note: &str| conn_provider::SteerInput {
+        thread_id: "thread-live".into(),
+        run_id: "run-4".into(),
+        provider_thread: thread.clone(),
+        provider_turn_id: turn_id.as_str().into(),
+        message: conn_provider::TurnMessage {
+            created_by: conn_contract::OrchestrationV2Actor::User,
+            creation_source: conn_contract::OrchestrationV2CreationSource::Web,
+            scheduled_task_id: None,
+            sender_thread_id: None,
+            message_id: format!("steer-{text}").as_str().into(),
+            text: text.into(),
+            attachments: vec![],
+        },
+        model_selection: None,
+        app_context: vec![conn_provider::AppContextEntry {
+            key: "mcp_app_item-1".into(),
+            text: note.into(),
+        }],
+    };
+    session
+        .steer_turn(steer("same", "Created Jira issue PROJ-42"))
+        .await
+        .unwrap();
+    assert_eq!(last_input()["message"]["content"], "same");
+    session
+        .steer_turn(steer("new", "Created Jira issue PROJ-44"))
+        .await
+        .unwrap();
+    assert!(last_input().to_string().contains("PROJ-44"));
+    session
+        .steer_turn(steer("again", "Created Jira issue PROJ-44"))
+        .await
+        .unwrap();
+    assert_eq!(last_input()["message"]["content"], "again");
     session.close().await;
 }
