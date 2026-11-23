@@ -190,6 +190,9 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
   const rgba = new Uint8ClampedArray(image.width * image.height * 4);
   const scale = image.bitsPerSample === 16 ? 257 : 1;
   const palette = image.palette;
+  const alpha = image.alpha;
+  // The tiff decoder inverts every WhiteIsZero sample, alpha included.
+  const invertAlpha = alpha && image.type === 0;
   for (let pixel = 0; pixel < image.width * image.height; pixel++) {
     const index = pixel * image.components;
     if (palette) {
@@ -203,7 +206,8 @@ async function decode(bytes: ArrayBuffer, heif: boolean) {
       const gray = image.data[index]! / scale;
       rgba.fill(gray, pixel * 4, pixel * 4 + 3);
     }
-    rgba[pixel * 4 + 3] = image.alpha ? image.data[index + image.components - 1]! / scale : 255;
+    const value = alpha ? image.data[index + image.components - 1]! / scale : 255;
+    rgba[pixel * 4 + 3] = invertAlpha ? 255 - value : value;
   }
   const canvas = new OffscreenCanvas(image.width, image.height);
   const context = canvas.getContext("2d");
