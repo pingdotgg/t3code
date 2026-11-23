@@ -11,6 +11,7 @@ import { VcsProcessExitError } from "@t3tools/contracts";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as GitLabCli from "./GitLabCli.ts";
+import { userFacingSourceControlDetail } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
 const layer = it.layer(
@@ -261,7 +262,7 @@ layer("GitLabCli.layer", (it) => {
       }),
   );
 
-  it.effect("creates same-project MRs without a repository lookup", () =>
+  it.effect("creates same-project MRs without a repository lookup, drafts by title prefix", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "t3-gitlab-mr-body-" });
@@ -292,6 +293,24 @@ layer("GitLabCli.layer", (it) => {
           ],
         }),
       );
+
+      const draftTitle = (title: string) =>
+        Effect.gen(function* () {
+          mockedRun.mockClear();
+          mockedRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+          yield* glab.createMergeRequest({
+            cwd: "/repo",
+            baseBranch: "main",
+            headSelector: "feature/fix",
+            title,
+            bodyFile,
+            draft: true,
+          });
+          return mockedRun.mock.calls[0]?.[0].args.find((arg) => arg.startsWith("title="));
+        });
+      expect(yield* draftTitle("Fix remote flow")).toBe("title=Draft: Fix remote flow");
+      expect(yield* draftTitle("draft: Fix remote flow")).toBe("title=draft: Fix remote flow");
+      expect(yield* draftTitle("[Draft] Fix remote flow")).toBe("title=[Draft] Fix remote flow");
     }).pipe(Effect.scoped),
   );
 
@@ -325,16 +344,19 @@ layer("GitLabCli.layer", (it) => {
   );
 
   it.effect.each([
-    { repository: "group/project", args: ["api", "projects/group%2Fproject"] },
+    { repository: "group/project", args: ["api", "projects/group%2Fproject"], env: {} },
     {
       repository: "https://gitlab.example.com:8443/group/sub/project.git",
       args: ["api", "--hostname", "gitlab.example.com:8443", "projects/group%2Fsub%2Fproject"],
+      // The environment token is the default host's login, not this host's.
+      env: { GITLAB_TOKEN: "", GITLAB_ACCESS_TOKEN: "", OAUTH_TOKEN: "" },
     },
     {
       repository: "https://gitlab.com/group/project/-/tree/main",
       args: ["api", "--hostname", "gitlab.com", "projects/group%2Fproject"],
+      env: {},
     },
-  ])("looks up $repository by its project path", ({ repository, args }) =>
+  ])("looks up $repository by its project path", ({ repository, args, env }) =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
@@ -352,33 +374,43 @@ layer("GitLabCli.layer", (it) => {
       const glab = yield* GitLabCli.GitLabCli;
       yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository });
 
-      expect(mockedRun).toHaveBeenCalledWith(expect.objectContaining({ command: "glab", args }));
+      expect(mockedRun).toHaveBeenCalledWith(
+        expect.objectContaining({ command: "glab", args, env }),
+      );
     }),
   );
 
-  it.effect("keeps non-merge-request not-found failures generic", () =>
-    Effect.gen(function* () {
-      const cause = new VcsProcessExitError({
-        operation: "GitLabCli.execute",
-        command: "glab",
-        cwd: "/repo",
-        exitCode: 1,
-        detail: "GET 404 project not found",
-        failureKind: "not-found",
-      });
-      mockedRun.mockReturnValueOnce(Effect.fail(cause));
-
-      const error = yield* Effect.gen(function* () {
-        const glab = yield* GitLabCli.GitLabCli;
-        return yield* glab.getRepositoryCloneUrls({
+  it.effect.each(["not-found", "command-failed"] as const)(
+    "exposes fixed repository lookup details only for not-found (%s)",
+    (failureKind) =>
+      Effect.gen(function* () {
+        const cause = new VcsProcessExitError({
+          operation: "GitLabCli.execute",
+          command: "glab",
           cwd: "/repo",
-          repository: "missing/project",
+          exitCode: 1,
+          detail: "GET 404 project not found",
+          failureKind,
         });
-      }).pipe(Effect.flip);
+        mockedRun.mockReturnValueOnce(Effect.fail(cause));
 
-      assert.strictEqual(error._tag, "GitLabCliCommandError");
-      assert.strictEqual(error.cause, cause);
-    }),
+        const error = yield* Effect.gen(function* () {
+          const glab = yield* GitLabCli.GitLabCli;
+          return yield* glab.getRepositoryCloneUrls({
+            cwd: "/repo",
+            repository: "missing/\tproject",
+          });
+        }).pipe(Effect.flip);
+
+        assert.strictEqual(error._tag, "GitLabCliCommandError");
+        assert.strictEqual(error.cause, cause);
+        assert.strictEqual(
+          userFacingSourceControlDetail(error),
+          failureKind === "not-found"
+            ? "Repository missing/ project was not found. Check the owner and name and try again."
+            : undefined,
+        );
+      }),
   );
 
   it.effect("preserves rate-limit failures as a distinct error", () =>

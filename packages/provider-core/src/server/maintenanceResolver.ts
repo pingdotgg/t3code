@@ -20,8 +20,10 @@ import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Cache from "effect/Cache";
 import * as Config from "effect/Config";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -255,12 +257,32 @@ function isYarnGlobalCommandPath(commandPath: string): boolean {
  * Paths mise owns. npm globals under mise's own Node belong to npm, which proves their prefix.
  * A command wrapper is a symlink to the `mise` binary, which dispatches on argv[0].
  */
-function isMiseCommandPath(commandPath: string): boolean {
+function isMiseCommandPath(commandPath: string, env: NodeJS.ProcessEnv): boolean {
   const normalized = normalizeCommandPath(commandPath);
+  const dir = (root: string | undefined, ...segments: ReadonlyArray<string>) =>
+    root ? [normalizeCommandPath(root).replace(/\/+$/, ""), ...segments].join("/") : undefined;
+  // `MISE_DATA_DIR` and friends move mise's layout off its usual `/mise/` paths.
+  const installRoots = [
+    dir(env.MISE_DATA_DIR, "installs"),
+    dir(env.MISE_DATA_DIR, "i"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "installs"),
+    dir(env.MISE_INSTALLS_DIR),
+    dir(env.MISE_INSTALL_STORE_DIR),
+    dir(env.MISE_SYSTEM_INSTALLS_DIR),
+  ];
+  const otherRoots = [
+    dir(env.MISE_DATA_DIR, "shims"),
+    dir(env.MISE_DATA_DIR, "command-wrappers"),
+    dir(env.MISE_SYSTEM_DATA_DIR, "shims"),
+  ];
+  const under = (root: string | undefined) =>
+    root !== undefined && normalized.startsWith(`${root}/`);
   return (
     (normalized.includes("/mise/installs/") && !normalized.includes("/mise/installs/node/")) ||
     normalized.includes("/mise/shims/") ||
-    normalized.includes("/mise/command-wrappers/")
+    normalized.includes("/mise/command-wrappers/") ||
+    installRoots.some((root) => under(root) && !under(dir(root, "node"))) ||
+    otherRoots.some(under)
   );
 }
 
@@ -478,39 +500,110 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+// Provider packages npm may own. Naming all of them costs one npm start, about a second on
+// Windows, the same as naming one, so providers sharing a global prefix share a run.
+const npmProviderPackageNames = new Set<string>();
+const NPM_IGNORED_VARIABLE = /^(?:CLAUDE|ELECTRON_RUN_AS_NODE$)/i;
+type NpmGlobalLatestVersions = ReadonlyMap<string, string | null>;
+const npmGlobalLatestVersionRuns = new Map<
+  string,
+  Deferred.Deferred<Option.Option<NpmGlobalLatestVersions>>
+>();
+
 // Unlike `npm view`, `outdated` applies min-release-age, before and their excludes.
-const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
-  packageName: string,
+const runNpmGlobalLatestVersions = Effect.fn("runNpmGlobalLatestVersions")(function* (
+  npmPath: string,
   npmPrefix: string,
   env: NodeJS.ProcessEnv,
+  packageName: string,
 ) {
-  // Match the updater's npm and environment.
-  const npmPath = yield* resolveCommandPath("npm", {
-    env: { ...(yield* HostProcess.Environment), ...env },
-  });
-  if (!npmPath) return null;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // Only installed packages, so a missing one cannot force the `ls` fallback.
+  const others = yield* Effect.filter(
+    Array.from(npmProviderPackageNames).filter((name) => name !== packageName),
+    (name) =>
+      Effect.forEach([path.join(npmPrefix, "lib"), npmPrefix], (root) =>
+        fileSystem
+          .exists(path.join(root, "node_modules", ...name.split("/"), "package.json"))
+          .pipe(Effect.orElseSucceed(() => false)),
+      ).pipe(Effect.map((found) => found.includes(true))),
+  );
+  const packageNames = [packageName, ...others];
+  const versions = new Map<string, string | null>(packageNames.map((name) => [name, null]));
   const outdated = yield* runProbe(
     npmPath,
-    ["outdated", "-g", "--prefix", npmPrefix, "--json", packageName],
+    ["outdated", "-g", "--prefix", npmPrefix, "--json", ...packageNames],
     env,
     // npm outdated exits 1 when updates are available.
     [0, 1],
   );
   const outdatedEntries = outdated ? Option.getOrUndefined(decodeOutdated(outdated)) : undefined;
   // npm prints failures such as an unreachable registry as `{"error": ...}`, also exiting 1.
-  if (!outdatedEntries || "error" in outdatedEntries) return null;
-  const latest = nonEmptyString(outdatedEntries[packageName]?.latest);
-  if (latest) return latest;
+  if (!outdatedEntries || "error" in outdatedEntries) return versions;
+  for (const name of packageNames) {
+    versions.set(name, nonEmptyString(outdatedEntries[name]?.latest));
+  }
   // An empty result means the installed version is still the eligible release.
+  const current = packageNames.filter((name) => versions.get(name) === null);
+  if (current.length === 0) return versions;
   const listed = yield* runProbe(
     npmPath,
-    ["ls", "-g", "--prefix", npmPrefix, "--depth", "0", "--json", packageName],
+    ["ls", "-g", "--prefix", npmPrefix, "--depth", "0", "--json", ...current],
     env,
     // npm ls still prints the tree but exits 1 when other globals have problems.
     [0, 1],
   );
   const listedEntries = listed ? Option.getOrUndefined(decodeNpmList(listed)) : undefined;
-  return nonEmptyString(listedEntries?.dependencies?.[packageName]?.version);
+  for (const name of current) {
+    versions.set(name, nonEmptyString(listedEntries?.dependencies?.[name]?.version));
+  }
+  return versions;
+});
+
+const resolveNpmGlobalLatestVersion = Effect.fn("resolveNpmGlobalLatestVersion")(function* (
+  packageName: string,
+  npmPrefix: string,
+  env: NodeJS.ProcessEnv,
+): Effect.fn.Return<string | null, never, ProviderMaintenanceResolverServices> {
+  // Match the updater's npm and environment.
+  const npmPath = yield* resolveCommandPath("npm", {
+    env: { ...(yield* HostProcess.Environment), ...env },
+  });
+  if (!npmPath) return null;
+  // Claude's driver sets its own variables and drops ELECTRON_RUN_AS_NODE; npm reads neither.
+  const npmEnv = Object.entries(env).filter(([name]) => !NPM_IGNORED_VARIABLE.test(name));
+  const key = [npmPath, npmPrefix, environmentCacheKey(Object.fromEntries(npmEnv))].join("\0");
+  const versions = yield* Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const running = npmGlobalLatestVersionRuns.get(key);
+      if (running) return { running };
+      const own = Deferred.makeUnsafe<Option.Option<NpmGlobalLatestVersions>>();
+      npmGlobalLatestVersionRuns.set(key, own);
+      return { own };
+    }),
+    (claim) =>
+      claim.own
+        ? runNpmGlobalLatestVersions(npmPath, npmPrefix, env, packageName).pipe(Effect.asSome)
+        : Deferred.await(claim.running),
+    (claim, exit) =>
+      claim.own
+        ? Effect.sync(() => {
+            if (npmGlobalLatestVersionRuns.get(key) === claim.own) {
+              npmGlobalLatestVersionRuns.delete(key);
+            }
+          }).pipe(
+            Effect.andThen(
+              Deferred.succeed(claim.own, Exit.isSuccess(exit) ? exit.value : Option.none()),
+            ),
+          )
+        : Effect.void,
+  );
+  // A run interrupted before answering, or one started before this package was known, retries.
+  if (Option.isSome(versions) && versions.value.has(packageName)) {
+    return versions.value.get(packageName) ?? null;
+  }
+  return yield* resolveNpmGlobalLatestVersion(packageName, npmPrefix, env);
 });
 
 // npm names the tarball `${name}-${version}.tgz`, dropping a scope's `@` and its `/`.
@@ -626,7 +719,9 @@ export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMain
     const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
     const isShim = isMiseExecutablePath(context.realCommandPath);
     const looksMise =
-      isShim || commandPaths.some(isMiseCommandPath) || (yield* isMiseWrapperScript(context));
+      isShim ||
+      commandPaths.some((commandPath) => isMiseCommandPath(commandPath, context.env)) ||
+      (yield* isMiseWrapperScript(context));
     const manual = (installPath: string) =>
       makeManualOnlyProviderMaintenanceCapabilities({ ...owner, installPath });
     const notOwned = (installPath: string) => (looksMise ? manual(installPath) : null);
@@ -964,6 +1059,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   // npm proof outranks a containing Homebrew keg; Homebrew Node globals still belong to npm.
   const npmPrefix = yield* resolveNpmGlobalPrefix(context, packageName);
   if (npmPrefix) {
+    npmProviderPackageNames.add(packageName);
     const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
     // npm 12 requires script approval to install native binaries; older npm only warns about the flag.
     const capabilities = makeProviderMaintenanceCapabilities({
@@ -1086,27 +1182,40 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
 });
 
 /**
- * The port that installed the executable, "" when MacPorts owns it under an unusable name,
- * or null when it does not. MacPorts prefixes are root-owned and its Claude port disables
- * `claude update`, so neither npm nor the native updater can upgrade these installs.
+ * The port that installed the launcher or its target, "" when MacPorts owns it under an
+ * unusable name or its registry cannot be read, or null when it does not. MacPorts prefixes
+ * are root-owned and its Claude port disables `claude update`, so neither npm nor the native
+ * updater can upgrade these installs.
  */
-const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
+export const resolveMacPortsOwner = Effect.fn("resolveMacPortsOwner")(function* (
   context: ProviderMaintenanceResolutionContext,
 ) {
   if (context.platform === "win32") return null;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const siblingPort = path.join(path.dirname(context.resolvedCommandPath), "port");
-  const portPath = (yield* fileSystem.exists(siblingPort).pipe(Effect.orElseSucceed(() => false)))
-    ? siblingPort
-    : yield* resolveCommandPath("port", { env: context.env });
-  if (!portPath) return null;
-  const prefix = `${normalizeCommandPath(path.dirname(path.dirname(portPath)))}/`;
-  if (!normalizeCommandPath(context.realCommandPath).startsWith(prefix)) return null;
-  const output = yield* runProbe(portPath, ["provides", context.realCommandPath], context.env);
-  const name = output ? /\bis provided by: (\S+)/.exec(output)?.[1] : undefined;
-  if (name === undefined) return null;
-  return /^[\w.+-]+$/.test(name) ? name : "";
+  const commandPaths = [...new Set([context.resolvedCommandPath, context.realCommandPath])];
+  // A MacPorts prefix holds `bin/port`, so every prefix containing a command path is an ancestor.
+  const portPaths = new Set<string>();
+  for (const commandPath of commandPaths) {
+    for (let dir = path.dirname(commandPath); ; dir = path.dirname(dir)) {
+      portPaths.add(path.join(dir, "bin", "port"));
+      if (path.dirname(dir) === dir) break;
+    }
+  }
+  for (const portPath of portPaths) {
+    if (!(yield* fileSystem.exists(portPath).pipe(Effect.orElseSucceed(() => false)))) continue;
+    const prefix = `${normalizeCommandPath(path.dirname(path.dirname(portPath)))}/`;
+    const owned = commandPaths.filter((commandPath) =>
+      normalizeCommandPath(commandPath).startsWith(prefix),
+    );
+    if (owned.length === 0) continue;
+    const output = yield* runProbe(portPath, ["provides", ...owned], context.env);
+    // A failed registry lookup is no proof that the files are free to update.
+    if (output === null) return "";
+    const name = /\bis provided by: (\S+)/.exec(output)?.[1];
+    if (name !== undefined) return /^[\w.+-]+$/.test(name) ? name : "";
+  }
+  return null;
 });
 
 // Volta bin entries only identify its shim; the package image proves ownership.
@@ -1164,6 +1273,7 @@ const resolveNpmGlobalPrefix = Effect.fn("resolveNpmGlobalPrefix")(function* (
 export function makePackageManagedProviderMaintenanceResolver(
   definition: PackageManagedProviderMaintenanceDefinition,
 ): ProviderMaintenanceCapabilitiesResolver {
+  npmProviderPackageNames.add(definition.npmPackageName);
   return {
     resolve: (context) => resolvePackageManagedProviderMaintenance(definition, context),
   };

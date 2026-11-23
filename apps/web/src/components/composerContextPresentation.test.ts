@@ -1,8 +1,16 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ChatAttachmentId, ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildMessageContext } from "~/lib/composerContextRecords";
-import { composerContextRecordsFromDraft } from "./composerContextPresentation";
+import { composerFileNeedsReattach } from "~/composerDraftStore";
+import {
+  attachmentContextRecord,
+  buildMessageContext,
+  isSameComposerContextPayload,
+} from "~/lib/composerContextRecords";
+import {
+  composerContextRecordsFromDraft,
+  uploadedContextRecordFromDraft,
+} from "./composerContextPresentation";
 
 describe("composerContextRecordsFromDraft", () => {
   it("resolves each wire reference to its own backing draft even when producer ids collide", () => {
@@ -52,5 +60,89 @@ describe("composerContextRecordsFromDraft", () => {
     for (const record of message.records) {
       expect(draftRecords.get(record.contextId)?.kind).toBe(record.kind);
     }
+  });
+
+  it("resolves existing queued attachments under their original wire context ids", () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const imageContextId = ComposerContextId.make("image_local-shot");
+    const fileContextId = ComposerContextId.make("file_local-notes");
+    const imageId = ChatAttachmentId.make("server-shot");
+    const fileId = ChatAttachmentId.make("server-notes");
+    const source = {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-11-22T14:00:00.000Z",
+      appName: "Safari",
+      windowTitle: "Example",
+    };
+    const imageAttachment = {
+      type: "image" as const,
+      id: imageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+      source,
+    };
+    const draftRecords = composerContextRecordsFromDraft({
+      terminalContexts: [],
+      environmentId,
+      existingAttachments: [
+        {
+          attachment: imageAttachment,
+          url: "http://127.0.0.1/assets/server-shot",
+          contextIds: [imageContextId],
+        },
+        {
+          attachment: {
+            type: "file",
+            id: fileId,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 12,
+          },
+          url: null,
+          contextIds: [fileContextId],
+        },
+      ],
+    });
+
+    const imageEntry = draftRecords.get(imageContextId);
+    expect(imageEntry).toMatchObject({
+      kind: "image",
+      record: {
+        id: imageId,
+        name: "image.png",
+        previewUrl: "http://127.0.0.1/assets/server-shot",
+        source,
+      },
+    });
+    const uploadedImageRecord = uploadedContextRecordFromDraft(imageEntry!);
+    expect(uploadedImageRecord).toMatchObject({
+      kind: "image",
+      contextId: imageContextId,
+      attachmentId: imageId,
+      source,
+    });
+    expect(
+      isSameComposerContextPayload(
+        uploadedImageRecord!,
+        attachmentContextRecord({
+          attachment: imageAttachment,
+          attachmentId: imageId,
+          contextId: imageContextId,
+        }),
+      ),
+    ).toBe(true);
+
+    const fileEntry = draftRecords.get(fileContextId);
+    expect(fileEntry?.kind).toBe("file");
+    if (fileEntry?.kind === "file") {
+      expect(composerFileNeedsReattach(fileEntry.record)).toBe(false);
+      expect(fileEntry.record.uploadEnvironmentId).toBe(environmentId);
+    }
+    expect(uploadedContextRecordFromDraft(fileEntry!)).toMatchObject({
+      kind: "file",
+      contextId: fileContextId,
+      attachmentId: fileId,
+    });
   });
 });
