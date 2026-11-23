@@ -11409,9 +11409,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly scheduledWakeup?: boolean;
       readonly wakeFiresDuringRead?: boolean;
       readonly pinnedHead?: string;
+      readonly rotateMcp?: boolean;
     }) {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-stale-" });
       const projectDir = path.join(configDir, "projects", "-workspace");
       yield* fileSystem.makeDirectory(projectDir, { recursive: true });
@@ -11457,6 +11459,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           attachments: [],
           providerTurnOrdinal: ordinal,
         });
+      const setMcp = (ordinal: number) =>
+        input.rotateMcp === true
+          ? mcpSessions.set({
+              environmentId: EnvironmentId.make("environment-claude-stale-process"),
+              threadId: harness.threadId,
+              providerSessionId: `mcp-session-claude-stale-process-${ordinal}`,
+              providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+              runId: RunId.make(`claude-stale-process-run-${ordinal}`),
+              attemptId: RunAttemptId.make(`attempt-stale-process:${ordinal}`),
+              endpoint: "http://127.0.0.1:43123/mcp",
+              authorizationHeader: `Bearer claude-stale-process-run-${ordinal}`,
+              browserToolsAvailable: false,
+            })
+          : Effect.void;
+      yield* setMcp(1);
       yield* harness.runtime.startTurn(turn(1));
       if (input.backgroundShell === true) yield* harness.offerAndWait(wakeTaskStarted);
       if (input.scheduledWakeup === true || input.wakeFiresDuringRead === true) {
@@ -11479,6 +11496,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           input.transcript(harness.promptUuid(0)),
         );
       }
+      yield* setMcp(2);
       if (input.wakeFiresDuringRead !== true) {
         yield* harness.runtime.startTurn(turn(2));
         return harness;
@@ -11513,10 +11531,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             { type: "text", text: "y".repeat(1_200_000) },
           ]),
       },
+      {
+        name: "its MCP credential also rotated",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+        rotateMcp: true,
+      },
     ])("replaces a warm process when $name", (row) =>
       Effect.gen(function* () {
         const harness = yield* nextTurnAfter(row);
         assert.lengthOf(harness.processQueues, 2, "the next turn must open a fresh process");
+        assert.lengthOf(harness.setMcpServersCalls, 0);
         assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
         assert.isUndefined(harness.getOpenedOptions()?.resumeSessionAt);
       }).pipe(Effect.provide(layer)),
