@@ -7,6 +7,7 @@ mod approval_state;
 mod cache;
 mod cards;
 mod color;
+mod command_label;
 mod composer;
 mod composer_state;
 pub(crate) use self::composer_state::{
@@ -2564,7 +2565,7 @@ impl ChatView {
                             .a11y_group(format!("timeline.work.{id}.live"), ax_label)
                             .flex()
                             .flex_row()
-                            .items_center()
+                            .items_start()
                             .gap(px(6.0))
                             .w_full()
                             .min_w_0()
@@ -2583,6 +2584,7 @@ impl ChatView {
                                 div()
                                     .flex_1()
                                     .min_w_0()
+                                    .mt(px((24.0 - BODY_LINE_HEIGHT_PX) / 2.0))
                                     .overflow_hidden()
                                     .text_ellipsis()
                                     .whitespace_nowrap()
@@ -2858,7 +2860,8 @@ impl ChatView {
             .id(SharedString::from(format!("tool-{id}")))
             .flex()
             .flex_row()
-            .items_center()
+            // Icon sits at the first line, like web's baseline-aligned `WorkLogLine`.
+            .items_start()
             .gap(px(6.0))
             .w_full()
             .min_w_0()
@@ -2880,6 +2883,8 @@ impl ChatView {
                 div()
                     .flex_1()
                     .min_w_0()
+                    // Centres the text line in the 24px icon box, as `items_center` did.
+                    .mt(px((24.0 - BODY_LINE_HEIGHT_PX) / 2.0))
                     .overflow_hidden()
                     .text_ellipsis()
                     .whitespace_nowrap()
@@ -2910,6 +2915,8 @@ impl ChatView {
                         .justify_center()
                         .size(px(16.0))
                         .flex_none()
+                        // Centres the caret in the 24px first line.
+                        .mt(px(4.0))
                         .child(icons::icon(
                             if expanded {
                                 icons::CARET_DOWN
