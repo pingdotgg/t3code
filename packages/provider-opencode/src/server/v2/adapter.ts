@@ -2255,6 +2255,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const rootThreadId = root.providerThread.appThreadId;
       if (rootThreadId === null) return;
       const hasLiveWork =
+        replaying !== undefined ||
+        root.wakes.length > 0 ||
         runningCalls(root).some((call) => call.background) ||
         sessionsOf(root).some(
           (candidate) =>
@@ -3887,6 +3889,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               discardWakes(session, session.wakes.splice(0));
               session.reports.clear();
             }
+            yield* clearMcpToolResultsIfIdle(state);
             for (const session of sessions.toReversed()) yield* syncRoster(session);
           }
           // Stopped off the lock this reconcile holds; one still running waits for a Stop.
@@ -4627,6 +4630,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (wake?.running !== true) return;
       state.wakes.pop();
       yield* replay(wake);
+      yield* clearMcpToolResultsIfIdle(state);
       for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
       yield* syncRosterAncestors(state);
     });
@@ -4654,6 +4658,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           if (wake.running) state.unsettled = false;
           yield* replay(wake);
+          yield* clearMcpToolResultsIfIdle(state);
           for (const session of sessionsOf(state).toReversed()) yield* syncRoster(session);
           yield* syncRosterAncestors(state);
         }),
@@ -4722,6 +4727,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           }
           const running = state.wakes.some((wake) => wake.running);
           discardWakes(state, state.wakes.splice(0));
+          yield* clearMcpToolResultsIfIdle(state);
           yield* syncRosterAncestors(state);
           if (running) {
             markUnsettled(state);
