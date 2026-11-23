@@ -6,6 +6,8 @@ import {
   Message,
   MessageFlag,
   MessageType,
+  NameFlag,
+  RequestNameReply,
   Variant,
   sessionBus,
   type MessageBus,
@@ -16,6 +18,14 @@ import type { SnapShotKeyChord } from "@t3tools/contracts";
 import { HYPRLAND_CAPTURE_ACTION, portalShortcutTrigger } from "./linuxCaptureSession.ts";
 export { portalShortcutTrigger } from "./linuxCaptureSession.ts";
 
+const GNOME = "org.gnome.Shell.Extensions.T3SnapShot";
+const GNOME_PATH = "/org/gnome/Shell/Extensions/T3SnapShot";
+const GNOME_MODIFIERS: Record<string, string> = {
+  CTRL: "<Control>",
+  ALT: "<Alt>",
+  SHIFT: "<Shift>",
+  LOGO: "<Super>",
+};
 const PORTAL = "org.freedesktop.portal.Desktop";
 const PATH = "/org/freedesktop/portal/desktop";
 const SHORTCUTS = "org.freedesktop.portal.GlobalShortcuts";
@@ -69,6 +79,8 @@ export class PortalCaptureShortcut {
   private closed = false;
   private connection = 0;
   private owner = "";
+  private gnomeFallback = false;
+  private gnomeOwner = "";
   private namespace = "";
   private session = "";
   private shortcutId = "";
@@ -83,6 +95,7 @@ export class PortalCaptureShortcut {
   private readonly onStateChanged: () => void;
   private readonly bus: MessageBus;
   private readonly managedByHyprland: boolean;
+  private readonly gnome: boolean;
 
   constructor(
     appId: string,
@@ -91,6 +104,7 @@ export class PortalCaptureShortcut {
     onStateChanged: () => void,
     bus: MessageBus = sessionBus(),
     managedByHyprland = false,
+    gnome = false,
   ) {
     this.appId = appId;
     this.trigger = portalShortcutTrigger(shortcut);
@@ -98,6 +112,7 @@ export class PortalCaptureShortcut {
     this.onStateChanged = onStateChanged;
     this.bus = bus;
     this.managedByHyprland = managedByHyprland;
+    this.gnome = gnome;
     if (managedByHyprland)
       this.state = {
         shortcutRegistered: false,
@@ -238,6 +253,33 @@ export class PortalCaptureShortcut {
 
   private message = (message: Message) => {
     if (this.closed || message.type !== MessageType.SIGNAL) return;
+    if (this.gnomeFallback) {
+      if (
+        message.sender === DBUS &&
+        message.interface === DBUS &&
+        message.member === "NameOwnerChanged" &&
+        message.body[0] === GNOME
+      ) {
+        // GNOME Shell disables the extension while the screen is locked and re-enables it after.
+        this.gnomeOwner = typeof message.body[2] === "string" ? message.body[2] : "";
+        if (this.gnomeOwner) void this.bindExtension(this.gnomeOwner).catch(this.failed);
+        else
+          this.update({
+            shortcutRegistered: false,
+            shortcutPending: true,
+            shortcutCanRetry: false,
+            shortcutMessage: "Waiting for the GNOME extension…",
+          });
+      } else if (
+        message.sender === this.gnomeOwner &&
+        message.path === GNOME_PATH &&
+        message.interface === GNOME &&
+        message.member === "ShortcutActivated" &&
+        this.state.shortcutRegistered
+      )
+        this.onCapture();
+      return;
+    }
     if (
       message.sender === "org.freedesktop.DBus" &&
       message.interface === DBUS &&
@@ -373,6 +415,82 @@ export class PortalCaptureShortcut {
     });
   }
 
+  /** GNOME 45–47 portals lack GlobalShortcuts, so the bundled extension owns the chord. */
+  private async bindGnomeShortcut() {
+    const name = `${this.appId}.SnapShot.Shortcut`;
+    const requested = await this.call({
+      destination: DBUS,
+      path: "/org/freedesktop/DBus",
+      interface: DBUS,
+      member: "RequestName",
+      signature: "su",
+      body: [name, NameFlag.DO_NOT_QUEUE],
+    });
+    if (requested.body[0] !== RequestNameReply.PRIMARY_OWNER)
+      throw new Error("Another T3 Code instance already owns the capture shortcut.");
+    this.gnomeFallback = true;
+    await this.call({
+      destination: DBUS,
+      path: "/org/freedesktop/DBus",
+      interface: DBUS,
+      member: "AddMatch",
+      signature: "s",
+      body: [
+        `type='signal',sender='${DBUS}',interface='${DBUS}',member='NameOwnerChanged',arg0='${GNOME}'`,
+      ],
+    });
+    const owner = await this.call({
+      destination: DBUS,
+      path: "/org/freedesktop/DBus",
+      interface: DBUS,
+      member: "GetNameOwner",
+      signature: "s",
+      body: [GNOME],
+    }).catch((error: unknown) => {
+      if (error instanceof DBusError && error.type === `${DBUS}.Error.NameHasNoOwner`)
+        throw new Error(
+          "Set up the GNOME extension in SnapShots setup, then sign out and back in.",
+        );
+      throw error;
+    });
+    this.gnomeOwner = string(owner.body[0]);
+    await this.bindExtension(this.gnomeOwner);
+  }
+
+  private async bindExtension(owner: string) {
+    const parts = this.trigger.split("+");
+    const key = parts.pop()!;
+    const accelerator =
+      parts.map((part) => GNOME_MODIFIERS[part]).join("") +
+      (key.length === 1 ? key.toLowerCase() : key);
+    const bound = await this.call({
+      destination: owner,
+      path: GNOME_PATH,
+      interface: GNOME,
+      member: "BindShortcut",
+      signature: "ss",
+      body: [`${this.appId}.SnapShot.Shortcut`, accelerator],
+    }).then(
+      () => true,
+      (error: unknown) => {
+        if (owner !== this.gnomeOwner) return false;
+        if (error instanceof DBusError && error.type === `${DBUS}.Error.UnknownMethod`)
+          throw new Error(
+            "Update the GNOME extension in SnapShots setup, then sign out and back in.",
+          );
+        throw error;
+      },
+    );
+    // A newer owner appeared while this bind was in flight; its own bind reports the state.
+    if (!bound || owner !== this.gnomeOwner) return;
+    this.update({
+      shortcutRegistered: true,
+      shortcutPending: false,
+      shortcutCanRetry: false,
+      shortcutMessage: null,
+    });
+  }
+
   private async initialize(first: boolean) {
     const trigger = this.trigger;
     if (!process.env.FLATPAK_ID && !process.env.SNAP) {
@@ -412,7 +530,17 @@ export class PortalCaptureShortcut {
       member: "Get",
       signature: "ss",
       body: [SHORTCUTS, "version"],
+    }).catch((error: unknown) => {
+      // GDBus answers InvalidArgs for a missing interface; every portal interface has `version`.
+      if (
+        this.gnome &&
+        error instanceof DBusError &&
+        ["InvalidArgs", "UnknownInterface"].some((name) => error.type === `${DBUS}.Error.${name}`)
+      )
+        return undefined;
+      throw error;
     });
+    if (!version) return this.bindGnomeShortcut();
     this.version = decodeVersion(version.body[0]).value;
     for (const rule of [
       `type='signal',sender='${this.owner}',path_namespace='${PATH}'`,

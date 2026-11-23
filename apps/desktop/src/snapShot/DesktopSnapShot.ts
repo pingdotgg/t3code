@@ -1292,6 +1292,7 @@ export const make = Effect.gen(function* () {
             },
             undefined,
             hyprland,
+            hasGnomeSetup(),
           );
         },
         catch: shortcutFailure,
