@@ -5,7 +5,7 @@ import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
   McpAppHostRefusal,
-  mcpAppStyleVariables,
+  mcpAppThemeContext,
   mcpResourceBytes,
   type McpAppCallToolResult,
   type McpAppHost,
@@ -300,7 +300,7 @@ export function ThreadMcpApp(props: {
       const isFullscreen = current.props.displayMode === "fullscreen";
       return {
         theme: current.theme.appearance,
-        styles: { variables: mcpAppStyleVariables(current.theme.variables) },
+        ...mcpAppThemeContext(current.theme.variables),
         displayMode: isFullscreen ? "fullscreen" : "inline",
         availableDisplayModes: ["inline", "fullscreen"],
         containerDimensions: isFullscreen

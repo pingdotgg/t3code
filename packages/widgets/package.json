@@ -8,11 +8,10 @@
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "devDependencies": {
-    "@types/leaflet": "1.9.20",
     "@types/node": "catalog:",
     "echarts": "6.0.0",
     "katex": "^0.18.2",
-    "leaflet": "1.9.4",
+    "maplibre-gl": "5.24.1",
     "mermaid": "11.12.0",
     "vite-plus": "catalog:"
   }

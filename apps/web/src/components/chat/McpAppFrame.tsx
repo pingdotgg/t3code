@@ -2,7 +2,7 @@ import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import {
   makeMcpAppHost,
   McpAppHostRefusal,
-  mcpAppStyleVariables,
+  mcpAppThemeContext,
   mcpResourceBytes,
   type McpAppCallToolResult,
   type McpAppDisplayMode,
@@ -261,7 +261,7 @@ ${action.text}`,
       const current = readLive();
       return {
         theme: current.theme.appearance,
-        styles: { variables: mcpAppStyleVariables(current.theme.variables) },
+        ...mcpAppThemeContext(current.theme.variables),
         displayMode: current.displayMode,
         availableDisplayModes: fullscreenSupported ? ["inline", "fullscreen"] : ["inline"],
         containerDimensions:

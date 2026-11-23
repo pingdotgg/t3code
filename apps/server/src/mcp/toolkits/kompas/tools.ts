@@ -30,9 +30,6 @@ const Widget = Schema.Struct({
   tool: Schema.String,
   resourceUri: Schema.String,
   prefersBorder: Schema.optional(Schema.Boolean),
-  csp: Schema.optional(
-    Schema.Struct({ resourceDomains: Schema.optional(Schema.Array(Schema.String)) }),
-  ),
 });
 const Shown = Schema.Struct({ widget: Widget, message: Schema.String });
 

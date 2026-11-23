@@ -18,6 +18,8 @@ export type McpAppDisplayMode = "inline" | "fullscreen" | "pip";
 export interface McpAppHostContext {
   readonly theme: "light" | "dark";
   readonly styles: { readonly variables: Readonly<Record<string, string>> };
+  /** Our own widgets' colors. Other apps reject `styles.variables` the spec does not name. */
+  readonly kompas?: Readonly<Record<string, string>>;
   readonly displayMode: McpAppDisplayMode;
   readonly availableDisplayModes: ReadonlyArray<McpAppDisplayMode>;
   /**
@@ -570,9 +572,20 @@ function readDownloads(contents: unknown): ReadonlyArray<McpAppDownload> | undef
   return files;
 }
 
-export function mcpAppStyleVariables(
-  theme: Readonly<Record<string, string>>,
-): Record<string, string> {
+/** The part of the host context that carries the theme. */
+export function mcpAppThemeContext(theme: Readonly<Record<string, string>>) {
+  const kompas: Record<string, string> = {};
+  for (const [name, value] of [
+    ["--kompas-accent", theme["--primary"]],
+    ["--kompas-accent-foreground", theme["--primary-foreground"]],
+    ["--kompas-accent-surface", theme["--accent-surface"]],
+  ] as const) {
+    if (value !== undefined && value !== "") kompas[name] = value;
+  }
+  return { styles: { variables: mcpAppStyleVariables(theme) }, kompas };
+}
+
+function mcpAppStyleVariables(theme: Readonly<Record<string, string>>): Record<string, string> {
   const pick = (name: string) => theme[name];
   const pairs: ReadonlyArray<readonly [string, string | undefined]> = [
     ["--color-background-primary", pick("--background")],
@@ -597,9 +610,6 @@ export function mcpAppStyleVariables(
     ["--font-sans", pick("--font-sans")],
     ["--font-mono", pick("--font-mono")],
     ["--border-radius-md", pick("--radius")],
-    ["--kompas-accent", pick("--primary")],
-    ["--kompas-accent-foreground", pick("--primary-foreground")],
-    ["--kompas-accent-surface", pick("--accent-surface")],
   ];
   const variables: Record<string, string> = {};
   for (const [name, value] of pairs) {

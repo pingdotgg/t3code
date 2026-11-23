@@ -30,8 +30,11 @@ export type WidgetName =
   | "decision"
   | "suggestions";
 
-/** Keyless raster tiles for personal use; tile.openstreetmap.org's policy rules apps out. */
-const MAP_CSP: McpAppCsp = { resourceDomains: ["https://*.basemaps.cartocdn.com"] };
+/** Keyless tiles that allow apps, unlike tile.openstreetmap.org. MapLibre's worker is a blob. */
+const MAP_CSP: McpAppCsp = {
+  connectDomains: ["https://tiles.openfreemap.org"],
+  resourceDomains: ["https://tiles.openfreemap.org", "blob:"],
+};
 const cspOf = (widget: string) => (widget === "map" ? MAP_CSP : undefined);
 
 const MARKER = /^<!doctype html><!--kompas-widget:([a-z]+)-->/;
@@ -122,13 +125,11 @@ const make = Effect.gen(function* () {
           Effect.onError(() => fileSystem.remove(filePath, { force: true }).pipe(Effect.ignore)),
           Effect.mapError(storageError),
         );
-      const csp = cspOf(input.widget);
       return {
         attachmentId,
         tool: input.tool,
         resourceUri: `ui://widgets/${input.widget}`,
         prefersBorder: false,
-        ...(csp === undefined ? {} : { csp }),
       };
     },
   );

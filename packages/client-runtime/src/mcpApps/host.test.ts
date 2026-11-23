@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { makeMcpAppHost, McpAppHostRefusal, type McpAppHostContext } from "./host.ts";
+import {
+  makeMcpAppHost,
+  McpAppHostRefusal,
+  mcpAppThemeContext,
+  type McpAppHostContext,
+} from "./host.ts";
 
 const app = {
   attachmentId: "thread-1-app",
@@ -452,4 +457,10 @@ describe("makeMcpAppHost", () => {
       expect(sent.find((m) => m.id === id)?.result).toEqual({});
     }
   });
+});
+
+it("keeps colors the spec does not name out of styles.variables, which other apps reject", () => {
+  const { styles, kompas } = mcpAppThemeContext({ "--destructive": "#f00", "--primary": "#00f" });
+  expect(styles.variables).toEqual({ "--color-border-danger": "#f00" });
+  expect(kompas).toEqual({ "--kompas-accent": "#00f" });
 });

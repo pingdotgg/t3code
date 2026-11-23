@@ -32,7 +32,8 @@ const applyContext = (context: Json | undefined) => {
   }
   if (typeof context.locale === "string") locale = context.locale;
   const styles = context.styles as { readonly variables?: Record<string, string> } | undefined;
-  for (const [name, value] of Object.entries(styles?.variables ?? {})) {
+  const own = context.kompas as Record<string, string> | undefined;
+  for (const [name, value] of Object.entries({ ...styles?.variables, ...own })) {
     root.style.setProperty(name, value);
   }
   if (context.displayMode !== undefined) {
