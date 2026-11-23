@@ -6170,6 +6170,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.sourceThreadId} is not a fork of ${command.targetThreadId}.`,
       });
     }
+    if (sourceProjection.thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.sourceThreadId} was deleted.`,
+      });
+    }
+    if (targetProjection.thread.deletedAt !== null || targetProjection.thread.archivedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.targetThreadId} is archived or deleted.`,
+      });
+    }
     // Queued runs cannot consume merge-back context. Refuse under the target's
     // command lock before a pending transfer can block its ordinary messages.
     if (targetProjection.runs.some((run) => isActiveRun(run) || run.status === "queued")) {
