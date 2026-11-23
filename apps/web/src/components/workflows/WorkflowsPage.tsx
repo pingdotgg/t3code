@@ -147,8 +147,11 @@ export function WorkflowsPage() {
             reserveNativeControls={!paneOpen}
             className="border-b"
           >
-            <WorkspaceBreadcrumb ariaLabel={gt("Workflows breadcrumb")} className="flex-1">
-              <WorkspaceBreadcrumbItem current={!editing}>
+            <WorkspaceBreadcrumb
+              ariaLabel={gt("Workflows breadcrumb")}
+              className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+            >
+              <WorkspaceBreadcrumbItem current={!editing} className="shrink">
                 {editing ? (
                   <button
                     type="button"
@@ -170,7 +173,7 @@ export function WorkflowsPage() {
                   <WorkspaceBreadcrumbSeparator>
                     <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
                   </WorkspaceBreadcrumbSeparator>
-                  <WorkspaceBreadcrumbItem current={search.file === undefined}>
+                  <WorkspaceBreadcrumbItem current={search.file === undefined} className="shrink">
                     {search.file === undefined ? (
                       <h1 className="truncate">
                         <T context="workflow definition files">Definitions</T>
@@ -214,6 +217,7 @@ export function WorkflowsPage() {
               >
                 <SelectTrigger
                   size="sm"
+                  className="w-auto min-w-0 max-w-48"
                   aria-label={gt("Environment", { $context: "a T3 Code server to pick" })}
                 >
                   <SelectValue>
@@ -227,7 +231,7 @@ export function WorkflowsPage() {
                       environmentId}
                   </SelectValue>
                 </SelectTrigger>
-                <SelectPopup>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
                   {connected.map((environment) => (
                     <SelectItem key={environment.environmentId} value={environment.environmentId}>
                       {environment.label}
