@@ -1,5 +1,5 @@
 import DocumentPages, { sanitizeDocumentHtml } from "./DocumentPages";
-import { act, render, stubGlobal, type Screen } from "../../../test/render";
+import { act, fakeTimers, render, stubGlobal, type Screen } from "../../../test/render";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -20,9 +20,16 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), () => ({
   default: pdfWorkerUrl,
 }));
 
+// Like the real hook, the callback is a new function whenever its resource object is.
+const refreshers = new WeakMap<object, () => Promise<string | null>>();
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
-  useAssetUrlRefresh: () => refresh,
+  useAssetUrlRefresh: (_environmentId, resource) => {
+    if (!resource) return refresh;
+    let callback = refreshers.get(resource);
+    if (!callback) refreshers.set(resource, (callback = () => refresh()));
+    return callback;
+  },
   useAssetUrlState: assetUrlState,
 }));
 // Hands each document pdf.js opens to the PDF test, which awaits its load instead of a poll window.
@@ -65,7 +72,7 @@ vi.mock(import("./office/WordDocument"), async () => {
   };
 });
 
-import { getClientSettings } from "~/hooks/useSettings";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import LargeTextViewer from "./LargeTextViewer";
 import VirtualTablePreview from "./VirtualTablePreview";
@@ -575,8 +582,14 @@ describe("large text preview recovery", () => {
           environmentId={EnvironmentId.make("test")}
           threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
           absolutePath="/repo/large.txt"
+          draftCwd={null}
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
+          copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
@@ -831,6 +844,112 @@ describe("large text preview recovery", () => {
     });
     await vi.waitFor(check);
     expect(screen.container.textContent).toContain("C19");
+  });
+
+  it("keeps row height and vertical position stable across horizontal scroll, fresh row arrays, resize, and typography changes", async () => {
+    const columns = 35;
+    const header = Array.from({ length: columns }, (_, i) => `Col ${i}`);
+    const forcedEightLines = Array.from({ length: 8 }, (_, i) => `L${i + 1}`).join("\n");
+    const wrappedTwelveWords = Array.from({ length: 12 }, (_, i) => `segment${i + 1}`).join(" ");
+    const makeRows = () => [
+      header,
+      ...Array.from({ length: 24 }, (_, rowIndex) =>
+        Array.from({ length: columns }, (_, columnIndex) => {
+          if (rowIndex === 0) {
+            if (columnIndex >= 10 && columnIndex < 28) return forcedEightLines;
+            if (columnIndex === 34) return wrappedTwelveWords;
+          }
+          if (columnIndex === 33 && rowIndex % 3 === 1) return forcedEightLines;
+          // Wide lowercase glyphs that wrap without spaces or newlines.
+          if (rowIndex === 2 && columnIndex === 34) return "m".repeat(11);
+          return `r${rowIndex + 1}-c${columnIndex}`;
+        }),
+      ),
+    ];
+    const view = (width: number) => (
+      <div style={{ display: "flex", height: 320, width }}>
+        <VirtualTablePreview
+          name="wide-wrapped.csv"
+          count={25}
+          columns={columns}
+          header={header}
+          // Fresh arrays per call must not loop or lose measured row heights.
+          getRows={(page) => (page === 0 ? makeRows() : undefined)}
+        />
+      </div>
+    );
+    const previousSettings = getClientSettings();
+    const previousRootFontSize = document.documentElement.style.fontSize;
+    try {
+      await using screen = await render(view(420));
+      const horizontal = () => screen.container.querySelector('[role="table"]')!.parentElement!;
+      const vertical = () => screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
+      const row = (index: number) =>
+        screen.container.querySelector<HTMLElement>(`[data-preview-row="${index}"]`)!;
+
+      await vi.waitFor(() => {
+        expect(row(1)).not.toBeNull();
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(150);
+      });
+
+      const initialRow1Height = row(1).getBoundingClientRect().height;
+      const initialRow2Height = row(2).getBoundingClientRect().height;
+      const initialRow3Height = row(3).getBoundingClientRect().height;
+      const initialRow4Top = row(4).getBoundingClientRect().top;
+
+      // Scroll to the far right where the word-wrapped column 34 mounts after 18 newline cells.
+      await act(() => {
+        horizontal().scrollLeft = horizontal().scrollWidth;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("segment12"));
+
+      expect(Math.abs(row(1).getBoundingClientRect().height - initialRow1Height)).toBeLessThan(1);
+      expect(Math.abs(row(2).getBoundingClientRect().height - initialRow2Height)).toBeLessThan(1);
+      expect(row(3).getBoundingClientRect().height).toBeGreaterThan(40);
+      expect(Math.abs(row(3).getBoundingClientRect().height - initialRow3Height)).toBeLessThan(1);
+      expect(Math.abs(row(4).getBoundingClientRect().top - initialRow4Top)).toBeLessThan(1);
+
+      // Scroll vertically into the table, then sweep horizontally back to the left edge.
+      await act(() => {
+        vertical().scrollTop = 120;
+        vertical().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(row(5)).not.toBeNull());
+      const scrolledRow5Top = row(5).getBoundingClientRect().top;
+      const scrolledRow5Height = row(5).getBoundingClientRect().height;
+
+      await act(() => {
+        horizontal().scrollLeft = 0;
+        horizontal().dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
+      await vi.waitFor(() => expect(screen.container.textContent).toContain("r6-c0"));
+
+      expect(Math.abs(row(5).getBoundingClientRect().height - scrolledRow5Height)).toBeLessThan(1);
+      expect(Math.abs(row(5).getBoundingClientRect().top - scrolledRow5Top)).toBeLessThan(1);
+
+      // Widening the container widens each uniform column, reducing wrapped line count.
+      await screen.rerender(view(1600));
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeLessThan(initialRow1Height),
+      );
+      const widenedRow1Height = row(1).getBoundingClientRect().height;
+
+      // Typography changes invalidate cached minimums even at the same container width.
+      await act(() => {
+        document.documentElement.style.fontSize = "20px";
+        __setClientSettingsForTests({
+          ...previousSettings,
+          fontSizeInterface: previousSettings.fontSizeInterface + 4,
+        });
+      });
+      await vi.waitFor(() =>
+        expect(row(1).getBoundingClientRect().height).toBeGreaterThan(widenedRow1Height),
+      );
+    } finally {
+      document.documentElement.style.fontSize = previousRootFontSize;
+      __setClientSettingsForTests(previousSettings);
+    }
   });
 
   it("reveals and highlights requested source lines again for a new request", async () => {
@@ -1232,6 +1351,28 @@ describe("document output sanitization", () => {
     expect(html).not.toContain("https://");
   });
 });
+it("keeps an attachment URL when the parent passes a fresh asset object for the same attachment", async () => {
+  const url = URL.createObjectURL(new Blob(["%PDF-1.4"], { type: "application/pdf" }));
+  refresh.mockReset().mockResolvedValue(url);
+  const preview = () => (
+    <AttachmentFilePreview
+      name="report.pdf"
+      mimeType="application/pdf"
+      sizeBytes={8}
+      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "report" }}
+    />
+  );
+  try {
+    await using screen = await render(preview());
+    await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    // FilePreviewPanel rebuilds `asset` when an agent command completes.
+    await screen.rerender(preview());
+    expect(refresh).toHaveBeenCalledTimes(1);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
 it("opens a known empty attachment even when its range response is inaccessible", async () => {
   refresh.mockResolvedValue("https://unreachable.invalid/empty.txt");
   await using screen = await render(
@@ -1592,6 +1733,58 @@ it("loads an edited HTML file outside the workspace from a renewed URL", async (
   );
 });
 
+it("keeps an unchanged workspace HTML page loaded across commands and renews its grant", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/repo/report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+    />
+  );
+  const minted = (url: string, fileRevision: string, expiresAt: number) =>
+    assetUrlState.mockReturnValue({ _tag: "Success", url, expiresAt, fileRevision });
+  const shownSrc = (screen: Screen) =>
+    screen.container.querySelector("iframe")?.getAttribute("src");
+  refresh.mockReset();
+  using _timers = fakeTimers();
+  vi.setSystemTime(0);
+  const expiresAt = 60 * 60_000;
+  minted("data:text/html,original", "one", expiresAt);
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+
+  // Agent commands re-mint the URL; the page and everything it loaded are unchanged.
+  minted("data:text/html,renewed", "one", expiresAt + 30 * 60_000);
+  await screen.rerender(preview("second"));
+  await screen.rerender(preview("third"));
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,original/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // Its grant is about to expire, so the page moves to the URL minted since.
+  await act(() => vi.advanceTimersByTime(59 * 60_000));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed/);
+  expect(refresh).not.toHaveBeenCalled();
+
+  // With no command since, the page asks for a fresh URL itself and moves to it.
+  refresh.mockResolvedValue(null);
+  await act(() => vi.advanceTimersByTime(30 * 60_000));
+  expect(refresh).toHaveBeenCalledTimes(1);
+  minted("data:text/html,renewed-again", "one", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("third"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,renewed-again/);
+
+  minted("data:text/html,edited", "two", expiresAt + 90 * 60_000);
+  await screen.rerender(preview("fourth"));
+  expect(shownSrc(screen)).toMatch(/^data:text\/html,edited/);
+});
+
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
   firstHeight = 140,
@@ -1764,7 +1957,9 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
   );
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
   const first = screen.container.querySelector("iframe")!;
+  const firstOutput = first.parentElement!;
   expect(first.srcdoc).toContain("saved 0-0");
+  await vi.waitFor(() => expect(first.clientHeight).toBeGreaterThan(0));
   const viewport = screen.container.querySelector<HTMLElement>(".scrollbar-gutter-both")!;
   await act(() => {
     viewport.scrollTop = viewport.scrollHeight;
@@ -1778,12 +1973,27 @@ it("mounts a bounded set of saved notebook outputs as the reader scrolls", async
     expect(first.isConnected).toBe(false);
   });
   expect(screen.container.querySelectorAll("iframe").length).toBeLessThanOrEqual(16);
+  const reservedHeight = firstOutput.getBoundingClientRect().height;
+  using cleanup = new DisposableStack();
+  const pending = new AbortController();
+  cleanup.defer(() => pending.abort());
+  // Hold the remounted frame in its loading state until it scrolls away again.
+  firstOutput.addEventListener("load", (event) => event.stopPropagation(), {
+    capture: true,
+    signal: pending.signal,
+  });
   await act(() => {
     viewport.scrollTop = 0;
   });
-  await vi.waitFor(() =>
-    expect(screen.container.querySelector("iframe")?.srcdoc).toContain("saved 0-0"),
-  );
+  await vi.waitFor(() => {
+    expect(firstOutput.querySelector("iframe")?.srcdoc).toContain("saved 0-0");
+    expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
+  });
+  await act(() => {
+    viewport.scrollTop = viewport.scrollHeight;
+  });
+  await vi.waitFor(() => expect(firstOutput.querySelector("iframe")).toBeNull());
+  expect(firstOutput.getBoundingClientRect().height).toBe(reservedHeight);
 });
 
 it.each([

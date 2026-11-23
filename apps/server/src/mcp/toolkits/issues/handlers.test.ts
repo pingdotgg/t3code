@@ -10,6 +10,10 @@ import {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import {
+  IssueTrackerError,
+  type StandaloneIssueTrackerApi,
+} from "@t3tools/source-control-core/server/IssueTracker";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -18,10 +22,13 @@ import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
 import * as IssueService from "../../../issue/IssueService.ts";
+import * as IssueTrackerRegistry from "../../../issue/IssueTrackerRegistry.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
+import * as IssueTrackerBindings from "../../../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -133,37 +140,42 @@ const detail: IssueDetail = {
   linkedPullRequests: [],
 };
 
+const projectLayer = Layer.mock(ProjectService.ProjectService)({
+  getShell: (id) => Effect.succeed(id === PROJECT_ID ? Option.some(project) : Option.none()),
+  listShells: () => Effect.succeed([project]),
+});
+
 const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issues: ReadonlyArray<ThreadIssueLink> = [],
+  issueLayer?: Layer.Layer<IssueService.IssueService>,
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
   const layerDependencies = Layer.mergeAll(
-    Layer.mock(ProjectService.ProjectService)({
-      getShell: (id) => Effect.succeed(id === PROJECT_ID ? Option.some(project) : Option.none()),
-      listShells: () => Effect.succeed([project]),
-    }),
+    projectLayer,
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) => Effect.succeed(id === THREAD_ID ? makeThread(issues) : null),
     }),
-    Layer.mock(IssueService.IssueService)({
-      detail: () => Effect.succeed(detail),
-      projectScope: (projectId) =>
-        Effect.succeed({
-          projectId,
-          tracker: GITHUB,
-          host: "github.com",
-          scope: "t3tools/t3code",
-        }),
-      resolveUrl: (url) =>
-        Effect.succeed({
-          projectId: PROJECT_ID,
-          tracker: GITHUB,
-          host: "github.com",
-          scope: "t3tools/t3code",
-          key: url.split("/").at(-1)!,
-          writable: true,
-        }),
-    }),
+    issueLayer ??
+      Layer.mock(IssueService.IssueService)({
+        detail: () => Effect.succeed(detail),
+        linkMetadata: () => Effect.succeed(detail),
+        projectScope: (projectId) =>
+          Effect.succeed({
+            projectId,
+            tracker: GITHUB,
+            host: "github.com",
+            scope: "t3tools/t3code",
+          }),
+        resolveUrl: (url) =>
+          Effect.succeed({
+            projectId: PROJECT_ID,
+            tracker: GITHUB,
+            host: "github.com",
+            scope: "t3tools/t3code",
+            key: url.split("/").at(-1)!,
+            writable: true,
+          }),
+      }),
     Layer.mock(ThreadIssueService.ThreadIssueService)({
       link: (input) =>
         Ref.update(links, (recorded) => [...recorded, input]).pipe(
@@ -198,6 +210,141 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
 });
 
 describe("issue toolkit handlers", () => {
+  it.effect("returns a Linear issue by URL with one issue read left before the rate limit", () =>
+    Effect.gen(function* () {
+      const tracker = IssueTrackerKind.make("linear");
+      const host = "linear.app";
+      const url = "https://linear.app/acme/issue/ENG-7/seven";
+      const readsLeft = yield* Ref.make(1);
+      const linear: StandaloneIssueTrackerApi = {
+        kind: tracker,
+        capabilities: detail.capabilities,
+        standalone: {
+          tracker,
+          displayName: "Linear",
+          host,
+          scopeNoun: "team",
+          credential: { label: "Personal API key", helpUrl: null },
+        },
+        parseIssueUrl: (link) =>
+          link.href === url ? { host, workspace: "acme", scope: "ENG", key: "ENG-7" } : null,
+        probeCredential: () => Effect.succeed({ account: "user", scopes: [] }),
+        getViewer: () => Effect.succeed("user"),
+        listIssues: () => Effect.succeed({ items: [], nextCursor: null }),
+        getComments: () => Effect.succeed({ comments: [], nextCursor: null }),
+        getIssue: ({ key }) =>
+          Ref.getAndUpdate(readsLeft, (left) => left - 1).pipe(
+            Effect.flatMap((left) =>
+              left > 0
+                ? Effect.succeed({
+                    ...detail,
+                    reactions: [],
+                    key,
+                    url,
+                    displayKey: key,
+                    body: "Repro steps",
+                  })
+                : Effect.fail(
+                    new IssueTrackerError({
+                      tracker,
+                      operation: "getIssue",
+                      reason: "rate-limited",
+                      detail: "Linear's rate limit was reached.",
+                    }),
+                  ),
+            ),
+          ),
+      };
+      const issueLayer = IssueService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            projectLayer,
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+            Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
+              list: () => Effect.succeed(new Map([[PROJECT_ID, { tracker, scope: "ENG" }]])),
+            }),
+            Layer.succeed(
+              IssueTrackerRegistry.IssueTrackerRegistry,
+              IssueTrackerRegistry.fromTrackers([linear]),
+            ),
+          ),
+        ),
+      );
+      const harness = yield* makeHarness([], issueLayer);
+      const result = yield* harness.call("read_issue", { url }).pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Success",
+        success: { url, displayKey: "ENG-7", title: "Seven", body: "Repro steps" },
+      });
+    }),
+  );
+
+  it.effect("files an issue in the bound Linear team an agent names", () =>
+    Effect.gen(function* () {
+      const tracker = IssueTrackerKind.make("linear");
+      const host = "linear.app";
+      const filedIn = yield* Ref.make<ReadonlyArray<string>>([]);
+      const linear: StandaloneIssueTrackerApi = {
+        kind: tracker,
+        capabilities: detail.capabilities,
+        standalone: {
+          tracker,
+          displayName: "Linear",
+          host,
+          scopeNoun: "team",
+          credential: { label: "Personal API key", helpUrl: null },
+        },
+        parseIssueUrl: () => null,
+        probeCredential: () => Effect.succeed({ account: "user", scopes: [] }),
+        getViewer: () => Effect.succeed("user"),
+        listIssues: () => Effect.succeed({ items: [], nextCursor: null }),
+        getComments: () => Effect.succeed({ comments: [], nextCursor: null }),
+        getIssue: () => Effect.die("unused"),
+        create: ({ scope }) =>
+          Ref.update(filedIn, (teams) => [...teams, scope]).pipe(
+            Effect.as({
+              key: `${scope}-1`,
+              url: `https://linear.app/acme/issue/${scope}-1`,
+              displayKey: `${scope}-1`,
+            }),
+          ),
+      };
+      const issueLayer = IssueService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            projectLayer,
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+            Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
+              list: () =>
+                Effect.succeed(
+                  new Map([[PROJECT_ID, { tracker, scope: "ENG", additionalScopes: ["OPS"] }]]),
+                ),
+            }),
+            Layer.succeed(
+              IssueTrackerRegistry.IssueTrackerRegistry,
+              IssueTrackerRegistry.fromTrackers([linear]),
+            ),
+          ),
+        ),
+      );
+      const harness = yield* makeHarness([], issueLayer);
+
+      expect(
+        yield* harness.call("create_issue", { title: "Backup ran twice", scope: "ops" }),
+      ).toMatchObject({ tracker, scope: "OPS", key: "OPS-1" });
+      expect(yield* harness.call("create_issue", { title: "Label typo" })).toMatchObject({
+        scope: "ENG",
+        key: "ENG-1",
+      });
+      const unbound = yield* harness
+        .call("create_issue", { title: "Flaky test", scope: "QA" })
+        .pipe(Effect.flip);
+      expect(unbound).toMatchObject({ _tag: "IssueOperationError", reason: "not-found" });
+      expect(unbound.message).toContain("Use one of: ENG, OPS.");
+      expect(yield* Ref.get(filedIn)).toEqual(["OPS", "ENG"]);
+    }),
+  );
+
   it.effect("refuses a credential without the issues capability", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

@@ -184,6 +184,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
       connectToOpenCodeServer: () =>
         Effect.succeed({
           url: "http://test.invalid",
+          version: "1.14.19",
           external: turnSettings.exitCode === undefined,
           exitCode: turnSettings.exitCode ?? null,
         }),
@@ -192,6 +193,7 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },
       resolveAttachmentPath: () => null,
+      compatibility: () => Effect.undefined,
       ...host,
     } as unknown as ProviderHost.ProviderHost["Service"]),
   );
@@ -1078,6 +1080,94 @@ describe("OpenCodeAdapterV2", () => {
             event.turnItem.type === "assistant_message" &&
             event.turnItem.text === "Post-compaction step",
         ),
+      );
+    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
+  );
+
+  it.effect("drops context usage carried over from before a completed compaction", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      let promptId = "";
+      const harness = yield* makeOpenCodeRuntimeHarness("compaction-usage", "root", {
+        event: { subscribe: async () => ({ stream: nativeEvents.stream }) },
+        session: {
+          create: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          get: async () => ({ data: { id: "root", time: { created: 1, updated: 1 } } }),
+          promptAsync: async (input: { messageID: string }) => {
+            promptId = input.messageID;
+            return { data: true };
+          },
+          abort: async () => ({ data: true }),
+          children: async () => ({ data: [] }),
+        },
+      });
+      const inherited = yield* harness.runtime.resumeThread({
+        providerThread: {
+          ...harness.providerThread,
+          contextUsage: { usedTokens: 150_000, maxTokens: 160_000 },
+        },
+      });
+      const received = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* harness.startTurn("hello", inherited);
+      const status = (type: "busy" | "idle") => ({
+        type: "session.status",
+        properties: { sessionID: "root", status: { type } },
+      });
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: promptId, role: "user", time: { created: 1 } },
+          },
+        }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("busy")));
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: "assistant", role: "assistant", time: { created: 1 }, parentID: promptId },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "step-finish",
+              id: "pre-compaction-step",
+              sessionID: "root",
+              messageID: "assistant",
+              reason: "stop",
+              cost: 0,
+              tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({ type: "session.compacted", properties: { sessionID: "root" } }),
+      );
+      yield* Effect.promise(() => nativeEvents.push(status("idle")));
+
+      const events = Array.from(yield* Fiber.join(received));
+      const usage = events.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.isNull(usage.at(-1));
+      const settled = events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
       );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
@@ -3758,6 +3848,7 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
           resolveAttachmentPath: () => null,
+          compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
       const threadId = ThreadId.make("thread-opencode-admission-race");
@@ -4402,6 +4493,7 @@ describe("OpenCodeAdapterV2", () => {
         Effect.provideService(ProviderHost.ProviderHost, {
           paths: { cwd: "/workspace" },
           resolveAttachmentPath: () => null,
+          compatibility: () => Effect.undefined,
         } as unknown as ProviderHost.ProviderHost["Service"]),
       );
       const threadId = ThreadId.make("thread-opencode-initial-stop");
@@ -5003,6 +5095,31 @@ describe("OpenCodeAdapterV2", () => {
       }),
     );
     assert.equal(permissionAction(approvalRequiredWorkspaceWrite, "edit"), "ask");
+
+    // A multi-folder thread reaches its other folders, and edits there still ask.
+    const multiFolder = openCodePermissionRules(
+      runtimePolicy("approval-required", {
+        workspace: { folders: [], extraRoots: ["/repos/api/", "/repos/api?", "/repos/a*"] },
+      }),
+    );
+    // A root with a glob character would also match its siblings, so it keeps asking.
+    assert.deepEqual(
+      multiFolder
+        .filter((rule) => rule.permission === "external_directory" && rule.action === "allow")
+        .map((rule) => rule.pattern),
+      ["/repos/api/*"],
+    );
+    assert.deepInclude(multiFolder, {
+      permission: "external_directory",
+      pattern: "/repos/api/*",
+      action: "allow",
+    });
+    assert.equal(permissionAction(multiFolder, "edit"), "ask");
+    assert.notDeepInclude(approvalRequired, {
+      permission: "external_directory",
+      pattern: "/repos/api/*",
+      action: "allow",
+    });
   });
 
   it("enforces non-interactive sandbox policy through OpenCode permissions", () => {
@@ -5266,6 +5383,34 @@ it.live.each([true, false])("opens an authenticated OpenCode session (external=%
     assert.include(requests, "/event");
     assert.include(requests, "/global/health");
     assert.equal(managedStarts, external ? 0 : 1);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide([
+      NodeServices.layer,
+      TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+      IdAllocator.layer,
+      McpProviderSessions.layer,
+    ]),
+  ),
+);
+
+it.effect("refuses a session on a server version the policy rates broken", () =>
+  Effect.gen(function* () {
+    const error = yield* makeOpenCodeRuntimeHarness(
+      "broken-version",
+      "ses_broken",
+      {},
+      {
+        compatibility: () =>
+          Effect.succeed({
+            status: "broken" as const,
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
+      },
+    ).pipe(Effect.flip);
+    assert.include(JSON.stringify(error), "OpenCode 1.14.19 does not work");
   }).pipe(
     Effect.scoped,
     Effect.provide([

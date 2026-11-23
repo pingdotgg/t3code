@@ -117,6 +117,35 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
+  it("builds no child index while no child asks for input", () => {
+    const { registry, threads, snapshotAtom } = makeHarness();
+    let parentIdReads = 0;
+    const child = {
+      ...v2ThreadShell,
+      id: ThreadId.make("child"),
+      creationSource: "mcp" as const,
+      lineage: {
+        rootThreadId: v2ThreadShell.id,
+        relationshipToParent: "subagent" as const,
+        // Nothing is pending, so only the child index would read parent ids.
+        get parentThreadId() {
+          parentIdReads++;
+          return v2ThreadShell.id;
+        },
+      },
+    };
+    const inputs = threads.childThreadInputsAtom({ environmentId, threadId: v2ThreadShell.id });
+    const dispose = registry.mount(inputs);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [v2ThreadShell, child],
+    });
+    expect(registry.get(inputs)).toEqual([]);
+    expect(parentIdReads).toBe(0);
+    dispose();
+    registry.dispose();
+  });
+
   it("preserves ordered reference arrays when a middle thread changes", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const snapshot = {
@@ -216,6 +245,8 @@ describe("v2 thread shell lists", () => {
       threads: [root, { ...legacyChild, status: "completed" as const }],
     });
     expect(registry.get(inputs)).toEqual([]);
+    registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
+    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
     dispose();
     registry.dispose();
   });
