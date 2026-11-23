@@ -8,6 +8,7 @@ import type {
   TableCell,
   Text,
 } from "mdast";
+import { remarkSpacedMediaPaths } from "./markdownSpacedMediaPaths.ts";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
 import remarkParse from "remark-parse";
@@ -97,6 +98,7 @@ function rehypePreserveBareAnchorPlaceholders() {
 
 export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   remarkGfm,
+  remarkSpacedMediaPaths,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkLinkAbsoluteFilePaths,
@@ -113,6 +115,7 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS: PluggableList = [
 // Leading whitespace is kept only where each line renders as a line.
 export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
   remarkGfm,
+  remarkSpacedMediaPaths,
   remarkEndAutolinksAtScriptPunctuation,
   remarkKeepAutolinkSuffixes,
   remarkKeepLeadingWhitespace,

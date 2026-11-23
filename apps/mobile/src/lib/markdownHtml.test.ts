@@ -14,6 +14,15 @@ import { ENRICHED_INLINE_FILE_LINK_REGEX } from "./enrichedLinkPresentation";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { parseMarkdown } from "react-native-enriched-markdown/src/web/parseMarkdown";
 
+it("renders a bare absolute image destination containing spaces in native Markdown", () => {
+  const path = "/Users/test/Mobile Documents/shot.png";
+  const markdown = `![Screenshot](${path})`;
+  expect(markdownImageSources(markdown)).toEqual([path]);
+  expect(markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX)).toBe(
+    `![Screenshot](<${path}>)`,
+  );
+});
+
 describe("HTML in native Markdown", () => {
   it("preserves screenshot URLs and captions from GitHub HTML image embeds", () => {
     expect(
