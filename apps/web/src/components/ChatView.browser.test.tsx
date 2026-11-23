@@ -588,7 +588,7 @@ it("a file picked after the phone composer collapses still attaches", async () =
   using _uploads = acceptAttachmentUploads();
   const editor = page.getByTestId("composer-editor");
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
-  await userEvent.click(editor);
+  await userEvent.click(page.getByRole("button", { name: "Expand composer" }));
   await expect.element(page.getByRole("button", { name: "Attach files" })).toBeVisible();
   const input = document.querySelector<HTMLInputElement>(
     'form[data-chat-composer-form] input[type="file"]',
@@ -596,13 +596,22 @@ it("a file picked after the phone composer collapses still attaches", async () =
   expect(input).not.toBeNull();
 
   // Opening the native picker blurs the editor, which collapses the phone composer.
-  (editor.element() as HTMLElement).blur();
-  await expect.element(page.getByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
+  await vi.waitFor(() => {
+    const attachButton = document.querySelector('button[aria-label="Attach files"]');
+    if (attachButton) {
+      const editorEl = editor.element() as HTMLElement;
+      editorEl.focus();
+      editorEl.blur();
+    }
+    expect(attachButton).toBeNull();
+  });
   const files = new DataTransfer();
   files.items.add(new File([PNG], "picked.png", { type: "image/png" }));
   input!.files = files.files;
   input!.dispatchEvent(new Event("change", { bubbles: true }));
 
+  await expect.element(page.getByRole("button", { name: "Preview picked.png" })).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Expand composer" }));
   await expect.element(page.getByRole("img", { name: "picked.png" })).toBeVisible();
 });
 
