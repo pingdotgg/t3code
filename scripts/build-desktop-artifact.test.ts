@@ -556,31 +556,27 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it.effect("ad-hoc signs unsigned macOS builds so the app keeps its bundle identifier", () =>
     Effect.gen(function* () {
-      const unsigned = yield* createBuildConfig(
-        "mac",
-        "dir",
-        "0.0.33",
-        false,
-        false,
-        undefined,
-        undefined,
-      );
-      const signed = yield* createBuildConfig(
-        "mac",
-        "dir",
-        "0.0.33",
-        true,
-        false,
-        undefined,
-        undefined,
-      );
-
-      assert.equal(unsigned.mac?.identity, "-");
-      assert.equal(unsigned.mac?.hardenedRuntime, false);
-      assert.isUndefined(unsigned.mac?.sign);
-      assert.isString(signed.mac?.sign);
-      assert.isUndefined(signed.mac?.identity);
-      assert.isUndefined(signed.mac?.hardenedRuntime);
+      for (const signed of [false, true]) {
+        const config = yield* createBuildConfig(
+          "mac",
+          "dir",
+          "0.0.33",
+          signed,
+          false,
+          undefined,
+          undefined,
+        );
+        const { sign, identity, hardenedRuntime } = config.mac as Record<string, unknown>;
+        if (signed) {
+          assert.isString(sign);
+          assert.isUndefined(identity);
+          assert.isUndefined(hardenedRuntime);
+        } else {
+          assert.isUndefined(sign);
+          assert.equal(identity, "-");
+          assert.equal(hardenedRuntime, false);
+        }
+      }
     }),
   );
 
