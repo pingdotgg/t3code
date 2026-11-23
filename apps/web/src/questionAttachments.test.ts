@@ -5,7 +5,12 @@ import {
 import { ApprovalRequestId, EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { beforeEach, expect, it, vi } from "vite-plus/test";
-import { useComposerDraftStore } from "./composerDraftStore";
+import { composerTargetKey, useComposerDraftStore } from "./composerDraftStore";
+import {
+  addPreparingComposerImages,
+  cancelPreparingComposerImages,
+  getPreparingComposerImages,
+} from "./components/chat/preparingComposerImages";
 import { formatInlineContextReference } from "./lib/composerContextReferences";
 import { threadContextReference } from "./lib/composerContextRecords";
 import {
@@ -217,5 +222,48 @@ it.each(["cancelled", "expired"] as const)(
       persistedAttachments: [savedPhoto],
     });
     expect(usePendingUserInputAnswers.getState()).toEqual({});
+  },
+);
+
+it.each(["cancelled", "expired"] as const)(
+  "returns preparing images to the thread draft when a question is %s",
+  (status) => {
+    const unanswered = RuntimeRequestId.make("request");
+    const answered = RuntimeRequestId.make("request-other");
+    const target = composerTargetKey({ environmentId, threadId });
+    const preparing = [
+      [threadId, unanswered, "first", "move-first"],
+      [threadId, unanswered, "second", "move-second"],
+      [threadId, answered, "first", "discard"],
+      [ThreadId.make("other-thread"), unanswered, "first", "stay"],
+    ] as const;
+    const keys = preparing.map(([thread, request, question, id]) => {
+      const key = questionAttachmentDraftId(environmentId, thread, request, question);
+      addPreparingComposerImages(key, [
+        { id, name: "screenshot.png", file: new File(["image"], "screenshot.png"), hidden: false },
+      ]);
+      changeQuestionAttachmentPreparation(key, 1);
+      return key;
+    });
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        for (const key of [...keys, target]) cancelPreparingComposerImages(key);
+      },
+    };
+
+    makeThreadRequestsResolvedAnnouncer(
+      environmentId,
+      threadId,
+    )([
+      { id: unanswered, status },
+      { id: answered, status: "resolved" },
+    ]);
+
+    expect(getPreparingComposerImages(target).map(({ id }) => id)).toEqual([
+      "move-first",
+      "move-second",
+    ]);
+    expect(keys.slice(0, 3).flatMap(getPreparingComposerImages)).toEqual([]);
+    expect(getPreparingComposerImages(keys[3]!).map(({ id }) => id)).toEqual(["stay"]);
   },
 );

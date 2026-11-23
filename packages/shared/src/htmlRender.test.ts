@@ -169,6 +169,14 @@ describe("htmlRenderFromToolItem", () => {
       ["html_render", result],
       // OpenCode 2 Code Mode reports a script's nested html_render call as one `execute` item.
       ["execute", JSON.stringify(result)],
+      // Antigravity runs the `acp-mcp-call` terminal fallback and wraps its stdout.
+      [
+        "t3-code.html_render",
+        {
+          output: `Created At: 2026-11-19T02:54:02Z\nCompleted At: 2026-11-19T02:54:02Z\nCommand exited with code 0.\n\nCommand output:\n${JSON.stringify({ content: [], structuredContent: result, isError: false })}\r\n`,
+          exit_code: 0,
+        },
+      ],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);
     }
