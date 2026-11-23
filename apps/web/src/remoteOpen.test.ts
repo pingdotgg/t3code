@@ -302,6 +302,16 @@ describe("buildRemoteOpenUrl", () => {
     });
   });
 
+  it("asks VS Code to open a remote project folder in a new window", () => {
+    // Without windowId=_blank, VS Code reuses (and replaces) the last active window.
+    const url = buildRemoteOpenUrl({
+      editor: "vscode",
+      host: "sol",
+      absolutePath: "/work/project",
+    });
+    expect(new URL(url ?? "").searchParams.get("windowId")).toBe("_blank");
+  });
+
   it("drops the Windows drive letter for Zed", () => {
     expect(
       buildRemoteOpenUrl({ editor: "zed", host: "sol", absolutePath: "C:\\Users\\theo" }),
