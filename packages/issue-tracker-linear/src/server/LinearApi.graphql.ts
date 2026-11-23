@@ -147,8 +147,6 @@ export const LinearIssue = Schema.Struct({
   title: Schema.String,
   /** Issue URL. */
   url: Schema.String,
-  /** The issue's description in markdown format. */
-  description: Schema.NullOr(Schema.String),
   /** The time at which the entity was created. */
   createdAt: Shared.DateTime,
   /**
@@ -253,7 +251,7 @@ export const T3Issues = GraphQL.query("T3Issues", {
       { name: "issues", body: ["(first:$", "first", " after:$", "after", " filter:$", "filter", " orderBy:$", "orderBy", "){nodes{...LinearIssue}pageInfo{...LinearPageInfo}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] },
@@ -361,8 +359,6 @@ export const T3IssueIssueIssue = Schema.Struct({
   title: Schema.String,
   /** Issue URL. */
   url: Schema.String,
-  /** The issue's description in markdown format. */
-  description: Schema.NullOr(Schema.String),
   /** The time at which the entity was created. */
   createdAt: Shared.DateTime,
   /**
@@ -386,6 +382,8 @@ export const T3IssueIssueIssue = Schema.Struct({
   assignee: Schema.NullOr(LinearUser),
   /** Labels associated with this issue. */
   labels: LinearIssueLabelsIssueLabelConnection,
+  /** The issue's description in markdown format. */
+  description: Schema.NullOr(Schema.String),
   /** Comments associated with the issue, including inline comments on the issue's description. */
   comments: CommentConnection,
   /** Reactions associated with the issue. */
@@ -405,10 +403,10 @@ export const T3Issue = GraphQL.query("T3Issue", {
       { name: "comments", body: "Int!" }
     ],
     selections: [
-      { name: "issue", body: ["(id:$", "id", "){...LinearIssue team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
+      { name: "issue", body: ["(id:$", "id", "){...LinearIssue description team{states(first:100){nodes{...LinearWorkflowState}}}comments(first:$", "comments", " orderBy:createdAt){nodes{...LinearComment}pageInfo{...LinearPageInfo}}reactions{...LinearReaction}attachments(first:50){nodes{url title sourceType metadata}}history(first:100 orderBy:createdAt){nodes{id createdAt actor{...LinearUser}botActor{...LinearBot}fromState{...LinearWorkflowState}toState{...LinearWorkflowState}fromAssignee{...LinearUser}toAssignee{...LinearUser}addedLabels{...LinearLabel}removedLabels{...LinearLabel}fromTitle toTitle}}}"] }
     ],
     fragments: [
-      { name: "LinearIssue", body: ["on Issue{id identifier number title url description createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
+      { name: "LinearIssue", body: ["on Issue{id identifier number title url createdAt updatedAt completedAt canceledAt state{...LinearWorkflowState}team{key}creator{...LinearUser}botActor{...LinearBot}assignee{...LinearUser}labels{nodes{...LinearLabel}}}"] },
       { name: "LinearWorkflowState", body: ["on WorkflowState{id name type position}"] },
       { name: "LinearComment", body: ["on Comment{id body createdAt url user{...LinearUser}botActor{...LinearBot}reactions{...LinearReaction}}"] },
       { name: "LinearPageInfo", body: ["on PageInfo{hasNextPage endCursor}"] },

@@ -73,6 +73,17 @@ final class T3SocksListener {
 enum T3TunnelFailure: String {
   case environment
   case port
+  case outdated
+}
+
+extension T3TunnelFailure {
+  /// The environment marks a dead or blocked port. A server from before the tunnel answers the
+  /// route like any other page; anything else, such as a proxy's 502, means it is out of reach.
+  static func classify(status: Int?, portRefused: Bool) -> T3TunnelFailure {
+    if portRefused { return .port }
+    guard let status else { return .environment }
+    return (200..<300).contains(status) || status == 404 ? .outdated : .environment
+  }
 }
 
 private let replySucceeded: UInt8 = 0
@@ -231,11 +242,12 @@ private final class T3SocksConnection {
       self?.queue.async {
         guard let self, !self.closed else { return }
         if error != nil {
-          // The environment marks a dead or blocked port; any other failure, including a proxy's
-          // 502 while the environment is down, means the environment itself is out of reach.
-          let portRefused = (tunnel.response as? HTTPURLResponse)?
-            .value(forHTTPHeaderField: "x-t3-tunnel-port-refused") != nil
-          self.onOutcome(portRefused ? .port : .environment)
+          let response = tunnel.response as? HTTPURLResponse
+          self.onOutcome(
+            T3TunnelFailure.classify(
+              status: response?.statusCode,
+              portRefused: response?.value(forHTTPHeaderField: "x-t3-tunnel-port-refused") != nil
+            ))
           return self.finish(socksReply(replyFailure))
         }
         self.onOutcome(nil)
