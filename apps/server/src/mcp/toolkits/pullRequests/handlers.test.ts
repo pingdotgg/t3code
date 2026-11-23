@@ -24,7 +24,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
@@ -417,17 +416,15 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
-  it.effect("does not call a known GitHub host unknown when repository carries the host", () =>
+  it.effect("says when repository is not owner/repo on a known host", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ project: makeProject() });
-      const result = yield* harness
-        .call("link_pull_request", { repository: "github.com/t3tools/t3code", number: 123 })
-        .pipe(Effect.result);
-      if (Result.isSuccess(result)) {
-        expect(result.success.url).toBe("https://github.com/t3tools/t3code/pull/123");
-      } else {
-        expect(result.failure).not.toMatchObject({ _tag: "PullRequestUrlUnavailableError" });
-      }
+      const error = yield* harness
+        .call("link_pull_request", { repository: "github.com/org/repo", number: 1 })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "PullRequestRepositoryInvalidError" });
+      expect(error.message).toContain("owner/repo");
+      expect(yield* Ref.get(harness.commands)).toEqual([]);
     }),
   );
 
