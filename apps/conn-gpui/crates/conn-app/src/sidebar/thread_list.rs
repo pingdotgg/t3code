@@ -36,6 +36,7 @@ use crate::app::ConnApp;
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
+use crate::sidebar::drafts::{DraftSidebar, render_draft_block, render_draft_undo_notice};
 use crate::sidebar::hover_card::render_thread_hover_card;
 use crate::sidebar::hover_card_state::RowRectCell;
 use crate::sidebar::{render_project_favicon, render_project_monogram};
@@ -87,7 +88,7 @@ pub(crate) fn render_thread_sidebar(
     layout: &LayoutState,
     workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
-    draft_project_id: Option<&str>,
+    drafts: &DraftSidebar<'_>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
     renaming_thread_id: Option<&str>,
@@ -264,25 +265,8 @@ pub(crate) fn render_thread_sidebar(
 
     // Flat list of threads, scoped to `active_workspace` (either an Orbit workspace or a
     // direct project filter) and live sidebar search when set.
-    let active_orbit_ws = active_workspace.and_then(|id| workspaces.iter().find(|ws| ws.id == id));
-    let thread_in_scope = |thread: &ThreadShell| -> bool {
-        let Some(ws_id) = active_workspace else {
-            return true;
-        };
-        if let Some(orbit_ws) = active_orbit_ws {
-            if let Some(project) = shell.project(&thread.project_id) {
-                workspace_matches_project(
-                    orbit_ws,
-                    &project.id,
-                    &project.title,
-                    &project.workspace_root,
-                )
-            } else {
-                workspace_matches_project(orbit_ws, &thread.project_id, "", "")
-            }
-        } else {
-            ws_id == thread.project_id
-        }
+    let thread_in_scope = |thread: &ThreadShell| {
+        project_in_scope(shell, workspaces, active_workspace, &thread.project_id)
     };
 
     let now_secs = current_unix_secs();
@@ -306,12 +290,11 @@ pub(crate) fn render_thread_sidebar(
         .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
     pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
 
-    let mut thread_rows = Vec::with_capacity(
-        pinned.len() + active.len() + 1 + usize::from(draft_project_id.is_some()),
-    );
-    if let Some(project_id) = draft_project_id {
-        let project = shell.project(project_id);
-        thread_rows.push(render_draft_sidebar_row(project, tokens, cx));
+    let mut thread_rows: Vec<gpui_kit::AnyElement> =
+        Vec::with_capacity(pinned.len() + active.len() + drafts.rows.len() + 2);
+    // Search lists threads only; drafts return when it clears (`SidebarDraftBlock`).
+    if !has_query {
+        thread_rows.extend(render_draft_block(&drafts.rows, tokens, cx));
     }
     for (idx, thread) in pinned.iter().enumerate() {
         let row_key = idx;
@@ -322,6 +305,7 @@ pub(crate) fn render_thread_sidebar(
             project: shell.project(&thread.project_id),
             selected,
             is_renaming,
+            unsent_draft: drafts.unsent_threads.contains(&thread.id),
             rename_input,
             now_secs,
             sidebar_width: layout.sidebar_width,
@@ -330,7 +314,7 @@ pub(crate) fn render_thread_sidebar(
             environment_label: hover.environment_label,
             tokens,
         };
-        thread_rows.push(render_thread_card(&row, cx));
+        thread_rows.push(render_thread_card(&row, cx).into_any_element());
     }
     if !pinned.is_empty() {
         // `pinned-divider`: a hairline between the Pinned and Active groups.
@@ -339,7 +323,8 @@ pub(crate) fn render_thread_sidebar(
                 .w_full()
                 .px(px(ROW_HORIZONTAL_INSET_PX))
                 .py(px(4.0))
-                .child(div().h(px(1.0)).bg(hsla_alpha(tokens.sidebar_border, 0.60))),
+                .child(div().h(px(1.0)).bg(hsla_alpha(tokens.sidebar_border, 0.60)))
+                .into_any_element(),
         );
     }
     for (idx, thread) in active.iter().enumerate() {
@@ -351,6 +336,7 @@ pub(crate) fn render_thread_sidebar(
             project: shell.project(&thread.project_id),
             selected,
             is_renaming,
+            unsent_draft: drafts.unsent_threads.contains(&thread.id),
             rename_input,
             now_secs,
             sidebar_width: layout.sidebar_width,
@@ -359,7 +345,7 @@ pub(crate) fn render_thread_sidebar(
             environment_label: hover.environment_label,
             tokens,
         };
-        thread_rows.push(render_thread_card(&row, cx));
+        thread_rows.push(render_thread_card(&row, cx).into_any_element());
     }
 
     // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
@@ -465,6 +451,7 @@ pub(crate) fn render_thread_sidebar(
                 project: shell.project(&thread.project_id),
                 selected,
                 is_renaming,
+                unsent_draft: drafts.unsent_threads.contains(&thread.id),
                 rename_input,
                 now_secs,
                 sidebar_width: layout.sidebar_width,
@@ -487,7 +474,12 @@ pub(crate) fn render_thread_sidebar(
         },
     )
     .child(top_row)
-    .child(list_scroll);
+    .child(list_scroll)
+    .children(
+        drafts
+            .undo_available
+            .then(|| render_draft_undo_notice(tokens, cx)),
+    );
 
     div()
         .id("sidebar-column")
@@ -842,6 +834,8 @@ struct RowCtx<'a> {
     project: Option<&'a ProjectShell>,
     selected: bool,
     is_renaming: bool,
+    /// The thread's composer holds unsent input (`useThreadHasUnsentDraft`).
+    unsent_draft: bool,
     rename_input: &'a Entity<InputState>,
     now_secs: i64,
     sidebar_width: f32,
@@ -1001,6 +995,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .as_ref()
         .is_some_and(Option::is_some);
     let group = SharedString::from(format!("sidebar-row-{}", row.row_key));
+    let tokens_warning = tokens.warning;
 
     // Line 1 (`flex h-5 min-w-0 items-center gap-1.5`):
     // StatusDotBadge(ProjectFavicon) + title + pinIndicator + hover-only settle icon button.
@@ -1080,11 +1075,18 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     };
     line1 = line1.child(title_el);
 
+    if row.unsent_draft {
+        line1 = line1.child(render_unsent_indicator(row));
+    }
+
     if is_pinned {
         line1 = line1.child(render_pin_indicator(row, cx));
     }
 
     // Hover-only icon-only settle control (`CircleCheckIcon`, `size-3.5`).
+    if row.unsent_draft {
+        line1 = line1.child(render_discard_thread_draft_button(row, &group, cx));
+    }
     let settle_id = thread.id.clone();
     let settle_btn = div()
         .id(("thread-settle-btn", row.row_key))
@@ -1231,6 +1233,17 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .border_color(gpui_kit::transparent_black())
             .opacity(0.7)
             .hover(move |s| s.bg(hover_bg).opacity(1.0));
+        if row.unsent_draft {
+            card = card
+                .bg(unsent_surface(tokens))
+                .hover(move |s| s.bg(unsent_surface_hover(tokens_warning)).opacity(1.0));
+        }
+    } else if row.unsent_draft {
+        // `draftSurfaceClassName`: `bg-warning/4 hover:bg-warning/8`.
+        card = card
+            .border_color(gpui_kit::transparent_black())
+            .bg(unsent_surface(tokens))
+            .hover(move |s| s.bg(unsent_surface_hover(tokens_warning)));
     } else {
         card = card
             .border_color(gpui_kit::transparent_black())
@@ -1290,6 +1303,9 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
             .into_any_element()
     };
 
+    let unsent_discard = row
+        .unsent_draft
+        .then(|| render_discard_thread_draft_button(row, &group, cx));
     let unsettle_id = thread.id.clone();
     let time_slot = div()
         .relative()
@@ -1359,7 +1375,9 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .border_t_1()
         .cursor_pointer()
         .child(favicon_slot)
+        .children(row.unsent_draft.then(|| render_unsent_indicator(row)))
         .child(title_el)
+        .children(unsent_discard)
         .child(time_slot);
     slim = attach_row_interactions(slim, row, cx);
     if row.selected {
@@ -1372,12 +1390,97 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                 .border_1()
                 .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
         }
+    } else if row.unsent_draft {
+        let warning = tokens.warning;
+        slim = slim
+            .border_color(gpui_kit::transparent_black())
+            .bg(unsent_surface(tokens))
+            .hover(move |s| s.bg(unsent_surface_hover(warning)));
     } else {
         slim = slim
             .border_color(gpui_kit::transparent_black())
             .hover(move |s| s.bg(hover_bg));
     }
     div().w_full().child(slim)
+}
+
+/// `draftSurfaceClassName` rest colour: `bg-warning/4`.
+fn unsent_surface(tokens: &Tokens) -> gpui_kit::Hsla {
+    hsla_alpha(tokens.warning, 0.04)
+}
+
+/// `draftSurfaceClassName` hover colour: `hover:bg-warning/8`.
+fn unsent_surface_hover(warning: conn_theme::Rgba) -> gpui_kit::Hsla {
+    hsla_alpha(warning, 0.08)
+}
+
+/// `draftIndicator`: the `SquarePen` mark (`text-warning-foreground`) on a thread with unsent
+/// input, with the `Unsent draft` label.
+fn render_unsent_indicator(row: &RowCtx<'_>) -> gpui_kit::AnyElement {
+    div()
+        .id(("thread-unsent-draft", row.row_key))
+        .test_support()
+        .a11y(
+            gpui_kit::Role::Image,
+            SharedString::from(format!("sidebar.thread.{}.unsent-draft", row.thread.id)),
+            "Unsent draft",
+        )
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .child(icons::concept(
+            "superhero/edit.svg",
+            12.0,
+            hsla(row.tokens.warning_foreground),
+        ))
+        .into_any_element()
+}
+
+/// The `X` that clears a thread's unsent input: shown on row hover or keyboard focus, and
+/// pressed with `Enter` / `Space` (`handleDiscardDraftClick`).
+fn render_discard_thread_draft_button(
+    row: &RowCtx<'_>,
+    group: &SharedString,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::AnyElement {
+    let tokens = row.tokens;
+    let muted = hsla(tokens.muted_foreground);
+    let thread_id = row.thread.id.clone();
+    let key_thread_id = row.thread.id.clone();
+    div()
+        .id(("thread-discard-draft-btn", row.row_key))
+        .test_support()
+        .a11y_button(
+            SharedString::from(format!("sidebar.thread.{}.discard-draft", row.thread.id)),
+            "Discard draft",
+        )
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(TITLE_LINE_HEIGHT_PX))
+        .px(px(6.0))
+        .rounded(px(CARD_RADIUS_PX))
+        .flex_shrink_0()
+        .cursor_pointer()
+        // Not `invisible()`: a hidden element cannot take keyboard focus.
+        .opacity(0.0)
+        .group_hover(group.clone(), |s| s.opacity(1.0))
+        .focus_visible(|s| s.opacity(1.0))
+        .tab_index(0)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_key_down(cx.listener(move |app, event: &gpui_kit::KeyDownEvent, _, cx| {
+            if conn_state::is_activation_key(&event.keystroke.key) {
+                cx.stop_propagation();
+                app.discard_thread_draft_row(&key_thread_id, cx);
+            }
+        }))
+        .on_click(cx.listener(move |app, _, _, cx| {
+            cx.stop_propagation();
+            app.discard_thread_draft_row(&thread_id, cx);
+        }))
+        .conn_tooltip("Discard draft", tokens)
+        .child(icons::concept("superhero/close.svg", 12.0, muted))
+        .into_any_element()
 }
 
 /// `threadTimeTimestamp`: last user message, else last update.
@@ -1399,106 +1502,30 @@ fn settled_thread_timestamp(thread: &ThreadShell) -> &str {
         .unwrap_or(&thread.updated_at)
 }
 
-/// Active unsent draft row pinned at the top of the sidebar list (Conn `SidebarDraftBlock` parity).
-fn render_draft_sidebar_row(
-    project: Option<&ProjectShell>,
-    tokens: &Tokens,
-    cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
-    let fg = hsla(tokens.foreground);
-    let muted = hsla(tokens.sidebar_muted_foreground);
-    let hover_bg = hsla(tokens.sidebar_row_hover);
-    let active_bg = hsla(tokens.sidebar_row_active);
-
-    let favicon = project.map_or_else(
-        || render_project_monogram("New", ROW_FAVICON_PX, tokens),
-        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
-    );
-    let project_name = project.map_or("Select project", |p| p.title.as_str());
-
-    let discard_btn = div()
-        .id("sidebar-draft-discard")
-        .a11y_button("sidebar.draft.discard", "Discard draft")
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(20.0))
-        .flex_shrink_0()
-        .rounded(px(5.0))
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover_bg))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(|app, _, _, cx| {
-            cx.stop_propagation();
-            app.cancel_new_thread(cx);
-        }))
-        .conn_tooltip("Discard draft", tokens)
-        .child(icons::concept("superhero/close.svg", 12.0, muted));
-
-    let mut card = div()
-        .id("sidebar-draft-row")
-        .a11y(
-            gpui_kit::Role::ListItem,
-            "sidebar.draft",
-            "New thread draft",
-        )
-        .aria_selected(true)
-        .flex()
-        .flex_col()
-        .w_full()
-        .px(px(ROW_HORIZONTAL_INSET_PX))
-        .py(px(SIDEBAR_CONTENT_INSET_PX))
-        .rounded(px(ROW_RADIUS_PX))
-        .border_t_1()
-        .bg(active_bg)
-        .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(CARD_ICON_TITLE_GAP_PX))
-                .w_full()
-                .h(px(TITLE_LINE_HEIGHT_PX))
-                .min_w_0()
-                .child(icons::concept("superhero/edit.svg", 14.0, muted))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(TITLE_FONT_SIZE_PX))
-                        .line_height(px(TITLE_LINE_HEIGHT_PX))
-                        .font_weight(gpui_kit::FontWeight::MEDIUM)
-                        .text_color(fg)
-                        .child("New thread"),
-                )
-                .child(discard_btn),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.0))
-                .w_full()
-                .mt(px(CARD_LINE_GAP_PX))
-                .pl(px(META_LINE_INDENT_PX))
-                .min_w_0()
-                .text_size(px(META_FONT_SIZE_PX))
-                .line_height(px(META_LINE_HEIGHT_PX))
-                .text_color(muted)
-                .child(favicon)
-                .child(div().min_w_0().truncate().child(project_name.to_owned())),
-        );
-
-    if tokens.appearance == Appearance::Light {
-        card = card
-            .border_1()
-            .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
+/// A project passes the sidebar's scope: no filter, an Orbit workspace that lists it, or the
+/// directly filtered project.
+#[must_use]
+pub(crate) fn project_in_scope(
+    shell: &ShellState,
+    workspaces: &[OrbitWorkspace],
+    active_workspace: Option<&str>,
+    project_id: &str,
+) -> bool {
+    let Some(ws_id) = active_workspace else {
+        return true;
+    };
+    match workspaces.iter().find(|ws| ws.id == ws_id) {
+        Some(orbit_ws) => match shell.project(project_id) {
+            Some(project) => workspace_matches_project(
+                orbit_ws,
+                &project.id,
+                &project.title,
+                &project.workspace_root,
+            ),
+            None => workspace_matches_project(orbit_ws, project_id, "", ""),
+        },
+        None => ws_id == project_id,
     }
-
-    div().w_full().py(px(2.0)).child(card)
 }
 
 /// Active thread ids in sidebar order: pinned (`pinOrderKey`) first, then active.

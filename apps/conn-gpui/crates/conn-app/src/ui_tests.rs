@@ -327,11 +327,13 @@ fn kitchen_sink_thread() -> ThreadState {
                         value: Some("vmpal".to_owned()),
                         label: "VMPal".to_owned(),
                         description: "Run inside nick-vm".to_owned(),
+                        preview: Some("Slow, but the pixels are real.".to_owned()),
                     },
                     UserInputOption {
                         value: Some("headless".to_owned()),
                         label: "Headless".to_owned(),
                         description: "Fast local GPUI test".to_owned(),
+                        preview: None,
                     },
                 ],
                 multi_select: false,
@@ -1144,4 +1146,673 @@ fn thread_hover_card_top_is_level_with_the_hovered_row(cx: &mut TestAppContext) 
         "estimated {estimated} vs laid-out {:?} with {lines} lines",
         card.size.height
     );
+}
+
+#[gpui_kit::test]
+fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let selected = |window: &mut Window, cx: &mut gpui_kit::App, label: &str| {
+        window.render_frame(cx);
+        window.find_by_label(label).selected()
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // The banner is a drawer over the composer card: inset, and tucked under its top edge.
+        let banner = window.find_by_label("Mode").bounds();
+        let card = window.find_by_label("Message input card").bounds();
+        assert!(
+            banner.top() < card.top() && banner.bottom() > card.top(),
+            "banner {banner:?} must tuck under the composer card {card:?}"
+        );
+        assert!(
+            banner.left() > card.left() && banner.right() < card.right(),
+            "banner {banner:?} must sit inside the card's width {card:?}"
+        );
+        assert_eq!(selected(window, cx, "VMPal"), Some(false));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+
+        // With the keyboard in the composer's editor, digits are text, not shortcuts.
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.press("2", cx);
+        assert_eq!(
+            selected(window, cx, "Headless"),
+            Some(false),
+            "a digit typed in the editor must not pick an option"
+        );
+        // The typed digit is the answer now, so no option shows as picked until it is removed.
+        window.press("backspace", cx);
+
+        // With it on the panel, they pick: the number is the option, and a modified digit,
+        // a number past the last option and a shifted digit do nothing.
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        window.press("cmd-2", cx);
+        window.press("3", cx);
+        window.press("shift-2", cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+        window.press("2", cx);
+        assert_eq!(selected(window, cx, "Headless"), Some(true));
+        assert_eq!(selected(window, cx, "VMPal"), Some(false));
+        window.press("1", cx);
+        assert_eq!(selected(window, cx, "VMPal"), Some(true));
+        assert_eq!(selected(window, cx, "Headless"), Some(false));
+    });
+}
+
+fn two_project_shell() -> ShellState {
+    let mut shell = kitchen_sink_shell();
+    let other: ProjectShell = match from_json(json!({
+        "id": "proj-other",
+        "title": "orbit",
+        "workspaceRoot": "/tmp/orbit-parity",
+        "defaultModelSelection": null,
+        "scripts": [],
+        "createdAt": "2026-11-20T09:00:00.000Z",
+        "updatedAt": "2026-11-22T15:00:00.000Z",
+    })) {
+        Ok(project) => project,
+        Err(err) => panic!("second ProjectShell failed: {err}"),
+    };
+    shell.projects.push(other);
+    shell
+}
+
+/// Types `text` into the composer and renders, so the draft shows and parks like a user's.
+fn type_into_composer(
+    cx: &mut TestAppContext,
+    window: AnyWindowHandle,
+    app: &Entity<ConnApp>,
+    text: &str,
+) {
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        chat.update(cx, |chat, cx| {
+            chat.set_draft_text(text.to_owned(), window, cx)
+        });
+        window.render_frame(cx);
+    });
+}
+
+#[gpui_kit::test]
+fn a_draft_moved_onto_a_project_with_a_draft_leaves_that_draft_in_the_sidebar(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+
+    // orbit gets a draft with text; conn-gpui gets another.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "orbit idea");
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-parity".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "conn idea");
+    let (moved_id, _) = cx
+        .read(|cx| app.read(cx).open_draft_for_test())
+        .expect("a draft is open");
+
+    // The hero's picker moves the open draft onto orbit, which already has one.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_draft_project("proj-other".to_owned(), cx)
+        });
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test()),
+        Some((moved_id.clone(), "proj-other".to_owned())),
+        "the draft with content moves to the picked project"
+    );
+    let _ = cx.update_window(window, |_, window, cx| window.render_frame(cx));
+
+    // Orbit's own draft stays: an unmapped row, with its text and project.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("orbit idea, Unsent draft, orbit")
+                .is_some(),
+            "the displaced draft keeps a sidebar row"
+        );
+    });
+
+    // Leaving the moved draft lists it too, newest first.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("conn idea, Unsent draft, orbit")
+                .is_some()
+        );
+        assert!(
+            window
+                .try_find_by_label("orbit idea, Unsent draft, orbit")
+                .is_some()
+        );
+    });
+
+    // `New thread` in orbit opens the draft the project points at: the moved one.
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test())
+            .map(|d| d.0),
+        Some(moved_id.clone()),
+    );
+
+    // The unmapped draft reopens from its row, with its text back in the composer.
+    let row = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "orbit idea, Unsent draft, orbit")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Left, cx);
+        window.pointer_up(row, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    let reopened = cx.read(|cx| app.read(cx).open_draft_for_test());
+    assert!(
+        reopened.is_some_and(|(id, project)| id != moved_id && project == "proj-other"),
+        "the unmapped draft is the one open now"
+    );
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let _ = cx.update_window(window, |_, _, cx| {
+        assert!(
+            chat.read(cx).draft_has_content(cx),
+            "the reopened draft shows its text"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn discarding_a_draft_row_removes_it_and_undo_brings_it_back(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "half a thought");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let row_label = "half a thought, Unsent draft, orbit";
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(row_label).is_some());
+        assert!(window.try_find_by_label("Discard draft").is_some());
+    });
+
+    // The row's `x` discards the draft and offers `Undo`.
+    let discard = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Discard draft")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the discard button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(row_label).is_none(),
+            "the row is gone"
+        );
+        assert!(window.try_find_by_label("Undo discard").is_some());
+    });
+
+    let undo = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Undo discard")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Undo: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(undo, None, cx);
+        window.pointer_down(undo, MouseButton::Left, cx);
+        window.pointer_up(undo, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(row_label).is_some(),
+            "undo brings the draft row back with its text"
+        );
+        assert!(window.try_find_by_label("Undo discard").is_none());
+    });
+}
+
+#[gpui_kit::test]
+fn draft_row_menu_offers_copy_project_settings_and_discard(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "menu draft");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx)
+        });
+    });
+    let row = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "menu draft, Unsent draft, orbit")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Right, cx);
+        window.pointer_up(row, MouseButton::Right, cx);
+        window.render_frame(cx);
+        for label in ["Copy", "Project settings"] {
+            assert!(
+                window.try_find_by_label(label).is_some(),
+                "{label} is listed"
+            );
+        }
+        // The row's own `x` and the menu's destructive item.
+        assert_eq!(window.find_all_by_label("Discard draft").len(), 2);
+    });
+    let copy = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, "Copy")) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Copy: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(copy, None, cx);
+        window.render_frame(cx);
+    });
+    let path = match cx.update_window(window, |_, window, cx| center_by_label(window, cx, "Path")) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Path: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(path, None, cx);
+        window.pointer_down(path, MouseButton::Left, cx);
+        window.pointer_up(path, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("/tmp/orbit-parity"),
+        "Copy > Path gives the draft's project folder"
+    );
+}
+
+#[gpui_kit::test]
+fn drafts_are_saved_to_disk_and_come_back_on_the_next_start(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let dir =
+        std::env::temp_dir().join(format!("conn-drafts-ui-{}", crate::drafts::new_draft_id()));
+    let path = dir.join("drafts.json");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_drafts_path_for_test(path.clone());
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "survives a restart");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.settle_drafts_for_test(cx)));
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is written");
+    assert!(saved.contains("survives a restart"));
+
+    // Discarding wipes the draft and its file entry; the saved copy is what a restart reads.
+    let _ = cx.update_window(window, |_, window, cx| {
+        let discard = center_by_label(window, cx, "Discard draft");
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("survives a restart, Unsent draft, orbit")
+                .is_none()
+        );
+    });
+    std::fs::write(&path, saved).expect("puts the saved file back");
+    cx.update(|cx| app.update(cx, |app, cx| app.restore_saved_drafts_for_test(cx)));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window
+                .try_find_by_label("survives a restart, Unsent draft, orbit")
+                .is_some(),
+            "the saved draft is listed again, with its text"
+        );
+    });
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[gpui_kit::test]
+fn picking_an_option_sets_the_typed_answer_aside_in_the_thread_draft(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let chat = cx.read(|cx| app.read(cx).chat_for_test());
+    let composer = cx.read(|cx| chat.read(cx).composer_for_test());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        // Picking an option with nothing typed sets nothing aside.
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        window.render_frame(cx);
+        assert_eq!(chat.read(cx).error_for_test(), None);
+
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.input("first try", cx);
+        window.render_frame(cx);
+        assert_eq!(composer.read(cx).draft_text_for_test(cx), "first try");
+        let headless = window.find_by_label("Headless").bounds().center();
+        window.pointer_move(headless, None, cx);
+        window.pointer_down(headless, MouseButton::Left, cx);
+        window.pointer_up(headless, MouseButton::Left, cx);
+        window.render_frame(cx);
+
+        let thread_draft = "thread:thread-selected";
+        assert_eq!(composer.read(cx).draft_text_for_test(cx), "");
+        assert_eq!(
+            composer.read(cx).parked_text_for_test(thread_draft).as_deref(),
+            Some("first try")
+        );
+        assert_eq!(
+            chat.read(cx).error_for_test().as_deref(),
+            Some(
+                "Your typed text was set aside. It will be back in the composer once the question is answered."
+            )
+        );
+        assert_eq!(window.find_by_label("Headless").selected(), Some(true));
+
+        // A second answer goes after the first, with a blank line between.
+        chat.update(cx, |chat, cx| chat.focus_composer(window, cx));
+        window.render_frame(cx);
+        window.input("second", cx);
+        window.render_frame(cx);
+        let vmpal = window.find_by_label("VMPal").bounds().center();
+        window.pointer_move(vmpal, None, cx);
+        window.pointer_down(vmpal, MouseButton::Left, cx);
+        window.pointer_up(vmpal, MouseButton::Left, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            composer.read(cx).parked_text_for_test(thread_draft).as_deref(),
+            Some("first try\n\nsecond")
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn draft_rows_open_and_menu_from_the_keyboard(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(two_project_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        app.update(cx, |app, cx| {
+            app.start_new_thread(Some("proj-other".to_owned()), Some(window), cx);
+        });
+    });
+    type_into_composer(cx, window, &app, "keyboard draft");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_thread("thread-selected".to_owned(), cx);
+        });
+    });
+    let label = "keyboard draft, Unsent draft, orbit";
+    let row = match cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        center_by_label(window, cx, label)
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the draft row: {err}"),
+    };
+
+    // A pressed row has the focus; the menu key opens its menu below the row.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(row, None, cx);
+        window.pointer_down(row, MouseButton::Left, cx);
+        window.key_down("shift-f10", false, cx);
+        window.render_frame(cx);
+    });
+    assert!(
+        cx.read(|cx| app.read(cx).thread_menu_open_for_test()),
+        "Shift+F10 opens the focused draft row's menu"
+    );
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.dismiss_shell_popovers_for_test(cx);
+        });
+    });
+
+    // `Enter` reopens the draft.
+    assert!(cx.read(|cx| app.read(cx).open_draft_for_test()).is_none());
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.key_down("enter", false, cx);
+        window.render_frame(cx);
+    });
+    assert_eq!(
+        cx.read(|cx| app.read(cx).open_draft_for_test())
+            .map(|d| d.1),
+        Some("proj-other".to_owned()),
+        "Enter on the focused draft row opens the draft"
+    );
+}
+
+#[gpui_kit::test]
+fn a_thread_with_unsent_input_shows_the_pen_and_discards_with_undo(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    let pinned_mark = "Unsent draft";
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_none(),
+            "no thread has unsent input yet"
+        );
+    });
+    type_into_composer(cx, window, &app, "reply I have not sent");
+    // The open thread's composer is on screen, so its row carries no mark.
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(pinned_mark).is_none());
+    });
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_some(),
+            "the thread left with unsent input gets the pen mark"
+        );
+    });
+
+    // The row's `x` clears the input and offers `Undo`.
+    let discard = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Discard draft")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate the discard button: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label(pinned_mark).is_none());
+        assert!(window.try_find_by_label("Undo discard").is_some());
+    });
+    let undo = match cx.update_window(window, |_, window, cx| {
+        center_by_label(window, cx, "Undo discard")
+    }) {
+        Ok(pt) => pt,
+        Err(err) => panic!("failed to locate Undo: {err}"),
+    };
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(undo, None, cx);
+        window.pointer_down(undo, MouseButton::Left, cx);
+        window.pointer_up(undo, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label(pinned_mark).is_some(),
+            "undo brings the unsent input back"
+        );
+    });
+}
+
+#[gpui_kit::test]
+fn a_threads_unsent_input_is_saved_and_comes_back_on_the_next_start(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    let dir =
+        std::env::temp_dir().join(format!("conn-threads-ui-{}", crate::drafts::new_draft_id()));
+    let path = dir.join("drafts.json");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_drafts_path_for_test(path.clone());
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test(
+                "thread-pinned".to_owned(),
+                ThreadState::new("thread-pinned"),
+                cx,
+            );
+        });
+    });
+    type_into_composer(cx, window, &app, "unsent across a restart");
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_thread_for_test(
+                "thread-selected".to_owned(),
+                ThreadState::new("thread-selected"),
+                cx,
+            );
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+    });
+    cx.update(|cx| app.update(cx, |app, cx| app.settle_drafts_for_test(cx)));
+    let saved = std::fs::read_to_string(&path).expect("the drafts file is written");
+    assert!(saved.contains("unsent across a restart"));
+
+    let _ = cx.update_window(window, |_, window, cx| {
+        let discard = center_by_label(window, cx, "Discard draft");
+        window.pointer_move(discard, None, cx);
+        window.pointer_down(discard, MouseButton::Left, cx);
+        window.pointer_up(discard, MouseButton::Left, cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.try_find_by_label("Unsent draft").is_none());
+    });
+    std::fs::write(&path, saved).expect("puts the saved file back");
+    cx.update(|cx| app.update(cx, |app, cx| app.restore_saved_drafts_for_test(cx)));
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(
+            window.try_find_by_label("Unsent draft").is_some(),
+            "the thread's unsent input is back"
+        );
+    });
+    let _ = std::fs::remove_dir_all(dir);
 }

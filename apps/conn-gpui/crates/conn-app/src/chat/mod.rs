@@ -9,13 +9,15 @@ mod color;
 mod composer;
 mod composer_state;
 pub(crate) use self::composer_state::{
-    RefEntry, ThreadWorkspace, branch_selection_target, local_branch_name_from_remote_ref,
-    previous_worktree,
+    APPROVAL_FEEDBACK_PLAIN_TEXT, APPROVAL_REDIRECT_RETRY, ApprovalSendPlan, HeldDraft, RefEntry,
+    ThreadWorkspace, approval_arrived, approval_redirect_notice, branch_selection_target,
+    local_branch_name_from_remote_ref, plan_approval_send, previous_worktree,
 };
 mod draft_hero;
 mod icons;
 pub(crate) mod markdown;
 mod question_logic;
+mod question_panel;
 mod spinner;
 mod toc;
 
@@ -32,7 +34,7 @@ use conn_theme::Tokens;
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
     InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, ParentElement, Render,
     SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, list, px,
     relative,
@@ -79,8 +81,8 @@ pub(crate) struct DraftProjectOption {
 /// View state rendered while composing a brand-new thread before `orchestration.launchThread`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraftViewInfo {
-    /// The connected environment; part of the draft's store key.
-    pub(crate) environment_id: String,
+    /// The draft's id; its text and attachments are stored under it, whatever project it targets.
+    pub(crate) draft_id: String,
     pub(crate) project_id: String,
     pub(crate) project_title: String,
     pub(crate) projects: Vec<DraftProjectOption>,
@@ -110,6 +112,8 @@ pub(crate) enum ChatEvent {
         attachments: Vec<conn_contract::ChatAttachment>,
         /// Steer or queue while a turn runs.
         dispatch: SendDispatch,
+        /// The draft an approval send left in the composer (see [`ChatView::settle_held_draft`]).
+        held_draft: Option<HeldDraft>,
     },
     /// Continue an interrupted thread (`Resume thread`).
     Resume,
@@ -228,11 +232,20 @@ pub(crate) struct ChatView {
     _copy_reset: Option<gpui_kit::Task<()>>,
     /// Ids of pending question and secret cards that need input fields.
     pending_card_ids: Vec<String>,
-    /// The thread shows a pending approval; a composer send declines it to redirect the agent.
-    pending_approval: bool,
+    /// The thread's first pending approval; a composer send declines it.
+    pending_approval: Option<composer_state::PendingApprovalPrompt>,
     /// The first pending question request, which a composer send answers.
     pending_question_id: Option<String>,
+    /// Pending approvals and the first pending question (entry id, request id), before the
+    /// typing guard hides any of them.
+    incoming_approvals: Vec<conn_state::PendingApproval>,
+    incoming_question: Option<(String, String)>,
+    /// Holds requests that arrive while the user types (`useComposerTypingGuard`).
+    typing_guard: composer_state::TypingGuard,
+    _typing_guard_idle: Option<gpui_kit::Task<()>>,
     user_input_cards: HashMap<String, cards::UserInputCardState>,
+    /// The pending question's banner: lead-in, scroll, and what keeps the digit shortcuts live.
+    question_panel: question_panel::QuestionPanelState,
     secret_forms: HashMap<String, cards::SecretFormState>,
     /// Runs whose changed-files tree has every folder expanded.
     changed_files_expanded: HashSet<String>,
@@ -302,17 +315,25 @@ impl ChatView {
                     text,
                     attachments,
                     dispatch,
+                    held_draft,
                 } => {
                     this.scroll_to_latest(cx);
                     cx.emit(ChatEvent::Send {
                         text: text.clone(),
                         attachments: attachments.clone(),
                         dispatch: *dispatch,
+                        held_draft: held_draft.clone(),
                     });
                     cx.notify();
                 }
                 ComposerEvent::AnswerQuestion { text } => {
                     this.answer_pending_question(text, cx);
+                }
+                ComposerEvent::TypingGuard(input) => {
+                    if this.typing_guard.update(*input, std::time::Instant::now()) {
+                        this.apply_typing_guard(cx);
+                    }
+                    this.schedule_typing_guard_idle(cx);
                 }
                 ComposerEvent::Resume => cx.emit(ChatEvent::Resume),
                 ComposerEvent::ImplementPlanInNewThread { text } => {
@@ -403,9 +424,14 @@ impl ChatView {
             copied_message_key: None,
             _copy_reset: None,
             pending_card_ids: Vec::new(),
-            pending_approval: false,
+            pending_approval: None,
             pending_question_id: None,
+            incoming_approvals: Vec::new(),
+            incoming_question: None,
+            typing_guard: composer_state::TypingGuard::default(),
+            _typing_guard_idle: None,
             user_input_cards: HashMap::new(),
+            question_panel: question_panel::QuestionPanelState::new(cx),
             secret_forms: HashMap::new(),
             changed_files_expanded: HashSet::new(),
             changed_files_dir_overrides: HashMap::new(),
@@ -442,6 +468,11 @@ impl ChatView {
     /// Returns the child composer entity for headless GPUI tests.
     #[cfg(test)]
     #[must_use]
+    pub(crate) fn error_for_test(&self) -> Option<String> {
+        self.error_banner.clone()
+    }
+
+    #[cfg(test)]
     pub(crate) fn composer_for_test(&self) -> Entity<Composer> {
         self.composer.clone()
     }
@@ -467,6 +498,22 @@ impl ChatView {
     /// Moves keyboard focus into the composer input.
     pub(crate) fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.composer.update(cx, |c, cx| c.focus_input(window, cx));
+    }
+
+    /// The composer's live draft, to compare with an approval send's [`HeldDraft`].
+    pub(crate) fn held_draft(&self, cx: &App) -> HeldDraft {
+        self.composer.read(cx).held_draft(cx)
+    }
+
+    /// Ends an approval send; with `clear`, empties the composer if its draft is unchanged.
+    pub(crate) fn settle_held_draft(
+        &mut self,
+        clear: Option<&HeldDraft>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        self.composer
+            .update(cx, |c, cx| c.settle_held_draft(clear, window, cx))
     }
 
     /// Restores or sets the composer textarea text (for example if a launch fails).
@@ -666,16 +713,34 @@ impl ChatView {
                 _ => None,
             })
             .collect();
-        self.pending_approval = thread
-            .entries
-            .iter()
-            .any(|entry| matches!(entry, TimelineEntry::Approval { .. }));
-        self.pending_question_id = thread.entries.iter().find_map(|entry| match entry {
+        self.incoming_approvals = thread.pending_approvals();
+        self.incoming_question = thread.entries.iter().find_map(|entry| match entry {
             TimelineEntry::UserInputRequest {
-                id, pending: true, ..
-            } => Some(id.clone()),
+                id,
+                request_id,
+                pending: true,
+                ..
+            } => Some((id.clone(), request_id.clone())),
             _ => None,
         });
+        let request_ids: Vec<String> = self
+            .incoming_approvals
+            .iter()
+            .map(|approval| approval.request_id.clone())
+            .chain(thread.entries.iter().filter_map(|entry| match entry {
+                TimelineEntry::UserInputRequest {
+                    request_id,
+                    pending: true,
+                    ..
+                } => Some(request_id.clone()),
+                _ => None,
+            }))
+            .collect();
+        self.typing_guard
+            .requests(&request_ids, std::time::Instant::now());
+        self.apply_typing_guard(cx);
+        self.schedule_typing_guard_idle(cx);
+        self.sync_question_panel(thread);
         self.sync_working_timer(cx);
         let sync_start = std::time::Instant::now();
         let stats = self.cache.sync(
@@ -834,14 +899,64 @@ impl ChatView {
         });
     }
 
+    /// Shows the pending approval and question the typing guard does not hold. A held first
+    /// question hides the question banner, as in Conn.
+    fn apply_typing_guard(&mut self, cx: &mut Context<'_, Self>) {
+        let (approval, question) = composer_state::guarded_pending_requests(
+            &self.incoming_approvals,
+            self.incoming_question.as_ref(),
+            self.typing_guard.held(),
+        );
+        self.pending_approval = approval;
+        self.pending_question_id = question;
+        cx.notify();
+    }
+
+    /// Releases held requests once typing pauses (`useComposerTypingGuard` idle timer).
+    fn schedule_typing_guard_idle(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(deadline) = self.typing_guard.idle_deadline() else {
+            self._typing_guard_idle = None;
+            return;
+        };
+        let wait = deadline.saturating_duration_since(std::time::Instant::now());
+        self._typing_guard_idle = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |view, cx| {
+                view._typing_guard_idle = None;
+                if view.typing_guard.update(
+                    composer_state::TypingGuardInput::Idle,
+                    std::time::Instant::now(),
+                ) {
+                    view.apply_typing_guard(cx);
+                }
+            });
+        }));
+    }
+
+    /// Request ids the typing guard holds back, so a send leaves those approvals pending.
+    pub(crate) fn held_request_ids(&self) -> &HashSet<String> {
+        self.typing_guard.held()
+    }
+
+    /// True while the typing guard holds the approval card `entry_id`.
+    fn approval_held(&self, entry_id: &str) -> bool {
+        self.incoming_approvals.iter().any(|approval| {
+            approval.entry_id == entry_id && self.typing_guard.held().contains(&approval.request_id)
+        })
+    }
+
     /// Drops per-thread card, copy, and fetched-detail state.
     fn reset_card_state(&mut self) {
         self.interrupted_run_id = None;
         self.copied_message_key = None;
         self._copy_reset = None;
         self.pending_card_ids.clear();
-        self.pending_approval = false;
+        self.pending_approval = None;
         self.pending_question_id = None;
+        self.incoming_approvals.clear();
+        self.incoming_question = None;
+        self.typing_guard.reset_scope();
+        self._typing_guard_idle = None;
         self.user_input_cards.clear();
         self.secret_forms.clear();
         self.changed_files_expanded.clear();
@@ -870,6 +985,7 @@ impl ChatView {
                     cx.emit(ChatEvent::OpenFile(path));
                 });
             })),
+            prose: None,
         }
     }
 
@@ -1578,7 +1694,6 @@ impl ChatView {
                 status,
                 pending,
                 answers,
-                dismissible,
                 ..
             } => self.render_user_input_card(
                 id,
@@ -1587,7 +1702,6 @@ impl ChatView {
                 *pending,
                 *status,
                 answers,
-                *dismissible,
                 cx,
             ),
             TimelineEntry::SecretRequest {
@@ -2906,10 +3020,7 @@ impl Render for ChatView {
         }
 
         let draft_key = if let Some(draft) = &self.draft {
-            Some(composer_state::new_thread_draft_key(
-                &draft.environment_id,
-                &draft.project_id,
-            ))
+            Some(composer_state::new_thread_draft_key(&draft.draft_id))
         } else {
             self.thread_id
                 .as_deref()
@@ -3039,6 +3150,11 @@ impl Render for ChatView {
             container.into_any_element()
         };
 
+        let question_banner = self.render_question_banner(window, cx);
+        let banner_docked = question_banner.is_some();
+        self.composer
+            .update(cx, |c, cx| c.set_stash_docked(banner_docked, cx));
+
         let mut composer_lane = div()
             .flex_none()
             .w_full()
@@ -3052,6 +3168,7 @@ impl Render for ChatView {
                 .w_full()
                 .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
                 .mx_auto()
+                .when_some(question_banner, |lane, banner| lane.child(banner))
                 .child(self.composer.clone()),
         );
 

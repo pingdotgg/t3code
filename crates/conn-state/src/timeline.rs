@@ -25,6 +25,8 @@ pub struct UserInputOption {
     pub description: String,
     /// Provider value sent as the answer; falls back to `label` when absent.
     pub value: Option<String>,
+    /// Markdown shown under the option, outside its button (`option.preview`).
+    pub preview: Option<String>,
 }
 
 impl UserInputOption {

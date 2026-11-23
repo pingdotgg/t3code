@@ -10,9 +10,9 @@ use std::sync::LazyLock;
 use conn_theme::{Appearance, Tokens};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, InteractiveElement,
-    InteractiveText, IntoElement, ParentElement, SharedString, StatefulInteractiveElement, Styled,
-    StyledText, UnderlineStyle, Window, div, px,
+    AnyElement, App, ClipboardItem, FontStyle, FontWeight, HighlightStyle, Hsla,
+    InteractiveElement, InteractiveText, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, UnderlineStyle, Window, div, px,
 };
 use markdown::mdast::Node;
 use syntect::parsing::{ParseState, Scope, ScopeStack, SyntaxReference, SyntaxSet};
@@ -77,9 +77,20 @@ pub(crate) enum HeadingStyle {
     BodySize,
 }
 
+/// A quieter body for one block of Markdown: the colour, and the size when set, of Conn's
+/// `**:text-muted-foreground` and `text-xs text-foreground/70` wrappers around `ChatMarkdown`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ProseStyle {
+    pub(crate) color: Hsla,
+    /// Font size and line height in px; the body's when `None`.
+    pub(crate) size: Option<(f32, f32)>,
+}
+
 /// Per-context rendering options for [`render_blocks`] and [`render_markdown`].
 #[derive(Default)]
 pub(crate) struct MarkdownOptions<'a> {
+    /// Overrides the colour (and size) of prose, headings and inline code.
+    pub(crate) prose: Option<ProseStyle>,
     /// Heading typography style.
     pub(crate) heading_style: HeadingStyle,
     /// Block id of the code block most recently copied, to show check feedback.
@@ -94,6 +105,19 @@ pub(crate) struct MarkdownOptions<'a> {
     pub(crate) workspace_root: Option<&'a str>,
     /// Optional callback invoked when a user clicks a workspace file link or inline file path.
     pub(crate) on_open_file: Option<Rc<dyn Fn(String, &mut Window, &mut App)>>,
+}
+
+impl MarkdownOptions<'_> {
+    fn prose_color(&self, tokens: &Tokens) -> Hsla {
+        self.prose
+            .map_or_else(|| prose_foreground(tokens), |prose| prose.color)
+    }
+
+    fn body_size(&self) -> (f32, f32) {
+        self.prose
+            .and_then(|prose| prose.size)
+            .unwrap_or((BODY_FONT_PX, BODY_LINE_HEIGHT_PX))
+    }
 }
 
 impl fmt::Debug for MarkdownOptions<'_> {
@@ -504,14 +528,17 @@ fn render_block(
     options: &MarkdownOptions<'_>,
 ) -> AnyElement {
     match block {
-        MarkdownBlock::Paragraph(spans) => div()
-            .w_full()
-            .min_w_0()
-            .text_size(px(BODY_FONT_PX))
-            .line_height(px(BODY_LINE_HEIGHT_PX))
-            .text_color(prose_foreground(tokens))
-            .child(render_inline_spans(block_id, spans, tokens, options))
-            .into_any_element(),
+        MarkdownBlock::Paragraph(spans) => {
+            let (font_px, line_px) = options.body_size();
+            div()
+                .w_full()
+                .min_w_0()
+                .text_size(px(font_px))
+                .line_height(px(line_px))
+                .text_color(options.prose_color(tokens))
+                .child(render_inline_spans(block_id, spans, tokens, options))
+                .into_any_element()
+        }
 
         MarkdownBlock::Heading { level, spans } => {
             let (font_px, line_px, weight, text_color) = match options.heading_style {
@@ -540,7 +567,7 @@ fn render_block(
                 .text_size(px(font_px))
                 .line_height(px(line_px))
                 .font_weight(weight)
-                .text_color(text_color)
+                .text_color(options.prose.map_or(text_color, |prose| prose.color))
                 .child(render_inline_spans(block_id, spans, tokens, options));
             if !is_first {
                 // `.chat-markdown h1..h6 { margin: 1.25rem 0 0.5rem }` (20px top total with 10.4px gap).
@@ -652,7 +679,7 @@ fn render_block(
                 .pl(px(12.8))
                 .border_l_2()
                 .border_color(hsla_alpha(tokens.foreground, 0.35))
-                .text_color(prose_foreground(tokens));
+                .text_color(options.prose_color(tokens));
             for (idx, b) in inner.iter().enumerate() {
                 let inner_id = format!("{block_id}-q{idx}");
                 inner_col = inner_col.child(render_block(&inner_id, b, idx == 0, tokens, options));
@@ -915,7 +942,7 @@ fn render_table(
                     .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(prose_foreground(tokens))
+                    .text_color(options.prose_color(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-th{c_idx}"),
                         cell,
@@ -947,7 +974,7 @@ fn render_table(
                     .py(px(7.2))
                     .text_size(px(BODY_FONT_PX))
                     .line_height(px(20.0))
-                    .text_color(prose_foreground(tokens))
+                    .text_color(options.prose_color(tokens))
                     .child(render_inline_spans(
                         &format!("{block_id}-td{r_idx}-{c_idx}"),
                         cell,
@@ -979,6 +1006,7 @@ fn render_inline_spans(
     let (styled, ranges, targets) = build_styled_text_with_targets(
         spans,
         tokens,
+        options.prose.map(|prose| prose.color),
         options.workspace_root,
         options.on_open_file.is_some(),
     );
@@ -1006,12 +1034,13 @@ fn render_inline_spans(
 fn build_styled_text_with_targets(
     spans: &[InlineSpan],
     tokens: &Tokens,
+    prose_override: Option<Hsla>,
     workspace_root: Option<&str>,
     file_links_enabled: bool,
 ) -> (StyledText, Vec<Range<usize>>, Vec<ClickTarget>) {
     // Runs, not highlights: inline code switches font family (SF Mono), which a highlight
     // cannot. Every run therefore carries its own font and color.
-    let prose = super::color::prose_foreground(tokens);
+    let prose = prose_override.unwrap_or_else(|| super::color::prose_foreground(tokens));
     let mut text = String::new();
     let mut runs: Vec<gpui_kit::TextRun> = Vec::new();
     let mut ranges: Vec<Range<usize>> = Vec::new();
@@ -1077,7 +1106,7 @@ fn build_styled_text_with_targets(
             let fg_color = if is_clickable_file {
                 hsla(tokens.info_foreground)
             } else {
-                hsla(tokens.foreground)
+                prose_override.unwrap_or_else(|| hsla(tokens.foreground))
             };
             (
                 fg_color,

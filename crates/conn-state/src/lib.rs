@@ -12,9 +12,11 @@
 //! - [`LayoutState`]: sidebar, right panel, and tab layout.
 
 mod annotations;
+mod drafts;
 mod layout;
 mod scheduled;
 mod shell;
+mod sidebar;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 mod thread;
@@ -46,16 +48,25 @@ pub use crate::scheduled::{
     schedule_label, webhook_delivery_label,
 };
 
+pub use crate::drafts::{
+    ProjectDraftSlots, Retarget, keeps_displaced_draft, persists_across_restart, project_draft_key,
+    retarget_draft,
+};
 pub use crate::layout::{
     LayoutState, PanelSurface, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
     RIGHT_PANEL_MIN_WIDTH, RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
     SIDEBAR_MIN_WIDTH,
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
+pub use crate::sidebar::{
+    DRAFT_STATUS_LABEL, DraftRowKey, SidebarDraft, SidebarDraftRow, draft_has_content,
+    draft_preview, draft_row_key, draft_row_label, freeze_active_draft_row, is_activation_key,
+    sidebar_draft_row, sidebar_draft_rows, threads_with_unsent_input,
+};
 pub use crate::thread::{
-    EntryTiming, ItemStatus, RunStatus, RunTiming, SecretRequestStatus,
-    ThreadContextWindowSnapshot, ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus,
-    parse_iso8601_epoch_ms, turn_item_detail,
+    EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,
+    SecretRequestStatus, ThreadContextWindowSnapshot, ThreadState, TimelineEntry,
+    TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
 };
 pub use crate::timeline::{
     LocalDateTime, PLAN_PREVIEW_MAX_LINES, SubagentTone, TurnCheckpointFile, TurnDiffRow,

@@ -51,6 +51,8 @@ pub(crate) enum ThreadMenuAction {
     CopyThreadId,
     ProjectSettings,
     Delete,
+    /// `Discard draft` on a new-thread draft row.
+    DiscardDraft,
 }
 
 impl ThreadMenuAction {
@@ -73,6 +75,7 @@ impl ThreadMenuAction {
             Self::CopyThreadId => "thread-menu.copy.thread-id",
             Self::ProjectSettings => "thread-menu.project-settings",
             Self::Delete => "thread-menu.delete",
+            Self::DiscardDraft => "thread-menu.discard-draft",
         }
     }
 }
@@ -236,10 +239,59 @@ pub(crate) fn build_thread_action_menu_items(state: &ThreadMenuState) -> Vec<Thr
     items
 }
 
+/// What a sidebar draft row's menu offers (`buildDraftActionMenuItems`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DraftMenuState {
+    /// The draft has a workspace path to copy.
+    pub(crate) has_path: bool,
+    pub(crate) has_branch: bool,
+    /// The draft's project exists, so its settings can open.
+    pub(crate) has_project: bool,
+}
+
+/// Port of `buildDraftActionMenuItems`: `Copy` (path, branch), `Project settings`, then a
+/// destructive `Discard draft`.
+#[must_use]
+pub(crate) fn build_draft_action_menu_items(state: DraftMenuState) -> Vec<ThreadMenuItem> {
+    use ThreadMenuAction as A;
+    let mut copy = ThreadMenuItem::new(A::Copy, "Copy", "superhero/copy.svg");
+    copy.disabled = !state.has_path && !state.has_branch;
+    if state.has_path {
+        copy.children.push(ThreadMenuItem::new(
+            A::CopyPath,
+            "Path",
+            "superhero/folder.svg",
+        ));
+    }
+    if state.has_branch {
+        copy.children.push(ThreadMenuItem::new(
+            A::CopyBranch,
+            "Branch",
+            "superhero/branch.svg",
+        ));
+    }
+    let mut items = vec![copy];
+    if state.has_project {
+        items.push(ThreadMenuItem::new(
+            A::ProjectSettings,
+            "Project settings",
+            "superhero/settings.svg",
+        ));
+    }
+    let mut discard =
+        ThreadMenuItem::new(A::DiscardDraft, "Discard draft", "superhero/delete.svg").separated();
+    discard.destructive = true;
+    items.push(discard);
+    items
+}
+
 /// Where the open Thread Actions menu sits and which thread it acts on.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ThreadMenuAnchor {
+    /// The thread id, or the draft id for a draft row's menu.
     pub(crate) thread_id: String,
+    /// The menu belongs to a new-thread draft row ([`build_draft_action_menu_items`]).
+    pub(crate) draft: bool,
     /// Window-space pointer position of the right-click (or the header chevron click).
     pub(crate) position: Point<Pixels>,
     /// Whether the `Copy` submenu is open.
@@ -352,6 +404,7 @@ fn render_menu_list(
     let highlight = hsla(tokens.shell_highlight);
     let separator = hsla_alpha(tokens.foreground, 0.08);
     let (menu_ax_id, menu_ax_label) = match level {
+        MenuLevel::Root if anchor.draft => ("thread-menu", "Draft actions"),
         MenuLevel::Root => ("thread-menu", "Thread actions"),
         MenuLevel::Submenu => ("thread-menu.copy.submenu", "Copy"),
     };
@@ -375,6 +428,7 @@ fn render_menu_list(
         let hover_intent = submenu_hover_intent(level, has_children);
         let action = item.action;
         let thread_id = anchor.thread_id.clone();
+        let is_draft = anchor.draft;
         let mut row = div()
             .id(SharedString::from(format!("{id_prefix}-{idx}")))
             .test_support()
@@ -430,6 +484,8 @@ fn render_menu_list(
                     cx.stop_propagation();
                     if has_children {
                         app.open_thread_menu_copy_submenu(cx);
+                    } else if is_draft {
+                        app.run_draft_menu_action(thread_id.clone(), action, window, cx);
                     } else {
                         app.run_thread_menu_action(thread_id.clone(), action, window, cx);
                     }
@@ -555,6 +611,28 @@ mod tests {
             .find(|i| i.action == ThreadMenuAction::Copy)
             .expect("copy submenu");
         assert_eq!(labels(&copy.children), vec!["Path", "Thread", "Thread ID"]);
+    }
+
+    #[test]
+    fn draft_menu_matches_conn_order_and_hides_what_the_draft_lacks() {
+        let full = build_draft_action_menu_items(DraftMenuState {
+            has_path: true,
+            has_branch: true,
+            has_project: true,
+        });
+        assert_eq!(
+            labels(&full),
+            vec!["Copy", "Project settings", "Discard draft"]
+        );
+        assert_eq!(labels(&full[0].children), vec!["Path", "Branch"]);
+        assert!(!full[0].disabled);
+        let discard = full.last().expect("discard row");
+        assert!(discard.destructive && discard.separator_before);
+        assert_eq!(discard.action, ThreadMenuAction::DiscardDraft);
+
+        let bare = build_draft_action_menu_items(DraftMenuState::default());
+        assert_eq!(labels(&bare), vec!["Copy", "Discard draft"]);
+        assert!(bare[0].disabled && bare[0].children.is_empty());
     }
 
     #[test]

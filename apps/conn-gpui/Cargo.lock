@@ -1238,6 +1238,7 @@ dependencies = [
  "conn-theme",
  "conn-web",
  "conn-wire",
+ "fancy-regex",
  "futures",
  "gpui-kit",
  "gpui-pre",

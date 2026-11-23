@@ -1327,11 +1327,13 @@ mod tests {
                         label: "SwiftUI".to_owned(),
                         description: "Native iOS".to_owned(),
                         value: Some("swiftui".to_owned()),
+                        preview: None,
                     },
                     UserInputOption {
                         label: "UIKit".to_owned(),
                         description: "Classic".to_owned(),
                         value: None,
+                        preview: None,
                     },
                 ],
                 multi_select: true,

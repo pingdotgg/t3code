@@ -183,6 +183,28 @@ pub fn respond_approval(
     }))
 }
 
+/// `runtime-request.respond`: decline an approval and pass `feedback` to the agent, for a request
+/// whose `responseCapability.supportsFeedback` is set (Conn's `sendApprovalFeedback`).
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn decline_approval_with_feedback(
+    thread_id: &str,
+    request_id: &str,
+    feedback: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "runtime-request.respond",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "requestId": request_id,
+        "decision": "decline",
+        "feedback": feedback,
+    }))
+}
+
 /// `runtime-request.respond`: answer a `user_input_request` with `answers` keyed by question id
 /// (each a string or a string array), as Conn's `ComposerPendingUserInputPanel` submits them.
 ///
@@ -635,6 +657,14 @@ mod tests {
         assert!(
             respond_approval("t1", "r1", "accept").is_ok(),
             "runtime-request.respond decodes"
+        );
+        assert!(
+            decline_approval_with_feedback("t1", "r1", "use the staging bucket").is_ok_and(
+                |command| serde_json::to_value(command)
+                    .is_ok_and(|value| value["feedback"] == "use the staging bucket"
+                        && value["decision"] == "decline")
+            ),
+            "runtime-request.respond with decline feedback decodes"
         );
         let mut answers = serde_json::Map::new();
         answers.insert("q1".to_owned(), json!("golang"));

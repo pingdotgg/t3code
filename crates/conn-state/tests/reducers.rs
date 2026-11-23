@@ -825,6 +825,82 @@ fn thread_replays_real_conn_server_turn_and_permission_fixtures() {
 }
 
 #[test]
+fn pending_approvals_follow_their_runtime_request() {
+    let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
+    let is_runtime_request = |frame: &Value| frame["event"]["type"] == "runtime-request.updated";
+    let replay = |frames: &[Value]| {
+        let mut state = ThreadState::default();
+        for frame in frames {
+            let changed = state.apply(decode_thread(frame.clone()));
+            if is_runtime_request(frame) {
+                assert!(changed, "a runtime request change re-syncs views");
+            }
+        }
+        state
+    };
+    let shows_approval_card = |state: &ThreadState| {
+        state
+            .entries
+            .iter()
+            .any(|e| matches!(e, TimelineEntry::Approval { .. }))
+    };
+    let request_index = frames
+        .iter()
+        .position(is_runtime_request)
+        .expect("fixture has a pending runtime request");
+    let card_index = frames
+        .iter()
+        .position(|f| f["event"]["payload"]["type"] == "approval_request")
+        .expect("fixture has an approval card");
+    let resolved_index = frames
+        .iter()
+        .rposition(is_runtime_request)
+        .expect("fixture resolves the request");
+
+    // Claude's live request takes decline feedback.
+    let waiting = replay(&frames[..=card_index]);
+    let approvals = waiting.pending_approvals();
+    assert_eq!(approvals.len(), 1);
+    assert!(approvals[0].answerable && approvals[0].supports_feedback);
+    assert_eq!(
+        Some(&approvals[0].request_id),
+        waiting.approval_requests.get(&approvals[0].entry_id)
+    );
+
+    // Once the request resolves, its card is no longer a pending approval, even before the
+    // card's own turn item catches up.
+    let resolved = replay(&frames[..=resolved_index]);
+    assert!(shows_approval_card(&resolved));
+    assert!(resolved.pending_approvals().is_empty());
+
+    // A request the provider can no longer answer stays pending but is not answerable.
+    let mut stale = frames[..=card_index].to_vec();
+    stale[request_index]["event"]["payload"]["responseCapability"] =
+        json!({ "type": "not_resumable", "reason": "provider session ended" });
+    let approvals = replay(&stale).pending_approvals();
+    assert_eq!(approvals.len(), 1);
+    assert!(!approvals[0].answerable && !approvals[0].supports_feedback);
+
+    // A snapshot carries the same state through `runtimeRequests`.
+    let mut snapshot = frames[0].clone();
+    snapshot["projection"]["runtimeRequests"] =
+        json!([frames[request_index]["event"]["payload"].clone()]);
+    snapshot["projection"]["visibleTurnItems"]
+        .as_array_mut()
+        .expect("snapshot visible turn items")
+        .push(json!({
+            "position": 1,
+            "sourceItemId": frames[card_index]["event"]["payload"]["id"].clone(),
+            "sourceThreadId": frames[card_index]["event"]["payload"]["threadId"].clone(),
+            "visibility": "local",
+            "item": frames[card_index]["event"]["payload"].clone(),
+        }));
+    let approvals = replay(&[snapshot]).pending_approvals();
+    assert_eq!(approvals.len(), 1);
+    assert!(approvals[0].answerable && approvals[0].supports_feedback);
+}
+
+#[test]
 fn layout_toggles_selection_and_width_clamping() {
     let mut layout = LayoutState::default();
     assert!(layout.sidebar_open, "sidebar starts open");

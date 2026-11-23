@@ -30,7 +30,6 @@ use gpui_kit::{
 
 use super::color::{hsla, hsla_alpha, muted_icon, prose_foreground};
 use super::composer_state::{ComposerPendingRequest, PendingQuestion};
-use super::question_logic::{question_primary, split_recommended_label};
 use super::{
     BODY_FONT_PX, BODY_LINE_HEIGHT_PX, ChatEvent, ChatView, MONO_FONT_FAMILY, UI_FONT_PX,
     UI_LINE_HEIGHT_PX, icons, markdown,
@@ -53,7 +52,9 @@ pub(super) struct UserInputCardState {
     pub(super) drafts: HashMap<String, UserInputDraft>,
     pub(super) responding: bool,
     pub(super) error: Option<String>,
-    _auto_advance: Option<Task<()>>,
+    /// The agent's lead-in shows in full (`Show more`) instead of three lines.
+    pub(super) context_expanded: bool,
+    pub(super) _auto_advance: Option<Task<()>>,
 }
 
 impl UserInputCardState {
@@ -63,6 +64,7 @@ impl UserInputCardState {
             drafts: HashMap::new(),
             responding: false,
             error: None,
+            context_expanded: false,
             _auto_advance: None,
         }
     }
@@ -441,6 +443,12 @@ impl ChatView {
         let pending = self.pending_card_ids.clone();
         self.secret_forms.retain(|id, _| pending.contains(id));
         self.user_input_cards.retain(|id, _| pending.contains(id));
+        self.question_panel.displaced.retain_keys(|key| {
+            pending.iter().any(|id| {
+                key.strip_prefix(id.as_str())
+                    .is_some_and(|rest| rest.starts_with(':'))
+            })
+        });
         for id in pending {
             let Some(entry) = self
                 .cache
@@ -499,7 +507,10 @@ impl ChatView {
     // Pending user input
     // -----------------------------------------------------------------------------------------
 
-    fn user_input_questions(&self, entry_id: &str) -> Option<(String, Vec<UserInputQuestion>)> {
+    pub(super) fn user_input_questions(
+        &self,
+        entry_id: &str,
+    ) -> Option<(String, Vec<UserInputQuestion>)> {
         self.cache.rows().iter().find_map(|row| match &row.entry {
             TimelineEntry::UserInputRequest {
                 id,
@@ -511,19 +522,25 @@ impl ChatView {
         })
     }
 
-    fn select_user_input_option(
+    pub(super) fn select_user_input_option(
         &mut self,
         entry_id: &str,
         question: &UserInputQuestion,
         value: &str,
+        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        if self
+            .user_input_cards
+            .get(entry_id)
+            .is_none_or(|state| state.responding)
+        {
+            return;
+        }
+        self.set_aside_typed_answer(entry_id, question, window, cx);
         let Some(state) = self.user_input_cards.get_mut(entry_id) else {
             return;
         };
-        if state.responding {
-            return;
-        }
         let next = question.toggle_option(state.drafts.get(&question.id), value);
         state.drafts.insert(question.id.clone(), next);
         if !question.multi_select {
@@ -533,7 +550,6 @@ impl ChatView {
                 let _ = this.update(cx, |view, cx| view.advance_user_input(&entry_id, cx));
             }));
         }
-        self.remeasure_for_id(entry_id);
         cx.notify();
     }
 
@@ -551,8 +567,12 @@ impl ChatView {
         }
     }
 
-    /// Moves to the next question once the active one is answered; submits on the last one.
-    fn advance_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
+    /// Moves to the next question once the active one is answered; submits on the last one
+    /// (`onAdvanceActivePendingUserInput`, which ignores a request nobody can answer).
+    pub(super) fn advance_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
+        if !self.question_panel.can_respond {
+            return;
+        }
         let Some((_, questions)) = self.user_input_questions(entry_id) else {
             return;
         };
@@ -572,20 +592,18 @@ impl ChatView {
         }
         if index + 1 < questions.len() {
             state.question_index = index + 1;
-            self.remeasure_for_id(entry_id);
             cx.notify();
         } else {
             self.submit_user_input(entry_id, cx);
         }
     }
 
-    fn go_back_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
+    pub(super) fn go_back_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
         if let Some(state) = self.user_input_cards.get_mut(entry_id)
             && state.question_index > 0
         {
             state.question_index -= 1;
             state._auto_advance = None;
-            self.remeasure_for_id(entry_id);
             cx.notify();
         }
     }
@@ -632,7 +650,6 @@ impl ChatView {
                         state.error = Some(crate::commands::format_client_error(&err));
                     }
                 }
-                view.remeasure_for_id(&entry_id);
                 cx.notify();
             });
         })
@@ -680,13 +697,14 @@ impl ChatView {
         if let Some(question) = questions.get(index)
             && !text.trim().is_empty()
         {
+            self.withdraw_restored_answer(&entry_id, &question.id, text, cx);
             self.set_user_input_custom(&entry_id, question, text, cx);
         }
         self.advance_user_input(&entry_id, cx);
     }
 
     /// Dismisses a message-mode question (`thread.user-input.dismiss`).
-    fn dismiss_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
+    pub(super) fn dismiss_user_input(&mut self, entry_id: &str, cx: &mut Context<'_, Self>) {
         let Some((request_id, _)) = self.user_input_questions(entry_id) else {
             return;
         };
@@ -717,6 +735,8 @@ impl ChatView {
         cx.notify();
     }
 
+    /// A question's timeline row. Conn shows a pending one in the composer banner
+    /// ([`ChatView::render_question_banner`]) and leaves a quiet `Input requested` row here.
     #[expect(
         clippy::too_many_arguments,
         reason = "mirrors the Conn component props one to one"
@@ -729,288 +749,22 @@ impl ChatView {
         pending: bool,
         status: TurnItemStatus,
         answers: &[UserInputAnswer],
-        dismissible: bool,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
-        if !pending {
-            return self.render_user_input_history(id, title, questions, status, answers, cx);
-        }
-        let Some(state) = self.user_input_cards.get(id) else {
-            // The state is created on the next render pass.
-            return div().h(px(24.0)).into_any_element();
-        };
-        let index = state.question_index.min(questions.len().saturating_sub(1));
-        let Some(question) = questions.get(index) else {
-            return div().into_any_element();
-        };
-        let draft = state.drafts.get(&question.id);
-        let disabled = state.responding;
-
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-
-        // `ComposerPendingUserInputCard`: no header and no answer field; the composer takes typed
-        // answers. The border and tile stand in for the composer banner this card sits in.
-        let mut card = div()
-            .id(SharedString::from(format!("question-card-{id}")))
-            .a11y(
-                gpui_kit::Role::Group,
-                SharedString::from(format!("chat.question.{id}")),
-                question.header.clone(),
-            )
-            .flex()
-            .flex_col()
-            .w_full()
-            .min_w_0()
-            .px(px(4.0))
-            .pt(px(12.0))
-            .pb(px(4.0))
-            .rounded(px(14.0))
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider))
-            .bg(hsla(self.tokens.shell_tile));
-
-        // The question starts 12px inside the option highlights.
-        card = card.child(div().px(px(12.0)).pb(px(4.0)).text_color(fg).child(
-            markdown::render_markdown(
-                &format!("question-{id}-{}", question.id),
-                &question.question,
-                &self.tokens,
-                &markdown::MarkdownOptions::default(),
-            ),
-        ));
-
-        let mut options = div().flex().flex_col().gap(px(2.0)).mt(px(8.0)).pb(px(4.0));
-        for (opt_idx, option) in question.options.iter().enumerate() {
-            let value = option.answer_value().to_owned();
-            let selected = question.is_option_selected(draft, &value);
-            let entry_id = id.to_owned();
-            let q = question.clone();
-            let (title_text, recommended) = split_recommended_label(&option.label);
-            let indicator: AnyElement = if question.multi_select {
-                self.render_checkbox_mark(selected)
-            } else {
-                self.render_option_radio(selected)
-            };
-            // No `1`-`9` key badge: the digit shortcuts are not ported (docs/parity/composer.md).
-            let main = div()
-                .flex()
-                .flex_row()
-                .items_start()
-                .gap(px(10.0))
-                .child(div().flex().items_center().h(px(20.0)).child(indicator))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.0))
-                        .flex_1()
-                        .min_w_0()
-                        .child(
-                            div()
-                                .text_size(px(BODY_FONT_PX))
-                                .line_height(px(20.0))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(fg)
-                                .child(title_text.to_owned()),
-                        )
-                        .when(
-                            !option.description.is_empty() && option.description != option.label,
-                            |d| {
-                                d.child(
-                                    div()
-                                        .text_size(px(UI_FONT_PX))
-                                        .line_height(px(16.0))
-                                        .text_color(muted)
-                                        .child(option.description.clone()),
-                                )
-                            },
-                        ),
-                );
-            let mut row = div()
-                .id((SharedString::from(format!("question-opt-{id}")), opt_idx))
-                .a11y_button(
-                    SharedString::from(format!("chat.question.option.{id}.{opt_idx}")),
-                    option.label.clone(),
-                )
-                .aria_selected(selected)
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .w_full()
-                .rounded(px(12.0))
-                .px(px(12.0))
-                .py(px(14.0))
-                .when(selected, |d| d.bg(hsla(self.tokens.shell_highlight)))
-                .when(recommended, |d| {
-                    // On its own line above the title, so the mark lines up with the title.
-                    d.child(
-                        div().flex().pl(px(26.0)).child(
-                            div()
-                                .rounded_full()
-                                .bg(hsla_alpha(self.tokens.primary, 0.15))
-                                .px(px(8.0))
-                                .py(px(1.0))
-                                .text_size(px(12.0))
-                                .line_height(px(16.0))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(hsla(self.tokens.primary))
-                                .child("Recommended"),
-                        ),
-                    )
-                })
-                .child(main);
-            if disabled {
-                row = row.opacity(0.5);
-            } else {
-                let hover = hsla_alpha(self.tokens.foreground, 0.04);
-                row = row
-                    .cursor_pointer()
-                    .when(!selected, move |d| d.hover(move |s| s.bg(hover)))
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        view.select_user_input_option(&entry_id, &q, &value, cx);
-                    }));
-            }
-            options = options.child(row);
-        }
-        card = card.child(options);
-
-        if let Some(error) = &state.error {
-            card = card.child(
-                div()
-                    .px(px(12.0))
-                    .pb(px(4.0))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(hsla(self.tokens.destructive))
-                    .child(error.clone()),
-            );
-        }
-
-        // Bottom row: `N of M`, Skip, Back, Next / Send.
-        let answered = question.resolve_answer(draft).is_some();
-        let is_last = index + 1 >= questions.len();
-        let complete = build_user_input_answers(questions, &state.drafts).is_some();
-        let auto_advancing = !question.multi_select && state._auto_advance.is_some();
-        let primary = question_primary(
-            is_last,
-            question.multi_select,
-            answered,
-            complete,
-            auto_advancing,
-            disabled,
-        );
-        let mut actions = div()
-            .mt(px(8.0))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.0))
-            .min_h(px(32.0));
-        if questions.len() > 1 {
-            actions = actions.child(
-                div()
-                    .pl(px(12.0))
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(format!("{} of {}", index + 1, questions.len())),
-            );
-        }
-        actions = actions.child(div().flex_1());
-        if dismissible {
-            let dismiss_id = id.to_owned();
-            actions = actions.child(
-                question_text_action(
-                    &self.tokens,
-                    format!("question-dismiss-{id}"),
-                    format!("chat.question.dismiss.{id}"),
-                    "Skip question",
-                    "Skip",
-                    !disabled,
-                    index == 0 && !primary.show,
-                )
-                .when(!disabled, |d| {
-                    d.on_click(cx.listener(move |view, _, _, cx| {
-                        view.dismiss_user_input(&dismiss_id, cx);
-                    }))
-                }),
-            );
-        }
-        if index > 0 {
-            let back_id = id.to_owned();
-            actions = actions.child(
-                question_text_action(
-                    &self.tokens,
-                    format!("question-back-{id}"),
-                    format!("chat.question-back-{id}"),
-                    "Back",
-                    "Back",
-                    !disabled,
-                    !primary.show,
-                )
-                .when(!disabled, |d| {
-                    d.on_click(cx.listener(move |view, _, _, cx| {
-                        view.go_back_user_input(&back_id, cx);
-                    }))
-                }),
-            );
-        }
-        if primary.show {
-            let (ax_label, text) = if disabled {
-                ("Submitting", "Submitting...")
-            } else if is_last {
-                ("Send answers", "Send")
-            } else {
-                ("Next", "Next")
-            };
-            let primary_id = id.to_owned();
-            let hover_bg = hsla_alpha(self.tokens.primary, 0.88);
-            actions = actions.child(
-                div()
-                    .id(SharedString::from(format!("question-submit-{id}")))
-                    .a11y_button(
-                        SharedString::from(format!("chat.question-submit-{id}")),
-                        ax_label,
-                    )
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .h(px(32.0))
-                    .px(px(16.0))
-                    .rounded_full()
-                    .bg(hsla(self.tokens.primary))
-                    .text_color(hsla(self.tokens.primary_foreground))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(20.0))
-                    .font_weight(FontWeight::MEDIUM)
-                    .when(!primary.enabled, |d| d.opacity(0.64))
-                    .when(primary.enabled, |d| {
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(hover_bg))
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                view.advance_user_input(&primary_id, cx);
-                            }))
-                    })
-                    .child(text),
-            );
-        }
-        card = card.child(actions);
-
-        div()
-            .w_full()
-            .min_w_0()
-            .pb(px(12.0))
-            .child(card)
-            .into_any_element()
+        self.render_user_input_history(id, title, questions, pending, status, answers, cx)
     }
 
     /// Answered or ended question: a `WorkLogRow` with each `question · answer`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the Conn component props one to one"
+    )]
     fn render_user_input_history(
         &self,
         id: &str,
         title: Option<&str>,
         questions: &[UserInputQuestion],
+        pending: bool,
         status: TurnItemStatus,
         answers: &[UserInputAnswer],
         cx: &mut Context<'_, Self>,
@@ -1033,6 +787,7 @@ impl ChatView {
                     "Question dismissed".to_owned()
                 }
                 TurnItemStatus::Failed => "Question failed".to_owned(),
+                _ if pending => title.map_or_else(|| "Input requested".to_owned(), str::to_owned),
                 _ => title
                     .map(str::to_owned)
                     .or_else(|| questions.first().map(|q| q.header.clone()))
@@ -1086,7 +841,7 @@ impl ChatView {
     }
 
     /// Conn `OptionRadio`: `size-4` circle, primary fill with a foreground dot when checked.
-    fn render_option_radio(&self, checked: bool) -> AnyElement {
+    pub(super) fn render_option_radio(&self, checked: bool) -> AnyElement {
         let mut radio = div()
             .flex()
             .items_center()
@@ -1114,7 +869,7 @@ impl ChatView {
     }
 
     /// Conn `CheckboxMark`: `size-4` rounded square, primary fill with a check when checked.
-    fn render_checkbox_mark(&self, checked: bool) -> AnyElement {
+    pub(super) fn render_checkbox_mark(&self, checked: bool) -> AnyElement {
         let mut mark = div()
             .flex()
             .items_center()
@@ -2192,7 +1947,7 @@ impl ChatView {
 
 /// A quiet text button of the question card (`TextAction`): `text-sm font-medium`, muted until
 /// hovered. The last action ends in line with the question text, not at the pill edge.
-fn question_text_action(
+pub(super) fn question_text_action(
     tokens: &conn_theme::Tokens,
     key: String,
     ax_id: String,

@@ -188,6 +188,25 @@ pub(super) fn render_stash_badge(
     tokens: &Tokens,
     cx: &mut Context<'_, Composer>,
 ) -> Option<AnyElement> {
+    let tab = render_stash_badge_tab(stash, tokens, cx)?;
+    Some(
+        div()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .w_full()
+            .px(px(22.0))
+            .child(tab)
+            .into_any_element(),
+    )
+}
+
+/// The badge's tab alone, for a host dock that places it beside its own banner.
+pub(super) fn render_stash_badge_tab(
+    stash: &PromptStash,
+    tokens: &Tokens,
+    cx: &mut Context<'_, Composer>,
+) -> Option<AnyElement> {
     let count = stash.entries().len();
     if count == 0 {
         return None;
@@ -198,51 +217,43 @@ pub(super) fn render_stash_badge(
     let (bg, border) = banner_colors(tokens);
     Some(
         div()
+            .id(SharedString::from(format!(
+                "composer-stash-badge-{}",
+                stash.pulse_key % 2
+            )))
+            .a11y_button(
+                "composer.stash-badge",
+                format!("Stashed prompts: {count}. Open stash."),
+            )
+            .aria_expanded(open)
             .flex()
             .flex_row()
-            .justify_end()
-            .w_full()
-            .px(px(22.0))
-            .child(
-                div()
-                    .id(SharedString::from(format!(
-                        "composer-stash-badge-{}",
-                        stash.pulse_key % 2
-                    )))
-                    .a11y_button(
-                        "composer.stash-badge",
-                        format!("Stashed prompts: {count}. Open stash."),
-                    )
-                    .aria_expanded(open)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .h(px(28.0))
-                    .px(px(10.0))
-                    .mb(px(-1.0))
-                    .rounded_t(px(10.0))
-                    .bg(bg)
-                    .border_1()
-                    .border_b_0()
-                    .border_color(border)
-                    .cursor_pointer()
-                    .text_size(px(12.0))
-                    .line_height(px(16.0))
-                    .text_color(if open { fg } else { muted })
-                    .hover(move |s| s.text_color(fg))
-                    .on_click(cx.listener(|composer, _, _, cx| {
-                        composer.toggle_stash_menu(cx);
-                    }))
-                    .conn_tooltip(format!("Stash ({STASH_SHORTCUT_LABEL})"), tokens)
-                    .child(icons::icon(
-                        ICON_BOOKMARK,
-                        14.0,
-                        if open { fg } else { muted },
-                    ))
-                    .child("Stash")
-                    .child(div().text_color(muted).child(count.to_string())),
-            )
+            .items_center()
+            .gap(px(6.0))
+            .h(px(28.0))
+            .px(px(10.0))
+            .mb(px(-1.0))
+            .rounded_t(px(10.0))
+            .bg(bg)
+            .border_1()
+            .border_b_0()
+            .border_color(border)
+            .cursor_pointer()
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .text_color(if open { fg } else { muted })
+            .hover(move |s| s.text_color(fg))
+            .on_click(cx.listener(|composer, _, _, cx| {
+                composer.toggle_stash_menu(cx);
+            }))
+            .conn_tooltip(format!("Stash ({STASH_SHORTCUT_LABEL})"), tokens)
+            .child(icons::icon(
+                ICON_BOOKMARK,
+                14.0,
+                if open { fg } else { muted },
+            ))
+            .child("Stash")
+            .child(div().text_color(muted).child(count.to_string()))
             .into_any_element(),
     )
 }
@@ -421,7 +432,7 @@ pub(super) fn render_stash_menu(
 
 /// `ComposerBanner.Root` default surface and border.
 fn banner_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) {
-    (hsla(tokens.shell_raised), hsla(tokens.shell_inner_border))
+    crate::chat::color::banner_surface(tokens)
 }
 
 #[cfg(test)]

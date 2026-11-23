@@ -13,6 +13,7 @@
 mod actions;
 mod branch_picker;
 mod context_meter;
+mod drafts;
 mod footer;
 mod menus;
 mod model_picker;
@@ -40,7 +41,7 @@ use gpui_kit::component::input::{
 use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
+    AnyElement, App, AppContext as _, ClipboardEntry, Context, Entity, EventEmitter, ExternalPaths,
     FontWeight, ImageFormat, InteractiveElement as _, IntoElement, ParentElement as _,
     PathPromptOptions, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
     Subscription, Window, deferred, div, px,
@@ -60,9 +61,9 @@ use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_mode
 use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
 use super::composer_state::{
-    ComposerDraft, ComposerDraftStore, ComposerPendingRequest, ComposerSendAction,
-    PromptHistoryEntry, PromptHistoryPosition, composer_placeholder, composer_send_action,
-    prompt_length_message, step_prompt_history,
+    ComposerDraft, ComposerDraftStore, ComposerPendingRequest, ComposerSendAction, HeldDraft,
+    PromptHistoryEntry, PromptHistoryPosition, TypingGuardInput, composer_placeholder,
+    composer_send_action, prompt_length_message, step_prompt_history,
 };
 use super::icons;
 use crate::a11y::ConnA11yExt as _;
@@ -155,11 +156,16 @@ pub(crate) enum ComposerEvent {
         attachments: Vec<ChatAttachment>,
         /// Steer or queue while a turn runs (`resolveComposerDispatchMode`).
         dispatch: SendDispatch,
+        /// Set when the send answers pending approvals: the draft stays in the composer until
+        /// the host settles it with [`Composer::settle_held_draft`].
+        held_draft: Option<HeldDraft>,
     },
     /// Answer the active pending question with `text`; blank uses its selected option.
     AnswerQuestion {
         text: String,
     },
+    /// An editor event for the typing guard (`useComposerTypingGuard`).
+    TypingGuard(TypingGuardInput),
     /// `Resume thread`: continue an interrupted thread (`useComposerResume`).
     Resume,
     /// `Implement in a new thread` from the plan follow-up split button.
@@ -189,6 +195,19 @@ pub(crate) enum ComposerEvent {
     ScratchWorkspaceRoot(Option<String>),
 }
 
+/// What the pending question's panel reads from the composer.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct QuestionComposerStatus {
+    /// The draft text, which becomes the answer on send.
+    pub(crate) typed: String,
+    /// Dictation is recording, so Send finishes it.
+    pub(crate) voice_active: bool,
+    /// A file is still uploading.
+    pub(crate) uploading: bool,
+    /// Sending is blocked outside the answer: offline, uploading or transcribing.
+    pub(crate) blocked: bool,
+}
+
 /// Stateful GPUI entity for the Conn composer, model picker, `/` command menu, and `@` mentions.
 pub(crate) struct Composer {
     tokens: Tokens,
@@ -213,6 +232,9 @@ pub(crate) struct Composer {
     can_resume: bool,
     /// The pending approval or question a send answers instead of starting a turn.
     pending_request: ComposerPendingRequest,
+    /// An approval send is declining; the draft stays put and another send waits
+    /// (`sendInFlightRef`).
+    answering_approval: bool,
     send_disabled_reason: Option<String>,
     environment_unavailable: bool,
     preparing_worktree: bool,
@@ -224,6 +246,8 @@ pub(crate) struct Composer {
     permission_preview: Option<&'static str>,
     implement_menu_open: bool,
     stash: PromptStash,
+    /// The host draws the stash badge in its own banner dock.
+    stash_docked: bool,
     branch: branch_picker::BranchUi,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
@@ -257,6 +281,8 @@ pub(crate) struct Composer {
     dictation: DictationState,
     dictation_error: Option<String>,
     next_dictation_seq: u64,
+    /// Send was pressed while dictating: submit once the transcript lands.
+    submit_after_dictation: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -317,9 +343,15 @@ impl Composer {
                     }
                 }
                 InputEvent::Change => {
+                    // Typing a question's answer is not prompt typing (`onPromptChange`).
+                    if this.pending_request.question.is_none() {
+                        cx.emit(ComposerEvent::TypingGuard(TypingGuardInput::Typed));
+                    }
                     this.on_draft_changed(cx);
                 }
-                _ => {}
+                InputEvent::Focus => cx.emit(ComposerEvent::TypingGuard(TypingGuardInput::Focus)),
+                InputEvent::Blur => cx.emit(ComposerEvent::TypingGuard(TypingGuardInput::Blur)),
+                InputEvent::PressEnter { .. } => {}
             },
         );
 
@@ -357,6 +389,7 @@ impl Composer {
             plan_follow_up: None,
             can_resume: false,
             pending_request: ComposerPendingRequest::default(),
+            answering_approval: false,
             send_disabled_reason: None,
             environment_unavailable: false,
             preparing_worktree: false,
@@ -368,6 +401,7 @@ impl Composer {
             permission_preview: None,
             implement_menu_open: false,
             stash: PromptStash::default(),
+            stash_docked: false,
             branch,
             textarea,
             model_search_input,
@@ -397,6 +431,7 @@ impl Composer {
             dictation: DictationState::Idle,
             dictation_error: None,
             next_dictation_seq: 1,
+            submit_after_dictation: false,
             _subscriptions: vec![textarea_sub, search_sub],
         };
         if composer.connection.is_some() {
@@ -524,7 +559,7 @@ impl Composer {
 
     /// Conn steers over pending approvals, since a send declines them to redirect the agent.
     fn effective_follow_up(&self) -> FollowUpBehavior {
-        if self.pending_request.approval {
+        if self.pending_request.approval.is_some() {
             FollowUpBehavior::Steer
         } else {
             self.follow_up
@@ -643,18 +678,6 @@ impl Composer {
             input.set_value(next.text, window, cx);
         });
         self.on_draft_changed(cx);
-    }
-
-    /// Moves the live draft to `key` when it has content (the hero's project picker). Returns
-    /// `true` when it moved; an empty draft stays, and the next sync shows `key`'s own draft.
-    pub(crate) fn retarget_draft_key(&mut self, key: &str, cx: &mut Context<'_, Self>) -> bool {
-        let empty = self.attachments.is_empty() && self.textarea.read(cx).value().trim().is_empty();
-        self.drafts.retarget(key, empty)
-    }
-
-    /// Drops `key`'s draft once it is sent or discarded (`clearDraftThread`).
-    pub(crate) fn discard_draft_key(&mut self, key: &str) {
-        self.drafts.discard(key);
     }
 
     /// Replaces the thread's recallable sent prompts.
@@ -1082,6 +1105,16 @@ impl Composer {
 
     #[cfg(test)]
     #[must_use]
+    pub(crate) fn draft_text_for_test(&self, cx: &App) -> String {
+        self.textarea.read(cx).value().to_string()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn parked_text_for_test(&self, key: &str) -> Option<String> {
+        self.drafts.parked_draft(key).map(|d| d.text.clone())
+    }
+
+    #[cfg(test)]
     pub(crate) fn attachment_states_for_test(&self) -> Vec<(String, String)> {
         self.attachments
             .iter()
@@ -1323,9 +1356,13 @@ impl Composer {
                     return;
                 }
                 composer.dictation = DictationState::Idle;
+                let submit = std::mem::take(&mut composer.submit_after_dictation);
                 match stop_res {
                     Ok(Ok(text)) => {
                         composer.apply_dictation_transcript(&text, window, cx);
+                        if submit {
+                            composer.submit(window, cx);
+                        }
                     }
                     Ok(Err(err)) => {
                         composer.dictation_error = Some(friendly_operator_error(&err));
@@ -1393,7 +1430,7 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if self.submitting {
+        if self.submitting || self.answering_approval {
             return;
         }
         let raw = self.textarea.read(cx).value().to_string();
@@ -1414,11 +1451,18 @@ impl Composer {
                 self.active_trigger = None;
                 self.dismissed_trigger_text = None;
                 cx.emit(ComposerEvent::AnswerQuestion { text: raw });
+                cx.emit(ComposerEvent::TypingGuard(TypingGuardInput::Send));
                 cx.notify();
                 return;
             }
-            ComposerSendAction::Message | ComposerSendAction::RedirectApprovals => {}
+            ComposerSendAction::Message
+            | ComposerSendAction::RedirectApprovals
+            | ComposerSendAction::DeclineWithFeedback => {}
         }
+        let holds_draft = matches!(
+            action,
+            ComposerSendAction::RedirectApprovals | ComposerSendAction::DeclineWithFeedback
+        );
         let still_uploading = self
             .attachments
             .iter()
@@ -1482,20 +1526,131 @@ impl Composer {
             true,
             alternate.unwrap_or(self.alternate_modifier),
         );
-        self.textarea.update(cx, |input, cx| {
-            input.set_value("", window, cx);
-        });
-        self.attachments.clear();
         self.active_trigger = None;
         self.dismissed_trigger_text = None;
         self.model_picker_open = false;
         self.implement_menu_open = false;
+        // Approvals are declined before the message goes, so the draft stays until then: an
+        // edit meanwhile, or a refused decline, keeps it (`useComposerSend`).
+        let held_draft = if holds_draft {
+            self.answering_approval = true;
+            Some(self.held_draft(cx))
+        } else {
+            self.textarea.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+            });
+            self.attachments.clear();
+            None
+        };
         cx.emit(ComposerEvent::Send {
             text,
             attachments: ready_attachments,
             dispatch,
+            held_draft,
         });
+        cx.emit(ComposerEvent::TypingGuard(TypingGuardInput::Send));
         cx.notify();
+    }
+
+    /// What the pending question's panel needs from the composer (`pendingPanelActions`).
+    pub(crate) fn question_panel_status(&self, cx: &App) -> QuestionComposerStatus {
+        let uploading = self
+            .attachments
+            .iter()
+            .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
+        QuestionComposerStatus {
+            typed: self.textarea.read(cx).value().to_string(),
+            voice_active: matches!(self.dictation, DictationState::Recording { .. }),
+            uploading,
+            blocked: self.environment_unavailable
+                || self.connection.is_none()
+                || self.send_disabled_reason.is_some()
+                || uploading
+                || matches!(self.dictation, DictationState::Transcribing { .. }),
+        }
+    }
+
+    /// Takes the text typed for the question's answer and empties the editor, as Conn does when
+    /// an option replaces the typed answer (`promptRef.current = ""`).
+    pub(crate) fn take_answer_text(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> String {
+        let text = self.textarea.read(cx).value().to_string();
+        if !text.is_empty() {
+            self.textarea
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.on_draft_changed(cx);
+        }
+        text
+    }
+
+    /// Edits the unsent text of another draft, such as the thread's while a question's answer
+    /// is shown (see [`ComposerDraftStore::edit_parked_text`]).
+    pub(crate) fn edit_parked_text(
+        &mut self,
+        key: &str,
+        edit: impl FnOnce(&str) -> Option<String>,
+    ) -> bool {
+        self.drafts.edit_parked_text(key, edit)
+    }
+
+    /// Send on the question panel while dictating: ends the dictation, then submits its text.
+    pub(crate) fn finish_dictation_and_submit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let DictationState::Recording { session_id } = self.dictation.clone() {
+            self.submit_after_dictation = true;
+            self.stop_dictation(session_id, window, cx);
+        } else {
+            self.submit(window, cx);
+        }
+    }
+
+    /// Hands the stash badge to the host's banner dock (`ComposerBanner.Dock`), or takes it back.
+    pub(crate) fn set_stash_docked(&mut self, docked: bool, cx: &mut Context<'_, Self>) {
+        if self.stash_docked != docked {
+            self.stash_docked = docked;
+            cx.notify();
+        }
+    }
+
+    /// The stash badge's tab for a host dock; none while the drawer is open.
+    pub(crate) fn dock_stash_badge(&self, cx: &mut Context<'_, Self>) -> Option<AnyElement> {
+        if self.stash.menu_open {
+            return None;
+        }
+        stash::render_stash_badge_tab(&self.stash, &self.tokens, cx)
+    }
+
+    /// The live draft, to compare with the one an approval send held.
+    pub(crate) fn held_draft(&self, cx: &App) -> HeldDraft {
+        HeldDraft {
+            text: self.textarea.read(cx).value().to_string(),
+            attachment_ids: self.attachments.iter().map(|a| a.local_id).collect(),
+        }
+    }
+
+    /// Ends an approval send. With `clear`, empties the composer when its draft still equals
+    /// `clear` and returns whether it did.
+    pub(crate) fn settle_held_draft(
+        &mut self,
+        clear: Option<&HeldDraft>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        self.answering_approval = false;
+        let cleared = clear.is_some_and(|held| *held == self.held_draft(cx));
+        if cleared {
+            self.textarea
+                .update(cx, |input, cx| input.set_value("", window, cx));
+            self.attachments.clear();
+        }
+        cx.notify();
+        cleared
     }
 
     /// `Resume thread`: asks the host to continue the interrupted thread.
@@ -2335,7 +2490,7 @@ impl Render for Composer {
             alternate_modifier: self.alternate_modifier,
             show_plan_follow_up: self.plan_follow_up.is_some() && !is_editing_queued,
             prompt_has_text: has_non_empty_text,
-            is_send_busy: self.submitting,
+            is_send_busy: self.submitting || self.answering_approval,
             send_disabled_reason: self
                 .send_disabled_reason
                 .clone()
@@ -2835,6 +2990,8 @@ impl Render for Composer {
             .when_some(
                 if self.stash.menu_open {
                     Some(render_stash_menu(&self.stash, &tokens, cx))
+                } else if self.stash_docked {
+                    None
                 } else {
                     render_stash_badge(&self.stash, &tokens, cx)
                 },

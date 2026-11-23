@@ -30,6 +30,12 @@ pub(super) fn message_highlight(tokens: &Tokens) -> Hsla {
     ))
 }
 
+/// `ComposerBanner.Root`'s default surface and outline (`--chat-composer-attached-surface`,
+/// `--chat-composer-attached-outline`).
+pub(super) fn banner_surface(tokens: &Tokens) -> (Hsla, Hsla) {
+    (hsla(tokens.shell_raised), hsla(tokens.shell_inner_border))
+}
+
 /// Assistant prose foreground matching Conn's `text-foreground/90`.
 pub(super) fn prose_foreground(tokens: &Tokens) -> Hsla {
     hsla_alpha(tokens.foreground, 0.90)

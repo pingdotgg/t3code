@@ -6,6 +6,7 @@ mod app;
 mod automation;
 mod colour_space;
 pub(crate) use conn_client::commands;
+mod drafts;
 mod file_icons;
 mod fixture;
 mod fonts;

@@ -1,5 +1,6 @@
 //! Workspace rail, thread sidebar views, and shared project favicon/monogram helpers.
 
+pub(crate) mod drafts;
 pub(crate) mod hover_card;
 pub(crate) mod hover_card_state;
 pub(crate) mod rail;

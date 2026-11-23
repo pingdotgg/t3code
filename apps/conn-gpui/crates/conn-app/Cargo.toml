@@ -19,6 +19,7 @@ conn-contract.workspace = true
 conn-state.workspace = true
 conn-theme.workspace = true
 conn-web.workspace = true
+fancy-regex = "0.16"
 gpui-kit.workspace = true
 # Optional direct dependency solely to activate `gpui-pre`'s built-in Subsecond hot-reload feature
 # (which `gpui-kit` does not forward). Debug-only inside `gpui-pre/build.rs`.
