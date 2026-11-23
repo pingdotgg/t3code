@@ -4,10 +4,11 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
   clampManagedRuntimeMode,
   resolveProjectProviderInstanceEnabled,
 } from "@t3tools/contracts";
-import { readEnvironmentScope } from "../../state/session";
+import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import type {
   EnvironmentId,
   ProjectId,
@@ -40,7 +41,11 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
-import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import {
+  canonicalTimeZone,
+  deviceTimeZone,
+  scheduleTimeZoneLabel,
+} from "@t3tools/client-runtime/scheduled-task-time-zone";
 import type { MessageResolver } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
@@ -76,6 +81,8 @@ import { ScheduledTaskPromptField } from "./components/ScheduledTaskPromptField"
 import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
+import { resolveMobileSettingsTargets, uniformMobileSetting } from "./settings-scoped-server";
+import { useSettingsWriter } from "./useSettingsWriter";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 import {
   changeDraftProject,
@@ -488,6 +495,7 @@ export function SettingsScheduledTasksRouteScreen() {
         contentContainerClassName="gap-5 px-5 pt-4"
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
       >
+        {selectedTargets.length > 0 ? <ScheduleTimeZoneSection targets={selectedTargets} /> : null}
         {visibleEnvironments.length > 0 ? (
           visibleEnvironments.map((environment) => (
             <EnvironmentTasks
@@ -522,6 +530,58 @@ export function SettingsScheduledTasksRouteScreen() {
         )}
       </ScrollView>
     </SettingsScreen>
+  );
+}
+
+const zoneName = (zone: string) => zone.replaceAll("_", " ");
+
+/** Daily and weekly tasks follow this zone; travelers move them to where this phone is. */
+function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly SettingsTarget[] }) {
+  const gt = useGT();
+  const writable = useEnvironmentsWithScope(targets, AuthSettingsWriteScope);
+  const writeSettings = useSettingsWriter();
+  const scoped = resolveMobileSettingsTargets(targets, null);
+  const saved = uniformMobileSetting(scoped, "scheduledTaskTimeZone");
+  const device = deviceTimeZone();
+  const machine = gt("Each machine's time zone");
+  const canWrite = targets.every((target) => writable.has(target.environmentId));
+  const description = gt(
+    "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs.",
+  );
+  const save = (zone: string) =>
+    void writeSettings(
+      scoped,
+      targets.map((target) => ({
+        environmentId: target.environmentId,
+        patch: { scheduledTaskTimeZone: zone },
+      })),
+    );
+  return (
+    <SettingsSection
+      footer={
+        saved !== null && saved !== "" && canonicalTimeZone(saved) !== canonicalTimeZone(device)
+          ? gt("{description} This device is in {zone}.", { description, zone: zoneName(device) })
+          : description
+      }
+    >
+      <SelectRow
+        label={gt("Time zone")}
+        value={saved === null ? gt("Mixed") : saved === "" ? machine : zoneName(saved)}
+        actions={
+          canWrite
+            ? [
+                {
+                  id: "device",
+                  title: gt("Use {zone}", { zone: zoneName(device) }),
+                  state: saved === device ? "on" : undefined,
+                },
+                { id: "machine", title: machine, state: saved === "" ? "on" : undefined },
+              ]
+            : []
+        }
+        onSelect={(id) => save(id === "device" ? device : "")}
+      />
+    </SettingsSection>
   );
 }
 

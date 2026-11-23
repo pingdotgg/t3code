@@ -21,3 +21,35 @@ export function scheduleTimeZoneLabel(
     return undefined;
   }
 }
+
+/** The canonical IANA name, so aliases such as Asia/Calcutta match Asia/Kolkata. */
+export function canonicalTimeZone(timeZone: string): string | undefined {
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone;
+  } catch {
+    return undefined;
+  }
+}
+
+export function deviceTimeZone(): string {
+  return new Intl.DateTimeFormat().resolvedOptions().timeZone;
+}
+
+/** Zones to offer for schedules, keeping a saved one the runtime no longer lists. */
+export function scheduleTimeZoneChoices(saved: string): ReadonlyArray<string> {
+  const zones = new Set(Intl.supportedValuesOf("timeZone"));
+  zones.add("UTC");
+  if (saved !== "") zones.add(saved);
+  return [...zones].sort();
+}
+
+/** True when schedules on these environments run in a zone other than this device's. */
+export function schedulesDifferFromDevice(
+  scheduleZones: ReadonlyArray<string | undefined>,
+  device: string,
+): boolean {
+  const here = canonicalTimeZone(device);
+  return scheduleZones.some(
+    (zone) => zone !== undefined && here !== undefined && canonicalTimeZone(zone) !== here,
+  );
+}

@@ -1116,6 +1116,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/scheduled-tasks",
   },
   {
+    id: "schedule-time-zone",
+    title: msg("Schedule time zone"),
+    to: "/settings/scheduled-tasks",
+    scope: "environment-defaults",
+    searchTerms: [msg("timezone travel daily weekly routines automations local time")],
+  },
+  {
     id: "agent-browser-access",
     title: msg("Agent browser access"),
     to: "/settings/browser",

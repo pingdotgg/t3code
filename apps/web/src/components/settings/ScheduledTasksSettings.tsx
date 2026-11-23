@@ -92,6 +92,7 @@ import { ManagedNotice } from "../ManagedPolicy";
 import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { EnvironmentRow, useEnvironmentTransportLabel } from "./EnvironmentRow";
+import { ScheduleTimeZoneRow } from "./ScheduleTimeZoneRow";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import {
@@ -466,6 +467,12 @@ export function ScheduledTasksSettings(target: {
   const permittedEnvironments = connectedEnvironments.filter(
     (_entry, index) => createPermissions[index],
   );
+  const readyEnvironmentIds = connectedEnvironments.flatMap((entry) =>
+    entry.serverConfig === null ? [] : [entry.environmentId],
+  );
+  const scheduleZones = useAtomValue(
+    scheduledTasksListAtom(environmentIdsKey(readyEnvironmentIds)),
+  ).map((query) => AsyncResult.getOrElse(query, () => null)?.timeZone);
   const creationEnvironment =
     permittedEnvironments.find(
       (entry) => entry.environmentId === defaultEnvironment?.environmentId,
@@ -490,6 +497,11 @@ export function ScheduledTasksSettings(target: {
           </Button>
         }
       >
+        {scope.kind !== "unavailable" && readyEnvironmentIds.length > 0 ? (
+          <SettingsGroup className="mb-8">
+            <ScheduleTimeZoneRow scheduleZones={scheduleZones} />
+          </SettingsGroup>
+        ) : null}
         {scope.kind === "unavailable" ? (
           <SettingsSection title={gt("Unavailable selection")}>
             <SettingsRow title={scope.message} />

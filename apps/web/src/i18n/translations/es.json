@@ -12781,5 +12781,14 @@
   "99d51127f573296b": "Otra cuenta",
   "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
   "99963c0142e17f00": "Para la nueva cuenta de {tracker}.",
-  "6d8e4ebc889bace9": "Añadir cuenta"
+  "6d8e4ebc889bace9": "Añadir cuenta",
+  "737fe0615966aee3": "Zona horaria de cada máquina",
+  "2feeb988e0a5feeb": "Las tareas diarias y semanales se ejecutan a su hora en esta zona. Al cambiarla, se mueven las próximas ejecuciones.",
+  "11f99421dd591e01": "Restablecer la zona horaria de las programaciones",
+  "126db7b02dfe930f": "Zona horaria de las programaciones",
+  "a7b4d8955fa8d65b": "Buscar zonas horarias",
+  "0c5a74ca8f8fbb90": "Buscar zonas horarias…",
+  "fe8d0e48798ba231": ["Este dispositivo está en ", { "i": 1, "k": "_gt_value_1", "v": "v" }, "."],
+  "e3a7999beb9b272a": "No se encontraron zonas horarias.",
+  "776636fe04a87fce": "zona horaria viaje diario semanal rutinas automatizaciones hora local"
 }

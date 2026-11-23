@@ -12786,5 +12786,18 @@
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
   "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "6d8e4ebc889bace9": "Ajouter un compte",
+  "737fe0615966aee3": "Fuseau horaire de chaque machine",
+  "2feeb988e0a5feeb": "Les tâches quotidiennes et hebdomadaires s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions.",
+  "11f99421dd591e01": "Réinitialiser le fuseau horaire des planifications",
+  "126db7b02dfe930f": "Fuseau horaire des planifications",
+  "a7b4d8955fa8d65b": "Rechercher des fuseaux horaires",
+  "0c5a74ca8f8fbb90": "Rechercher des fuseaux horaires…",
+  "fe8d0e48798ba231": [
+    "Cet appareil est dans le fuseau ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    "."
+  ],
+  "e3a7999beb9b272a": "Aucun fuseau horaire trouvé.",
+  "776636fe04a87fce": "fuseau horaire voyage quotidien hebdomadaire routines automatisations heure locale"
 }

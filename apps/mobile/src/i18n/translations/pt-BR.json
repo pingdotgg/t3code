@@ -5612,5 +5612,10 @@
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
   "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
   "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "737fe0615966aee3": "Fuso horário de cada máquina",
+  "2feeb988e0a5feeb": "Tarefas diárias e semanais são executadas no horário definido neste fuso. Alterá-lo move as próximas execuções.",
+  "a54e0232b776cce4": "{description} Este dispositivo está em {zone}.",
+  "044286af877f7f1e": "Fuso horário",
+  "ea8f3f3e5ae5568d": "Usar {zone}"
 }

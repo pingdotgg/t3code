@@ -24,6 +24,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ScheduledTaskService from "./ScheduledTaskService.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const decodeUpsertInput = Schema.decodeUnknownEffect(ScheduledTaskUpsertInput);
 
@@ -33,6 +34,7 @@ it.effect("rejects a stale form save after deletion while preserving explicit-id
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
+      ServerSettings.ServerSettingsService.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -81,6 +83,7 @@ it.effect("preserves a due run when a save only pads the scheduled hour", () =>
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
+      ServerSettings.ServerSettingsService.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -136,6 +139,7 @@ it.effect("keeps the task list order when a toggle or edit rewrites updated_at",
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
+      ServerSettings.ServerSettingsService.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
         namedProjectsRoot: "/projects",
@@ -201,6 +205,7 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       ManagedPolicy.layerTest(),
+      ServerSettings.ServerSettingsService.layerTest(),
       // Capture the poll pass so the test drives each due interval directly.
       Layer.mock(Scheduler.Scheduler)({
         register: (name, work) =>
@@ -386,6 +391,7 @@ it.effect(
         NodeCrypto.layer,
         Scheduler.layer,
         ManagedPolicy.layerTest(),
+        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: (input) =>
             Deferred.succeed(launched, input.title).pipe(
@@ -451,6 +457,7 @@ it.effect("a fixed-time slot missed while the server was off shows on the task",
       NodeCrypto.layer,
       Scheduler.layer,
       ManagedPolicy.layerTest(),
+      ServerSettings.ServerSettingsService.layerTest(),
       Layer.mock(ThreadLaunchService.ThreadLaunchService)({
         launch: () =>
           Ref.update(launches, (count) => count + 1).pipe(
@@ -528,6 +535,7 @@ it.effect(
         NodeCrypto.layer,
         Scheduler.layer,
         ManagedPolicy.layerTest(),
+        ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(ThreadLaunchService.ThreadLaunchService)({
           launch: (input) =>
             (input.title === "Slow"

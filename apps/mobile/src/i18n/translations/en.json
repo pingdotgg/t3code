@@ -5620,5 +5620,10 @@
   "856812e7e1fc445e": "Tool calls in chat",
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user."
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "737fe0615966aee3": "Each machine's time zone",
+  "2feeb988e0a5feeb": "Daily and weekly tasks run at their set time in this zone. Changing it moves upcoming runs.",
+  "a54e0232b776cce4": "{description} This device is in {zone}.",
+  "044286af877f7f1e": "Time zone",
+  "ea8f3f3e5ae5568d": "Use {zone}"
 }

@@ -1,6 +1,6 @@
 import { RegistryContext } from "@effect/atom-react";
 import * as Effect from "effect/Effect";
-import { Atom, AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
   EnvironmentId,
@@ -10,6 +10,7 @@ import {
   ThreadId,
   type ScheduledTask,
 } from "@t3tools/contracts";
+import { deviceTimeZone } from "@t3tools/client-runtime/scheduled-task-time-zone";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -60,6 +61,8 @@ const state = vi.hoisted(() => ({
   tasksLoaded: true,
   secondary: false,
   remove: vi.fn(),
+  reportedZone: undefined as string | undefined,
+  updateSettings: vi.fn(),
 }));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
@@ -69,6 +72,8 @@ function setup() {
   state.tasksLoaded = true;
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.secondary = false;
+  state.reportedZone = undefined;
+  state.updateSettings.mockReset();
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -131,9 +136,21 @@ vi.mock(import("../../state/server"), async (original) => {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
       },
+      scheduledTasksLive: ((
+        request: Parameters<typeof actual.serverEnvironment.scheduledTasksLive>[0],
+      ) =>
+        state.reportedZone === undefined
+          ? actual.serverEnvironment.scheduledTasksLive(request)
+          : Atom.make(
+              AsyncResult.success({ tasks: [task], timeZone: state.reportedZone }),
+            )) as never,
     },
   };
 });
+vi.mock(import("./useScopedSettings"), async (original) => ({
+  ...(await original()),
+  useUpdateScopedSettings: (() => state.updateSettings) as never,
+}));
 vi.mock(import("../../state/threads"), async (original) => {
   const actual = await original();
   return {
@@ -195,6 +212,41 @@ describe("ScheduledTasksSettings", () => {
         input: { id: task.id },
       }),
     );
+  });
+
+  it("offers to move schedules to this device's time zone when they run in another", async () => {
+    setup();
+    const device = deviceTimeZone();
+    state.reportedZone = device === "Asia/Tokyo" ? "America/Denver" : "Asia/Tokyo";
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    const deviceName = device.replaceAll("_", " ");
+    await expect
+      .element(screen.getByRole("status").filter({ hasText: "This device is in" }))
+      .toHaveTextContent(`This device is in ${deviceName}.Use ${deviceName}`);
+    await screen.getByRole("button", { name: `Use ${deviceName}` }).click();
+    expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith({ scheduledTaskTimeZone: device });
+  });
+
+  it("hides the time zone prompt when schedules already run in this device's zone", async () => {
+    setup();
+    state.reportedZone = deviceTimeZone();
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    await expect
+      .element(screen.getByRole("combobox", { name: "Schedule time zone" }))
+      .toHaveTextContent("Each machine's time zone");
+    await expect.element(screen.getByText(/This device is in/)).not.toBeInTheDocument();
   });
 
   it("creates on a permitted secondary and reacts to permission changes", async () => {

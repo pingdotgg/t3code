@@ -5618,5 +5618,10 @@
   "856812e7e1fc445e": "Verktygsanrop i chatten",
   "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
   "99d51127f573296b": "Ett konto till",
-  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare."
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "737fe0615966aee3": "Varje dators tidszon",
+  "2feeb988e0a5feeb": "Dagliga och veckovisa uppgifter körs vid sin angivna tid i den här tidszonen. Om du ändrar den flyttas kommande körningar.",
+  "a54e0232b776cce4": "{description} Den här enheten är i {zone}.",
+  "044286af877f7f1e": "Tidszon",
+  "ea8f3f3e5ae5568d": "Använd {zone}"
 }

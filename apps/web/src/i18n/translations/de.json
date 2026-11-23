@@ -12786,5 +12786,18 @@
   "99d51127f573296b": "Weiteres Konto",
   "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
   "99963c0142e17f00": "Für das neue {tracker}-Konto.",
-  "6d8e4ebc889bace9": "Konto hinzufügen"
+  "6d8e4ebc889bace9": "Konto hinzufügen",
+  "737fe0615966aee3": "Zeitzone des jeweiligen Rechners",
+  "2feeb988e0a5feeb": "Tägliche und wöchentliche Aufgaben laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen.",
+  "11f99421dd591e01": "Zeitzone für Zeitpläne auf Standard zurücksetzen",
+  "126db7b02dfe930f": "Zeitzone für Zeitpläne",
+  "a7b4d8955fa8d65b": "Zeitzonen suchen",
+  "0c5a74ca8f8fbb90": "Zeitzonen suchen…",
+  "fe8d0e48798ba231": [
+    "Dieses Gerät befindet sich in ",
+    { "i": 1, "k": "_gt_value_1", "v": "v" },
+    "."
+  ],
+  "e3a7999beb9b272a": "Keine Zeitzonen gefunden.",
+  "776636fe04a87fce": "Zeitzone Reise täglich wöchentlich Routinen Automatisierungen Ortszeit"
 }

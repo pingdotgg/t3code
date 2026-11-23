@@ -5612,5 +5612,10 @@
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
   "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}."
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "737fe0615966aee3": "Fuseau horaire de chaque machine",
+  "2feeb988e0a5feeb": "Les tâches quotidiennes et hebdomadaires s’exécutent à leur heure dans ce fuseau. Le modifier déplace les prochaines exécutions.",
+  "a54e0232b776cce4": "{description} Cet appareil est dans le fuseau {zone}.",
+  "044286af877f7f1e": "Fuseau horaire",
+  "ea8f3f3e5ae5568d": "Utiliser {zone}"
 }

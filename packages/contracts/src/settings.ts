@@ -8,6 +8,7 @@ import {
 } from "./auth.ts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
@@ -1482,6 +1483,8 @@ export const ServerSettings = Schema.Struct({
   snoozePresets: SnoozePresetSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_PRESETS)),
   ),
+  /** IANA zone for daily and weekly scheduled tasks. Empty uses this machine's zone. */
+  scheduledTaskTimeZone: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Clients hide threads with these tags while `hideTaggedThreads` is on. Bad entries drop alone, so a hand edit cannot reset settings. */
   hiddenThreadTags: Schema.Array(Schema.Unknown).pipe(
     Schema.decodeTo(
@@ -1822,6 +1825,15 @@ const ModelSelectionPatch = Schema.Struct({
   options: Schema.optionalKey(ProviderOptionSelections),
 });
 
+const ScheduledTaskTimeZone = TrimmedString.check(
+  Schema.makeFilter(
+    (value) =>
+      value === "" ||
+      Option.isSome(DateTime.zoneMakeNamed(value)) ||
+      "Expected an IANA time zone, such as America/Denver.",
+  ),
+);
+
 export const ServerSettingsPatch = Schema.Struct({
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
@@ -1936,6 +1948,7 @@ export const ServerSettingsPatch = Schema.Struct({
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozePresets: Schema.optionalKey(SnoozePresetSettings),
+  scheduledTaskTimeZone: Schema.optionalKey(ScheduledTaskTimeZone),
   hiddenThreadTags: Schema.optionalKey(Schema.Array(Schema.String)),
   hideTaggedThreads: Schema.optionalKey(Schema.Boolean),
   guestSharingEnabled: Schema.optionalKey(Schema.Boolean),

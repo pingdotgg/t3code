@@ -60,6 +60,7 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as DueHint from "../scheduling/DueHint.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { latestRootProviderFailure } from "@t3tools/shared/orchestrationV2ThreadError";
 import { isMissedFixedTimeRun, isSameSchedule, nextScheduledRunAt } from "./Schedule.ts";
 import {
@@ -327,7 +328,13 @@ const UNSUCCESSFUL_RUN_ERRORS = {
   cancelled: "The run was cancelled.",
   rolled_back: "The run was rolled back.",
 } as const;
-const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
+
+/** Fixed-time schedules follow the configured zone; an empty or unknown one uses this machine's. */
+function scheduleZone(timeZone: string): DateTime.TimeZone {
+  return timeZone === ""
+    ? DateTime.zoneMakeLocal()
+    : Option.getOrElse(DateTime.zoneMakeNamed(timeZone), DateTime.zoneMakeLocal);
+}
 
 function nextRunAt(
   task: Pick<ScheduledTask, "enabled" | "schedule">,
@@ -492,6 +499,14 @@ export const layer = Layer.effect(
     const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    const currentZone = serverSettings.getSettings.pipe(
+      Effect.map((settings) => scheduleZone(settings.scheduledTaskTimeZone)),
+      Effect.orElseSucceed(DateTime.zoneMakeLocal),
+    );
+    const localNow = currentZone.pipe(
+      Effect.flatMap((zone) => DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone))),
+    );
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     const managedPolicy = yield* ManagedPolicy.ManagedPolicy;
     const webhookPolicyOrganization = ManagedPolicy.deniedBy(managedPolicy, "webhookTasks");
@@ -1410,13 +1425,55 @@ export const layer = Layer.effect(
       ),
     );
 
+    // A future fixed-time run is the next occurrence after now, so recomputing it is a no-op
+    // unless the zone changed: then it moves to the same wall-clock time in the new zone.
+    const moveFixedTimeRunsToZone = Effect.fn("ScheduledTaskService.moveFixedTimeRunsToZone")(
+      function* (zone: DateTime.TimeZone) {
+        const now = yield* DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone));
+        const rows = yield* sql<ScheduledTaskRow>`
+          SELECT * FROM scheduled_tasks
+          WHERE enabled = 1 AND next_run_at > ${iso(now)}
+        `;
+        let moved = false;
+        for (const row of rows) {
+          const decoded = yield* Effect.result(decodeRow(row));
+          if (Result.isFailure(decoded) || decoded.success.schedule.type !== "fixed_time") continue;
+          const task = decoded.success;
+          const next = nextRunAt(task, now);
+          if (next === task.nextRunAt) continue;
+          const updated = yield* sql`
+            UPDATE scheduled_tasks
+            SET next_run_at = ${next}, updated_at = ${iso(now)}
+            WHERE task_id = ${task.id} AND next_run_at IS ${task.nextRunAt}
+            RETURNING task_id
+          `;
+          moved ||= updated.length > 0;
+        }
+        if (moved) yield* dueTasks.invalidate;
+      },
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
+      ),
+    );
+
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    let appliedZone = yield* currentZone;
+    yield* moveFixedTimeRunsToZone(appliedZone);
+    yield* Stream.runForEach(settingsChanges, (settings) => {
+      const zone = scheduleZone(settings.scheduledTaskTimeZone);
+      if (DateTime.zoneToString(zone) === DateTime.zoneToString(appliedZone)) return Effect.void;
+      appliedZone = zone;
+      // Republish even when no run moved: lists carry the zone label.
+      return moveFixedTimeRunsToZone(zone).pipe(Effect.andThen(notifyChanged));
+    }).pipe(Effect.forkIn(serviceScope));
+
     yield* scheduler.register("scheduled-tasks", runDueTasks());
 
     const list: ScheduledTaskService["Service"]["list"] = () =>
-      listRows().pipe(
-        Effect.map((tasks) => ({
+      Effect.all([listRows(), currentZone]).pipe(
+        Effect.map(([tasks, zone]) => ({
           tasks,
-          timeZone: DateTime.zoneToString(DateTime.zoneMakeLocal()),
+          timeZone: DateTime.zoneToString(zone),
         })),
         Effect.mapError((cause) => taskError("Could not list schedule tasks.", { cause })),
       );

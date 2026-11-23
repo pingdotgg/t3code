@@ -5618,5 +5618,10 @@
   "856812e7e1fc445e": "Tool-Aufrufe im Chat",
   "8d545d54c0a9e950": "Die Befehle, Bearbeitungen und Suchen ausblenden, die Agenten ausführen. „Erfolgreiche ausblenden“ behält Fehler. „Zen“ zeigt nur endgültige Antworten. Genehmigungen, Fragen und Fehler werden immer angezeigt.",
   "99d51127f573296b": "Weiteres Konto",
-  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer."
+  "8ec2c57414669b79": "Verbinde einen zweiten {tracker}-Workspace oder -Nutzer.",
+  "737fe0615966aee3": "Zeitzone des jeweiligen Rechners",
+  "2feeb988e0a5feeb": "Tägliche und wöchentliche Aufgaben laufen zur eingestellten Uhrzeit in dieser Zeitzone. Eine Änderung verschiebt anstehende Ausführungen.",
+  "a54e0232b776cce4": "{description} Dieses Gerät befindet sich in {zone}.",
+  "044286af877f7f1e": "Zeitzone",
+  "ea8f3f3e5ae5568d": "{zone} verwenden"
 }
