@@ -273,6 +273,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        worktree_cleanup: OnceLock::new(),
     });
 
     // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).
@@ -461,6 +462,16 @@ pub async fn serve_with_instances(
         }
         // Pull request watches: a sweep every two minutes, as T3's `PullRequestWatchReactor`.
         crate::methods::pull_requests::start_watches(&state.deps);
+        // Worktree cleanup: at start, hourly, and on rule changes and deletions, as T3's
+        // `StorageCleanup`.
+        let cleanup = crate::worktree_cleanup::WorktreeCleanup::new(
+            sqlite_engine.clone(),
+            environment.clone(),
+            terminals.clone(),
+            crate::methods::pull_requests::merge_lookup(&state.deps),
+        );
+        cleanup.start();
+        let _ = host.worktree_cleanup.set(cleanup);
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
     crate::model_manifest::start(state_dir.clone(), environment.clone());

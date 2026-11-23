@@ -230,6 +230,44 @@ fn err(e: rusqlite::Error) -> String {
 }
 
 /// A stored JSON column. The engine wrote it, so bad JSON is a broken store, not a value.
+/// The shell fields worktree cleanup reads; the rest is dropped as each row is read.
+fn cleanup_fields(mut shell: Value) -> Value {
+    const KEPT: [&str; 25] = [
+        "id",
+        "projectId",
+        "title",
+        "branch",
+        "worktreePath",
+        "lineage",
+        "status",
+        "activeRunId",
+        "pendingBackgroundTasks",
+        "pendingRuntimeRequest",
+        "latestUserMessageAt",
+        "latestRunId",
+        "latestRunRequestedAt",
+        "latestRunStartedAt",
+        "latestRunCompletedAt",
+        "createdAt",
+        "updatedAt",
+        "archivedAt",
+        "settledAt",
+        "settledOverride",
+        "pinnedAt",
+        "lastErrorClass",
+        "usageLimitResetAt",
+        "limitRecovery",
+        "deletedAt",
+    ];
+    match shell.as_object_mut() {
+        Some(map) => {
+            map.retain(|key, _| KEPT.contains(&key.as_str()));
+            shell
+        }
+        None => Value::Null,
+    }
+}
+
 fn parse(text: String) -> StoreResult<Value> {
     serde_json::from_str(&text).map_err(|e| format!("store: a stored row is not JSON: {e}"))
 }
@@ -439,6 +477,45 @@ impl Store {
             "archivedThreads": [],
             "projects": projects,
         }))
+    }
+
+    /// What worktree cleanup weighs (T3 `storageCleanup.ts`): the shells of live and archived
+    /// threads, and deleted threads that had a worktree and a branch, each
+    /// with its project's root as `workspaceRoot`.
+    pub(crate) fn cleanup_threads(&self) -> StoreResult<(Vec<Value>, Vec<Value>)> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT shell FROM threads WHERE deleted = 0 AND shell IS NOT NULL ORDER BY rowid",
+            )
+            .map_err(err)?;
+        let live = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?
+            .map(|row| row.map_err(err).and_then(parse).map(cleanup_fields))
+            .collect::<StoreResult<Vec<Value>>>()?;
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT p.workspace_root, t.thread FROM threads t JOIN projects p ON p.id = t.project_id
+                 WHERE t.deleted = 1 AND json_extract(t.thread, '$.worktreePath') IS NOT NULL
+                   AND json_extract(t.thread, '$.branch') IS NOT NULL ORDER BY t.rowid",
+            )
+            .map_err(err)?;
+        let deleted = keyed_rows(
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(err)?,
+        )?
+        .into_iter()
+        .map(|(root, thread)| {
+            let mut thread = cleanup_fields(thread);
+            thread["workspaceRoot"] = Value::String(root);
+            thread
+        })
+        .collect();
+        Ok((live, deleted))
     }
 
     pub(crate) fn projects_snapshot(&self) -> StoreResult<Vec<Value>> {

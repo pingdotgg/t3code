@@ -142,6 +142,19 @@ pub struct SqliteEngine {
     inner: Arc<Inner>,
 }
 
+/// What worktree cleanup reads in one pass ([`SqliteEngine::cleanup_threads`]): thread shell
+/// JSON as clients see it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CleanupThreads {
+    /// Live and archived threads, with the fields cleanup reads.
+    pub threads: Vec<Value>,
+    /// Deleted threads that had a worktree and a branch, with their project's
+    /// `workspaceRoot`.
+    pub deleted: Vec<Value>,
+    /// The live projects (`OrchestrationV2ProjectShell`).
+    pub projects: Vec<Value>,
+}
+
 impl std::fmt::Debug for SqliteEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteEngine").finish_non_exhaustive()
@@ -412,6 +425,52 @@ impl SqliteEngine {
     /// ([`EngineConfig::attention`]).
     pub fn attention_signal(&self) -> Option<Arc<tokio::sync::Notify>> {
         self.inner.attention.clone()
+    }
+
+    /// The threads worktree cleanup weighs, with the live projects (see [`CleanupThreads`]).
+    pub async fn cleanup_threads(&self) -> Result<CleanupThreads, String> {
+        self.inner
+            .db(|store| {
+                let (threads, deleted) = store.cleanup_threads()?;
+                let projects = store.projects_snapshot()?;
+                Ok(CleanupThreads {
+                    threads,
+                    deleted,
+                    projects,
+                })
+            })
+            .await
+    }
+
+    /// The folders open provider sessions work in. A session can outlive its run, so a
+    /// worktree it works in is still in use (`ProviderSessionManager.isLive`).
+    pub async fn open_session_cwds(&self) -> Result<Vec<String>, String> {
+        let threads: Vec<String> = crate::lock(&self.inner.live).keys().cloned().collect();
+        if threads.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.inner
+            .db(move |store| {
+                let mut cwds = Vec::new();
+                for thread in threads {
+                    let tx = store.tx()?;
+                    let sessions = tx.entities(&thread, "providerSessions");
+                    tx.rollback();
+                    cwds.extend(sessions?.into_iter().filter_map(|session| {
+                        (session["status"] != "stopped")
+                            .then(|| session["cwd"].as_str().map(str::to_owned))
+                            .flatten()
+                    }));
+                }
+                Ok(cwds)
+            })
+            .await
+    }
+
+    /// The per-folder locks turn checkpoints take; `None` when checkpoints are off. Work that
+    /// removes a checkout holds its folder's lock, so no capture runs in a folder going away.
+    pub fn workspace_locks(&self) -> Option<&conn_vcs::locks::WorkspaceLocks> {
+        self.inner.checkpoints.as_ref()
     }
 
     /// Now, by the engine's clock, in milliseconds since the epoch.

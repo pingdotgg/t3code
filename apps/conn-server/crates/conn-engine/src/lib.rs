@@ -72,8 +72,8 @@ pub use attention::{AttentionOutboxRow, RELEASED_COMPLETION_GRACE_MS};
 pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{
-    CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig, RuntimePolicyOverride,
-    SqliteEngine,
+    CleanupThreads, CommandOutputTap, DEFAULT_IDLE_SESSION, EngineConfig, ProjectConfig,
+    RuntimePolicyOverride, SqliteEngine,
 };
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,

@@ -21,6 +21,22 @@ Left: T3's generated branch name and waiting for the setup script (both also ope
 worktree launch). One difference by design: when the checkout fails, the call is
 refused and no child is made; T3 makes the child and fails its run in preparation.
 
+**Worktree cleanup (2026-11-23):** the `storageCleanup` worktree rules and the per-project
+`worktreeCleanup` override now remove managed worktrees, as T3's `StorageCleanup` does: after N
+days without activity, N days after settling, a merged pull request, a deleted thread, or a
+finished thread with nothing beyond the default branch. Every rule is off by default. A sweep
+runs at start, hourly, on a rule change, on a thread delete, and when a session stops while a
+deleted thread's worktree waits. T3's keep reasons hold: running or pending threads, open
+terminals and sessions, shared or unowned checkouts, symlinked or unmanaged folders, project
+checkouts, nested repositories, a changed branch, local and hidden changes, and submodule
+commits on no remote. The checks repeat under the folder's checkpoint lock before
+`git worktree remove`, which keeps the branch. Proof: `conn-vcs/tests/cleanup.rs` (12) and
+`conn-server` `worktree_cleanup` (21). Not ported: the cleanup report and its RPCs
+(`server.runStorageCleanup`, `getStorageCleanupReport`, still unserved), orphan folder reports,
+scratch folders, browser artifact and log retention, checkpoint ref pruning, and following a
+branch switched while idle (the worktree is kept instead). A thread whose worktree was removed
+does not get its checkout back on the next turn yet.
+
 **Known difference, stop in progress (2026-11-18):** with the provider's reply to
 `turn/interrupt` held, T3 reported the run interrupted on one slow CI run (cause not proven).
 Conn ends a stopped run only on the provider's terminal event: the Codex adapter awaits the

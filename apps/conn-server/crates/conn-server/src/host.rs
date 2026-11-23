@@ -34,6 +34,8 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Set once the engine exists; a deleted thread or a stopped session may free a worktree.
+    pub worktree_cleanup: OnceLock<crate::worktree_cleanup::WorktreeCleanup>,
 }
 
 impl std::fmt::Debug for Host {
@@ -119,6 +121,9 @@ impl EngineHost for Host {
     fn session_closed(&self, key: &str) {
         if let Some(mcp) = self.mcp.get() {
             mcp.revoke_provider_session(key);
+        }
+        if let Some(cleanup) = self.worktree_cleanup.get() {
+            cleanup.session_closed();
         }
     }
 
@@ -280,6 +285,11 @@ impl EngineHost for Host {
                 }
             }
         }
+        if reason == ThreadClose::Deleted
+            && let Some(cleanup) = self.worktree_cleanup.get()
+        {
+            cleanup.thread_deleted();
+        }
         // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
         if reason == ThreadClose::Deleted
             && let Some(tasks) = self.scheduled_tasks.get().cloned()
@@ -360,6 +370,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            worktree_cleanup: OnceLock::new(),
         };
         host.mcp.set(service.clone()).unwrap();
         let issue = |project: Option<&str>| {
