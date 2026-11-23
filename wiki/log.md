@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-23
+
+- Recorded the [upstream sync](upstream-integration.md) through `9904124683` and its Git/Jujutsu and notification compatibility decisions.
+
 ## 2026-11-20
 
 - Recorded the [upstream integration candidate](upstream-integration.md) through `ccc1feb155`, including the mobile preferences and VCS compatibility decisions.
