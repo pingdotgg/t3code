@@ -317,6 +317,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       Effect.ensuring(modelRoutes.settle),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
       Effect.provideService(Path.Path, path),
     );
 
@@ -466,7 +467,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 complete: true,
               });
             }
-          })
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient))
         : undefined;
 
     return {

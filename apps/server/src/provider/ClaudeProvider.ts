@@ -20,7 +20,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import { createModelCapabilities } from "@t3tools/shared/model";
+import { createModelCapabilities, readCustomModelEntries } from "@t3tools/shared/model";
 import { envTrampoline, supportsEnvChdir } from "@t3tools/shared/envTrampoline";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SpawnWorker from "../process/SpawnWorker.ts";
@@ -114,10 +114,11 @@ function claudeProviderModels(
     if (!model.isCustom) return model;
     const baseSlug = model.slug.slice(model.slug.lastIndexOf("/") + 1);
     const supportsCustomReasoning = /^(glm|chatglm|deepseek)\b|^(glm|deepseek)-/i.test(baseSlug);
+    const hasDescriptors = (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
     const baseCapabilities =
-      supportsCustomReasoning && model.capabilities.optionDescriptors.length === 0
+      supportsCustomReasoning && !hasDescriptors
         ? GLM_REASONING_CAPABILITIES
-        : model.capabilities;
+        : (model.capabilities ?? DEFAULT_CLAUDE_MODEL_CAPABILITIES);
     return { ...model, capabilities: withUltracodeToggle(baseCapabilities) };
   });
 }
@@ -812,23 +813,30 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const claudeSettingsEnv = yield* readClaudeSettingsEnv(claudeSettings, cwd, resolvedEnvironment);
-  const effectiveEnv = {
-    ...claudeSettingsEnv,
+  const settingsEnvRecord = claudeSettingsEnv as Readonly<Record<string, unknown>>;
+  const readEnvValue = (
+    record: Readonly<Record<string, unknown>>,
+    key: string,
+  ): string | undefined =>
+    typeof record[key] === "string" && record[key].trim().length > 0 ? record[key] : undefined;
+  const effectiveEnv: Readonly<Record<string, unknown>> = {
+    ...settingsEnvRecord,
     ...instanceEnvOverrides,
   };
-  const baseUrl = effectiveEnv.ANTHROPIC_BASE_URL || resolvedEnvironment.ANTHROPIC_BASE_URL;
+  const baseUrl =
+    readEnvValue(effectiveEnv, "ANTHROPIC_BASE_URL") ?? resolvedEnvironment.ANTHROPIC_BASE_URL;
   const customApiKey =
     instanceEnvOverrides?.ANTHROPIC_AUTH_TOKEN?.trim() ||
     instanceEnvOverrides?.ANTHROPIC_API_KEY?.trim() ||
     instanceEnvOverrides?.DEEPSEEK_API_KEY?.trim() ||
     instanceEnvOverrides?.ZHIPU_API_KEY?.trim() ||
-    claudeSettingsEnv.ANTHROPIC_AUTH_TOKEN ||
+    readEnvValue(settingsEnvRecord, "ANTHROPIC_AUTH_TOKEN") ||
     resolvedEnvironment.ANTHROPIC_AUTH_TOKEN ||
-    claudeSettingsEnv.ANTHROPIC_API_KEY ||
+    readEnvValue(settingsEnvRecord, "ANTHROPIC_API_KEY") ||
     resolvedEnvironment.ANTHROPIC_API_KEY ||
-    claudeSettingsEnv.DEEPSEEK_API_KEY ||
+    readEnvValue(settingsEnvRecord, "DEEPSEEK_API_KEY") ||
     resolvedEnvironment.DEEPSEEK_API_KEY ||
-    claudeSettingsEnv.ZHIPU_API_KEY ||
+    readEnvValue(settingsEnvRecord, "ZHIPU_API_KEY") ||
     resolvedEnvironment.ZHIPU_API_KEY;
   const customVendor = detectCustomAnthropicVendor(baseUrl);
   const updateRequiredModels = customVendor
@@ -851,14 +859,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           vendor: customVendor,
           baseUrl,
           apiKey: customApiKey,
-          customModels: claudeSettings.customModels,
+          customModels: readCustomModelEntries(claudeSettings.customModels).map(
+            (entry) => entry.slug,
+          ),
           envModels: [
-            effectiveEnv.ANTHROPIC_MODEL || resolvedEnvironment.ANTHROPIC_MODEL,
-            effectiveEnv.ANTHROPIC_DEFAULT_OPUS_MODEL ||
+            readEnvValue(effectiveEnv, "ANTHROPIC_MODEL") ?? resolvedEnvironment.ANTHROPIC_MODEL,
+            readEnvValue(effectiveEnv, "ANTHROPIC_DEFAULT_OPUS_MODEL") ??
               resolvedEnvironment.ANTHROPIC_DEFAULT_OPUS_MODEL,
-            effectiveEnv.ANTHROPIC_DEFAULT_SONNET_MODEL ||
+            readEnvValue(effectiveEnv, "ANTHROPIC_DEFAULT_SONNET_MODEL") ??
               resolvedEnvironment.ANTHROPIC_DEFAULT_SONNET_MODEL,
-            effectiveEnv.ANTHROPIC_DEFAULT_HAIKU_MODEL ||
+            readEnvValue(effectiveEnv, "ANTHROPIC_DEFAULT_HAIKU_MODEL") ??
               resolvedEnvironment.ANTHROPIC_DEFAULT_HAIKU_MODEL,
           ],
           capabilities: withUltracodeToggle(GLM_REASONING_CAPABILITIES),

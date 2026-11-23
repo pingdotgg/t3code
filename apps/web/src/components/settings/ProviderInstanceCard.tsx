@@ -385,10 +385,14 @@ export function ProviderEnvironmentSection(props: {
   if (draft !== storedDraft) setDraft(draft);
   const rows = draft.rows;
   const rowsRef = useRef(rows);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep latest rows available to rapid blur+click handlers before React re-renders
+  const lastPublishedRef = useRef<ReadonlyArray<ProviderInstanceEnvironmentVariable>>(
+    draft.lastPublished ?? props.environment,
+  );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keep latest rows and baseline available to rapid blur+click handlers before React re-renders
   useEffect(() => {
     rowsRef.current = rows;
-  }, [rows]);
+    lastPublishedRef.current = draft.lastPublished ?? props.environment;
+  }, [rows, draft.lastPublished, props.environment]);
   const setRows = (nextRows: ReadonlyArray<EnvironmentDraftRow>) => {
     rowsRef.current = nextRows;
     setDraft((current) => ({ ...current, rows: nextRows }));
@@ -406,6 +410,11 @@ export function ProviderEnvironmentSection(props: {
       published.push({ ...rest, name });
     }
     rowsRef.current = nextRows;
+    if (providerEnvironmentsEqual(published, lastPublishedRef.current)) {
+      setDraft((current) => ({ ...current, rows: nextRows }));
+      return;
+    }
+    lastPublishedRef.current = published;
     setDraft((current) => ({ rows: nextRows, seen: current.seen, lastPublished: published }));
     props.onChange(published);
   };

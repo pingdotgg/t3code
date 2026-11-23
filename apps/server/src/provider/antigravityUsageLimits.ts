@@ -323,7 +323,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
   readonly readKeyringSecret?: Effect.Effect<string | undefined, AntigravityKeyringError>;
-  readonly renewCliToken?: Effect.Effect<void, unknown>;
+  readonly renewCliToken?: Effect.Effect<void>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

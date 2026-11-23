@@ -4,9 +4,10 @@ import {
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 const DEEPSEEK_BALANCE_PATH = "/user/balance";
-const DEEPSEEK_BALANCE_TIMEOUT_MS = 10_000;
 
 interface DeepSeekBalanceInfoEntry {
   readonly currency?: unknown;
@@ -142,32 +143,47 @@ export const fetchDeepSeekUsageLimits = Effect.fn("fetchDeepSeekUsageLimits")(fu
     });
   }
   const authHeader = apiKey.toLowerCase().startsWith("bearer ") ? apiKey : `Bearer ${apiKey}`;
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+  if (Option.isNone(httpClient)) {
+    return makeUnavailableUsageLimits({
+      checkedAt: input.checkedAt,
+      reason: "probeFailed",
+      message: "DeepSeek balance client is unavailable.",
+    });
+  }
 
-  return yield* Effect.tryPromise({
-    try: async () => {
-      const response = await fetch(url, {
-        method: "GET",
-        headers: {
+  return yield* httpClient.value
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({
           Authorization: authHeader,
           Accept: "application/json",
-        },
-        signal: AbortSignal.timeout(DEEPSEEK_BALANCE_TIMEOUT_MS),
-      });
-      if (response.status === 401 || response.status === 403) {
-        return makeUnavailableUsageLimits({
+        }),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((response) => {
+        if (response.status === 401 || response.status === 403) {
+          return Effect.succeed(
+            makeUnavailableUsageLimits({
+              checkedAt: input.checkedAt,
+              reason: "probeFailed",
+              message: "DeepSeek API key was rejected when checking balance.",
+            }),
+          );
+        }
+        return response.json.pipe(
+          Effect.orElseSucceed(() => undefined as unknown),
+          Effect.map((json) => deepseekBalanceResponseToLimits(json, input.checkedAt)),
+        );
+      }),
+      Effect.timeout("10 seconds"),
+      Effect.orElseSucceed(() =>
+        makeUnavailableUsageLimits({
           checkedAt: input.checkedAt,
           reason: "probeFailed",
-          message: "DeepSeek API key was rejected when checking balance.",
-        });
-      }
-      const json: unknown = await response.json().catch(() => undefined);
-      return deepseekBalanceResponseToLimits(json, input.checkedAt);
-    },
-    catch: () =>
-      makeUnavailableUsageLimits({
-        checkedAt: input.checkedAt,
-        reason: "probeFailed",
-        message: "Could not reach DeepSeek balance endpoint.",
-      }),
-  }).pipe(Effect.catch((fallback) => Effect.succeed(fallback)));
+          message: "Could not reach DeepSeek balance endpoint.",
+        }),
+      ),
+    );
 });

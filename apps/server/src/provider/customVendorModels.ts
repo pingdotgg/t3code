@@ -1,10 +1,10 @@
-import type { ModelCapabilities, ServerProviderModel } from "@t3tools/contracts";
+import type { ServerProviderModel } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { isDeepSeekEndpoint } from "./deepseekUsageLimits.ts";
 import { isZhipuEndpoint } from "./zhipuUsageLimits.ts";
-
-const MODELS_FETCH_TIMEOUT_MS = 8_000;
 
 type CustomAnthropicVendor = "zhipu" | "deepseek";
 
@@ -148,24 +148,35 @@ function extractModelIdsFromPayload(payload: unknown): ReadonlyArray<string> {
   return ids;
 }
 
-async function fetchLiveVendorModelIds(
+const fetchLiveVendorModelIds = (
+  client: HttpClient.HttpClient,
   vendor: CustomAnthropicVendor,
   url: string,
   apiKey: string,
-): Promise<ReadonlyArray<string>> {
+): Effect.Effect<ReadonlyArray<string>> => {
   const bearerHeader = apiKey.toLowerCase().startsWith("bearer ") ? apiKey : `Bearer ${apiKey}`;
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: bearerHeader,
-      Accept: "application/json",
-    },
-    signal: AbortSignal.timeout(MODELS_FETCH_TIMEOUT_MS),
-  });
-  if (!response.ok) return [];
-  const json: unknown = await response.json().catch(() => undefined);
-  return extractModelIdsFromPayload(json).filter((id) => isRelevantVendorModelId(vendor, id));
-}
+  return client
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({
+          Authorization: bearerHeader,
+          Accept: "application/json",
+        }),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((response) =>
+        response.status >= 200 && response.status < 300
+          ? response.json.pipe(Effect.orElseSucceed(() => undefined as unknown))
+          : Effect.succeed(undefined as unknown),
+      ),
+      Effect.timeout("8 seconds"),
+      Effect.map((json) =>
+        extractModelIdsFromPayload(json).filter((id) => isRelevantVendorModelId(vendor, id)),
+      ),
+      Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+    );
+};
 
 export const fetchCustomVendorModels = Effect.fn("fetchCustomVendorModels")(function* (input: {
   readonly vendor: CustomAnthropicVendor;
@@ -173,16 +184,14 @@ export const fetchCustomVendorModels = Effect.fn("fetchCustomVendorModels")(func
   readonly apiKey: string | undefined;
   readonly customModels: ReadonlyArray<string>;
   readonly envModels: ReadonlyArray<string | undefined>;
-  readonly capabilities: ModelCapabilities;
+  readonly capabilities: ServerProviderModel["capabilities"];
 }): Effect.fn.Return<ReadonlyArray<ServerProviderModel>> {
   const url = resolveVendorModelsUrl(input.vendor, input.baseUrl);
   const apiKey = input.apiKey?.trim();
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
   const liveIds =
-    url && apiKey
-      ? yield* Effect.tryPromise({
-          try: () => fetchLiveVendorModelIds(input.vendor, url, apiKey),
-          catch: () => [] as ReadonlyArray<string>,
-        }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<string>)))
+    url && apiKey && Option.isSome(httpClient)
+      ? yield* fetchLiveVendorModelIds(httpClient.value, input.vendor, url, apiKey)
       : [];
 
   const envIds = input.envModels

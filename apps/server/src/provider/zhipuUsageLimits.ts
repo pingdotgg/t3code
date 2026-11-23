@@ -3,10 +3,12 @@ import {
   makeUnavailableUsageLimits,
   makeUsageLimits,
 } from "@t3tools/provider-core/server/usageLimits";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import { HttpClient, HttpClientRequest } from "effect/http";
 
 const ZHIPU_QUOTA_PATH = "/api/monitor/usage/quota/limit";
-const ZHIPU_QUOTA_TIMEOUT_MS = 10_000;
 
 interface ZhipuQuotaLimitEntry {
   readonly type?: unknown;
@@ -50,12 +52,10 @@ function parseResetTimeIso(value: unknown): string | undefined {
   const numeric = asFiniteNumber(value);
   if (numeric !== undefined && numeric > 0) {
     const ms = numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-    const date = new Date(ms);
-    return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+    return Option.getOrUndefined(Option.map(DateTime.make(ms), DateTime.formatIso));
   }
   if (typeof value === "string" && value.trim().length > 0) {
-    const parsed = Date.parse(value);
-    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+    return Option.getOrUndefined(Option.map(DateTime.make(value), DateTime.formatIso));
   }
   return undefined;
 }
@@ -196,18 +196,25 @@ function zhipuQuotaResponseToLimits(
   return makeUsageLimits({ checkedAt, windows });
 }
 
-async function fetchZhipuQuotaJson(url: string, authHeader: string): Promise<unknown> {
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(ZHIPU_QUOTA_TIMEOUT_MS),
-  });
-  const json: unknown = await response.json().catch(() => undefined);
-  return { status: response.status, json };
-}
+const fetchZhipuQuotaJson = (client: HttpClient.HttpClient, url: string, authHeader: string) =>
+  client
+    .execute(
+      HttpClientRequest.get(url).pipe(
+        HttpClientRequest.setHeaders({
+          Authorization: authHeader,
+          "Content-Type": "application/json",
+        }),
+      ),
+    )
+    .pipe(
+      Effect.flatMap((response) =>
+        response.json.pipe(
+          Effect.orElseSucceed(() => undefined as unknown),
+          Effect.map((json) => ({ status: response.status, json })),
+        ),
+      ),
+      Effect.timeout("10 seconds"),
+    );
 
 export const fetchZhipuUsageLimits = Effect.fn("fetchZhipuUsageLimits")(function* (input: {
   readonly baseUrl: string;
@@ -222,13 +229,17 @@ export const fetchZhipuUsageLimits = Effect.fn("fetchZhipuUsageLimits")(function
       reason: "unsupported",
     });
   }
+  const httpClient = yield* Effect.serviceOption(HttpClient.HttpClient);
+  if (Option.isNone(httpClient)) {
+    return makeUnavailableUsageLimits({
+      checkedAt: input.checkedAt,
+      reason: "probeFailed",
+      message: "Zhipu quota client is unavailable.",
+    });
+  }
 
-  return yield* Effect.tryPromise({
-    try: async () => {
-      const first = (await fetchZhipuQuotaJson(url, apiKey)) as {
-        status: number;
-        json: unknown;
-      };
+  return yield* fetchZhipuQuotaJson(httpClient.value, url, apiKey).pipe(
+    Effect.flatMap((first) => {
       const firstCode =
         first.json && typeof first.json === "object"
           ? asFiniteNumber((first.json as Record<string, unknown>).code)
@@ -237,19 +248,18 @@ export const fetchZhipuUsageLimits = Effect.fn("fetchZhipuUsageLimits")(function
         const bearerHeader = apiKey.toLowerCase().startsWith("bearer ")
           ? apiKey
           : `Bearer ${apiKey}`;
-        const retry = (await fetchZhipuQuotaJson(url, bearerHeader)) as {
-          status: number;
-          json: unknown;
-        };
-        return zhipuQuotaResponseToLimits(retry.json, input.checkedAt);
+        return fetchZhipuQuotaJson(httpClient.value, url, bearerHeader).pipe(
+          Effect.map((retry) => zhipuQuotaResponseToLimits(retry.json, input.checkedAt)),
+        );
       }
-      return zhipuQuotaResponseToLimits(first.json, input.checkedAt);
-    },
-    catch: () =>
+      return Effect.succeed(zhipuQuotaResponseToLimits(first.json, input.checkedAt));
+    }),
+    Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         checkedAt: input.checkedAt,
         reason: "probeFailed",
         message: "Could not reach Zhipu quota endpoint.",
       }),
-  }).pipe(Effect.catch((fallback) => Effect.succeed(fallback)));
+    ),
+  );
 });

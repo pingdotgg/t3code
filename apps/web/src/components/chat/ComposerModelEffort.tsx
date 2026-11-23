@@ -342,6 +342,8 @@ const EFFORT_STARS = [
 function EffortSpectrumSlider(props: {
   readonly label: string;
   readonly choices: ReturnType<typeof selectableProviderOptionChoices>;
+  readonly value: string | undefined;
+  readonly shown: boolean;
   readonly currentIndex: number;
   readonly disabled: boolean;
   readonly onSelectIndex: (index: number) => void;
@@ -371,17 +373,8 @@ function EffortSpectrumSlider(props: {
       </div>
       <div
         ref={trackRef}
-        role="slider"
-        data-effort-level={currentChoice?.label ?? ""}
-        aria-label={props.label}
-        aria-valuemin={0}
-        aria-valuemax={Math.max(0, count - 1)}
-        aria-valuenow={safeIndex}
-        aria-valuetext={currentChoice?.label ?? ""}
-        aria-disabled={props.disabled}
-        tabIndex={props.disabled ? -1 : 0}
         className={cn(
-          "relative h-7 w-full select-none rounded-full bg-muted/80 shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          "relative h-7 w-full select-none rounded-full bg-muted/80 shadow-inner outline-none focus-within:ring-2 focus-within:ring-ring focus-within:ring-inset",
           props.disabled ? "cursor-not-allowed opacity-55" : "cursor-pointer",
         )}
         onPointerDown={(event) => {
@@ -401,25 +394,8 @@ function EffortSpectrumSlider(props: {
             event.currentTarget.releasePointerCapture(event.pointerId);
           }
         }}
-        onKeyDown={(event) => {
-          if (props.disabled || count <= 1) return;
-          if (event.key === "ArrowRight" || event.key === "ArrowUp") {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onSelectIndex(Math.min(count - 1, safeIndex + 1));
-          } else if (event.key === "ArrowLeft" || event.key === "ArrowDown") {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onSelectIndex(Math.max(0, safeIndex - 1));
-          } else if (event.key === "Home") {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onSelectIndex(0);
-          } else if (event.key === "End") {
-            event.preventDefault();
-            event.stopPropagation();
-            props.onSelectIndex(count - 1);
-          }
+        onPointerCancel={() => {
+          draggingRef.current = false;
         }}
       >
         <div
@@ -455,6 +431,31 @@ function EffortSpectrumSlider(props: {
           className="pointer-events-none absolute top-1/2 size-6 -translate-y-1/2 rounded-full bg-white shadow-md transition-[left] duration-300 ease-out"
           style={{ left: `calc(${fillPercent}% - 1.625rem)` }}
         />
+
+        <div
+          className="absolute inset-0 grid"
+          style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
+        >
+          {props.choices.map((option, index) => {
+            const selected = option.id === props.value;
+            const tabStop = props.shown ? selected : index === 0;
+            return (
+              <button
+                key={option.id}
+                type="button"
+                role="radio"
+                aria-label={option.label}
+                aria-checked={selected}
+                disabled={props.disabled}
+                data-effort-row={true}
+                data-effort-level={option.label}
+                tabIndex={tabStop ? 0 : -1}
+                className="h-full w-full cursor-pointer bg-transparent opacity-0 outline-none disabled:cursor-not-allowed"
+                onClick={() => props.onSelectIndex(index)}
+              />
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -506,6 +507,8 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
         <EffortSpectrumSlider
           label={descriptor.label}
           choices={choices}
+          value={value}
+          shown={shown}
           currentIndex={currentIndex}
           disabled={locked}
           onSelectIndex={(index) => {
