@@ -81,4 +81,26 @@ describe("issueFilterProjects", () => {
       ["worktree", "t3code · laptop · /work/worktree"],
     ]);
   });
+
+  it("lists a repository once across environments and checkouts", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (environmentId: EnvironmentId, id: string) =>
+      ({
+        id: ProjectId.make(id),
+        environmentId,
+        title: "pingdotgg/t3code",
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+        isScratch: false,
+      }) as unknown as EnvironmentProject;
+    const choices = issueFilterProjects(
+      [project(laptop, "main"), project(laptop, "worktree"), project(vps, "remote")],
+      new Map([
+        [laptop, "Laptop"],
+        [vps, "VPS"],
+      ]),
+    );
+    expect(choices.map((choice) => choice.title)).toEqual(["pingdotgg/t3code"]);
+  });
 });
