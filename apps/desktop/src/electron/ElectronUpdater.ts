@@ -34,6 +34,7 @@ interface DebUpdaterInternal {
     readonly downloadedFileInfo: unknown;
   } | null;
   readonly app: { readonly name: string; readonly relaunch: () => void; readonly quit: () => void };
+  readonly dispatchError: (error: Error) => void;
   readonly _logger: {
     readonly info: (message: string) => void;
     readonly warn: (message: string) => void;
@@ -196,16 +197,15 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
     deb._logger.warn("install call ignored: quitAndInstallCalled is set to true");
     return;
   }
-  const installerPath = deb.downloadedUpdateHelper?.file ?? null;
-  if (installerPath === null || deb.downloadedUpdateHelper?.downloadedFileInfo == null) {
-    return yield* new DebInstallError({
-      reason: "No update filepath provided, can't quit and install",
-      exitCode: null,
-    });
-  }
-
   deb.quitAndInstallCalled = true;
   yield* Effect.gen(function* () {
+    const installerPath = deb.downloadedUpdateHelper?.file ?? null;
+    if (installerPath === null || deb.downloadedUpdateHelper?.downloadedFileInfo == null) {
+      return yield* new DebInstallError({
+        reason: "No update filepath provided, can't quit and install",
+        exitCode: null,
+      });
+    }
     const dpkgPath = yield* resolveSystemBinary("dpkg", binDirs);
     if (dpkgPath !== null) {
       yield* runAsRoot(deb, [dpkgPath, "-i", installerPath], binDirs).pipe(
@@ -257,6 +257,8 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
         deb.quitAndInstallCalled = false;
       }),
     ),
+    // Report through the updater's error event, as electron-updater's own install does.
+    Effect.catch((error) => Effect.sync(() => deb.dispatchError(error))),
   );
 });
 
@@ -428,17 +430,7 @@ export const makeWithOptions = (options?: {
       return Effect.suspend(() => {
         const channel = autoUpdater.channel;
         if (autoUpdater instanceof DebUpdater) {
-          return quitAndInstallDeb(autoUpdater, isSilent, isForceRunAfter, systemBinDirs).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ElectronUpdaterQuitAndInstallError({
-                  channel,
-                  isSilent,
-                  isForceRunAfter,
-                  cause,
-                }),
-            ),
-          );
+          return quitAndInstallDeb(autoUpdater, isSilent, isForceRunAfter, systemBinDirs);
         }
         if (autoUpdater instanceof AppImageUpdater)
           relaunchWithoutInheritedDescriptors(autoUpdater);

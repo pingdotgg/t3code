@@ -6,7 +6,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -223,10 +222,12 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
           .readFileString(path.join(dir, "calls"))
           .pipe(Effect.map((calls) => calls.trim().split("\n")));
 
-        const dismissed = yield* Effect.exit(
-          updater.quitAndInstall({ isSilent: true, isForceRunAfter: true }),
-        );
-        assert.isTrue(Exit.isFailure(dismissed));
+        const errors: Array<unknown> = [];
+        yield* updater.on("error", (error: unknown) => errors.push(error));
+
+        // Failures reach DesktopUpdates through the updater's error event, as upstream's do.
+        yield* updater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
+        assert.equal(errors.length, 1);
         assert.deepEqual(yield* readCalls, [
           `--disable-internal-agent ${path.join(binDir, "dpkg")} -i ${debPath}`,
         ]);
@@ -241,6 +242,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         ]);
         assert.equal(electronStub.app.relaunch.mock.calls.length, 1);
         assert.equal(electronStub.app.quit.mock.calls.length, 1);
+        assert.equal(errors.length, 1);
       }).pipe(Effect.provide(NodeServices.layer)),
     );
   },
