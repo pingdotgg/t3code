@@ -190,6 +190,37 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #41190 a healthy daemon left on an older pin speaks an incompatible RPC protocol
+  it.effect("replaces a healthy daemon that runs a different agent-device version", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { host, runs } = yield* agentFixture(
+        (stateDir) =>
+          fs
+            .writeFileString(
+              `${stateDir}/daemon.json`,
+              JSON.stringify({
+                httpPort: 23456,
+                token: "current-token",
+                pid: process.pid,
+                version: AGENT_DEVICE_VERSION,
+              }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:23456",
+        token: "current-token",
+      });
+      expect(runs.some((run) => run.args.includes("daemon") && run.args.includes("stop"))).toBe(
+        true,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the SDK a later shell environment selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
