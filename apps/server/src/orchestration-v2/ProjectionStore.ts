@@ -1960,6 +1960,9 @@ export function threadShellFromProjection(
     ...(projection.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
+    ...(projection.thread.workflowRun === undefined
+      ? {}
+      : { workflowRun: projection.thread.workflowRun }),
     latestRunId: latestRun?.id ?? null,
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
@@ -2274,6 +2277,9 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.workflowRun === undefined
+      ? {}
+      : { workflowRun: input.state.thread.workflowRun }),
     latestRunId: input.state.latestRunId,
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
@@ -2363,6 +2369,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       AND COALESCE(${row}.completion_delivery_state, '') IN ('acknowledged', 'delivered', 'disposed')
       AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_runs AS run
+          INDEXED BY orchestration_v2_projection_runs_run_status_idx
         WHERE run.run_id = ${row}.run_id
           AND run.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
       )
@@ -2383,6 +2390,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const todoListOfSettledRun = (row: Statement.Fragment) => sql`(
       ${row}.kind = 'todo_list' AND ${row}.run_id IS NOT NULL AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_runs AS todo_run
+          INDEXED BY orchestration_v2_projection_runs_run_status_idx
         WHERE todo_run.run_id = ${row}.run_id
           AND todo_run.status IN ('queued','preparing','starting','running','waiting')
       ))`;
@@ -4388,37 +4396,50 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            WHERE (thread_id = ${threadId}
+            WHERE ${
+              filter?.omitSettledSubagentRecords === true
+                ? // A dispatcher's settled tasks' provider threads belong to the child threads;
+                  // only a session this thread also uses is probed when it detaches. Most rows
+                  // lack an owner or session, so ANALYZE rates those indexes as matching every
+                  // row and SQLite scans for an OR of them; each union branch seeks instead.
+                  sql`rowid IN (
+              SELECT rowid FROM orchestration_v2_projection_provider_threads
+              WHERE thread_id = ${threadId}
+              UNION
+              SELECT rowid FROM orchestration_v2_projection_provider_threads
+                INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
+              WHERE owner_node_id IN (${nodesOwningProviderThreads(threadId)})
+              UNION
+              SELECT rowid FROM orchestration_v2_projection_provider_threads
+              WHERE provider_thread_id IN (
+                SELECT provider_thread_id
+                FROM orchestration_v2_projection_subagents
+                WHERE rowid IN (${unsettledSubagentRowids(threadId)})
+                  AND provider_thread_id IS NOT NULL
+              )
+              UNION
+              SELECT rowid FROM orchestration_v2_projection_provider_threads AS shared
+                INDEXED BY orchestration_v2_projection_provider_threads_session_idx
+              WHERE provider_session_id IN (
+                  SELECT provider_session_id
+                  FROM orchestration_v2_projection_provider_session_bindings
+                  WHERE thread_id = ${threadId}
+                )
+                AND EXISTS (
+                  SELECT 1 FROM orchestration_v2_projection_subagents AS owner
+                  WHERE owner.provider_thread_id = shared.provider_thread_id
+                    AND owner.thread_id = ${threadId}
+                )
+            )`
+                : sql`(thread_id = ${threadId}
                OR owner_node_id IN (${nodesOwningProviderThreads(threadId)})
-               OR ${
-                 filter?.omitSettledSubagentRecords === true
-                   ? // A dispatcher thread holds thousands of settled tasks. Their provider
-                     // threads belong to the child threads; only a session this thread also
-                     // uses is probed for background work when the thread detaches it.
-                     sql`provider_thread_id IN (
-                 SELECT provider_thread_id
-                 FROM orchestration_v2_projection_subagents
-                 WHERE rowid IN (${unsettledSubagentRowids(threadId)})
-                   AND provider_thread_id IS NOT NULL
-               )
-               OR (provider_session_id IN (
-                   SELECT provider_session_id
-                   FROM orchestration_v2_projection_provider_session_bindings
-                   WHERE thread_id = ${threadId}
-                 )
-                 AND EXISTS (
-                   SELECT 1 FROM orchestration_v2_projection_subagents AS owner
-                   WHERE owner.provider_thread_id =
-                       orchestration_v2_projection_provider_threads.provider_thread_id
-                     AND owner.thread_id = ${threadId}
-                 ))`
-                   : sql`provider_thread_id IN (
+               OR provider_thread_id IN (
                  SELECT provider_thread_id
                  FROM orchestration_v2_projection_subagents
                  WHERE thread_id = ${threadId}
                    AND provider_thread_id IS NOT NULL
-               )`
-               })
+               ))`
+            }
               ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
@@ -9605,6 +9626,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly parent_thread_id: string | null;
         readonly root_thread_id: string;
         readonly side_chat: number | null;
+        readonly workflow_step: number | null;
         readonly delegated_from_environment_id: string | null;
         readonly delegated_from_thread_id: string | null;
         readonly delegated_from_title: string | null;
@@ -9621,6 +9643,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
           json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
           json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
+          json_extract(t.payload_json, '$.lineage.workflowStep') AS workflow_step,
           json_extract(t.payload_json, '$.delegatedFrom.environmentId') AS delegated_from_environment_id,
           json_extract(t.payload_json, '$.delegatedFrom.threadId') AS delegated_from_thread_id,
           json_extract(t.payload_json, '$.delegatedFrom.title') AS delegated_from_title,
@@ -9635,7 +9658,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         id: ThreadId.make(row.thread_id),
         projectId: ProjectId.make(row.project_id),
         title: row.title,
-        lineage: shellIndexLineage(row),
+        lineage: {
+          ...shellIndexLineage(row),
+          ...(row.workflow_step === 1 ? { workflowStep: true } : {}),
+        },
         ...(row.delegated_from_environment_id === null || row.delegated_from_thread_id === null
           ? {}
           : {
