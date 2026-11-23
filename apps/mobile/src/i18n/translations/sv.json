@@ -5777,5 +5777,15 @@
   "5c8355c1b8581221": "Allt är ikapp",
   "210d496dd7338edd": "Öppna PseudoCode för att uppdatera",
   "99d51127f573296b": "Ett konto till",
-  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare."
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "9b9df5ba41c4a8e2": "Gruppera trådar efter projekt",
+  "e8db798a0575c8e9": "Grupperar aktiva trådar i projektmappar. Fästa trådar ligger ovanför och snoozade och klara trådar nedanför.",
+  "0d7b8e66a12aa64b": "I projektvyn stannar arbetande trådar i sina projektmappar. Din inställning för arbetssektionen återställs när du stänger av projektvyn.",
+  "7e5c3008b5c0d2d9": "gruppera trådar efter projekt",
+  "e09d04e9f25b7ba8": "projektmappar",
+  "d25661576338fcf0": "Behöver din uppmärksamhet",
+  "7367ac6d7473df6c": "{project}, {count} dolda trådar",
+  "5af190a4b64e6d6f": "{project}, {count} dolda trådar, {status}",
+  "1acf5ae561eb2754": "Fäller ihop projektet",
+  "793a282af8116867": "Fäller ut projektet"
 }

@@ -5771,5 +5771,15 @@
   "5c8355c1b8581221": "Todo al día",
   "210d496dd7338edd": "Abre PseudoCode para actualizar",
   "99d51127f573296b": "Otra cuenta",
-  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}."
+  "8ec2c57414669b79": "Conecta un segundo espacio de trabajo o usuario de {tracker}.",
+  "9b9df5ba41c4a8e2": "Agrupar hilos por proyecto",
+  "e8db798a0575c8e9": "Agrupa los hilos activos en carpetas de proyecto. Los hilos fijados permanecen arriba, y los pospuestos y resueltos abajo.",
+  "0d7b8e66a12aa64b": "En la vista por proyectos, los hilos en curso permanecen en sus carpetas de proyecto. Tu preferencia de la sección Trabajando se restaura al desactivar esta vista.",
+  "7e5c3008b5c0d2d9": "agrupar hilos por proyecto",
+  "e09d04e9f25b7ba8": "carpetas de proyecto",
+  "d25661576338fcf0": "Necesita tu atención",
+  "7367ac6d7473df6c": "{project}, {count} hilos ocultos",
+  "5af190a4b64e6d6f": "{project}, {count} hilos ocultos, {status}",
+  "1acf5ae561eb2754": "Contrae el proyecto",
+  "793a282af8116867": "Expande el proyecto"
 }

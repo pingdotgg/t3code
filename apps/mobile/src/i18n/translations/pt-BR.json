@@ -5771,5 +5771,15 @@
   "5c8355c1b8581221": "Tudo em dia",
   "210d496dd7338edd": "Abra o PseudoCode para atualizar",
   "99d51127f573296b": "Outra conta",
-  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}."
+  "8ec2c57414669b79": "Conecte um segundo espaço de trabalho ou usuário do {tracker}.",
+  "9b9df5ba41c4a8e2": "Agrupar threads por projeto",
+  "e8db798a0575c8e9": "Organiza as threads ativas em pastas de projeto. As fixadas ficam acima, e as adiadas e concluídas abaixo.",
+  "0d7b8e66a12aa64b": "Na visualização por projetos, as threads em andamento ficam nas pastas dos respectivos projetos. Sua preferência da seção Trabalhando é restaurada ao desativar essa visualização.",
+  "7e5c3008b5c0d2d9": "agrupar threads por projeto",
+  "e09d04e9f25b7ba8": "pastas de projeto",
+  "d25661576338fcf0": "Precisa da sua atenção",
+  "7367ac6d7473df6c": "{project}, {count} threads ocultas",
+  "5af190a4b64e6d6f": "{project}, {count} threads ocultas, {status}",
+  "1acf5ae561eb2754": "Recolhe o projeto",
+  "793a282af8116867": "Expande o projeto"
 }
