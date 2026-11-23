@@ -2960,6 +2960,31 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("keeps reporting a worktree whose git metadata cannot be deleted", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fixture = yield* cleanupFixture();
+        const adminDir = (yield* fixture.command(fixture.worktree, [
+          "rev-parse",
+          "--absolute-git-dir",
+        ])).stdout.trim();
+        // Stands in for root-owned files a container wrote into the worktree's git dir.
+        const stuck = `${adminDir}/scratch/fanal`;
+        yield* fixture.fs.makeDirectory(stuck, { recursive: true });
+        yield* fixture.fs.writeFileString(`${stuck}/f`, "x\n");
+        yield* fixture.fs.chmod(stuck, 0o555);
+        yield* Effect.addFinalizer(() => fixture.fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+        yield* fixture.service.runNow;
+        const later = yield* fixture.service.runNow;
+        expect(later.entries).toEqual([
+          expect.objectContaining({
+            path: fixture.worktree,
+            outcome: expect.stringMatching(/^(kept|failed)$/),
+          }),
+        ]);
+      }),
+    ),
+  );
   it.live("skips a stored worktree path whose parent is a regular file", () =>
     runCleanupTest(
       Effect.gen(function* () {
