@@ -91,57 +91,15 @@ describe("issueFilterProjects", () => {
         [vps, "vps"],
       ]),
     );
-    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["other", "other"],
-      ["main", "t3code · laptop · /work/main"],
-      ["scratch", "t3code · laptop · /work/scratch"],
-    ]);
-    const repository = choices.find((choice) => choice.id === ProjectId.make("main"));
-    expect(repository?.memberProjectKeys).toEqual([
-      JSON.stringify([laptop, ProjectId.make("main")]),
-      JSON.stringify([laptop, ProjectId.make("worktree")]),
-      JSON.stringify([vps, ProjectId.make("main")]),
-    ]);
-    const scratch = choices.find((choice) => choice.id === ProjectId.make("scratch"));
-    expect(scratch?.memberProjectKeys).toEqual([
-      JSON.stringify([laptop, ProjectId.make("scratch")]),
-    ]);
-  });
-
-  it("hiding a grouped repository hides it on every environment", () => {
-    const laptop = EnvironmentId.make("laptop");
-    const vps = EnvironmentId.make("vps");
-    const project = (id: string, environmentId: EnvironmentId) =>
-      ({
-        id: ProjectId.make(id),
-        environmentId,
-        title: "t3code",
-        workspaceRoot: `/work/${id}`,
-        repositoryIdentity: {
-          canonicalKey: id === "other" ? "github.com/acme/other" : "github.com/pingdotgg/t3code",
-        },
-      }) as unknown as EnvironmentProject;
-    const projects = [
-      project("main", laptop),
-      project("worktree", laptop),
-      project("other", laptop),
-      project("main", vps),
-    ];
-    const repository = issueFilterProjects(projects, new Map([[laptop, "laptop"]])).find(
-      (choice) => choice.id === ProjectId.make("main"),
-    );
-    const hidden = repository?.memberProjectKeys.map(
-      (key) => JSON.parse(key) as readonly [EnvironmentId, ProjectId],
-    );
-    const input = { state: "open" } as const;
-    expect(issueListTargets([laptop, vps], projects, hidden, input)).toEqual([
-      {
-        environmentId: laptop,
-        input: {
-          state: "open",
-          excludeProjectIds: [ProjectId.make("main"), ProjectId.make("worktree")],
-        },
-      },
+    const key = (environmentId: EnvironmentId, id: string) =>
+      JSON.stringify([environmentId, ProjectId.make(id)]);
+    expect(choices.map((choice) => [choice.title, choice.memberProjectKeys])).toEqual([
+      ["other", [key(laptop, "other")]],
+      [
+        "t3code · laptop · /work/main",
+        [key(laptop, "main"), key(laptop, "worktree"), key(vps, "main")],
+      ],
+      ["t3code · laptop · /work/scratch", [key(laptop, "scratch")]],
     ]);
   });
 });

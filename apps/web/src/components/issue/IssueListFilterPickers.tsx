@@ -194,15 +194,13 @@ function ProjectChoices(props: {
       <MenuSeparator />
       {visible.length === 0 ? <MenuItem disabled>{gt("No matching projects.")}</MenuItem> : null}
       {visible.map((project) => {
-        // One entry hides every member: a repository across environments and checkouts.
-        const memberKeys = project.memberProjectKeys;
         return (
           <MenuCheckboxItem
             key={pullRequestProjectKey(project)}
-            checked={memberKeys.some((key) => !props.hidden.has(key))}
+            checked={project.memberProjectKeys.some((key) => !props.hidden.has(key))}
             onCheckedChange={(shown) => {
               const next = new Set(props.hidden);
-              for (const key of memberKeys) {
+              for (const key of project.memberProjectKeys) {
                 if (shown) next.delete(key);
                 else next.add(key);
               }

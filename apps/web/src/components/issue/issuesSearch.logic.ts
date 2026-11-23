@@ -65,49 +65,34 @@ export interface IssueFilterProject extends EnvironmentProject {
 }
 
 /**
- * One choice per repository across environments: hiding it hides the repository everywhere.
- * Projects on one repository can read different Linear teams, so those hide together.
- * Scratch projects stay as their own choice, since Settings can bind one to a Linear team.
+ * One choice per repository across environments and checkouts: hiding it hides the repository
+ * everywhere, so projects on one repository bound to different Linear teams hide together.
+ * Scratch projects stay their own choice, since Settings can bind one to a Linear team.
  */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
 ): ReadonlyArray<IssueFilterProject> => {
-  const groups = new Map<string, Array<EnvironmentProject>>();
+  const groups = new Map<string, { project: EnvironmentProject; memberProjectKeys: string[] }>();
   for (const project of projects) {
-    const repositoryKey =
-      project.isScratch === true
-        ? undefined
-        : project.repositoryIdentity
-          ? repositoryGroupingKeyOf(project.repositoryIdentity)
-          : undefined;
-    const key = repositoryKey
-      ? JSON.stringify(["repository", repositoryKey])
-      : JSON.stringify(["project", project.environmentId, project.id]);
-    const members = groups.get(key);
-    if (members) members.push(project);
-    else groups.set(key, [project]);
-  }
-  const representatives: Array<EnvironmentProject> = [];
-  const memberKeys = new Map<string, ReadonlyArray<string>>();
-  for (const members of groups.values()) {
-    const representative = members[0];
-    if (!representative) continue;
-    representatives.push(representative);
-    memberKeys.set(
-      projectKey(representative),
-      members.map((member) => projectKey(member)),
-    );
+    const repository =
+      project.isScratch !== true && project.repositoryIdentity
+        ? repositoryGroupingKeyOf(project.repositoryIdentity)
+        : undefined;
+    const key = JSON.stringify(repository ?? [project.environmentId, project.id]);
+    const group = groups.get(key);
+    if (group) group.memberProjectKeys.push(projectKey(project));
+    else groups.set(key, { project, memberProjectKeys: [projectKey(project)] });
   }
   return pullRequestFilterProjects(
-    // Grouping is done above: keep the repository out so the shared filter does not
-    // regroup the representatives by environment and repository.
-    representatives.map((project) => ({ ...project, repositoryIdentity: null })),
+    [...groups.values()].map(({ project, memberProjectKeys }) => ({
+      ...project,
+      // Grouped already; the shared helper would split the group again per environment.
+      repositoryIdentity: null,
+      memberProjectKeys,
+    })),
     environmentLabels,
-  ).map((choice) => ({
-    ...choice,
-    memberProjectKeys: memberKeys.get(projectKey(choice)) ?? [projectKey(choice)],
-  }));
+  );
 };
 
 export const issueProjectKeys = (pairs: IssuesSearch["hideProjects"]): ReadonlySet<string> =>
