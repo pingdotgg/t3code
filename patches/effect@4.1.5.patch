@@ -381,7 +381,7 @@ index bff6370..0a6962c 100644
  // =============================================================================
  /**
 diff --git a/dist/ai/McpServer.d.ts b/dist/ai/McpServer.d.ts
-index fe6f18e..965ec98 100644
+index fe6f18e..c67169e 100644
 --- a/dist/ai/McpServer.d.ts
 +++ b/dist/ai/McpServer.d.ts
 @@ -17,6 +17,7 @@ import * as Context from "../Context.ts";
@@ -634,7 +634,7 @@ index fe6f18e..965ec98 100644
 + * the endpoint with a challenge, and runs the event's `stream` for the
 + * subscription's lifetime, POSTing each occurrence with Standard Webhooks
 + * signatures, one at a time, retrying with backoff. Subscriptions live in
-+ * memory: every grant is finite, between a minute and a day, so a client
++ * memory: every grant is finite, between a minute and an hour, so a client
 + * refreshing from its cursor recreates what a restart lost. A failure of the
 + * stream, such as `Forbidden` when access is revoked, ends the subscription
 + * with a `terminated` envelope.
@@ -1208,7 +1208,7 @@ index 0000000..d875046
 +    }
 +}, Effect.scoped);
 diff --git a/dist/ai/internal/mcpProtocol/v2026_07_28.js b/dist/ai/internal/mcpProtocol/v2026_07_28.js
-index af1ceed..c54a047 100644
+index af1ceed..1737b34 100644
 --- a/dist/ai/internal/mcpProtocol/v2026_07_28.js
 +++ b/dist/ai/internal/mcpProtocol/v2026_07_28.js
 @@ -17,6 +17,7 @@ import * as Schema from "../../../Schema.js";
@@ -1248,7 +1248,7 @@ index af1ceed..c54a047 100644
      if (declared !== undefined) capabilities.extensions = declared;
      if (presence.tools) capabilities.tools = {
        listChanged: supportsSubscriptions
-@@ -297,6 +302,27 @@ export const makeHandlers = (core, _lifecycle, context) => {
+@@ -297,6 +302,26 @@ export const makeHandlers = (core, _lifecycle, context) => {
        serverInfo: context.serverInfo
      };
    });
@@ -1260,7 +1260,6 @@ index af1ceed..c54a047 100644
 +      yield* validateParameterHeaders(registration.descriptor.inputSchema, args, httpRequest.value.headers);
 +    }
 +  });
-+  // Webhook delivery is not implemented, so subscribing refuses every event type.
 +  // Webhook delivery runs the event's push stream, so it needs both.
 +  const webhookRegistration = Effect.fnUntraced(function* (method, name, args) {
 +    yield* requireEvents(method);
@@ -1276,7 +1275,7 @@ index af1ceed..c54a047 100644
    const requireSkills = method => McpSkills.requireSkills(core, method).pipe(Effect.catch(error => failWithHttpStatus(404, error)));
    const getInvocation = PublicMcpSchema.McpRequestContext.useSync(McpProtocol.invocationFromRequestContext);
    const getInputInvocation = Effect.fnUntraced(function* (request) {
-@@ -592,6 +618,96 @@ export const makeHandlers = (core, _lifecycle, context) => {
+@@ -592,6 +617,96 @@ export const makeHandlers = (core, _lifecycle, context) => {
        }, context.serverInfo);
        return yield* decodeReadResourceDirectoryResult(result);
      }, Effect.mapError(projectError)),
@@ -1373,7 +1372,7 @@ index af1ceed..c54a047 100644
      "notifications/cancelled": Effect.fnUntraced(function* (_request) {
        return yield* Effect.void;
      })
-@@ -613,10 +729,10 @@ const runtime = {
+@@ -613,10 +728,10 @@ const runtime = {
  export const protocol = /*#__PURE__*/McpProtocol.make({
    protocolVersion: McpSchema.protocolVersion,
    runtime,
@@ -1420,10 +1419,10 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
 new file mode 100644
-index 0000000..a063ca0
+index 0000000..4b2b1c8
 --- /dev/null
 +++ b/dist/ai/internal/mcpWebhooks.js
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,428 @@
 +import * as Clock from "../../Clock.js";
 +import * as Digest from "../../crypto/Digest.js";
 +import * as Mac from "../../crypto/Mac.js";
@@ -1444,15 +1443,17 @@ index 0000000..a063ca0
 +import { wireError } from "./mcpEvents.js";
 +const MINUTE_MS = 6e4;
 +const MIN_TTL_MS = MINUTE_MS;
-+const MAX_TTL_MS = 24 * 60 * MINUTE_MS;
-+const DEFAULT_TTL_MS = 60 * MINUTE_MS;
++const MAX_TTL_MS = 60 * MINUTE_MS;
++const DEFAULT_TTL_MS = 15 * MINUTE_MS;
 +const MAX_ATTEMPTS = 5;
 +const FIRST_RETRY_MS = 3e4;
 +const REQUEST_TIMEOUT_MS = 1e4;
 +const ROTATION_GRACE_MS = 5 * MINUTE_MS;
 +const VERIFIED_FOR_MS = MAX_TTL_MS;
++const FAILED_FOR_MS = 5 * MINUTE_MS;
++const VERIFICATIONS_PER_HOST_PER_MINUTE = 10;
 +const MAX_SUBSCRIPTIONS_PER_PRINCIPAL = 100;
-+const MAX_RESPONSE_CHARS = 4096;
++const MAX_CHALLENGE_RESPONSE_BYTES = 8192;
 +const SECRET_PREFIX = "whsec_";
 +const invalid = (message) => new PublicMcpSchema.InvalidParams({ message });
 +const grantTtl = (suggested) => suggested === void 0 ? DEFAULT_TTL_MS : suggested === null ? MAX_TTL_MS : Math.min(MAX_TTL_MS, Math.max(MIN_TTL_MS, suggested));
@@ -1500,10 +1501,29 @@ index 0000000..a063ca0
 +  }
 +  return "connection_refused";
 +};
-+const readText = (response) => response.stream.pipe(
-+  Stream.decodeText(),
-+  Stream.runFold(() => "", (text, chunk) => text.length >= MAX_RESPONSE_CHARS ? text : text + chunk)
-+);
++const readCapped = (response) => Effect.suspend(() => {
++  const chunks = [];
++  let total = 0;
++  return response.stream.pipe(
++    Stream.takeWhile((chunk) => {
++      if (total > MAX_CHALLENGE_RESPONSE_BYTES) return false;
++      total += chunk.length;
++      chunks.push(chunk);
++      return true;
++    }),
++    Stream.runDrain,
++    Effect.map(() => {
++      if (total > MAX_CHALLENGE_RESPONSE_BYTES) return void 0;
++      const bytes = new Uint8Array(total);
++      let offset = 0;
++      for (const chunk of chunks) {
++        bytes.set(chunk, offset);
++        offset += chunk.length;
++      }
++      return new TextDecoder().decode(bytes);
++    })
++  );
++});
 +const echoedChallenge = (body) => {
 +  try {
 +    const parsed = JSON.parse(body);
@@ -1524,9 +1544,16 @@ index 0000000..a063ca0
 +  const digest = yield* Digest.Digest;
 +  const random = yield* SecureRandom.SecureRandom;
 +  const { guard } = options;
-+  const { client } = options;
++  const client = HttpClient.withScope(options.client);
 +  const subscriptions = /* @__PURE__ */ new Map();
++  const pending = /* @__PURE__ */ new Map();
 +  const verified = /* @__PURE__ */ new Map();
++  const failedVerifications = /* @__PURE__ */ new Map();
++  const verifying = /* @__PURE__ */ new Map();
++  const verificationsByHost = /* @__PURE__ */ new Map();
++  const forget = (subscription) => {
++    if (subscriptions.get(subscription.id) === subscription) subscriptions.delete(subscription.id);
++  };
 +  const subscriptionId = (principal, url, name, args) => digest.digestHex(Digest.sha256, encoder.encode(canonicalJson([principal, url.href, name, args]))).pipe(
 +    Effect.map((hex) => `sub_${hex.slice(0, 32)}`)
 +  );
@@ -1535,7 +1562,7 @@ index 0000000..a063ca0
 +    Effect.orDie,
 +    Effect.map((tags) => tags.map((tag) => `v1,${Base64.encode(tag)}`).join(" "))
 +  );
-+  const send = Effect.fnUntraced(function* (subscription, body, webhookId) {
++  const send = Effect.fnUntraced(function* (subscription, body, webhookId, readBody) {
 +    const admitted = yield* Effect.result(guard.check(subscription.url));
 +    if (Result.isFailure(admitted)) {
 +      return { _tag: "Failed", category: "connection_refused", retryable: true };
@@ -1554,15 +1581,18 @@ index 0000000..a063ca0
 +      HttpClientRequest.bodyText(body, "application/json")
 +    );
 +    const outcome = yield* client.execute(request).pipe(
-+      // The body is read either way, so the connection is free for the next delivery.
-+      Effect.flatMap(
-+        (response) => Effect.map(readText(response), (text) => response.status >= 200 && response.status < 300 ? { _tag: "Delivered", body: text } : {
-+          _tag: "Failed",
-+          category: statusCategory(response.status),
-+          retryable: response.status !== 410 && response.status !== 413
-+        })
-+      ),
++      Effect.flatMap((response) => {
++        if (response.status < 200 || response.status >= 300) {
++          return Effect.succeed({
++            _tag: "Failed",
++            category: statusCategory(response.status),
++            retryable: response.status !== 410 && response.status !== 413
++          });
++        }
++        return readBody ? Effect.map(readCapped(response), (text) => ({ _tag: "Delivered", body: text })) : Effect.succeed({ _tag: "Delivered", body: void 0 });
++      }),
 +      Effect.timeoutOption(Duration.millis(REQUEST_TIMEOUT_MS)),
++      Effect.scoped,
 +      // `fetch` would follow a redirect itself; webhook delivery never does.
 +      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
 +      // Trace ids stay inside: the endpoint belongs to someone else.
@@ -1576,7 +1606,7 @@ index 0000000..a063ca0
 +  const deliver = Effect.fnUntraced(function* (subscription, body, webhookId) {
 +    for (let attempt = 1; ; attempt++) {
 +      const startedAt = yield* Clock.currentTimeMillis;
-+      const outcome = yield* send(subscription, body, webhookId);
++      const outcome = yield* send(subscription, body, webhookId, false);
 +      if (outcome._tag === "Delivered") {
 +        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis;
 +        subscription.lastError = void 0;
@@ -1624,32 +1654,79 @@ index 0000000..a063ca0
 +          return Effect.void;
 +      }
 +    }),
-+    Effect.catch((failure) => control(subscription, "terminated", { error: wireError(failure) }))
++    // Ended before it says so, so a refresh meanwhile starts afresh instead of reporting it live.
++    Effect.catch(
++      (failure) => Effect.suspend(() => {
++        forget(subscription);
++        return control(subscription, "terminated", { error: wireError(failure) });
++      })
++    )
 +  );
 +  const expiry = (subscription) => Effect.gen(function* () {
 +    while (true) {
 +      const left = subscription.expiresAt - (yield* Clock.currentTimeMillis);
-+      if (left <= 0) return;
-+      yield* Effect.sleep(Duration.millis(left));
++      if (left <= 0) return forget(subscription);
++      yield* Effect.raceFirst(Effect.sleep(Duration.millis(left)), Deferred.await(subscription.deadlineMoved));
++    }
++  });
++  const handshake = Effect.fnUntraced(function* (subscription) {
++    const challenge = Base64Url.encode(yield* random.randomBytes(32));
++    const outcome = yield* send(
++      subscription,
++      JSON.stringify({ type: "verification", challenge }),
++      yield* messageId("msg_verification"),
++      true
++    );
++    if (outcome._tag === "Failed") return yield* Effect.fail(outcome.category);
++    const echoed = outcome.body === void 0 ? void 0 : echoedChallenge(outcome.body);
++    if (echoed === void 0 || !Mac.timingSafeEqual(encoder.encode(echoed), encoder.encode(challenge))) {
++      return yield* Effect.fail("challenge_failed");
 +    }
 +  });
 +  const verify = Effect.fnUntraced(function* (subscription) {
 +    const key = JSON.stringify([subscription.principal, subscription.url.href]);
 +    const now = yield* Clock.currentTimeMillis;
-+    if ((verified.get(key) ?? 0) > now) return;
-+    const challenge = Base64Url.encode(yield* random.randomBytes(32));
-+    const outcome = yield* send(
-+      subscription,
-+      JSON.stringify({ type: "verification", challenge }),
-+      yield* messageId("msg_verification")
-+    );
-+    if (outcome._tag === "Failed") return yield* callbackError(outcome.category);
-+    const echoed = echoedChallenge(outcome.body);
-+    if (echoed === void 0 || !Mac.timingSafeEqual(encoder.encode(echoed), encoder.encode(challenge))) {
-+      return yield* callbackError("challenge_failed");
-+    }
 +    for (const [entry, until] of verified) if (until <= now) verified.delete(entry);
-+    verified.set(key, now + VERIFIED_FOR_MS);
++    for (const [entry, failure2] of failedVerifications) if (failure2.until <= now) failedVerifications.delete(entry);
++    if (verified.has(key)) return;
++    const failure = failedVerifications.get(key);
++    if (failure !== void 0) return yield* callbackError(failure.category);
++    const inFlight = verifying.get(key);
++    if (inFlight !== void 0) return yield* Deferred.await(inFlight);
++    const host = subscription.url.hostname;
++    const recent = (verificationsByHost.get(host) ?? []).filter((at) => at > now - MINUTE_MS);
++    if (recent.length >= VERIFICATIONS_PER_HOST_PER_MINUTE) {
++      verificationsByHost.set(host, recent);
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many callback verifications for this host",
++        data: { limit: "verifications", max: VERIFICATIONS_PER_HOST_PER_MINUTE }
++      });
++    }
++    for (const [entry, times] of verificationsByHost) {
++      if (times.every((at) => at <= now - MINUTE_MS)) verificationsByHost.delete(entry);
++    }
++    verificationsByHost.set(host, [...recent, now]);
++    const done = Deferred.makeUnsafe();
++    verifying.set(key, done);
++    return yield* handshake(subscription).pipe(
++      Effect.tap(
++        () => Effect.map(Clock.currentTimeMillis, (at) => {
++          verified.set(key, at + VERIFIED_FOR_MS);
++        })
++      ),
++      Effect.tapError(
++        (category) => Effect.map(Clock.currentTimeMillis, (at) => {
++          failedVerifications.set(key, { until: at + FAILED_FOR_MS, category });
++        })
++      ),
++      Effect.mapError(callbackError),
++      Effect.onExit(
++        (exit) => Effect.sync(() => {
++          verifying.delete(key);
++          Deferred.doneUnsafe(done, exit);
++        })
++      )
++    );
 +  });
 +  const refresh = (subscription, secret, expiresAt, now) => {
 +    if (subscription.secret !== secret.text) {
@@ -1658,6 +1735,9 @@ index 0000000..a063ca0
 +      subscription.key = secret.key;
 +    }
 +    subscription.expiresAt = expiresAt;
++    const moved = subscription.deadlineMoved;
++    subscription.deadlineMoved = Deferred.makeUnsafe();
++    Deferred.doneUnsafe(moved, Effect.void);
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
@@ -1681,15 +1761,29 @@ index 0000000..a063ca0
 +    const expiresAt = now + grantTtl(request.ttlMs);
 +    const live = subscriptions.get(id);
 +    if (live !== void 0) return refresh(live, secret, expiresAt, now);
-+    let held = 0;
-+    for (const subscription2 of subscriptions.values()) if (subscription2.principal === principal) held++;
++    let held = pending.get(principal) ?? 0;
++    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++;
 +    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
 +      return yield* new PublicMcpSchema.ResourceExhausted({
 +        message: "Too many webhook subscriptions",
 +        data: { limit: "subscriptions", max: MAX_SUBSCRIPTIONS_PER_PRINCIPAL }
 +      });
 +    }
-+    yield* Effect.mapError(guard.check(url), (rejected) => invalid(`delivery.url is not allowed: ${rejected.message}`));
++    pending.set(principal, (pending.get(principal) ?? 0) + 1);
++    let reserved = true;
++    const release = () => {
++      if (!reserved) return;
++      reserved = false;
++      const left = (pending.get(principal) ?? 1) - 1;
++      if (left === 0) pending.delete(principal);
++      else pending.set(principal, left);
++    };
++    return yield* create(request, { principal, url, secret, id, expiresAt, now, release }).pipe(
++      Effect.ensuring(Effect.sync(release))
++    );
++  });
++  const create = Effect.fnUntraced(function* (request, { expiresAt, id, now, principal, release, secret, url }) {
++    yield* Effect.mapError(guard.check(url), () => invalid("delivery.url is not allowed"));
 +    const subscription = {
 +      id,
 +      principal,
@@ -1701,11 +1795,13 @@ index 0000000..a063ca0
 +      watermark: request.cursor,
 +      lastDeliveryAt: void 0,
 +      lastError: void 0,
-+      fiber: void 0
++      fiber: void 0,
++      deadlineMoved: Deferred.makeUnsafe()
 +    };
 +    yield* verify(subscription);
 +    const raced = subscriptions.get(id);
 +    if (raced !== void 0) return refresh(raced, secret, expiresAt, now);
++    release();
 +    subscriptions.set(id, subscription);
 +    const accepted = yield* Deferred.make();
 +    const lifetime = request.open(
@@ -1718,7 +1814,7 @@ index 0000000..a063ca0
 +      Effect.raceFirst(expiry(subscription)),
 +      Effect.ignore,
 +      Effect.ensuring(Effect.suspend(() => {
-+        if (subscriptions.get(id) === subscription) subscriptions.delete(id);
++        forget(subscription);
 +        return Deferred.fail(accepted, new PublicMcpSchema.InternalError({ message: "The subscription ended" }));
 +      }))
 +    );
@@ -1970,7 +2066,7 @@ index ba6c830..1e58fb9 100644
  // Prompts
  // =============================================================================
 diff --git a/src/ai/McpServer.ts b/src/ai/McpServer.ts
-index 4c2e191..834b9ce 100644
+index 4c2e191..b88d210 100644
 --- a/src/ai/McpServer.ts
 +++ b/src/ai/McpServer.ts
 @@ -16,6 +16,8 @@ import * as Cause from "../Cause.ts"
@@ -2374,7 +2470,7 @@ index 4c2e191..834b9ce 100644
 + * the endpoint with a challenge, and runs the event's `stream` for the
 + * subscription's lifetime, POSTing each occurrence with Standard Webhooks
 + * signatures, one at a time, retrying with backoff. Subscriptions live in
-+ * memory: every grant is finite, between a minute and a day, so a client
++ * memory: every grant is finite, between a minute and an hour, so a client
 + * refreshing from its cursor recreates what a restart lost. A failure of the
 + * stream, such as `Forbidden` when access is revoked, ends the subscription
 + * with a `terminated` envelope.
@@ -3213,10 +3309,10 @@ index 9d4c96e..eb0590c 100644
      effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
 diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
 new file mode 100644
-index 0000000..f48911f
+index 0000000..8df6682
 --- /dev/null
 +++ b/src/ai/internal/mcpWebhooks.ts
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,646 @@
 +/**
 + * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
 + * validation, subscription identity, Standard Webhooks signing, the endpoint
@@ -3249,10 +3345,11 @@ index 0000000..f48911f
 +const MINUTE_MS = 60_000
 +/** @internal */
 +export const MIN_TTL_MS = MINUTE_MS
++// Short grants because subscriptions live in memory: a restart loses them until the next refresh.
 +/** @internal */
-+export const MAX_TTL_MS = 24 * 60 * MINUTE_MS
++export const MAX_TTL_MS = 60 * MINUTE_MS
 +/** @internal */
-+export const DEFAULT_TTL_MS = 60 * MINUTE_MS
++export const DEFAULT_TTL_MS = 15 * MINUTE_MS
 +/** @internal */
 +export const MAX_ATTEMPTS = 5
 +// Retries wait 30 s, 1, 2 and 4 minutes: about 7.5 minutes in all.
@@ -3261,8 +3358,13 @@ index 0000000..f48911f
 +// Deliveries signed with the old secret before a rotation still verify for this long.
 +const ROTATION_GRACE_MS = 5 * MINUTE_MS
 +const VERIFIED_FOR_MS = MAX_TTL_MS
++// A failed challenge is answered from here, so repeated subscribes cannot flood the endpoint.
++const FAILED_FOR_MS = 5 * MINUTE_MS
++// Verification POSTs one destination host receives per minute, across all principals.
++const VERIFICATIONS_PER_HOST_PER_MINUTE = 10
 +const MAX_SUBSCRIPTIONS_PER_PRINCIPAL = 100
-+const MAX_RESPONSE_CHARS = 4_096
++// A verification reads this many bytes of the response at most; a delivery reads none.
++const MAX_CHALLENGE_RESPONSE_BYTES = 8_192
 +const SECRET_PREFIX = "whsec_"
 +
 +/**
@@ -3359,10 +3461,13 @@ index 0000000..f48911f
 +  lastDeliveryAt: number | undefined
 +  lastError: FailureCategory | undefined
 +  fiber: Fiber.Fiber<void> | undefined
++  // Completed when a refresh moves the deadline, so the expiry recomputes it.
++  deadlineMoved: Deferred.Deferred<void>
 +}
 +
 +type Outcome =
-+  | { readonly _tag: "Delivered"; readonly body: string }
++  // `body` is read only for a verification, and is undefined when it was too long.
++  | { readonly _tag: "Delivered"; readonly body: string | undefined }
 +  | { readonly _tag: "Failed"; readonly category: FailureCategory; readonly retryable: boolean }
 +
 +const invalid = (message: string) => new PublicMcpSchema.InvalidParams({ message })
@@ -3437,11 +3542,31 @@ index 0000000..f48911f
 +  return "connection_refused"
 +}
 +
-+const readText = (response: HttpClientResponse.HttpClientResponse) =>
-+  response.stream.pipe(
-+    Stream.decodeText(),
-+    Stream.runFold(() => "", (text, chunk) => text.length >= MAX_RESPONSE_CHARS ? text : text + chunk)
-+  )
++// Stops pulling past the cap; closing the request's scope then aborts the rest.
++const readCapped = (response: HttpClientResponse.HttpClientResponse) =>
++  Effect.suspend(() => {
++    const chunks: Array<Uint8Array> = []
++    let total = 0
++    return response.stream.pipe(
++      Stream.takeWhile((chunk) => {
++        if (total > MAX_CHALLENGE_RESPONSE_BYTES) return false
++        total += chunk.length
++        chunks.push(chunk)
++        return true
++      }),
++      Stream.runDrain,
++      Effect.map(() => {
++        if (total > MAX_CHALLENGE_RESPONSE_BYTES) return undefined
++        const bytes = new Uint8Array(total)
++        let offset = 0
++        for (const chunk of chunks) {
++          bytes.set(chunk, offset)
++          offset += chunk.length
++        }
++        return new TextDecoder().decode(bytes)
++      })
++    )
++  })
 +
 +const echoedChallenge = (body: string): string | undefined => {
 +  try {
@@ -3472,9 +3597,19 @@ index 0000000..f48911f
 +  const digest = yield* Digest.Digest
 +  const random = yield* SecureRandom.SecureRandom
 +  const { guard } = options
-+  const { client } = options
++  // Closing a request's scope aborts its body, so a delivery never downloads what the endpoint sends.
++  const client = HttpClient.withScope(options.client)
 +  const subscriptions = new Map<string, Subscription>()
++  // Subscribes past the principal check that have not created their subscription yet.
++  const pending = new Map<string, number>()
 +  const verified = new Map<string, number>()
++  const failedVerifications = new Map<string, { readonly until: number; readonly category: FailureCategory }>()
++  const verifying = new Map<string, Deferred.Deferred<void, PublicMcpSchema.CallbackEndpointError>>()
++  const verificationsByHost = new Map<string, Array<number>>()
++
++  const forget = (subscription: Subscription) => {
++    if (subscriptions.get(subscription.id) === subscription) subscriptions.delete(subscription.id)
++  }
 +
 +  const subscriptionId = (principal: string, url: URL, name: string, args: unknown) =>
 +    digest.digestHex(Digest.sha256, encoder.encode(canonicalJson([principal, url.href, name, args]))).pipe(
@@ -3492,7 +3627,12 @@ index 0000000..f48911f
 +    )
 +
 +  // One POST. The timestamp and signature are fresh on every attempt.
-+  const send = Effect.fnUntraced(function*(subscription: Subscription, body: string, webhookId: string) {
++  const send = Effect.fnUntraced(function*(
++    subscription: Subscription,
++    body: string,
++    webhookId: string,
++    readBody: boolean
++  ) {
 +    const admitted = yield* Effect.result(guard.check(subscription.url))
 +    if (Result.isFailure(admitted)) {
 +      return { _tag: "Failed", category: "connection_refused", retryable: true } satisfies Outcome
@@ -3513,18 +3653,20 @@ index 0000000..f48911f
 +      HttpClientRequest.bodyText(body, "application/json")
 +    )
 +    const outcome = yield* client.execute(request).pipe(
-+      // The body is read either way, so the connection is free for the next delivery.
-+      Effect.flatMap((response) =>
-+        Effect.map(readText(response), (text): Outcome =>
-+          response.status >= 200 && response.status < 300
-+            ? { _tag: "Delivered", body: text }
-+            : {
-+              _tag: "Failed",
-+              category: statusCategory(response.status),
-+              retryable: response.status !== 410 && response.status !== 413
-+            })
-+      ),
++      Effect.flatMap((response): Effect.Effect<Outcome, unknown> => {
++        if (response.status < 200 || response.status >= 300) {
++          return Effect.succeed({
++            _tag: "Failed",
++            category: statusCategory(response.status),
++            retryable: response.status !== 410 && response.status !== 413
++          })
++        }
++        return readBody
++          ? Effect.map(readCapped(response), (text) => ({ _tag: "Delivered", body: text }))
++          : Effect.succeed({ _tag: "Delivered", body: undefined })
++      }),
 +      Effect.timeoutOption(Duration.millis(REQUEST_TIMEOUT_MS)),
++      Effect.scoped,
 +      // `fetch` would follow a redirect itself; webhook delivery never does.
 +      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
 +      // Trace ids stay inside: the endpoint belongs to someone else.
@@ -3540,7 +3682,7 @@ index 0000000..f48911f
 +  const deliver = Effect.fnUntraced(function*(subscription: Subscription, body: string, webhookId: string) {
 +    for (let attempt = 1;; attempt++) {
 +      const startedAt = yield* Clock.currentTimeMillis
-+      const outcome = yield* send(subscription, body, webhookId)
++      const outcome = yield* send(subscription, body, webhookId, false)
 +      if (outcome._tag === "Delivered") {
 +        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis
 +        subscription.lastError = undefined
@@ -3596,35 +3738,84 @@ index 0000000..f48911f
 +            return Effect.void
 +        }
 +      }),
-+      Effect.catch((failure) => control(subscription, "terminated", { error: wireError(failure) }))
++      // Ended before it says so, so a refresh meanwhile starts afresh instead of reporting it live.
++      Effect.catch((failure) =>
++        Effect.suspend(() => {
++          forget(subscription)
++          return control(subscription, "terminated", { error: wireError(failure) })
++        })
++      )
 +    )
 +
 +  const expiry = (subscription: Subscription) =>
 +    Effect.gen(function*() {
 +      while (true) {
 +        const left = subscription.expiresAt - (yield* Clock.currentTimeMillis)
-+        if (left <= 0) return
-+        yield* Effect.sleep(Duration.millis(left))
++        if (left <= 0) return forget(subscription)
++        yield* Effect.raceFirst(Effect.sleep(Duration.millis(left)), Deferred.await(subscription.deadlineMoved))
 +      }
 +    })
 +
-+  const verify = Effect.fnUntraced(function*(subscription: Subscription) {
-+    const key = JSON.stringify([subscription.principal, subscription.url.href])
-+    const now = yield* Clock.currentTimeMillis
-+    if ((verified.get(key) ?? 0) > now) return
++  const handshake = Effect.fnUntraced(function*(subscription: Subscription) {
 +    const challenge = Base64Url.encode(yield* random.randomBytes(32))
 +    const outcome = yield* send(
 +      subscription,
 +      JSON.stringify({ type: "verification", challenge }),
-+      yield* messageId("msg_verification")
++      yield* messageId("msg_verification"),
++      true
 +    )
-+    if (outcome._tag === "Failed") return yield* callbackError(outcome.category)
-+    const echoed = echoedChallenge(outcome.body)
++    if (outcome._tag === "Failed") return yield* Effect.fail(outcome.category)
++    const echoed = outcome.body === undefined ? undefined : echoedChallenge(outcome.body)
 +    if (echoed === undefined || !Mac.timingSafeEqual(encoder.encode(echoed), encoder.encode(challenge))) {
-+      return yield* callbackError("challenge_failed")
++      return yield* Effect.fail<FailureCategory>("challenge_failed")
 +    }
++  })
++
++  // Cached per (principal, url) either way; concurrent subscribes share one handshake.
++  const verify = Effect.fnUntraced(function*(subscription: Subscription) {
++    const key = JSON.stringify([subscription.principal, subscription.url.href])
++    const now = yield* Clock.currentTimeMillis
 +    for (const [entry, until] of verified) if (until <= now) verified.delete(entry)
-+    verified.set(key, now + VERIFIED_FOR_MS)
++    for (const [entry, failure] of failedVerifications) if (failure.until <= now) failedVerifications.delete(entry)
++    if (verified.has(key)) return
++    const failure = failedVerifications.get(key)
++    if (failure !== undefined) return yield* callbackError(failure.category)
++    const inFlight = verifying.get(key)
++    if (inFlight !== undefined) return yield* Deferred.await(inFlight)
++    const host = subscription.url.hostname
++    const recent = (verificationsByHost.get(host) ?? []).filter((at) => at > now - MINUTE_MS)
++    if (recent.length >= VERIFICATIONS_PER_HOST_PER_MINUTE) {
++      verificationsByHost.set(host, recent)
++      return yield* new PublicMcpSchema.ResourceExhausted({
++        message: "Too many callback verifications for this host",
++        data: { limit: "verifications", max: VERIFICATIONS_PER_HOST_PER_MINUTE }
++      })
++    }
++    for (const [entry, times] of verificationsByHost) {
++      if (times.every((at) => at <= now - MINUTE_MS)) verificationsByHost.delete(entry)
++    }
++    verificationsByHost.set(host, [...recent, now])
++    const done = Deferred.makeUnsafe<void, PublicMcpSchema.CallbackEndpointError>()
++    verifying.set(key, done)
++    return yield* handshake(subscription).pipe(
++      Effect.tap(() =>
++        Effect.map(Clock.currentTimeMillis, (at) => {
++          verified.set(key, at + VERIFIED_FOR_MS)
++        })
++      ),
++      Effect.tapError((category) =>
++        Effect.map(Clock.currentTimeMillis, (at) => {
++          failedVerifications.set(key, { until: at + FAILED_FOR_MS, category })
++        })
++      ),
++      Effect.mapError(callbackError),
++      Effect.onExit((exit) =>
++        Effect.sync(() => {
++          verifying.delete(key)
++          Deferred.doneUnsafe(done, exit)
++        })
++      )
++    )
 +  })
 +
 +  const refresh = (
@@ -3639,6 +3830,9 @@ index 0000000..f48911f
 +      subscription.key = secret.key
 +    }
 +    subscription.expiresAt = expiresAt
++    const moved = subscription.deadlineMoved
++    subscription.deadlineMoved = Deferred.makeUnsafe()
++    Deferred.doneUnsafe(moved, Effect.void)
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
@@ -3663,7 +3857,8 @@ index 0000000..f48911f
 +    const expiresAt = now + grantTtl(request.ttlMs)
 +    const live = subscriptions.get(id)
 +    if (live !== undefined) return refresh(live, secret, expiresAt, now)
-+    let held = 0
++    // The slot is taken before anything asynchronous, so concurrent subscribes cannot pass the cap.
++    let held = pending.get(principal) ?? 0
 +    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++
 +    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
 +      return yield* new PublicMcpSchema.ResourceExhausted({
@@ -3671,7 +3866,34 @@ index 0000000..f48911f
 +        data: { limit: "subscriptions", max: MAX_SUBSCRIPTIONS_PER_PRINCIPAL }
 +      })
 +    }
-+    yield* Effect.mapError(guard.check(url), (rejected) => invalid(`delivery.url is not allowed: ${rejected.message}`))
++    pending.set(principal, (pending.get(principal) ?? 0) + 1)
++    let reserved = true
++    const release = () => {
++      if (!reserved) return
++      reserved = false
++      const left = (pending.get(principal) ?? 1) - 1
++      if (left === 0) pending.delete(principal)
++      else pending.set(principal, left)
++    }
++    return yield* create(request, { principal, url, secret, id, expiresAt, now, release }).pipe(
++      Effect.ensuring(Effect.sync(release))
++    )
++  })
++
++  const create = Effect.fnUntraced(function*(
++    request: SubscribeRequest,
++    { expiresAt, id, now, principal, release, secret, url }: {
++      readonly principal: string
++      readonly url: URL
++      readonly secret: { readonly text: string; readonly key: Mac.Key }
++      readonly id: string
++      readonly expiresAt: number
++      readonly now: number
++      readonly release: () => void
++    }
++  ) {
++    // One answer whether the host is private or does not resolve, so it reveals neither.
++    yield* Effect.mapError(guard.check(url), () => invalid("delivery.url is not allowed"))
 +    const subscription: Subscription = {
 +      id,
 +      principal,
@@ -3683,12 +3905,14 @@ index 0000000..f48911f
 +      watermark: request.cursor,
 +      lastDeliveryAt: undefined,
 +      lastError: undefined,
-+      fiber: undefined
++      fiber: undefined,
++      deadlineMoved: Deferred.makeUnsafe()
 +    }
 +    yield* verify(subscription)
 +    // A concurrent subscribe for the same key may have finished while this one verified.
 +    const raced = subscriptions.get(id)
 +    if (raced !== undefined) return refresh(raced, secret, expiresAt, now)
++    release()
 +    subscriptions.set(id, subscription)
 +    const accepted = yield* Deferred.make<
 +      { readonly cursor: string | null; readonly truncated: boolean },
@@ -3704,7 +3928,7 @@ index 0000000..f48911f
 +      Effect.raceFirst(expiry(subscription)),
 +      Effect.ignore,
 +      Effect.ensuring(Effect.suspend(() => {
-+        if (subscriptions.get(id) === subscription) subscriptions.delete(id)
++        forget(subscription)
 +        return Deferred.fail(accepted, new PublicMcpSchema.InternalError({ message: "The subscription ended" }))
 +      }))
 +    )
