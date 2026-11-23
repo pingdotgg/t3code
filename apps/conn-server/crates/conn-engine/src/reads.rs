@@ -54,7 +54,8 @@ macro_rules! search_sql {
                AND k.thread_id NOT IN (SELECT value FROM json_each(?7))
                AND NOT EXISTS (
                  SELECT 1 FROM json_each(?2) AS token
-                 WHERE instr(lower(COALESCE(json_extract(e.body, '$.text'), '')), token.value) = 0
+                 WHERE instr(lower(COALESCE(k.search_text, json_extract(e.body, '$.text'), '')),
+                             token.value) = 0
                )
              ORDER BY h.rowid DESC
              LIMIT ?5"
@@ -433,7 +434,9 @@ impl Store {
                 continue;
             }
             let message = &hit["message"];
-            let text = message["text"].as_str().unwrap_or_default();
+            let stored = message["text"].as_str().unwrap_or_default();
+            let text = crate::store::readable_search_text(stored);
+            let text = text.as_deref().unwrap_or(stored);
             matches.push(json!({
                 "threadId": thread_id,
                 "projectId": hit["projectId"],

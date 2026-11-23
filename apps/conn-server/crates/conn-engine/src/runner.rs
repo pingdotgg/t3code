@@ -43,6 +43,9 @@ pub(crate) struct LiveThread {
     /// Waiters for the pump to store the events already sent ([`Inner::events_stored`]).
     stored_waiters: Mutex<Vec<oneshot::Sender<()>>>,
     stored_wanted: tokio::sync::Notify,
+    /// A close's request to detach the active run once the pump stored the events received so
+    /// far; answered when the pump marked them ([`Inner::close_session`]).
+    detach: Mutex<Option<oneshot::Sender<()>>>,
     /// Since when background work has kept this idle session open.
     held_since: Mutex<Option<u64>>,
     /// The provider session's id, for its provider threads.
@@ -61,8 +64,10 @@ pub(crate) struct LiveThread {
 /// oldest-found entry is revoked. Far above the threads one container runs.
 pub(crate) const MAX_KEPT_TOOLS: usize = 1024;
 
-/// How long a close waits for the pump to store what the provider already reported.
-const CLOSE_DRAIN_LIMIT: Duration = Duration::from_secs(5);
+/// How long a close waits for the pump to mark the events already received before it closes
+/// the session. Past it the pump still marks them when it gets there; nothing is decided by
+/// the timeout.
+const CLOSE_MARK_LIMIT: Duration = Duration::from_secs(5);
 
 /// A closed session's agent tools, kept while the shared process that holds them runs.
 pub(crate) struct KeptTools {
@@ -546,6 +551,7 @@ impl Inner {
                 closed: tokio::sync::Notify::new(),
                 stored_waiters: Mutex::new(Vec::new()),
                 stored_wanted: tokio::sync::Notify::new(),
+                detach: Mutex::new(None),
                 held_since: Mutex::new(None),
                 provider_session_id: provider_session["id"]
                     .as_str()
@@ -1200,6 +1206,11 @@ impl Inner {
         // Events taken so far, and who waits for the count to reach a mark.
         let mut taken: u64 = 0;
         let mut marks: Vec<(u64, oneshot::Sender<()>)> = Vec::new();
+        // A close's detach takes effect once every event received before it is stored.
+        let mut detach_at: Option<u64> = None;
+        // After a close of a session whose process ended: what was already received is still
+        // stored, then the pump ends.
+        let mut closing = false;
         loop {
             // A held snapshot is stored once its message was idle long enough. The timer
             // only runs on a clock that moves by itself; on a `ManualClock` a snapshot comes
@@ -1215,11 +1226,25 @@ impl Inner {
             for (_, waiter) in marks.extract_if(.., |(mark, _)| *mark <= taken) {
                 let _ = waiter.send(());
             }
+            if let Some(ack) = lock(&live.detach).take() {
+                detach_at = Some(taken + (ahead.len() + events.len()) as u64);
+                let _ = ack.send(());
+            }
+            if detach_at.is_some_and(|mark| mark <= taken) {
+                detach_at = None;
+                if !self.shutting_down() {
+                    self.end_detached_run(&thread_id, &live).await;
+                }
+            }
             let event = match (ahead.pop_front(), wake) {
                 (Some(event), _) => Some(event),
+                (None, _) if closing => events.try_recv().ok(),
                 (None, Some((at, when))) => tokio::select! {
                     event = events.recv() => event,
-                    () = live.closed.notified() => None,
+                    () = live.closed.notified() => {
+                        closing = true;
+                        continue;
+                    }
                     () = live.stored_wanted.notified() => {
                         let waiting = (ahead.len() + events.len()) as u64;
                         let new = std::mem::take(&mut *lock(&live.stored_waiters));
@@ -1235,7 +1260,10 @@ impl Inner {
                 },
                 (None, None) => tokio::select! {
                     event = events.recv() => event,
-                    () = live.closed.notified() => None,
+                    () = live.closed.notified() => {
+                        closing = true;
+                        continue;
+                    }
                     () = live.stored_wanted.notified() => {
                         let waiting = (ahead.len() + events.len()) as u64;
                         let new = std::mem::take(&mut *lock(&live.stored_waiters));
@@ -2189,19 +2217,18 @@ impl Inner {
     /// shared process (Codex's `app-server`) still runs, its MCP client may still use them,
     /// so they are kept for the thread's next session.
     pub(crate) async fn close_session(self: &Arc<Self>, thread_id: &str) {
-        // What the provider reported before the close is stored first: a Stop it already
-        // confirmed keeps its status. Bounded, so a pump that cannot go on never holds it.
-        if let Some(live) = self.live_thread(thread_id) {
-            let _ = tokio::time::timeout(CLOSE_DRAIN_LIMIT, self.stored(&live)).await;
-        }
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             let released_at = self.now_ms();
             self.command_output.finish_thread(thread_id);
-            // The run is detached before the close, so a root turn the close ends (Codex on
-            // a shared `app-server`) does not end it as if the provider stopped it. The close
-            // fails only a run still active here.
-            let detached = live.take_active();
+            // The pump marks the events received before the close and detaches the run once
+            // they are stored: a Stop the provider already confirmed keeps its status, and a
+            // root turn the close itself ends (Codex on a shared `app-server`) does not end it
+            // as if the provider stopped it. The run then fails only if still active.
+            let (ack, marked) = oneshot::channel();
+            *lock(&live.detach) = Some(ack);
+            live.stored_wanted.notify_one();
+            let _ = tokio::time::timeout(CLOSE_MARK_LIMIT, marked).await;
             let closed = live.session.close().await;
             let instance = self
                 .providers
@@ -2227,18 +2254,6 @@ impl Inner {
             {
                 self.end_released_subagents(thread_id, &live.provider_session_id, released_at)
                     .await;
-            }
-            if let Some(active) = detached
-                && !self.shutting_down()
-            {
-                self.end_run(
-                    thread_id,
-                    &active.run_id,
-                    "failed",
-                    Some(session_ended()),
-                    RunEnd::Detached,
-                )
-                .await;
             }
             // A process that outlives the session (Codex's shared `app-server`) still reports
             // the subagents it runs for it, as T3's adapter keeps their turn contexts: the

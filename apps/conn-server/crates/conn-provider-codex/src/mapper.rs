@@ -13,8 +13,6 @@ const ENDED_TURNS_KEPT: usize = 64;
 /// Completed turns kept while their background commands run (`settledTurns`); past this the
 /// oldest is forgotten, and its commands' late ends show nothing.
 const SETTLED_TURNS_KEPT: usize = 16;
-/// Root terminals waiting for their descendants; past this the oldest goes out at once.
-const DEFERRED_TERMINALS_KEPT: usize = 16;
 /// `BACKGROUND_COMMAND_DETAIL_COMMAND_MAX_LENGTH` and `…_OUTPUT_TAIL_MAX_LENGTH`, in UTF-16
 /// code units as JavaScript counts.
 const WAKE_COMMAND_MAX_UNITS: usize = 200;
@@ -262,8 +260,10 @@ pub struct Mapper<E: Env> {
     /// most [`SETTLED_TURNS_KEPT`].
     settled: VecDeque<Settled>,
     /// Interrupted root turns' terminals that wait for their running descendants
-    /// (`deferredRootTerminals`), oldest first; at most [`DEFERRED_TERMINALS_KEPT`].
-    deferred_terminals: VecDeque<(String, Value)>,
+    /// (`deferredRootTerminals`), oldest first: (native root thread, native turn, terminal).
+    /// One per root thread: Codex runs one root turn on a thread at a time, so a thread's next
+    /// root turn started only after the earlier one ended there.
+    deferred_terminals: VecDeque<(String, String, Value)>,
 }
 
 /// A completed turn kept for its running commands, and the commands whose end already asked
@@ -821,8 +821,14 @@ impl<E: Env> Mapper<E> {
                 self.finalize(&native, "failed", now, Some(detail), None, &mut out);
             }
         }
-        // No descendant outlives the process.
-        for (_, terminal) in std::mem::take(&mut self.deferred_terminals) {
+        // No subagent outlives the process: an announced child whose first turn never came
+        // ends too, then the roots that waited for them.
+        let status = if expected { "interrupted" } else { "failed" };
+        let announced: Vec<String> = self.unsettled_children().cloned().collect();
+        for child in announced {
+            out.extend(self.end_idle_child(&child, status));
+        }
+        for (_, _, terminal) in std::mem::take(&mut self.deferred_terminals) {
             push_event(&mut out, terminal);
         }
         out
@@ -1836,13 +1842,20 @@ impl<E: Env> Mapper<E> {
                 terminal["childTurnsContinue"] = json!(true);
                 push_event(out, terminal);
             } else if descendants && terminal_status != "completed" {
-                if self.deferred_terminals.len() >= DEFERRED_TERMINALS_KEPT
-                    && let Some((_, oldest)) = self.deferred_terminals.pop_front()
+                // An earlier deferred terminal of this thread goes first, keeping the order.
+                if let Some(at) = self
+                    .deferred_terminals
+                    .iter()
+                    .position(|(thread, _, _)| *thread == turn.native_thread_id)
+                    && let Some((_, _, earlier)) = self.deferred_terminals.remove(at)
                 {
-                    push_event(out, oldest);
+                    push_event(out, earlier);
                 }
-                self.deferred_terminals
-                    .push_back((native.to_owned(), terminal));
+                self.deferred_terminals.push_back((
+                    turn.native_thread_id.clone(),
+                    native.to_owned(),
+                    terminal,
+                ));
             } else {
                 push_event(out, terminal);
             }
@@ -1865,11 +1878,11 @@ impl<E: Env> Mapper<E> {
     /// `flushReadyRootTerminals`: deferred root terminals whose descendants all ended.
     fn flush_ready_terminals(&mut self, out: &mut Vec<Out>) {
         let mut waiting = VecDeque::with_capacity(self.deferred_terminals.len());
-        for (native, terminal) in std::mem::take(&mut self.deferred_terminals) {
+        for (thread, native, terminal) in std::mem::take(&mut self.deferred_terminals) {
             if self.lineage(&native).is_empty() {
                 push_event(out, terminal);
             } else {
-                waiting.push_back((native, terminal));
+                waiting.push_back((thread, native, terminal));
             }
         }
         self.deferred_terminals = waiting;

@@ -67,6 +67,34 @@ pub enum SessionMsg {
         thread: String,
         response: Value,
     },
+    /// What Codex says about a closed session's silent subagent thread.
+    ChildRead {
+        thread: String,
+        read: ChildRead,
+    },
+}
+
+/// A closed session's check of a silent subagent thread with Codex (`thread/read` with turns).
+#[derive(Debug)]
+pub enum ChildRead {
+    /// Codex answered: a turn it reports ended ends here with that status.
+    Turns(Value),
+    /// Codex does not know the thread, so nothing runs there.
+    Missing,
+    /// The last check, after `turn/interrupt`: what the answer (if any) reports ended ends with
+    /// that status, and what is still open ends interrupted.
+    Final(Option<Value>),
+}
+
+/// How [`AppServer::claim_route`] found a native thread's route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Claim {
+    /// It had none; the claimant routes it now.
+    Taken,
+    /// It already led to the claimant.
+    Held,
+    /// It leads to another session, which keeps it until the claimant takes it over.
+    Elsewhere,
 }
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
@@ -223,40 +251,37 @@ impl AppServer {
         self.lock().sessions.len()
     }
 
-    /// Routes `native_thread_id` to `inbox`; returns the route it replaced.
-    pub fn route(
-        &self,
-        native_thread_id: &str,
-        inbox: mpsc::Sender<SessionMsg>,
-    ) -> Option<mpsc::Sender<SessionMsg>> {
+    pub fn route(&self, native_thread_id: &str, inbox: mpsc::Sender<SessionMsg>) {
         self.lock()
             .routes
-            .insert(native_thread_id.to_owned(), inbox)
+            .insert(native_thread_id.to_owned(), inbox);
     }
 
-    /// Undoes [`Self::route`] while `native_thread_id` still leads to `inbox`: `previous` goes
-    /// back, or the route goes.
-    pub fn restore_route(
-        &self,
-        native_thread_id: &str,
-        inbox: &mpsc::Sender<SessionMsg>,
-        previous: Option<mpsc::Sender<SessionMsg>>,
-    ) {
+    /// Routes `native_thread_id` to `inbox` unless another session owns it: that session keeps
+    /// its frames until the claimant takes the thread over ([`Self::route`]).
+    pub fn claim_route(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) -> Claim {
         let mut state = self.lock();
-        if !state
+        match state.routes.get(native_thread_id) {
+            Some(r) if r.same_channel(inbox) => Claim::Held,
+            Some(_) => Claim::Elsewhere,
+            None => {
+                state
+                    .routes
+                    .insert(native_thread_id.to_owned(), inbox.clone());
+                Claim::Taken
+            }
+        }
+    }
+
+    /// Removes the route of `native_thread_id` while it leads to `inbox`.
+    pub fn unroute_from(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) {
+        let mut state = self.lock();
+        if state
             .routes
             .get(native_thread_id)
             .is_some_and(|r| r.same_channel(inbox))
         {
-            return;
-        }
-        match previous {
-            Some(previous) => {
-                state.routes.insert(native_thread_id.to_owned(), previous);
-            }
-            None => {
-                state.routes.remove(native_thread_id);
-            }
+            state.routes.remove(native_thread_id);
         }
     }
 

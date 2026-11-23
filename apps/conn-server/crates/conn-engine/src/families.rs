@@ -754,9 +754,10 @@ pub(crate) fn end_orphaned_native_subagents(
 }
 
 /// `cascadeTerminalizeRunOwnedSubagents`: a run that ends interrupted, failed or cancelled
-/// ends its provider-native subagents' open work with it: an open record, its node and item,
-/// and its child's runless root turns. A record that already settled keeps its result, but its
-/// child link still leads to open work (T3 keeps `linkedChildThreadIds` for the run).
+/// ends the open work it owns. It owns its provider-native subagents, the threads they run in,
+/// and the native subagents nested there (on a child thread, with no run), recursively, as
+/// T3's `ownedThreadIds` grows with each subagent thread. Each open record, node, item and
+/// provider turn settles on its own, once. A record that already settled keeps its result.
 pub(crate) fn end_run_native_subagents(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -764,18 +765,50 @@ pub(crate) fn end_run_native_subagents(
     status: &str,
 ) -> StoreResult<()> {
     let now = tx.now().to_owned();
-    for row in tx.entities_where(thread_id, "subagents", "runId", run_id)? {
-        if row["origin"] != "provider_native" {
+    let mut owned = vec![thread_id.to_owned()];
+    let mut pending: Vec<(String, Value)> = tx
+        .entities_where(thread_id, "subagents", "runId", run_id)?
+        .into_iter()
+        .filter(|row| row["origin"] == "provider_native")
+        .map(|row| (thread_id.to_owned(), row))
+        .collect();
+    while let Some((owner, mut row)) = pending.pop() {
+        if work_active(&row) {
+            let id = row["id"].as_str().unwrap_or_default().to_owned();
+            let run = row["runId"].as_str().map(str::to_owned);
+            let work = row.clone();
+            row["status"] = json!(status);
+            row["completedAt"] = json!(now);
+            row["updatedAt"] = json!(now);
+            tx.append(
+                Draft::new(&owner, "subagent.updated", row)
+                    .run(run.as_deref())
+                    .node(Some(&id)),
+            )?;
+            row = work;
+        }
+        settle_subagent_rows(tx, &owner, &row, status, &now)?;
+        let Some(child) = row["childThreadId"].as_str().map(str::to_owned) else {
+            continue;
+        };
+        if owned.contains(&child) || owned.len() > MAX_OWNED_THREADS || tx.thread(&child)?.is_none()
+        {
             continue;
         }
-        if work_active(&row) {
-            end_native_subagent(tx, thread_id, row, status, &now)?;
-        } else {
-            end_subagent_work(tx, thread_id, &row, status, &now)?;
-        }
+        owned.push(child.clone());
+        settle_runless_work(tx, &child, status, &now)?;
+        pending.extend(
+            tx.entities_where(&child, "subagents", "origin", "provider_native")?
+                .into_iter()
+                .filter(|nested| nested["runId"].is_null())
+                .map(|nested| (child.clone(), nested)),
+        );
     }
     Ok(())
 }
+
+/// Bounds the threads one run's cascade follows; far above any real subagent tree.
+const MAX_OWNED_THREADS: usize = 256;
 
 /// Ends one provider-native subagent: its record, node and item together, then its child's
 /// runless root turns.
@@ -800,9 +833,26 @@ fn end_native_subagent(
     end_subagent_work(tx, thread_id, &work, status, now)
 }
 
-/// A subagent's open work: its node, its item, and its child's runless root turns. Only open
-/// rows change, so each settles once.
+/// A subagent's open work: its node, its item, and its child's runless work. Only open rows
+/// change, so each settles once.
 fn end_subagent_work(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    row: &Value,
+    status: &str,
+    now: &str,
+) -> StoreResult<()> {
+    settle_subagent_rows(tx, thread_id, row, status, now)?;
+    if let Some(child) = row["childThreadId"].as_str().filter(|c| *c != thread_id)
+        && tx.thread(child)?.is_some()
+    {
+        settle_runless_work(tx, child, status, now)?;
+    }
+    Ok(())
+}
+
+/// A subagent's own open node and items, each on its own.
+fn settle_subagent_rows(
     tx: &mut Tx<'_>,
     thread_id: &str,
     row: &Value,
@@ -811,7 +861,6 @@ fn end_subagent_work(
 ) -> StoreResult<()> {
     let id = row["id"].as_str().unwrap_or_default().to_owned();
     let run = row["runId"].as_str().map(str::to_owned);
-    let child = row["childThreadId"].as_str().map(str::to_owned);
     if let Some(mut node) = tx.entity(thread_id, "nodes", &id)?.filter(work_active) {
         node["status"] = json!(status);
         node["completedAt"] = json!(now);
@@ -834,53 +883,60 @@ fn end_subagent_work(
                 .node(Some(&id)),
         )?;
     }
-    if let Some(child) = child.filter(|c| c != thread_id)
-        && tx.thread(&child)?.is_some()
-    {
-        end_runless_root_turns(tx, &child, status, now)?;
-    }
     Ok(())
 }
 
-/// A native subagent's thread has no runs to end its root turns: they end here, with the
-/// items and provider turns under them that are not part of a run.
-fn end_runless_root_turns(
+/// A native subagent's thread has no runs to end its work: its runless root turns, items and
+/// provider turns end here, each open row on its own (a settled root turn can still have an
+/// open item).
+fn settle_runless_work(
     tx: &mut Tx<'_>,
     thread_id: &str,
     status: &str,
     now: &str,
 ) -> StoreResult<()> {
-    for mut node in tx.entities_where(thread_id, "nodes", "kind", "root_turn")? {
-        if !node["runId"].is_null() || !work_active(&node) {
+    for mut node in open_rows(tx, thread_id, "nodes")? {
+        if node["kind"] != "root_turn" || !node["runId"].is_null() {
             continue;
         }
         let node_id = node["id"].as_str().unwrap_or_default().to_owned();
         node["status"] = json!(status);
         node["completedAt"] = json!(now);
         tx.append(Draft::new(thread_id, "node.updated", node).node(Some(&node_id)))?;
-        for mut item in tx.entities_where(thread_id, "turnItems", "nodeId", &node_id)? {
-            if !item["runId"].is_null() || !work_active(&item) {
-                continue;
-            }
-            item["status"] = json!(status);
-            item["completedAt"] = json!(now);
-            item["updatedAt"] = json!(now);
-            if matches!(
-                item["type"].as_str(),
-                Some("reasoning" | "assistant_message")
-            ) {
-                item["streaming"] = json!(false);
-            }
-            tx.append(Draft::new(thread_id, "turn-item.updated", item).node(Some(&node_id)))?;
+    }
+    for mut item in open_rows(tx, thread_id, "turnItems")? {
+        if !item["runId"].is_null() {
+            continue;
         }
-        for mut turn in tx.entities_where(thread_id, "providerTurns", "nodeId", &node_id)? {
-            if !turn["runAttemptId"].is_null() || !work_active(&turn) {
-                continue;
-            }
-            turn["status"] = json!(status);
-            turn["completedAt"] = json!(now);
-            tx.append(Draft::new(thread_id, "provider-turn.updated", turn).node(Some(&node_id)))?;
+        let node_id = item["nodeId"].as_str().map(str::to_owned);
+        item["status"] = json!(status);
+        item["completedAt"] = json!(now);
+        item["updatedAt"] = json!(now);
+        if matches!(
+            item["type"].as_str(),
+            Some("reasoning" | "assistant_message")
+        ) {
+            item["streaming"] = json!(false);
         }
+        tx.append(Draft::new(thread_id, "turn-item.updated", item).node(node_id.as_deref()))?;
+    }
+    for mut turn in open_rows(tx, thread_id, "providerTurns")? {
+        if !turn["runAttemptId"].is_null() {
+            continue;
+        }
+        let node_id = turn["nodeId"].as_str().map(str::to_owned);
+        turn["status"] = json!(status);
+        turn["completedAt"] = json!(now);
+        tx.append(Draft::new(thread_id, "provider-turn.updated", turn).node(node_id.as_deref()))?;
     }
     Ok(())
+}
+
+/// A thread's `kind` rows in an open status.
+fn open_rows(tx: &Tx<'_>, thread_id: &str, kind: &str) -> StoreResult<Vec<Value>> {
+    let mut rows = Vec::new();
+    for status in ["pending", "running", "waiting"] {
+        rows.extend(tx.entities_where(thread_id, kind, "status", status)?);
+    }
+    Ok(rows)
 }

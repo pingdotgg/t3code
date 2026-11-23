@@ -72,9 +72,11 @@ CREATE TABLE IF NOT EXISTS shell_changes (
 -- for queries of three or more characters. `message_keys` gives each message a stable rowid.
 CREATE VIRTUAL TABLE IF NOT EXISTS message_search USING fts5(text, tokenize = 'trigram');
 CREATE TABLE IF NOT EXISTS message_keys (
-  id         INTEGER PRIMARY KEY,
-  thread_id  TEXT NOT NULL,
-  message_id TEXT NOT NULL,
+  id          INTEGER PRIMARY KEY,
+  thread_id   TEXT NOT NULL,
+  message_id  TEXT NOT NULL,
+  -- The message as it reads, when that differs from its stored text (`search_text` in T3).
+  search_text TEXT,
   UNIQUE (thread_id, message_id)
 );
 CREATE TABLE IF NOT EXISTS turn_item_positions (
@@ -1943,19 +1945,95 @@ fn migrate(conn: &Connection) -> StoreResult<()> {
         )
         .map_err(err)?;
     }
+    if version < 5 {
+        // 5: the index holds messages as they read (T3's migration 81): a citation as its
+        // text and comment, not its hidden link. The stored messages stay as they are.
+        let has_column = conn
+            .prepare("SELECT 1 FROM pragma_table_info('message_keys') WHERE name = 'search_text'")
+            .and_then(|mut stmt| stmt.exists([]))
+            .map_err(err)?;
+        if !has_column {
+            conn.execute_batch("ALTER TABLE message_keys ADD COLUMN search_text TEXT")
+                .map_err(err)?;
+        }
+        let rows: Vec<(String, String, String)> = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT k.thread_id, k.message_id, COALESCE(json_extract(e.body, '$.text'), '')
+                     FROM message_keys k
+                     JOIN entities e
+                       ON e.thread_id = k.thread_id AND e.kind = 'messages' AND e.id = k.message_id",
+                )
+                .map_err(err)?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(err)?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(err)?
+        };
+        for (thread_id, message_id, text) in rows {
+            if readable_search_text(&text).is_some() {
+                index_message(conn, &thread_id, &message_id, &text)?;
+            }
+        }
+        conn.execute_batch("PRAGMA user_version = 5").map_err(err)?;
+    }
     Ok(())
 }
 
-/// Puts the final text of one message into `message_search`, replacing an older version.
+/// `readableSearchText` in T3's `messageSearchIndex.ts`: a message as it reads, a citation as
+/// its text and comment, and a link label without its markdown escapes (a file mention stores
+/// `__init__.py` as `[\_\_init\_\_.py](...)`). `None` when that is the stored text.
+pub(crate) fn readable_search_text(text: &str) -> Option<String> {
+    let plain = crate::citations::to_plain_text(text);
+    let readable = unescape_link_labels(&plain);
+    (readable != text).then_some(readable)
+}
+
+/// T3's `LINK_LABEL` (`(!?\[)([^\]\n]*)(\]\([^)\s]*\))`), with `\*` and `\_` in each label
+/// unescaped.
+fn unescape_link_labels(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('[') {
+        out.push_str(before);
+        out.push('[');
+        // `label](href)`: the label stops at `]` or a line end, the href at `)` or a space.
+        let link = after.find([']', '\n']).and_then(|end| {
+            let label = after.get(..end)?;
+            let tail = after.get(end..)?.strip_prefix("](")?;
+            let end = tail.find(|c: char| c == ')' || c.is_whitespace())?;
+            let href = tail.get(..end)?;
+            let rest = tail.get(end..)?.strip_prefix(')')?;
+            Some((label, href, rest))
+        });
+        match link {
+            Some((label, href, tail)) => {
+                out.push_str(&label.replace("\\*", "*").replace("\\_", "_"));
+                out.push_str("](");
+                out.push_str(href);
+                out.push(')');
+                rest = tail;
+            }
+            None => rest = after,
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Puts the final text of one message into `message_search` as it reads, replacing an older
+/// version.
 fn index_message(
     conn: &Connection,
     thread_id: &str,
     message_id: &str,
     text: &str,
 ) -> StoreResult<()> {
+    let readable = readable_search_text(text);
     conn.execute(
-        "INSERT OR IGNORE INTO message_keys (thread_id, message_id) VALUES (?1, ?2)",
-        params![thread_id, message_id],
+        "INSERT INTO message_keys (thread_id, message_id, search_text) VALUES (?1, ?2, ?3)
+         ON CONFLICT (thread_id, message_id) DO UPDATE SET search_text = excluded.search_text",
+        params![thread_id, message_id, readable],
     )
     .map_err(err)?;
     let id: i64 = conn
@@ -1969,7 +2047,7 @@ fn index_message(
         .map_err(err)?;
     conn.execute(
         "INSERT INTO message_search (rowid, text) VALUES (?1, ?2)",
-        params![id, text],
+        params![id, readable.as_deref().unwrap_or(text)],
     )
     .map_err(err)?;
     Ok(())
@@ -2293,7 +2371,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let index: i64 = store
             .conn
             .query_row(
@@ -2411,7 +2489,7 @@ mod tests {
             .conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         let shell = store.shell_snapshot().unwrap();
         let threads = shell["threads"].as_array().unwrap();
         let parent = threads.iter().find(|t| t["id"] == "parent").unwrap();

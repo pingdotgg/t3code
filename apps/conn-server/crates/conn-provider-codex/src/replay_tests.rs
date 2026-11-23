@@ -944,6 +944,46 @@ fn a_shared_close_leaves_a_running_subagent_open() {
     }
 }
 
+/// A thread defers at most one root terminal: Codex starts a thread's next root turn only
+/// after the earlier one ended there, so a second deferral publishes the earlier terminal
+/// first, in order, and no cap ever publishes one ahead of its turn.
+#[test]
+fn a_thread_keeps_one_deferred_root_terminal_in_order() {
+    let mut mapper = Mapper::new(FixedEnv::default());
+    let dir = env!("CARGO_MANIFEST_DIR");
+    let ts: Value = serde_json::from_str(&read(format!("{dir}/testdata/ts/simple.json"))).unwrap();
+    let mut terminals = Vec::new();
+    for (turn, child, child_turn) in [("tu", "c1", "ct1"), ("tu2", "c2", "ct2")] {
+        mapper.begin_turn("th", &turn_input(&ts["startTurn"][0]));
+        let _ = mapper.turn_start_result("th", &json!({"turn": {"id": turn, "startedAt": null}}));
+        let out: Vec<Value> = feed(
+            &mut mapper,
+            &[
+                json!({"method": "item/started", "params": {"threadId": "th", "turnId": turn,
+                    "item": {"type": "subAgentActivity", "id": child, "kind": "started",
+                        "agentThreadId": child, "agentPath": "/root/helper"}}}),
+                json!({"method": "turn/started", "params": {"threadId": child,
+                    "turn": {"id": child_turn, "status": "inProgress", "startedAt": 1}}}),
+                json!({"method": "turn/completed", "params": {"threadId": "th",
+                    "turn": {"id": turn, "status": "interrupted", "completedAt": 3}}}),
+            ],
+        )
+        .into_iter()
+        .filter_map(|o| match o {
+            Out::Event(e) => Some(serde_json::to_value(e).unwrap()),
+            _ => None,
+        })
+        .collect();
+        terminals.extend(
+            out.iter()
+                .filter(|e| e["type"] == "turn.terminal")
+                .map(|e| e["providerTurnId"].as_str().unwrap_or_default().to_owned()),
+        );
+    }
+    assert_eq!(terminals.len(), 1, "{terminals:?}");
+    assert!(terminals[0].ends_with(":tu"), "{terminals:?}");
+}
+
 #[test]
 fn deferred_mcp_app_uses_t3s_failed_cli_result() {
     let recording: Value = serde_json::from_str(include_str!("../testdata/mcp-app.json")).unwrap();
