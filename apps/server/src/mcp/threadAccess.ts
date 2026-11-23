@@ -4,6 +4,7 @@ import type {
 } from "../orchestration-v2/ProjectionStore.ts";
 import {
   CommandId,
+  type EnvironmentId,
   OrchestratorMcpFailure,
   type ProjectId,
   type ProviderInstanceId,
@@ -12,6 +13,13 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import {
+  hasThreadLinks,
+  parseThreadLinkHref,
+  threadLinkCandidates,
+  threadLinkRefs,
+} from "@t3tools/shared/threadLinks";
+import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
@@ -32,8 +40,22 @@ const suggestedThreadId = (threadId: ThreadId) => {
   return encoded === rest ? null : ThreadId.make(`${delegatedTaskPrefix}${encoded}`);
 };
 
+// A pasted link (bare, Markdown, or hosted) names its thread; only this environment's can be read here.
+const candidateThreadIds = (threadId: ThreadId, environmentId: EnvironmentId) => {
+  if (!hasThreadLinks(threadId)) {
+    const suggested = suggestedThreadId(threadId);
+    return suggested === null ? [] : [suggested];
+  }
+  const link = parseThreadLinkHref(threadId);
+  const refs =
+    link === null
+      ? threadLinkRefs(threadId, environmentId)
+      : threadLinkCandidates(link, environmentId);
+  return refs.filter((ref) => ref.environmentId === environmentId).map((ref) => ref.threadId);
+};
+
 /**
- * Agents paste bare uuids for `mcp:<uuid>` threads and unencoded delegated-task ids.
+ * Agents paste bare uuids for `mcp:<uuid>` threads, unencoded delegated-task ids, and thread links.
  * The id is never rewritten, so permission checks keyed on it still hold; the miss
  * only names a live thread the caller could read by its full id. Ids from another
  * machine miss here too. The link hint is static: listing links probes peers.
@@ -44,13 +66,21 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
   threadId: ThreadId,
   message: string,
 ) {
-  const suggested = suggestedThreadId(threadId);
-  const shell =
-    suggested === null
-      ? null
-      : yield* threads.getThreadShell(suggested).pipe(Effect.orElseSucceed(() => null));
-  const mcpHint =
-    shell === null || shell.deletedAt !== null ? "" : ` Did you mean \`${suggested}\`?`;
+  let suggested: ThreadId | null = null;
+  for (const candidate of candidateThreadIds(threadId, scope.environmentId)) {
+    const shell = yield* threads.getThreadShell(candidate).pipe(Effect.orElseSucceed(() => null));
+    if (shell !== null && shell.deletedAt === null) {
+      suggested = candidate;
+      break;
+    }
+  }
+  if (suggested !== null && hasThreadLinks(threadId)) {
+    return yield* new OrchestratorMcpFailure({
+      code: "thread_not_found",
+      message: `\`${threadId}\` is a thread link, not a thread id. Pass \`${suggested}\` instead.`,
+    });
+  }
+  const mcpHint = suggested === null ? "" : ` Did you mean \`${suggested}\`?`;
   const caller =
     scope.thread === undefined
       ? null
@@ -170,10 +200,7 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
-    (shell.pendingBackgroundTasks?.some(
-      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
-    ) ??
-      false));
+    hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, providerInstanceId));
 
 /** Thread callers need a live run or its background subagent in an unarchived thread. OAuth clients rely on their session and ceiling. */
 export function assertLiveCaller({ caller, scope }: Caller) {
