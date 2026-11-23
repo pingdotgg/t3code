@@ -101,6 +101,9 @@ import { ToolSearchToolkit } from "./toolkits/toolSearch/tools.ts";
 import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as IssuesHandlers from "./toolkits/issues/handlers.ts";
 import { IssuesToolkit } from "./toolkits/issues/tools.ts";
+import * as CuHandlers from "./toolkits/cu/handlers.ts";
+import { CuToolkit } from "./toolkits/cu/tools.ts";
+import * as CuaDriver from "./toolkits/cu/cuaDriver.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -1489,6 +1492,11 @@ export const layerDeviceToolkit = Layer.mergeAll(
   layerDeviceScreenshotRegistration,
 );
 
+const layerCuToolkit = toolkitRegistration(CuToolkit, CuHandlers.layer).pipe(
+  Layer.provide(OrchestratorMcpService.layer),
+  Layer.provide(CuaDriver.layerLive),
+);
+
 /**
  * `McpServer` for in-process calls, which provide `McpInvocationContext`
  * around `callTool` as the auth middleware does for each /mcp request.
@@ -1536,6 +1544,7 @@ export const layerTools = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerIssuesToolkit,
   layerDeviceToolkit,
+  layerCuToolkit,
   layerHtmlToolkit,
   layerMessageToolkit,
 );

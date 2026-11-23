@@ -229,7 +229,8 @@ export interface OrchestratorMcpServiceShape {
     input: {
       readonly label: string;
       readonly reason: string;
-      readonly url: string;
+      readonly url?: string | undefined;
+      readonly toolName?: string | undefined;
       readonly timeoutMs?: number | undefined;
       readonly clientRequestId?: string | undefined;
     },
@@ -2866,11 +2867,11 @@ const make = Effect.gen(function* () {
 
     requestBrowserValue: Effect.fn("OrchestratorMcpService.requestBrowserValue")(
       function* (scope, input) {
-        const { status, threadId, turnItemId } = yield* askSecretCard(
-          scope,
-          "preview_request_fill",
-          { ...input, delivery: "browser" },
-        );
+        const { toolName = "preview_request_fill", ...cardInput } = input;
+        const { status, threadId, turnItemId } = yield* askSecretCard(scope, toolName, {
+          ...cardInput,
+          delivery: "browser",
+        });
         if (status !== "saved") {
           return { status, note: SECRET_REQUEST_UNSAVED_NOTE[status] } as const;
         }
