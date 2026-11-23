@@ -56,7 +56,7 @@ export function IssueEditScreen({ route }: StaticScreenProps<IssueEditParams>) {
     <PullRequestSheetContent
       busy={busy}
       title={isTitle ? gt("Edit title") : gt("Edit description")}
-      subtitle={`${detail?.displayKey ?? params.issueKey} · ${params.scope}`}
+      subtitle={`${detail?.displayKey ?? params.issueKey} · ${detail?.scope ?? params.scope}`}
       footer={
         <Button
           fullWidth

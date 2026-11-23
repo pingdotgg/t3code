@@ -355,14 +355,15 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           ?.id;
       };
       const known = assignees.map((wanted) => find(current, wanted));
-      if (known.every((id) => id !== undefined)) return known;
+      if (known.every((id) => id !== undefined)) return [...new Set(known)];
       const members = yield* assignable(operation, listId, workspaceId);
-      return yield* Effect.forEach(assignees, (wanted, index) => {
+      const ids = yield* Effect.forEach(assignees, (wanted, index) => {
         const id = known[index] ?? find(members, wanted);
         return id === undefined
           ? Effect.fail(failed(operation, `"${wanted}" is not a member of this ClickUp list.`))
           : Effect.succeed(id);
       });
+      return [...new Set(ids)];
     });
 
     /**

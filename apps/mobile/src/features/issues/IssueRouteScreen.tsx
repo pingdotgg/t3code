@@ -607,6 +607,8 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
         ? CHAT_CONTENT_MAX_WIDTH
         : undefined;
   const url = issue?.url;
+  // A ClickUp link names no list until the task is read.
+  const scope = detail?.scope ?? params.scope;
   return (
     <PullRequestMarkdownRepository
       params={{
@@ -620,7 +622,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
       <View className="flex-1 bg-screen">
         <AppBar
           title={issue?.displayKey ?? params.issueKey}
-          subtitle={connected ? params.scope : gt("{scope} · Offline", { scope: params.scope })}
+          subtitle={connected ? scope : gt("{scope} · Offline", { scope })}
           onBack={layout.usesSplitView ? undefined : returnToList}
           menus={[
             {
