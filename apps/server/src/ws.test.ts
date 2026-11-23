@@ -8,8 +8,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   AuthAccessReadScope,
+  type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  type WorkflowRun,
+  type WorkflowStep,
   AuthSessionId,
   AuthSourceControlWriteScope,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -69,6 +72,7 @@ import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as WorkspacePreviewRevisions from "./assets/WorkspacePreviewRevisions.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
@@ -82,6 +86,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as NativeChildWorkQuery from "./orchestration-v2/NativeChildWorkQuery.ts";
 import * as CommandOutputHub from "./orchestration-v2/CommandOutputHub.ts";
+import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
 import * as CodexInstallation from "./provider/CodexInstallation.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
@@ -93,12 +98,15 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "./project/ScratchThreadPromotion.ts";
 import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as McpSignIn from "./mcpApps/McpSignIn.ts";
 import * as ModelManifest from "./provider/ModelManifest.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+import * as PeerThreadRelay from "./peer/PeerThreadRelay.ts";
+import * as PeerClientPairing from "./peer/PeerClientPairing.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewManager from "./preview/Manager.ts";
@@ -125,7 +133,10 @@ import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolve
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as Workflows from "./workflows/Workflows.ts";
+import * as WorkflowRuntime from "./workflows/WorkflowRuntime.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as FeedbackStore from "./feedback/FeedbackStore.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -146,6 +157,8 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
@@ -158,6 +171,7 @@ import * as SecretCheck from "./secrets/SecretCheck.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 
@@ -832,12 +846,14 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
   Layer.mock(NativeChildWorkQuery.NativeChildWorkQuery)({}),
   Layer.mock(CommandOutputHub.CommandOutputHub)({}),
+  ThreadViewers.layer,
   Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
   Layer.mock(DeviceService.DeviceService)({}),
   Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
   Layer.mock(GitWorkflowService.GitWorkflowService)({}),
   Layer.mock(HostResources.HostResources)({}),
   Layer.mock(McpAppRequests.McpAppRequests)({}),
+  Layer.mock(McpSignIn.McpSignIn)({}),
   Layer.mock(ModelManifest.ModelManifest)({}),
   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -845,6 +861,8 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
   Layer.mock(PeerLinks.PeerLinks)({}),
   Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
+  Layer.mock(PeerThreadRelay.PeerThreadRelay)({}),
+  Layer.mock(PeerClientPairing.PeerClientPairing)({}),
   Layer.mock(PortScanner.PortDiscovery)({ trackAgent: () => () => undefined }),
   Layer.mock(PreviewManager.PreviewManager)({}),
   Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
@@ -870,7 +888,10 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Workflows.layerDisabled,
+  Layer.mock(WorkflowRuntime.WorkflowDefinitions)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(FeedbackStore.FeedbackStore)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
   Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
@@ -891,13 +912,17 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
   Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
   Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
+  Layer.mock(WorkspaceFolders.WorkspaceFolders)({}),
+  Layer.mock(TaskFolders.TaskFolders)({}),
   Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
   Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+  FeatureFlags.layerTest(),
 );
 
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
   AssetSigner.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+  WorkspacePreviewRevisions.layer,
   ServerSettings.layer.pipe(
     Layer.provide(Layer.merge(ServerSecretStore.layer, ManagedPolicy.layerTest())),
   ),
@@ -2626,4 +2651,162 @@ it.effect("ACP session RPCs list a thread missing its history and repair it on i
       ),
     ),
   ),
+);
+
+const workflowTags = [
+  WS_METHODS.workflowsGet,
+  WS_METHODS.workflowsAnswer,
+  WS_METHODS.workflowsResume,
+  WS_METHODS.workflowsCancel,
+] as const;
+const workflowRpcs = WsRpcGroup.omit(
+  ...[...WsRpcGroup.requests.keys()].filter(
+    (
+      tag,
+    ): tag is Exclude<
+      keyof typeof RpcAuthorization.RPC_REQUIRED_SCOPES,
+      (typeof workflowTags)[number]
+    > => !(workflowTags as ReadonlyArray<string>).includes(tag),
+  ),
+);
+const workflowRun: WorkflowRun = {
+  runId: "run-1",
+  workflow: "release",
+  version: 1,
+  title: "Release 1.2",
+  status: "paused",
+  detail: "build failed: exit 1",
+  result: null,
+  pauses: 1,
+  retired: false,
+  resumesAt: null,
+  parentRunId: null,
+  parentStep: null,
+  startedAt: "2026-11-01T00:00:00.000Z",
+  updatedAt: "2026-11-01T00:01:00.000Z",
+  endedAt: null,
+};
+const workflowStep: WorkflowStep = {
+  name: "build",
+  kind: "step",
+  status: "failed",
+  attempts: 2,
+  detail: "exit 1",
+  threadId: null,
+  environmentId: null,
+  result: null,
+  said: null,
+  startedAt: "2026-11-01T00:00:10.000Z",
+  endedAt: "2026-11-01T00:01:00.000Z",
+};
+
+/** A client for the workflow RPCs whose session holds `scopes`; `calls` records what reached the service. */
+const makeWorkflowClient = Effect.fn("test.makeWorkflowClient")(function* (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  calls: Array<unknown>,
+) {
+  const services = Layer.mergeAll(
+    layerUnusedConfigRpcServices,
+    Layer.mock(ExternalLauncher.ExternalLauncher)({}),
+    Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+    Layer.mock(UsageLimitSources.UsageLimitSources)({}),
+    Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({}),
+    Layer.mock(DirectEndpoints.DirectEndpoints)({}),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/unused" }),
+    Layer.mock(ScratchThreadPromotion.ScratchThreadPromotion)({}),
+    Layer.mock(ServerEnvironment.ServerEnvironment)({}),
+    Layer.mock(EnvironmentAuth.EnvironmentAuth)({}),
+    Layer.mock(Workflows.Workflows)({
+      get: (runId) =>
+        runId === workflowRun.runId
+          ? Effect.succeed({ run: workflowRun, steps: [workflowStep], references: [] })
+          : Effect.fail(new Workflows.WorkflowRunNotFoundError({ runId })),
+      answer: (runId, name, value) =>
+        Effect.sync(() => calls.push({ answer: [runId, name], value })),
+      resume: (runId) => Effect.sync(() => calls.push({ resume: runId })),
+      cancel: (runId, reason) => Effect.sync(() => calls.push({ cancel: runId, reason })),
+    }),
+  );
+  return yield* RpcTest.makeClient(workflowRpcs).pipe(
+    Effect.provide(
+      layerWsRpc(
+        {
+          sessionId: AuthSessionId.make("workflow-test"),
+          subject: "workflow-test",
+          method: "browser-session-cookie",
+          scopes: [...scopes],
+        },
+        {},
+        yield* ServerBrowser.ServerBrowser,
+        () => Effect.void,
+        { secretReferences: true },
+      ).pipe(Layer.provide(services), Layer.merge(RpcAuthorization.layer(scopes))),
+    ),
+  );
+});
+const layerWorkflowRpcTest = Layer.mergeAll(
+  Layer.fresh(layerConfigSources),
+  Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+  Layer.mock(ServerBrowser.ServerBrowser)({}),
+);
+
+it.effect("workflow RPCs read a run and pass an answer, a resume and a cancel to the service", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const client = yield* makeWorkflowClient(
+      [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+      calls,
+    );
+
+    assert.deepEqual(yield* client[WS_METHODS.workflowsGet]({ runId: "run-1" }), {
+      run: workflowRun,
+      steps: [workflowStep],
+      references: [],
+    });
+    const missing = yield* client[WS_METHODS.workflowsGet]({ runId: "gone" }).pipe(Effect.flip);
+    assert.deepEqual(
+      [missing._tag, missing.message],
+      ["WorkflowRequestError", "Workflow run gone was not found."],
+    );
+
+    yield* client[WS_METHODS.workflowsAnswer]({
+      runId: "run-1",
+      name: "approve",
+      choice: "yes",
+      reason: "Looks good",
+    });
+    yield* client[WS_METHODS.workflowsAnswer]({ runId: "run-1", name: "approve", choice: "no" });
+    yield* client[WS_METHODS.workflowsResume]({ runId: "run-1" });
+    yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1" });
+    yield* client[WS_METHODS.workflowsCancel]({ runId: "run-1", reason: "Wrong branch" });
+
+    assert.deepEqual(calls, [
+      { answer: ["run-1", "approve"], value: { choice: "yes", reason: "Looks good" } },
+      { answer: ["run-1", "approve"], value: { choice: "no" } },
+      { resume: "run-1" },
+      { cancel: "run-1", reason: undefined },
+      { cancel: "run-1", reason: "Wrong branch" },
+    ]);
+  }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
+);
+
+it.effect("a session that can only read sees a workflow run but cannot steer it", () =>
+  Effect.gen(function* () {
+    const calls: Array<unknown> = [];
+    const client = yield* makeWorkflowClient([AuthOrchestrationReadScope], calls);
+
+    assert.equal((yield* client[WS_METHODS.workflowsGet]({ runId: "run-1" })).run.runId, "run-1");
+    const refused = yield* Effect.all([
+      client[WS_METHODS.workflowsAnswer]({ runId: "run-1", name: "approve", choice: "yes" }).pipe(
+        Effect.flip,
+      ),
+      client[WS_METHODS.workflowsResume]({ runId: "run-1" }).pipe(Effect.flip),
+      client[WS_METHODS.workflowsCancel]({ runId: "run-1" }).pipe(Effect.flip),
+    ]);
+    assert.deepEqual(
+      refused.map((error) => error._tag),
+      Array.from({ length: 3 }, () => "EnvironmentAuthorizationError"),
+    );
+    assert.deepEqual(calls, []);
+  }).pipe(Effect.provide(layerWorkflowRpcTest), Effect.scoped),
 );

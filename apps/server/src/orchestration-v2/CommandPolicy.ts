@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isSlashCommand } from "@t3tools/shared/composerTrigger";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -59,6 +60,17 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/**
+ * A message that signs a provider account out at turn start, as `providerAuthLogout` does.
+ * With attachments the same text is an ordinary prompt.
+ */
+export function isProviderSignOutPrompt(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && message.text.trim().toLowerCase() === "/logout";
+}
+
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -90,6 +102,25 @@ export function goalCommandStopsActiveRun(
   }
 }
 
+export function resolveMessageDispatch(
+  projection: OrchestrationV2ThreadProjection,
+  message: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "dispatchMode" | "deliveryIntent" | "text" | "attachments"
+  >,
+): MessageDispatchMode {
+  const mode = resolveMessageDispatchIntent(
+    projection,
+    message.dispatchMode,
+    message.deliveryIntent,
+  );
+  // A provider runs a steered command in place of the turn's task, so commands wait.
+  return mode.type === "steer_active" && isSlashCommand(message)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+/** How a message joins active work when it is free to steer. */
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
