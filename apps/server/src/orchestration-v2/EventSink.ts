@@ -7,12 +7,14 @@ import {
   type OrchestrationV2TurnItem,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
+  ProviderTurnId,
   RunAttemptId,
   RunId,
   RuntimeRequestId,
   NodeId,
   type ProjectId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as ThreadViewers from "./ThreadViewers.ts";
@@ -269,6 +271,47 @@ export class EventSinkV2 extends Context.Service<EventSinkV2, EventSinkV2Shape>(
   "t3/orchestration-v2/EventSink/EventSinkV2",
 ) {}
 
+/**
+ * Tool execution items belong to the run that created them. Other turn-item types can
+ * legitimately move across runs (`user_message` missed steers, session-scoped `todo_list` /
+ * `proposed_plan`, and resumed provider-native `subagent` items), so only tool executions are
+ * pinned here.
+ */
+type RunPinnedToolItem = Extract<
+  OrchestrationV2TurnItem,
+  {
+    readonly type:
+      | "command_execution"
+      | "dynamic_tool"
+      | "file_change"
+      | "file_search"
+      | "web_search";
+  }
+>;
+
+function isRunPinnedToolItemType(
+  type: OrchestrationV2TurnItem["type"],
+): type is RunPinnedToolItem["type"] {
+  return (
+    type === "command_execution" ||
+    type === "dynamic_tool" ||
+    type === "file_change" ||
+    type === "file_search" ||
+    type === "web_search"
+  );
+}
+
+function isRunPinnedToolItem(item: OrchestrationV2TurnItem): item is RunPinnedToolItem {
+  return isRunPinnedToolItemType(item.type);
+}
+
+function parseStoredStartedAt(
+  raw: string | null,
+  fallback: DateTime.Utc | null,
+): DateTime.Utc | null {
+  return raw === null ? fallback : Option.getOrElse(DateTime.make(raw), () => fallback);
+}
+
 const layerBase: Layer.Layer<
   EventSinkV2,
   never,
@@ -400,7 +443,29 @@ const layerBase: Layer.Layer<
         });
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    type ExistingToolNode = {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly parentNodeId: NodeId | null;
+      readonly rootNodeId: NodeId;
+      readonly providerThreadId: ProviderThreadId | null;
+      readonly providerTurnId: ProviderTurnId | null;
+      readonly startedAt: DateTime.Utc | null;
+    };
+    type ExistingToolItem = {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly nodeId: NodeId | null;
+      readonly providerThreadId: ProviderThreadId | null;
+      readonly providerTurnId: ProviderTurnId | null;
+      readonly parentItemId: TurnItemId | null;
+      readonly ordinal: number;
+      startedAt: DateTime.Utc | null | undefined;
+    };
+
+    const normalizeEvents = Effect.fnUntraced(function* (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -408,20 +473,215 @@ const layerBase: Layer.Layer<
             : [],
         ),
       );
-      return Effect.forEach(
-        events,
-        (event): Effect.Effect<OrchestrationV2DomainEvent, unknown> =>
-          event.type === "turn-item.updated"
-            ? turnItemPositions
-                .normalize(
-                  event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
-                )
-                .pipe(Effect.map((payload) => ({ ...event, payload })))
-            : Effect.succeed(event),
-        { concurrency: 1 },
-      );
-    };
+      const toolNodeIds = [
+        ...new Set(
+          events.flatMap((event) =>
+            event.type === "node.updated" && event.payload.kind === "tool_call"
+              ? [event.payload.id]
+              : [],
+          ),
+        ),
+      ];
+      const toolItemIds = [
+        ...new Set(
+          events.flatMap((event) =>
+            event.type === "turn-item.updated" && isRunPinnedToolItem(event.payload)
+              ? [event.payload.id]
+              : [],
+          ),
+        ),
+      ];
+
+      const existingToolNodes = new Map<NodeId, ExistingToolNode>();
+      if (toolNodeIds.length > 0) {
+        const rows = yield* sql<{
+          readonly node_id: NodeId;
+          readonly thread_id: ThreadId;
+          readonly run_id: RunId | null;
+          readonly parent_node_id: NodeId | null;
+          readonly root_node_id: NodeId;
+          readonly kind: string;
+          readonly provider_thread_id: ProviderThreadId | null;
+          readonly provider_turn_id: ProviderTurnId | null;
+          readonly started_at: string | null;
+        }>`
+          SELECT
+            node_id,
+            thread_id,
+            run_id,
+            parent_node_id,
+            root_node_id,
+            kind,
+            provider_thread_id,
+            provider_turn_id,
+            started_at
+          FROM orchestration_v2_projection_nodes
+          WHERE node_id IN ${sql.in(toolNodeIds)}
+        `;
+        for (const row of rows) {
+          if (row.kind !== "tool_call" || row.run_id === null) continue;
+          existingToolNodes.set(row.node_id, {
+            threadId: row.thread_id,
+            runId: row.run_id,
+            parentNodeId: row.parent_node_id,
+            rootNodeId: row.root_node_id,
+            providerThreadId: row.provider_thread_id,
+            providerTurnId: row.provider_turn_id,
+            startedAt: parseStoredStartedAt(row.started_at, null),
+          });
+        }
+      }
+
+      const existingToolItems = new Map<TurnItemId, ExistingToolItem>();
+      if (toolItemIds.length > 0) {
+        const rows = yield* sql<{
+          readonly turn_item_id: TurnItemId;
+          readonly thread_id: ThreadId;
+          readonly run_id: RunId | null;
+          readonly node_id: NodeId | null;
+          readonly provider_thread_id: ProviderThreadId | null;
+          readonly provider_turn_id: ProviderTurnId | null;
+          readonly parent_item_id: TurnItemId | null;
+          readonly ordinal: number;
+          readonly type: OrchestrationV2TurnItem["type"];
+        }>`
+          SELECT
+            turn_item_id,
+            thread_id,
+            run_id,
+            node_id,
+            provider_thread_id,
+            provider_turn_id,
+            parent_item_id,
+            ordinal,
+            type
+          FROM orchestration_v2_projection_turn_items
+          WHERE turn_item_id IN ${sql.in(toolItemIds)}
+        `;
+        for (const row of rows) {
+          if (row.run_id === null || !isRunPinnedToolItemType(row.type)) continue;
+          existingToolItems.set(row.turn_item_id, {
+            threadId: row.thread_id,
+            runId: row.run_id,
+            nodeId: row.node_id,
+            providerThreadId: row.provider_thread_id,
+            providerTurnId: row.provider_turn_id,
+            parentItemId: row.parent_item_id,
+            ordinal: row.ordinal,
+            startedAt: undefined,
+          });
+        }
+      }
+
+      const normalized: Array<OrchestrationV2DomainEvent> = [];
+      for (const event of events) {
+        if (event.type === "node.updated" && event.payload.kind === "tool_call") {
+          const existing = existingToolNodes.get(event.payload.id);
+          if (
+            existing !== undefined &&
+            existing.threadId === event.payload.threadId &&
+            existing.runId !== event.payload.runId
+          ) {
+            normalized.push({
+              ...event,
+              runId: existing.runId,
+              payload: {
+                ...event.payload,
+                runId: existing.runId,
+                parentNodeId: existing.parentNodeId,
+                rootNodeId: existing.rootNodeId,
+                providerThreadId: existing.providerThreadId,
+                providerTurnId: existing.providerTurnId,
+                startedAt: existing.startedAt ?? event.payload.startedAt,
+              },
+            });
+            continue;
+          }
+          if (existing === undefined && event.payload.runId !== null) {
+            existingToolNodes.set(event.payload.id, {
+              threadId: event.payload.threadId,
+              runId: event.payload.runId,
+              parentNodeId: event.payload.parentNodeId,
+              rootNodeId: event.payload.rootNodeId,
+              providerThreadId: event.payload.providerThreadId,
+              providerTurnId: event.payload.providerTurnId,
+              startedAt: event.payload.startedAt,
+            });
+          }
+          normalized.push(event);
+          continue;
+        }
+
+        if (event.type === "turn-item.updated") {
+          if (isRunPinnedToolItem(event.payload)) {
+            const existing = existingToolItems.get(event.payload.id);
+            if (
+              existing !== undefined &&
+              existing.threadId === event.payload.threadId &&
+              existing.runId !== event.payload.runId
+            ) {
+              // Read `startedAt` from payload_json only on the rare cross-run mismatch path.
+              if (existing.startedAt === undefined) {
+                const startedRows = yield* sql<{ readonly started_at: string | null }>`
+                  SELECT json_extract(payload_json, '$.startedAt') AS started_at
+                  FROM orchestration_v2_projection_turn_items
+                  WHERE turn_item_id = ${event.payload.id}
+                  LIMIT 1
+                `;
+                existing.startedAt = parseStoredStartedAt(startedRows[0]?.started_at ?? null, null);
+              }
+              const pinnedPayload: RunPinnedToolItem = {
+                ...event.payload,
+                runId: existing.runId,
+                nodeId: existing.nodeId,
+                providerThreadId: existing.providerThreadId,
+                providerTurnId: existing.providerTurnId,
+                parentItemId: existing.parentItemId,
+                ordinal: existing.ordinal,
+                startedAt: existing.startedAt ?? event.payload.startedAt,
+              };
+              const { nodeId: _droppedNodeId, ...eventWithoutNodeId } = event;
+              // Skip TurnItemPositionStore.normalize: it only allocates/moves ordinals, and this
+              // item already holds its original ordinal in its creating run.
+              normalized.push({
+                ...eventWithoutNodeId,
+                runId: existing.runId,
+                ...(existing.nodeId === null ? {} : { nodeId: existing.nodeId }),
+                payload: pinnedPayload,
+              });
+              continue;
+            }
+          }
+
+          const payload = yield* turnItemPositions.normalize(
+            event.payload,
+            event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+          );
+          if (
+            isRunPinnedToolItem(payload) &&
+            payload.runId !== null &&
+            !existingToolItems.has(payload.id)
+          ) {
+            existingToolItems.set(payload.id, {
+              threadId: payload.threadId,
+              runId: payload.runId,
+              nodeId: payload.nodeId,
+              providerThreadId: payload.providerThreadId,
+              providerTurnId: payload.providerTurnId,
+              parentItemId: payload.parentItemId,
+              ordinal: payload.ordinal,
+              startedAt: payload.startedAt,
+            });
+          }
+          normalized.push({ ...event, payload });
+          continue;
+        }
+
+        normalized.push(event);
+      }
+
+      return normalized;
+    });
 
     // The enclosing write or commit span already traces this projection bookkeeping.
     const recordProjectedSequence = Effect.fnUntraced(function* (sequence: number) {
