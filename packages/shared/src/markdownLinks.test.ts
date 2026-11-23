@@ -98,7 +98,7 @@ describe("parseMarkdownFileLink", () => {
     "icon@2x.png",
   ])("reads back the composer's link to %s", (path) => {
     const destination = /\]\((.*)\)$/.exec(serializeComposerFileLink(path))?.[1];
-    expect(parseMarkdownFileLink(destination ?? "")?.path).toBe(path);
+    expect(resolveMarkdownFileLinkTarget(destination ?? "", "/repo")).toBe(`/repo/${path}`);
   });
 
   it.each([

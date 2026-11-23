@@ -1,3 +1,5 @@
+import { parseMarkdownFileLink } from "./markdownLinks.ts";
+
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
@@ -20,12 +22,16 @@ function escapeMarkdownLinkLabel(label: string): string {
 }
 
 function encodeMarkdownLinkDestination(path: string): string {
-  return encodeURI(path)
+  const destination = encodeURI(path)
     .replaceAll("(", "%28")
     .replaceAll(")", "%29")
     .replaceAll("#", "%23")
     .replaceAll("?", "%3F")
     .replaceAll("\\", "%5C");
+  // Names like `C#/Program.cs` or `icon@2x.png` only read back as files behind `./`.
+  return parseMarkdownFileLink(destination) || /^[\\/]/.test(path)
+    ? destination
+    : `./${destination}`;
 }
 
 export function serializeComposerFileLink(path: string): string {
