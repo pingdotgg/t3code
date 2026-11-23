@@ -450,6 +450,20 @@ const EMPTY_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 const EMPTY_RESOLVED_APPROVAL_DECISIONS: ReadonlyMap<RuntimeRequestId, ProviderApprovalDecision> =
   new Map();
 
+function deriveResolvedApprovalDecisions(
+  requests: ThreadStructure["runtimeRequests"] | undefined,
+): ReadonlyMap<RuntimeRequestId, ProviderApprovalDecision> {
+  if (!requests || requests.length === 0) return EMPTY_RESOLVED_APPROVAL_DECISIONS;
+  let map: Map<RuntimeRequestId, ProviderApprovalDecision> | null = null;
+  for (const request of requests) {
+    if (request.status === "resolved" && request.decision !== undefined) {
+      if (map === null) map = new Map();
+      map.set(request.id, request.decision);
+    }
+  }
+  return map ?? EMPTY_RESOLVED_APPROVAL_DECISIONS;
+}
+
 type ChatViewProps =
   | {
       environmentId: EnvironmentId;
@@ -1518,24 +1532,15 @@ export default function ChatView(props: ChatViewProps) {
   const onHeldRequestIdsChange = useStableCallback((requestIds: ReadonlySet<string>) => {
     setHeldApprovalRequestIds((current) => (shallow(current, requestIds) ? current : requestIds));
   });
-  const resolvedApprovalDecisions = (() => {
-    const requests = serverProjection?.runtimeRequests;
-    if (!requests || requests.length === 0) return EMPTY_RESOLVED_APPROVAL_DECISIONS;
-    let map: Map<RuntimeRequestId, ProviderApprovalDecision> | null = null;
-    for (const request of requests) {
-      if (request.status === "resolved" && request.decision !== undefined) {
-        map ??= new Map();
-        map.set(request.id, request.decision);
-      }
-    }
-    return map ?? EMPTY_RESOLVED_APPROVAL_DECISIONS;
-  })();
+  const resolvedApprovalDecisions = deriveResolvedApprovalDecisions(
+    serverProjection?.runtimeRequests,
+  );
   const childThreadApprovals = useAtomValue(childThreadApprovalsAtom(activeThreadRef));
   const visiblePendingApprovalCount = pendingApprovals.filter(
     (approval) => !heldApprovalRequestIds.has(approval.requestId),
   ).length;
   const onApprovalAnsweredStable = useStableCallback(() => {
-    if (visiblePendingApprovalCount <= 1 && layoutPane.focused) {
+    if (visiblePendingApprovalCount + childThreadApprovals.length <= 1 && layoutPane.focused) {
       requestAnimationFrame(() => composerRef.current?.focusAtEnd());
     }
   });

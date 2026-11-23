@@ -1389,8 +1389,9 @@ function WorkingBarSlot({
     const scrollToApproval =
       pendingRequest.kind === "approval"
         ? () => {
-            document
-              .querySelector("[data-approval-request-id]")
+            ctx.listRef.current
+              ?.getScrollableNode()
+              ?.querySelector<HTMLElement>("[data-approval-request-id]")
               ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
           }
         : null;

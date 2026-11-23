@@ -16,9 +16,11 @@ import { TimelineApprovalCtx } from "./timelineRowContext";
 export function TimelineChildApprovalCard({
   entry,
   onOpenThread,
+  onAnswered,
 }: {
   readonly entry: ChildThreadApproval;
   readonly onOpenThread?: (() => void) | undefined;
+  readonly onAnswered?: (() => void) | null | undefined;
 }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
@@ -44,6 +46,7 @@ export function TimelineChildApprovalCard({
         <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
       }
       error={error}
+      onAnswered={onAnswered}
       onRespond={async (requestId, decision) => {
         if (!canRespond || responding) return;
         setResponding(true);
@@ -73,7 +76,7 @@ export function SubagentPendingApprovals({
   readonly childThreadKey: string;
   readonly onOpenThread?: (() => void) | undefined;
 }) {
-  const { childApprovalsByThreadKey } = use(TimelineApprovalCtx);
+  const { childApprovalsByThreadKey, onApprovalAnswered } = use(TimelineApprovalCtx);
   const entries = childApprovalsByThreadKey.get(childThreadKey);
   if (!entries || entries.length === 0) return null;
   return (
@@ -87,6 +90,7 @@ export function SubagentPendingApprovals({
           ])}
           entry={entry}
           onOpenThread={onOpenThread}
+          onAnswered={onApprovalAnswered}
         />
       ))}
     </div>

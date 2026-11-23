@@ -116,6 +116,8 @@ const TimelineGapRecorder = timelineGapRecorderEnabled
   : null;
 
 const EMPTY_PENDING_APPROVALS: ReadonlyArray<PendingApproval> = [];
+const EMPTY_PENDING_APPROVAL_REQUEST_IDS: ReadonlySet<RuntimeRequestId> = new Set();
+const EMPTY_PENDING_APPROVALS_BY_ID: ReadonlyMap<RuntimeRequestId, PendingApproval> = new Map();
 const EMPTY_CHILD_THREAD_APPROVALS: ReadonlyArray<ChildThreadApproval> = [];
 const EMPTY_RESPONDING_REQUEST_IDS: TimelineApprovalState["respondingRequestIds"] = [];
 const EMPTY_RESOLVED_APPROVAL_DECISIONS: ReadonlyMap<RuntimeRequestId, ProviderApprovalDecision> =
@@ -737,9 +739,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const isVisiblePendingApproval = (approval: PendingApproval) =>
     !heldApprovalRequestIds?.has(approval.requestId);
-  const pendingApprovalRequestIds = new Set(
-    pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
-  );
+  const pendingApprovalRequestIds =
+    pendingApprovals.length === 0
+      ? EMPTY_PENDING_APPROVAL_REQUEST_IDS
+      : new Set(
+          pendingApprovals.filter(isVisiblePendingApproval).map((approval) => approval.requestId),
+        );
   const childApprovalThreadIds =
     childThreadApprovals.length === 0
       ? EMPTY_CHILD_APPROVAL_THREAD_IDS
@@ -1377,10 +1382,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   // Built from props after the last hook so the compiler can memoize the row context; a map
   // made before a hook would rebuild it, and re-render every row, on each streamed update.
-  const visiblePendingApprovals = pendingApprovals.filter(isVisiblePendingApproval);
-  const pendingApprovalsByRequestId = new Map(
-    visiblePendingApprovals.map((approval) => [approval.requestId, approval]),
-  );
+  const visiblePendingApprovals =
+    pendingApprovals.length === 0
+      ? EMPTY_PENDING_APPROVALS
+      : pendingApprovals.filter(isVisiblePendingApproval);
+  const pendingApprovalsByRequestId =
+    visiblePendingApprovals.length === 0
+      ? EMPTY_PENDING_APPROVALS_BY_ID
+      : new Map(visiblePendingApprovals.map((approval) => [approval.requestId, approval]));
   const activeShortcutRequestId =
     visiblePendingApprovals.find((approval) => approval.responseCapability === "live")?.requestId ??
     null;
@@ -1789,6 +1798,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                       entry.approval.requestId,
                     ])}
                     entry={entry}
+                    onAnswered={onApprovalAnswered}
                     onOpenThread={() =>
                       onOpenThread(entry.thread.threadId, entry.thread.environmentId, "primary")
                     }
