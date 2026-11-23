@@ -147,6 +147,18 @@ export const layer = Layer.effectDiscard(
       ));
     const command = inhibitorCommand(platform, process.pid, isWsl);
     if (command === undefined) return;
+    // systemd-inhibit talks to logind over the system bus; a host without systemd
+    // (container, chroot) has no socket, so it fails to connect instead of inhibiting.
+    if (
+      platform === "linux" &&
+      !isWsl &&
+      !(yield* fileSystem.exists("/run/dbus/system_bus_socket").pipe(
+        Effect.orElseSucceed(() => true),
+      ))
+    ) {
+      yield* Effect.logInfo("keep-awake skipped: no system bus for the sleep inhibitor");
+      return;
+    }
     const settings = yield* Settings.ServerSettingsService;
     const events = yield* OrchestrationEventStore.OrchestrationEventStore;
     const sql = yield* SqlClient.SqlClient;
