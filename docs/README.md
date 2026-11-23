@@ -38,34 +38,38 @@
 Start with the [development runbook](./operations/development.md) and
 [contribution policy](../CONTRIBUTING.md).
 
-Internal notes preserve architectural decisions, constraints, and implementation traps that the
-source alone does not explain. Most code changes do not need an internal documentation update. Follow the
-[documentation rules](../AGENTS.md#documentation) before adding one.
+Internal docs preserve architectural decisions, trust boundaries, conventions, and cross-cutting
+traps that the source alone does not explain. Most code changes do not need an internal
+documentation update. Follow the [documentation rules](../AGENTS.md#documentation) before adding
+anything.
+
+### Architecture and boundaries
 
 - [Architecture overview](./internals/overview.md)
 - [Glossary](./internals/glossary.md)
 - [Connection runtime](./internals/connection-runtime.md)
 - [Providers](./internals/providers.md)
-- [Adding a provider](./internals/adding-a-provider.md)
-- [Pull request file revisions](./internals/pull-request-file-revisions.md)
-- [Model classification](./internals/model-manifest.md)
-- [Remote environments](./internals/remote.md)
-- [Server updates](./internals/server-updates.md)
-- [Resource telemetry](./internals/resource-telemetry.md)
-- [Product analytics](./internals/product-analytics.md)
 - [Environment auth](./internals/environment-auth.md)
+- [Remote environments](./internals/remote.md)
 - [T3 Connect](./internals/t3-connect.md)
-- [Assistant citations](./internals/assistant-citations.md)
+- [Server updates](./internals/server-updates.md)
+- [Product analytics](./internals/product-analytics.md)
+- [Performance regression checks](./internals/performance-regressions.md)
 - [Mobile layout](./internals/mobile-layout.md)
 - [Mobile navigation](./internals/mobile-navigation.md)
 - [Mobile development lifecycle](./internals/mobile-development.md)
-- [Terminal runtime](./internals/terminal-runtime.md)
-- [Devices](./internals/devices.md)
-- [Voice input](./internals/voice-input.md)
+
+### Conventions
+
+- [Effect services](./internals/effect-services.md)
+- [Web UI](./internals/web-ui.md)
+- [Testing](./internals/testing.md)
+- [Translating the UI (i18n)](./internals/i18n.md)
 
 ### Runbooks
 
 - [Development and local builds](./operations/development.md)
+- [Dev container](./operations/devcontainer.md)
 - [Scenarios: real-app proof for a fix](./operations/scenarios.md)
 - [T3 Connect setup](./operations/connect-setup.md)
 - [Release](./operations/release.md)

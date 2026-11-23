@@ -36,7 +36,7 @@ vp run dev
 Open the pairing URL printed by the dev runner. The bare origin does not authenticate
 a new browser.
 
-Prefer a container? See [Dev container](../internals/devcontainer.md) for VS Code and Codespaces setup.
+Prefer a container? See [Dev container](./devcontainer.md) for VS Code and Codespaces setup.
 
 ## Forge mirror (optional)
 
