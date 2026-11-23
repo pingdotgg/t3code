@@ -1036,7 +1036,10 @@ describe("buildThreadListV2ListItems", () => {
       const failureItems = buildThreadListV2ListItems({ ...input, items: failureLayout.items });
       expect(failureItems.find((item) => item.type === "v2-project-folder")?.status).toBe(status);
     }
-    expect(threadJumpTarget(items, "thread.jump.2")?.id).toBe("selected");
+    expect(threadJumpTarget(items, "thread.jump.3")).toMatchObject({
+      type: "v2-thread",
+      item: { thread: { id: "selected" } },
+    });
     const expanded = buildThreadListV2ListItems({ ...input, collapsedProjectKeys: [] });
     expect(expanded.filter((item) => item.type === "v2-thread")).toHaveLength(threads.length);
     const emptyScope = buildThreadListV2ListItems({
