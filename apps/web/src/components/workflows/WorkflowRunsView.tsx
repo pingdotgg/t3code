@@ -27,6 +27,7 @@ import {
   defaultWorkflowRunId,
   groupWorkflowRuns,
   listedWorkflowRuns,
+  WORKFLOW_OTHER_KIND,
   workflowQuestionKinds,
   workflowRunAsksKind,
   workflowRunLists,
@@ -206,32 +207,22 @@ export function WorkflowRunsView({
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
-  // A run the address names is that run or none: another one's buttons would act on the wrong run.
-  const shownRunId =
-    selectedRunId === null
-      ? defaultWorkflowRunId(groups)
-      : (all.find((node) => node.run.runId === selectedRunId)?.run.runId ?? null);
-  const shown = all.find((node) => node.run.runId === shownRunId) ?? null;
   // A run that another invoked is not in the list itself; the one it is part of stands for it.
   const listedFor = (node: WorkflowRunNode | null): string | null => {
     if (node === null) return null;
     const parent = all.find((candidate) => candidate.run.runId === node.run.parentRunId);
     return parent === undefined ? node.run.runId : listedFor(parent);
   };
-  const currentRunId = listedFor(shown);
+  // A run the address names is that run or none: another one's buttons would act on the wrong run.
+  const selected =
+    selectedRunId === null ? null : (all.find((node) => node.run.runId === selectedRunId) ?? null);
   // A run opened by its link is shown in a list that has it, so the list never points at nothing.
   const opening = defaultWorkflowListTab(groups);
   const holds = (candidate: WorkflowListTab) =>
-    lists[candidate].some((node) => node.run.runId === currentRunId);
-  // Not while a kind is picked: answering its last question would move the list to every run.
-  const batching = opening === "needs-you" && pickedKind !== EVERY_KIND;
+    lists[candidate].some((node) => node.run.runId === listedFor(selected));
   const tab =
     pickedTab ??
-    (selectedRunId === null || holds(opening) || batching
-      ? opening
-      : holds("running")
-        ? "running"
-        : "all");
+    (selectedRunId === null || holds(opening) ? opening : holds("running") ? "running" : "all");
   const ofWorkflow = lists[tab].filter(
     (node) => section === null || workflowRunInvolves(node, section.name),
   );
@@ -248,6 +239,16 @@ export function WorkflowRunsView({
     candidate.label ?? gt("Other", { $context: "workflow questions that have no kind" });
   const listed =
     kind === EVERY_KIND ? ofWorkflow : ofWorkflow.filter((node) => workflowRunAsksKind(node, kind));
+  // With no run named, the one shown is one the list has: with a kind picked, one that asks it.
+  const shown =
+    selectedRunId !== null
+      ? selected
+      : kind === EVERY_KIND
+        ? (all.find((node) => node.run.runId === defaultWorkflowRunId(groups)) ?? null)
+        : (allWorkflowRunNodes({ needsYou: listed, workflows: [] }).find((node) =>
+            node.questions.some((question) => (question.kind ?? WORKFLOW_OTHER_KIND) === kind),
+          ) ?? null);
+  const currentRunId = listedFor(shown);
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}
@@ -307,7 +308,14 @@ export function WorkflowRunsView({
               </Select>
             ) : null}
             {kinds.length === 0 ? null : (
-              <Select value={kind} onValueChange={(value) => setPickedKind(value ?? EVERY_KIND)}>
+              <Select
+                value={kind}
+                onValueChange={(value) => {
+                  setPickedKind(value ?? EVERY_KIND);
+                  // Held here, so answering the kind's last question does not move the list on.
+                  setPickedTab("needs-you");
+                }}
+              >
                 <SelectTrigger
                   size="sm"
                   aria-label={gt("Kind of question", {
