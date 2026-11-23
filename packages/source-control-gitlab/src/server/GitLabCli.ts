@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -15,10 +16,13 @@ import {
   type VcsProcessExitFailureKind,
 } from "@t3tools/contracts";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
+  type NormalizedGitLabMergeRequestRecord,
+  withSourceProjectPath,
 } from "./gitLabMergeRequests.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
@@ -238,6 +242,24 @@ export class GitLabNamespaceDecodeError extends Schema.TaggedError<GitLabNamespa
   }
 }
 
+export class GitLabMergeRequestBodyReadError extends Schema.TaggedError<GitLabMergeRequestBodyReadError>()(
+  "GitLabMergeRequestBodyReadError",
+  {
+    operation: Schema.Literal("createMergeRequest"),
+    command: Schema.Literal("glab"),
+    cwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  get detail(): string {
+    return "The merge request description could not be read.";
+  }
+
+  override get message(): string {
+    return `GitLab CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export const GitLabCliError = Schema.Union([
   GitLabCliUnavailableError,
   GitLabCliAuthenticationError,
@@ -248,6 +270,7 @@ export const GitLabCliError = Schema.Union([
   GitLabMergeRequestDecodeError,
   GitLabRepositoryDecodeError,
   GitLabNamespaceDecodeError,
+  GitLabMergeRequestBodyReadError,
 ]);
 export type GitLabCliError = typeof GitLabCliError.Type;
 
@@ -280,6 +303,8 @@ export class GitLabCli extends Context.Service<
     readonly execute: (input: {
       readonly cwd: string;
       readonly host?: string | undefined;
+      /** A host taken from caller input, not from a project remote. See `ENVIRONMENT_TOKEN_VARIABLES`. */
+      readonly callerNamedHost?: string | undefined;
       readonly args: ReadonlyArray<string>;
       readonly timeoutMs?: number;
       /** Keeps sensitive payloads out of argv. */
@@ -319,6 +344,7 @@ export class GitLabCli extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
     }) => Effect.Effect<void, GitLabCliError>;
 
     readonly getDefaultBranch: (input: {
@@ -333,6 +359,11 @@ export class GitLabCli extends Context.Service<
   }
 >()("@t3tools/source-control-gitlab/server/GitLabCli") {}
 
+// The create-MR endpoint has no draft attribute; GitLab reads the draft marker from the title.
+// Same markers and case rule as glab's `EnsureTitlePrefix`.
+const draftTitle = (title: string) =>
+  /^\s*(?:\[draft\]|\(draft\)|draft:)/i.test(title) ? title : `Draft: ${title}`;
+
 const RawGitLabRepositoryCloneUrlsSchema = Schema.Struct({
   path_with_namespace: TrimmedNonEmptyString,
   web_url: TrimmedNonEmptyString,
@@ -346,6 +377,10 @@ const RawGitLabDefaultBranchSchema = Schema.Struct({
 
 const decodeGitLabMergeRequestProject = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number, path: TrimmedNonEmptyString })),
+);
+
+const decodeGitLabProjectPath = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ path_with_namespace: TrimmedNonEmptyString })),
 );
 
 const RawGitLabNamespaceSchema = Schema.Struct({
@@ -421,6 +456,26 @@ function parseRepositoryPath(repository: string): {
   return { namespacePath, projectPath };
 }
 
+function parseRepositoryLookup(repository: string): {
+  readonly host: string | null;
+  readonly projectPath: string;
+} {
+  const trimmed = repository.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return { host: null, projectPath: repository };
+  try {
+    const url = new URL(trimmed);
+    const projectPath = decodeURIComponent(url.pathname)
+      .replace(/\/-(?:\/.*)?$/, "")
+      .replace(/^\/+|\/+$/g, "")
+      .replace(/\.git$/, "");
+    return projectPath.length === 0
+      ? { host: null, projectPath: repository }
+      : { host: url.host, projectPath };
+  } catch {
+    return { host: null, projectPath: repository };
+  }
+}
+
 // glab prints a missing project or merge request as a bare 404, and an expired
 // OAuth login as an `invalid_grant` refresh failure without suggesting `glab auth login`.
 const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null => {
@@ -436,9 +491,29 @@ const classifyGlabFailure = (stderr: string): VcsProcessExitFailureKind | null =
   return null;
 };
 
+/**
+ * These are the login for glab's default host (GITLAB_HOST, else gitlab.com). glab before 1.131
+ * sends them to any host a command names, so a host a caller names runs without them and falls
+ * back to that host's own `glab auth login`.
+ */
+const ENVIRONMENT_TOKEN_VARIABLES = ["GITLAB_TOKEN", "GITLAB_ACCESS_TOKEN", "OAUTH_TOKEN"] as const;
+const WITHOUT_ENVIRONMENT_TOKEN = Object.fromEntries(
+  ENVIRONMENT_TOKEN_VARIABLES.map((name) => [name, ""]),
+);
+
+const hostOf = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//, "")
+    .replace(/\/.*$/, "");
+
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* HostProcess.Environment;
+  const defaultHost = hostOf(environment.GITLAB_HOST?.trim() || "gitlab.com");
 
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
@@ -450,8 +525,13 @@ export const make = Effect.gen(function* () {
         command: "glab",
         args: input.args,
         cwd: input.cwd,
-        // glab may otherwise prefer a different checkout remote.
-        ...(input.host === undefined ? {} : { env: { GITLAB_HOST: input.host } }),
+        env: {
+          // glab may otherwise prefer a different checkout remote.
+          ...(input.host === undefined ? {} : { GITLAB_HOST: input.host }),
+          ...(input.callerNamedHost !== undefined && hostOf(input.callerNamedHost) !== defaultHost
+            ? WITHOUT_ENVIRONMENT_TOKEN
+            : {}),
+        },
         classifyFailure: classifyGlabFailure,
         notFoundDetail: "Merge request not found.",
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -485,6 +565,35 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // glab's MR JSON names a fork's source project only by `source_project_id`.
+  const resolveSourceProjectPaths = Effect.fn("GitLabCli.resolveSourceProjectPaths")(function* (
+    cwd: string,
+    records: ReadonlyArray<NormalizedGitLabMergeRequestRecord>,
+    paths: Map<number, string | null>,
+  ) {
+    const ids = new Set<number>();
+    for (const record of records) {
+      const id = record.unresolvedSourceProjectId;
+      if (id !== undefined && !paths.has(id)) ids.add(id);
+    }
+    yield* Effect.forEach(
+      ids,
+      (id) =>
+        execute({ cwd, args: ["api", `projects/${id}`] }).pipe(
+          Effect.flatMap((result) => decodeGitLabProjectPath(result.stdout.trim())),
+          Effect.map((project) => project.path_with_namespace),
+          Effect.orElseSucceed(() => null),
+          Effect.map((path) => void paths.set(id, path)),
+        ),
+      { concurrency: 8, discard: true },
+    );
+    return records.map((record) =>
+      record.unresolvedSourceProjectId === undefined
+        ? record
+        : withSourceProjectPath(record, paths.get(record.unresolvedSourceProjectId) ?? null),
+    );
+  });
+
   return GitLabCli.of({
     execute,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
@@ -492,6 +601,7 @@ export const make = Effect.gen(function* () {
       let pageSize = limit;
       let page = 1;
       const items: GitLabMergeRequestSummary[] = [];
+      const sourceProjectPaths = input.source?.owner ? new Map<number, string | null>() : null;
       while (items.length < limit) {
         const result = yield* execute({
           cwd: input.cwd,
@@ -526,7 +636,11 @@ export const make = Effect.gen(function* () {
             cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
           });
         }
-        items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
+        // Only a fork head can match a fork's merge request, so other lookups skip the API calls.
+        const records = sourceProjectPaths
+          ? yield* resolveSourceProjectPaths(input.cwd, decoded.success, sourceProjectPaths)
+          : decoded.success;
+        items.push(...records.map(toSummaryWithOptionalUpdatedAt));
         // Count raw entries: the decoder drops invalid ones, which would end paging early.
         const entries = decodeJsonArray(raw);
         if (
@@ -561,16 +675,24 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return Effect.succeed(toSummaryWithOptionalUpdatedAt(decoded.success));
+              return resolveSourceProjectPaths(input.cwd, [decoded.success], new Map()).pipe(
+                Effect.map(([record]) => toSummaryWithOptionalUpdatedAt(record!)),
+              );
             }),
           ),
         ),
       );
     }),
     getRepositoryCloneUrls: Effect.fn("GitLabCli.getRepositoryCloneUrls")(function (input) {
+      const { host, projectPath } = parseRepositoryLookup(input.repository);
       return execute({
         cwd: input.cwd,
-        args: ["api", `projects/${encodeURIComponent(input.repository)}`],
+        ...(host === null ? {} : { callerNamedHost: host }),
+        args: [
+          "api",
+          ...(host === null ? [] : ["--hostname", host]),
+          `projects/${encodeURIComponent(projectPath)}`,
+        ],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -656,6 +778,18 @@ export const make = Effect.gen(function* () {
       );
     }),
     createMergeRequest: Effect.fn("GitLabCli.createMergeRequest")(function* (input) {
+      // A confined glab (Snap) has a private /tmp, so it cannot open the server's body file.
+      const description = yield* fileSystem.readFileString(input.bodyFile).pipe(
+        Effect.mapError(
+          (cause) =>
+            new GitLabMergeRequestBodyReadError({
+              operation: "createMergeRequest",
+              command: "glab",
+              cwd: input.cwd,
+              cause,
+            }),
+        ),
+      );
       let project = ":fullpath";
       let targetProjectId: number | undefined;
       if (input.source?.repository || input.source?.owner) {
@@ -691,10 +825,11 @@ export const make = Effect.gen(function* () {
             ? []
             : ["--raw-field", `target_project_id=${targetProjectId}`]),
           "--raw-field",
-          `title=${input.title}`,
+          `title=${input.draft === true ? draftTitle(input.title) : input.title}`,
           "--field",
-          `description=@${input.bodyFile}`,
+          "description=@-",
         ],
+        stdin: description,
       });
     }),
     getDefaultBranch: Effect.fn("GitLabCli.getDefaultBranch")(function (input) {

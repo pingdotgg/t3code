@@ -72,13 +72,20 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       // Another t3 earlier on PATH still runs first, so `t3` would not run this one.
       const otherBin = path.join(root, "other-bin");
       yield* fs.makeDirectory(otherBin);
-      yield* fs.writeFileString(path.join(otherBin, "t3"), "");
+      yield* fs.writeFileString(path.join(otherBin, "t3"), "", { mode: 0o755 });
       const shadowed = yield* provide(installCli(), {
         PATH: `${otherBin}:${path.join(root, "bin")}`,
       });
       assert.isFalse(shadowed.onPath);
       assert.equal(shadowed.shadowedBy, path.join(otherBin, "t3"));
       assert.isUndefined(shadowed.pathCommand);
+      yield* fs.remove(path.join(otherBin, "t3"));
+      yield* fs.makeDirectory(path.join(otherBin, "t3"));
+      const directory = yield* provide(installCli(), {
+        PATH: `${otherBin}:${path.join(root, "bin")}`,
+      });
+      assert.isTrue(directory.onPath);
+      assert.isUndefined(directory.shadowedBy);
       const recorded = yield* fs.readFileString(path.join(runtimeDir, "launchers"));
       assert.equal(recorded, `\n${yield* fs.realPath(path.join(root, "bin"))}/t3\n`);
 

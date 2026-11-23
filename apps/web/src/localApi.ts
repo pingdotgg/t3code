@@ -4,11 +4,13 @@ import type {
   ContextMenuSource,
   LocalApi,
 } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { isWebUrl } from "./browser/webUrl";
 import { requestConfirmDialog } from "./confirmDialog";
 import { dismissContextMenu, showContextMenuFallback } from "./contextMenuFallback";
 import { readBrowserClientSettings, writeBrowserClientSettings } from "./clientPersistenceStorage";
+import { m } from "./i18n/messages";
 
 let cachedApi: LocalApi | undefined;
 
@@ -28,21 +30,21 @@ export function createLocalApi(): LocalApi {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
           if (!opened) {
-            throw new Error("Unable to open link.");
+            throw new Error(m(msg("Unable to open link.")));
           }
           return;
         }
 
-        if (!isWebUrl(url)) throw new Error("Unable to open link.");
+        if (!isWebUrl(url)) throw new Error(m(msg("Unable to open link.")));
         window.open(url, "_blank", "noopener,noreferrer");
       },
       openSystemSettings: async (pane) => {
         if (!window.desktopBridge) {
-          throw new Error("Unable to open System Settings.");
+          throw new Error(m(msg("Unable to open System Settings.")));
         }
         const opened = await window.desktopBridge.openSystemSettings(pane);
         if (!opened) {
-          throw new Error("Unable to open System Settings.");
+          throw new Error(m(msg("Unable to open System Settings.")));
         }
       },
     },
