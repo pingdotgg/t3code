@@ -62,6 +62,7 @@ const LoopStats = Schema.Struct({
   p50: Schema.Number,
   p99: Schema.Number,
   max: Schema.Number,
+  samples: Schema.Number,
   gcCount: Schema.Number,
   gcMs: Schema.Number,
 });
@@ -285,11 +286,9 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
   const decodeCpuProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: CpuProfile }));
   return {
     // getrusage keeps the switches of threads that already exited, unlike per-thread counters.
-    // The delay histogram's timer wakes an idle loop once per sample, so the same read takes its
-    // sample count off: a difference of two reads then covers one interval for both counters.
     contextSwitches: send("Runtime.evaluate", {
       expression:
-        "(() => { const u = process.resourceUsage(); return u.voluntaryContextSwitches + u.involuntaryContextSwitches - (globalThis.__t3ServerMetrics?.delay.count ?? 0); })()",
+        "(() => { const u = process.resourceUsage(); return u.voluntaryContextSwitches + u.involuntaryContextSwitches; })()",
       returnByValue: true,
     }).pipe(
       Effect.flatMap(decodeEvaluated),
@@ -326,6 +325,7 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
           p50: ms(bench.delay.percentile(50)),
           p99: ms(bench.delay.percentile(99)),
           max: ms(bench.delay.max),
+          samples: bench.delay.count,
           gcCount: bench.gcCount,
           gcMs: bench.gcMs,
         });
@@ -641,6 +641,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       loopDelayP50Ms: round(loop.p50),
       loopDelayP99Ms: round(loop.p99),
       loopDelayMaxMs: round(loop.max),
+      loopSamples: loop.samples,
       gcCount: loop.gcCount,
       gcPauseMs: round(loop.gcMs),
     };

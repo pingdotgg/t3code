@@ -12,6 +12,11 @@ const Window = Schema.Struct({
   loopDelayP50Ms: Schema.optional(Schema.Number),
   loopDelayP99Ms: Schema.optional(Schema.Number),
   loopDelayMaxMs: Schema.optional(Schema.Number),
+  /**
+   * Delay samples taken. Each can wake an idle loop, so they sit inside `wakeupsPerSec` (up to
+   * 100/s at rest, near none under load, when the loop is already awake); not compared.
+   */
+  loopSamples: Schema.optional(Schema.Number),
   /** GC events and their summed pause in the window, from a `gc` PerformanceObserver. */
   gcCount: Schema.optional(Schema.Number),
   gcPauseMs: Schema.optional(Schema.Number),
@@ -206,7 +211,13 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   const improved: string[] = [];
   let compared = 0;
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
-    if (metric === "soak.minutes" || metric.startsWith("scaling.points")) continue;
+    if (
+      metric === "soak.minutes" ||
+      metric.endsWith("loopSamples") ||
+      metric.startsWith("scaling.points")
+    ) {
+      continue;
+    }
     const x = a.get(metric);
     const y = b.get(metric);
     if (!x || !y) {
