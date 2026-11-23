@@ -366,6 +366,52 @@ function makeProviderThread(input: {
   };
 }
 
+const rawBearer = (config: { readonly authorizationHeader: string } | undefined) => {
+  assert.isDefined(config);
+  return config!.authorizationHeader.replace(/^Bearer\s+/, "");
+};
+
+const makeRunCreatedEvent = (input: {
+  readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
+  readonly threadId: ThreadId;
+  readonly runId: RunId;
+  readonly attemptId: RunAttemptId;
+  readonly nodeId: NodeId;
+  readonly userMessageId: MessageId;
+  readonly providerThreadId: OrchestrationV2ProviderThread["id"];
+  readonly now: DateTime.Utc;
+  readonly ordinal?: number;
+  readonly status?: "interrupted" | "completed";
+  readonly outputSchema?: { readonly type: "object" };
+}) =>
+  Effect.map(input.idAllocator.allocate.event({ threadId: input.threadId }), (id) => ({
+    id,
+    type: "run.created" as const,
+    threadId: input.threadId,
+    runId: input.runId,
+    nodeId: input.nodeId,
+    driver: CODEX_DRIVER,
+    occurredAt: input.now,
+    payload: {
+      id: input.runId,
+      threadId: input.threadId,
+      ordinal: input.ordinal ?? 1,
+      providerInstanceId: modelSelection.instanceId,
+      modelSelection,
+      providerThreadId: input.providerThreadId,
+      userMessageId: input.userMessageId,
+      rootNodeId: input.nodeId,
+      activeAttemptId: input.attemptId,
+      status: input.status ?? ("completed" as const),
+      requestedAt: input.now,
+      startedAt: input.now,
+      completedAt: input.now,
+      checkpointId: null,
+      contextHandoffId: null,
+      ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
+    },
+  }));
+
 // A Codex native subagent's provider thread is owned by its child app thread
 // but reachable from the parent's projection through the subagent record.
 const makeNativeChildFixture = Effect.fnUntraced(function* () {
@@ -2277,44 +2323,33 @@ it.effect(
         const attempt2 = idAllocator.derive.runAttempt({ runId: run2, attemptOrdinal: 1 });
         const run3 = idAllocator.derive.run({ threadId, ordinal: 3 });
         const attempt3 = idAllocator.derive.runAttempt({ runId: run3, attemptOrdinal: 1 });
-        const makeTypedRunEvent = (
-          runId: RunId,
-          attemptId: RunAttemptId,
-          ordinal: number,
-          status: "interrupted" | "completed",
-        ) =>
-          Effect.map(idAllocator.allocate.event({ threadId }), (id) => ({
-            id,
-            type: "run.created" as const,
-            threadId,
-            runId,
-            nodeId: idAllocator.derive.rootNode({ runId }),
-            driver: CODEX_DRIVER,
-            occurredAt: now,
-            payload: {
-              id: runId,
-              threadId,
-              ordinal,
-              providerInstanceId: modelSelection.instanceId,
-              modelSelection,
-              providerThreadId: providerThread.id,
-              userMessageId: MessageId.make(`msg-compact-mcp-${ordinal}`),
-              rootNodeId: idAllocator.derive.rootNode({ runId }),
-              activeAttemptId: attemptId,
-              status,
-              requestedAt: now,
-              startedAt: now,
-              completedAt: now,
-              checkpointId: null,
-              contextHandoffId: null,
-              outputSchema: { type: "object" as const },
-            },
-          }));
         yield* eventSink.write({
           events: [
             yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
-            yield* makeTypedRunEvent(run1, attempt1, 1, "interrupted"),
-            yield* makeTypedRunEvent(run2, attempt2, 2, "completed"),
+            yield* makeRunCreatedEvent({
+              idAllocator,
+              threadId,
+              runId: run1,
+              attemptId: attempt1,
+              nodeId: idAllocator.derive.rootNode({ runId: run1 }),
+              userMessageId: MessageId.make("msg-compact-mcp-1"),
+              providerThreadId: providerThread.id,
+              now,
+              status: "interrupted",
+              outputSchema: { type: "object" },
+            }),
+            yield* makeRunCreatedEvent({
+              idAllocator,
+              threadId,
+              runId: run2,
+              attemptId: attempt2,
+              nodeId: idAllocator.derive.rootNode({ runId: run2 }),
+              userMessageId: MessageId.make("msg-compact-mcp-2"),
+              providerThreadId: providerThread.id,
+              now,
+              ordinal: 2,
+              outputSchema: { type: "object" },
+            }),
           ],
         });
 
@@ -2327,9 +2362,7 @@ it.effect(
           attemptId: attempt1,
           requireRunScopedMcp: true,
         });
-        const config1 = yield* mcpSessions.read(threadId);
-        assert.isDefined(config1);
-        const token1 = config1!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const token1 = rawBearer(yield* mcpSessions.read(threadId));
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
 
         const subscriber = yield* runtime.subscribeEvents!;
@@ -2359,9 +2392,7 @@ it.effect(
           },
         });
 
-        const config3 = yield* mcpSessions.read(threadId);
-        assert.isDefined(config3);
-        const token3 = config3!.authorizationHeader.replace(/^Bearer\s+/, "");
+        const token3 = rawBearer(yield* mcpSessions.read(threadId));
         assert.notEqual(token3, token1);
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
         assert.equal((yield* registry.resolve(token3))?.thread.runId, run3);
@@ -3599,10 +3630,6 @@ it.effect.each([
 ])("$description", ({ scenario }) =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
-    const rawBearer = (config: { readonly authorizationHeader: string } | undefined) => {
-      assert.isDefined(config);
-      return config!.authorizationHeader.replace(/^Bearer\s+/, "");
-    };
     const openFor = (
       manager: ProviderSessionManager.ProviderSessionManagerV2Shape,
       providerSessionId: ProviderSessionId,
@@ -3644,44 +3671,6 @@ it.effect.each([
           providerSessionId,
         };
       });
-    const makeCompletedRunEvent = (input: {
-      readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
-      readonly threadId: ThreadId;
-      readonly runId: RunId;
-      readonly attemptId: RunAttemptId;
-      readonly nodeId: NodeId;
-      readonly userMessageId: MessageId;
-      readonly providerThreadId: OrchestrationV2ProviderThread["id"];
-      readonly now: DateTime.Utc;
-      readonly outputSchema?: { readonly type: "object" };
-    }) =>
-      Effect.map(input.idAllocator.allocate.event({ threadId: input.threadId }), (id) => ({
-        id,
-        type: "run.created" as const,
-        threadId: input.threadId,
-        runId: input.runId,
-        nodeId: input.nodeId,
-        driver: CODEX_DRIVER,
-        occurredAt: input.now,
-        payload: {
-          id: input.runId,
-          threadId: input.threadId,
-          ordinal: 1,
-          providerInstanceId: modelSelection.instanceId,
-          modelSelection,
-          providerThreadId: input.providerThreadId,
-          userMessageId: input.userMessageId,
-          rootNodeId: input.nodeId,
-          activeAttemptId: input.attemptId,
-          status: "completed" as const,
-          requestedAt: input.now,
-          startedAt: input.now,
-          completedAt: input.now,
-          checkpointId: null,
-          contextHandoffId: null,
-          ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
-        },
-      }));
     const withServerSettings = (
       input: Omit<Parameters<typeof layerTest>[0], "serverSettingsLayer">,
     ) => {
@@ -3786,7 +3775,7 @@ it.effect.each([
         yield* eventSink.write({
           events: [
             yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
-            yield* makeCompletedRunEvent({
+            yield* makeRunCreatedEvent({
               idAllocator,
               threadId,
               runId: run1,
@@ -3925,7 +3914,7 @@ it.effect.each([
         yield* eventSink.write({
           events: [
             yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
-            yield* makeCompletedRunEvent({
+            yield* makeRunCreatedEvent({
               idAllocator,
               threadId,
               runId: run1,

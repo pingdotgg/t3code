@@ -3234,39 +3234,14 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
-        const ensureTurnMcp = (
-          input: Pick<
-            ProviderAdapter.ProviderAdapterV2TurnInput,
-            "threadId" | "providerThread" | "runId" | "attemptId"
-          >,
-        ) =>
-          ensureTurnMcpSession({
-            providerSessionId,
-            threadId: input.threadId,
-            providerInstanceId: runtime.instanceId,
-            runtime,
-            runId: input.runId,
-            attemptId: input.attemptId,
-          }).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: runtime.driver,
-                  threadId: input.threadId,
-                  providerThreadId: input.providerThread.id,
-                  runId: input.runId,
-                  cause,
-                }),
-            ),
-          );
         // A start, continuation or compaction keeps the session busy until its turn.terminal.
-        const runTrackedTurn = <A, E>(
+        const runTrackedTurn = <E>(
           input: Pick<
             ProviderAdapter.ProviderAdapterV2TurnInput,
             "threadId" | "providerThread" | "runId" | "attemptId" | "runOrdinal"
           >,
           releasedCause: string,
-          run: () => Effect.Effect<A, E>,
+          run: () => Effect.Effect<void, E>,
         ) =>
           observeActivity(
             providerSessionId,
@@ -3276,7 +3251,27 @@ export const layerWithOptions = (
               providerInstanceId: runtime.instanceId,
             }),
           ).pipe(
-            Effect.andThen(ensureTurnMcp(input)),
+            Effect.andThen(
+              ensureTurnMcpSession({
+                providerSessionId,
+                threadId: input.threadId,
+                providerInstanceId: runtime.instanceId,
+                runtime,
+                runId: input.runId,
+                attemptId: input.attemptId,
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: runtime.driver,
+                      threadId: input.threadId,
+                      providerThreadId: input.providerThread.id,
+                      runId: input.runId,
+                      cause,
+                    }),
+                ),
+              ),
+            ),
             // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
             Effect.andThen(
               holdThreadLoaded({
