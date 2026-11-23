@@ -100,6 +100,21 @@ describe("compareMetrics", () => {
     const result = compareMetrics(quietRuns(base), withSamples);
     expect(result.regressed).toEqual([]);
     expect(result.table).toContain("| quiet.wakeupsPerSec | 7 | 160 | not comparable | | |");
+    // The per-thread fit comes from the quiet windows, so it follows their method.
+    const scaling = (wakeupsPerThread: number) => ({
+      heapMBPerThread: 1,
+      rssMBPerThread: 2,
+      cpuPctPerThread: 0.1,
+      wakeupsPerThread,
+      points: [],
+    });
+    const fitted = (metrics: ServerMetrics, wakeupsPerThread: number): ServerMetrics => ({
+      meta,
+      runs: metrics.runs.map((run) => ({ ...run, scaling: scaling(wakeupsPerThread) })),
+    });
+    const fit = compareMetrics(fitted(quietRuns(base), 0.5), fitted(withSamples, 6));
+    expect(fit.regressed).toEqual([]);
+    expect(fit.table).toContain("| scaling.wakeupsPerThread | 0.5 | 6 | not comparable | | |");
     expect(compareMetrics(withSamples, withSamples).compared).toBe(10);
   });
 
