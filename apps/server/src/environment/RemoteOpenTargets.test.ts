@@ -26,7 +26,7 @@ const requireBuiltin = NodeModule.createRequire(import.meta.url);
 const nodeOs: typeof NodeOS = requireBuiltin("node:os");
 const nodeDns: typeof NodeDns = requireBuiltin("node:dns");
 
-const useMacTailnet = () => {
+const useMacTailnet = (input: { readonly ipv4?: boolean } = {}) => {
   vi.spyOn(nodeOs, "networkInterfaces").mockReturnValue({
     // Another VPN on the shared CGNAT range, listed before Tailscale.
     utun3: [
@@ -40,14 +40,18 @@ const useMacTailnet = () => {
       },
     ],
     utun4: [
-      {
-        address: "100.64.1.2",
-        netmask: "255.255.255.255",
-        family: "IPv4",
-        mac: "00:00:00:00:00:00",
-        internal: false,
-        cidr: "100.64.1.2/32",
-      },
+      ...(input.ipv4 === false
+        ? []
+        : [
+            {
+              address: "100.64.1.2",
+              netmask: "255.255.255.255",
+              family: "IPv4" as const,
+              mac: "00:00:00:00:00:00",
+              internal: false,
+              cidr: "100.64.1.2/32",
+            },
+          ]),
       {
         address: "fd7a:115c:a1e0::1",
         netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
@@ -268,6 +272,26 @@ describe("RemoteOpenTargets", () => {
       ]);
       expect(reverseLookup).toHaveBeenCalledWith("100.64.1.2");
       expect(spawned).toEqual([]);
+    }),
+  );
+
+  it.effect("with a macOS Tailscale app on an IPv6-only tailnet, resolves from IPv6", () =>
+    Effect.gen(function* () {
+      const reverseLookup = useMacTailnet({ ipv4: false }).mockResolvedValue([
+        "bb-1.tail1234.ts.net.",
+      ]);
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: false },
+        tailscale: TAILSCALE_SSH,
+        hostname: "bb-1",
+        username: "t3-user",
+        platform: "darwin",
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+        { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      expect(reverseLookup).toHaveBeenCalledWith("fd7a:115c:a1e0::1");
     }),
   );
 

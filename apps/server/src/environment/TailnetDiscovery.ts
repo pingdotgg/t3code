@@ -45,15 +45,21 @@ export const isTailscaleInterface = (
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
 const readTailnetFromInterfaces = Effect.gen(function* () {
-  const address = Object.entries(NodeOS.networkInterfaces())
+  const entries = Object.entries(NodeOS.networkInterfaces())
     .flatMap(([name, entries = []]) => (isTailscaleInterface(name, entries) ? entries : []))
-    .find(
-      (entry) =>
-        !entry.internal && entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
-    )?.address;
+    .filter((entry) => !entry.internal);
+  const ipv4 = entries.find(
+    (entry) => entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
+  )?.address;
+  // A tailnet can disable IPv4; its MagicDNS name still resolves from the IPv6 address.
+  const address =
+    ipv4 ??
+    entries.find((entry) => entry.family === "IPv6" && isTailnetHost(entry.address))?.address;
   if (address === undefined) return null;
   const magicDnsName = yield* lookupMagicDnsName(address);
-  return magicDnsName === null ? null : { magicDnsName, ipv4Addresses: [address], fromCli: false };
+  return magicDnsName === null
+    ? null
+    : { magicDnsName, ipv4Addresses: ipv4 === undefined ? [] : [ipv4], fromCli: false };
 });
 
 /**
