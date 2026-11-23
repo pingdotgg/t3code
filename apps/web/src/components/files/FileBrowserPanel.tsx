@@ -27,7 +27,11 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
-import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import {
+  PIERRE_TREE_UNSAFE_CSS,
+  pierreTreeStyle,
+  titleClippedPierreTreeRow,
+} from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -645,7 +649,34 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={gt("{projectName} files", { projectName })}
           className="min-h-0 flex-1 overflow-hidden"
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey ||
+              dragMention.isDragInProgress()
+            ) {
+              return;
+            }
+            // Pierre emits no change for its sole selected row; read before the click to avoid double opens.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || entryKindsRef.current.get(path) !== "file") return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (!clickedSelectedRow) return;
+            treeSelectionPathRef.current = path;
+            onOpenFile(panelPath(path));
+          }}
           style={pierreTreeStyle(resolvedTheme)}
+          onPointerOver={titleClippedPierreTreeRow}
         />
       )}
     </div>
