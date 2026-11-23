@@ -56,7 +56,7 @@ fn enqueue(store: &mut Store, effects: &[Effect]) {
 /// What a claim took, as `(thread, effect_type)`.
 fn claimed(store: &Store) -> Vec<(i64, String, String)> {
     store
-        .claim_effects(64)
+        .claim_effects(64, || true)
         .unwrap()
         .into_iter()
         .map(|c| {
@@ -185,6 +185,16 @@ fn a_thread_runs_one_effect_at_a_time_in_commit_order() {
     let next = claimed(&t.1);
     assert_eq!(next.len(), 1);
     assert_eq!(next[0].2, "provider-turn.start");
+}
+
+/// A dropped engine's worker claims nothing, so a newer engine on the same store runs its rows
+/// alone (`engine_tests::a_restart_continues_the_running_turn_in_the_same_provider_thread`).
+#[test]
+fn a_claim_its_engine_no_longer_owns_takes_no_row() {
+    let mut t = TempStore::new("unowned");
+    enqueue(&mut t.1, &[start("t1", "r1")]);
+    assert!(t.1.claim_effects(64, || false).unwrap().is_empty());
+    assert_eq!(claimed(&t.1).len(), 1, "the row stayed pending");
 }
 
 /// "runs title generation beside critical work while serializing each lane", and a free row

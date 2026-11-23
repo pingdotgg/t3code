@@ -39,15 +39,27 @@ impl Inner {
         let wake = self.effects_wake.clone();
         tokio::spawn(async move {
             loop {
-                // The engine is gone: stop.
+                // The engine is gone: stop. Another engine may own the store now.
                 let Some(inner) = weak.upgrade() else { return };
+                if inner.engine_dropped.load(Ordering::SeqCst) {
+                    return;
+                }
+                let owner = inner.clone();
                 let claimed = inner
-                    .db(|store| store.claim_effects(CLAIM_BATCH))
+                    .db(move |store| {
+                        store.claim_effects(CLAIM_BATCH, || {
+                            !owner.engine_dropped.load(Ordering::SeqCst)
+                        })
+                    })
                     .await
                     .unwrap_or_else(|e| {
                         eprintln!("conn-engine: could not claim effects: {e}");
                         vec![]
                     });
+                // Dropped while the claim ran: leave the rows to the next engine's start.
+                if inner.engine_dropped.load(Ordering::SeqCst) {
+                    return;
+                }
                 let worked = !claimed.is_empty();
                 for row in claimed {
                     tokio::spawn(inner.clone().run_claimed(row));
@@ -66,6 +78,9 @@ impl Inner {
         tokio::spawn(async move {
             loop {
                 let Some(inner) = weak.upgrade() else { return };
+                if inner.engine_dropped.load(Ordering::SeqCst) {
+                    return;
+                }
                 if let Err(e) = inner.db(|store| store.prune_settled_effects()).await {
                     eprintln!("conn-engine: could not prune settled effects: {e}");
                 }

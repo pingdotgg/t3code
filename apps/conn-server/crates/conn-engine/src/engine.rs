@@ -142,6 +142,17 @@ pub struct SqliteEngine {
     inner: Arc<Inner>,
 }
 
+impl Drop for SqliteEngine {
+    /// The engine's owner let go: its worker claims nothing more. Effects already running end
+    /// on their own, as a process ends its in-flight work.
+    fn drop(&mut self) {
+        self.inner
+            .engine_dropped
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.inner.effects_wake.notify_one();
+    }
+}
+
 impl std::fmt::Debug for SqliteEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SqliteEngine").finish_non_exhaustive()
@@ -184,6 +195,8 @@ pub(crate) struct Inner {
     pub(crate) effects_wake: Arc<tokio::sync::Notify>,
     /// The effect worker started ([`Inner::ensure_effect_worker`]).
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
+    /// The [`SqliteEngine`] was dropped: the worker stops claiming.
+    pub(crate) engine_dropped: std::sync::atomic::AtomicBool,
     /// Test hook: pauses one command inside its transaction, before it commits.
     #[cfg(test)]
     pub(crate) commit_pause: Mutex<Option<CommitPause>>,
@@ -293,6 +306,7 @@ impl SqliteEngine {
                 idle_session: config.idle_session,
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
+                engine_dropped: std::sync::atomic::AtomicBool::new(false),
                 #[cfg(test)]
                 commit_pause: Mutex::new(None),
             }),

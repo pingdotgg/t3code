@@ -217,7 +217,32 @@ impl Store {
     /// `EffectOutbox.claimNext`, for up to `limit` rows at once: each becomes `running`, in
     /// one statement, so no row is claimed twice. A row this build cannot read fails, and the
     /// next row of its thread may run.
-    pub(crate) fn claim_effects(&self, limit: usize) -> StoreResult<Vec<Claimed>> {
+    ///
+    /// `owned` is asked while the write lock is held: when it says no, nothing is claimed. A
+    /// dropped engine's claim then cannot take a row that a newer engine on the same store
+    /// committed after the drop.
+    pub(crate) fn claim_effects(
+        &self,
+        limit: usize,
+        owned: impl Fn() -> bool,
+    ) -> StoreResult<Vec<Claimed>> {
+        let conn = self.raw();
+        conn.execute_batch("BEGIN IMMEDIATE").map_err(err)?;
+        let claimed = if owned() {
+            self.claim_rows(limit)
+        } else {
+            Ok(vec![])
+        };
+        let end = if claimed.is_ok() {
+            "COMMIT"
+        } else {
+            "ROLLBACK"
+        };
+        conn.execute_batch(end).map_err(err)?;
+        claimed
+    }
+
+    fn claim_rows(&self, limit: usize) -> StoreResult<Vec<Claimed>> {
         let now = self.now_iso();
         let conn = self.raw();
         loop {
