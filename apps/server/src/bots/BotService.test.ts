@@ -16,6 +16,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { afterEach, vi } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -164,6 +165,8 @@ describe("BotHome pure helpers", () => {
     expect(parseGroupMentions("no mentions here", members)).toEqual([]);
   });
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("BotService", () => {
   it.effect("creates bot home files, imports bot folders, and enforces path containment", () => {
@@ -384,4 +387,30 @@ describe("BotService", () => {
       expect(harness.deletedProjects).toContain(fullAccessBot.projectId);
     }).pipe(Effect.provide(harness.layer));
   });
+
+  it.effect.each([
+    { from: "2026-03-07T23:30:00.000Z", expected: "2026-03-08T13:00:00.000Z" },
+    { from: "2026-10-31T23:30:00.000Z", expected: "2026-11-01T14:00:00.000Z" },
+  ] as const)(
+    "computes fixed-time routine runs on the local calendar from $from",
+    ({ from, expected }) => {
+      const harness = makeTestHarness();
+      return Effect.gen(function* () {
+        vi.stubEnv("TZ", "America/New_York");
+        yield* TestClock.setTime(Date.parse(from));
+        const bots = yield* BotService.BotService;
+        const bot = yield* bots.create({ name: "Morning Bot" });
+        const routine = yield* bots.upsertRoutine({
+          botId: bot.id,
+          title: "Morning sweep",
+          prompt: "Summarize overnight activity.",
+          enabled: true,
+          schedule: { type: "fixed_time", timeOfDay: "09:00" },
+        });
+        expect(routine.nextRunAt).toBe(expected);
+        const listed = yield* bots.listRoutines({ botId: bot.id });
+        expect(listed.routines.find((r) => r.id === routine.id)?.nextRunAt).toBe(expected);
+      }).pipe(Effect.provide(harness.layer));
+    },
+  );
 });
