@@ -15,7 +15,7 @@ import * as Path from "effect/Path";
 import type { ShellEnvironmentPatch } from "@t3tools/contracts";
 import * as HostProcess from "./HostProcess.ts";
 import * as Context from "effect/Context";
-const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
+const SHELL_ENV_NAME_PATTERN = /^[A-Za-z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
 const POSIX_PATH_DELIMITER = ":";
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
@@ -184,6 +184,87 @@ export function readPathFromLaunchctl(
   } catch {
     return undefined;
   }
+}
+
+export const PROXY_ENV_NAMES = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+] as const;
+const PROXY_ENV_NAME_SET: ReadonlySet<string> = new Set(PROXY_ENV_NAMES);
+
+const proxyUrl = (host: string | undefined, port: string | undefined): string | undefined => {
+  if (!host || /[\s,]/u.test(host)) return undefined;
+  const authority = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `http://${authority}${port && /^\d+$/u.test(port) ? `:${port}` : ""}`;
+};
+
+// macOS writes `*.corp` and `169.254/16`; NO_PROXY readers want `.corp` and `169.254.0.0/16`.
+const noProxyEntry = (exception: string): string => {
+  if (exception.startsWith("*.")) return exception.slice(1);
+  const [address = "", bits] = exception.split("/");
+  const octets = address.split(".");
+  return bits !== undefined && octets.length < 4 && octets.every((octet) => /^\d+$/u.test(octet))
+    ? `${[...octets, "0", "0", "0"].slice(0, 4).join(".")}/${bits}`
+    : exception;
+};
+
+/**
+ * Proxy variables for the manual HTTP/HTTPS proxy in `scutil --proxy` output, the macOS System
+ * Settings proxy. Empty when none is enabled, or when a PAC file decides per host instead.
+ */
+export function macosSystemProxyEnvironment(
+  scutilOutput: string,
+): Partial<Record<(typeof PROXY_ENV_NAMES)[number], string>> {
+  const settings = new Map<string, string>();
+  const exceptions: string[] = [];
+  // Per-interface copies nest under __SCOPED__; only the top-level dictionary is the active proxy.
+  const containers: string[] = [];
+  for (const line of scutilOutput.split("\n")) {
+    const entry = line.trim();
+    if (entry === "}") {
+      containers.pop();
+      continue;
+    }
+    const separator = entry.indexOf(" : ");
+    const key = separator === -1 ? entry : entry.slice(0, separator);
+    const value = separator === -1 ? "" : entry.slice(separator + 3).trim();
+    if (entry.endsWith("{")) containers.push(key);
+    else if (containers.length === 1) settings.set(key, value);
+    else if (containers.length === 2 && containers[1] === "ExceptionsList") exceptions.push(value);
+  }
+  if (settings.get("ProxyAutoConfigEnable") === "1") return {};
+
+  const http =
+    settings.get("HTTPEnable") === "1"
+      ? proxyUrl(settings.get("HTTPProxy"), settings.get("HTTPPort"))
+      : undefined;
+  const https =
+    settings.get("HTTPSEnable") === "1"
+      ? proxyUrl(settings.get("HTTPSProxy"), settings.get("HTTPSPort"))
+      : undefined;
+  if (!http && !https) return {};
+
+  // macOS keeps loopback direct without listing it; NO_PROXY has to say so.
+  const noProxy = [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    ...exceptions
+      .filter((exception) => exception.length > 0 && !/[\s,]/u.test(exception))
+      .map(noProxyEntry),
+  ].join(",");
+  return {
+    ...(http ? { HTTP_PROXY: http, http_proxy: http } : {}),
+    ...(https ? { HTTPS_PROXY: https, https_proxy: https } : {}),
+    NO_PROXY: noProxy,
+    no_proxy: noProxy,
+  };
 }
 
 export function mergePathEntries(
@@ -1231,6 +1312,8 @@ export function applyShellEnvironment(
 ): void {
   for (const [key, value] of Object.entries(patch)) {
     if (key === "PATH" && platform === "win32") setWindowsPath(env, value);
+    // Windows names ignore case, so clearing an unset `http_proxy` would delete `HTTP_PROXY`.
+    else if (platform === "win32" && PROXY_ENV_NAME_SET.has(key)) continue;
     else if (value === null) delete env[key];
     else env[key] = value;
   }

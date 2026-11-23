@@ -28,6 +28,7 @@ import {
   gitForWindowsBash,
   isCommandAvailable,
   listLoginShellCandidates,
+  macosSystemProxyEnvironment,
   mergePathEntries,
   mergePathValues,
   npmShimExecutable,
@@ -246,6 +247,71 @@ describe("listLoginShellCandidates", () => {
       "/opt/homebrew/bin/nu",
       "/bin/zsh",
     ]);
+  });
+});
+
+describe("macosSystemProxyEnvironment", () => {
+  const scutil = (lines: ReadonlyArray<string>) =>
+    ["<dictionary> {", ...lines.map((line) => `  ${line}`), "}", ""].join("\n");
+  const scoped = [
+    "__SCOPED__ : <dictionary> {",
+    "  en0 : <dictionary> {",
+    "    ExceptionsList : <array> {",
+    "      0 : scoped.example",
+    "    }",
+    "    HTTPEnable : 1",
+    "    HTTPPort : 9",
+    "    HTTPProxy : scoped-proxy",
+    "  }",
+    "}",
+  ];
+
+  it.each([
+    {
+      name: "maps the HTTP and HTTPS proxies and their exceptions",
+      lines: [
+        "ExceptionsList : <array> {",
+        "  0 : *.local",
+        "  1 : 169.254/16",
+        "  2 : intranet.corp",
+        "}",
+        "ExcludeSimpleHostnames : 0",
+        "HTTPEnable : 1",
+        "HTTPPort : 8080",
+        "HTTPProxy : proxy.corp",
+        "HTTPSEnable : 1",
+        "HTTPSPort : 8443",
+        "HTTPSProxy : fd00::1",
+        ...scoped,
+      ],
+      expected: {
+        HTTP_PROXY: "http://proxy.corp:8080",
+        http_proxy: "http://proxy.corp:8080",
+        HTTPS_PROXY: "http://[fd00::1]:8443",
+        https_proxy: "http://[fd00::1]:8443",
+        NO_PROXY: "localhost,127.0.0.1,::1,.local,169.254.0.0/16,intranet.corp",
+        no_proxy: "localhost,127.0.0.1,::1,.local,169.254.0.0/16,intranet.corp",
+      },
+    },
+    {
+      name: "ignores a proxy that is configured but switched off",
+      lines: ["HTTPEnable : 0", "HTTPPort : 8080", "HTTPProxy : proxy.corp", ...scoped],
+      expected: {},
+    },
+    {
+      name: "leaves a PAC-driven setup alone",
+      lines: [
+        "HTTPEnable : 1",
+        "HTTPPort : 8080",
+        "HTTPProxy : proxy.corp",
+        "ProxyAutoConfigEnable : 1",
+        "ProxyAutoConfigURLString : http://corp/proxy.pac",
+      ],
+      expected: {},
+    },
+    { name: "returns nothing for output that is not a proxy dictionary", lines: [], expected: {} },
+  ])("$name", ({ lines, expected }) => {
+    expect(macosSystemProxyEnvironment(scutil(lines))).toEqual(expected);
   });
 });
 
@@ -1442,9 +1508,12 @@ describe("desktop shell environment updates", () => {
       });
       env.Path = "C:\\stale";
       env.path = "C:\\other";
-      applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null }, platform);
+      env.http_proxy = "http://inherited";
+      applyShellEnvironment(env, { PATH: null, SSH_AUTH_SOCK: null, http_proxy: null }, platform);
       expect(env).toEqual({
-        ...(platform === "win32" ? {} : { Path: "C:\\stale", path: "C:\\other" }),
+        ...(platform === "win32"
+          ? { http_proxy: "http://inherited" }
+          : { Path: "C:\\stale", path: "C:\\other" }),
         UNRELATED: "keep",
       });
     },

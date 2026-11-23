@@ -636,8 +636,10 @@ describe("DesktopShellEnvironment", () => {
         },
       });
 
-      assert.equal(commands.length, 1);
-      assert.equal(commands[0]?._tag === "StandardCommand" ? commands[0].command : "", "/bin/zsh");
+      assert.deepEqual(
+        commands.map((command) => (command._tag === "StandardCommand" ? command.command : "")),
+        ["/bin/zsh", "/usr/sbin/scutil"],
+      );
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin:/opt/bin : /Users/test/.local/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
       assert.equal(env.HOMEBREW_PREFIX, "/opt/homebrew");
@@ -742,6 +744,33 @@ describe("DesktopShellEnvironment", () => {
   );
 
   it.effect.each([
+    { name: "uses the macOS system proxy when the shell names none", shellProxy: undefined },
+    { name: "keeps the shell's proxy over the macOS system proxy", shellProxy: "http://shell:1" },
+  ])("$name", ({ shellProxy }) =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+      const commands: string[] = [];
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: (command) => {
+          if (command._tag !== "StandardCommand") return "";
+          commands.push(command.command);
+          return command.command === "/usr/sbin/scutil"
+            ? "<dictionary> {\n  HTTPSEnable : 1\n  HTTPSPort : 8080\n  HTTPSProxy : proxy.corp\n}\n"
+            : envOutput({ PATH: "/usr/bin", ...(shellProxy ? { https_proxy: shellProxy } : {}) });
+        },
+      });
+
+      assert.deepEqual(commands, shellProxy ? ["/bin/zsh"] : ["/bin/zsh", "/usr/sbin/scutil"]);
+      assert.equal(env.https_proxy, shellProxy ?? "http://proxy.corp:8080");
+      assert.equal(env.HTTPS_PROXY, shellProxy ? undefined : "http://proxy.corp:8080");
+      assert.equal(env.NO_PROXY, shellProxy ? undefined : "localhost,127.0.0.1,::1");
+    }),
+  );
+
+  it.effect.each([
     {
       name: "hydrates both Android SDK names when neither is inherited",
       inherited: {},
@@ -813,7 +842,12 @@ describe("DesktopShellEnvironment", () => {
         },
       });
 
-      assert.deepEqual(commands, ["/opt/homebrew/bin/nu", "/bin/zsh", "/bin/launchctl"]);
+      assert.deepEqual(commands, [
+        "/opt/homebrew/bin/nu",
+        "/bin/zsh",
+        "/bin/launchctl",
+        "/usr/sbin/scutil",
+      ]);
       assert.equal(env.PATH, "/opt/homebrew/bin:/usr/bin");
       assert.isFalse(prepared);
     }),

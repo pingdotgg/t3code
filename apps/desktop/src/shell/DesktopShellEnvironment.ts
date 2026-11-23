@@ -3,7 +3,9 @@ import {
   applyShellEnvironment,
   buildEnvironmentCaptureCommand,
   listLoginShellCandidates,
+  macosSystemProxyEnvironment,
   mergePathValues,
+  PROXY_ENV_NAMES,
   readUserLoginShell,
   setWindowsPath,
   windowsEnvironmentValueCommand,
@@ -50,6 +52,7 @@ interface WindowsProbeOptions {
 const DesktopShellEnvironmentProbe = Schema.Literals([
   "login-shell",
   "launchctl-path",
+  "system-proxy",
   "powershell-profile",
   "powershell-no-profile",
 ]);
@@ -128,6 +131,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "__MISE_DIFF",
   "JAVA_HOME",
   "PNPM_HOME",
+  ...PROXY_ENV_NAMES,
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -386,6 +390,15 @@ const readLaunchctlPath = (env: NodeJS.ProcessEnv) =>
     timeout: LAUNCHCTL_TIMEOUT,
   }).pipe(orEmptyOnTimeout, Effect.map(trimNonEmpty));
 
+const readMacosSystemProxy = (env: NodeJS.ProcessEnv) =>
+  runCommandOutput({
+    env,
+    probe: "system-proxy",
+    command: "/usr/sbin/scutil",
+    args: ["--proxy"],
+    timeout: LAUNCHCTL_TIMEOUT,
+  }).pipe(orEmptyOnTimeout, Effect.map(macosSystemProxyEnvironment));
+
 const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEnvironment")(
   function* (
     names: ReadonlyArray<string>,
@@ -556,10 +569,16 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
       "T3CODE_TELEMETRY_ENABLED",
       "T3CODE_FEATURE_FLAGS",
       "T3CODE_RELEASE_BASE_URL",
+      ...PROXY_ENV_NAMES,
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
       }
+    }
+
+    // Dock launches get no proxy variables, and the System Settings proxy is in no shell file.
+    if (config.platform === "darwin" && PROXY_ENV_NAMES.every((name) => !config.env[name])) {
+      Object.assign(config.env, yield* readMacosSystemProxy(config.env));
     }
 
     // The device host picks the Android SDK from ANDROID_HOME before ANDROID_SDK_ROOT,
