@@ -1724,6 +1724,34 @@ it.effect("merge-back rejects a second fork's context until the first is consume
         [first.threadId, "pending"],
       ],
     );
+
+    // Archiving or deleting a parent cascades only to side chats, so the full fork can still merge back.
+    const mergeNestedInto = (commandId: string) =>
+      orchestrator
+        .dispatch({
+          type: "thread.merge_back",
+          commandId: CommandId.make(commandId),
+          sourceThreadId: nested.threadId,
+          targetThreadId: first.threadId,
+          sourcePoint: { type: "run", runId: nestedRunId },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.flip);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("merge-back-guard-archive-first"),
+      threadId: first.threadId,
+    });
+    const intoArchived = yield* mergeNestedInto("merge-back-guard-into-archived");
+    assert.equal(intoArchived._tag, "OrchestratorDispatchError");
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("merge-back-guard-delete-first"),
+      threadId: first.threadId,
+    });
+    const intoDeleted = yield* mergeNestedInto("merge-back-guard-into-deleted");
+    assert.equal(intoDeleted._tag, "OrchestratorDispatchError");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
