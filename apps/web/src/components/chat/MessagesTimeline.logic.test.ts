@@ -6584,6 +6584,57 @@ describe("live subagents after their parent turn settles", () => {
     });
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
   });
+
+  it("keeps a subagent waiting on approval outside the working window", () => {
+    const childThreadId = ThreadId.make("child-awaiting-approval");
+    const subagent = { ...child("waiting-child", 2, "waiting"), childThreadId };
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: (
+        [
+          {
+            ...base("user", 1),
+            status: "completed",
+            type: "user_message",
+            messageId: MessageId.make("user"),
+            inputIntent: "turn_start",
+            text: "Delegate work",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          subagent,
+        ] satisfies OrchestrationV2TurnItem[]
+      ).map(projected),
+      optimisticMessages: [],
+    });
+    const baseInput = {
+      timelineEntries: entries,
+      latestRun: {
+        runId,
+        status: "running" as const,
+        startedAt: DateTime.formatIso(at(0)),
+        completedAt: null,
+      },
+      runningRunId: runId,
+      isWorking: true,
+      activeTurnStartedAt: DateTime.formatIso(at(0)),
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      turnWorkFold: true,
+    };
+    const waitingInput = {
+      ...baseInput,
+      childApprovalThreadIds: new Set([childThreadId]),
+    };
+    const waitingRows = applyWorkingWindow(deriveMessagesTimelineRows(waitingInput), waitingInput);
+    expect(waitingRows.map((row) => row.id)).toEqual([
+      "user",
+      "working-indicator-row",
+      "waiting-child",
+    ]);
+    const settledRows = applyWorkingWindow(deriveMessagesTimelineRows(baseInput), baseInput);
+    expect(settledRows.map((row) => row.id)).toEqual(["user", "working-indicator-row"]);
+  });
 });
 
 describe("parent run waiting on foreground subagents", () => {
