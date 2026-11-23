@@ -38,6 +38,7 @@ import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopStartupRecovery from "./DesktopStartupRecovery.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopRemoteUpdates from "../updates/DesktopRemoteUpdates.ts";
+import { releaseIdleShipItJob } from "../updates/MacShipItJob.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
@@ -422,6 +423,11 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  // Before an install can submit ShipIt. A running job stays loaded.
+  yield* releaseIdleShipItJob({
+    platform: environment.platform,
+    bundleId: environment.appUserModelId,
+  });
   if (environment.platform === "linux") {
     const selectedBackend = yield* safeStorage.selectedStorageBackend;
     yield* logStartupInfo("safe storage ready", {
