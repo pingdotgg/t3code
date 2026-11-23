@@ -16,7 +16,7 @@
 use rusqlite::{Connection, params};
 
 use crate::commands::Effect;
-use crate::store::{Store, StoreResult, Tx};
+use crate::store::{Store, StoreResult, Tx, owns};
 
 /// The outbox table. `progress` is what a running effect recorded so a later process can go on
 /// from there (a rollback's phase and the provider's answer).
@@ -47,8 +47,9 @@ WHERE status IN ('succeeded', 'cancelled');
 
 /// `SETTLED_EFFECT_RETENTION`: settled rows are kept 7 days. Failed rows stay, as in T3.
 pub(crate) const SETTLED_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
-/// `PRUNE_BATCH_SIZE`: each delete is its own statement, so the store lock is let go between.
-const PRUNE_BATCH: usize = 500;
+/// `PRUNE_BATCH_SIZE`: each delete is its own statement, and the worker lets the store go
+/// between batches.
+pub(crate) const PRUNE_BATCH: usize = 500;
 
 /// Which rows of a thread wait for each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,20 +219,15 @@ impl Store {
     /// one statement, so no row is claimed twice. A row this build cannot read fails, and the
     /// next row of its thread may run.
     ///
-    /// `owned` is asked while the write lock is held: when it says no, nothing is claimed. A
-    /// dropped engine's claim then cannot take a row that a newer engine on the same store
-    /// committed after the drop.
-    pub(crate) fn claim_effects(
-        &self,
-        limit: usize,
-        owned: impl Fn() -> bool,
-    ) -> StoreResult<Vec<Claimed>> {
+    /// Ownership is checked while the write lock is held: a dropped or replaced engine claims
+    /// nothing, so it cannot take a row that a newer engine on the same store committed.
+    pub(crate) fn claim_effects(&self, limit: usize) -> StoreResult<Vec<Claimed>> {
         let conn = self.raw();
         conn.execute_batch("BEGIN IMMEDIATE").map_err(err)?;
-        let claimed = if owned() {
-            self.claim_rows(limit)
-        } else {
-            Ok(vec![])
+        let claimed = match owns(conn, self.owner()) {
+            Ok(true) => self.claim_rows(limit),
+            Ok(false) => Ok(vec![]),
+            Err(e) => Err(e),
         };
         let end = if claimed.is_ok() {
             "COMMIT"
@@ -294,48 +290,69 @@ impl Store {
     }
 
     /// `succeed` / `fail` / a cancel: settles a running row. `false` when the row is not
-    /// running (already settled).
+    /// running (already settled) or this engine no longer owns the store.
     pub(crate) fn settle_effect(
         &self,
         id: i64,
         status: Settled,
         error: Option<&str>,
     ) -> StoreResult<bool> {
+        self.try_settle_effect(id, status, error).map_err(err)
+    }
+
+    /// [`Self::settle_effect`] with SQLite's own error, so the worker can tell a busy store
+    /// from a failed write.
+    pub(crate) fn try_settle_effect(
+        &self,
+        id: i64,
+        status: Settled,
+        error: Option<&str>,
+    ) -> rusqlite::Result<bool> {
+        #[cfg(test)]
+        if self.settle_faults.get() > 0 {
+            self.settle_faults.set(self.settle_faults.get() - 1);
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
+                Some("injected settlement fault".into()),
+            ));
+        }
+        let epoch = match self.owner() {
+            None => None,
+            Some(owner) => match owner.epoch() {
+                Some(epoch) => Some(epoch),
+                None => return Ok(false),
+            },
+        };
         let now = self.now_iso();
-        let changed = self
-            .raw()
-            .execute(
-                "UPDATE effect_outbox
-                 SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
-                 WHERE id = ?1 AND status = 'running'",
-                params![id, status.as_str(), now, error],
-            )
-            .map_err(err)?;
+        let changed = self.raw().execute(
+            "UPDATE effect_outbox
+             SET status = ?2, completed_at = ?3, updated_at = ?3, last_error = ?4
+             WHERE id = ?1 AND status = 'running'
+               AND (?5 IS NULL
+                    OR ?5 = (SELECT value FROM meta WHERE key = 'engine_epoch'))",
+            params![id, status.as_str(), now, error, epoch],
+        )?;
         Ok(changed == 1)
     }
 
-    /// `pruneSettled`: deletes succeeded and cancelled rows that settled more than
-    /// [`SETTLED_RETENTION_MS`] ago, [`PRUNE_BATCH`] at a time. Returns how many went.
-    pub(crate) fn prune_settled_effects(&self) -> StoreResult<usize> {
+    /// One batch of `pruneSettled`: deletes up to [`PRUNE_BATCH`] succeeded and cancelled rows
+    /// that settled more than [`SETTLED_RETENTION_MS`] ago. Returns how many went; the worker
+    /// calls again while a batch is full, and lets the store go in between.
+    pub(crate) fn prune_settled_batch(&self) -> StoreResult<usize> {
+        if !owns(self.raw(), self.owner())? {
+            return Ok(0);
+        }
         let cutoff =
             conn_support::time::iso_from_ms(self.now_millis().saturating_sub(SETTLED_RETENTION_MS));
-        let mut pruned = 0;
-        loop {
-            let deleted = self
-                .raw()
-                .execute(
-                    "DELETE FROM effect_outbox WHERE id IN (
-                       SELECT id FROM effect_outbox
-                       WHERE status IN ('succeeded', 'cancelled') AND completed_at < ?1
-                       LIMIT ?2)",
-                    params![cutoff, PRUNE_BATCH as i64],
-                )
-                .map_err(err)?;
-            pruned += deleted;
-            if deleted < PRUNE_BATCH {
-                return Ok(pruned);
-            }
-        }
+        self.raw()
+            .execute(
+                "DELETE FROM effect_outbox WHERE id IN (
+                   SELECT id FROM effect_outbox
+                   WHERE status IN ('succeeded', 'cancelled') AND completed_at < ?1
+                   LIMIT ?2)",
+                params![cutoff, PRUNE_BATCH as i64],
+            )
+            .map_err(err)
     }
 
     /// Cancels what a previous process left `pending` or `running`, at start, before anything

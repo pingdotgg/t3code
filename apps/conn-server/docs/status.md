@@ -14,7 +14,11 @@ worker runs them, as T3's `EffectOutbox.ts` and `EffectWorker.ts`. Before, they 
 the commit returned, so a closed socket could lose a committed turn start (the run stayed
 `starting`). The in-memory lanes are gone. Proof: engine tests for an aborted launch and an
 aborted archive (both fail with the old order), commit order per thread, and the outbox store
-tests from T3's `FoundationPersistence.test.ts`. Left: T3's process-loss split (replay-safe
+tests from T3's `FoundationPersistence.test.ts`. Each commit publishes its own sequence, so an
+aborted caller cannot hide it from clients. An engine takes an `engine_epoch` lease at open;
+every write checks it in its transaction, so a dropped or replaced engine never writes again. A
+settlement retries while the store is locked and otherwise settles the row `failed`, so its
+lane frees without running the effect again. Pruning lets the store go between batches. Left: T3's process-loss split (replay-safe
 effects run again; today every unsettled row is cancelled at start), folding
 `pending_rollbacks` into the outbox, and T3's worker retries.
 

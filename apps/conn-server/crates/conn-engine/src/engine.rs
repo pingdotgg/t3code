@@ -143,8 +143,9 @@ pub struct SqliteEngine {
 }
 
 impl Drop for SqliteEngine {
-    /// The engine's owner let go: its worker claims nothing more. Effects already running end
-    /// on their own, as a process ends its in-flight work.
+    /// The engine's owner let go: it never writes again. Its worker claims nothing more, and
+    /// an effect already running fails its next write (`Store::take_ownership`), as a process
+    /// that ends loses its in-flight work.
     fn drop(&mut self) {
         self.inner
             .engine_dropped
@@ -163,8 +164,9 @@ pub(crate) struct Inner {
     store: Arc<Mutex<Store>>,
     /// Raised after a commit wrote an attention event; `None` when they are off.
     attention: Option<Arc<tokio::sync::Notify>>,
-    /// The latest committed sequence. Stream tasks wake on it and read from the store.
-    pub(crate) notify: watch::Sender<u64>,
+    /// The latest committed sequence. Stream tasks wake on it and read from the store. Each
+    /// commit sends it (`Tx::commit`).
+    pub(crate) notify: Arc<watch::Sender<u64>>,
     pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
@@ -195,11 +197,14 @@ pub(crate) struct Inner {
     pub(crate) effects_wake: Arc<tokio::sync::Notify>,
     /// The effect worker started ([`Inner::ensure_effect_worker`]).
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
-    /// The [`SqliteEngine`] was dropped: the worker stops claiming.
-    pub(crate) engine_dropped: std::sync::atomic::AtomicBool,
+    /// The [`SqliteEngine`] was dropped: the worker stops, and the store refuses its writes.
+    pub(crate) engine_dropped: Arc<std::sync::atomic::AtomicBool>,
     /// Test hook: pauses one command inside its transaction, before it commits.
     #[cfg(test)]
     pub(crate) commit_pause: Mutex<Option<CommitPause>>,
+    /// Test hooks of the effect worker (`effect_worker.rs`).
+    #[cfg(test)]
+    pub(crate) worker_hooks: Mutex<crate::effect_worker::TestHooks>,
     thread_gates: crate::thread_locks::ThreadLocks,
 }
 
@@ -241,6 +246,8 @@ impl SqliteEngine {
                 .unwrap_or_default()
         });
         let mut store = Store::open(&config.database)?;
+        // From here every older engine on this database is fenced.
+        let engine_dropped = store.take_ownership()?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
         let attention = config
@@ -278,12 +285,12 @@ impl SqliteEngine {
         }
         tx.enqueue(None, &effects)?;
         tx.commit(None)?;
-        let high = store.high_water();
+        let notify = store.published.clone();
         let engine = Self {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
                 attention,
-                notify: watch::Sender::new(high),
+                notify,
                 providers: config
                     .provider_set
                     .unwrap_or_else(|| config.providers.into()),
@@ -306,9 +313,11 @@ impl SqliteEngine {
                 idle_session: config.idle_session,
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
-                engine_dropped: std::sync::atomic::AtomicBool::new(false),
+                engine_dropped,
                 #[cfg(test)]
                 commit_pause: Mutex::new(None),
+                #[cfg(test)]
+                worker_hooks: Mutex::default(),
             }),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
@@ -533,27 +542,22 @@ impl Inner {
         .expect("store task panicked")
     }
 
-    /// One atomic write. Wakes the streams when it commits.
+    /// One atomic write. Its commit wakes the streams.
     pub(crate) async fn write<T: Send + 'static>(
         &self,
         f: impl FnOnce(&mut Tx<'_>) -> StoreResult<T> + Send + 'static,
     ) -> StoreResult<T> {
-        let result = self
-            .db(move |store| {
-                let mut tx = store.tx()?;
-                match f(&mut tx) {
-                    Ok(value) => tx.commit(None).map(|seq| (value, seq)),
-                    Err(e) => {
-                        tx.rollback();
-                        Err(e)
-                    }
+        self.db(move |store| {
+            let mut tx = store.tx()?;
+            match f(&mut tx) {
+                Ok(value) => tx.commit(None).map(|_| value),
+                Err(e) => {
+                    tx.rollback();
+                    Err(e)
                 }
-            })
-            .await;
-        result.map(|(value, seq)| {
-            self.notify.send_replace(seq);
-            value
+            }
         })
+        .await
     }
 
     /// Decides, commits and starts the effects of one command. Returns the sequence to wait
@@ -996,14 +1000,10 @@ impl Inner {
                 }
             })
             .await;
-        let (seq, replayed) = outcome.map_err(|e| match e {
+        outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
             CommandError::Store(message) => DispatchError::Internal(message),
-        })?;
-        if !replayed {
-            self.notify.send_replace(seq);
-        }
-        Ok((seq, replayed))
+        })
     }
 
     #[cfg(test)]

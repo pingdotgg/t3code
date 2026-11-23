@@ -10,6 +10,10 @@
 //! Known deviation: T3 retries a failed effect up to 5 times with backoff (`maxAttempts`). Our
 //! effects record their own failures (a failed start fails its run), so a row that ran is
 //! settled `succeeded`. Porting T3's retries is a planned follow-up.
+//!
+//! The worker is bound to its engine: the engine's drop stops it, and the store refuses every
+//! write of an engine that was dropped or replaced (`Store::take_ownership`). T3 gets the same
+//! from the scope that owns its workers and the database.
 
 use std::{
     sync::{Arc, atomic::Ordering},
@@ -25,6 +29,35 @@ const CLAIM_BATCH: usize = 64;
 const LIVENESS_POLL: Duration = Duration::from_secs(30);
 /// `layerPruneWorker`: settled rows are pruned at start and every hour.
 const PRUNE_EVERY: Duration = Duration::from_secs(60 * 60);
+/// `lockRetrySchedule`: a settlement that met a locked store tries again after this.
+const LOCK_RETRY: Duration = Duration::from_millis(100);
+
+/// Test hooks: each fires once, then clears.
+#[cfg(test)]
+#[derive(Default)]
+pub(crate) struct TestHooks {
+    /// After an effect of this type ran, before its settlement: sends, then waits.
+    pub(crate) settle_pause: Option<(
+        &'static str,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+    /// A settlement met a locked store and will try again.
+    pub(crate) settle_busy: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Between two prune batches, with the store let go: sends, then waits.
+    pub(crate) prune_pause: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
+}
+
+/// A store too busy to write now: try again, the effect itself is done.
+fn locked(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+    )
+}
 
 impl Inner {
     /// Starts the worker and the prune loop once, on the caller's runtime. Without a runtime
@@ -44,13 +77,8 @@ impl Inner {
                 if inner.engine_dropped.load(Ordering::SeqCst) {
                     return;
                 }
-                let owner = inner.clone();
                 let claimed = inner
-                    .db(move |store| {
-                        store.claim_effects(CLAIM_BATCH, || {
-                            !owner.engine_dropped.load(Ordering::SeqCst)
-                        })
-                    })
+                    .db(|store| store.claim_effects(CLAIM_BATCH))
                     .await
                     .unwrap_or_else(|e| {
                         eprintln!("conn-engine: could not claim effects: {e}");
@@ -81,7 +109,7 @@ impl Inner {
                 if inner.engine_dropped.load(Ordering::SeqCst) {
                     return;
                 }
-                if let Err(e) = inner.db(|store| store.prune_settled_effects()).await {
+                if let Err(e) = inner.prune_settled_effects().await {
                     eprintln!("conn-engine: could not prune settled effects: {e}");
                 }
                 drop(inner);
@@ -90,17 +118,99 @@ impl Inner {
         });
     }
 
+    /// `pruneSettled`, one batch per store visit: the store is let go and the runtime yields
+    /// between batches, so other reads and writes get in. Returns how many rows went.
+    pub(crate) async fn prune_settled_effects(&self) -> Result<usize, String> {
+        let mut pruned = 0;
+        loop {
+            let deleted = self.db(|store| store.prune_settled_batch()).await?;
+            pruned += deleted;
+            if deleted < crate::outbox::PRUNE_BATCH {
+                return Ok(pruned);
+            }
+            tokio::task::yield_now().await;
+            #[cfg(test)]
+            {
+                let pause = crate::lock(&self.worker_hooks).prune_pause.take();
+                if let Some((paused, release)) = pause {
+                    let _ = paused.send(());
+                    let _ = release.await;
+                }
+            }
+        }
+    }
+
     /// Runs one claimed row and settles it; its thread's next row may then run.
     async fn run_claimed(self: Arc<Self>, claimed: Claimed) {
         let Claimed { id, effect } = claimed;
+        #[cfg(test)]
+        let effect_type = effect.effect_type();
         self.clone().run_effect(effect).await;
-        if let Err(e) = self
-            .db(move |store| store.settle_effect(id, Settled::Succeeded, None))
-            .await
+        #[cfg(test)]
         {
-            // The row stays running and holds its thread until the next start cancels it.
-            eprintln!("conn-engine: could not settle effect {id}: {e}");
+            let pause = {
+                let mut hooks = crate::lock(&self.worker_hooks);
+                match hooks.settle_pause.take() {
+                    Some((ty, paused, release)) if ty == effect_type => Some((paused, release)),
+                    other => {
+                        hooks.settle_pause = other;
+                        None
+                    }
+                }
+            };
+            if let Some((paused, release)) = pause {
+                let _ = paused.send(());
+                let _ = release.await;
+            }
         }
+        self.settle_ran(id).await;
         self.effects_wake.notify_one();
+    }
+
+    /// Settles a row whose effect ran, so its lane frees without running it again.
+    ///
+    /// T3's recovery (`EffectWorker.ts`, `recoverPostSuccessSettlement`): a settlement that
+    /// meets a locked store tries again (`retryWhileLocked`); one that fails otherwise settles
+    /// the row `failed` instead (`terminalizeClaim`). T3 puts a replay-safe effect back in the
+    /// queue there; we never run an effect twice (no worker retries yet), so every kind ends
+    /// `failed`, with the reason.
+    async fn settle_ran(&self, id: i64) {
+        let error = match self.settle(id, Settled::Succeeded, None).await {
+            Ok(()) => return,
+            Err(e) => e,
+        };
+        eprintln!("conn-engine: could not settle effect {id}: {error}");
+        let reason = format!("Worker failed to settle the effect after execution started: {error}");
+        if let Err(e) = self.settle(id, Settled::Failed, Some(reason)).await {
+            // The row stays running and holds its thread until the next start cancels it.
+            eprintln!("conn-engine: could not fail effect {id} after its settlement failed: {e}");
+        }
+    }
+
+    /// One settlement write, tried again while the store is locked. An engine that no longer
+    /// owns the store settles nothing: the newer engine cancelled the row at its start.
+    async fn settle(
+        &self,
+        id: i64,
+        status: Settled,
+        error: Option<String>,
+    ) -> Result<(), rusqlite::Error> {
+        loop {
+            let reason = error.clone();
+            let result = self
+                .db(move |store| store.try_settle_effect(id, status, reason.as_deref()))
+                .await;
+            match result {
+                Ok(_) => return Ok(()),
+                Err(e) if locked(&e) && !self.engine_dropped.load(Ordering::SeqCst) => {
+                    #[cfg(test)]
+                    if let Some(busy) = crate::lock(&self.worker_hooks).settle_busy.take() {
+                        let _ = busy.send(());
+                    }
+                    tokio::time::sleep(LOCK_RETRY).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 }

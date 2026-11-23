@@ -266,6 +266,65 @@ pub(crate) struct Store {
     pub(crate) attention: Option<std::sync::Arc<tokio::sync::Notify>>,
     /// Raised after a commit that wrote outbox rows (`outbox.rs`): the effect worker wakes.
     pub(crate) effects_wake: std::sync::Arc<tokio::sync::Notify>,
+    /// The latest committed sequence, sent by the commit itself (T3's `EventSink` publishes
+    /// after its transaction), so a caller that goes away cannot keep clients from seeing it.
+    pub(crate) published: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
+    /// The engine that may write here ([`Store::take_ownership`]); `None` for a store opened
+    /// without an engine.
+    owner: Option<Owner>,
+    /// Test hook: the next settlements fail with an I/O error.
+    #[cfg(test)]
+    pub(crate) settle_faults: std::cell::Cell<u32>,
+}
+
+/// An engine's lease on the store: the `engine_epoch` it took at open, and the flag its drop
+/// raises. Every write checks both in its own transaction, so a dropped or replaced engine
+/// never writes again (T3 scopes its workers to the runtime that owns the database).
+#[derive(Clone)]
+pub(crate) struct Owner {
+    epoch: i64,
+    released: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Owner {
+    pub(crate) fn epoch(&self) -> Option<i64> {
+        (!self.released.load(std::sync::atomic::Ordering::SeqCst)).then_some(self.epoch)
+    }
+}
+
+/// The last sequence the database holds.
+fn stored_high(conn: &Connection) -> StoreResult<u64> {
+    let high: i64 = conn
+        .query_row(
+            "SELECT MAX(COALESCE((SELECT MAX(seq) FROM events), 0),
+                        COALESCE((SELECT MAX(seq) FROM shell_changes), 0),
+                        COALESCE((SELECT MAX(sequence) FROM receipts), 0),
+                        COALESCE((SELECT value FROM meta WHERE key = 'imported_through'), 0))",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    Ok(high.max(0) as u64)
+}
+
+/// A write by an engine that no longer owns the store.
+pub(crate) const NOT_OWNER: &str = "store: this engine no longer owns the database";
+
+/// Whether `owner` still holds the store, read in `conn`'s open transaction.
+pub(crate) fn owns(conn: &Connection, owner: Option<&Owner>) -> StoreResult<bool> {
+    let Some(owner) = owner else { return Ok(true) };
+    let Some(epoch) = owner.epoch() else {
+        return Ok(false);
+    };
+    let current: Option<i64> = conn
+        .query_row(
+            "SELECT value FROM meta WHERE key = 'engine_epoch'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(err)?;
+    Ok(current == Some(epoch))
 }
 
 /// The turn starts a Stop must know about, kept beside the store so a command decides under
@@ -301,16 +360,7 @@ impl Store {
         conn.execute_batch(crate::attention::SCHEMA).map_err(err)?;
         conn.execute_batch(crate::outbox::SCHEMA).map_err(err)?;
         migrate(&conn)?;
-        let high: i64 = conn
-            .query_row(
-                "SELECT MAX(COALESCE((SELECT MAX(seq) FROM events), 0),
-                            COALESCE((SELECT MAX(seq) FROM shell_changes), 0),
-                            COALESCE((SELECT MAX(sequence) FROM receipts), 0),
-                            COALESCE((SELECT value FROM meta WHERE key = 'imported_through'), 0))",
-                [],
-                |row| row.get(0),
-            )
-            .map_err(err)?;
+        let high = stored_high(&conn)?;
         let imported_through: i64 = conn
             .query_row(
                 "SELECT COALESCE((SELECT value FROM meta WHERE key = 'imported_through'), 0)",
@@ -321,13 +371,52 @@ impl Store {
         Ok(Self {
             conn,
             imported_through: imported_through.max(0) as u64,
-            next_seq: high as u64 + 1,
+            next_seq: high + 1,
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
             starts: StartLedger::default(),
             attention: None,
             effects_wake: std::sync::Arc::default(),
+            published: std::sync::Arc::new(tokio::sync::watch::Sender::new(high)),
+            owner: None,
+            #[cfg(test)]
+            settle_faults: std::cell::Cell::new(0),
         })
+    }
+
+    /// Makes this store's engine the one that may write: a newer epoch fences every engine
+    /// that opened the database before. Returns the flag that releases the lease on drop.
+    pub(crate) fn take_ownership(
+        &mut self,
+    ) -> StoreResult<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let epoch: i64 = tx
+            .query_row(
+                "INSERT INTO meta (key, value) VALUES ('engine_epoch', 1)
+                 ON CONFLICT (key) DO UPDATE SET value = value + 1
+                 RETURNING value",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(err)?;
+        // An older engine may have committed since `open` read the sequence; none can now.
+        let high = stored_high(&tx)?;
+        tx.commit().map_err(err)?;
+        self.next_seq = high + 1;
+        self.published.send_replace(high);
+        let released = std::sync::Arc::default();
+        self.owner = Some(Owner {
+            epoch,
+            released: std::sync::Arc::clone(&released),
+        });
+        Ok(released)
+    }
+
+    pub(crate) fn owner(&self) -> Option<&Owner> {
+        self.owner.as_ref()
     }
 
     /// `EXPLAIN QUERY PLAN` details, one per step, for tests that prove an index is used.
@@ -376,6 +465,8 @@ impl Store {
             attention_written: false,
             effects_wake: self.effects_wake.clone(),
             effects_written: false,
+            published: self.published.clone(),
+            owner: self.owner.clone(),
             now_ms,
             generates_titles,
             starts: &mut self.starts,
@@ -1047,6 +1138,8 @@ pub(crate) struct Tx<'a> {
     attention_written: bool,
     effects_wake: std::sync::Arc<tokio::sync::Notify>,
     effects_written: bool,
+    published: std::sync::Arc<tokio::sync::watch::Sender<u64>>,
+    owner: Option<Owner>,
     now_ms: u64,
 }
 
@@ -1771,8 +1864,20 @@ impl Tx<'_> {
         if high / PRUNE_EVERY != (self.start.saturating_sub(1)) / PRUNE_EVERY {
             prune(&self.tx)?;
         }
+        // Last, after every write: the write lock is held, so no newer engine can take the
+        // store between this check and the commit.
+        if !owns(&self.tx, self.owner.as_ref())? {
+            return Err(NOT_OWNER.into());
+        }
         self.tx.commit().map_err(err)?;
         *self.store_seq = self.next_seq;
+        self.published.send_if_modified(|published| {
+            let newer = high > *published;
+            if newer {
+                *published = high;
+            }
+            newer
+        });
         if self.attention_written
             && let Some(attention) = &self.attention
         {

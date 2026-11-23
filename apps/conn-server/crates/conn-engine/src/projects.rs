@@ -389,9 +389,7 @@ impl Inner {
                 }
             })
             .await;
-        let (value, seq) = result?;
-        self.notify.send_replace(seq);
-        Ok(value)
+        result.map(|(value, _)| value)
     }
 
     pub(crate) async fn project_mutate(self: &Arc<Self>, input: Value) -> ProjectResult<Value> {

@@ -56,7 +56,7 @@ fn enqueue(store: &mut Store, effects: &[Effect]) {
 /// What a claim took, as `(thread, effect_type)`.
 fn claimed(store: &Store) -> Vec<(i64, String, String)> {
     store
-        .claim_effects(64, || true)
+        .claim_effects(64)
         .unwrap()
         .into_iter()
         .map(|c| {
@@ -187,14 +187,47 @@ fn a_thread_runs_one_effect_at_a_time_in_commit_order() {
     assert_eq!(next[0].2, "provider-turn.start");
 }
 
-/// A dropped engine's worker claims nothing, so a newer engine on the same store runs its rows
-/// alone (`engine_tests::a_restart_continues_the_running_turn_in_the_same_provider_thread`).
+/// A replaced or dropped engine never writes: it claims, settles and commits nothing, so a
+/// newer engine on the same store runs its rows alone
+/// (`engine_tests::a_replaced_engine_s_running_effect_writes_nothing`).
 #[test]
-fn a_claim_its_engine_no_longer_owns_takes_no_row() {
+fn an_engine_that_no_longer_owns_the_store_writes_nothing() {
     let mut t = TempStore::new("unowned");
-    enqueue(&mut t.1, &[start("t1", "r1")]);
-    assert!(t.1.claim_effects(64, || false).unwrap().is_empty());
-    assert_eq!(claimed(&t.1).len(), 1, "the row stayed pending");
+    t.1.take_ownership().unwrap();
+    enqueue(&mut t.1, &[start("t1", "r1"), start("t2", "r2")]);
+    let running = claimed(&t.1);
+    assert_eq!(running.len(), 2);
+
+    // A newer engine opens the same database: the older one is fenced.
+    let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
+    let released = newer.take_ownership().unwrap();
+    enqueue(&mut newer, &[start("t3", "r3")]);
+    assert!(t.1.claim_effects(64).unwrap().is_empty());
+    assert!(
+        !t.1.settle_effect(running[0].0, Settled::Succeeded, None)
+            .unwrap()
+    );
+    let mut tx = t.1.tx().unwrap();
+    tx.enqueue(None, &[start("t4", "r4")]).unwrap();
+    assert_eq!(tx.commit(None).unwrap_err(), crate::store::NOT_OWNER);
+    assert_eq!(t.1.prune_settled_batch().unwrap(), 0);
+
+    // The newer engine still owns it, until its drop releases it.
+    assert!(
+        newer
+            .settle_effect(running[1].0, Settled::Succeeded, None)
+            .unwrap()
+    );
+    released.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(newer.claim_effects(64).unwrap().is_empty());
+    assert!(
+        !newer
+            .settle_effect(running[0].0, Settled::Succeeded, None)
+            .unwrap()
+    );
+    let mut tx = newer.tx().unwrap();
+    tx.enqueue(None, &[start("t5", "r5")]).unwrap();
+    assert_eq!(tx.commit(None).unwrap_err(), crate::store::NOT_OWNER);
 }
 
 /// "runs title generation beside critical work while serializing each lane", and a free row
@@ -269,7 +302,10 @@ fn pruning_drops_old_settled_rows_in_batches_and_keeps_the_rest() {
     insert(1, "failed", Some(&old));
     insert(1, "pending", None);
     insert(1, "running", None);
-    assert_eq!(t.1.prune_settled_effects().unwrap(), 1_203);
+    let batches: Vec<usize> =
+        std::iter::from_fn(|| Some(t.1.prune_settled_batch().unwrap()).filter(|&n| n > 0))
+            .collect();
+    assert_eq!(batches, [PRUNE_BATCH, PRUNE_BATCH, 203]);
     let mut left: Vec<String> =
         t.1.raw()
             .prepare("SELECT status FROM effect_outbox")
@@ -280,5 +316,5 @@ fn pruning_drops_old_settled_rows_in_batches_and_keeps_the_rest() {
             .unwrap();
     left.sort();
     assert_eq!(left, ["failed", "pending", "running", "succeeded"]);
-    assert_eq!(t.1.prune_settled_effects().unwrap(), 0);
+    assert_eq!(t.1.prune_settled_batch().unwrap(), 0);
 }
