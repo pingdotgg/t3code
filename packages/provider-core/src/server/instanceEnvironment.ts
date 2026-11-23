@@ -8,13 +8,15 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   environment: ProviderInstanceEnvironment | undefined,
   baseEnv: NodeJS.ProcessEnv = process.env,
 ) {
+  // The desktop runs the server as Node; inherited, it makes Electron apps agents launch exit.
+  // Undefined, not omitted: spawns with `extendEnv` would merge the server's value back in.
+  const next: NodeJS.ProcessEnv = { ...baseEnv, ELECTRON_RUN_AS_NODE: undefined };
   if (!environment || environment.length === 0) {
-    return baseEnv;
+    return next;
   }
 
   const home = yield* HostProcess.HomeDirectory;
   const windows = (yield* HostProcess.Platform) === "win32";
-  const next: NodeJS.ProcessEnv = { ...baseEnv };
   for (const variable of environment) {
     // An unresolved secret reference carries no value; the registry resolves it for the provider.
     if (typeof variable.value !== "string") continue;
