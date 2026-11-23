@@ -426,3 +426,18 @@ export function pathRewrites(from: string, to: string) {
   const pairs = new Map(spellings.map((spell) => [spell(from), spell(to)] as const));
   return [...pairs];
 }
+
+/**
+ * When the next activity report goes out, `intervalMs` after the previous send, and whether it
+ * starts too late to renew the lease that send took: past `latestMs`, a renewal can land after it
+ * lapsed.
+ */
+export function nextActivityReport(
+  lastSentAt: number,
+  now: number,
+  intervalMs = 25_000,
+  latestMs = 40_000,
+) {
+  const due = lastSentAt + intervalMs;
+  return { waitMs: Math.max(0, due - now), late: Math.max(due, now) - lastSentAt > latestMs };
+}

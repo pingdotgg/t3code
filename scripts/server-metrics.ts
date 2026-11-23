@@ -62,6 +62,7 @@ import {
   ServerMetrics,
   slope,
   spread,
+  nextActivityReport,
   parsePsCpuTime,
   pathRewrites,
   pathSpellings,
@@ -1133,13 +1134,21 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       orElse: () => new MetricsError({ message: "an activity report got no answer" }),
     }),
   );
-  const firstSent = yield* nowMs;
+  let lastSent = yield* nowMs;
   yield* report;
-  // Renewals start every 25 s from the previous send, not its reply, so with the 15 s deadline
-  // each lands well inside the 45 s lease. The first one counts from the first send too.
-  yield* nowMs.pipe(
-    Effect.flatMap((now) => Effect.sleep(Duration.millis(Math.max(0, 25_000 - (now - firstSent))))),
-    Effect.andThen(report.pipe(Effect.repeat(Schedule.fixed(Duration.seconds(25))))),
+  // Each renewal goes out 25 s after the previous send, however long its reply took; one that
+  // would start past the lease's safe point marks the client lost instead.
+  yield* Effect.gen(function* () {
+    while (true) {
+      const next = nextActivityReport(lastSent, yield* nowMs);
+      if (next.late) {
+        return yield* new MetricsError({ message: "an activity renewal missed its lease" });
+      }
+      yield* Effect.sleep(Duration.millis(next.waitMs));
+      lastSent = yield* nowMs;
+      yield* report;
+    }
+  }).pipe(
     Effect.catchCause(() => Ref.update(lost, (first) => first ?? "an activity report failed")),
     Effect.forkScoped,
   );

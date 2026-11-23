@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   compareMetrics,
   heapGrowth,
+  nextActivityReport,
   parsePsCpuTime,
   parseRunSelection,
   pathRewrites,
@@ -302,5 +303,15 @@ describe("pathRewrites", () => {
     ],
   ])("%s", (_name, text, from, to, expected) => {
     expect(rewrite(text, from, to)).toBe(expected);
+  });
+});
+
+describe("nextActivityReport", () => {
+  it.each([
+    ["before it is due: wait out the interval", 1_000, 10_000, { waitMs: 16_000, late: false }],
+    ["a slow reply: send now, still inside the lease", 1_000, 31_000, { waitMs: 0, late: false }],
+    ["past the safe point: the lease would lapse", 1_000, 42_000, { waitMs: 0, late: true }],
+  ])("%s", (_name, lastSentAt, now, expected) => {
+    expect(nextActivityReport(lastSentAt, now)).toEqual(expected);
   });
 });
