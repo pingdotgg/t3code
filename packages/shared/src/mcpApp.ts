@@ -8,7 +8,7 @@ export const MCP_APP_OUTPUT_KEY = "t3McpApp";
 /** Frame URL query parameter carrying the host's color scheme before `ui/initialize`. */
 export const MCP_APP_COLOR_SCHEME_PARAM = "t3-color-scheme";
 
-const MCP_APP_MIN_HEIGHT = 80;
+export const MCP_APP_MIN_HEIGHT = 80;
 export const MCP_APP_DEFAULT_HEIGHT = 320;
 export const MCP_APP_MAX_HEIGHT = 2000;
 export const MCP_APP_MAX_HTML_BYTES = 5 * 1024 * 1024;
@@ -262,6 +262,8 @@ export function mcpAppAllowAttribute(permissions: McpAppPermissions | undefined)
 
 export function clampMcpAppHeight(height: number): number {
   if (!Number.isFinite(height)) return MCP_APP_DEFAULT_HEIGHT;
+  // An app with nothing to show reports 0; the minimum would leave an empty box.
+  if (height <= 0) return 0;
   return Math.round(Math.min(MCP_APP_MAX_HEIGHT, Math.max(MCP_APP_MIN_HEIGHT, height)));
 }
 

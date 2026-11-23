@@ -15,6 +15,7 @@ import {
   MCP_APP_COLOR_SCHEME_PARAM,
   MCP_APP_DEFAULT_HEIGHT,
   MCP_APP_MAX_HEIGHT,
+  MCP_APP_MIN_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
   type McpAppReference,
@@ -438,6 +439,7 @@ export function McpAppFrame(props: {
           variant="ghost"
           onClick={() => {
             setSrc(null);
+            setHeight(MCP_APP_DEFAULT_HEIGHT);
             setDocumentGeneration((value) => value + 1);
             setClosed(false);
           }}
@@ -451,7 +453,7 @@ export function McpAppFrame(props: {
   const fullscreen = displayMode === "fullscreen";
   return (
     // Preserve inline row height during fullscreen to prevent timeline jumps.
-    <div style={{ height }}>
+    <div style={{ height: navigatedAway ? Math.max(height, MCP_APP_MIN_HEIGHT) : height }}>
       <div
         ref={attachBox}
         // Preserve the frame's parent to avoid reloads; the top layer escapes timeline containment.
@@ -461,7 +463,10 @@ export function McpAppFrame(props: {
         data-mcp-app-fullscreen={fullscreen ? "" : undefined}
         className={cn(
           "relative size-full overflow-hidden",
-          app.prefersBorder === true && !fullscreen && "rounded-lg border border-border",
+          app.prefersBorder === true &&
+            !fullscreen &&
+            height > 0 &&
+            "rounded-lg border border-border",
           fullscreen
             ? "fixed inset-0 m-0 flex h-dvh max-h-none w-dvw max-w-none flex-col border-0 bg-background p-0"
             : "block! static! m-0 border-0 bg-transparent p-0 text-inherit",

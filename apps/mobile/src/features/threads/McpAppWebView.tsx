@@ -15,6 +15,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { CommandId, MessageId } from "@t3tools/contracts";
 import {
+  MCP_APP_MIN_HEIGHT,
   mcpAppAllowAttribute,
   mcpAppFileName,
   mcpAppReferencesEqual,
@@ -517,10 +518,14 @@ export function ThreadMcpApp(props: {
       ? null
       : { html: outerDocument(uri, mcpAppAllowAttribute(app.permissions), secret) };
 
+  // Status views need room for their text and buttons even after an app collapsed to 0.
+  const statusHeight = Math.max(height, MCP_APP_MIN_HEIGHT);
+  const rowHeight = navigatedAway || crashed ? statusHeight : height;
+
   if (presentedFullscreen) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
+        style={{ height: statusHeight, marginBottom: ROW_BOTTOM_MARGIN }}
         className="items-center justify-center rounded-lg border border-border"
       >
         <Text className="text-sm text-foreground-muted">
@@ -535,7 +540,7 @@ export function ThreadMcpApp(props: {
   if (closed) {
     return (
       <View
-        style={{ height, marginBottom: ROW_BOTTOM_MARGIN }}
+        style={{ height: statusHeight, marginBottom: ROW_BOTTOM_MARGIN }}
         className="items-center justify-center gap-2 rounded-lg border border-border"
       >
         <Text className="text-sm text-foreground-muted">
@@ -558,7 +563,13 @@ export function ThreadMcpApp(props: {
   }
 
   return (
-    <View style={fullscreen ? { flex: 1 } : { height, marginBottom: ROW_BOTTOM_MARGIN }}>
+    <View
+      style={
+        fullscreen
+          ? { flex: 1 }
+          : { height: rowHeight, marginBottom: rowHeight === 0 ? 0 : ROW_BOTTOM_MARGIN }
+      }
+    >
       {navigatedAway ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-sm text-foreground-muted">
