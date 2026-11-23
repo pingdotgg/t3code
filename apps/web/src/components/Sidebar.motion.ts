@@ -38,6 +38,12 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
   let released: Map<HTMLElement, number> | null = null;
+  const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+  let scrollTop = scroller?.scrollTop ?? 0;
+  const trackScroll = () => {
+    scrollTop = scroller?.scrollTop ?? 0;
+  };
+  scroller?.addEventListener("scroll", trackScroll, { passive: true });
 
   const remainingOffset = (node: HTMLElement) => {
     const current = running.get(node);
@@ -53,7 +59,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     entering.clear();
     exiting.clear();
   };
-  const fadeOut = (node: HTMLElement, position: RowPosition, travel: number) => {
+  const fadeOut = (node: HTMLElement, position: RowPosition, travel: number, shift: number) => {
     if (position.height === 0) return;
     const clone = node.cloneNode(true) as HTMLElement;
     for (const element of [clone, ...clone.querySelectorAll("*")]) {
@@ -72,7 +78,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     clone.inert = true;
     Object.assign(clone.style, {
       position: "absolute",
-      top: `${position.top + remainingOffset(node)}px`,
+      top: `${position.top + remainingOffset(node) + shift}px`,
       left: `${position.left}px`,
       width: `${position.width}px`,
       height: `${position.height}px`,
@@ -166,6 +172,14 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         positions !== null &&
         !reducedMotion?.matches &&
         fadeCount <= MAX_FADED_ROWS_PER_UPDATE;
+      // A removal near the bottom shrinks the list and the browser clamps scrollTop, moving
+      // every row on screen; offsets include that shift so those rows slide instead of jump.
+      let shift = 0;
+      if (scroller !== null) {
+        const max = scroller.scrollHeight - scroller.clientHeight;
+        if (scrollTop > max && scroller.scrollTop >= max - 1)
+          shift = scroller.scrollTop - scrollTop;
+      }
       const movedDelta = new Map<HTMLElement, number>();
       const nextOrder = [...next.keys()];
       const oldOrder = positions === null ? [] : [...positions.keys()];
@@ -186,13 +200,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       else {
         for (const [node, position] of next) {
           const previousTop = positions!.get(node)?.top;
-          if (previousTop === undefined || previousTop === position.top) continue;
-          movedDelta.set(node, previousTop + remainingOffset(node) - position.top);
+          if (previousTop === undefined || previousTop + shift === position.top) continue;
+          movedDelta.set(node, previousTop + remainingOffset(node) - position.top + shift);
         }
         for (const [node, position] of positions!) {
           if (next.has(node)) continue;
           const delta = ridingDelta(oldOrder, oldOrder.indexOf(node), (n) => next.has(n));
-          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta);
+          fadeOut(node, position, delta === undefined ? rowTravel(position.height) : -delta, shift);
         }
       }
       for (const [node, entry] of entering) {
@@ -246,6 +260,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         released = null;
       }
       positions = next;
+      if (scroller !== null) scrollTop = scroller.scrollTop;
     },
     release() {
       suspend();
@@ -259,6 +274,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     suspend,
     dispose() {
       suspend();
+      scroller?.removeEventListener("scroll", trackScroll);
       disposed = true;
     },
   };

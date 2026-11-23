@@ -30,6 +30,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "./config.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as TaskFolders from "./workspace/TaskFolders.ts";
+import { layerTaskFoldersWithGit } from "./workspace/TaskFolders.testkit.ts";
 import * as GitManager from "./git/GitManager.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as Settings from "./serverSettings.ts";
@@ -373,6 +375,10 @@ const cleanupFixture = (
     let gitInspections = 0;
     let snapshotReads = 0;
     let terminalListener: ((event: TerminalMetadataStreamEvent) => Effect.Effect<void>) | undefined;
+    let taskFolders: Pick<TaskFolders.TaskFolders["Service"], "find" | "remove"> = {
+      find: () => Effect.succeed(null),
+      remove: () => Effect.succeed({ removed: [], kept: [] }),
+    };
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
     const context = yield* Layer.build(StorageCleanup.layer).pipe(
@@ -530,10 +536,18 @@ const cleanupFixture = (
           }),
       } as unknown as TerminalManager.TerminalManager["Service"]),
       Effect.provideService(ServerActivation, Deferred.await(activated)),
+      Effect.provideService(TaskFolders.TaskFolders, {
+        find: (target: string) => taskFolders.find(target),
+        remove: (input: Parameters<TaskFolders.TaskFolders["Service"]["remove"]>[0]) =>
+          taskFolders.remove(input),
+      } as unknown as TaskFolders.TaskFolders["Service"]),
     );
     return {
       service: Context.get(context, StorageCleanup.StorageCleanup),
       repo,
+      setTaskFolders: (service: typeof taskFolders) => {
+        taskFolders = service;
+      },
       setTerminals: (terminals: TerminalSummary[]) =>
         terminalListener?.({ type: "snapshot", terminals }) ?? Effect.void,
       editBeforeRemoval: () => {
@@ -897,6 +911,33 @@ it.live.each(["repository", "uppercase", "bare"] as const)(
     ),
 );
 
+it.live("removes a worktree whose ignored folder holds a gitfile pointing nowhere", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree } = yield* cleanupFixture();
+      // Packages such as conda-forge's `referencing` ship a test suite's dangling gitlink.
+      yield* fs.makeDirectory(`${worktree}/dist/suite`, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/dist/suite/.git`, "gitdir: ../.git/modules/x\n");
+      const [entry] = (yield* service.runNow).entries;
+      expect(entry?.reason).not.toBe("Contains a nested Git repository");
+      expect(entry).toMatchObject({ outcome: "removed" });
+      expect(yield* fs.exists(worktree)).toBe(false);
+    }),
+  ),
+);
+
+it.live("keeps a worktree whose gitfile target exists only with its trailing space", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, worktree } = yield* cleanupFixture();
+      yield* fs.makeDirectory(`${worktree}/dist/suite/git `, { recursive: true });
+      yield* fs.writeFileString(`${worktree}/dist/suite/.git`, "gitdir: git \n");
+      const [entry] = (yield* service.runNow).entries;
+      expect(entry).toMatchObject({ outcome: "kept", reason: "Contains a nested Git repository" });
+    }),
+  ),
+);
+
 const submoduleCleanupFixture = () =>
   Effect.gen(function* () {
     const fixture = yield* cleanupFixture();
@@ -959,6 +1000,82 @@ it.live("keeps an ignored repository inside a registered submodule", () =>
         reason: "Contains a nested Git repository",
       });
       expect(yield* fs.readFileString(`${nested}/uncommitted.txt`)).toBe("keep me");
+    }),
+  ),
+);
+
+it.live("removes a task folder's clean worktrees and keeps the one with uncommitted work", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, command, setTaskFolders, setThreads } = yield* cleanupFixture();
+      const trackedRepository = Effect.fnUntraced(function* (name: string) {
+        const folder = `${repo}/dist/${name}`;
+        yield* fs.makeDirectory(folder, { recursive: true });
+        yield* command(folder, ["init", "-b", "main"]);
+        yield* command(folder, ["config", "user.email", "cleanup@example.test"]);
+        yield* command(folder, ["config", "user.name", "Cleanup test"]);
+        yield* fs.writeFileString(`${folder}/tracked.txt`, "original\n");
+        yield* command(folder, ["add", "."]);
+        yield* command(folder, ["commit", "-m", "initial"]);
+        return { name, path: folder };
+      });
+      const api = yield* trackedRepository("api");
+      const web = yield* trackedRepository("web");
+      const context = yield* Layer.build(
+        layerTaskFoldersWithGit({
+          workspaceRoot: repo,
+          trackedFolders: [api, web],
+          thread: null,
+        }).pipe(Layer.provide(NodeCrypto.layer)),
+      );
+      const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+      const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+      const { taskFolder } = yield* taskFolders.create({
+        plan: plan!,
+        branch: "task",
+        projectStart: { refName: "main", baseRefName: "main" },
+        startFromOrigin: false,
+      });
+      const root = taskFolder.root;
+      // A nested worktree's uncommitted work must survive its thread's cleanup.
+      yield* fs.writeFileString(`${root}/dist/api/tracked.txt`, "uncommitted\n");
+      setTaskFolders(taskFolders);
+      setThreads([shell({ branch: "task", worktreePath: root })]);
+
+      const report = yield* service.runNow;
+
+      expect(
+        report.entries
+          .filter((entry) => entry.path?.startsWith(root))
+          .map(({ path, outcome, reason }) => ({ path, outcome, reason }))
+          .toSorted((left, right) => left.path!.localeCompare(right.path!)),
+      ).toEqual([
+        { path: root, outcome: "kept", reason: "Holds a repository that was kept" },
+        {
+          path: `${root}/dist/api`,
+          outcome: "kept",
+          reason: "Has uncommitted changes (1 file)",
+        },
+        { path: `${root}/dist/web`, outcome: "removed", reason: expect.any(String) },
+      ]);
+      expect(
+        report.entries.find((entry) => entry.path === `${root}/dist/web`)?.bytes,
+      ).toBeGreaterThan(0);
+      expect(yield* fs.readFileString(`${root}/dist/api/tracked.txt`)).toBe("uncommitted\n");
+      expect(yield* fs.exists(`${root}/dist/web`)).toBe(false);
+      // The thread is alive, so the record keeps the whole layout for when it resumes.
+      expect((yield* taskFolders.find(root))?.repositories).toHaveLength(2);
+
+      yield* command(`${root}/dist/api`, ["checkout", "--", "tracked.txt"]);
+      const second = yield* service.runNow;
+
+      expect(second.entries.filter((entry) => entry.path?.startsWith(root))).toEqual(
+        [`${root}/dist/api`, root].map((path) =>
+          expect.objectContaining({ path, outcome: "removed" }),
+        ),
+      );
+      expect(yield* fs.exists(root)).toBe(false);
+      expect(yield* fs.readFileString(`${api.path}/tracked.txt`)).toBe("original\n");
     }),
   ),
 );
@@ -3808,6 +3925,36 @@ describe("storage cleanup reports and local file policies", () => {
     ),
   );
   it.live.each([
+    { kind: "logs", name: "server.log.1", label: "rotated logs" },
+    { kind: "browser-artifacts", name: "capture.png", label: "browser artifacts" },
+  ] as const)("skips dangling symlinks during $kind cleanup", ({ kind, name, label }) =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, config, enableFiles, disable } = yield* cleanupFixture();
+        disable();
+        enableFiles();
+        const directory = kind === "logs" ? `${config.logsDir}/nested` : config.browserArtifactsDir;
+        yield* fs.makeDirectory(directory, { recursive: true });
+        const expired = `${directory}/${name}`;
+        const dangling = `${directory}/00-dangling-${name}`;
+        const linked = `${directory}/01-linked-${name}`;
+        yield* fs.symlink("missing", dangling);
+        yield* fs.symlink(directory, linked);
+        yield* fs.writeFileString(expired, "expired");
+        yield* fs.utimes(expired, 1, 1);
+
+        const report = yield* service.runNow;
+        expect(report.entries.filter((entry) => entry.kind === kind)).toMatchObject([
+          { outcome: "removed", reason: `Removed 1 ${label}`, files: 1, bytes: 7 },
+        ]);
+        expect((yield* fs.readDirectory(directory)).toSorted()).toEqual([
+          `00-dangling-${name}`,
+          `01-linked-${name}`,
+        ]);
+      }),
+    ),
+  );
+  it.live.each([
     { linked: "home", outcome: "removed", reason: "Removed 1 rotated logs" },
     { linked: "logs folder", outcome: "kept", reason: "No expired files" },
   ] as const)(
@@ -3842,6 +3989,43 @@ describe("storage cleanup reports and local file policies", () => {
           expect(yield* fs.exists(`${disk}/real/logs/server.log.1`)).toBe(outcome === "kept");
         }),
       ),
+  );
+  it.live("keeps external rotated logs when a scanned directory is replaced by a symlink", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* fs.makeDirectory(config.logsDir, { recursive: true });
+        const nested = `${yield* fs.realPath(config.logsDir)}/nested`;
+        const outside = yield* fs.makeTempDirectoryScoped();
+        const expired = `${outside}/server.log.1`;
+        yield* fs.makeDirectory(nested);
+        yield* fs.writeFileString(expired, "external log");
+        yield* fs.utimes(expired, 1, 1);
+
+        const { service, enableFiles, disable } = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) =>
+              Effect.gen(function* () {
+                if (directory === nested) {
+                  yield* fs.rename(nested, `${nested}-original`);
+                  yield* fs.symlink(outside, nested);
+                }
+                return yield* fs.readDirectory(directory, options);
+              }),
+          }),
+        );
+        disable();
+        enableFiles();
+        const report = yield* service.runNow;
+        expect(yield* fs.exists(expired)).toBe(true);
+        expect(report.entries.find((entry) => entry.kind === "logs")).toMatchObject({
+          outcome: "kept",
+          reason: "No expired files",
+        });
+      }),
+    ),
   );
   it.live("reports git failures without aborting the remaining categories", () =>
     runCleanupTest(
@@ -3893,6 +4077,102 @@ describe("settled worktree rechecks", () => {
           expect(yield* fixture.fs.exists(fixture.worktree)).toBe(true);
         }),
       ),
+  );
+  it.effect("keeps a task folder when settings change after its checks began", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* cleanupFixture();
+        fixture.setSettings({
+          autoResumeLimitedThreads: false,
+          storageCleanup: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeSettledAfterDays: 0,
+          },
+        });
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, settledAt: at(0) }),
+        ]);
+        let removals = 0;
+        fixture.setTaskFolders({
+          find: () =>
+            Effect.sync(() => {
+              fixture.setSettings({ autoResumeLimitedThreads: true });
+              return {
+                root: fixture.worktree,
+                projectId: ProjectId.make("project-1"),
+                projectRoot: fixture.repo,
+                anchor: fixture.repo,
+                projectPath: fixture.worktree,
+                projectIsWorktree: true,
+                repositories: [],
+              };
+            }),
+          remove: () =>
+            Effect.sync(() => {
+              removals += 1;
+              return { removed: [], kept: [] };
+            }),
+        });
+        const report = yield* fixture.service.runNow;
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Settings changed since check",
+        });
+        expect(removals).toBe(0);
+      }),
+    ),
+  );
+  it.effect("keeps a task folder's checkout when settings change while it is measured", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW_MS);
+        const fixture = yield* pausedMeasurementFixture();
+        fixture.setSettings({
+          autoResumeLimitedThreads: false,
+          storageCleanup: {
+            ...DEFAULT_SERVER_SETTINGS.storageCleanup,
+            worktreeSettledAfterDays: 0,
+          },
+        });
+        fixture.setThreads([
+          shell({ branch: "feature", worktreePath: fixture.worktree, settledAt: at(0) }),
+        ]);
+        fixture.setTaskFolders({
+          find: () =>
+            Effect.succeed({
+              root: fixture.worktree,
+              projectId: ProjectId.make("project-1"),
+              projectRoot: fixture.repo,
+              anchor: fixture.repo,
+              projectPath: fixture.worktree,
+              projectIsWorktree: true,
+              repositories: [],
+            }),
+          remove: (input) =>
+            Effect.gen(function* () {
+              const verdict = yield* input.inspect!({
+                worktreePath: fixture.worktree,
+                repositoryPath: fixture.repo,
+              });
+              return {
+                removed: [],
+                kept:
+                  verdict.keep === null ? [] : [{ path: fixture.worktree, reason: verdict.keep }],
+              };
+            }),
+        });
+        const run = yield* fixture.service.runNow.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.measuring);
+        fixture.setSettings({ autoResumeLimitedThreads: true });
+        yield* Deferred.succeed(fixture.resume, undefined);
+        const report = yield* Fiber.join(run);
+        expect(report.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Settings changed since check",
+        });
+      }),
+    ),
   );
   it.effect.each([{ settledAt: null }, { settledAt: at(DAY_MS) }])(
     "keeps a checkout changed during measurement (%j)",

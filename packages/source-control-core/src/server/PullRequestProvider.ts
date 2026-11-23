@@ -40,6 +40,7 @@ import type {
   PullRequestPreview,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
+  PullRequestVisibility,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t3tools/contracts";
@@ -108,6 +109,8 @@ export interface ProviderChangeRequest {
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
+  /** Absent where the host has no private change requests or names no visibility. */
+  readonly visibility?: PullRequestVisibility;
 }
 
 export interface ProviderChangeRequestSummary {

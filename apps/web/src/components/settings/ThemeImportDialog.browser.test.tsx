@@ -157,6 +157,58 @@ it("sizes an oversized theme file just under 1 MB as 1.00 MB", async () => {
     );
 });
 
+it.each(["failed read", "batch install"])(
+  "keeps the oversized replacement warning after a superseded %s",
+  async (earlierImport) => {
+    using _themes = isolateThemes();
+    await using _screen = await render(
+      <ThemeImportDialog
+        open
+        onOpenChange={() => {}}
+        onImported={() => true}
+        onImportedMany={() => {}}
+      />,
+    );
+    const earlierRead = Promise.withResolvers<string>();
+    const readStarted = Promise.withResolvers<void>();
+    const earlierFile = Object.assign(themeFile("Dusk"), {
+      text() {
+        readStarted.resolve();
+        return earlierRead.promise;
+      },
+    });
+    const input = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    const files = new DataTransfer();
+    if (earlierImport === "batch install") files.items.add(themeFile("Dawn"));
+    files.items.add(earlierFile);
+    await act(async () => {
+      input.files = files.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      await readStarted.promise;
+    });
+    await expect.element(page.getByRole("button", { name: "Reading…" })).toBeDisabled();
+    await userEvent.upload(
+      input,
+      new File([" ".repeat(256 * 1024 + 1)], earlierFile.name, { type: "application/json" }),
+    );
+    const warning = page.getByText(/^That file is/);
+    await expect.element(warning).toBeVisible();
+
+    await act(async () => {
+      if (earlierImport === "batch install") {
+        earlierRead.resolve(JSON.stringify(theme("Dusk")));
+      } else {
+        earlierRead.reject(new Error("Could not read Dusk"));
+      }
+      await earlierRead.promise.catch(() => {});
+    });
+
+    expect(getCustomThemes().map((theme) => theme.label)).toEqual([]);
+    expect(page.getByRole("alert").element().textContent).toMatch(/^That file is/);
+    await expect.element(page.getByRole("button", { name: "Choose files" })).toBeEnabled();
+  },
+);
+
 function themeJsonc(name: string, background: string) {
   return `{
     // VS Code themes use JSONC even with a .json extension.
