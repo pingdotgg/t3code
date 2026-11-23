@@ -1,12 +1,15 @@
 import "~/index.css";
 
 import { EnvironmentId } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/input-group";
 import type { RightPanelSurface } from "~/rightPanelStore";
-import { render, stubGlobal } from "../../test/render";
+import { dispatchMenuAction } from "~/shortcuts/dispatcher";
+import { act, render, stubGlobal } from "../../test/render";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import { RightPanelTabs, type RightPanelTabsProps } from "./RightPanelTabs";
 import { subscribePreviewAction } from "./preview/previewActionBus";
@@ -221,6 +224,63 @@ function releaseThumbButton(
     routerMoved: !up.defaultPrevented,
   };
 }
+
+const FILES_SURFACE: RightPanelSurface = { id: "files", kind: "files" };
+
+function CyclingPanel(props: {
+  active: RightPanelSurface;
+  surfaces: readonly RightPanelSurface[];
+}) {
+  const [activeId, setActiveId] = useState(props.active.id);
+  const base = panel(props.active).props as RightPanelTabsProps;
+  return (
+    <RightPanelTabs
+      {...base}
+      keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+      surfaces={props.surfaces}
+      activeSurfaceId={activeId}
+      onActivate={(surface) => setActiveId(surface.id)}
+    >
+      {null}
+    </RightPanelTabs>
+  );
+}
+
+describe("surface switching", () => {
+  it("cycles panel surfaces forwards with Ctrl+Tab and backwards with Ctrl+Shift+Tab", async () => {
+    await using screen = await render(
+      <CyclingPanel
+        active={BROWSER_SURFACE}
+        surfaces={[BROWSER_SURFACE, DIFF_SURFACE, FILES_SURFACE]}
+      />,
+    );
+    const activeTabTitle = () =>
+      screen.container.querySelector("[data-active-tab='true']")?.textContent;
+
+    expect(activeTabTitle()).toBe("Browser");
+    await userEvent.keyboard("{Control>}{Tab}{/Control}");
+    expect(activeTabTitle()).toBe("Diff");
+    await userEvent.keyboard("{Control>}{Tab}{/Control}");
+    expect(activeTabTitle()).toBe("Files");
+    await userEvent.keyboard("{Control>}{Tab}{/Control}");
+    expect(activeTabTitle()).toBe("Browser");
+    await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
+    expect(activeTabTitle()).toBe("Files");
+  });
+
+  it("cycles when desktop forwards the chord from a focused browser page", async () => {
+    await using screen = await render(
+      <CyclingPanel active={BROWSER_SURFACE} surfaces={[BROWSER_SURFACE, DIFF_SURFACE]} />,
+    );
+    const activeTabTitle = () =>
+      screen.container.querySelector("[data-active-tab='true']")?.textContent;
+
+    await act(() => dispatchMenuAction("rightPanel.nextSurface"));
+    expect(activeTabTitle()).toBe("Diff");
+    await act(() => dispatchMenuAction("rightPanel.previousSurface"));
+    expect(activeTabTitle()).toBe("Browser");
+  });
+});
 
 const STAYS_PUT = { focusMoved: false, routerMoved: false };
 

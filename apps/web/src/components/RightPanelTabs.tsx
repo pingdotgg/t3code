@@ -115,6 +115,7 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import { registerMenuAction } from "~/shortcuts/dispatcher";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -1142,14 +1143,31 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   const addSurfaceMenuBlocked = () =>
     !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
-  const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
+  const cycleRightPanelSurface = useEffectEvent((direction: 1 | -1) => {
+    if (props.surfaces.length < 2) return;
+    const activeIndex = props.surfaces.findIndex((surface) => surface.id === props.activeSurfaceId);
+    const nextIndex =
+      activeIndex === -1
+        ? direction === 1
+          ? 0
+          : props.surfaces.length - 1
+        : (activeIndex + direction + props.surfaces.length) % props.surfaces.length;
+    const next = props.surfaces[nextIndex];
+    if (next) props.onActivate(next);
+  });
+  const onPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
-    if (
-      resolveShortcutCommand(event, props.keybindings, {
-        context: { ...props.getShortcutContext(), rightPanelOpen: true },
-      }) !== "rightPanel.new"
-    )
+    const command = resolveShortcutCommand(event, props.keybindings, {
+      context: { ...props.getShortcutContext(), rightPanelOpen: true },
+    });
+    if (command === "rightPanel.nextSurface" || command === "rightPanel.previousSurface") {
+      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cycleRightPanelSurface(command === "rightPanel.nextSurface" ? 1 : -1);
       return;
+    }
+    if (command !== "rightPanel.new") return;
     if (addSurfaceMenuBlocked()) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1163,14 +1181,23 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const onMenuAction = useEffectEvent((action: string) => {
     if (action === "rightPanel.new" && !addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document keydown and the desktop menu action (forwarded from a focused browser page) for the new surface shortcut while the panel is open
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes document keydown and desktop menu actions forwarded from a focused browser page while the panel is open
   useEffect(() => {
     if (props.open === false) return;
-    document.addEventListener("keydown", onNewSurfaceKeyDown, true);
+    document.addEventListener("keydown", onPanelKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction(onMenuAction);
+    const unregister = [
+      registerMenuAction("rightPanel.nextSurface", () => {
+        if (!document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) cycleRightPanelSurface(1);
+      }),
+      registerMenuAction("rightPanel.previousSurface", () => {
+        if (!document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) cycleRightPanelSurface(-1);
+      }),
+    ];
     return () => {
-      document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+      document.removeEventListener("keydown", onPanelKeyDown, true);
       unsubscribe?.();
+      for (const cleanup of unregister) cleanup();
     };
   }, [props.open]);
 

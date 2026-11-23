@@ -993,6 +993,28 @@ describe("PreviewManager", () => {
         expect(focus).toHaveBeenCalledOnce();
         expect(send).toHaveBeenCalledTimes(2);
         send.mockClear();
+        focus.mockClear();
+        yield* manager.setForwardedShortcuts([
+          { command: "rightPanel.nextSurface", shortcut: parseKeybindingShortcut("ctrl+tab")! },
+        ]);
+        beforeInput(
+          { preventDefault: vi.fn() } as never,
+          {
+            type: "keyDown",
+            key: "Tab",
+            meta: false,
+            control: true,
+            shift: false,
+            alt: false,
+          } as never,
+        );
+        expect(focus).toHaveBeenCalledOnce();
+        expect(send).toHaveBeenCalledExactlyOnceWith(
+          "desktop:menu-action",
+          "rightPanel.nextSurface",
+        );
+        expect(focus.mock.invocationCallOrder[0]).toBeLessThan(send.mock.invocationCallOrder[0]!);
+        send.mockClear();
         yield* manager.setForwardedShortcuts([{ command: "view.reopenClosed", shortcut }]);
 
         Object.assign(newer.webContents, { focusedFrame: null });

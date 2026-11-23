@@ -54,6 +54,10 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Switch right panel surfaces
+
+With the right panel open, `Ctrl+Tab` moves to the next surface and `Ctrl+Shift+Tab` moves to the previous surface. Both wrap at either end. Browsers reserve those chords for browser tabs, so they only reach the desktop app. To use them in a browser tab, bind other keys for **Right Panel: Next Surface** and **Right Panel: Previous Surface** in Settings → Keybindings.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull requests page, use `mod+shift+c`

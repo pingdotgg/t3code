@@ -457,6 +457,8 @@ const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
   "terminal.close": msg("Terminal: Close"),
   "rightPanel.toggle": msg("Right Panel: Toggle"),
   "rightPanel.new": msg("Right Panel: New"),
+  "rightPanel.nextSurface": msg("Right Panel: Next Surface"),
+  "rightPanel.previousSurface": msg("Right Panel: Previous Surface"),
   "threadPanel.toggle": msg("Thread Panel: Toggle"),
   "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
   "rightPanel.close": msg("Right Panel: Close"),

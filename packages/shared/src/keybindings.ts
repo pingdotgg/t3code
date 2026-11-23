@@ -68,6 +68,10 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+b", command: "rightPanel.toggle" },
   { key: "mod+shift+b", command: "threadPanel.toggle", when: "!terminalFocus" },
   { key: "mod+t", command: "rightPanel.new", when: "rightPanelOpen && !terminalFocus" },
+  // Browsers keep Ctrl+Tab for their own tabs, so this default only reaches the desktop app or a
+  // standalone browser window; everywhere else it is inert rather than harmful.
+  { key: "ctrl+tab", command: "rightPanel.nextSurface", when: "rightPanelOpen" },
+  { key: "ctrl+shift+tab", command: "rightPanel.previousSurface", when: "rightPanelOpen" },
   { key: "mod+d", command: "terminal.split", when: "terminalFocus" },
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+shift+d", command: "composer.dictation", when: "!terminalFocus" },
