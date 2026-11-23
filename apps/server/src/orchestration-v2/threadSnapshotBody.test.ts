@@ -15,6 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { projectThreadProjectionForWire } from "@t3tools/shared/wireProjection";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -24,7 +25,6 @@ import * as Stream from "effect/Stream";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { encodeThreadSnapshotBody } from "./threadSnapshotBody.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
 
 const provider = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId: provider, model: "gpt-5.4" };
