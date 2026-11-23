@@ -270,7 +270,12 @@ export function createWorkspaceFocusController(doc: Document) {
     if (areas.length === 0) return false;
     const activeArea = doc.activeElement?.closest<HTMLElement>(AREA_SELECTOR);
     const currentId = fromArea ?? activeArea?.dataset.workspaceArea ?? lastArea;
-    const current = areas.findIndex((area) => area.dataset.workspaceArea === currentId);
+    // A side chat nests areas with the main chat's names, so prefer the focused element.
+    const activeIndex = fromArea || !activeArea ? -1 : areas.indexOf(activeArea);
+    const current =
+      activeIndex === -1
+        ? areas.findIndex((area) => area.dataset.workspaceArea === currentId)
+        : activeIndex;
     const index =
       current === -1
         ? direction === 1
@@ -293,6 +298,8 @@ export function createWorkspaceFocusController(doc: Document) {
       if (
         doc.activeElement !== doc.body ||
         !doc.hasFocus() ||
+        // Scrolling swaps these out; focusing elsewhere would pull a screen reader's cursor along.
+        lost.closest("[inert][data-workspace-scroll-swap]") ||
         (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
       )
         return;

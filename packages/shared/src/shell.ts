@@ -7,6 +7,7 @@ import * as Cache from "effect/Cache";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -74,13 +75,13 @@ export type SpawnExecutableResolver = (
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-) => string | undefined;
+) => string | undefined | Promise<string | undefined>;
 
-function resolveSpawnExecutableWithNode(
+async function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-): string | undefined {
+): Promise<string | undefined> {
   const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const candidates = resolveCommandCandidates(
@@ -89,28 +90,37 @@ function resolveSpawnExecutableWithNode(
     windowsPathExtensions,
     path.extname,
   );
-  const isExecutable = (candidate: string) => {
+  const isExecutable = async (candidate: string) => {
     try {
-      if (!NodeFS.statSync(candidate).isFile()) return false;
+      if (!(await NodeFS.promises.stat(candidate)).isFile()) return false;
       if (platform === "win32") {
         return windowsPathExtensions.includes(path.extname(candidate).toUpperCase());
       }
-      return canExecuteFile(candidate);
+      await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
+      return true;
     } catch {
       return false;
     }
   };
 
   if (command.includes("/") || command.includes("\\")) {
-    return candidates.find(isExecutable);
+    for (const candidate of candidates) {
+      if (await isExecutable(candidate)) return candidate;
+    }
+    return undefined;
   }
 
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
-    const normalizedPathEntry = stripWrappingQuotes(trimPathEntry(pathEntry, platform));
+    const normalizedPathEntry = normalizePathEntry(pathEntry, platform);
     if (normalizedPathEntry.length === 0) continue;
+    const names =
+      platform === "win32"
+        ? await listResolverPathDirectory(normalizedPathEntry, path.isAbsolute)
+        : undefined;
     for (const candidate of candidates) {
+      if (isAbsentFromListing(names, candidate)) continue;
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (await isExecutable(candidatePath)) return candidatePath;
     }
   }
   return undefined;
@@ -278,9 +288,25 @@ export function buildEnvironmentCaptureCommand(
     : command;
 }
 
+// Process first so profile prepends win; User and Machine add dirs missing from the launch snapshot.
+export function windowsEnvironmentValueCommand(name: string): string {
+  if (name === "PATH") {
+    return (
+      "$value = (@(" +
+      "[Environment]::GetEnvironmentVariable('PATH','Process')," +
+      "[Environment]::GetEnvironmentVariable('PATH','Machine')," +
+      "[Environment]::GetEnvironmentVariable('PATH','User')" +
+      ") | Where-Object { $_ }) -join ';'"
+    );
+  }
+  return `$value = [Environment]::GetEnvironmentVariable('${name}')`;
+}
+
 function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): string {
   return [
     "$ErrorActionPreference = 'Stop'",
+    // Redirected PowerShell output uses the console code page, which mangles non-ASCII paths.
+    "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}",
     ...names.flatMap((name) => {
       if (!SHELL_ENV_NAME_PATTERN.test(name)) {
         throw new Error(`Unsupported environment variable name: ${name}`);
@@ -288,7 +314,7 @@ function buildWindowsEnvironmentCaptureCommand(names: ReadonlyArray<string>): st
 
       return [
         `Write-Output '${envCaptureStart(name)}'`,
-        `$value = [Environment]::GetEnvironmentVariable('${name}')`,
+        windowsEnvironmentValueCommand(name),
         "if ($null -ne $value -and $value.Length -gt 0) { Write-Output $value }",
         `Write-Output '${envCaptureEnd(name)}'`,
       ];
@@ -439,12 +465,13 @@ export const readEnvironmentFromWindowsShell = Effect.fn("shell.readEnvironmentF
   },
 );
 
-function stripWrappingQuotes(value: string): string {
-  return value.replace(/^"+|"+$/g, "");
-}
-
 function trimPathEntry(entry: string, platform: NodeJS.Platform): string {
   return platform === "win32" ? entry.trim() : entry;
+}
+
+// POSIX PATH entries are literal: whitespace and quotes are part of the directory name.
+function normalizePathEntry(entry: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? entry.trim().replace(/^"+|"+$/g, "") : entry;
 }
 
 function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
@@ -452,7 +479,7 @@ function pathDelimiterForPlatform(platform: NodeJS.Platform): string {
 }
 
 function normalizePathEntryForComparison(entry: string, platform: NodeJS.Platform): string {
-  const normalized = stripWrappingQuotes(trimPathEntry(entry, platform));
+  const normalized = normalizePathEntry(entry, platform);
   return platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
@@ -561,7 +588,38 @@ export const CommandResolutionCache = Context.Reference<Map<string, CommandResol
 
 interface PathDirectoryListing {
   readonly modified: number | null | undefined;
+  /** Lowercased entry names; undefined when the directory cannot be listed. */
   readonly names: ReadonlySet<string> | undefined;
+  readonly reusable: boolean;
+}
+
+const PATH_DIRECTORY_LISTINGS_MAX_ENTRIES = 1024;
+// A directory changed within a coarse filesystem's timestamp step (FAT: 2 s) can change again
+// without moving its mtime, so its listing serves the lookups waiting on it but is not kept.
+const PATH_DIRECTORY_SETTLE_MS = 2_000;
+const NO_DIRECTORY_NAMES: ReadonlySet<string> = new Set();
+
+// A listing only speaks for names Windows matches by ASCII case folding. It omits 8.3 aliases
+// (`~`), Windows trims a trailing dot, and other characters fold differently than in JS.
+const LISTED_NAME_PATTERN = /^[\w.+-]*[\w+-]$/;
+
+function isAbsentFromListing(names: ReadonlySet<string> | undefined, candidate: string): boolean {
+  return (
+    names !== undefined &&
+    LISTED_NAME_PATTERN.test(candidate) &&
+    !names.has(candidate.toLowerCase())
+  );
+}
+
+// The listing must start after the mtime's timestamp step has passed, and a relative entry
+// names another directory once the working directory changes.
+function isReusableListing(
+  directory: string,
+  modified: number,
+  listedAtMs: number,
+  isAbsolute: (path: string) => boolean,
+): boolean {
+  return isAbsolute(directory) && listedAtMs - modified >= PATH_DIRECTORY_SETTLE_MS;
 }
 
 const directoryMtime = (directory: string) =>
@@ -575,29 +633,77 @@ const directoryMtime = (directory: string) =>
 // Timestamp before reading so concurrent additions change the next mtime check; missing listings fall back to direct probes.
 const listPathDirectory = Effect.fnUntraced(function* (
   directory: string,
-): Effect.fn.Return<PathDirectoryListing, never, FileSystem.FileSystem> {
+): Effect.fn.Return<PathDirectoryListing, never, FileSystem.FileSystem | Path.Path> {
+  const path = yield* Path.Path;
   const modified = yield* directoryMtime(directory);
-  if (modified == null) return { modified, names: modified === null ? new Set() : undefined };
+  if (modified === null) {
+    return { modified, names: NO_DIRECTORY_NAMES, reusable: path.isAbsolute(directory) };
+  }
+  if (modified === undefined) return { modified, names: undefined, reusable: false };
+  const listedAtMs = yield* Clock.currentTimeMillis;
   const entries = yield* FileSystem.FileSystem.use((fileSystem) =>
     fileSystem.readDirectory(directory),
   ).pipe(Effect.orElseSucceed(() => undefined));
-  return { modified, names: entries && new Set(entries.map((entry) => entry.toLowerCase())) };
+  return {
+    modified,
+    names: entries && new Set(entries.map((entry) => entry.toLowerCase())),
+    reusable:
+      entries !== undefined && isReusableListing(directory, modified, listedAtMs, path.isAbsolute),
+  };
 });
 
-const PathDirectoryListings = Context.Reference<
-  Cache.Cache<string, PathDirectoryListing, never, FileSystem.FileSystem> | undefined
->("@t3tools/shared/shell/PathDirectoryListings", { defaultValue: () => undefined });
+export const makePathDirectoryListings = Cache.makeWith(listPathDirectory, {
+  capacity: PATH_DIRECTORY_LISTINGS_MAX_ENTRIES,
+  timeToLive: (exit) =>
+    Exit.isSuccess(exit) && exit.value.reusable ? Duration.infinity : Duration.zero,
+  requireServicesAt: "lookup",
+});
 
-export const withPathDirectoryListings =
-  /* Directory reads are cached inside one shell operation; a span for each lookup adds noise. */
-  Effect.fnUntraced(function* <A, E, R>(effect: Effect.Effect<A, E, R>) {
-    const listings = yield* Cache.make({
-      capacity: 1024,
-      lookup: listPathDirectory,
-      requireServicesAt: "lookup",
-    });
-    return yield* effect.pipe(Effect.provideService(PathDirectoryListings, listings));
-  });
+/** Windows PATH directory listings for the process; each use rechecks the directory's mtime. */
+export const PathDirectoryListings = Context.Reference(
+  "@t3tools/shared/shell/PathDirectoryListings",
+  { defaultValue: () => Effect.runSync(makePathDirectoryListings) },
+);
+
+const resolverPathDirectoryListings = new Map<
+  string,
+  { readonly modified: number; readonly names: ReadonlySet<string> }
+>();
+
+// The spawn resolver's counterpart of `PathDirectoryListings`, under the same rules.
+async function listResolverPathDirectory(
+  directory: string,
+  isAbsolute: (path: string) => boolean,
+): Promise<ReadonlySet<string> | undefined> {
+  let modified: number;
+  try {
+    const stats = await NodeFS.promises.stat(directory);
+    if (!stats.isDirectory()) return undefined;
+    modified = stats.mtimeMs;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? NO_DIRECTORY_NAMES : undefined;
+  }
+  const cached = resolverPathDirectoryListings.get(directory);
+  if (cached?.modified === modified) return cached.names;
+  resolverPathDirectoryListings.delete(directory);
+  // This resolver runs outside Effect, so it has no Clock to read.
+  // @effect-diagnostics-next-line globalDate:off
+  const listedAtMs = Date.now();
+  let names: ReadonlySet<string>;
+  try {
+    names = new Set((await NodeFS.promises.readdir(directory)).map((entry) => entry.toLowerCase()));
+  } catch {
+    return undefined;
+  }
+  if (isReusableListing(directory, modified, listedAtMs, isAbsolute)) {
+    if (resolverPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
+      const oldest = resolverPathDirectoryListings.keys().next().value;
+      if (oldest !== undefined) resolverPathDirectoryListings.delete(oldest);
+    }
+    resolverPathDirectoryListings.set(directory, { modified, names });
+  }
+  return names;
+}
 
 // An injected resolver or locator may answer differently for the same search, so its
 // entries are kept apart from every other resolver's.
@@ -661,14 +767,15 @@ const findOnPath = Effect.fnUntraced(function* (
   const pathEntries: string[] = [];
   const seenPathEntries = new Set<string>();
   for (const entry of pathValue.split(pathDelimiterForPlatform(platform))) {
-    const pathEntry = stripWrappingQuotes(trimPathEntry(entry, platform));
+    const pathEntry = normalizePathEntry(entry, platform);
     if (pathEntry.length === 0 || seenPathEntries.has(pathEntry)) continue;
 
     seenPathEntries.add(pathEntry);
     pathEntries.push(pathEntry);
   }
 
-  const listings = yield* PathDirectoryListings;
+  // Only Windows multiplies the candidates per directory; elsewhere a listing saves no probe.
+  const listings = platform === "win32" ? yield* PathDirectoryListings : undefined;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
     let listing = listings && (yield* Cache.get(listings, pathEntry));
@@ -677,7 +784,7 @@ const findOnPath = Effect.fnUntraced(function* (
       listing = yield* Cache.get(listings, pathEntry);
     }
     for (const candidate of commandCandidates) {
-      if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
+      if (isAbsentFromListing(listing?.names, candidate)) continue;
       const candidatePath = path.join(pathEntry, candidate);
       if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
         matches.push(candidatePath);
@@ -798,6 +905,20 @@ export function preferGitForWindowsBinary(
   return executable;
 }
 
+/** Git for Windows' bash beside a git.exe from its install, never WSL's System32 bash.exe. */
+export function gitForWindowsBash(
+  gitExecutable: string,
+  isFile: (filePath: string) => boolean = isFileSync,
+): string | undefined {
+  const path = NodePath.win32;
+  if (path.basename(gitExecutable).toLowerCase() !== "git.exe") return undefined;
+  // git.exe lives in <root>\cmd, <root>\bin, or <root>\<build>\bin.
+  const launcherRoot = path.dirname(path.dirname(gitExecutable));
+  return [launcherRoot, path.dirname(launcherRoot)]
+    .map((root) => path.join(root, "bin", "bash.exe"))
+    .find(isFile);
+}
+
 // npm cmd-shim format for native executables.
 const NPM_EXECUTABLE_SHIM_PREFIX = [
   "@ECHO off",
@@ -885,18 +1006,21 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (
-    cached !== undefined &&
-    cached.expiresAtNanos > nowNanos &&
-    (cached.resolvedPath === null ||
-      resolveExecutable(cached.resolvedPath, "darwin", env) !== undefined)
-  ) {
-    return cached.resolvedPath ?? "git";
+  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+    const cachedPath = cached.resolvedPath;
+    if (
+      cachedPath === null ||
+      (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
+        undefined
+    ) {
+      return cachedPath ?? "git";
+    }
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const onPath = yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
+  const located = onPath === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
-    located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
+    located !== undefined &&
+    (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
       ? located
       : null;
   cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
@@ -914,6 +1038,8 @@ const CONSOLE_FREE_GIT_READS = [
   "rev-parse --git-path index",
   "rev-parse --git-common-dir",
   "rev-parse --show-toplevel",
+  "rev-parse --git-common-dir --show-toplevel",
+  "rev-parse --path-format=absolute --git-path index --git-common-dir --show-toplevel",
   "rev-parse --symbolic-full-name HEAD",
   "rev-parse --abbrev-ref --symbolic-full-name @{upstream}",
   "symbolic-ref --quiet HEAD",
@@ -974,10 +1100,8 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
       shell: false,
     };
   }
-  // The scan is synchronous and runs before every child process, so it shares
-  // the PATH scan cache above. Explicit paths stay uncached for the same reason,
-  // and so do misses: a failed spawn is how providers report "not installed",
-  // and that has to clear the moment the binary appears.
+  // Cache successful PATH lookups. Explicit paths and misses stay uncached so
+  // newly installed executables are discoverable immediately.
   const explicitPath = command.includes("/") || command.includes("\\");
   const cache = yield* CommandResolutionCache;
   const cacheKey = [
@@ -995,7 +1119,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     resolvedExecutable = cached.resolvedPath;
   } else {
-    const found = resolveExecutable(command, platform, env);
+    const found = yield* Effect.promise(async () => resolveExecutable(command, platform, env));
     resolvedExecutable = found === undefined ? null : preferGitForWindowsBinary(found, env);
     if (!explicitPath && resolvedExecutable !== null) {
       cacheCommandResolution(cache, cacheKey, resolvedExecutable, nowNanos);

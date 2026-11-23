@@ -70,11 +70,18 @@ describe("decodeMergeRequestListJson", () => {
             reviewers: [{ username: "julius" }],
             labels: ["backend", "  "],
           },
+          {
+            iid: 43,
+            labels: [
+              { name: "bug", color: "#E24329", description: "Something is broken" },
+              { name: " ", color: "#000000" },
+            ],
+          },
         ]),
       ),
     );
 
-    expect(batch.items).toHaveLength(1);
+    expect(batch.items).toHaveLength(2);
     expect(batch.items[0]).toMatchObject({
       number: 42,
       author: { login: "bilal", name: "Bilal" },
@@ -86,6 +93,9 @@ describe("decodeMergeRequestListJson", () => {
       reviewRequestLogins: ["julius"],
       labels: [{ name: "backend", color: null }],
     });
+    expect(batch.items[1]?.labels).toEqual([
+      { name: "bug", color: "#E24329", description: "Something is broken" },
+    ]);
   });
 
   it("treats a merged timestamp as merged whatever the state says", () => {
@@ -681,6 +691,7 @@ describe("decodeMergeRequestDiffsJson", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.patch).toContain("diff --git a/big.bin b/big.bin");
+    expect(result.withheldPaths).toEqual(["big.bin"]);
   });
 
   it("reports how many files GitLab returned, so the caller can page", () => {
@@ -1186,8 +1197,12 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     targetBranch: "main",
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
-                    author: { username: "bilal", name: "Bilal", avatarUrl: null },
-                    labels: { nodes: [{ title: "bug" }] },
+                    author: {
+                      username: "bilal",
+                      name: "Bilal",
+                      avatarUrl: "/uploads/-/system/user/avatar/42/avatar.png?v=1",
+                    },
+                    labels: { nodes: [{ title: "bug", color: "#E24329", description: null }] },
                     approved: false,
                     approvedBy: { nodes: [] },
                     reviewers: {
@@ -1212,11 +1227,16 @@ describe("decodeMergeRequestGraphqlListJson", () => {
     expect(page.items).toEqual([
       expect.objectContaining({
         number: 7,
+        author: {
+          login: "bilal",
+          name: "Bilal",
+          avatarUrl: "https://gitlab.com/uploads/-/system/user/avatar/42/avatar.png?v=1",
+        },
         state: "open",
         isDraft: true,
         mergeability: "conflicting",
         reviewRequestLogins: ["julius"],
-        labels: [expect.objectContaining({ name: "bug" })],
+        labels: [{ name: "bug", color: "#E24329", description: null }],
       }),
     ]);
     expect([...page.states]).toEqual([
@@ -1224,6 +1244,46 @@ describe("decodeMergeRequestGraphqlListJson", () => {
     ]);
     expect(page).toMatchObject({ rawCount: 2, hasNextPage: true, endCursor: "eyJpZCI6IjcifQ" });
   });
+
+  it.each(["", " "])(
+    "keeps a blank GraphQL avatarUrl as null, not the merge request page",
+    (avatarUrl) => {
+      const page = expectSuccess(
+        decodeMergeRequestGraphqlListJson(
+          JSON.stringify({
+            data: {
+              metadata: { enterprise: false },
+              project: {
+                mergeRequests: {
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                  nodes: [
+                    {
+                      iid: "7",
+                      title: "Add the merge requests page",
+                      webUrl: "https://gitlab.com/acme/web/-/merge_requests/7",
+                      state: "opened",
+                      createdAt: "2026-07-01T00:00:00Z",
+                      updatedAt: "2026-07-02T00:00:00Z",
+                      sourceBranch: "feat/page",
+                      targetBranch: "main",
+                      author: { username: "bilal", name: "Bilal", avatarUrl },
+                    },
+                  ],
+                },
+              },
+            },
+          }),
+        ),
+      );
+
+      expect(page.items[0]?.author).toEqual({
+        login: "bilal",
+        name: "Bilal",
+        avatarUrl: null,
+      });
+    },
+  );
+
   it("fails on a project the reader cannot see, rather than reading it as empty", () => {
     expect(
       Result.isFailure(
