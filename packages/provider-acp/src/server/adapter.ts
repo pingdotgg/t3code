@@ -707,6 +707,21 @@ export interface AcpAdapterV2Flavor {
    * through `ACP_OPEN_REPLY_QUIET_LIMIT` instead of closing early.
    */
   readonly hasPendingReply?: (sessionId: string) => Effect.Effect<boolean>;
+  /**
+   * True when the agent owns background work outside ACP's wire state (such as native
+   * subagents, swarms, or queued wakes). `purpose: "idle_release"` also covers live
+   * waiting workers whose process state would be lost on idle teardown, while
+   * `"session_replace"` checks only actively executing work so rollbacks stay possible.
+   */
+  readonly hasPendingBackgroundWork?: (input: {
+    readonly sessionId: string;
+    readonly purpose: "idle_release" | "session_replace";
+  }) => Effect.Effect<boolean>;
+  /**
+   * Skip `session/close` during scope teardown when the agent treats it as a destructive
+   * force-cancel rather than a graceful detach.
+   */
+  readonly skipCloseSessionOnTeardown?: boolean;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -10273,7 +10288,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const transportHadOutstandingResponses = yield* closeNativeTransport;
             const sessionCapabilities =
               started.initializeResult.agentCapabilities?.sessionCapabilities;
-            if (sessionCapabilities?.close != null) {
+            if (sessionCapabilities?.close != null && flavor.skipCloseSessionOnTeardown !== true) {
               yield* runtimeTransitionPermit.withPermitsIfAvailable(1)(
                 Effect.gen(function* () {
                   const teardownState = yield* Ref.get(runtimeTeardownState);
@@ -10303,8 +10318,65 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         // A replacement agent can negotiate capabilities the initial agent did not have.
         const canReportBackgroundWork =
-          continuationRequests !== undefined &&
-          (flavor.followAgentWorkState === true || Boolean(flavor.enablePostSettleContinuation));
+          flavor.hasPendingBackgroundWork !== undefined ||
+          flavor.hasPendingReply !== undefined ||
+          (continuationRequests !== undefined &&
+            (flavor.followAgentWorkState === true || Boolean(flavor.enablePostSettleContinuation)));
+        const checkPendingBackgroundWork = Effect.fn("AcpAdapterV2.checkPendingBackgroundWork")(
+          function* (purpose: "idle_release" | "session_replace") {
+            const rootSessionId = yield* Ref.get(activeSessionId);
+            if (postSettleContinuationEnabled || followsAgentWorkState) {
+              if (
+                followsAgentWorkState &&
+                rootSessionId !== null &&
+                hasWorkingDescendant(rootSessionId)
+              )
+                return true;
+              if (
+                followsAgentWorkState &&
+                (agentWork?.state === "running" ||
+                  agentWork?.state === "requires_action" ||
+                  agentRequests.size > 0)
+              )
+                return true;
+              if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+              if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
+              if (yield* Ref.get(continuationRequested)) return true;
+              if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+              const active = yield* Ref.get(activeTurn);
+              if (
+                active !== null &&
+                [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+              ) {
+                return true;
+              }
+              const carryover = yield* Ref.get(carryoverSubagents);
+              if (
+                carryover !== null &&
+                carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
+              ) {
+                return true;
+              }
+            }
+            if (rootSessionId !== null) {
+              if (flavor.hasPendingBackgroundWork !== undefined) {
+                if (
+                  yield* flavor.hasPendingBackgroundWork({
+                    sessionId: rootSessionId,
+                    purpose,
+                  })
+                ) {
+                  return true;
+                }
+              } else if (flavor.hasPendingReply !== undefined) {
+                if (yield* flavor.hasPendingReply(rootSessionId)) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          },
+        );
         const sessionRuntime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver,
@@ -10326,42 +10398,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }),
           ...(canReportBackgroundWork
             ? {
-                hasPendingBackgroundWork: Effect.gen(function* () {
-                  if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
-                  const rootSessionId = yield* Ref.get(activeSessionId);
-                  if (
-                    followsAgentWorkState &&
-                    rootSessionId !== null &&
-                    hasWorkingDescendant(rootSessionId)
-                  )
-                    return true;
-                  if (
-                    followsAgentWorkState &&
-                    (agentWork?.state === "running" ||
-                      agentWork?.state === "requires_action" ||
-                      agentRequests.size > 0)
-                  )
-                    return true;
-                  if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
-                  if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
-                  if (yield* Ref.get(continuationRequested)) return true;
-                  if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
-                  const active = yield* Ref.get(activeTurn);
-                  if (
-                    active !== null &&
-                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  const carryover = yield* Ref.get(carryoverSubagents);
-                  if (
-                    carryover !== null &&
-                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
-                  ) {
-                    return true;
-                  }
-                  return false;
-                }),
+                hasPendingBackgroundWork: checkPendingBackgroundWork("idle_release"),
               }
             : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
@@ -10370,9 +10407,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 Effect.gen(function* () {
                   if (threadInput.forceNewNativeThread) {
                     const currentTurn = yield* Ref.get(activeTurn);
-                    const pendingWork = yield* (
-                      sessionRuntime.hasPendingBackgroundWork ?? Effect.succeed(false)
-                    );
+                    const pendingWork = canReportBackgroundWork
+                      ? yield* checkPendingBackgroundWork("session_replace")
+                      : false;
                     if (currentTurn !== null || pendingWork)
                       return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                         driver,

@@ -749,6 +749,93 @@ async function readLastTranscriptLine(
   }
 }
 
+const SYSTEM_STOP_NOTICE_PREFIX =
+  "All your subagents and background tasks have been stopped due to ";
+
+const decodeInboxMessageSummary = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sender: Schema.String,
+      timestamp: Schema.optional(Schema.String),
+      content: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
+const decodeSwarmMembers = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      members: Schema.optional(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            conversation_id: Schema.optional(Schema.String),
+            role: Schema.optional(Schema.String),
+            desired_state: Schema.optional(Schema.String),
+            phase: Schema.optional(Schema.String),
+            wake_mode: Schema.optional(Schema.String),
+            killed: Schema.optional(Schema.Boolean),
+            last_read_seq: Schema.optional(Schema.Number),
+            last_nudged_seq: Schema.optional(Schema.Number),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
+
+interface InboxMessageSummary {
+  readonly sender: string;
+  readonly timestampMs: number | undefined;
+  readonly content: string | undefined;
+}
+
+const parseTimestampMs = (timestamp: string | undefined): number | undefined => {
+  if (timestamp === undefined) return undefined;
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) ? ms : undefined;
+};
+
+async function readMessageSummaries(
+  profileRoot: string,
+  conversationId: string,
+): Promise<ReadonlyArray<InboxMessageSummary>> {
+  const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
+  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox === undefined) return [];
+  const names = (await NodeFSP.readdir(inbox.path)).filter(
+    (name) => name.endsWith(".json") && name !== "read.json",
+  );
+  if (names.length > MAX_MESSAGE_FILES) throw new Error("Too many messages");
+  return Promise.all(
+    names.map(async (name) => {
+      const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
+      if (file === undefined || file.info.size > MAX_STEP_BYTES) throw new Error("Unreadable");
+      const decoded = Option.getOrThrow(
+        decodeInboxMessageSummary(await NodeFSP.readFile(file.path, "utf8")),
+      );
+      return {
+        sender: decoded.sender,
+        timestampMs: parseTimestampMs(decoded.timestamp),
+        content: decoded.content,
+      };
+    }),
+  );
+}
+
+async function hasUnansweredWakingTranscriptStep(
+  profileRoot: string,
+  sessionId: string,
+): Promise<boolean> {
+  const lastStep = await readLastTranscriptLine(profileRoot, sessionId);
+  if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
+  return (
+    lastStep.content === undefined ||
+    lastStep.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
+    !lastStep.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
+  );
+}
+
 /**
  * True when `agy` has a high-priority wake queued in the session's inbox or already dequeued as
  * the trailing `SYSTEM_MESSAGE` step in `transcript.jsonl` with no `PLANNER_RESPONSE` yet.
@@ -761,13 +848,7 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return false;
       if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-      const lastStep = await readLastTranscriptLine(profileRoot, input.sessionId);
-      if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
-      return (
-        lastStep.content === undefined ||
-        lastStep.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
-        !lastStep.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
-      );
+      return hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId);
     };
     return yield* Effect.tryPromise({
       try: read,
@@ -775,6 +856,142 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
     }).pipe(Effect.orElseSucceed(() => false));
   },
 );
+
+/**
+ * True when Antigravity owns background work for this session that would be lost if the process
+ * were torn down: unread high-priority wakes, unanswered waking steps, live swarm members in
+ * `swarm/members.json`, or active/revived detached subagents in `subagents/*.json`.
+ * Ignores persisted child records predating the latest system stop notice.
+ */
+export const readAntigravityHasPendingBackgroundWork = Effect.fn(
+  "readAntigravityHasPendingBackgroundWork",
+)(function* (input: {
+  readonly profileDirectory: string;
+  readonly sessionId: string;
+  readonly purpose?: "idle_release" | "session_replace";
+}) {
+  if (!NATIVE_ID.test(input.sessionId)) return false;
+  const read = async (): Promise<boolean> => {
+    const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+    if (profileRoot === undefined) return false;
+    if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
+    if (await hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) return true;
+
+    const parentMessages = await readMessageSummaries(profileRoot, input.sessionId);
+    let latestSystemStopMs: number | undefined;
+    const reportedSenders = new Set<string>();
+    const latestReportMsBySender = new Map<string, number>();
+    for (const msg of parentMessages) {
+      reportedSenders.add(msg.sender);
+      if (msg.timestampMs !== undefined) {
+        const previousReportMs = latestReportMsBySender.get(msg.sender);
+        if (previousReportMs === undefined || msg.timestampMs > previousReportMs) {
+          latestReportMsBySender.set(msg.sender, msg.timestampMs);
+        }
+        if (msg.sender === "system" && msg.content?.includes(SYSTEM_STOP_NOTICE_PREFIX) === true) {
+          if (latestSystemStopMs === undefined || msg.timestampMs > latestSystemStopMs) {
+            latestSystemStopMs = msg.timestampMs;
+          }
+        }
+      }
+    }
+
+    const swarmFile = await antigravityManagedPath(
+      profileRoot,
+      ["antigravity-acp", "brain", input.sessionId, ".system_generated", "swarm", "members.json"],
+      "file",
+    );
+    const swarm =
+      swarmFile !== undefined && swarmFile.info.size <= MAX_STEP_BYTES
+        ? Option.getOrUndefined(decodeSwarmMembers(await NodeFSP.readFile(swarmFile.path, "utf8")))
+        : undefined;
+    const swarmChildIds = new Set<string>();
+    for (const member of Object.values(swarm?.members ?? {})) {
+      if (member.conversation_id !== undefined) {
+        swarmChildIds.add(member.conversation_id);
+      }
+    }
+    for (const [name, member] of Object.entries(swarm?.members ?? {})) {
+      if (name === "coordinator" || member.role === "coordinator") continue;
+      if (
+        member.killed === true ||
+        member.phase === "KILLED" ||
+        member.phase === "STOPPED" ||
+        member.desired_state === "KILLED" ||
+        member.desired_state === "STOPPED"
+      ) {
+        continue;
+      }
+      if (latestSystemStopMs !== undefined) {
+        if (member.conversation_id === undefined || !NATIVE_ID.test(member.conversation_id)) {
+          continue;
+        }
+        const childMessages = await readMessageSummaries(profileRoot, member.conversation_id);
+        let latestChildMsgMs: number | undefined;
+        for (const msg of childMessages) {
+          if (
+            msg.timestampMs !== undefined &&
+            (latestChildMsgMs === undefined || msg.timestampMs > latestChildMsgMs)
+          ) {
+            latestChildMsgMs = msg.timestampMs;
+          }
+        }
+        if (latestChildMsgMs === undefined || latestChildMsgMs <= latestSystemStopMs) {
+          continue;
+        }
+      }
+      const isActivelyWorking =
+        member.wake_mode === "working" ||
+        member.phase === "STARTING" ||
+        (member.last_nudged_seq !== undefined &&
+          member.last_read_seq !== undefined &&
+          member.last_nudged_seq > member.last_read_seq);
+      if (isActivelyWorking || input.purpose !== "session_replace") {
+        return true;
+      }
+    }
+
+    const childIds = await listDetachedChildIds(profileRoot, input.sessionId);
+    if (childIds !== undefined) {
+      for (const childId of childIds) {
+        if (swarmChildIds.has(childId)) continue;
+        const subagent = await readDetachedSubagent(profileRoot, input.sessionId, childId);
+        if (subagent === undefined || subagent.state === "SUBAGENT_STATE_KILLED") continue;
+        const childMessages = await readMessageSummaries(profileRoot, childId);
+        let latestPromptFromParentMs: number | undefined;
+        for (const msg of childMessages) {
+          if (
+            msg.sender === input.sessionId &&
+            msg.timestampMs !== undefined &&
+            (latestPromptFromParentMs === undefined || msg.timestampMs > latestPromptFromParentMs)
+          ) {
+            latestPromptFromParentMs = msg.timestampMs;
+          }
+        }
+        if (
+          latestSystemStopMs !== undefined &&
+          (latestPromptFromParentMs === undefined || latestPromptFromParentMs <= latestSystemStopMs)
+        ) {
+          continue;
+        }
+        if (!reportedSenders.has(childId)) return true;
+        const latestReportMs = latestReportMsBySender.get(childId);
+        if (
+          latestPromptFromParentMs !== undefined &&
+          (latestReportMs === undefined || latestPromptFromParentMs > latestReportMs)
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+  return yield* Effect.tryPromise({
+    try: read,
+    catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+  }).pipe(Effect.orElseSucceed(() => false));
+});
 
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:

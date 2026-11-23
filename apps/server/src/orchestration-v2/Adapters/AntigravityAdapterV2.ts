@@ -34,6 +34,7 @@ import {
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
+  readAntigravityHasPendingBackgroundWork,
   readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
@@ -247,6 +248,9 @@ export function makeAntigravityAcpAdapterFlavor(
     deferFinalizeForBackgroundWork: true,
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
+    // Antigravity treats session/close as ForceStopCascadeTree and writes a fake user force-cancel
+    // inbox notice; closing the process via SIGTERM shuts it down without destroying cascade state.
+    skipCloseSessionOnTeardown: true,
     toolOutlivesPrompt: antigravityToolOutlivesPrompt,
     // agy sometimes loses the terminal update or wake for a background command, which would
     // hold the turn in Working forever. 30 minutes still leaves long commands room.
@@ -319,6 +323,12 @@ export function makeAntigravityAcpAdapterFlavor(
             readAntigravityPendingReply({
               profileDirectory,
               sessionId,
+            }),
+          hasPendingBackgroundWork: ({ sessionId, purpose }) =>
+            readAntigravityHasPendingBackgroundWork({
+              profileDirectory,
+              sessionId,
+              purpose,
             }),
         }),
   };

@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
@@ -3114,5 +3115,240 @@ describe("AntigravityAdapterV2 update_steps checklist", () => {
         ["Create b.txt", "running"],
       ]);
     }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 teardown and native background work", () => {
+  it.live(
+    "skips destructive session/close on scope teardown even when close capability is advertised",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-teardown-log-" });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-agy-teardown-ws-",
+        });
+        const requestLog = path.join(logs, "requests.ndjson");
+        let closeSessionCalls = 0;
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const instanceId = ProviderInstanceId.make("antigravity-skip-close-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AGENT_VERSION: "1.5.14",
+                  T3_ACP_REQUEST_LOG_PATH: requestLog,
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                start: () =>
+                  runtime.start().pipe(
+                    Effect.map((started) => ({
+                      ...started,
+                      initializeResult: {
+                        ...started.initializeResult,
+                        agentCapabilities: {
+                          ...started.initializeResult.agentCapabilities,
+                          sessionCapabilities: {
+                            ...started.initializeResult.agentCapabilities?.sessionCapabilities,
+                            close: {},
+                          },
+                        },
+                      },
+                    })),
+                  ),
+                closeSession: () =>
+                  Effect.sync(() => {
+                    closeSessionCalls += 1;
+                  }).pipe(Effect.andThen(runtime.closeSession())),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const threadId = ThreadId.make("thread-antigravity-skip-close");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+
+        const sessionScope = yield* Scope.make();
+        const session = yield* adapter
+          .openSession({
+            threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-antigravity-skip-close"),
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.provideService(Scope.Scope, sessionScope));
+        yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+        yield* Scope.close(sessionScope, Exit.void);
+
+        assert.equal(closeSessionCalls, 0);
+        const methods = (yield* fileSystem.readFileString(requestLog))
+          .trim()
+          .split("\n")
+          .map((line) => (JSON.parse(line) as { method?: string }).method);
+        assert.include(methods, "session/new");
+        assert.notInclude(methods, "session/close");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "reports live swarm workers to hasPendingBackgroundWork while letting parked mentions allow session replacement",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-swarm-prof-" });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-swarm-ws-" });
+        const instanceId = ProviderInstanceId.make("antigravity-swarm-pending-test");
+        let spawnCount = 0;
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          profileDirectory: profile,
+          makeRuntime: (input) => {
+            spawnCount += 1;
+            return makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AGENT_VERSION: "1.5.14",
+                },
+              },
+            }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
+          },
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const threadId = ThreadId.make("thread-antigravity-swarm-pending");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-swarm-pending"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const initialThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const rootSessionId = initialThread.nativeThreadRef?.nativeId;
+        assert.isNotNull(rootSessionId ?? null);
+        if (!rootSessionId) {
+          throw new Error("Expected Antigravity initial thread to have a nativeId");
+        }
+        const writeSwarm = (members: Record<string, unknown>) => {
+          const swarmFile = path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            rootSessionId,
+            ".system_generated",
+            "swarm",
+            "members.json",
+          );
+          return fileSystem
+            .makeDirectory(path.dirname(swarmFile), { recursive: true })
+            .pipe(
+              Effect.andThen(fileSystem.writeFileString(swarmFile, JSON.stringify({ members }))),
+            );
+        };
+
+        assert.isDefined(session.hasPendingBackgroundWork);
+        assert.isFalse(yield* session.hasPendingBackgroundWork!);
+
+        // Working worker blocks both idle release and forceNewNativeThread replacement.
+        yield* writeSwarm({
+          worker: {
+            conversation_id: "11111111-1111-1111-1111-111111111111",
+            role: "worker",
+            phase: "RUNNING",
+            wake_mode: "working",
+            killed: false,
+          },
+        });
+        assert.isTrue(yield* session.hasPendingBackgroundWork!);
+        const blockedError = yield* session
+          .ensureThread({ threadId, modelSelection, runtimePolicy, forceNewNativeThread: true })
+          .pipe(Effect.flip);
+        assert.instanceOf(blockedError.cause, ProviderAdapter.ProviderAdapterProtocolError);
+        assert.include(
+          (blockedError.cause as ProviderAdapter.ProviderAdapterProtocolError).detail,
+          "Cannot replace ACP session",
+        );
+        assert.equal(spawnCount, 1);
+
+        // Waiting worker (wake_mode: "mentions") still pins idle release, but allows session replacement.
+        yield* writeSwarm({
+          worker: {
+            conversation_id: "11111111-1111-1111-1111-111111111111",
+            role: "worker",
+            phase: "RUNNING",
+            wake_mode: "mentions",
+            last_read_seq: 2,
+            last_nudged_seq: 2,
+            killed: false,
+          },
+        });
+        assert.isTrue(yield* session.hasPendingBackgroundWork!);
+        const replacedThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+          forceNewNativeThread: true,
+        });
+        assert.equal(spawnCount, 2);
+        assert.equal(replacedThread.nativeThreadRef?.nativeId, "mock-session-1");
+
+        // Once the new session has no active swarm / old worker is killed, pending work is false.
+        yield* writeSwarm({
+          worker: {
+            conversation_id: "11111111-1111-1111-1111-111111111111",
+            role: "worker",
+            phase: "KILLED",
+            wake_mode: "mentions",
+            killed: true,
+          },
+        });
+        assert.isFalse(yield* session.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
