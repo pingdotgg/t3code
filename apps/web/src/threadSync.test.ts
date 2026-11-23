@@ -47,7 +47,9 @@ describe("isThreadCatchingUp", () => {
               hasError,
             });
             if (isThreadCatchingUp(phase, environmentUnavailable)) {
-              held.push(`${status} detail=${detailExists} error=${hasError}`);
+              held.push(
+                `${status} detail=${detailExists} error=${hasError} unavailable=${environmentUnavailable}`,
+              );
             }
           }
         }
@@ -57,9 +59,9 @@ describe("isThreadCatchingUp", () => {
     // deleted thread and an unreachable environment never hold, so a broken sync cannot lock
     // the person out.
     expect(held).toEqual([
-      "empty detail=true error=false",
-      "cached detail=true error=false",
-      "synchronizing detail=true error=false",
+      "empty detail=true error=false unavailable=false",
+      "cached detail=true error=false unavailable=false",
+      "synchronizing detail=true error=false unavailable=false",
     ]);
   });
 });
