@@ -96,6 +96,7 @@ vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../../connection/catalog", () => ({ retryEnvironmentCatalogLoad: vi.fn() }));
 vi.mock("../connection/environmentStatusText", () => ({ runtimeConnectionErrorText: () => null }));
 vi.mock("../../state/entities", () => ({
   useProjects: () => [regular, scratch],
@@ -110,7 +111,7 @@ vi.mock("../../state/use-remote-environment-registry", () => ({
   }),
 }));
 vi.mock("../../state/workspace", () => ({
-  useWorkspaceState: () => ({ state: { hasReadyEnvironment: true } }),
+  useWorkspaceState: () => ({ state: { hasReadyEnvironment: true, catalogLoadError: null } }),
 }));
 vi.mock("../sharing/IncomingShareProvider", () => ({
   useIncomingShare: () => ({ getShare: () => null, releaseShareReservation: vi.fn() }),
