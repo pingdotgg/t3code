@@ -7267,6 +7267,19 @@ body {
       }
     }
 
+    /* On the pane's edge that outline's side runs straight down, so the pane's
+       corner under it takes the same fill (data-pane-hover-start, PaneTabs.tsx). */
+    & [data-pane-hover-start] [data-pane-bar-corner="start"],
+    & [data-layout-pane-id][data-pane-hovered-start] > [data-pane-cut="start-notch"]::before {
+      background-image:
+        linear-gradient(
+          color-mix(in srgb, var(--pane-join-fill) 45%, transparent),
+          color-mix(in srgb, var(--pane-join-fill) 45%, transparent)
+        ),
+        var(--surface-grain);
+      background-size: auto, var(--surface-grain-size);
+    }
+
     /* Keep the unfocused tab's existing label and icon contrast. */
     & [data-pane-notch-unfocused] [data-layout-tab-strip] [data-joined] {
       color: var(--pane-bar-fg);
