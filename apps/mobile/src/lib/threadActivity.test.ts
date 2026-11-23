@@ -1483,7 +1483,7 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
 
-  it("does not show Thinking once the open run's provider turn has ended", () => {
+  it("does not show Thinking once the provider turn has ended or its reply is streaming", () => {
     const startedAt = "2026-04-01T00:00:01.000Z";
     const run = { runId, status: "running" as const, startedAt, completedAt: null };
     expect(
@@ -1495,6 +1495,15 @@ describe("buildThreadFeed", () => {
         startedAt,
       ).map((row) => row.type),
     ).toEqual(["run-fold"]);
+    const streamingReply = buildThreadFeed([
+      projected(userMessage(), 0),
+      projected({ ...assistantMessage(), streaming: true }, 1),
+    ]);
+    expect(
+      deriveThreadFeedPresentation(streamingReply, run, new Set(), new Set(), startedAt).map(
+        (row) => row.type,
+      ),
+    ).toEqual(["message", "run-fold", "message"]);
   });
   it("hides tool calls or everything but the final answer", () => {
     const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;

@@ -29,6 +29,7 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
+  "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0": "svg",
   "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
   "http://www.w3.org/1999/xhtml": "",
@@ -266,7 +267,7 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
   reserveMarkup(tag.length * 2 + spans.length + 5);
   return `<${tag}${spans}>${children}</${tag}>`;
 }
-async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
+async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -278,12 +279,14 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       archive,
       archivePath("content.xml", node.attrs["xlink:href"] ?? ""),
     );
-    return src ? `<img src="${src}" alt="">` : "";
+    return src ? `<img src="${src}" alt="${boundedMarkup(escape(imageAlt))}">` : "";
   }
   if (
     [
       "office:annotation",
       "presentation:notes",
+      "svg:title",
+      "svg:desc",
       "text:tracked-changes",
       "office:scripts",
       "draw:object",
@@ -298,8 +301,16 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
     ].includes(node.name)
   )
     return "";
+  const childImageAlt =
+    node.name === "draw:frame"
+      ? ["svg:title", "svg:desc"]
+          .map((name) => node.children.find((child) => child.name === name))
+          .map((child) => (child ? text(child).trim() : ""))
+          .filter(Boolean)
+          .join(" ")
+      : "";
   let children = "";
-  for (const child of node.children) children += await odfHtml(child, archive);
+  for (const child of node.children) children += await odfHtml(child, archive, childImageAlt);
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -538,6 +549,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let state = {
     skip: false,
     deleted: false,
+    hiddenText: false,
     bold: false,
     italic: false,
     underline: false,
@@ -560,7 +572,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   };
   let run = "";
   let fallback = 0;
-  const hidden = () => state.skip || state.deleted;
+  const hidden = () => state.skip || state.deleted || state.hiddenText;
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const flush = () => {
@@ -703,6 +715,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         const label =
           (
             {
+              0: "windows-1252",
+              866: "ibm866",
               65001: "utf-8",
               932: "shift_jis",
               936: "gbk",
@@ -722,10 +736,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "ul") state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
+      else if (word === "v") state.hiddenText = arg !== 0;
       else if (word === "plain")
         state = {
           ...state,
           deleted: false,
+          hiddenText: false,
           bold: false,
           italic: false,
           underline: false,

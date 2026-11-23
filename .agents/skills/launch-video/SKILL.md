@@ -37,10 +37,25 @@ There are two ways to build one:
    - Agent turns: pass `claude: [turns]` to `prepareHome` and the real Claude provider runs
      `scripts/fake-claude.mjs` as its CLI, so the video shows Claude's logo, models, thinking
      and tool rows. Each turn is `{ match, steps }`: `think`, `text`, `bash` (+ `output`, `ms`),
-     `wait`, and `tool` (+ `input`), which calls that T3 MCP tool for real, e.g.
-     `delegate_task`. Match generated titles with a `{ match: "title", repeat: true }` turn.
-     `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids that change
-     every run. `fake-claude.log` in the home records the protocol, for debugging.
+     `wait`, `edit` (+ `old`, `new`) and `write` (+ `content`), which change the file for real
+     so diffs and checkpoints show them, and `tool` (+ `input`), which calls that T3 MCP tool
+     for real, e.g. `delegate_task`; with `server` and `output` it plays another MCP server's
+     tool instead. `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids
+     that change every run. `bash` with `run: true` executes the command in the session's cwd
+     (to push a branch or open a pull request with a forge CLI); `as: "name"` keeps its output,
+     or the `pick` regex match in it, as `<var:name>` for the turn's later steps. A workflow
+     `agent` step with `returns` finishes on `submit: { ... }`, which hands it that value
+     through `t3_submit_output`. `fake-claude.log` in the home records the protocol, for debugging.
+   - Titles, commit messages and branch names come from `claude -p --json-schema`: answer them
+     with `{ match, json }` turns, where `match` is tested against the schema plus the prompt
+     (`'"title"'`, `'"subject"[\\s\\S]*products\\.ts'`). Unanswered ones fail in the app.
+   - An MCP server that needs a sign-in: pass `claude: { turns, servers: [{ name, authUrl }] }`.
+     The fake answers Claude's `mcp_status`, `mcp_authenticate` and `mcp_oauth_callback_url`,
+     and remembers the sign-in across processes like the real CLI.
+   - `createProject(env, title, files, { repos: ["api", "web"] })` makes a plain folder of
+     several repositories. Staged repos commit as a fictional author. Keep staging homes
+     outside this checkout (e.g. `<out>/home`): a project folder inside it shows this
+     checkout's branch.
    - Data a real flow can't produce cheaply goes into the app's own stores, never into pixels.
      `insertPeerLinks` writes link rows into a stopped server; `serveDescriptors` makes fake
      machines answer the reachability probe. The client's saved environments and routes live
@@ -82,6 +97,11 @@ harness's task stop; it ends its servers' process groups.
   only on tailnet names. `serve.mjs` links to this machine's tailnet DNS name.
 - **Leaks.** Grep the beats for the real hostname, username and tailnet name before
   rendering. `snapshot.mjs` drops hidden inputs' values (they hold local paths).
+- **Timeline rows** (`[data-timeline-row-id]`) are placed by a transform; `rise`/`pop` on one
+  replaces it and the row vanishes. Animate an element inside the row.
+- **The app's own animations** (a running tool's shine) are frozen into the beat and seeked
+  with the story, which can leave text invisible. Cancel them in `setup()`:
+  `iframe.contentDocument.getAnimations().forEach((a) => a.cancel())`.
 - **Timing.** A replayed turn streams in real time (each frame delay caps at 2 s). Make a
   recording long enough for the drive to catch the state you need, and freeze beats on a
   timer when the UI summarises (a running command shows only "Running pnpm").
