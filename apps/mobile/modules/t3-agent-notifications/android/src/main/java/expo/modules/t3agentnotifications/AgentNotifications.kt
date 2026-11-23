@@ -378,7 +378,7 @@ object AgentNotifications {
       .setShortCriticalText(if (ongoing) presentation.chip else null)
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
-    presentation.applyTo(builder, localized)
+    presentation.applyTo(builder)
     val action = presentation.action
     if (action != null && openThread != null) builder.addAction(0, action, openThread)
     if (ongoing) {

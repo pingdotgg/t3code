@@ -122,14 +122,8 @@ internal class ActivityPresentation(
     context.resources.getQuantityString(id, count, count)
 
   val summary = when {
-    hero == null -> {
-      val title = data["activity_title"]?.takeIf { it.isNotBlank() }?.take(120)
-      if (title == null || title == "Agent activity") {
-        context.getString(R.string.agent_activity_summary_default)
-      } else {
-        title
-      }
-    }
+    hero == null -> data["activity_title"]?.takeIf { it.isNotBlank() }?.take(120)
+      ?: context.getString(R.string.agent_activity_summary_default)
     rows.size == 1 -> hero.title
     attentionCount == 1 -> context.getString(R.string.agent_activity_summary_one_needs_you)
     attentionCount > 1 ->
@@ -168,7 +162,7 @@ internal class ActivityPresentation(
     null
   }
 
-  fun applyTo(builder: NotificationCompat.Builder, context: Context) {
+  fun applyTo(builder: NotificationCompat.Builder) {
     val tint = phase?.let { ContextCompat.getColor(context, it.color) }
     if (tint != null) builder.setColor(tint)
     // Tint the summary only when it names an outcome or a request; a plain
@@ -183,12 +177,12 @@ internal class ActivityPresentation(
           if (activeCount > 0) {
             quantity(R.plurals.agent_activity_subtext_active, activeCount)
           } else {
-            this.context.getString(R.string.agent_activity_subtext_threads, threadCount)
+            context.getString(R.string.agent_activity_subtext_threads, threadCount)
           }
         ).joinToString(" · ")
       )
     }
-    val body = body(context)
+    val body = body()
     val lineBreak = body.indexOf('\n')
     val firstLine = if (lineBreak >= 0) body.subSequence(0, lineBreak) else body
     builder.setContentText(firstLine).setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -197,21 +191,21 @@ internal class ActivityPresentation(
     builder.setShowWhen(false).setUsesChronometer(false)
   }
 
-  private fun body(context: Context): CharSequence = when {
+  private fun body(): CharSequence = when {
     hero == null -> legacyBody
-    rows.size == 1 -> statusLine(context, hero.copy(title = hero.project), "")
+    rows.size == 1 -> statusLine(hero.copy(title = hero.project), "")
     else -> SpannableStringBuilder().apply {
       rows.forEachIndexed { index, row ->
         if (index > 0) append("\n")
-        append(statusLine(context, row, row.project.takeUnless { singleProject }.orEmpty()))
+        append(statusLine(row, row.project.takeUnless { singleProject }.orEmpty()))
       }
     }
   }
 
-  private fun statusLine(context: Context, row: ActivityRow, trailing: String): CharSequence =
+  private fun statusLine(row: ActivityRow, trailing: String): CharSequence =
     SpannableStringBuilder().apply {
       val status = ActivityPhase.forStatus(row.status)
-      val statusText = status?.let { this@ActivityPresentation.context.getString(it.statusRes) }
+      val statusText = status?.let { context.getString(it.statusRes) }
         ?: row.status
       val color = ContextCompat.getColor(context, status?.color ?: R.color.agent_activity_waiting)
       append(tinted(statusText, color, bold = true))
