@@ -22,7 +22,7 @@ use tokio::{
     time::{Instant, sleep_until},
 };
 
-use crate::commands::{failure, finish_run_as, hold_queue, start_next_queued};
+use crate::commands::{RunEnd, failure, finish_run_as, hold_queue, start_next_queued};
 use crate::engine::Inner;
 use crate::lock;
 use crate::store::Draft;
@@ -224,6 +224,7 @@ impl Inner {
                 &run_id,
                 "failed",
                 Some(failure("provider_error", &message, None)),
+                RunEnd::Settled,
             )
             .await;
         }
@@ -346,6 +347,7 @@ impl Inner {
         run_id: &str,
         status: &'static str,
         failure: Option<Value>,
+        end: RunEnd,
     ) {
         let (thread, run) = (thread_id.to_owned(), run_id.to_owned());
         let (thread_id, run_id) = (thread_id.to_owned(), run_id.to_owned());
@@ -380,6 +382,7 @@ impl Inner {
                     persisted,
                     failure,
                     crate::commands::IdleWrite::TurnEnd,
+                    end,
                 )?;
                 // A failure holds the queue, so queued messages do not hit the same wall. A
                 // late end of a run that already ended (a start failing after Force stop)
@@ -1424,7 +1427,8 @@ impl Inner {
                     reserved.retain(|(tid, _)| *tid != thread_id);
                     if let Some(run_id) = run_id {
                         live.take_active();
-                        self.end_run(&thread_id, &run_id, status, failure).await;
+                        self.end_run(&thread_id, &run_id, status, failure, RunEnd::Settled)
+                            .await;
                         if broken {
                             self.mark_thread_broken(&thread_id, &run_id).await;
                         }
@@ -1451,20 +1455,8 @@ impl Inner {
             self.end_released_subagents(&thread_id, &live.provider_session_id, self.now_ms())
                 .await;
         }
-        if !self.shutting_down()
-            && let Some(active) = live.take_active()
-        {
-            self.end_run(
-                &thread_id,
-                &active.run_id,
-                "failed",
-                Some(failure(
-                    "provider_error",
-                    "The provider session ended during the turn.",
-                    None,
-                )),
-            )
-            .await;
+        if !self.shutting_down() {
+            self.end_detached_run(&thread_id, &live).await;
         }
         let mut map = lock(&self.live);
         if map
@@ -1694,7 +1686,8 @@ impl Inner {
             live.take_active();
             self.close_session(&thread_id).await;
         }
-        self.end_run(&thread_id, &run_id, "interrupted", None).await;
+        self.end_run(&thread_id, &run_id, "interrupted", None, RunEnd::Settled)
+            .await;
     }
 
     /// Stop with no active run (`ProviderTurnControlService.interrupt` on a settled turn):
@@ -1988,7 +1981,8 @@ impl Inner {
             {
                 eprintln!("conn-engine: could not record the Force stop: {e}");
             }
-            self.end_run(&thread_id, &run_id, "interrupted", None).await;
+            self.end_run(&thread_id, &run_id, "interrupted", None, RunEnd::Settled)
+                .await;
         }
         Ok(json!({"outcome": "killed", "sharedWithThreadIds": []}))
     }
@@ -2080,7 +2074,7 @@ impl Inner {
 
     /// Closes provider sessions idle for `idle`, so an idle thread does not keep a provider
     /// process. The next turn opens a session and resumes the stored provider thread.
-    pub(crate) async fn reap_idle(&self, idle: Duration) {
+    pub(crate) async fn reap_idle(self: &Arc<Self>, idle: Duration) {
         let idle_threads: Vec<String> = lock(&self.live)
             .iter()
             .filter(|(_, live)| live.idle_for(self.clock.now_millis(), idle, self.idle_max_hold))
@@ -2182,11 +2176,14 @@ impl Inner {
     /// once its process has ended, with those kept for other threads on that process. While a
     /// shared process (Codex's `app-server`) still runs, its MCP client may still use them,
     /// so they are kept for the thread's next session.
-    pub(crate) async fn close_session(&self, thread_id: &str) {
+    pub(crate) async fn close_session(self: &Arc<Self>, thread_id: &str) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             let released_at = self.now_ms();
             self.command_output.finish_thread(thread_id);
+            // The run is detached before the close, so a root turn the close ends (Codex on
+            // a shared `app-server`) does not end it as if the provider stopped it.
+            let detached = live.take_active();
             let closed = live.session.close().await;
             let instance = self
                 .providers
@@ -2213,8 +2210,25 @@ impl Inner {
                 self.end_released_subagents(thread_id, &live.provider_session_id, released_at)
                     .await;
             }
-            // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
-            live.closed.notify_one();
+            if let Some(active) = detached
+                && !self.shutting_down()
+            {
+                self.end_run(
+                    thread_id,
+                    &active.run_id,
+                    "failed",
+                    Some(session_ended()),
+                    RunEnd::Detached,
+                )
+                .await;
+            }
+            // A process that outlives the session (Codex's shared `app-server`) still reports
+            // the subagents it runs for it, as T3's adapter keeps their turn contexts: the
+            // pump reads on until the session drops its events. `notify_one` keeps a permit,
+            // so a pump not yet waiting still sees it.
+            if closed == conn_provider::Closed::RuntimeStopped || self.shutting_down() {
+                live.closed.notify_one();
+            }
             if !self.shutting_down() {
                 self.record_release(thread_id, &live.provider_session_id)
                     .await;
@@ -2223,6 +2237,20 @@ impl Inner {
                 self.clear_released_rosters(thread_id, &live.provider_session_id)
                     .await;
             }
+        }
+    }
+
+    /// A run its session left open fails: the session ended during the turn.
+    async fn end_detached_run(self: &Arc<Self>, thread_id: &str, live: &LiveThread) {
+        if let Some(active) = live.take_active() {
+            self.end_run(
+                thread_id,
+                &active.run_id,
+                "failed",
+                Some(session_ended()),
+                RunEnd::Detached,
+            )
+            .await;
         }
     }
 
@@ -2309,6 +2337,14 @@ impl Inner {
             eprintln!("conn-engine: could not clear released background tasks: {e}");
         }
     }
+}
+
+fn session_ended() -> Value {
+    failure(
+        "provider_error",
+        "The provider session ended during the turn.",
+        None,
+    )
 }
 
 enum Translated {

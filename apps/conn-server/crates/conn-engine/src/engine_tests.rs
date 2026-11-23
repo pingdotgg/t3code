@@ -906,6 +906,102 @@ async fn a_shared_runtime_close_leaves_native_subagents_open() {
     }
 }
 
+/// After that close the process still reports what it runs for the session: a subagent that
+/// ends later reaches the store, as T3's adapter keeps a child's turn context past a release.
+/// The pump reads on until the session drops its events.
+#[tokio::test(flavor = "current_thread")]
+async fn a_shared_runtime_close_still_stores_a_subagents_later_end() {
+    let db = TempDb::new("orphans-shared-late");
+    let (engine, provider) = open_with(&db, FakeProvider::new("claudeAgent").with_shared_runtime());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    engine.inner().close_session("t1").await;
+    let late = provider
+        .after_close
+        .lock()
+        .unwrap()
+        .take()
+        .expect("the closed session's events");
+    let mut subagent = engine
+        .inner()
+        .write(|tx| tx.entity("t1", "subagents", "node:native"))
+        .await
+        .unwrap()
+        .unwrap();
+    subagent["status"] = json!("completed");
+    subagent["completedAt"] = subagent["startedAt"].clone();
+    subagent["parentNodeId"] = json!("node:root");
+    subagent["nativeTaskRef"] = Value::Null;
+    late.send(from_json(json!({"type": "subagent.updated", "subagent": subagent})).unwrap())
+        .await
+        .unwrap();
+    drop(late);
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "subagent.updated"
+            && item["event"]["payload"]["id"] == "node:native"
+            && item["event"]["payload"]["status"] == "completed"
+        {
+            break;
+        }
+    }
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:native").await,
+        "completed"
+    );
+}
+
+/// A confirmed Stop ends the run's own native subagent with it: record, node, item and its
+/// child's runless turn together (T3's `cascadeTerminalizeRunOwnedSubagents`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_confirmed_stop_ends_the_runs_native_subagents() {
+    let db = TempDb::new("orphans-stop");
+    let (engine, _) = open_with(&db, FakeProvider::new("claudeAgent"));
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let provider_thread = provider_thread_of_t1(&engine).await;
+    seed_native_subagents(&engine, &provider_thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "c3", "threadId": "t1", "runId": "run:t1:1"}),
+    )
+    .await;
+    let ended = until_run_ends(&mut thread).await;
+    assert_eq!(ended.last().unwrap().1["status"], "interrupted");
+    for (thread, kind, id) in [
+        ("t1", "subagents", "node:native"),
+        ("t1", "nodes", "node:native"),
+        ("t1", "turnItems", "item:node:native"),
+        ("child", "nodes", "node:child-root"),
+        ("child", "turnItems", "item:child-cmd"),
+    ] {
+        assert_eq!(
+            row_status(&engine, thread, kind, id).await,
+            "interrupted",
+            "{kind} {id}"
+        );
+    }
+    // An app-owned subagent is not the provider's to end.
+    assert_eq!(
+        row_status(&engine, "t1", "subagents", "node:app").await,
+        "running"
+    );
+}
+
 /// A clean stop leaves them open for the next start, which cancels them.
 #[tokio::test(flavor = "current_thread")]
 async fn a_shutdown_leaves_native_subagents_for_the_next_start() {

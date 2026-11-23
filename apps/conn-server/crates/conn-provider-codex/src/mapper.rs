@@ -728,18 +728,52 @@ impl<E: Env> Mapper<E> {
             .unwrap_or_default()
     }
 
-    /// The app-server is gone: every open turn ends. `expected` (a close) ends them as
-    /// interrupted, a crash as failed.
     /// The session closed. `shared`: the app-server keeps running for other sessions, so
-    /// this session's subagents may still run there; their child turns are dropped without an
-    /// end, and only the root turns end. Otherwise the process ended with the session.
+    /// this session's subagents may still run there. Their child turns stay open and end with
+    /// their own `turn/completed` or the process's exit; only the root turns end now. Otherwise
+    /// the process ended with the session, and every open turn ends.
     pub fn on_close(&mut self, shared: bool) -> Vec<Out> {
-        if shared {
-            self.turns.retain(|_, turn| turn.subagent.is_none());
+        if !shared {
+            return self.on_exit(true, "The session closed.");
         }
-        self.on_exit(true, "The session closed.")
+        self.pending_turns.clear();
+        self.abandoned = None;
+        self.settled.clear();
+        let roots: Vec<String> = self
+            .turns
+            .iter()
+            .filter(|(_, turn)| turn.subagent.is_none())
+            .map(|(native, _)| native.clone())
+            .collect();
+        self.requests.retain(|_, request| {
+            self.turns.values().any(|turn| {
+                turn.subagent.is_some() && turn.native_thread_id == request.native_thread_id
+            })
+        });
+        let mut out = Vec::new();
+        for native in roots {
+            let now = self.env.now();
+            self.finalize(&native, "interrupted", now, None, None, &mut out);
+        }
+        out
     }
 
+    /// The native threads of subagent turns still open: after a shared close they keep their
+    /// route until they end.
+    pub fn open_child_threads(&self) -> Vec<String> {
+        let mut threads: Vec<String> = self
+            .turns
+            .values()
+            .filter(|turn| turn.subagent.is_some())
+            .map(|turn| turn.native_thread_id.clone())
+            .collect();
+        threads.sort();
+        threads.dedup();
+        threads
+    }
+
+    /// The app-server is gone: every open turn ends. `expected` (a close) ends them as
+    /// interrupted, a crash as failed.
     pub fn on_exit(&mut self, expected: bool, detail: &str) -> Vec<Out> {
         let mut out = Vec::new();
         self.pending_turns.clear();

@@ -78,6 +78,9 @@ pub struct FakeProvider {
     close_delay: std::time::Duration,
     /// What a session's `close` answers; see [`Self::with_shared_runtime`].
     pub closes_as: Arc<Mutex<Closed>>,
+    /// The event sender of the last session closed on a shared process, which may still
+    /// report what that process runs for it. Dropping it ends the session's events.
+    pub after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
@@ -121,6 +124,7 @@ impl FakeProvider {
             background_wait: true,
             close_delay: std::time::Duration::ZERO,
             closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
+            after_close: Arc::default(),
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
@@ -214,7 +218,8 @@ struct FakeSession {
     abandoned: Arc<(Mutex<Option<String>>, tokio::sync::Notify)>,
     instance: String,
     driver: String,
-    events: mpsc::Sender<ProviderEvent>,
+    /// Gone after `close`.
+    events: Mutex<Option<mpsc::Sender<ProviderEvent>>>,
     turn: Arc<Mutex<Option<Turn>>>,
     steering: bool,
     background: Arc<AtomicBool>,
@@ -237,6 +242,7 @@ struct FakeSession {
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
     closes_as: Arc<Mutex<Closed>>,
+    after_close: Arc<Mutex<Option<mpsc::Sender<ProviderEvent>>>>,
 }
 
 impl FakeSession {
@@ -329,7 +335,7 @@ impl Provider for FakeProvider {
                     abandoned: Arc::default(),
                     instance: self.id.as_str().to_owned(),
                     driver: self.driver().to_owned(),
-                    events: tx,
+                    events: Mutex::new(Some(tx)),
                     turn: Arc::new(Mutex::new(None)),
                     steering: self.steering,
                     background: Arc::new(AtomicBool::new(false)),
@@ -349,6 +355,7 @@ impl Provider for FakeProvider {
                     control_delay: self.control_delay,
                     close_delay: self.close_delay,
                     closes_as: self.closes_as.clone(),
+                    after_close: self.after_close.clone(),
                 }),
                 events: rx,
             })
@@ -413,6 +420,13 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
 }
 
 impl FakeSession {
+    /// The event sender; after `close`, one whose receiver is gone.
+    fn events(&self) -> mpsc::Sender<ProviderEvent> {
+        crate::lock(&self.events)
+            .clone()
+            .unwrap_or_else(|| mpsc::channel(1).0)
+    }
+
     /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
     /// marked, as Claude's `emitRosterUpdate`.
     fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
@@ -457,7 +471,7 @@ impl FakeSession {
             events.push(provider_turn(&turn, "completed"));
             events.push(terminal(&turn, TurnStatus::Completed, None));
             *crate::lock(&self.turn) = Some(turn);
-            let tx = self.events.clone();
+            let tx = self.events();
             tokio::spawn(async move { emit(&tx, events).await });
             Ok(())
         })
@@ -559,13 +573,13 @@ impl Session for FakeSession {
             // `coldstart`: a start that takes 500 ms with its provider turn shown at once, as
             // Claude's cold start. Abandoned, it ends that turn interrupted and fails.
             if text.starts_with("coldstart") {
-                emit(&self.events, [provider_turn(&turn, "running")]).await;
+                emit(&self.events(), [provider_turn(&turn, "running")]).await;
                 *crate::lock(&self.turn) = Some(turn.clone());
                 let wait = std::time::Duration::from_millis(500);
                 if self.wait_unless_abandoned(&turn.run_id, wait).await {
                     crate::lock(&self.calls).push(format!("start abandoned {}", turn.run_id));
                     emit(
-                        &self.events,
+                        &self.events(),
                         [
                             provider_turn(&turn, "interrupted"),
                             terminal(&turn, TurnStatus::Interrupted, None),
@@ -582,7 +596,7 @@ impl Session for FakeSession {
                     terminal(&turn, TurnStatus::Completed, None),
                 ];
                 tokio::spawn({
-                    let tx = self.events.clone();
+                    let tx = self.events();
                     async move { emit(&tx, done).await }
                 });
                 return Ok(());
@@ -619,7 +633,7 @@ impl Session for FakeSession {
                 })
                 .await;
             }
-            let tx = self.events.clone();
+            let tx = self.events();
             let mut started = vec![provider_turn(&turn, "running")];
             self.stuck.store(text == "stuck", Ordering::SeqCst);
             match text.as_str() {
@@ -858,7 +872,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -888,7 +902,7 @@ impl Session for FakeSession {
                 )
             };
             crate::lock(&self.calls).push(format!("interrupt {run}"));
-            emit(&self.events, event).await;
+            emit(&self.events(), event).await;
             tokio::time::sleep(self.control_delay).await;
             crate::lock(&self.calls).push(format!("interrupted {run}"));
             Ok(())
@@ -934,7 +948,7 @@ impl Session for FakeSession {
                 events.push(terminal(turn, TurnStatus::Completed, None));
                 events
             };
-            emit(&self.events, events).await;
+            emit(&self.events(), events).await;
             Ok(())
         })
     }
@@ -1027,7 +1041,7 @@ impl Session for FakeSession {
             ));
             if !matched.is_empty() {
                 let update = self.roster_update(conn_contract::to_json(&input.provider_thread));
-                emit(&self.events, [update]).await;
+                emit(&self.events(), [update]).await;
             }
             Ok(matched)
         })
@@ -1118,6 +1132,10 @@ impl Session for FakeSession {
         self.closed.fetch_add(1, Ordering::SeqCst);
         let delay = self.close_delay;
         let closed = *crate::lock(&self.closes_as);
+        let events = crate::lock(&self.events).take();
+        if closed == Closed::RuntimeShared {
+            *crate::lock(&self.after_close) = events;
+        }
         Box::pin(async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;

@@ -719,7 +719,7 @@ pub(crate) fn end_orphaned_native_subagents(
     if released.is_some() && released_threads.is_empty() {
         return Ok(());
     }
-    for mut row in tx.entities(thread_id, "subagents")? {
+    for row in tx.entities(thread_id, "subagents")? {
         if row["origin"] != "provider_native" || !work_active(&row) {
             continue;
         }
@@ -748,44 +748,75 @@ pub(crate) fn end_orphaned_native_subagents(
                 continue;
             }
         }
-        let id = row["id"].as_str().unwrap_or_default().to_owned();
-        let run = row["runId"].as_str().map(str::to_owned);
-        let child = row["childThreadId"].as_str().map(str::to_owned);
-        row["status"] = json!(status);
-        row["completedAt"] = json!(now);
-        row["updatedAt"] = json!(now);
+        end_native_subagent(tx, thread_id, row, status, &now)?;
+    }
+    Ok(())
+}
+
+/// `cascadeTerminalizeRunOwnedSubagents`: a run that ends interrupted, failed or cancelled
+/// ends its open provider-native subagents with it: record, node, item, and their child's
+/// runless root turns.
+pub(crate) fn end_run_native_subagents(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+    status: &str,
+) -> StoreResult<()> {
+    let now = tx.now().to_owned();
+    for row in tx.entities_where(thread_id, "subagents", "runId", run_id)? {
+        if row["origin"] == "provider_native" && work_active(&row) {
+            end_native_subagent(tx, thread_id, row, status, &now)?;
+        }
+    }
+    Ok(())
+}
+
+/// Ends one provider-native subagent: its record, node and item together, then its child's
+/// runless root turns.
+fn end_native_subagent(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    mut row: Value,
+    status: &str,
+    now: &str,
+) -> StoreResult<()> {
+    let id = row["id"].as_str().unwrap_or_default().to_owned();
+    let run = row["runId"].as_str().map(str::to_owned);
+    let child = row["childThreadId"].as_str().map(str::to_owned);
+    row["status"] = json!(status);
+    row["completedAt"] = json!(now);
+    row["updatedAt"] = json!(now);
+    tx.append(
+        Draft::new(thread_id, "subagent.updated", row)
+            .run(run.as_deref())
+            .node(Some(&id)),
+    )?;
+    if let Some(mut node) = tx.entity(thread_id, "nodes", &id)?.filter(work_active) {
+        node["status"] = json!(status);
+        node["completedAt"] = json!(now);
         tx.append(
-            Draft::new(thread_id, "subagent.updated", row)
+            Draft::new(thread_id, "node.updated", node)
                 .run(run.as_deref())
                 .node(Some(&id)),
         )?;
-        if let Some(mut node) = tx.entity(thread_id, "nodes", &id)?.filter(work_active) {
-            node["status"] = json!(status);
-            node["completedAt"] = json!(now);
-            tx.append(
-                Draft::new(thread_id, "node.updated", node)
-                    .run(run.as_deref())
-                    .node(Some(&id)),
-            )?;
+    }
+    for mut item in tx.entities_where(thread_id, "turnItems", "subagentId", &id)? {
+        if item["type"] != "subagent" || !work_active(&item) {
+            continue;
         }
-        for mut item in tx.entities_where(thread_id, "turnItems", "subagentId", &id)? {
-            if item["type"] != "subagent" || !work_active(&item) {
-                continue;
-            }
-            item["status"] = json!(status);
-            item["completedAt"] = json!(now);
-            item["updatedAt"] = json!(now);
-            tx.append(
-                Draft::new(thread_id, "turn-item.updated", item)
-                    .run(run.as_deref())
-                    .node(Some(&id)),
-            )?;
-        }
-        if let Some(child) = child.filter(|c| c != thread_id)
-            && tx.thread(&child)?.is_some()
-        {
-            end_runless_root_turns(tx, &child, status, &now)?;
-        }
+        item["status"] = json!(status);
+        item["completedAt"] = json!(now);
+        item["updatedAt"] = json!(now);
+        tx.append(
+            Draft::new(thread_id, "turn-item.updated", item)
+                .run(run.as_deref())
+                .node(Some(&id)),
+        )?;
+    }
+    if let Some(child) = child.filter(|c| c != thread_id)
+        && tx.thread(&child)?.is_some()
+    {
+        end_runless_root_turns(tx, &child, status, now)?;
     }
     Ok(())
 }

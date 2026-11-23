@@ -149,9 +149,11 @@ impl AppServer {
     }
 
     /// Forgets a session; stops the process when it was the last one. True when a running
-    /// process keeps serving other sessions.
-    pub async fn remove_session(&self, session_id: &str) -> bool {
-        let process = self.detach_session(session_id);
+    /// process keeps serving other sessions. `keep` names native threads whose frames still
+    /// go to the session's inbox: subagents that may outlive it on a shared process, as T3
+    /// keeps their turn contexts after a release. They end with their own frames or the exit.
+    pub async fn remove_session(&self, session_id: &str, keep: &[String]) -> bool {
+        let process = self.detach(session_id, keep);
         let shared = {
             let state = self.lock();
             !state.sessions.is_empty() && state.live.is_some()
@@ -165,9 +167,15 @@ impl AppServer {
     /// Forgets a session without waiting: the sync half of [`Self::remove_session`]. Returns
     /// the process to stop when no session is left.
     pub(crate) fn detach_session(&self, session_id: &str) -> Option<Process> {
+        self.detach(session_id, &[])
+    }
+
+    fn detach(&self, session_id: &str, keep: &[String]) -> Option<Process> {
         let mut state = self.lock();
         if let Some(inbox) = state.sessions.remove(session_id) {
-            state.routes.retain(|_, r| !r.same_channel(&inbox));
+            state
+                .routes
+                .retain(|thread, r| !r.same_channel(&inbox) || keep.contains(thread));
         }
         if state.sessions.is_empty() {
             state.live.take().map(|live| live.process)
@@ -212,6 +220,18 @@ impl AppServer {
 
     pub fn unroute(&self, native_thread_id: &str) {
         self.lock().routes.remove(native_thread_id);
+    }
+
+    /// Removes the route of `native_thread_id` while it still leads to `inbox`.
+    pub fn unroute_from(&self, native_thread_id: &str, inbox: &mpsc::Sender<SessionMsg>) {
+        let mut state = self.lock();
+        if state
+            .routes
+            .get(native_thread_id)
+            .is_some_and(|r| r.same_channel(inbox))
+        {
+            state.routes.remove(native_thread_id);
+        }
     }
 
     /// The running process's generation, starting and initializing one when none runs.
@@ -525,7 +545,27 @@ impl AppServer {
             }
             // Requests waiting on the dead process fail with `Stopped`.
             state.pending.clear();
-            state.sessions.values().cloned().collect()
+            let mut inboxes: Vec<mpsc::Sender<SessionMsg>> =
+                state.sessions.values().cloned().collect();
+            // A closed session that still waits on its subagents holds only routes; the exit
+            // ends them, and its routes go.
+            let state = &mut *state;
+            let sessions = &state.sessions;
+            let lingering: Vec<mpsc::Sender<SessionMsg>> = state
+                .routes
+                .values()
+                .filter(|r| !sessions.values().any(|s| s.same_channel(r)))
+                .cloned()
+                .collect();
+            state
+                .routes
+                .retain(|_, r| sessions.values().any(|s| s.same_channel(r)));
+            for inbox in lingering {
+                if !inboxes.iter().any(|i| i.same_channel(&inbox)) {
+                    inboxes.push(inbox);
+                }
+            }
+            inboxes
         };
         let detail = format!(
             "The Codex app-server exited unexpectedly ({}).",
@@ -652,7 +692,7 @@ read never
         };
         assert_eq!(method, "thread/started");
         let pid = server.pid().unwrap();
-        server.remove_session("s1").await;
+        server.remove_session("s1", &[]).await;
         assert!(server.generation().is_none());
         let alive = conn_provider_support::process::pid_alive(pid);
         assert!(!alive, "the app-server outlived its last session");
@@ -710,7 +750,7 @@ read never
             deltas, SESSION_INBOX,
             "the overflow was dropped, not queued"
         );
-        server.remove_session("slow").await;
+        server.remove_session("slow", &[]).await;
     }
 
     #[tokio::test(flavor = "current_thread")]

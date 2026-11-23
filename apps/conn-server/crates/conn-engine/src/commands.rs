@@ -2032,8 +2032,22 @@ pub(crate) fn finish_run(
         status,
         failure,
         IdleWrite::WhileActive,
+        RunEnd::Settled,
     )
     .map(drop)
+}
+
+/// Why a run ends, which decides what happens to its live provider-native subagents.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunEnd {
+    /// The provider or the engine ended the run (a confirmed Stop, a failure, a cancel): an
+    /// interrupted, failed or cancelled run takes its open native subagents with it, as T3's
+    /// `cascadeTerminalizeRunOwnedSubagents`.
+    Settled,
+    /// The run's session went away (released, or its events ended). A native subagent still
+    /// running keeps its item open: it ends with its own row, from the provider (Codex's
+    /// shared `app-server` outlives the session) or from the orphan cleanup.
+    Detached,
 }
 
 /// When a run's end writes its provider thread `idle`.
@@ -2051,6 +2065,10 @@ pub(crate) enum IdleWrite {
 /// completed provider turn whose checkpoint is still to be taken persists `waiting`, with no
 /// `completedAt` (`RunExecutionService.ts`). Returns whether it ended the run: `false` when
 /// the run is gone or already ended.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each says one thing about how this run ends"
+)]
 pub(crate) fn finish_run_as(
     tx: &mut Tx<'_>,
     thread_id: &str,
@@ -2059,6 +2077,7 @@ pub(crate) fn finish_run_as(
     persisted: &str,
     failure: Option<Value>,
     idle: IdleWrite,
+    end: RunEnd,
 ) -> StoreResult<bool> {
     let Some(mut run) = tx.entity(thread_id, "runs", run_id)? else {
         return Ok(false);
@@ -2083,6 +2102,9 @@ pub(crate) fn finish_run_as(
         "cancelled" => "cancelled",
         _ => "interrupted",
     };
+    if end == RunEnd::Settled && matches!(item_status, "interrupted" | "failed" | "cancelled") {
+        crate::families::end_run_native_subagents(tx, thread_id, run_id, item_status)?;
+    }
 
     for mut message in tx.entities_where(thread_id, "messages", "runId", run_id)? {
         if message["streaming"] == true {
@@ -2103,10 +2125,8 @@ pub(crate) fn finish_run_as(
                 item["status"].as_str(),
                 Some("idle" | "pending" | "running" | "waiting")
             );
-        // A provider-native subagent still running ends with its own row: from the provider,
-        // or from the orphan cleanup once its process is gone. A process that outlives the
-        // run (Codex's shared `app-server`) may still run it.
         if open
+            && end == RunEnd::Detached
             && item["type"] == "subagent"
             && let Some(id) = item["subagentId"].as_str()
             && tx.entity(thread_id, "subagents", id)?.is_some_and(|row| {

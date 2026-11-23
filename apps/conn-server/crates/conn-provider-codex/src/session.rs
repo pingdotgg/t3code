@@ -95,6 +95,11 @@ struct State {
     /// Passed to each `thread/start` and `thread/resume` (`set_mcp_servers`).
     mcp_servers: Vec<McpServer>,
     closed: bool,
+    /// After a close on a shared app-server: the subagent threads whose frames still come
+    /// here, and the session itself, held until they end (`Inner::settle_closed`).
+    lingering: Option<(Vec<String>, Arc<Inner>)>,
+    /// `close` has delivered its own events; from here on the session only waits.
+    released: bool,
     /// The run whose start Stop abandoned (`abandon_turn_start`); one is enough, as a stale id
     /// matches no later run.
     abandoned_run: Option<String>,
@@ -276,6 +281,8 @@ impl CodexSession {
                 // Codex reads them from each thread's config (`thread/start`, resume, fork).
                 mcp_servers,
                 closed: false,
+                lingering: None,
+                released: false,
                 abandoned_run: None,
                 logged: HashSet::new(),
             }),
@@ -290,6 +297,35 @@ impl CodexSession {
 impl Inner {
     fn lock(&self) -> MutexGuard<'_, State> {
         crate::lock(&self.state)
+    }
+
+    /// After a close: while subagent turns that may outlive it are open, the session keeps
+    /// itself, its routes and its events; once none is open, it lets go of all three.
+    fn settle_closed(self: &Arc<Self>, kept: Vec<String>) {
+        let (unroute, held) = {
+            let mut state = self.lock();
+            if !state.released {
+                return;
+            }
+            if state.mapper.open_child_threads().is_empty() {
+                state.events = None;
+                let held = state.lingering.take();
+                let mut threads = kept;
+                if let Some((more, _)) = &held {
+                    threads.extend(more.iter().cloned());
+                }
+                (threads, held)
+            } else {
+                if state.lingering.is_none() {
+                    state.lingering = Some((kept, Arc::clone(self)));
+                }
+                (Vec::new(), None)
+            }
+        };
+        for thread in unroute {
+            self.server.unroute_from(&thread, &self.inbox);
+        }
+        drop(held);
     }
 
     fn start_abandoned(&self, run_id: &str) -> bool {
@@ -558,6 +594,7 @@ async fn drive(inner: std::sync::Weak<Inner>, mut rx: mpsc::Receiver<SessionMsg>
             }
         };
         inner.deliver(outs).await;
+        inner.settle_closed(Vec::new());
     }
 }
 
@@ -1434,11 +1471,13 @@ impl Session for CodexSession {
                 inner.server.unroute(&native);
             }
             // Whether the process outlives this session decides whether its subagents ended,
-            // so it is known before the mapper ends anything.
-            let shared = inner.server.remove_session(&inner.id).await;
+            // so it is known before the mapper ends anything. Their threads keep their routes.
+            let kept = inner.lock().mapper.open_child_threads();
+            let shared = inner.server.remove_session(&inner.id, &kept).await;
             let outs = inner.lock().mapper.on_close(shared);
             inner.deliver(outs).await;
-            inner.lock().events = None;
+            inner.lock().released = true;
+            inner.settle_closed(kept);
             if shared {
                 Closed::RuntimeShared
             } else {
@@ -1471,6 +1510,16 @@ while IFS= read -r line; do
     *'"method":"thread/resume"'*'th1'*) mcp_loaded=1; emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"th1\"}}}" ;;
     *'"method":"mcpServer/resource/read"'*) emit "{\"id\":$id,\"result\":{\"contents\":[{\"uri\":\"ui://stub\",\"text\":\"<h1>Stub</h1>\",\"mimeType\":\"text/html;profile=mcp-app\"}]}}" ;;
     *'"method":"config/read"'*) emit "{\"id\":$id,\"result\":{\"config\":{}}}" ;;
+    *'"method":"turn/start"'*'spawn child'*)
+      emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu5\",\"startedAt\":null}}}"
+      emit '{"method":"item/started","params":{"threadId":"th1","turnId":"tu5","item":{"type":"subAgentActivity","id":"a1","kind":"started","agentThreadId":"ch1","agentPath":"/root/helper"}}}'
+      emit '{"method":"turn/started","params":{"threadId":"ch1","turn":{"id":"ct","status":"inProgress","startedAt":1}}}'
+      emit '{"method":"turn/completed","params":{"threadId":"th1","turn":{"id":"tu5","status":"completed","completedAt":3}}}' ;;
+    *'"method":"test/finishChild"'*)
+      emit "{\"id\":$id,\"result\":{}}"
+      emit '{"method":"turn/completed","params":{"threadId":"ch1","turn":{"id":"ct","status":"completed","completedAt":4}}}' ;;
+    *'"method":"thread/read"'*'ch1'*)
+      emit "{\"id\":$id,\"result\":{\"thread\":{\"id\":\"ch1\",\"model\":\"gpt-6-luna\"}}}" ;;
     *'"method":"turn/start"'*'approve me'*)
       emit "{\"id\":$id,\"result\":{\"turn\":{\"id\":\"tu1\",\"startedAt\":null}}}"
       emit '{"method":"item/commandExecution/requestApproval","id":0,"params":{"threadId":"th1","turnId":"tu1","itemId":"c1","command":"ls"}}' ;;
@@ -1717,6 +1766,90 @@ done
         );
         assert_eq!(sessions[1].close().await, Closed::RuntimeStopped);
         assert_eq!(provider.server.pid(), None, "the last session stopped it");
+    }
+
+    /// A subagent that outlives its session's close on a shared app-server still reports its
+    /// end, as T3 keeps the child's turn context after a release: from its own
+    /// `turn/completed`, or as interrupted once the last session stops the process. Then the
+    /// closed session's events end.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_shared_close_still_reports_the_subagents_end() {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for finish in [true, false] {
+                shared_close_child_end(finish).await;
+            }
+        })
+        .await
+        .expect("both cases finished within 30 s");
+    }
+
+    async fn shared_close_child_end(finish: bool) {
+        let provider = provider();
+        let open = |thread: &str, id: &str| {
+            provider.open_session(OpenSessionInput {
+                thread_id: thread.into(),
+                provider_session_id: id.into(),
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                resume_from_session: None,
+                mcp_servers: vec![],
+                host: None,
+            })
+        };
+        let OpenedSession {
+            session,
+            mut events,
+            ..
+        } = open("t1", "s1").await.unwrap();
+        let other = open("t2", "s2").await.unwrap().session;
+        let thread = session
+            .ensure_thread(EnsureThreadInput {
+                thread_id: "t1".into(),
+                title: None,
+                model_selection: from_json(json!({"instanceId": "codex", "model": "gpt-6-luna"}))
+                    .unwrap(),
+                runtime_policy: policy(),
+                existing_provider_thread: None,
+            })
+            .await
+            .unwrap();
+        session
+            .start_turn(turn(&thread, 5, "spawn child"))
+            .await
+            .unwrap();
+        let root = until(&mut events, "turn.terminal").await;
+        assert_eq!(root.last().unwrap()["status"], "completed");
+        assert_eq!(session.close().await, Closed::RuntimeShared);
+        if finish {
+            provider
+                .server
+                .request("test/finishChild", json!({}))
+                .await
+                .unwrap();
+        } else {
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        }
+        let mut rest = Vec::new();
+        while let Some(event) = events.recv().await {
+            rest.push(serde_json::to_value(event).unwrap());
+        }
+        let status = if finish { "completed" } else { "interrupted" };
+        assert!(
+            rest.iter().any(|e| e["type"] == "provider_turn.updated"
+                && e["providerTurn"]["nativeTurnRef"]["nativeId"] == "ct"
+                && e["providerTurn"]["status"] == status),
+            "finish={finish}: {rest:?}"
+        );
+        assert!(
+            rest.iter().any(|e| e["type"] == "node.updated"
+                && e["node"]["kind"] == "subagent"
+                && e["node"]["status"] == status),
+            "finish={finish}: {rest:?}"
+        );
+        if finish {
+            assert_eq!(other.close().await, Closed::RuntimeStopped);
+        }
     }
 
     #[tokio::test(flavor = "current_thread")]
