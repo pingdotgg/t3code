@@ -2682,6 +2682,7 @@
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Terminal-Prozess läuft",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} Terminal-Prozess läuft. Terminal öffnen} other {{count} Terminal-Prozesse laufen. Terminal öffnen}}",
+  "29f0a9ccd63b5471": "Browser-Tab spielt Audio ab. Tab öffnen",
   "56f37ff8ca568059": "Stack",
   "6831e9a46cbd8939": "Kette",
   "9aa9e74a3b7eee91": "Zum Chat hinzufügen",

@@ -2685,6 +2685,7 @@
   "3260b22f72f7effb": "{tooltipLead}：{title}",
   "feac8e54b30c5a03": "终端进程正在运行",
   "fc2c9a91f498ad6b": "{count, plural, other {{count} 个终端进程正在运行。打开终端}}",
+  "29f0a9ccd63b5471": "浏览器标签页正在播放音频。打开标签页",
   "56f37ff8ca568059": "堆叠",
   "6831e9a46cbd8939": "链",
   "9aa9e74a3b7eee91": "添加到对话",

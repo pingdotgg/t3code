@@ -2681,6 +2681,7 @@
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "Proceso de terminal en ejecución",
   "fc2c9a91f498ad6b": "{count, plural, one {{count} proceso de terminal en ejecución. Abrir terminal} other {{count} procesos de terminal en ejecución. Abrir terminal}}",
+  "29f0a9ccd63b5471": "Pestaña del navegador reproduciendo audio. Abrir pestaña",
   "56f37ff8ca568059": "pila",
   "6831e9a46cbd8939": "cadena",
   "9aa9e74a3b7eee91": "Añadir al chat",

@@ -2680,6 +2680,7 @@
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "터미널 프로세스 실행 중",
   "fc2c9a91f498ad6b": "{count, plural, other {터미널 프로세스 {count}개 실행 중. 터미널 열기}}",
+  "29f0a9ccd63b5471": "브라우저 탭에서 오디오 재생 중. 탭 열기",
   "56f37ff8ca568059": "스택",
   "6831e9a46cbd8939": "체인",
   "9aa9e74a3b7eee91": "채팅에 추가",
