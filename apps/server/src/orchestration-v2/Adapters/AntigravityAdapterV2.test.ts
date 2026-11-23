@@ -1004,6 +1004,9 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    readonly promptUpdates?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    readonly promptStopReason?: EffectAcpSchema.StopReason;
+    readonly steerStopReason?: EffectAcpSchema.StopReason;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1036,6 +1039,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
   const scheduledFinalizes = yield* Queue.unbounded<Duration.Input>();
+  const promptSettledDeferred = yield* Deferred.make<void>();
   const instanceId = ProviderInstanceId.make("antigravity-wake-test");
   const threadId = ThreadId.make("thread-antigravity-wake");
   const selfInvocation = yield* resolveSelfInvocation();
@@ -1082,33 +1086,39 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
               if (prompts.length > 1) {
                 yield* Deferred.succeed(steered, undefined);
                 yield* Deferred.await(releaseSteer);
-                return { stopReason: "end_turn" as const };
+                return { stopReason: options?.steerStopReason ?? ("end_turn" as const) };
               }
-              if (options?.initialToolCalls !== undefined) {
-                for (const toolUpdate of options.initialToolCalls) {
-                  yield* send(toolUpdate);
+              if (options?.promptUpdates !== undefined) {
+                for (const promptUpdate of options.promptUpdates) {
+                  yield* send(promptUpdate);
                 }
               } else {
-                yield* send(
-                  detachedChildProfile === undefined
-                    ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
-                    : {
-                        sessionUpdate: "tool_call",
-                        toolCallId: "call_research",
-                        kind: "other",
-                        title: "Run invoke_subagent",
-                        status: "completed",
-                        rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
-                      },
-                );
+                if (options?.initialToolCalls !== undefined) {
+                  for (const toolUpdate of options.initialToolCalls) {
+                    yield* send(toolUpdate);
+                  }
+                } else {
+                  yield* send(
+                    detachedChildProfile === undefined
+                      ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
+                      : {
+                          sessionUpdate: "tool_call",
+                          toolCallId: "call_research",
+                          kind: "other",
+                          title: "Run invoke_subagent",
+                          status: "completed",
+                          rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
+                        },
+                  );
+                }
+                yield* send({
+                  sessionUpdate: "agent_message_chunk",
+                  content: { type: "text", text: "I'll render once the fetch finishes." },
+                });
               }
-              yield* send({
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: "I'll render once the fetch finishes." },
-              });
               yield* send(usage);
               if (steering?.holdsFirstPrompt === true) yield* Deferred.await(steered);
-              return { stopReason: "end_turn" as const };
+              return { stopReason: options?.promptStopReason ?? ("end_turn" as const) };
             }),
         })),
       );
@@ -1135,6 +1145,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             : { continuationRequests: adapterOptions.continuationRequests }),
           testHooks: {
             onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
+            afterPromptSettledWithBackgroundWork: () =>
+              Deferred.succeed(promptSettledDeferred, undefined).pipe(Effect.asVoid),
           },
         });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -1220,6 +1232,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     usage,
     offers,
     scheduledFinalizes,
+    awaitPromptSettledWithBackgroundWork: Deferred.await(promptSettledDeferred),
     send,
     startTurn,
     until,
@@ -1326,7 +1339,21 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
-      yield* throughPromptSettled;
+      const settled = yield* throughPromptSettled;
+      const preWakeReply = settled.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.text === "I'll render once the fetch finishes.",
+      );
+      assert.equal(
+        preWakeReply?.type === "turn_item.updated" &&
+          preWakeReply.turnItem.type === "assistant_message"
+          ? preWakeReply.turnItem.phase
+          : null,
+        "final_answer",
+        "the completed reply before a deferred background wake must stay visible",
+      );
       // Progress keeps a command past the post-settle hold bound, which counts silence only.
       for (const minute of [10, 20, 30]) {
         yield* TestClock.adjust("10 minutes");
@@ -1516,7 +1543,20 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
             ],
           });
         yield* startTurn(1, false);
-        yield* throughPromptSettled;
+        const settled = yield* throughPromptSettled;
+        const initialReply = settled.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "I'll render once the fetch finishes.",
+        );
+        assert.equal(
+          initialReply?.type === "turn_item.updated" &&
+            initialReply.turnItem.type === "assistant_message"
+            ? initialReply.turnItem.phase
+            : null,
+          "final_answer",
+        );
 
         // Command 1 finishes and wakes the model.
         yield* writeFile(
@@ -1684,11 +1724,27 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const run = yield* until((event) => event.type === "turn.terminal");
         const terminal = run.at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
-        assert.include(
-          JSON.stringify(run),
-          "All 34 tests passed.",
-          "reply 2 must stay in the same run",
+        const wake1Reply = run.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "gates passed; waiting for tests.",
         );
+        const wake2Reply = run.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "All 34 tests passed.",
+        );
+        assert.equal(
+          wake1Reply?.type === "turn_item.updated" &&
+            wake1Reply.turnItem.type === "assistant_message"
+            ? wake1Reply.turnItem.phase
+            : null,
+          "final_answer",
+          "reply 1 must stay visible as a distinct final answer when reply 2 follows in the same run",
+        );
+        assert.isDefined(wake2Reply, "reply 2 must be its own assistant message in the same run");
         assert.lengthOf(offers, 0, "the open run needs no continuation");
       }).pipe(Effect.provide(layerSession)),
   );
@@ -1745,7 +1801,20 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
             ],
           });
         yield* startTurn(1, false);
-        yield* throughPromptSettled;
+        const settled = yield* throughPromptSettled;
+        const initialReply = settled.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "I'll render once the fetch finishes.",
+        );
+        assert.equal(
+          initialReply?.type === "turn_item.updated" &&
+            initialReply.turnItem.type === "assistant_message"
+            ? initialReply.turnItem.phase
+            : null,
+          "final_answer",
+        );
         assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
 
         yield* TestClock.adjust("9 seconds");
@@ -1770,6 +1839,236 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         assert.include(JSON.stringify(run), "Mix finished.");
         assert.lengthOf(offers, 0);
       }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect.each([
+    {
+      name: "keeps pre-tool commentary foldable before a deferred background command",
+      mode: "pre-tool-commentary" as const,
+      expectedPhase: undefined,
+    },
+    {
+      name: "keeps named pre-tool commentary foldable before a deferred background command",
+      mode: "named-pre-tool-commentary" as const,
+      expectedPhase: undefined,
+    },
+    {
+      name: "does not restore a named reply cleared by an empty replacement before settlement",
+      mode: "cleared-named-reply" as const,
+      expectedPhase: undefined,
+    },
+    {
+      name: "preserves a pre-wake reply closed by a background command completion before end_turn",
+      mode: "background-tool-completion" as const,
+      expectedPhase: "final_answer" as const,
+    },
+    {
+      name: "preserves a pre-wake reply closed by trailing reasoning before end_turn",
+      mode: "trailing-reasoning" as const,
+      expectedPhase: "final_answer" as const,
+    },
+    {
+      name: "does not promote assistant text when the prompt ends cancelled",
+      mode: "cancelled-prompt" as const,
+      expectedPhase: undefined,
+    },
+    {
+      name: "clears stale final_answer when a promoted named segment reopens before a new tool",
+      mode: "reopened-named-commentary" as const,
+      expectedPhase: undefined,
+    },
+  ])("$name", ({ mode, expectedPhase }) =>
+    Effect.gen(function* () {
+      const cmd = {
+        toolCallId: "call_pause",
+        kind: "execute",
+        title: "bin/session pause",
+        rawInput: { CommandLine: "bin/session pause", WaitMsBeforeAsync: 10000 },
+      } as const;
+      const otherCmd = {
+        toolCallId: "call_keep_open",
+        kind: "execute",
+        title: "bin/wait",
+        rawInput: { CommandLine: "bin/wait", WaitMsBeforeAsync: 10000 },
+      } as const;
+      const targetText =
+        mode === "pre-tool-commentary" || mode === "named-pre-tool-commentary"
+          ? "Let me pause the stack."
+          : "Full UI/UX audit reply.";
+      const promptUpdates: ReadonlyArray<EffectAcpSchema.SessionUpdate> =
+        mode === "pre-tool-commentary"
+          ? [
+              { sessionUpdate: "agent_message_chunk", content: { type: "text", text: targetText } },
+              { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+            ]
+          : mode === "named-pre-tool-commentary"
+            ? [
+                {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "msg-commentary",
+                  content: { type: "text", text: targetText },
+                },
+                { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                // Trailing whitespace on the same named stream must not restore pre-tool commentary.
+                {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "msg-commentary",
+                  content: { type: "text", text: "\n" },
+                },
+              ]
+            : mode === "cleared-named-reply"
+              ? [
+                  { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                  {
+                    sessionUpdate: "agent_message_chunk",
+                    messageId: "msg-cleared",
+                    content: { type: "text", text: targetText },
+                  },
+                  {
+                    sessionUpdate: "agent_thought_chunk",
+                    content: { type: "text", text: "Retracting draft reply." },
+                  },
+                  {
+                    sessionUpdate: "agent_message",
+                    messageId: "msg-cleared",
+                    content: [],
+                  },
+                ]
+              : mode === "background-tool-completion"
+                ? [
+                    { sessionUpdate: "tool_call", ...otherCmd, status: "in_progress" },
+                    { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                    {
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: targetText },
+                    },
+                    {
+                      sessionUpdate: "tool_call_update",
+                      ...cmd,
+                      status: "completed",
+                      rawOutput: { output: "Stack paused.", exit_code: 0 },
+                    },
+                  ]
+                : mode === "trailing-reasoning"
+                  ? [
+                      { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                      {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: targetText },
+                      },
+                      {
+                        sessionUpdate: "agent_thought_chunk",
+                        content: { type: "text", text: "Waiting on background pause." },
+                      },
+                    ]
+                  : mode === "reopened-named-commentary"
+                    ? [
+                        { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          messageId: "msg-reopened",
+                          content: { type: "text", text: targetText },
+                        },
+                      ]
+                    : [
+                        { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                        {
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text: targetText },
+                        },
+                      ];
+      const { usage, send, startTurn, until, awaitPromptSettledWithBackgroundWork } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          promptUpdates,
+          ...(mode === "cancelled-prompt" ? { promptStopReason: "cancelled" as const } : {}),
+        });
+      yield* startTurn(1, false);
+      yield* awaitPromptSettledWithBackgroundWork;
+      const pendingCmd = mode === "background-tool-completion" ? otherCmd : cmd;
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...pendingCmd,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      if (mode === "reopened-named-commentary") {
+        // Reopening the previously promoted named segment before a new tool must drop its stale final_answer phase.
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          messageId: "msg-reopened",
+          content: { type: "text", text: " Checking again." },
+        });
+        yield* send({
+          sessionUpdate: "tool_call",
+          toolCallId: "call_recheck",
+          kind: "execute",
+          title: "bin/check",
+          status: "completed",
+        });
+      }
+      yield* send({
+        sessionUpdate: "agent_thought_chunk",
+        content: { type: "text", text: "Background command completed." },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Stack s23 is paused." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const allEvents = yield* until((event) => event.type === "turn.terminal");
+      if (mode === "reopened-named-commentary") {
+        const reopened = allEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.nativeItemRef?.nativeId?.endsWith(":assistant:message:msg-reopened"),
+        );
+        assert.equal(
+          reopened?.type === "turn_item.updated" && reopened.turnItem.type === "assistant_message"
+            ? reopened.turnItem.phase
+            : null,
+          expectedPhase,
+        );
+        return;
+      }
+      if (mode === "cleared-named-reply") {
+        const cleared = allEvents.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.nativeItemRef?.nativeId?.endsWith(":assistant:message:msg-cleared"),
+        );
+        assert.equal(
+          cleared?.type === "turn_item.updated" && cleared.turnItem.type === "assistant_message"
+            ? cleared.turnItem.text
+            : null,
+          "",
+          "settlement must not republish text cleared by an empty replacement",
+        );
+        assert.equal(
+          cleared?.type === "turn_item.updated" && cleared.turnItem.type === "assistant_message"
+            ? cleared.turnItem.phase
+            : null,
+          undefined,
+        );
+        return;
+      }
+      const preWakeReply = allEvents.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "assistant_message" &&
+          event.turnItem.status === "completed" &&
+          event.turnItem.text.trim() === targetText,
+      );
+      assert.equal(
+        preWakeReply?.type === "turn_item.updated" &&
+          preWakeReply.turnItem.type === "assistant_message"
+          ? preWakeReply.turnItem.phase
+          : null,
+        expectedPhase,
+      );
+    }).pipe(Effect.provide(layerSession)),
   );
 
   // agy names its background commands `<session>/task-<n>`; the agent passes that to
@@ -1939,6 +2238,86 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         "a silent steer prompt must still hit the inactivity timeout",
       );
     }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "does not mark a cancelled steer's partial reply as final_answer on a continuation run",
+    () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand(
+          { IsDaemon: true, WaitMsBeforeAsync: 500 },
+          undefined,
+          { agentVersion: "1.5.11", holdsFirstPrompt: false },
+          { steerStopReason: "cancelled" },
+        );
+        const {
+          session,
+          providerThread,
+          command,
+          usage,
+          offers,
+          send,
+          startTurn,
+          until,
+          throughTerminal,
+        } = opened;
+        yield* startTurn(1, false);
+        yield* throughTerminal;
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...command,
+          status: "completed",
+          rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+        });
+        assert.lengthOf(offers, 1);
+        yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* startTurn(2, true);
+        const followUp = { toolCallId: "call_build", kind: "execute", title: "vp run build" };
+        yield* send({ sessionUpdate: "tool_call", ...followUp, status: "in_progress" });
+        const continued = yield* until(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === followUp.toolCallId,
+        );
+        const providerTurnId = continued.flatMap((event) =>
+          event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+        )[0]!;
+
+        yield* session.steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-2"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer-cancelled"),
+            text: "Skip the build",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        });
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Partial steer reply." },
+        });
+        yield* send(usage);
+        yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
+        yield* opened.releaseSteer;
+        const events = yield* until((event) => event.type === "turn.terminal");
+        const partial = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.text === "Partial steer reply.",
+        );
+        assert.equal(
+          partial?.type === "turn_item.updated" && partial.turnItem.type === "assistant_message"
+            ? partial.turnItem.phase
+            : null,
+          undefined,
+          "a steer prompt that ends cancelled must not promote its partial text on usage_update",
+        );
+      }).pipe(Effect.provide(layerSession)),
   );
 
   it.effect("steers a run held open by a detached subagent without stopping it", () =>

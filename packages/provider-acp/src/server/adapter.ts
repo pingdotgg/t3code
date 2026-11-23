@@ -1667,8 +1667,11 @@ function selectAutoApprovedPermissionOption(
 interface ActiveTextSegment {
   readonly nativeItemId: string;
   readonly startedAt: DateTime.Utc;
+  completedAt?: DateTime.Utc | undefined;
   sourceMessageId: string | null;
   text: string;
+  hasNonWhitespace: boolean;
+  finalAnswer?: boolean | undefined;
   // The running node and first text have been emitted.
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
@@ -1702,6 +1705,8 @@ interface ActiveAcpTurn {
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
+  /** The latest non-empty assistant segment not yet followed by a new tool or input request. */
+  closingAssistant: ActiveTextSegment | null;
   providerRetry?:
     | {
         readonly failure: OrchestrationV2ProviderFailure;
@@ -3206,32 +3211,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : context.reasoning;
 
         const textEmissionPermit = yield* Semaphore.make(1);
-        /**
-         * Emits the stream's current segment. A `flushOf` call is a delayed
-         * flush: it emits only while that segment is still current and has
-         * unsent text. The permit keeps a flush from landing after the
-         * segment's completed snapshot.
-         */
-        const emitTextSegment = Effect.fnUntraced(function* (
+        const writeTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
+          segment: ActiveTextSegment,
           completed: boolean,
-          flushOf?: ActiveTextSegment,
+          emitsNode: boolean,
         ) {
-          const stream = textStreamFor(context, kind);
-          const segment = stream.current;
-          if (segment === null) return;
-          if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
-          // The node carries no text, so it changes only when the segment
-          // opens and when it completes.
-          const emitsNode = completed || !segment.emitted;
-          segment.emitted = true;
-          segment.dirty = false;
           // Read the text in the same step that clears `dirty`. Chunks keep
           // appending while this emission yields; each one marks the segment
           // dirty again and reaches the next flush or the close.
           const text = segment.text;
           const now = yield* DateTime.now;
+          if (completed) {
+            segment.completedAt ??= now;
+          }
+          const completedAt = completed ? (segment.completedAt ?? now) : null;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = providerNodeId(segment.nativeItemId);
           const turnItemId = providerTurnItemId(segment.nativeItemId);
@@ -3259,7 +3254,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 runtimeRequestId: null,
                 checkpointScopeId: null,
                 startedAt: segment.startedAt,
-                completedAt: completed ? now : null,
+                completedAt,
               },
             });
           }
@@ -3301,7 +3296,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       status: completed ? "completed" : "running",
                       title: null,
                       startedAt: segment.startedAt,
-                      completedAt: completed ? now : null,
+                      completedAt,
                       updatedAt: now,
                       type: "user_message",
                       messageId,
@@ -3326,9 +3321,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       status: completed ? "completed" : "running",
                       title: null,
                       startedAt: segment.startedAt,
-                      completedAt: completed ? now : null,
+                      completedAt,
                       updatedAt: now,
                       type: "assistant_message",
+                      ...(completed && segment.finalAnswer === true
+                        ? { phase: "final_answer" as const }
+                        : {}),
                       messageId,
                       text,
                       streaming: !completed,
@@ -3354,13 +3352,44 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               status: completed ? "completed" : "running",
               title: null,
               startedAt: segment.startedAt,
-              completedAt: completed ? now : null,
+              completedAt,
               updatedAt: now,
               type: "reasoning",
               text,
               streaming: !completed,
             },
           });
+        });
+
+        /**
+         * Emits the stream's current segment. A `flushOf` call is a delayed
+         * flush: it emits only while that segment is still current and has
+         * unsent text. The permit keeps a flush from landing after the
+         * segment's completed snapshot.
+         */
+        const emitTextSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          completed: boolean,
+          flushOf?: ActiveTextSegment,
+        ) {
+          const stream = textStreamFor(context, kind);
+          const segment = stream.current;
+          if (segment === null) return;
+          if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
+          // The node carries no text, so it changes only when the segment
+          // opens and when it completes.
+          const emitsNode = completed || !segment.emitted;
+          segment.emitted = true;
+          segment.dirty = false;
+          yield* writeTextSegment(context, kind, segment, completed, emitsNode);
+        }, textEmissionPermit.withPermit);
+
+        const promoteAssistantSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          segment: ActiveTextSegment,
+        ) {
+          yield* writeTextSegment(context, "assistant", segment, true, true);
         }, textEmissionPermit.withPermit);
 
         /**
@@ -3404,6 +3433,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* closeTextStream(context, "assistant");
         });
 
+        // A reply that finishes a prompt or wake before background work continues in the
+        // same run must carry `final_answer`, so a later wake note does not fold it away.
+        const closeTextStreamsAsFinalAnswer = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const closing = context.closingAssistant;
+          context.closingAssistant = null;
+          yield* closeTextStream(context, "user");
+          yield* closeTextStream(context, "reasoning");
+          const current = context.assistant.current;
+          if (current !== null) {
+            if (closing !== null && current === closing && closing.hasNonWhitespace) {
+              current.finalAnswer = true;
+            }
+            yield* closeTextStream(context, "assistant");
+            if (closing === current) return;
+          }
+          if (closing !== null && !closing.finalAnswer && closing.hasNonWhitespace) {
+            closing.finalAnswer = true;
+            yield* promoteAssistantSegment(context, closing);
+          }
+        });
+
         const openTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
@@ -3423,10 +3473,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   startedAt: yield* DateTime.now,
                   sourceMessageId,
                   text: "",
+                  hasNonWhitespace: false,
                   emitted: false,
                   dirty: false,
                 }
-              : { ...closed, emitted: false, dirty: false };
+              : {
+                  ...closed,
+                  completedAt: undefined,
+                  finalAnswer: undefined,
+                  emitted: false,
+                  dirty: false,
+                };
           if (closed === undefined) stream.nextSegment += 1;
           stream.current = segment;
           return segment;
@@ -3460,6 +3517,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             segment.sourceMessageId = sourceMessageId;
           }
           segment.text += text;
+          if (
+            (!segment.hasNonWhitespace ||
+              (kind === "assistant" && context.closingAssistant !== segment)) &&
+            text.trim().length > 0
+          ) {
+            segment.hasNonWhitespace = true;
+            if (kind === "assistant") {
+              context.closingAssistant = segment;
+            }
+          }
           yield* publishTextSegment(context, kind);
         });
 
@@ -3478,6 +3545,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             segment = yield* openTextSegment(context, kind, messageId);
           }
           segment.text = text;
+          segment.hasNonWhitespace = text.trim().length > 0;
+          if (kind === "assistant") {
+            if (segment.hasNonWhitespace) {
+              context.closingAssistant = segment;
+            } else {
+              segment.finalAnswer = undefined;
+              if (context.closingAssistant?.nativeItemId === segment.nativeItemId) {
+                context.closingAssistant = null;
+              }
+            }
+          }
           yield* publishTextSegment(context, kind);
         });
 
@@ -4492,6 +4570,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "user");
           const previous = context.tools.get(incoming.toolCallId);
+          // A brand-new tool call turns any earlier assistant text into pre-tool commentary.
+          if (previous === undefined && projectedStatus === undefined) {
+            context.closingAssistant = null;
+          }
           const merged = mergeToolCallState(previous, incoming);
           const normalized = flavor.normalizeToolCall?.(merged) ?? merged;
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(normalized);
@@ -5835,6 +5917,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
                 context.replyOpen = false;
+                if (
+                  !context.finalized &&
+                  !context.interrupted &&
+                  (context.promptSettled
+                    ? context.promptSettledStatus === "completed"
+                    : context.promptSequence === 0 &&
+                      acpIsProviderContinuationMessage(context.input.message))
+                ) {
+                  yield* closeTextStreamsAsFinalAnswer(context);
+                }
                 if (context.promptSettled) yield* idleReportedSubagents(context);
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {
@@ -6401,6 +6493,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           generation: number,
           transportRequestId: string,
         ) {
+          context.closingAssistant = null;
           yield* closeTextStreams(context);
           const parsed = parsePermissionRequest(params);
           const approvalOptions = flavor.approvalOptions?.(params);
@@ -6526,6 +6619,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           transportRequestId: string,
         ) {
           const context = yield* activeContext;
+          context.closingAssistant = null;
           yield* closeTextStreams(context);
           const requestId = yield* idAllocator.allocate.runtimeRequest({
             driver,
@@ -9458,8 +9552,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ? yield* flavor.hasPendingReply(context.nativeThreadId)
                       : false;
                   if (context.finalized) return;
-                  if (deferredBackgroundWork || pendingReply) {
-                    yield* closeTextStreams(context);
+                  if (!context.interrupted && (deferredBackgroundWork || pendingReply)) {
+                    if (status === "completed") {
+                      yield* closeTextStreamsAsFinalAnswer(context);
+                    } else {
+                      yield* closeTextStreams(context);
+                    }
                     yield* schedulePostSettleHoldExpiry(context);
                     if (pendingReply) {
                       context.replyOpen = true;
@@ -9470,7 +9568,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     );
                     return;
                   }
-                  yield* finalizeTurn(context, status);
+                  yield* finalizeTurn(context, context.interrupted ? "interrupted" : status);
                 }),
               ).pipe(
                 Effect.andThen(() => options.testHooks?.afterPromptCallback?.() ?? Effect.void),
@@ -9700,6 +9798,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               user: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               assistant: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
               reasoning: { current: null, nextSegment: 0, closedNamedSegments: new Map() },
+              closingAssistant: null,
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
@@ -10037,6 +10136,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                   context.promptSettled = false;
                   context.promptSettledStatus = null;
+                  context.closingAssistant = null;
                   context.backgroundFinalizeGeneration += 1;
                   context.promptSentAt = yield* Clock.currentTimeMillis;
                   context.lastProgressAt = context.promptSentAt;
