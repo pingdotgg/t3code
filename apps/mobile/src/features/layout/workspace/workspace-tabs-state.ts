@@ -16,9 +16,15 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
+const PAGE_TABS = ["usage", "workflows", "workstreams", "study", "memory"] as const;
+export type PageTab = (typeof PAGE_TABS)[number];
+
+export const isPageTab = (tab: WorkspaceSearchTab): tab is PageTab =>
+  PAGE_TABS.some((candidate) => candidate === tab);
+
 /** Settings, Chats, pull requests and issues pair a list with a detail column; the others are one page. */
 export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
-  return settingsOpen || (tab !== "usage" && tab !== "workflows");
+  return settingsOpen || !isPageTab(tab);
 }
 
 export interface WorkspaceTabState {
@@ -55,6 +61,9 @@ export function initialWorkspaceTabsState(
       pullRequests: emptyTab(),
       issues: emptyTab(),
       workflows: emptyTab(),
+      workstreams: emptyTab(),
+      study: emptyTab(),
+      memory: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),
     },
@@ -82,7 +91,7 @@ export function workspaceTabsReducer(
           selectionRevision: state.selectionRevision + 1,
         };
   const tab = action.tab ?? state.selectedTab;
-  if (tab === "usage" || tab === "workflows") return state;
+  if (isPageTab(tab)) return state;
   const current = state.tabs[tab];
   let next: WorkspaceTabState;
   switch (action.type) {

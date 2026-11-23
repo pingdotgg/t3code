@@ -47,7 +47,7 @@ abstract class AgentNotificationsFixture {
       }
     )
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     AgentNotifications.setThreadOnScreen("/threads/environment/thread")
   }
 
@@ -206,10 +206,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   fun reopeningSameAccountPreservesCardsDeduplicationAndDismissal() {
     val message = update("attention", true)
     AgentNotifications.receive(context, message)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     assertEquals(2, manager.activeNotifications.size)
     AgentNotifications.dismiss(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     AgentNotifications.receive(context, message)
     assertEquals("t3-agent-alert", manager.activeNotifications.single().tag)
   }
@@ -217,10 +217,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
   @Test
   fun changingAccountOrDeviceClearsOldCardsAndRejectsOldPushes() {
     AgentNotifications.receive(context, update("attention", true))
-    AgentNotifications.configure(context, "device", "different-user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "different-user", "kompas-dev", true)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
-    AgentNotifications.configure(context, "different-device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "different-device", "user", "kompas-dev", true)
     AgentNotifications.receive(context, update("attention", true))
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.clear(context)
@@ -298,7 +298,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertTrue(manager.activeNotifications.isEmpty())
     AgentNotifications.receive(context, update("new-work", true))
     assertEquals("t3-agent-activity", manager.activeNotifications.single().tag)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", false)
     assertTrue(manager.activeNotifications.isEmpty())
   }
 
@@ -536,13 +536,13 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.dismiss(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", false)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     AgentNotifications.receive(context, update("work", true))
     assertEquals(1, alarms.scheduledAlarms.size)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", false)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", false)
     assertTrue(alarms.scheduledAlarms.isEmpty())
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     AgentNotifications.receive(context, update("work", true))
     AgentNotifications.clear(context)
     assertTrue(alarms.scheduledAlarms.isEmpty())
@@ -661,7 +661,7 @@ class AgentNotificationChannelsTest {
     val manager = context.getSystemService(NotificationManager::class.java)
     shadowOf(manager).setNotificationsEnabled(true)
     AgentNotifications.clear(context)
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     val running = mapOf(
       "device_id" to "device",
       "user_id" to "user",
@@ -676,7 +676,7 @@ class AgentNotificationChannelsTest {
     val initialCard = manager.activeNotifications.single()
     assertEquals("t3-agent-activity", initialCard.tag)
 
-    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.configure(context, "device", "user", "kompas-dev", true)
     AgentNotifications.receive(
       context,
       running + mapOf(

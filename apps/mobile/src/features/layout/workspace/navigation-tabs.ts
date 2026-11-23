@@ -3,6 +3,7 @@ import { msg } from "gt-react-native";
 import { AsyncResult } from "effect/reactivity";
 import { Platform } from "react-native";
 import {
+  CODING_TABS,
   NAVIGATION_TAB_LABELS,
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
@@ -12,6 +13,7 @@ import {
 } from "./navigation-tab-order";
 import type { AppSymbolName } from "../../../components/ui/AppSymbol";
 import { mobilePreferencesAtom } from "../../../state/preferences";
+import { useChatMode } from "../../kompas/state";
 import { PullRequestGlyph } from "../../pull-requests/pullRequestGlyphs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { resolveWorkspaceTabOrder } from "./workspace-tabs-state";
@@ -28,6 +30,9 @@ export const WORKSPACE_TAB_LABELS = {
 
 export const NAVIGATION_TAB_ICONS = {
   threads: "text.bubble",
+  workstreams: "folder",
+  study: "book",
+  memory: "lightbulb",
   pullRequests: PullRequestGlyph.pullRequest,
   issues: "git.issue",
   workflows: "point.3.connected.trianglepath.dotted",
@@ -44,6 +49,7 @@ export function useNavigationTabOrder() {
 
 export function useHiddenNavigationTabs() {
   const preferences = useAtomValue(mobilePreferencesAtom);
+  const chatMode = useChatMode();
   const selected = useWorkspaceTabs()?.state.selectedTab ?? "threads";
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   return [
@@ -51,6 +57,7 @@ export function useHiddenNavigationTabs() {
       ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
       : []),
     sharedSlotAbsentee(selected, saved?.sharedSlotTab),
+    ...(chatMode ? CODING_TABS : []),
   ];
 }
 

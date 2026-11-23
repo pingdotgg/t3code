@@ -20,6 +20,7 @@ import {
   mcpAppReferencesEqual,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
+import { T3_WIDGET_SERVER } from "@t3tools/shared/toolOutput";
 import * as Predicate from "effect/Predicate";
 import { AsyncResult } from "effect/reactivity";
 import Constants from "expo-constants";
@@ -45,6 +46,8 @@ import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { appendComposerDraftText } from "../../state/use-composer-drafts";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
 
@@ -376,7 +379,10 @@ export function ThreadMcpApp(props: {
         }
       },
       sendMessage: async (text) => {
+        // T3's own widgets send only what their button says, so the tap is the approval.
+        const ownWidget = app.server === T3_WIDGET_SERVER && userActive.current;
         if (
+          !ownWidget &&
           !(await confirm(
             m(msg("Send this message from {server}?", { server: app.server })),
             text,
@@ -395,6 +401,14 @@ export function ThreadMcpApp(props: {
           dispatchMode: "queue",
           createdAt: new Date().toISOString(),
         });
+      },
+      widgetAction: (action) => {
+        const { environmentId, conversationThreadId } = latest.current.props;
+        if (action.action === "study") {
+          latest.current.navigation.navigate("KompasReview", { deckId: action.deckId });
+          return;
+        }
+        appendComposerDraftText(scopedThreadKey(environmentId, conversationThreadId), action.text);
       },
       updateModelContext: async (context) => {
         const { environmentId, input } = scope();

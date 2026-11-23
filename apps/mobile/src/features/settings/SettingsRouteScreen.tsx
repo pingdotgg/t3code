@@ -34,6 +34,7 @@ import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
 import { useGT, useMessages } from "gt-react-native";
+import { useChatMode } from "../kompas/state";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -253,10 +254,19 @@ function useSettingsIndexSections(): SettingsListSection[] {
   ): SettingsListRow => ({ id: target, icon, label, target, ...extra });
   const serverPage = (target: SettingsPageTarget, icon: SettingsListRow["icon"], label: string) =>
     page(target, icon, label, { disabled: noServerTargets });
+  const chatMode = useChatMode();
+  const navigation = useNavigation();
   // The same pages and groups as Settings on web, minus what mobile has no setting for.
   return [
     {
       rows: [
+        page("SettingsKompas", "book", gt("Mode and reminders")),
+        {
+          id: "SettingsPlugins",
+          icon: "puzzlepiece",
+          label: gt("Plugins"),
+          onPress: () => navigation.navigate("SettingsPlugins"),
+        },
         page("SettingsOrganization", "gearshape", gt("General")),
         page("SettingsAppearance", "paintbrush", gt("Appearance")),
         page("SettingsFollowUp", "bubble.left.and.bubble.right", gt("Chat")),
@@ -277,20 +287,22 @@ function useSettingsIndexSections(): SettingsListSection[] {
     },
     {
       title: gt("Code"),
-      rows: [
-        page(
-          "SettingsProjectOverview",
-          "folder",
-          gt("Projects"),
-          selectedProjectKey !== null ? { value: projectLabel } : undefined,
-        ),
-        serverPage(
-          "SettingsEnvironmentSourceControl",
-          "arrow.triangle.branch",
-          gt("Source control & issues"),
-        ),
-        serverPage("SettingsWorktrees", "square.on.square", gt("Worktrees")),
-      ],
+      rows: chatMode
+        ? []
+        : [
+            page(
+              "SettingsProjectOverview",
+              "folder",
+              gt("Projects"),
+              selectedProjectKey !== null ? { value: projectLabel } : undefined,
+            ),
+            serverPage(
+              "SettingsEnvironmentSourceControl",
+              "arrow.triangle.branch",
+              gt("Source control & issues"),
+            ),
+            serverPage("SettingsWorktrees", "square.on.square", gt("Worktrees")),
+          ],
     },
     {
       rows: [

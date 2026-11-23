@@ -139,6 +139,10 @@ import { SettingsProjectGroupingRouteScreen } from "./features/settings/Settings
 import { SettingsProjectOverviewRouteScreen } from "./features/settings/SettingsProjectOverviewRouteScreen";
 import { UsageLimitAccountScreen } from "./features/usage/UsageLimitsPooled";
 import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
+import { KompasSettingsScreen } from "./features/kompas/KompasSettingsScreen";
+import { PluginsScreen } from "./features/kompas/PluginsScreen";
+import { DeckScreen, ReviewScreen } from "./features/kompas/StudyScreens";
+import { WorkstreamScreen } from "./features/kompas/WorkstreamScreens";
 import { WorkflowRunRouteScreen } from "./features/workflows/WorkflowRunRouteScreen";
 import { WorkflowStepSheet } from "./features/workflows/WorkflowStepSheet";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
@@ -398,6 +402,16 @@ const SETTINGS_SCREENS = {
     screen: ScheduledTaskModelPickerRouteScreen,
     options: THREAD_SETTINGS_ROUTE,
   }),
+  SettingsPlugins: createNativeStackScreen({
+    screen: PluginsScreen,
+    linking: "settings/plugins",
+    options: settingsPage(),
+  }),
+  SettingsKompas: createNativeStackScreen({
+    screen: KompasSettingsScreen,
+    linking: "settings/kompas",
+    options: settingsPage(),
+  }),
   SettingsClientStorage: createNativeStackScreen({
     screen: SettingsClientStorageRouteScreen,
     linking: "settings/client-storage",
@@ -585,6 +599,12 @@ const RootStackConfig = createWorkspaceStackNavigator({
         ...compactBrandHeaderOptions,
       },
     }),
+    KompasReview: createNativeStackScreen({
+      screen: ReviewScreen,
+      options: { headerShown: false, presentation: "fullScreenModal" },
+    }),
+    KompasDeck: createNativeStackScreen({ screen: DeckScreen, options: pageRoute() }),
+    KompasWorkstream: createNativeStackScreen({ screen: WorkstreamScreen, options: pageRoute() }),
     PullRequest: createNativeStackScreen({
       screen: PullRequestRouteScreen,
       linking: {

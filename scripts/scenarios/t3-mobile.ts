@@ -12,7 +12,7 @@ import { run, ScenarioError } from "./shell.ts";
 import { makeState, runPromise, type T3State } from "./t3.ts";
 
 const APP_ID = "com.t3tools.kompas.dev";
-const SCHEME = "t3code-dev";
+const SCHEME = "kompas-dev";
 
 export interface MobileT3 extends T3State {
   /** Installs the dev client if the device lacks it, loads it from Metro, and pairs it. */

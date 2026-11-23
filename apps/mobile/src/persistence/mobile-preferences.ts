@@ -162,6 +162,8 @@ export interface Preferences {
   /** Hardware-keyboard Return behavior in the composer. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
+  /** The hour of the daily study reminder; null or unset means none. */
+  readonly studyReminderHour?: number | null;
   /** The client `language` setting: a locale code or "system". Unset means English. */
   readonly language?: string;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
@@ -253,6 +255,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    studyReminderHour?: number | null;
     language?: string;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
@@ -282,6 +285,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.navigationTabOrder = parsed.navigationTabOrder.filter(
       (tab): tab is string => typeof tab === "string",
     );
+  }
+
+  if (typeof parsed.studyReminderHour === "number" || parsed.studyReminderHour === null) {
+    preferences.studyReminderHour = parsed.studyReminderHour;
   }
 
   if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {

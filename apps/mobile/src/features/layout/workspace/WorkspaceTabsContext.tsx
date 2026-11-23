@@ -67,6 +67,9 @@ function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
     pullRequests: 0,
     issues: 0,
     workflows: 0,
+    workstreams: 0,
+    study: 0,
+    memory: 0,
     usage: 0,
     settings: 0,
   };

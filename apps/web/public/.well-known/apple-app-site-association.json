@@ -3,9 +3,9 @@
     "details": [
       {
         "appIDs": [
-          "ARK85ZXQ4Z.com.t3tools.t3code",
-          "ARK85ZXQ4Z.com.t3tools.t3code.preview",
-          "ARK85ZXQ4Z.com.t3tools.t3code.dev"
+          "ARK85ZXQ4Z.com.t3tools.kompas",
+          "ARK85ZXQ4Z.com.t3tools.kompas.preview",
+          "ARK85ZXQ4Z.com.t3tools.kompas.dev"
         ],
         "components": [{ "/": "/threads/*" }]
       }

@@ -30,7 +30,7 @@ export class DeviceError extends Schema.TaggedError<DeviceError>()("DeviceError"
 }) {}
 
 export const APP_ID = "com.t3tools.kompas.dev";
-export const SCHEME = "t3code-dev";
+export const SCHEME = "kompas-dev";
 
 export interface ProbeState {
   readonly route: {
