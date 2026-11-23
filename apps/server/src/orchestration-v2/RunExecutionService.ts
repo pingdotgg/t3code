@@ -993,6 +993,9 @@ export const layer: Layer.Layer<
                     providerInstanceId: input.run.providerInstanceId,
                     occurredAt: completedAt,
                     payload: makeProviderFailureTurnItem({
+                      ...(input.terminal.failureItemId === undefined
+                        ? {}
+                        : { id: input.terminal.failureItemId }),
                       driver: input.terminal.driver,
                       threadId: input.run.threadId,
                       runId: input.run.id,
