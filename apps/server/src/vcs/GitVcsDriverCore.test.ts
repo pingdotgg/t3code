@@ -9596,8 +9596,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        const path = yield* Path.Path;
+        // `-z` keeps the NUL terminator last, so the test helper's trim cannot strip the suffix.
+        const readConfig = (key: string) =>
+          git(cwd, ["config", "-z", "--get", key]).pipe(Effect.map((value) => value.slice(0, -1)));
 
-        for (const branch of ["feature/memo\u3000", "feature/memo\u00a0"]) {
+        for (const [index, branch] of ["feature/memo\u3000", "feature/memo\u00a0"].entries()) {
           yield* git(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`]);
           const head = yield* git(cwd, ["rev-parse", "HEAD"]);
           assert.deepEqual(
@@ -9607,6 +9611,21 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               fallbackRemoteName: "origin",
             }),
             { commitSha: head, remoteRefName: `origin/${branch}` },
+          );
+          assert.equal(yield* driver.resolveBranchName(cwd, `origin/${branch}`), branch);
+
+          const newRefName = `worktree-${index}`;
+          yield* driver.createWorktree({
+            cwd,
+            path: path.join(yield* makeTmpDir("git-worktrees-"), newRefName),
+            refName: `origin/${branch}`,
+            newRefName,
+            baseRefName: `origin/${branch}`,
+          });
+          assert.equal(yield* readConfig(`branch.${newRefName}.t3-merge-base`), branch);
+          assert.equal(
+            yield* readConfig(`branch.${newRefName}.t3-merge-base-ref`),
+            `refs/remotes/origin/${branch}`,
           );
 
           yield* git(cwd, ["checkout", "-b", branch]);

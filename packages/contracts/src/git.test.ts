@@ -5,6 +5,7 @@ import {
   GitCommandError,
   GitPreparePullRequestThreadResult,
   GitRunStackedActionInput,
+  VcsCreateWorktreeInput,
 } from "./git.ts";
 import { PullRequestDiffFileContentsInput } from "./pullRequest.ts";
 import { ReviewDiffFileContentsInput } from "./review.ts";
@@ -104,5 +105,21 @@ describe("Git file paths", () => {
   ])("preserves leading and trailing whitespace for $operation", ({ decode, encode, input }) => {
     expect(decode(input)).toEqual(input);
     expect(encode(input)).toEqual(input);
+  });
+});
+
+describe("Git ref names", () => {
+  it("keep non-ASCII whitespace across RPC and still trim ASCII whitespace", () => {
+    const decode = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
+    const encode = Schema.encodeUnknownSync(VcsCreateWorktreeInput);
+    for (const branch of ["feature/memo\u3000", "feature/memo\u00a0", "\u3000"]) {
+      const input = { cwd: "/repo", refName: `origin/${branch}`, baseRefName: branch, path: null };
+      expect(decode(input)).toEqual(input);
+      expect(encode(input)).toEqual(input);
+    }
+    expect(
+      decode({ cwd: "/repo", refName: " origin/feature\n", baseRefName: "\tmain ", path: null }),
+    ).toEqual({ cwd: "/repo", refName: "origin/feature", baseRefName: "main", path: null });
+    expect(() => decode({ cwd: "/repo", refName: " \n", path: null })).toThrow();
   });
 });

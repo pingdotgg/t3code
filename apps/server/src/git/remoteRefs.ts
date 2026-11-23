@@ -1,3 +1,5 @@
+import { trimAsciiWhitespace } from "@t3tools/contracts";
+
 export function parseRemoteNamesInGitOrder(stdout: string): ReadonlyArray<string> {
   const remoteNames: Array<string> = [];
   for (const line of stdout.split("\n")) {
@@ -11,16 +13,6 @@ export function parseRemoteNamesInGitOrder(stdout: string): ReadonlyArray<string
 
 export function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return parseRemoteNamesInGitOrder(stdout).toSorted((a, b) => b.length - a.length);
-}
-
-// Git refnames may contain non-ASCII whitespace (U+00A0, U+3000), so only strip ASCII.
-function trimAsciiWhitespace(value: string): string {
-  const isAsciiWhitespace = (code: number) => code === 0x20 || (code >= 0x09 && code <= 0x0d);
-  let start = 0;
-  let end = value.length;
-  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
-  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
-  return value.slice(start, end);
 }
 
 export function parseRemoteRefWithRemoteNames(

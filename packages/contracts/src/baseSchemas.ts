@@ -28,6 +28,32 @@ const isNonBlank = Schema.makeFilter((value: string) => value.trim().length > 0,
 });
 export const TrimmedNonEmptyString = TrimmedString.check(isNonBlank);
 
+const isAsciiWhitespace = (code: number) => code === 0x20 || (code >= 0x09 && code <= 0x0d);
+// Git ref names may contain non-ASCII whitespace (U+00A0, U+3000) but never ASCII whitespace.
+export const trimAsciiWhitespace = (value: string) => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
+  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
+  return start === 0 && end === value.length ? value : value.slice(start, end);
+};
+
+export const GitRefName = Schema.String.pipe(
+  Schema.decodeTo(
+    Schema.String,
+    SchemaTransformation.transformEffect({
+      decode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+      encode: (value) => Effect.succeed(trimAsciiWhitespace(value)),
+    }),
+  ),
+).check(
+  Schema.makeFilter((value: string) => trimAsciiWhitespace(value).length > 0, {
+    expected: "a non-blank Git ref name",
+    toJsonSchema: () => [{ minLength: 1 }, true],
+    arbitraryConstraint: { minLength: 1 },
+  }),
+);
+
 export const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
