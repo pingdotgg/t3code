@@ -14,6 +14,13 @@ export function isLineInFileDiff(
   );
 }
 
+const GIT_LFS_POINTER_VERSION = /^version https:\/\/git-lfs\.github\.com\/spec\/v1\r?\n?$/u;
+
+/** A Git LFS-tracked file's patch is its pointer text, so the hunks never show the file itself. */
+export function isGitLfsPointerDiff(file: FileDiffMetadata): boolean {
+  return file.hunks.length > 0 && GIT_LFS_POINTER_VERSION.test(file.additionLines[0] ?? "");
+}
+
 export function getFileViewedRange<T extends { readonly fileKey: string }>(
   files: ReadonlyArray<T>,
   fileKey: string,

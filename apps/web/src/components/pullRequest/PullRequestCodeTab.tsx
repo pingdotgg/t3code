@@ -142,7 +142,7 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
+import { getFileViewedRange, isGitLfsPointerDiff, isLineInFileDiff } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
@@ -809,9 +809,9 @@ function PullRequestCodeTab({
   const imageRevision = commit ?? detail.headSha;
   const rawFileUrl = sourceControlClients.find(detail.provider)?.rawFileUrl;
   const repositoryUrl = sourceControlClients.parseChangeRequestUrl(detail.url)?.link.repositoryUrl;
-  // Hosts send no patch for an image, so its expanded row shows the file at this revision.
+  // Hosts send no patch for an image, or only its LFS pointer, so the row shows the file itself.
   const imagePreviewUrl = (fileDiff: FileDiffMetadata, path: string) =>
-    fileDiff.hunks.length === 0 &&
+    (fileDiff.hunks.length === 0 || isGitLfsPointerDiff(fileDiff)) &&
     fileDiff.type !== "deleted" &&
     isWorkspaceImagePreviewPath(path) &&
     imageRevision !== undefined &&

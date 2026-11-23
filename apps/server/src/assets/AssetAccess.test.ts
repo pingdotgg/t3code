@@ -1858,6 +1858,7 @@ describe("AssetAccess", () => {
       url: string;
       headers: Readonly<Record<string, string>>;
       repository?: string;
+      cwd?: string;
     }> = [];
     const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
     const media = sourceControlDefinitions.mediaUrl(url)!;
@@ -1912,7 +1913,12 @@ describe("AssetAccess", () => {
         cookie: "session",
       });
       expect(fetched).toEqual([
-        { url: media.fetchUrl, headers: { range: "bytes=0-4" }, repository: "owner/repo" },
+        {
+          url: media.fetchUrl,
+          headers: { range: "bytes=0-4" },
+          repository: "owner/repo",
+          cwd: "/repo",
+        },
       ]);
       expect(response.status).toBe(206);
       // The upstream sent no type, so it comes from the file name the host gave the media.

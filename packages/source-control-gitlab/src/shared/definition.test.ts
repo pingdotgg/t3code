@@ -139,3 +139,22 @@ describe("GitLab remotes", () => {
     expect(recognize("https://notgitlab.example.com/group/repo.git")).toBeNull();
   });
 });
+
+describe("GitLab media", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+  const rawFileUrl = (repositoryUrl: string, path: string, revision = sha) =>
+    definition.rawFileUrl?.({ repositoryUrl, sha: revision, path }) ?? null;
+  const media = (url: string) => definition.mediaUrl?.(new URL(url)) ?? null;
+
+  it("addresses a committed file at a full SHA as immutable credentialed media", () => {
+    const url = rawFileUrl("https://git.example.com/group/sub/project", "art/a #1?.png");
+    expect(url).toBe(`https://git.example.com/group/sub/project/-/raw/${sha}/art/a%20%231%3F.png`);
+    expect(media(url ?? "")).toEqual({
+      fetchUrl: url,
+      fileName: "a #1?.png",
+      immutable: true,
+    });
+    expect(rawFileUrl("https://git.example.com/group/project", "a.png", "main")).toBeNull();
+    expect(media(`https://git.example.com/group/project/-/blob/${sha}/a.png`)).toBeNull();
+  });
+});
