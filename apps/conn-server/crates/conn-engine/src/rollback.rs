@@ -712,6 +712,11 @@ impl Inner {
         let cwd = context.scope["cwd"].as_str().unwrap_or_default().to_owned();
         if let Some(checkpoints) = &self.checkpoints {
             let _held = checkpoints.workspace(&cwd).await;
+            // The store stays locked until the files and refs are done, even if the engine
+            // drops meanwhile. A dropped engine's rollback touches nothing.
+            let Some(_store) = self.store_lock.upgrade() else {
+                return Err(RollbackFailure::Fenced);
+            };
             // The lock may have waited: an engine replaced meanwhile touches no file.
             let owned = self
                 .db(|store| store.owns_store())
@@ -719,6 +724,14 @@ impl Inner {
                 .map_err(RollbackFailure::Failed)?;
             if !owned {
                 return Err(RollbackFailure::Fenced);
+            }
+            #[cfg(test)]
+            {
+                let pause = crate::lock(&self.worker_hooks).restore_pause.take();
+                if let Some((paused, release)) = pause {
+                    let _ = paused.send(());
+                    let _ = release.await;
+                }
             }
             let path = PathBuf::from(&cwd);
             if restore_files && !progress.files_restored {

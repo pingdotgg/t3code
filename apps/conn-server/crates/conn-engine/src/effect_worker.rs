@@ -42,6 +42,11 @@ pub(crate) struct TestHooks {
         tokio::sync::oneshot::Sender<()>,
         tokio::sync::oneshot::Receiver<()>,
     )>,
+    /// A rollback holds its workspace and is about to restore files: sends, then waits.
+    pub(crate) restore_pause: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
     /// A settlement met a locked store and will try again.
     pub(crate) settle_busy: Option<tokio::sync::oneshot::Sender<()>>,
     /// Between two prune batches, with the store let go: sends, then waits.

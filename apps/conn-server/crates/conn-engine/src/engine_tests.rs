@@ -1098,6 +1098,41 @@ async fn a_second_engine_on_a_live_store_is_refused() {
     assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
 }
 
+/// The lock follows the database file, not its spelling: an open through a symlink to a live
+/// store, and the reverse, is refused and leaves the live engine's lease alone.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_opened_through_a_symlink_is_refused() {
+    let db = TempDb::new("store-lock-symlink");
+    let link = db.0.join("link.sqlite");
+    std::os::unix::fs::symlink(db.path(), &link).unwrap();
+    let epoch = || -> i64 {
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'engine_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    // The first open creates the file: its lock must already be the one the target takes.
+    for (first, second) in [(link.clone(), db.path()), (db.path(), link.clone())] {
+        let engine = SqliteEngine::open(EngineConfig::new(&first)).unwrap();
+        let before = epoch();
+        let Err(error) = SqliteEngine::start(EngineConfig::new(&second)).await else {
+            panic!(
+                "{} opened the store {} holds",
+                second.display(),
+                first.display()
+            );
+        };
+        assert_eq!(error, crate::STORE_IN_USE);
+        assert_eq!(epoch(), before);
+        drop(engine);
+        std::fs::remove_file(db.path()).unwrap();
+    }
+}
+
 /// Once the engine is dropped, its store opens again, and the new engine recovers what the
 /// first left: its cut turn is continued.
 #[tokio::test(flavor = "current_thread")]

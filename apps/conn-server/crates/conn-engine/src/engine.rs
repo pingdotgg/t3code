@@ -154,8 +154,9 @@ impl EngineConfig {
 
 pub struct SqliteEngine {
     inner: Arc<Inner>,
-    /// The store's lock ([`lock_store`]), held while this engine lives: one engine per store.
-    _lock: std::fs::File,
+    /// The store's lock ([`lock_store`]): one engine per store. The engine holds it while it
+    /// lives, and a task that changes the workspace holds it too ([`Inner::store_lock`]).
+    _lock: Arc<std::fs::File>,
 }
 
 /// What a second open of a store that a live engine holds gets.
@@ -165,7 +166,9 @@ pub const STORE_IN_USE: &str = "store in use: another engine has this database o
 /// lock does for its folder. A second engine on the store, in this process or another, gets
 /// [`STORE_IN_USE`] before it reads or writes anything. Dropping the file releases it.
 fn lock_store(database: &std::path::Path) -> Result<std::fs::File, String> {
-    let mut path = database.as_os_str().to_owned();
+    let mut path = resolved(database)
+        .map_err(|e| format!("cannot resolve the store {}: {e}", database.display()))?
+        .into_os_string();
     path.push(".lock");
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -188,6 +191,34 @@ fn lock_store(database: &std::path::Path) -> Result<std::fs::File, String> {
             }
         }
     }
+}
+
+/// The database's real path, so every spelling of one file (a symlink, `..`) shares one lock.
+/// A file not created yet resolves through its folder, after any symlink that names it.
+fn resolved(database: &std::path::Path) -> std::io::Result<PathBuf> {
+    let mut path = database.to_path_buf();
+    // A symlink to a file not created yet: follow it by hand, as the kernel's 40-hop limit.
+    for _ in 0..40 {
+        match std::fs::canonicalize(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            other => return other,
+        }
+        let Ok(target) = std::fs::read_link(&path) else {
+            let name = path
+                .file_name()
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
+            let parent = match path.parent() {
+                Some(parent) if !parent.as_os_str().is_empty() => parent,
+                _ => std::path::Path::new("."),
+            };
+            return Ok(std::fs::canonicalize(parent)?.join(name));
+        };
+        path = match path.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+    }
+    Err(std::io::Error::other("too many levels of symbolic links"))
 }
 
 /// How long an open waits for a store lock that looks held.
@@ -251,6 +282,11 @@ pub(crate) struct Inner {
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
     /// The [`SqliteEngine`] was dropped: the worker stops, and the store refuses its writes.
     pub(crate) engine_dropped: Arc<std::sync::atomic::AtomicBool>,
+    /// The store's lock while the engine lives. A task that changes the workspace upgrades it
+    /// first and holds it until it is done, so a dropped engine's restore keeps the store from
+    /// a replacement. A failed upgrade means the engine is gone: the task touches nothing.
+    /// Not an `Arc`: session pumps hold `Inner` for as long as their sessions run.
+    pub(crate) store_lock: std::sync::Weak<std::fs::File>,
     /// Test hook: pauses one command inside its transaction, before it commits.
     #[cfg(test)]
     pub(crate) commit_pause: Mutex<Option<CommitPause>>,
@@ -320,7 +356,7 @@ impl SqliteEngine {
                 .unwrap_or_default()
         });
         // Before anything reads or migrates the store.
-        let lock = lock_store(&config.database)?;
+        let lock = Arc::new(lock_store(&config.database)?);
         let mut store = Store::open(&config.database)?;
         // From here every older engine on this database is fenced.
         let engine_dropped = store.take_ownership(abandoned)?;
@@ -390,6 +426,7 @@ impl SqliteEngine {
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
                 engine_dropped,
+                store_lock: Arc::downgrade(&lock),
                 #[cfg(test)]
                 commit_pause: Mutex::new(None),
                 #[cfg(test)]
