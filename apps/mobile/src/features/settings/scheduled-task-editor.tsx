@@ -14,6 +14,7 @@ import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import {
   scheduledTaskEditorHasChanges,
   scheduledTaskEditorSessionAtom,
+  setScheduledTaskEditorSaving,
   startScheduledTaskEditor,
   updateScheduledTaskEditor,
   readScheduledTaskEditor,
@@ -98,6 +99,8 @@ export function useScheduledTaskEditor() {
   const editor = session ? session.current : defaultEditor;
   const initial = session ? session.initial : defaultEditor;
   const hasChanges = scheduledTaskEditorHasChanges(initial, editor);
+  const saving = session?.saving ?? false;
+  const setSaving = (next: boolean) => setScheduledTaskEditorSaving(next, defaultEditor);
   const setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>> = (update) => {
     updateScheduledTaskEditor(update, defaultEditor);
   };
@@ -111,6 +114,8 @@ export function useScheduledTaskEditor() {
     setEditor,
     startEditor,
     hasChanges,
+    saving,
+    setSaving,
     resetEditor,
     draftForEnvironment,
   };

@@ -676,6 +676,8 @@ const writeParentRun = (input: {
     const providerThreadId = input.stable
       ? ProviderThreadId.make(`${input.runId}:provider-thread`)
       : null;
+    const setupUnfinished =
+      input.status === "preparing" || input.status === "failed" || input.status === "interrupted";
     yield* eventSink.write({
       events: [
         ...(providerThreadId === null
@@ -728,7 +730,7 @@ const writeParentRun = (input: {
             status: input.status,
             queuePosition: null,
             requestedAt: now,
-            startedAt: now,
+            startedAt: setupUnfinished ? null : now,
             completedAt:
               input.status === "preparing" ||
               input.status === "running" ||
@@ -737,9 +739,7 @@ const writeParentRun = (input: {
                 : now,
             checkpointId: input.stable ? CheckpointId.make(`${input.runId}:checkpoint`) : null,
             contextHandoffId: null,
-            ...(input.status === "preparing" ||
-            input.status === "failed" ||
-            input.status === "interrupted"
+            ...(setupUnfinished
               ? { workspacePreparation: { type: "worktree" as const, baseRef: "main" } }
               : {}),
           },
@@ -993,6 +993,100 @@ it.effect("a fresh send in a fork that has not run yet starts without the fork's
     assert.deepEqual(
       fork.contextTransfers.filter((transfer) => transfer.type === "fork").map((t) => t.status),
       ["superseded"],
+    );
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
+it.effect.each([
+  {
+    name: "a fresh send queued behind a side chat's failed first run gives later sends no note",
+    scheduled: false,
+  },
+  {
+    name: "a scheduled fresh run queued behind a side chat's failed first run keeps the fork",
+    scheduled: true,
+  },
+] as const)("$name", ({ scheduled }) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const key = scheduled ? "queued-scheduled-side-chat" : "queued-fresh-side-chat";
+    const parentId = ThreadId.make(`${key}-parent`);
+    const sideChatId = ThreadId.make(`${key}-child`);
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make(`${key}-parent-run`),
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+      stable: true,
+    });
+    yield* forkSideChat(`${key}-fork`, parentId, sideChatId);
+    const send = (name: string, freshContext = false) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${key}-${name}`),
+        threadId: sideChatId,
+        messageId: MessageId.make(`${key}-${name}`),
+        text: name,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "web",
+        ...(freshContext ? { freshContext } : {}),
+        ...(freshContext && scheduled
+          ? { scheduledTaskId: ScheduledTaskId.make(`${key}-task`) }
+          : {}),
+      });
+    const settle = (name: string, status: "failed" | "completed") =>
+      Effect.gen(function* () {
+        const run = (yield* orchestrator.getThreadProjection(sideChatId)).runs.find(
+          (candidate) => candidate.userMessageId === MessageId.make(`${key}-${name}`),
+        )!;
+        const now = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${key}-${name}-${status}`),
+              type: "run.updated",
+              threadId: sideChatId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status, completedAt: now },
+            },
+          ],
+        });
+      });
+    yield* send("first");
+    yield* send("fresh", true);
+    // The first run fails before its provider forks the parent's session.
+    yield* settle("first", "failed");
+    yield* orchestrator.dispatch({
+      type: "queue.resume",
+      commandId: CommandId.make(`${key}-resume`),
+      threadId: sideChatId,
+    });
+    assert.equal(
+      (yield* orchestrator.getThreadProjection(sideChatId)).runs.find(
+        (run) => run.userMessageId === MessageId.make(`${key}-fresh`),
+      )?.status,
+      "starting",
+    );
+    yield* settle("fresh", "completed");
+    yield* send("next");
+
+    const sideChat = yield* orchestrator.getThreadProjection(sideChatId);
+    assert.deepEqual(
+      sideChat.contextTransfers.filter((transfer) => transfer.type === "fork").map((t) => t.status),
+      [scheduled ? "pending" : "superseded"],
+    );
+    if (scheduled) return;
+    const next = sideChat.runs.find((run) => run.userMessageId === MessageId.make(`${key}-next`));
+    // A fork still pending would give the next send a new note, with a digest of the main thread.
+    assert.deepEqual(
+      sideChat.contextHandoffs.filter((handoff) => handoff.targetRunId === next?.id),
+      [],
     );
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
@@ -1630,6 +1724,34 @@ it.effect("merge-back rejects a second fork's context until the first is consume
         [first.threadId, "pending"],
       ],
     );
+
+    // Archiving or deleting a parent cascades only to side chats, so the full fork can still merge back.
+    const mergeNestedInto = (commandId: string) =>
+      orchestrator
+        .dispatch({
+          type: "thread.merge_back",
+          commandId: CommandId.make(commandId),
+          sourceThreadId: nested.threadId,
+          targetThreadId: first.threadId,
+          sourcePoint: { type: "run", runId: nestedRunId },
+          createdBy: "user",
+          creationSource: "web",
+        })
+        .pipe(Effect.flip);
+    yield* orchestrator.dispatch({
+      type: "thread.archive",
+      commandId: CommandId.make("merge-back-guard-archive-first"),
+      threadId: first.threadId,
+    });
+    const intoArchived = yield* mergeNestedInto("merge-back-guard-into-archived");
+    assert.equal(intoArchived._tag, "OrchestratorDispatchError");
+    yield* orchestrator.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("merge-back-guard-delete-first"),
+      threadId: first.threadId,
+    });
+    const intoDeleted = yield* mergeNestedInto("merge-back-guard-into-deleted");
+    assert.equal(intoDeleted._tag, "OrchestratorDispatchError");
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
@@ -1844,6 +1966,7 @@ const runForkWithFailingNativeSource = (forkFailures: number) => {
       ProviderReplayHarness.layerWithRegistry(
         { name: "fork-missing-native-source" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
+        { runEffectWorker: false },
       ),
     ),
   );
