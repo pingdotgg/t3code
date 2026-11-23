@@ -8,6 +8,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
+  AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
   repositoryGroupingDisplayNameOf,
   resolveEnvironmentMachineKind,
@@ -233,7 +234,9 @@ function useAddProjectTargets() {
   const flow = useNewTaskFlow();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const serverConfigs = useServerConfigs();
+  // The clone destination needs both: writing source control and creating the project.
   const canClone = useEnvironmentsWithScope(connectedEnvironments, AuthSourceControlWriteScope);
+  const canOperate = useEnvironmentsWithScope(connectedEnvironments, AuthOrchestrationOperateScope);
   if (flow.isScratchDraft || !flow.selectedProject?.repositoryIdentity?.locator.remoteUrl) {
     return [];
   }
@@ -243,6 +246,7 @@ function useAddProjectTargets() {
       (environment) =>
         !hasProject.has(environment.environmentId) &&
         canClone.has(environment.environmentId) &&
+        canOperate.has(environment.environmentId) &&
         canCreateProjectInEnvironment(environment.connectionState) &&
         serverConfigs.has(environment.environmentId),
     )
