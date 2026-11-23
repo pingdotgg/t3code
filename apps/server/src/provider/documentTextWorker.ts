@@ -683,12 +683,26 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
     } else if (extension === ".xlsx") {
       const workbook = read("xl/workbook.xml");
+      const rels = relations("xl/_rels/workbook.xml.rels");
+      const workbookRelations = [...rels.values()];
+      const workbookPartPath = (part: string) => {
+        const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
+        return target ? NodePath.posix.resolve("/xl", target).slice(1) : `xl/${part}.xml`;
+      };
       const dateSystem = ["1", "true"].includes(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
       )
         ? "1904"
         : "1900";
-      const styles = files.has("xl/styles.xml") ? read("xl/styles.xml") : undefined;
+      let stylesPath = workbookPartPath("styles");
+      if (!files.has(stylesPath)) {
+        // OPC part names compare case-insensitively for ASCII letters.
+        const foldAscii = (name: string) =>
+          name.replaceAll(/[A-Z]/gu, (char) => char.toLowerCase());
+        const target = foldAscii(stylesPath);
+        stylesPath = files.keys().find((name) => foldAscii(name) === target) ?? stylesPath;
+      }
+      const styles = files.has(stylesPath) ? read(stylesPath) : undefined;
       const customFormats = new Map(
         styles
           ? [...all(styles, "numFmt")].map((node) => [node.attrs.numFmtId, node.attrs.formatCode])
@@ -696,13 +710,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       );
       const cellFormats = styles ? all(styles, "cellXfs").next().value : undefined;
       const formats = cellFormats ? children(cellFormats) : [];
-      const rels = relations("xl/_rels/workbook.xml.rels");
-      const sharedTarget = [...rels.values()].find((rel) =>
-        rel.Type?.endsWith("/sharedStrings"),
-      )?.Target;
-      const sharedPath = sharedTarget
-        ? NodePath.posix.resolve("/xl", sharedTarget).slice(1)
-        : "xl/sharedStrings.xml";
+      const sharedPath = workbookPartPath("sharedStrings");
       const strings = files.has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
       const populatedStrings = strings.map(hasCellText);
       for (const sheet of all(workbook, "sheet")) {
