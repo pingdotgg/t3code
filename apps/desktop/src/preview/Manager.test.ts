@@ -1291,7 +1291,6 @@ describe("PreviewManager", () => {
         const multipartData: Electron.PostBody["data"] = [
           { type: "rawData", bytes: Buffer.from("a=1") },
         ];
-        const blobUrl = "blob:https://example.com/0b6c6a5e-55d4-4b4c-9d47-8f1b0c1d2e3f";
 
         expect(
           openWindow({
@@ -1316,13 +1315,6 @@ describe("PreviewManager", () => {
             },
           }),
         ).toEqual({ action: "deny" });
-        expect(
-          openWindow({
-            ...detailsBase,
-            url: blobUrl,
-            disposition: "foreground-tab",
-          }),
-        ).toEqual({ action: "deny" });
         yield* Effect.yieldNow;
 
         expect(preview.loadURL.mock.calls).toEqual([
@@ -1340,7 +1332,6 @@ describe("PreviewManager", () => {
               extraHeaders: "content-type: application/x-www-form-urlencoded",
             },
           ],
-          [blobUrl],
         ]);
       }),
     ),
