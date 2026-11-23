@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Signed, notarized, stapled macOS DMG for the PseudoCode fork.
 #
-#   ship-mac.sh [arm64|x64]
+#   ship-mac.sh
 #
 # Needs a Developer ID Application identity in the login keychain and a notarytool keychain
 # profile. See ../ROTATION.md to set both up. No secret is named on any command line.
 set -euo pipefail
 
-ARCH="${1:-arm64}"
+if [ "$#" -gt 0 ]; then
+  echo "ship-mac.sh takes no arguments; the fork ships arm64 only." >&2
+  exit 1
+fi
+ARCH=arm64
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 . "$SCRIPT_DIR/_common.sh"
