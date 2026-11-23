@@ -62,6 +62,7 @@ mod store;
 mod streaming;
 mod streams;
 mod t3_import;
+mod thread_find;
 mod time;
 mod titles;
 mod transcript;

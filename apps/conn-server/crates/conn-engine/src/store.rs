@@ -633,13 +633,7 @@ impl Store {
         if !out.fits() {
             return Ok(ThreadTranscript::TooLarge);
         }
-        if !self.inherited_rows(&thread, &mut out)? {
-            return Ok(ThreadTranscript::TooLarge);
-        }
-        let runs = entities(&self.conn, thread_id, "runs")?;
-        let attempts = entities(&self.conn, thread_id, "attempts")?;
-        let rule = self.visibility(thread_id, &runs, &attempts)?;
-        if !self.transcript_rows(thread_id, "local", &mut out, |item| rule.shows(item))? {
+        if !self.visible_rows(&thread, &mut out)? {
             return Ok(ThreadTranscript::TooLarge);
         }
         Ok(ThreadTranscript::Body(out.finish(
@@ -647,6 +641,19 @@ impl Store {
             title,
             &updated_at,
         )?))
+    }
+
+    /// A thread's visible timeline rows, read one at a time into `out`: what a run fork
+    /// inherits, then the thread's own visible rows. `false` when the sink is full.
+    pub(crate) fn visible_rows(&self, thread: &Value, out: &mut impl RowSink) -> StoreResult<bool> {
+        if !self.inherited_rows(thread, out)? {
+            return Ok(false);
+        }
+        let thread_id = thread["id"].as_str().unwrap_or_default();
+        let runs = entities(&self.conn, thread_id, "runs")?;
+        let attempts = entities(&self.conn, thread_id, "attempts")?;
+        let rule = self.visibility(thread_id, &runs, &attempts)?;
+        self.transcript_rows(thread_id, "local", out, |item| rule.shows(item))
     }
 
     /// The rows a run fork that is not a side chat shows before its own, as T3's
@@ -669,7 +676,7 @@ impl Store {
     }
 
     /// The thread record and `activity_at` of a thread that is not deleted.
-    fn live_thread(&self, thread_id: &str) -> StoreResult<Option<(Value, String)>> {
+    pub(crate) fn live_thread(&self, thread_id: &str) -> StoreResult<Option<(Value, String)>> {
         let row = self
             .conn
             .query_row(
@@ -2203,7 +2210,9 @@ mod tests {
         store
             .conn
             .execute_batch(
-                r#"INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body) VALUES
+                r#"INSERT INTO threads (id, project_id, activity_at, thread) VALUES
+                 ('t1', 'p1', '2026-01-01T00:00:00.000Z', '{"id":"t1","title":"Fox"}');
+                 INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body) VALUES
                  ('t1', 'turnItems', 'i1', 1, 1, 1,
                   '{"type":"user_message","status":"completed","text":"one fox, two fox","messageId":"m1","runId":"r1"}'),
                  ('t1', 'turnItems', 'i2', 2, 2, 2,

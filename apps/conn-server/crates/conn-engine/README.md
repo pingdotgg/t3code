@@ -185,6 +185,12 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   rule. `background_work.updated` (not persisted) holds an idle session like the provider's
   own probe, at most 64 provider turns tracked. `client-check.mjs` compares the roster with
   T3's own function.
+- **Find in a thread.** `searchThread` and `searchThreadStream` read the visible timeline
+  that `visible_rows` also writes into the transcript, so a run fork searches the parent
+  history it shows, through the fork run. Each message counts matches in the text its
+  Markdown shows (`src/thread_find.rs`, pulldown-cmark): emphasis and link labels join, link
+  destinations stay out, and each block is its own segment. T3's file-link labels, citations,
+  skill labels and assistant HTML are not rendered. No parse is cached.
 - **Stop.** `thread.stop` and `run.interrupt` record a `run_interrupt_request` item on the
   active run (`markStoppedRun`, message "Stopped by user" or the command's reason); a run that
   ends interrupted gets a `run_interrupt_result` (`makeInterruptResultTurnItem`). When the
