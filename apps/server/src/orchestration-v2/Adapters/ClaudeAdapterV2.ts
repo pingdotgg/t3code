@@ -13431,20 +13431,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.queryPolicyKey === queryPolicyKey &&
             !existing.stopping &&
             // A pinned head already decides where a fresh process resumes.
-            resumeSessionAt === undefined &&
-            (yield* liveProcessMissedTranscriptMessages(existing))
+            resumeSessionAt === undefined
           ) {
-            // A scheduled wakeup dies with the process, like its background work.
-            if (
+            // Decided before the transcript read: with no pending wakeup then, none can fire during it.
+            const keepsWork =
               (yield* liveProcessRunsBackgroundWork(existing)) ||
-              scheduledWakeupsByNativeThread.has(nativeThreadId)
-            ) {
-              yield* Effect.logWarning(
-                "orchestration-v2.claude-stale-process-kept-for-background-work",
-                { threadId: turnInput.threadId, nativeThreadId },
-              );
-            } else {
-              replaceStaleProcess = true;
+              scheduledWakeupsByNativeThread.has(nativeThreadId) ||
+              (yield* holdsBufferedWake(
+                nativeThreadId,
+                (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [],
+              ));
+            if (yield* liveProcessMissedTranscriptMessages(existing)) {
+              if (keepsWork) {
+                yield* Effect.logWarning(
+                  "orchestration-v2.claude-stale-process-kept-for-background-work",
+                  { threadId: turnInput.threadId, nativeThreadId },
+                );
+              } else {
+                replaceStaleProcess = true;
+              }
             }
           }
           const reuseLaunchSettings =

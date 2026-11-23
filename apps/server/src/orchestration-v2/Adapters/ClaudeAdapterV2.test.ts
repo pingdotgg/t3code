@@ -11391,6 +11391,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readonly transcript: ((promptUuid: string) => string) | null;
       readonly backgroundShell?: boolean;
       readonly scheduledWakeup?: boolean;
+      readonly wakeFiresDuringRead?: boolean;
       readonly pinnedHead?: string;
     }) {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -11398,10 +11399,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const configDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-stale-" });
       const projectDir = path.join(configDir, "projects", "-workspace");
       yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+      const transcriptOpened = yield* Deferred.make<void>();
+      const releaseTranscript = yield* Deferred.make<void>();
+      const heldFileSystem: FileSystem.FileSystem = {
+        ...fileSystem,
+        open: (filePath, options) =>
+          filePath.endsWith(".jsonl")
+            ? Deferred.succeed(transcriptOpened, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseTranscript)),
+                Effect.andThen(fileSystem.open(filePath, options)),
+              )
+            : fileSystem.open(filePath, options),
+      };
       const harness = yield* makeWakeHarnessWithOptions({
         environment: { CLAUDE_CONFIG_DIR: configDir },
         freshQueueOnReopen: true,
-      });
+      }).pipe(
+        input.wakeFiresDuringRead === true
+          ? Effect.provideService(FileSystem.FileSystem, heldFileSystem)
+          : (effect) => effect,
+      );
       const providerThread =
         input.pinnedHead === undefined
           ? harness.providerThread
@@ -11426,7 +11443,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         });
       yield* harness.runtime.startTurn(turn(1));
       if (input.backgroundShell === true) yield* harness.offerAndWait(wakeTaskStarted);
-      if (input.scheduledWakeup === true) {
+      if (input.scheduledWakeup === true || input.wakeFiresDuringRead === true) {
         for (const frame of scheduleWakeupFrames({
           toolUseId: "toolu_stale_process_wakeup",
           uuids: ["00000000-0000-4000-8000-000000000c05", "00000000-0000-4000-8000-000000000c06"],
@@ -11446,7 +11463,16 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           input.transcript(harness.promptUuid(0)),
         );
       }
-      yield* harness.runtime.startTurn(turn(2));
+      if (input.wakeFiresDuringRead !== true) {
+        yield* harness.runtime.startTurn(turn(2));
+        return harness;
+      }
+      yield* TestClock.adjust("1 hour");
+      const nextTurn = yield* Effect.forkChild(harness.runtime.startTurn(turn(2)));
+      yield* Deferred.await(transcriptOpened);
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* Deferred.succeed(releaseTranscript, undefined);
+      yield* Fiber.join(nextTurn);
       return harness;
     });
     const layer = Layer.mergeAll(
@@ -11523,6 +11549,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         name: "replacing it would cancel a scheduled wakeup",
         transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
         scheduledWakeup: true,
+      },
+      {
+        name: "its scheduled wakeup fires while the transcript is read",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+        wakeFiresDuringRead: true,
       },
       {
         // Longer than the tail T3 reads, and the process's own messages are not written yet.
