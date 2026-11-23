@@ -22,6 +22,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
+  type BackgroundWorkLossCause,
   awaitingProviderThreadId,
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
@@ -238,6 +239,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     readonly threadId: ThreadId;
     readonly sourceRunId: RunId;
     readonly processLossCount?: number;
+    readonly cause?: BackgroundWorkLossCause;
   }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -317,7 +319,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       projection.attempts,
     );
     const noteText =
-      note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+      note.work.length === 0
+        ? undefined
+        : restartCancelledBackgroundWorkNote(note.work, input.cause);
     const text =
       noteText === undefined
         ? CONTINUE_PROMPT
@@ -334,9 +338,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+          summary:
+            input.cause === "provider_exit"
+              ? "The agent runtime exited and stopped background work"
+              : note.settled
+                ? "T3 Code restarted and stopped background work"
+                : "T3 Code restarted and resumed this turn",
           detail: text,
         },
         attachments: [],

@@ -15,7 +15,8 @@ type TextPart = string | typeof CELL_START | typeof CELL_END | { fallback: strin
 
 const TRUNCATED = "\n\n[Extracted text truncated at document extraction limits.]";
 // Parts the document never displays: the XHTML head, tracked deletions and moves, field codes,
-// phonetic guides, paragraph properties such as tab-stop definitions.
+// phonetic guides, paragraph properties such as tab-stop definitions, drawing anchor layout
+// values and encoded field data.
 const HIDDEN = new Set([
   "head",
   "script",
@@ -28,6 +29,19 @@ const HIDDEN = new Set([
   "delInstrText",
   "tracked-changes",
   "pPr",
+  "positionH",
+  "positionV",
+  "sizeRelH",
+  "sizeRelV",
+  "fldData",
+  // An OpenDocument index keeps its templates beside the generated index; only the latter is content.
+  "table-of-content-source",
+  "illustration-index-source",
+  "table-index-source",
+  "object-index-source",
+  "user-index-source",
+  "alphabetical-index-source",
+  "bibliography-source",
 ]);
 
 // @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
@@ -99,17 +113,18 @@ function xml(source: string, extension: string): XmlNode {
     const node = stack.pop()!;
     const parent = stack.at(-1)!;
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
-    if (extension === ".docx" && node.name === "del") {
+    if (
+      (extension === ".docx" && node.name === "del") ||
+      (odf && node.name === "annotation" && parent.name !== "semantics") ||
+      (extension === ".odp" &&
+        node.name === "page-thumbnail" &&
+        stack.some((ancestor) => ancestor.name === "notes"))
+    ) {
       parent.children.pop();
       return;
     }
-    // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
-    // Keep one when no Choice carries text, such as a chart with a VML caption.
-    if (node.name === "Fallback" && parent.hasTextChoice) {
-      parent.children.pop();
-      return;
-    }
-    if (!node.hasText && node.name !== "noBreakHyphen") return;
+    if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
+    if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
   });
@@ -124,17 +139,42 @@ function xml(source: string, extension: string): XmlNode {
   return root;
 }
 
-const children = (node: XmlNode) =>
-  node.children.filter((child): child is XmlNode => typeof child !== "string");
+const children = (node: XmlNode | undefined) =>
+  node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
+
+function retainCompatibilityFallback(parent: XmlNode, fallback: XmlNode): boolean {
+  // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
+  // Keep one when no Choice carries text, such as a chart with a VML caption.
+  if (parent.hasTextChoice) {
+    parent.children.pop();
+    return false;
+  }
+  if (fallback.hasText || hasInlineTab(fallback, ["tab", "ptab"])) {
+    parent.children = parent.children.filter(
+      (child) =>
+        typeof child === "string" || child.name !== "Choice" || !hasInlineTab(child, ["ptab"]),
+    );
+  }
+  return true;
+}
+
+function hasInlineTab(node: XmlNode, names: readonly string[]): boolean {
+  return (
+    !HIDDEN.has(node.name) &&
+    (names.includes(node.name) || children(node).some((child) => hasInlineTab(child, names)))
+  );
+}
 function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNode, void> {
   for (const child of children(node)) {
     if (typeof name === "string" ? child.name === name : name.includes(child.name)) yield child;
     else yield* all(child, name);
   }
 }
-function* text(node: XmlNode): Generator<string, void> {
+function* text(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
-  if (["tab", "cell"].includes(node.name)) yield "\t";
+  // Word text boxes hold their own paragraphs inside the anchoring paragraph.
+  if (node.name === "txbxContent") yield* paragraphs(node);
+  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
@@ -186,6 +226,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
     }
   }
 }
+// A notes page also holds the slide image, slide number, date, header and footer placeholders.
+const NOTES_PAGE_PLACEHOLDERS = new Set(["sldImg", "sldNum", "dt", "hdr", "ftr"]);
+const isNotesPagePlaceholder = (node: XmlNode) =>
+  node.name === "sp" && NOTES_PAGE_PLACEHOLDERS.has(all(node, "ph").next().value?.attrs.type ?? "");
+function withoutNotesPagePlaceholders(node: XmlNode): XmlNode {
+  return {
+    ...node,
+    children: node.children
+      .filter((child) => typeof child === "string" || !isNotesPagePlaceholder(child))
+      .map((child) => (typeof child === "string" ? child : withoutNotesPagePlaceholders(child))),
+  };
+}
 function* inCell(parts: Iterable<TextPart>): Generator<TextPart, void> {
   yield CELL_START;
   yield* parts;
@@ -229,9 +281,8 @@ function hasCellText(cell: XmlNode): boolean {
 function* table(node: XmlNode): Generator<TextPart, void> {
   let rowCount = 0;
   for (const row of all(node, ["tr", "table-row"])) {
-    const cells = children(row).filter((cell) =>
-      ["tc", "table-cell", "covered-table-cell", "td", "th"].includes(cell.name),
-    );
+    // Word nests a cell inside w:sdt when a content control wraps the whole cell.
+    const cells = [...all(row, ["tc", "table-cell", "covered-table-cell", "td", "th"])];
     // ODS writers pad sheets with repeated empty rows and trailing cells.
     while (cells.length && !hasCellText(cells.at(-1)!)) cells.pop();
     if (!cells.length) continue;
@@ -333,6 +384,8 @@ async function archive(path: string): Promise<Map<string, string>> {
   return files;
 }
 
+const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
+
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
   if (!book || typeof book !== "object" || !("cells" in book) || !Array.isArray(book.cells))
@@ -344,24 +397,29 @@ function* notebook(source: string): Generator<string, void> {
         if (typeof line === "string") yield line;
       }
   }
+  function outputText(value: unknown): string {
+    // Notebook fragments can split a terminal escape sequence.
+    return NodeUtil.stripVTControlCharacters([...lines(value)].join(""));
+  }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
-    const kind = "cell_type" in cell && cell.cell_type === "code" ? "code" : "markdown";
+    const cellType = "cell_type" in cell ? cell.cell_type : undefined;
+    const kind = NOTEBOOK_CELL_TYPES.find((type) => type === cellType) ?? "markdown";
     yield `## Cell ${index + 1} (${kind})\n`;
     if ("source" in cell) yield* lines(cell.source);
     if ("outputs" in cell && Array.isArray(cell.outputs)) {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
-        if ("text" in output) yield* lines(output.text);
+        if ("text" in output) yield outputText(output.text);
         else if (
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
           "text/plain" in output.data
         )
-          yield* lines(output.data["text/plain"]);
+          yield outputText(output.data["text/plain"]);
         else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
@@ -382,10 +440,37 @@ function* notebook(source: string): Generator<string, void> {
   }
 }
 
+// Per-byte decoding only supports the single-byte \fcharset values.
+const FONT_CODE_PAGES = new Map([
+  [77, "macintosh"],
+  [161, "windows-1253"],
+  [162, "windows-1254"],
+  [163, "windows-1258"],
+  [177, "windows-1255"],
+  [178, "windows-1256"],
+  [186, "windows-1257"],
+  [204, "windows-1251"],
+  [222, "windows-874"],
+  [238, "windows-1250"],
+]);
+
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
-  let state = { skip: false, uc: 1, decoder: new TextDecoder("windows-1252") };
+  let state = {
+    skip: false,
+    deleted: false,
+    hiddenText: false,
+    uc: 1,
+    font: 0,
+    fontTable: false,
+    decoder: new TextDecoder("windows-1252"),
+  };
   const stack: Array<typeof state> = [];
+  // A font's \fcharset, not the document code page, encodes the bytes written in that font.
+  const fonts = new Map<number, typeof state.decoder>();
+  let defaultFont = 0;
+  const decoder = () => fonts.get(state.font) ?? state.decoder;
+  const hidden = () => state.skip || state.deleted || state.hiddenText;
   const symbols = new Map([
     ["endash", "–"],
     ["emdash", characterEntities.mdash],
@@ -419,8 +504,7 @@ function* rtf(source: string): Generator<string, void> {
       const word = /^([a-z]+)(-?\d+)? ?/i.exec(rest);
       if (hex) {
         if (fallback) fallback--;
-        else if (!state.skip)
-          yield state.decoder.decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
+        else if (!hidden()) yield decoder().decode(Uint8Array.of(Number.parseInt(hex[1]!, 16)));
         i += 3;
       } else if (word) {
         i += word[0].length;
@@ -445,11 +529,35 @@ function* rtf(source: string): Generator<string, void> {
             "object",
             "fldinst",
             "header",
+            "headerf",
+            "headerl",
+            "headerr",
             "footer",
+            "footerf",
+            "footerl",
+            "footerr",
           ].includes(control)
         )
           state.skip = true;
-        if (control === "ansicpg") {
+        if (control === "fonttbl") state.fontTable = true;
+        else if (control === "deff") state.font = defaultFont = value;
+        else if (control === "f") {
+          state.font = value;
+          if (state.fontTable) fonts.delete(value);
+        } else if (control === "fcharset" && state.fontTable) {
+          const codePage = FONT_CODE_PAGES.get(value);
+          if (codePage) fonts.set(state.font, new TextDecoder(codePage));
+        }
+        if (control === "deleted") state.deleted = value !== 0;
+        else if (control === "v") state.hiddenText = value !== 0;
+        else if (control === "plain") {
+          state.deleted = false;
+          state.hiddenText = false;
+          state.font = defaultFont;
+        }
+        if (control === "mac" || (control === "ansicpg" && value === 10000))
+          state.decoder = new TextDecoder("macintosh");
+        else if (control === "ansicpg") {
           // Per-byte decoding only supports single-byte Windows code pages.
           if (value !== 874 && (value < 1250 || value > 1258))
             throw new Error("Unsupported RTF code page");
@@ -458,27 +566,29 @@ function* rtf(source: string): Generator<string, void> {
           if (!Number.isSafeInteger(value) || value < 0)
             throw new Error("Invalid RTF fallback count");
           state.uc = value;
-        } else if (control === "u" && !state.skip) {
-          yield String.fromCharCode(value < 0 ? value + 65536 : value);
+        } else if (control === "u") {
+          if (!hidden()) yield String.fromCharCode(value < 0 ? value + 65536 : value);
           fallback = state.uc;
-        } else if (!state.skip && ["par", "line", "row"].includes(control)) yield "\n";
-        else if (!state.skip && ["tab", "cell"].includes(control)) yield "\t";
-        else if (!state.skip && symbols.has(control)) yield symbols.get(control)!;
+        } else if (!hidden() && ["par", "line", "sect", "page", "column"].includes(control))
+          yield "\n";
+        else if (!hidden() && control === "tab") yield "\t";
+        // Table structure survives tracked deletions; only the deleted cell text is dropped.
+        else if (!state.skip && control === "row") yield "\n";
+        else if (!state.skip && control === "cell") yield "\t";
+        else if (!hidden() && symbols.has(control)) yield symbols.get(control)!;
       } else {
         i++;
         if (fallback) fallback--;
         else if (rest[0] === "*") state.skip = true;
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-        else if (!state.skip && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
-        else if (!state.skip && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
-        else if (!state.skip && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
+        else if (!hidden() && (rest[0] === "\n" || rest[0] === "\r")) yield "\n";
+        else if (!hidden() && ["\\", "{", "}"].includes(rest[0]!)) yield rest[0]!;
+        else if (!hidden() && symbols.has(rest[0]!)) yield symbols.get(rest[0]!)!;
       }
-    } else if (!state.skip && char !== "\n" && char !== "\r") {
+    } else if (char !== "\n" && char !== "\r") {
       if (fallback) fallback--;
-      else
-        yield char.charCodeAt(0) < 128
-          ? char
-          : state.decoder.decode(Uint8Array.of(char.charCodeAt(0)));
+      else if (!hidden())
+        yield char.charCodeAt(0) < 128 ? char : decoder().decode(Uint8Array.of(char.charCodeAt(0)));
     }
   }
 }
@@ -509,8 +619,17 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           .filter((rel) => rel.attrs.TargetMode !== "External")
           .map((rel) => [rel.attrs.Id, rel.attrs.Target]),
       );
-    if (extension === ".docx") yield* paragraphs(read("word/document.xml"));
-    else if ([".odt", ".ods", ".odp"].includes(extension)) {
+    if (extension === ".docx") {
+      // The package relationship names the main part; Word for the web saves word/document2.xml.
+      const target = files.has("_rels/.rels")
+        ? [...all(read("_rels/.rels"), "Relationship")].find(
+            (rel) =>
+              rel.attrs.Type?.endsWith("/officeDocument") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const main = target && NodePath.posix.normalize(target).replace(/^\//, "");
+      yield* paragraphs(read(main && files.has(main) ? main : "word/document.xml"));
+    } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt") yield* paragraphs(content);
       else {
@@ -519,8 +638,19 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           yield extension === ".ods"
             ? `\n\n## Sheet: ${part.attrs.name ?? "Untitled"}\n`
             : `\n\n## Slide ${++index}\n`;
-          if (extension === ".ods") yield* table(part);
-          else yield* paragraphs(part);
+          if (extension === ".ods") {
+            yield* table(part);
+            continue;
+          }
+          const notes = children(part).find((child) => child.name === "notes");
+          yield* paragraphs({
+            ...part,
+            children: part.children.filter((child) => child !== notes),
+          });
+          if (notes && hasCellText(notes)) {
+            yield "\nNotes:\n";
+            yield* paragraphs(notes);
+          }
         }
       }
     } else if (extension === ".xlsx") {
@@ -615,8 +745,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
     } else if (extension === ".pptx") {
       const rels = relations("ppt/_rels/presentation.xml.rels");
+      const [presentation] = children(read("ppt/presentation.xml"));
+      const slideList = children(presentation).find((node) => node.name === "sldIdLst");
       let index = 0;
-      for (const slide of all(read("ppt/presentation.xml"), "sldId")) {
+      for (const slide of children(slideList).filter((node) => node.name === "sldId")) {
         yield `\n\n## Slide ${++index}\n`;
         const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id);
         if (!target) {
@@ -641,14 +773,16 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             !target
           )
             continue;
-          yield "Notes:\n";
-          yield* paragraphs(
+          const notesPage = withoutNotesPagePlaceholders(
             read(
               target.startsWith("/")
                 ? target.slice(1)
                 : NodePath.posix.join(NodePath.posix.dirname(name), target),
             ),
           );
+          if (!hasCellText(notesPage)) continue;
+          yield "Notes:\n";
+          yield* paragraphs(notesPage);
         }
       }
     } else if (extension === ".epub") {
@@ -732,5 +866,5 @@ export async function extractDocumentText(path: string, extension: string): Prom
   }
   result = result.replaceAll(/\n(?:[ \t]*\n){2,}/g, "\n\n").trim();
   if (!result && !truncated) throw new Error("No text extracted");
-  return result + (truncated ? TRUNCATED : "");
+  return truncated ? result.replace(/[\uD800-\uDBFF]$/, "").trimEnd() + TRUNCATED : result;
 }
