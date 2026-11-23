@@ -9,6 +9,7 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -75,10 +76,8 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
   });
   // npm loads the whole package history per lookup, so a burst of specs must not spawn one each.
   const npmPermits = yield* Semaphore.make(2);
-  const cache = yield* Cache.make({
-    capacity: 32,
-    timeToLive: Duration.minutes(1),
-    lookup: Effect.fn("NpmRelease.lookup")(function* (spec: string) {
+  const cache = yield* Cache.makeWith(
+    Effect.fn("NpmRelease.lookup")(function* (spec: string) {
       // Without npm there is no configured registry to honor, so use the public one.
       const npmPath = yield* resolveCommandPath("npm");
       if (npmPath === null) return yield* lookupPublic(spec);
@@ -97,7 +96,13 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
             Effect.logInfo("npm release lookup failed", { tag: error._tag }),
           ),
           Effect.mapError(
-            () => new ServerNpmReleaseError({ reason: "npm could not complete the lookup." }),
+            (error) =>
+              new ServerNpmReleaseError({
+                reason:
+                  error._tag === "ProcessTimeoutError"
+                    ? `npm release lookup timed out after ${error.timeoutMs / 1_000} seconds.`
+                    : "npm could not complete the lookup.",
+              }),
           ),
         );
       if (output.timedOut || output.stdoutTruncated || output.stdoutInvalidUtf8) {
@@ -114,7 +119,11 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
       }
       return yield* toRelease(spec, output.stdout);
     }),
-  });
+    {
+      capacity: 32,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.minutes(1) : Duration.zero),
+    },
+  );
   return NpmRelease.of({
     get: Effect.fn("NpmRelease.get")(function* (input) {
       const { spec } = yield* decodeInput(input).pipe(

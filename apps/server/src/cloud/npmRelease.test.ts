@@ -131,6 +131,30 @@ it.effect.each([
   }),
 );
 
+it.effect("reports a timeout and retries the configured npm lookup immediately", () =>
+  Effect.gen(function* () {
+    const lookup = { spec: "nightly" };
+    let calls = 0;
+    const service = yield* makeService((input) =>
+      ++calls === 1
+        ? Effect.fail(
+            new ProcessRunner.ProcessTimeoutError({
+              command: input.command,
+              argumentCount: input.args.length,
+              cwd: input.cwd,
+              spawnCwd: input.spawnCwd,
+              timeoutMs: 15_000,
+            }),
+          )
+        : Effect.succeed(output(JSON.stringify({ version }))),
+    );
+    const first = yield* Effect.flip(service.get(lookup));
+    expect(first.reason).toBe("npm release lookup timed out after 15 seconds.");
+    expect(yield* service.get(lookup)).toEqual({ version });
+    expect(calls).toBe(2);
+  }),
+);
+
 it.effect("falls back to public npm only when npm is not installed", () =>
   Effect.gen(function* () {
     const urls: string[] = [];

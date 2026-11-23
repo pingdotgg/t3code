@@ -1,9 +1,8 @@
 import { type ServerConfig, ServerNpmReleaseError } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -43,8 +42,8 @@ export function npmReleaseFailureMessage(
       );
 }
 
-export const npmReleaseAtom = Atom.family((spec: string) =>
-  Atom.make((get) => {
+export const npmReleaseLookupAtom = Atom.family((spec: string) =>
+  Atom.readable((get) => {
     const primary = get(primaryEnvironmentIdAtom);
     // With the desktop's local server turned off there is no primary, so a connected server answers.
     const candidates =
@@ -54,20 +53,27 @@ export const npmReleaseAtom = Atom.family((spec: string) =>
         (id) => unsupportedLookup(get(serverEnvironment.configValueAtom(id))) === null,
       ) ?? candidates[0];
     if (environmentId === undefined) {
-      return Effect.fail(
-        new ServerNpmReleaseError({ reason: m(msg("Connect to a server to check releases.")) }),
-      );
+      return {
+        error: new ServerNpmReleaseError({
+          reason: m(msg("Connect to a server to check releases.")),
+        }),
+      };
     }
-    const unsupported = unsupportedLookup(get(serverEnvironment.configValueAtom(environmentId)));
-    if (unsupported !== null) return Effect.fail(unsupported);
-    return get
-      .result(serverEnvironment.npmRelease({ environmentId, input: { spec } }))
-      .pipe(
-        Effect.map((release) =>
-          release === null
-            ? null
-            : { version: release.version, databaseMigration: release.databaseMigration },
-        ),
-      );
+    const error = unsupportedLookup(get(serverEnvironment.configValueAtom(environmentId)));
+    return error === null
+      ? { query: serverEnvironment.npmRelease({ environmentId, input: { spec } }) }
+      : { error };
+  }),
+);
+
+export const npmReleaseAtom = Atom.family((spec: string) =>
+  Atom.make((get) => {
+    const lookup = get(npmReleaseLookupAtom(spec));
+    if (lookup.error !== undefined) return AsyncResult.fail(lookup.error);
+    return AsyncResult.map(get(lookup.query), (release) =>
+      release === null
+        ? null
+        : { version: release.version, databaseMigration: release.databaseMigration },
+    );
   }).pipe(Atom.withLabel(`npm-release:${spec}`)),
 );
