@@ -68,6 +68,8 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  placeholder = "",
+  placeholderSuffix,
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -77,6 +79,8 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  placeholder?: string;
+  placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -88,7 +92,8 @@ function Composer({
       contextRecords={new Map()}
       skills={skills}
       disabled={disabled}
-      placeholder=""
+      placeholder={placeholder}
+      placeholderSuffix={placeholderSuffix}
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
@@ -562,6 +567,25 @@ it.each([
 });
 
 it.each([
+  ["**DEV**", "**DEV**!"],
+  ["*DEV*", "*DEV*!"],
+  ["~~DEV~~", "~~DEV~~!"],
+  ["`DEV`", "`DEV`!"],
+  ["***DEV***", "***DEV***!"],
+])("types after the closing markers of pasted %s", async (pasted, typed) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    editor.view.focus();
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await userEvent.keyboard("!");
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(typed);
+});
+
+it.each([
   { literalText: false, imports: 1 },
   { literalText: true, imports: 0 },
 ])(
@@ -676,6 +700,54 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   const caret = editor.view.coordsAtPos(editor.state.selection.head);
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
+
+it.each(["none", "caret", "selection"] as const)(
+  "keeps the reading position when a draft rewraps (focus: %s)",
+  async (focus) => {
+    const focused = focus !== "none";
+    const value = "A long wrapped paragraph should keep the sentence being read in view. ".repeat(
+      100,
+    );
+    const style = document.head.appendChild(document.createElement("style"));
+    style.textContent = ".composer-tiptap { width: 700px; max-height: 160px; overflow-y: auto; }";
+    using _style = { [Symbol.dispose]: () => style.remove() };
+    await using screen = await mountEditor(value);
+    const { editor } = screen;
+    const scroller = editor.view.dom;
+    await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(500));
+    if (focused) await focusAt(editor, 2000);
+    scroller.scrollTop = 300;
+    scroller.dispatchEvent(new Event("scroll"));
+    const box = scroller.getBoundingClientRect();
+    const position = editor.view.posAtCoords({
+      left: box.left + box.width / 2,
+      top: box.top + 25,
+    })!;
+    const before = editor.view.coordsAtPos(position.pos).top - box.top;
+    if (focused) await focusAt(editor, position.pos);
+    if (focus === "selection") {
+      editor.commands.setTextSelection({ from: position.pos, to: position.pos + 20 });
+    }
+    document.dispatchEvent(new Event("selectionchange"));
+    const selection = editor.state.selection.toJSON();
+    for (const width of [420, 700]) {
+      // The panel toggle shortcut reaches the focused editor before the width changes.
+      if (focused) {
+        scroller.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "b", ctrlKey: true, altKey: true, bubbles: true }),
+        );
+      }
+      scroller.style.width = `${width}px`;
+      await vi.waitFor(() => {
+        const after =
+          editor.view.coordsAtPos(position.pos).top - scroller.getBoundingClientRect().top;
+        expect(Math.abs(after - before)).toBeLessThan(25);
+      });
+      expect(editor.state.selection.toJSON()).toEqual(selection);
+      expect(editor.view.hasFocus()).toBe(focused);
+    }
+  },
+);
 
 it("does not outline the line under a click made with the node-select modifier held", async () => {
   await using screen = await mountEditor("ship it");
@@ -1214,3 +1286,25 @@ it.each(["other field", "document body"])(
     );
   },
 );
+
+it("lets a one-line placeholder's button take clicks and passes the rest to the editor", async () => {
+  const onClick = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      placeholder="Run the tests"
+      placeholderSuffix={
+        <button type="button" className="pointer-events-auto" onClick={onClick}>
+          Tab
+        </button>
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await userEvent.click(editor.view.dom, { position: { x: 12, y: 12 } });
+  await vi.waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: "Tab" }));
+  expect(onClick).toHaveBeenCalledOnce();
+});
