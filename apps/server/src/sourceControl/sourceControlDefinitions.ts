@@ -6,6 +6,7 @@ import * as ForgejoDriver from "@t3tools/source-control-forgejo/server/driver";
 import * as GitCafeDriver from "@t3tools/source-control-gitcafe/server/driver";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
+import * as RadicleDriver from "@t3tools/source-control-radicle/server/driver";
 import * as TanStackSourceDriver from "@t3tools/source-control-tanstack-source/server/driver";
 
 /**
@@ -21,6 +22,7 @@ export const BUILT_IN_SOURCE_CONTROL_DRIVER_LIST = [
   ForgejoDriver.driver,
   BitbucketDriver.driver,
   AzureDevOpsDriver.driver,
+  RadicleDriver.driver,
 ];
 
 export const sourceControlDefinitions = builtInSourceControlDefinitions;
