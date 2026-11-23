@@ -317,7 +317,12 @@ it.effect("--wait follows the sent run to its continuation's terminal status", (
 /** The reads that ask whether a run after `runId` holds a message someone sent. */
 const laterRunReads = (
   laterRun: RunId,
-  items: ReadonlyArray<{ readonly runId: RunId; readonly type: string }>,
+  items: ReadonlyArray<{
+    readonly runId: RunId;
+    readonly type: string;
+    readonly position?: number;
+  }>,
+  earlierPosition: number | null = null,
 ) => [
   {
     recentRuns: [
@@ -325,7 +330,7 @@ const laterRunReads = (
       { runId: laterRun, ordinal: 2 },
     ],
   },
-  { thread: {}, items, nextPosition: null, hasMore: false },
+  { thread: {}, items, nextPosition: null, hasMore: false, earlierPosition },
 ];
 
 it.effect("--wait lasts until background work the agent waits on wakes it and that run ends", () =>
@@ -379,7 +384,7 @@ it.effect(
             { runId: wakeRun, ordinal: 2, status },
           ],
         },
-        { thread: {}, items: [], nextPosition: null, hasMore: false },
+        { thread: {}, items: [], nextPosition: null, hasMore: false, earlierPosition: null },
       ];
       const { tools } = scriptedTools({
         t3_thread_wait: [
@@ -426,7 +431,7 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const sentRun = RunId.make("run-2");
-      const { tools } = scriptedTools({
+      const { tools, calls } = scriptedTools({
         t3_thread_wait: [
           { threadId, runId, status: "completed", timedOut: false },
           {
@@ -438,7 +443,12 @@ it.effect(
             output: { head: "abc" },
           },
         ],
-        t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
+        // Older pages remain, but the newest already holds the sent message.
+        t3_thread_read: laterRunReads(
+          sentRun,
+          [{ runId: sentRun, type: "user_message", position: 9 }],
+          5,
+        ),
       });
 
       assert.deepStrictEqual(yield* waitForRun(tools, threadId, runId, true), {
@@ -447,6 +457,12 @@ it.effect(
         status: "completed",
         output: { head: "abc" },
       });
+      assert.deepStrictEqual(
+        calls
+          .filter((entry) => entry.tool === "t3_thread_read")
+          .map((entry) => (entry.args as { readonly beforePosition?: number }).beforePosition),
+        [undefined, Number.MAX_SAFE_INTEGER],
+      );
     }),
 );
 

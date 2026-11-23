@@ -681,11 +681,27 @@ const runsAfter = Effect.fn("cli.thread.runsAfter")(function* (
   if (own === undefined) return { later: [], sent: true };
   const later = recentRuns.filter((run) => run.ordinal > own.ordinal);
   if (later.length === 0) return { later, sent: false };
-  const { items } = yield* readTimeline(tools, threadId, "messages");
-  const sent = items.some(
-    (item) => item.type === "user_message" && later.some((run) => run.runId === item.runId),
+  const isSent = (item: OrchestratorMcpThreadTimelineItem) =>
+    item.type === "user_message" && later.some((run) => run.runId === item.runId);
+  // Runs take sent messages in order, so a later run's message comes after any
+  // message this run or an earlier one took.
+  const notLater = new Set(
+    recentRuns.filter((run) => run.ordinal <= own.ordinal).map((run) => run.runId),
   );
-  return { later, sent };
+  const read = yield* readBackward(
+    tools,
+    threadId,
+    "messages",
+    () => READ_PAGE_LIMIT,
+    (page) =>
+      page.some(
+        (item) =>
+          isSent(item) ||
+          (item.type === "user_message" && item.runId != null && notLater.has(item.runId)),
+      ),
+  );
+  const pages = read?.pages ?? [(yield* readTimeline(tools, threadId, "messages")).items];
+  return { later, sent: pages.some((page) => page.some(isSent)) };
 });
 
 /**
