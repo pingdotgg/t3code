@@ -63,17 +63,13 @@ fn mount(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ProvidersView>) {
         let tokens = init(cx);
         gpui_kit::open_window(tall_window(), cx, |window, cx| {
             window.activate_window();
-            cx.new(|cx| {
-                ProvidersView::new(
-                    ProvidersInit {
-                        tokens,
-                        geometry: ShellGeometry::default(),
-                        connection: None,
-                        environment_label: "Mini".to_owned(),
-                    },
-                    window,
-                    cx,
-                )
+            cx.new(|_| {
+                ProvidersView::new(ProvidersInit {
+                    tokens,
+                    geometry: ShellGeometry::default(),
+                    connection: None,
+                    environment_label: "Mini".to_owned(),
+                })
             })
         })
         .expect("window opens")

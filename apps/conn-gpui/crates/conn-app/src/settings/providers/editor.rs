@@ -1080,7 +1080,6 @@ impl ProvidersView {
     pub(super) fn editor_sections(
         &mut self,
         group: Option<&ProviderGroup>,
-        window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Vec<AnyElement> {
         let Some(selected) = self.selected.clone() else {
@@ -1154,13 +1153,9 @@ impl ProvidersView {
         }
         sections.push(settings_section(&name, identity, &tokens, &geometry).into_any_element());
 
-        // Setup: Antigravity's enable button, the Account row and the driver's own variables.
+        // Setup: Antigravity's enable button and credential check, and the driver's own
+        // variables.
         let mut setup = Vec::new();
-        let shows_account = group.is_some_and(|g| {
-            g.has_setup
-                || g.can_authenticate == Some(true)
-                || (g.driver == "acpRegistry" && g.installed)
-        });
         if row.driver == "antigravity" {
             let enable_id = selected.clone();
             let environment = self.environment_label.clone();
@@ -1194,22 +1189,9 @@ impl ProvidersView {
                 &geometry,
             ));
         }
-        if let Some(group) = group.filter(|_| shows_account) {
-            let mut account = self.account_rows(group, window, cx);
-            if row.driver == "antigravity" && !account.is_empty() {
-                // The Environment row above already says where this runs.
-                account.remove(0);
-            }
-            setup.extend(account);
-        } else if row.driver == "cursor" && group.is_some_and(|g| g.can_authenticate == Some(false))
+        if let Some(group) = group.filter(|g| conn_state::provider_auth::offers_credential_check(g))
         {
-            setup.push(settings_row(
-                "Cursor account",
-                Some("Using CURSOR_API_KEY. Remove it from this provider's environment to use browser sign-in."),
-                div().into_any_element(),
-                &tokens,
-                &geometry,
-            ));
+            setup.extend(self.account_rows(group, cx));
         }
         if let Some(editor) = &self.editor {
             for field_row in &editor.env_fields {

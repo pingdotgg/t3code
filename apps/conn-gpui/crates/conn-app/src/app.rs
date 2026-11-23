@@ -4397,10 +4397,7 @@ impl ConnApp {
             self.go_forward(forward, cx);
         }
         // Deleting ends every undo that restores the thread's place (`expireThreadUndos`).
-        self.forget_thread_undo(
-            thread_id,
-            &[ThreadUndoKind::Settle, ThreadUndoKind::Pin],
-        );
+        self.forget_thread_undo(thread_id, &[ThreadUndoKind::Settle, ThreadUndoKind::Pin]);
         // The thread's unsent input goes with it (`clearComposerDraftForThread`).
         let deleted = thread_id.to_owned();
         self.dispatch_thread_command_then(

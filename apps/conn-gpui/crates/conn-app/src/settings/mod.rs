@@ -301,17 +301,13 @@ impl SettingsModal {
             )
         });
 
-        let providers = cx.new(|cx| {
-            providers::ProvidersView::new(
-                providers::ProvidersInit {
-                    tokens: tokens.clone(),
-                    geometry,
-                    connection: provider_connection,
-                    environment_label: provider_environment,
-                },
-                window,
-                cx,
-            )
+        let providers = cx.new(|_| {
+            providers::ProvidersView::new(providers::ProvidersInit {
+                tokens: tokens.clone(),
+                geometry,
+                connection: provider_connection,
+                environment_label: provider_environment,
+            })
         });
 
         let projects_tokens = tokens.clone();

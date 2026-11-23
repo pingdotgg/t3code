@@ -649,26 +649,21 @@ pub struct ProviderGroup {
     pub show_badge: bool,
     /// `setup.canAuthenticate`; `None` when the server sent no setup block.
     pub can_authenticate: Option<bool>,
-    /// `setup.documentationUrl`.
-    pub documentation_url: Option<String>,
     /// The snapshot's own `displayName`, else the humanised driver. The banner names the
     /// provider with it (`status.displayName?.trim() || formatProviderDriverKindLabel(driver)`).
     pub provider_label: String,
     /// `getProviderCompatibilityNote`: one quiet line for a version Orbit should change.
     pub compatibility_note: Option<String>,
-    /// The signed-in account's email, for the setup page (`auth.email`).
-    pub auth_email: Option<String>,
     /// `auth.type`, for the setup page (`gemini-api-key`, `agent-platform`, ...).
     pub auth_type: Option<String>,
-    /// `auth.canLogout`.
-    pub can_logout: Option<bool>,
     /// Models this provider's CLI is too old to run (`updateRequiredModels`).
     pub update_required: Vec<UpdateRequiredModel>,
     /// `auth.label`, a product or plan name.
     pub auth_label: Option<String>,
     /// The installed CLI's version.
     pub version: Option<String>,
-    /// `hasProviderSetup`: Antigravity always, any other provider when `setup.canAuthenticate`.
+    /// `hasProviderSetup`: Antigravity only. Every other provider signs in through the Orbit AI
+    /// router, so its setup is its runtime fields, not a sign-in.
     pub has_setup: bool,
     pub models: Vec<ModelOption>,
     /// User-invocable provider skills for the `$` menu.
@@ -791,12 +786,10 @@ impl ProviderGroup {
             );
         }
         if self.unauthenticated {
-            return if !self.has_setup {
-                "Sign in via the CLI to authenticate again.".to_owned()
-            } else if self.driver == "antigravity" {
-                "Open provider setup to sign in with Google.".to_owned()
+            return if self.has_setup {
+                "Open provider setup to connect it.".to_owned()
             } else {
-                "Open provider setup to sign in.".to_owned()
+                "Sign in via the CLI to authenticate again.".to_owned()
             };
         }
         let name = &self.provider_label;
@@ -996,10 +989,6 @@ impl ModelCatalog {
                     .find(|info| info.instance_id == item.instance_id)
                     .is_some_and(|info| info.show_badge),
                 can_authenticate: item.setup.as_ref().map(|s| s.can_authenticate),
-                documentation_url: item
-                    .setup
-                    .as_ref()
-                    .and_then(|s| s.documentation_url.clone()),
                 provider_label: item
                     .display_name
                     .as_deref()
@@ -1010,15 +999,7 @@ impl ModelCatalog {
                     .compatibility_advisory
                     .as_ref()
                     .and_then(compatibility_note),
-                auth_email: item
-                    .auth
-                    .email
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned),
                 auth_type: item.auth.r#type.clone(),
-                can_logout: item.auth.can_logout,
                 update_required: item
                     .update_required_models
                     .iter()
@@ -1031,8 +1012,7 @@ impl ModelCatalog {
                     .collect(),
                 auth_label: item.auth.label.clone(),
                 version: item.version.clone(),
-                has_setup: item.driver == "antigravity"
-                    || item.setup.as_ref().is_some_and(|s| s.can_authenticate),
+                has_setup: item.driver == "antigravity",
                 models,
                 skills,
                 supported_runtime_modes,
@@ -2246,10 +2226,7 @@ mod live_tests {
             .expect("object")
             .remove("message");
         let banner = banner_for(antigravity).expect("raised");
-        assert_eq!(
-            banner.message,
-            "Open provider setup to sign in with Google."
-        );
+        assert_eq!(banner.message, "Open provider setup to connect it.");
         assert!(banner.offers_setup);
 
         let mut codex = provider_json("codex");
