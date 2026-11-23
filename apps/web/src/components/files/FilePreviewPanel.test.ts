@@ -299,6 +299,18 @@ Third}`;
     for (const [rtf, expected] of [
       [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
       [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+        "<p>€5 café</p>",
+      ],
+      [
+        String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+        "<p>pridržana</p>",
+      ],
+      [
+        String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+        "<p>Привет</p>",
+      ],
     ] as const) {
       const decoded = openRtf(bytes(rtf));
       if (decoded.type !== "document") throw new Error("Expected document");
@@ -426,6 +438,23 @@ Third}`;
                     "final entry",
                   ],
                 },
+                {
+                  output_type: "error",
+                  ename: "ZeroDivisionError",
+                  evalue: "division by zero",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  evalue: "\u001b[31mbad input\u001b[0m",
+                  traceback: [],
+                },
+                {
+                  output_type: "error",
+                  ename: "RuntimeError",
+                  evalue: "kernel reset",
+                  traceback: ["\u001b[31m\u001b[0m", "  \n"],
+                },
               ],
             },
           ],
@@ -446,6 +475,9 @@ Third}`;
         kind: "text",
         text: "Traceback (most recent call last):\nCell In[3], line 1\n----> 1 fail()\nValueError: preview proof\nfinal entry",
       },
+      { kind: "text", text: "ZeroDivisionError: division by zero" },
+      { kind: "text", text: "bad input" },
+      { kind: "text", text: "RuntimeError: kernel reset" },
     ]);
     expect(() => openNotebook(bytes('{"nbformat":3,"cells":[]}'))).toThrow(
       expect.objectContaining({ code: "notebook-unsupported" }),
@@ -635,4 +667,30 @@ Third}`;
     expect(result.pages[1]!.html).toContain('src="data:image/png;base64,');
     expect(result.pages[1]!.html).not.toMatch(/https:|script|alert/);
   });
+
+  it.each([
+    ["percent-encoded", "My%20Book/book%201.opf", "My Book/book 1.opf", "My Book/one.xhtml"],
+    ["literal percent", "My%20Book/book.opf", "My%20Book/book.opf", "My%20Book/one.xhtml"],
+    ["malformed percent", "Book%ZZ/book.opf", "Book%ZZ/book.opf", "Book%ZZ/one.xhtml"],
+  ])(
+    "reads EPUB packages with %s rootfile paths",
+    async (_label, fullPath, packagePath, chapterPath) => {
+      const archive = new JSZip()
+        .file(
+          "META-INF/container.xml",
+          `<container><rootfiles><rootfile full-path="${fullPath}"/></rootfiles></container>`,
+        )
+        .file(
+          packagePath,
+          '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>',
+        )
+        .file(
+          chapterPath,
+          "<html><head><title>First</title></head><body><p>Hello</p></body></html>",
+        );
+      const result = await openEpub(archive);
+      if (result.type !== "document") throw new Error("Expected document");
+      expect(result.pages).toEqual([{ title: "First", html: "<p>Hello</p>" }]);
+    },
+  );
 });
