@@ -587,10 +587,14 @@ impl Inner {
         grid: Option<(u16, u16)>,
     ) -> Result<(), TerminalOpenError> {
         check_cwd(&launch.cwd)?;
-        let (cols, rows) = grid.unwrap_or((
-            launch.cols.unwrap_or(DEFAULT_COLS),
-            launch.rows.unwrap_or(DEFAULT_ROWS),
-        ));
+        // A reused terminal keeps its grid where the launch leaves a dimension out.
+        let (cols, rows) = grid.unwrap_or_else(|| {
+            let (cols, rows) = state
+                .sessions
+                .get(key)
+                .map_or((DEFAULT_COLS, DEFAULT_ROWS), |s| (s.cols, s.rows));
+            (launch.cols.unwrap_or(cols), launch.rows.unwrap_or(rows))
+        });
         let env = launch.env.unwrap_or_default();
         let grace = self.config.kill_grace;
         if let Some(session) = state.sessions.get_mut(key) {

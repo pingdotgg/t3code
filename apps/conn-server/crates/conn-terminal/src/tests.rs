@@ -356,6 +356,56 @@ async fn shares_the_smallest_viewer_grid() {
     );
 }
 
+// T3 `open`: a reused terminal keeps its grid where the input omits a dimension
+// (`input.cols ?? liveSession.cols`). The desktop reruns a project action this way.
+#[tokio::test(flavor = "current_thread")]
+async fn reopening_without_a_size_keeps_the_live_grid() {
+    let manager = TerminalManager::new(config());
+    let sized = |cols, rows| {
+        let mut input = open_input("t12", "term-1");
+        (input.cols, input.rows) = (cols, rows);
+        input
+    };
+    let grid = |snapshot: TerminalSessionSnapshot| (snapshot.cols, snapshot.rows);
+    let first = manager.open(sized(Some(125), Some(43))).unwrap();
+    let pid = first.pid;
+    let mut sub = manager.observe(session("t12", "term-1")).unwrap();
+
+    let reopened = manager.open(sized(None, None)).unwrap();
+    assert_eq!(reopened.pid, pid);
+    assert_eq!(grid(reopened), (Some(125), Some(43)));
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut sub, "43 125").await;
+
+    let cols_only = manager.open(sized(Some(110), None)).unwrap();
+    assert_eq!(grid(cols_only), (Some(110), Some(43)));
+    let explicit = manager.open(sized(Some(118), Some(39))).unwrap();
+    assert_eq!(grid(explicit), (Some(118), Some(39)));
+    write(&manager, "t12", "term-1", "stty size\n").await;
+    output_contains(&mut sub, "39 118").await;
+
+    // A viewer's grid still comes first.
+    let mut viewer = attach_input("t12", "term-1");
+    (viewer.cols, viewer.rows) = (Some(100), Some(30));
+    let _viewer = manager.attach(viewer, 1).unwrap();
+    assert_eq!(
+        grid(manager.open(sized(None, None)).unwrap()),
+        (Some(100), Some(30))
+    );
+    assert_eq!(
+        grid(manager.open(sized(Some(90), Some(20))).unwrap()),
+        (Some(100), Some(30))
+    );
+
+    // A new terminal without a size starts at the defaults.
+    let mut fresh = sized(None, None);
+    fresh.terminal_id = "term-2".into();
+    assert_eq!(
+        grid(manager.open(fresh).unwrap()),
+        (Some(i64::from(DEFAULT_COLS)), Some(i64::from(DEFAULT_ROWS)))
+    );
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn bounds_scrollback_and_resyncs_a_slow_viewer() {
     let manager = TerminalManager::new(TerminalConfig {

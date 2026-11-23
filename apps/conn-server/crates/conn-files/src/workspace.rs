@@ -227,8 +227,21 @@ pub fn read_file(
         let cwd = paths::resolve_cwd(&input.cwd, None);
         let (target, relative) =
             paths::resolve_within_root(&cwd, requested).ok_or_else(FileFailure::outside_root)?;
-        let real_root = fs::canonicalize(&cwd)
-            .map_err(|e| FileFailure::op(Operation::RealpathWorkspaceRoot, &target, &cwd, e))?;
+        let real_root = match fs::canonicalize(&cwd) {
+            Ok(root) => root,
+            // Storage cleanup removes idle worktrees but keeps their path, so nothing below exists.
+            Err(e) if allow_missing && e.kind() == io::ErrorKind::NotFound => {
+                return Ok(absent(relative));
+            }
+            Err(e) => {
+                return Err(FileFailure::op(
+                    Operation::RealpathWorkspaceRoot,
+                    &target,
+                    &cwd,
+                    e,
+                ));
+            }
+        };
         let (real, exists) = if allow_missing {
             realpath_allow_missing(&target)
         } else {
