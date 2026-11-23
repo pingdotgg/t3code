@@ -78,15 +78,17 @@ vi.mock(import("~/state/query"), async (original) => ({
   })) as never,
 }));
 
-const stubbedAsset = vi.hoisted(() => ({ url: "" }));
+const stubbedAsset = vi.hoisted(() => ({ url: "", failed: false }));
 vi.mock(import("~/assets/assetUrls"), async (original) => {
   const actual = await original();
   return {
     ...actual,
     useAssetUrlState: ((...args: Parameters<typeof actual.useAssetUrlState>) =>
-      stubbedAsset.url
-        ? { _tag: "Success", url: stubbedAsset.url }
-        : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
+      stubbedAsset.failed
+        ? { _tag: "Failure" }
+        : stubbedAsset.url
+          ? { _tag: "Success", url: stubbedAsset.url }
+          : actual.useAssetUrlState(...args)) as typeof actual.useAssetUrlState,
     useAssetUrls: ((...args: Parameters<typeof actual.useAssetUrls>) =>
       stubbedAsset.url
         ? args[1].map(() => stubbedAsset.url)
@@ -1840,6 +1842,48 @@ describe("MessagesTimeline attachments", () => {
         ),
       }),
     );
+  });
+
+  it("keeps an unavailable viewed image inside the 10rem work-log strip", async () => {
+    stubbedAsset.failed = true;
+    onTestFinished(() => {
+      stubbedAsset.failed = false;
+    });
+    await using screen = await renderElement(
+      <TimelineRowCtx
+        value={
+          {
+            threadRef: { environmentId: ENVIRONMENT_ID, threadId: ThreadId.make("thread-1") },
+            workspaceRoot: "/repo",
+          } as never
+        }
+      >
+        <ViewedImagesTimelineRow
+          row={{
+            kind: "viewed-images",
+            id: "viewed",
+            createdAt: CREATED_AT,
+            paths: ["/repo/step-1.jpg", "/repo/step-3.jpg"],
+          }}
+        />
+      </TimelineRowCtx>,
+    );
+    const frame = await vi.waitFor(() => {
+      const element = screen.container.querySelector<HTMLElement>(
+        '[data-image-gallery] [role="alert"]',
+      );
+      expect(element).toBeTruthy();
+      return element!;
+    });
+    // A missing file has no dimensions, so the frame must draw its own square
+    // cap instead of letting `aspect-video w-full` fill the thread column.
+    const size = await vi.waitFor(() => {
+      const rect = frame.getBoundingClientRect();
+      expect(rect.width).toBeGreaterThan(0);
+      return rect;
+    });
+    expect(size.width).toBeLessThanOrEqual(161);
+    expect(Math.abs(size.width - size.height)).toBeLessThanOrEqual(1);
   });
 
   it("opens an image from an expanded tool row as a gallery of the turn's viewed images", async () => {
