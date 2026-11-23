@@ -42,6 +42,7 @@ import { type SelfInvocation, selfInvocationArgs } from "@t3tools/shared/nodeRun
 import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import {
   compactDynamicToolOutput,
+  compactT3McpToolOutput,
   htmlRenderFromToolItem,
   mcpToolResultOutput,
 } from "@t3tools/shared/toolOutput";
@@ -1255,6 +1256,30 @@ function acpMcpToolCallOutput(rawOutput: unknown): unknown {
     : { error: errorMessage, result: resultOutput };
 }
 
+function sameCompactToolOutput(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") {
+    return false;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((entry, index) => sameCompactToolOutput(entry, right[index]))
+    );
+  }
+  const leftEntries = Object.entries(left as Record<string, unknown>);
+  const rightRecord = right as Record<string, unknown>;
+  return (
+    leftEntries.length === Object.keys(rightRecord).length &&
+    leftEntries.every(
+      ([key, value]) =>
+        Object.hasOwn(rightRecord, key) && sameCompactToolOutput(value, rightRecord[key]),
+    )
+  );
+}
+
 function nonEmptyText(value: unknown, fallback: string): string {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
 }
@@ -1713,6 +1738,10 @@ interface ActiveAcpTurn {
   contextUsage: ThreadTokenUsageSnapshot | null;
   nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
   readonly tools: Map<string, AcpToolCallState & { readonly backgroundCommandTaskId?: string }>;
+  /** Confirmed compact T3 MCP tool results by toolCallId; survives interleaved in_progress replays. */
+  readonly claimedToolResults: Map<string, Record<string, unknown>>;
+  /** T3 MCP toolCallIds that already drained a recorded result from McpProviderSessions. */
+  readonly drainedToolResultIds: Set<string>;
   /** Tools the agent failed after Stop; later updates keep them interrupted. */
   readonly stoppedToolCallIds: Set<string>;
   readonly toolUpdatesSkipped: Map<string, number>;
@@ -4799,22 +4828,43 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
             let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
+            const resolvedT3Tool = resolveT3McpToolId(toolName);
+            const isHtmlRender = resolvedT3Tool === HTML_RENDER_TOOL_NAME;
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
             if (
-              isHtmlRender &&
+              resolvedT3Tool !== null &&
               (status === "failed" || (status === "completed" && isError)) &&
               previous?.status !== "failed" &&
               previous?.status !== "completed"
             ) {
-              // A failed call may have published before the provider lost its result.
-              yield* mcpSessions.takeHtmlRender(
-                context.input.threadId,
-                input,
-                htmlRenderFromToolItem({ toolName, output }),
-              );
+              // A failed call may have completed on T3's MCP server before the provider lost its result.
+              if (isHtmlRender) {
+                yield* mcpSessions.takeHtmlRender(
+                  context.input.threadId,
+                  input,
+                  htmlRenderFromToolItem({ toolName, output }),
+                );
+              } else if (!context.drainedToolResultIds.has(toolCall.toolCallId)) {
+                context.drainedToolResultIds.add(toolCall.toolCallId);
+                yield* mcpSessions.takeToolResult(
+                  context.input.threadId,
+                  resolvedT3Tool,
+                  input,
+                  compactT3McpToolOutput(resolvedT3Tool, output),
+                );
+              }
+            }
+            if (
+              status === "completed" &&
+              resolvedT3Tool !== null &&
+              !isHtmlRender &&
+              isError &&
+              compactDynamicToolOutput(output)?.isError !== true
+            ) {
+              // Unwrapping `{ result: { isError: true, content: [] } }` drops the error marker.
+              output = { isError: true };
             }
             if (status === "completed" && isHtmlRender && !isError) {
               const reportedPage = htmlRenderFromToolItem({ toolName, output });
@@ -4833,6 +4883,55 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ...toolCall,
                   data: { ...toolCall.data, rawOutput: output },
                 });
+              }
+            }
+            if (status === "completed" && resolvedT3Tool !== null && !isHtmlRender && !isError) {
+              const reportedOutput = compactT3McpToolOutput(resolvedT3Tool, output);
+              // Antigravity and Kiro strip or replace MCP results, including across repeated or
+              // interleaved in_progress updates.
+              const claimedOutput =
+                context.claimedToolResults.get(toolCall.toolCallId) ??
+                compactT3McpToolOutput(
+                  resolvedT3Tool,
+                  acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
+                );
+              if (reportedOutput !== undefined) {
+                context.claimedToolResults.set(toolCall.toolCallId, reportedOutput);
+                if (
+                  !context.drainedToolResultIds.has(toolCall.toolCallId) &&
+                  (claimedOutput === undefined ||
+                    !sameCompactToolOutput(claimedOutput, reportedOutput))
+                ) {
+                  context.drainedToolResultIds.add(toolCall.toolCallId);
+                  yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                    reportedOutput,
+                  );
+                }
+              } else {
+                let recoveredOutput = claimedOutput;
+                if (
+                  recoveredOutput === undefined &&
+                  projectedStatus === undefined &&
+                  !context.drainedToolResultIds.has(toolCall.toolCallId)
+                ) {
+                  context.drainedToolResultIds.add(toolCall.toolCallId);
+                  recoveredOutput = yield* mcpSessions.takeToolResult(
+                    context.input.threadId,
+                    resolvedT3Tool,
+                    input,
+                  );
+                }
+                if (recoveredOutput !== undefined) {
+                  context.claimedToolResults.set(toolCall.toolCallId, recoveredOutput);
+                  output = recoveredOutput;
+                  context.tools.set(toolCall.toolCallId, {
+                    ...toolCall,
+                    data: { ...toolCall.data, rawOutput: output },
+                  });
+                }
               }
             }
             turnItem = {
@@ -9703,6 +9802,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),
+              claimedToolResults: new Map(),
+              drainedToolResultIds: new Set(),
               stoppedToolCallIds: new Set(),
               toolUpdatesSkipped: new Map(),
               toolStartedAt: new Map(),

@@ -5,6 +5,7 @@ import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/tool
 import {
   MAX_TOOL_OUTPUT_IMAGES,
   readToolOutputImage,
+  SEND_TO_USER_TOOL_NAME,
   type ToolOutputImage,
 } from "@t3tools/shared/toolOutput";
 
@@ -123,10 +124,10 @@ export function openCodeCommandFailed(toolName: string, completedMetadata: unkno
   );
 }
 
-/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
-export function openCodeCodeModeHtmlRenders(
+function openCodeCodeModeToolCalls(
   completedMetadata: unknown,
   mcpServerName: string,
+  toolName: string,
 ): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
   if (typeof completedMetadata !== "object" || completedMetadata === null) return [];
   const toolCalls = (completedMetadata as Record<string, unknown>)["toolCalls"];
@@ -134,13 +135,29 @@ export function openCodeCodeModeHtmlRenders(
   return toolCalls.flatMap((call: unknown, index) => {
     if (typeof call !== "object" || call === null) return [];
     const { tool, status, input } = call as Record<string, unknown>;
-    return tool === `${mcpServerName}.${HTML_RENDER_TOOL_NAME}` &&
+    return tool === `${mcpServerName}.${toolName}` &&
       status === "completed" &&
       typeof input === "object" &&
       input !== null
       ? [{ index, input: input as Record<string, unknown> }]
       : [];
   });
+}
+
+/** Code Mode reports nested calls with their input but no result, so pages are found by input. */
+export function openCodeCodeModeHtmlRenders(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, HTML_RENDER_TOOL_NAME);
+}
+
+/** Code Mode reports nested calls with their input but no result, so sent messages are found by input. */
+export function openCodeCodeModeSentMessages(
+  completedMetadata: unknown,
+  mcpServerName: string,
+): ReadonlyArray<{ readonly index: number; readonly input: Record<string, unknown> }> {
+  return openCodeCodeModeToolCalls(completedMetadata, mcpServerName, SEND_TO_USER_TOOL_NAME);
 }
 
 export function openCodeToolTurnItem(

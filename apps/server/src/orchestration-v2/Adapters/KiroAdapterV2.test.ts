@@ -17,7 +17,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -1345,6 +1345,83 @@ describe("KiroAdapterV2 MCP tools", () => {
             assert.deepEqual(
               completed === undefined ? undefined : htmlRenderFromToolItem(completed),
               page,
+            );
+          }),
+      });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("recovers send_to_user text when Kiro keeps only the plain confirmation text", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const toolCallId = "tooluse_kiro_send_to_user";
+      const message = "### Draft\n\nReady to ship.";
+      const args = { message };
+      const rawInput = { tool_id: "t3-code::send_to_user", arguments: args };
+      const kiroMeta = { kiro: { serverName: "t3-code", toolOrigin: "default" } };
+      yield* runKiroScript({
+        scenario: "mcp-send-to-user",
+        frames: [
+          ...openSessionFrames({
+            initialize: KIRO_V3_INITIALIZE,
+            configOptions: [modeOption, autopilotOption("on")],
+          }),
+          turnPrompt,
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId,
+            title: "@t3-code/send_to_user",
+            kind: "other",
+            status: "pending",
+            rawInput,
+            _meta: kiroMeta,
+          }),
+          update({
+            sessionUpdate: "tool_call_update",
+            toolCallId,
+            status: "completed",
+            title: "@t3-code/send_to_user",
+            rawInput,
+            rawOutput: {
+              response: "Shown to the user. Don't repeat it.",
+              imageBase64Urls: [],
+              message: "Shown to the user. Don't repeat it.",
+            },
+            content: [
+              {
+                type: "content",
+                content: { type: "text", text: "Shown to the user. Don't repeat it." },
+              },
+            ],
+            _meta: kiroMeta,
+          }),
+          answer("session/prompt", { stopReason: "end_turn" }),
+          ...closeSession,
+        ],
+        drive: ({ events, startTurn }) =>
+          Effect.gen(function* () {
+            yield* mcpSessions.recordToolResult(
+              ThreadId.make("thread-kiro-mcp-send-to-user"),
+              "send_to_user",
+              args,
+              { sentMessage: message },
+            );
+            yield* startTurn;
+            const turn = yield* collectTurn(events);
+            const completed = turn
+              .flatMap((event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.type === "dynamic_tool" &&
+                event.turnItem.nativeItemRef?.nativeId === toolCallId
+                  ? [event.turnItem]
+                  : [],
+              )
+              .at(-1);
+            assert.equal(completed?.toolName, "t3-code.send_to_user");
+            assert.equal(completed?.status, "completed");
+            assert.equal(
+              completed === undefined ? undefined : sentMessageFromToolItem(completed),
+              message,
             );
           }),
       });

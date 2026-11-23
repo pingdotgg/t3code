@@ -34,7 +34,15 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ sentMessage: `${longest}界` })).toBeUndefined();
     // OpenCode 2 Code Mode reports a script's nested send_to_user call as one `execute` item.
     const output = JSON.stringify({ sentMessage: "Draft", message: "Shown to the user." });
-    expect(sentMessageFromToolItem({ toolName: "execute", output })).toBe("Draft");
+    for (const toolName of [
+      "mcp__t3-code__send_to_user",
+      "t3-code.send_to_user",
+      "t3-code-thread_1_send_to_user",
+      "send_to_user",
+      "execute",
+    ]) {
+      expect(sentMessageFromToolItem({ toolName, output })).toBe("Draft");
+    }
   });
 
   it("keeps nested thread identity and scalar task IDs without result bodies", () => {

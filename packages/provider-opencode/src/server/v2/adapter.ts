@@ -71,7 +71,11 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  htmlRenderFromToolItem,
+  SEND_TO_USER_TOOL_NAME,
+  sentMessageFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -101,6 +105,7 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import {
   openCodeCodeModeHtmlRenders,
+  openCodeCodeModeSentMessages,
   openCodeCommandFailed,
   openCodeToolTurnItem,
 } from "../toolItems.ts";
@@ -1498,10 +1503,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       // A script that returns the reference already renders through its own item.
       const returnedPage =
         turnItem.type === "dynamic_tool" ? htmlRenderFromToolItem(turnItem) : undefined;
-      const pages = openCodeCodeModeHtmlRenders(
-        result?.metadata,
-        yield* mcpServerNameFor(turn.input.threadId),
-      );
+      const mcpServerName = yield* mcpServerNameFor(turn.input.threadId);
+      const pages = openCodeCodeModeHtmlRenders(result?.metadata, mcpServerName);
       for (const { index, input } of pages) {
         const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
         if (turn.takenPages.has(pageId)) continue;
@@ -1518,6 +1521,41 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
             input: { title: page.title, height: page.height },
             output: { htmlRender: page },
+          },
+        });
+      }
+      // A script that returns the sent message already renders through its own item.
+      let returnedMessage =
+        turnItem.type === "dynamic_tool" ? sentMessageFromToolItem(turnItem) : undefined;
+      const sentMessages = openCodeCodeModeSentMessages(result?.metadata, mcpServerName);
+      for (const { index, input } of sentMessages) {
+        const messageId = `${nativeId}:${SEND_TO_USER_TOOL_NAME}:${index}`;
+        if (turn.takenPages.has(messageId)) continue;
+        turn.takenPages.add(messageId);
+        const recovered = yield* mcpSessions.takeToolResult(
+          turn.input.threadId,
+          SEND_TO_USER_TOOL_NAME,
+          input,
+        );
+        const sentMessage = sentMessageFromToolItem({
+          toolName: SEND_TO_USER_TOOL_NAME,
+          output: recovered,
+        });
+        if (sentMessage === undefined) continue;
+        if (returnedMessage !== undefined && sentMessage === returnedMessage) {
+          returnedMessage = undefined;
+          continue;
+        }
+        yield* emitNode(state, turn, messageId, "tool_call", "completed", startedAt, updatedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...itemBase(state, turn, messageId, "completed", startedAt, updatedAt, updatedAt),
+            type: "dynamic_tool",
+            toolName: `t3-code.${SEND_TO_USER_TOOL_NAME}`,
+            input: { message: sentMessage },
+            output: { sentMessage },
           },
         });
       }
