@@ -88,6 +88,9 @@ export const make = (hosts: ReadonlyArray<string>) => {
       NodeNet.isIP(host) !== 0
         ? [host]
         : (yield* resolveAll(host).pipe(
+            // A subscribe holds its slot while this runs, and a delivery's request timeout
+            // does not cover it, so a slow resolver counts as no answer.
+            Effect.timeout("5 seconds"),
             Effect.mapError(
               () => new WebhookAddressRejected({ message: `${host} could not be resolved` }),
             ),

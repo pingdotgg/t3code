@@ -97,7 +97,14 @@ interface Delivery {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly raw: string;
   readonly body: Record<string, any>;
-  readonly reply: Deferred.Deferred<{ readonly status: number; readonly body?: string }>;
+  readonly reply: Deferred.Deferred<Answer>;
+}
+
+/** `open` sends the body and never ends it. */
+interface Answer {
+  readonly status: number;
+  readonly body?: string;
+  readonly open?: boolean;
 }
 
 const settled = (
@@ -131,7 +138,7 @@ const serve = Effect.gen(function* () {
     "/hook",
     Effect.fnUntraced(function* (request: HttpServerRequest.HttpServerRequest) {
       const raw = yield* request.text;
-      const reply = yield* Deferred.make<{ readonly status: number; readonly body?: string }>();
+      const reply = yield* Deferred.make<Answer>();
       replies.add(reply);
       yield* Queue.offer(deliveries, {
         headers: request.headers,
@@ -140,7 +147,12 @@ const serve = Effect.gen(function* () {
         reply,
       });
       const answer = yield* Deferred.await(reply);
-      return HttpServerResponse.text(answer.body ?? "", { status: answer.status });
+      return answer.open === true
+        ? HttpServerResponse.stream(
+            Stream.make(new TextEncoder().encode(answer.body)).pipe(Stream.concat(Stream.never)),
+            { status: answer.status, contentType: "application/json" },
+          )
+        : HttpServerResponse.text(answer.body ?? "", { status: answer.status });
     }, Effect.orDie),
   );
   yield* HttpRouter.serve(
@@ -242,8 +254,8 @@ const serve = Effect.gen(function* () {
     Effect.forEach(replies, (reply) => Deferred.succeed(reply, { status: 503 }), { discard: true }),
   );
   const hookUrl = `${HttpServer.formatAddress((yield* HttpServer.HttpServer).address)}/hook`;
-  const answer = (delivery: Delivery, status: number, body?: string) =>
-    Deferred.succeed(delivery.reply, body === undefined ? { status } : { status, body });
+  const answer = (delivery: Delivery, status: number, body?: string, open = false) =>
+    Deferred.succeed(delivery.reply, body === undefined ? { status } : { status, body, open });
   const subscribeParams = (params: Record<string, unknown> = {}) => ({
     name: "thread.run_settled",
     delivery: { mode: "webhook", url: hookUrl, secret },
@@ -495,14 +507,19 @@ it.effect("verifies a webhook endpoint and refuses one that does not echo the ch
       cached: { code: -32027, data: { reason: "challenge_failed" } },
     });
 
-    // At most 8 KiB of the answer is read, so a longer one fails even with the right challenge.
+    // At most 8 KiB of the answer is read: exactly that passes, and one byte more fails at
+    // once, even from an endpoint that never ends its answer.
+    const echoOfLength = (challenge: string, length: number) => {
+      const bare = JSON.stringify({ challenge, padding: "" });
+      return JSON.stringify({ challenge, padding: "x".repeat(length - bare.length) });
+    };
+    const exact = yield* at(`${subscribeParams().delivery.url}?exact`);
+    const fits = yield* Queue.take(deliveries);
+    yield* answer(fits, 200, echoOfLength(fits.body.challenge, 8_192));
+    expect((yield* Fiber.join(exact)).error).toBeUndefined();
     const long = yield* at(`${subscribeParams().delivery.url}?long`);
     const padded = yield* Queue.take(deliveries);
-    yield* answer(
-      padded,
-      200,
-      JSON.stringify({ challenge: padded.body.challenge, padding: "x".repeat(9_000) }),
-    );
+    yield* answer(padded, 200, echoOfLength(padded.body.challenge, 8_193), true);
     expect((yield* Fiber.join(long)).error).toMatchObject({
       code: -32027,
       data: { reason: "challenge_failed" },
@@ -577,6 +594,37 @@ it.effect("delivers one signed event at a time and advances the cursor once each
       })).cursor,
     ).toBe(second.body.cursor);
     yield* answer(third, 200);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("reports a gap the endpoint never took on the next refresh", () =>
+  Effect.gen(function* () {
+    const hub = yield* MilestoneHub.MilestoneHub;
+    const { call, deliveries, answer, subscribe, subscribeParams } = yield* serve;
+    const filter = { arguments: { projectIds: ["project:a"] } };
+    yield* subscribe(filter);
+    yield* hub.publish(settled("a"));
+    const first = yield* Queue.take(deliveries);
+    // While "a" is out, more milestones than the subscription's backlog go by elsewhere.
+    for (let index = 0; index < 300; index++) {
+      yield* hub.publish(settled(`elsewhere-${index}`, { project: "project:b" }));
+    }
+    yield* answer(first, 200);
+    const gap = yield* Queue.take(deliveries);
+    expect(gap.body).toMatchObject({ type: "gap" });
+    yield* answer(gap, 410);
+    // "c" goes out only after the gap was given up on.
+    yield* hub.publish(settled("c"));
+    const next = yield* Queue.take(deliveries);
+    expect(next.body.eventId).toBe("c");
+    const refresh = call("events/subscribe", subscribeParams(filter)).pipe(
+      Effect.map(({ result }) => result!),
+    );
+    const refreshed = yield* refresh;
+    expect(refreshed.truncated).toBe(true);
+    expect(refreshed.cursor).not.toBe(first.body.cursor);
+    expect((yield* refresh).truncated).toBe(false);
+    yield* answer(next, 200);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

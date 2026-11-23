@@ -1419,10 +1419,10 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
 new file mode 100644
-index 0000000..4b2b1c8
+index 0000000..0f5a6a2
 --- /dev/null
 +++ b/dist/ai/internal/mcpWebhooks.js
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,440 @@
 +import * as Clock from "../../Clock.js";
 +import * as Digest from "../../crypto/Digest.js";
 +import * as Mac from "../../crypto/Mac.js";
@@ -1504,16 +1504,20 @@ index 0000000..4b2b1c8
 +const readCapped = (response) => Effect.suspend(() => {
 +  const chunks = [];
 +  let total = 0;
++  let oversized = false;
 +  return response.stream.pipe(
 +    Stream.takeWhile((chunk) => {
-+      if (total > MAX_CHALLENGE_RESPONSE_BYTES) return false;
++      if (total + chunk.length > MAX_CHALLENGE_RESPONSE_BYTES) {
++        oversized = true;
++        return false;
++      }
 +      total += chunk.length;
 +      chunks.push(chunk);
 +      return true;
 +    }),
 +    Stream.runDrain,
 +    Effect.map(() => {
-+      if (total > MAX_CHALLENGE_RESPONSE_BYTES) return void 0;
++      if (oversized) return void 0;
 +      const bytes = new Uint8Array(total);
 +      let offset = 0;
 +      for (const chunk of chunks) {
@@ -1605,15 +1609,17 @@ index 0000000..4b2b1c8
 +  });
 +  const deliver = Effect.fnUntraced(function* (subscription, body, webhookId) {
 +    for (let attempt = 1; ; attempt++) {
++      const current = subscriptions.get(subscription.id);
++      if (current !== void 0 && current !== subscription) return false;
 +      const startedAt = yield* Clock.currentTimeMillis;
 +      const outcome = yield* send(subscription, body, webhookId, false);
 +      if (outcome._tag === "Delivered") {
 +        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis;
 +        subscription.lastError = void 0;
-+        return;
++        return true;
 +      }
 +      subscription.lastError = outcome.category;
-+      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return;
++      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return false;
 +      const wait = startedAt + FIRST_RETRY_MS * 2 ** (attempt - 1) - (yield* Clock.currentTimeMillis);
 +      if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
 +    }
@@ -1646,9 +1652,10 @@ index 0000000..4b2b1c8
 +          });
 +        case "Gap":
 +          return control(subscription, "gap", { cursor: item.cursor }).pipe(
-+            Effect.andThen(Effect.sync(() => {
++            Effect.map((delivered) => {
++              if (!delivered) subscription.gapUnacknowledged = true;
 +              subscription.watermark = item.cursor;
-+            }))
++            })
 +          );
 +        case "Error":
 +          return Effect.void;
@@ -1728,7 +1735,8 @@ index 0000000..4b2b1c8
 +      )
 +    );
 +  });
-+  const refresh = (subscription, secret, expiresAt, now) => {
++  const refresh = Effect.fnUntraced(function* (subscription, secret, expiresAt, now) {
++    yield* Deferred.await(subscription.accepted);
 +    if (subscription.secret !== secret.text) {
 +      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS };
 +      subscription.secret = secret.text;
@@ -1738,18 +1746,20 @@ index 0000000..4b2b1c8
 +    const moved = subscription.deadlineMoved;
 +    subscription.deadlineMoved = Deferred.makeUnsafe();
 +    Deferred.doneUnsafe(moved, Effect.void);
++    const truncated = subscription.gapUnacknowledged;
++    subscription.gapUnacknowledged = false;
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
 +      cursor: subscription.watermark,
-+      truncated: false,
++      truncated,
 +      deliveryStatus: {
 +        active: true,
 +        lastDeliveryAt: subscription.lastDeliveryAt === void 0 ? null : iso(subscription.lastDeliveryAt),
 +        lastError: subscription.lastError ?? null
 +      }
 +    };
-+  };
++  });
 +  const subscribe = Effect.fnUntraced(function* (request) {
 +    const principal = yield* options.principal;
 +    const mode = request.delivery.mode;
@@ -1760,7 +1770,7 @@ index 0000000..4b2b1c8
 +    const now = yield* Clock.currentTimeMillis;
 +    const expiresAt = now + grantTtl(request.ttlMs);
 +    const live = subscriptions.get(id);
-+    if (live !== void 0) return refresh(live, secret, expiresAt, now);
++    if (live !== void 0) return yield* refresh(live, secret, expiresAt, now);
 +    let held = pending.get(principal) ?? 0;
 +    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++;
 +    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
@@ -1796,14 +1806,16 @@ index 0000000..4b2b1c8
 +      lastDeliveryAt: void 0,
 +      lastError: void 0,
 +      fiber: void 0,
-+      deadlineMoved: Deferred.makeUnsafe()
++      deadlineMoved: Deferred.makeUnsafe(),
++      accepted: Deferred.makeUnsafe(),
++      gapUnacknowledged: false
 +    };
 +    yield* verify(subscription);
 +    const raced = subscriptions.get(id);
-+    if (raced !== void 0) return refresh(raced, secret, expiresAt, now);
++    if (raced !== void 0) return yield* refresh(raced, secret, expiresAt, now);
 +    release();
 +    subscriptions.set(id, subscription);
-+    const accepted = yield* Deferred.make();
++    const { accepted } = subscription;
 +    const lifetime = request.open(
 +      (events) => Effect.suspend(() => {
 +        subscription.watermark = events.cursor;
@@ -3309,10 +3321,10 @@ index 9d4c96e..eb0590c 100644
      effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
 diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
 new file mode 100644
-index 0000000..8df6682
+index 0000000..3f362fe
 --- /dev/null
 +++ b/src/ai/internal/mcpWebhooks.ts
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,664 @@
 +/**
 + * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
 + * validation, subscription identity, Standard Webhooks signing, the endpoint
@@ -3463,6 +3475,13 @@ index 0000000..8df6682
 +  fiber: Fiber.Fiber<void> | undefined
 +  // Completed when a refresh moves the deadline, so the expiry recomputes it.
 +  deadlineMoved: Deferred.Deferred<void>
++  // Where the event's stream started, or why it could not; a same-key refresh waits for it.
++  readonly accepted: Deferred.Deferred<
++    { readonly cursor: string | null; readonly truncated: boolean },
++    McpCore.EventFailure | McpCore.RequestRejected
++  >
++  // A gap whose envelope the endpoint never took, reported on the next refresh.
++  gapUnacknowledged: boolean
 +}
 +
 +type Outcome =
@@ -3547,16 +3566,20 @@ index 0000000..8df6682
 +  Effect.suspend(() => {
 +    const chunks: Array<Uint8Array> = []
 +    let total = 0
++    let oversized = false
 +    return response.stream.pipe(
 +      Stream.takeWhile((chunk) => {
-+        if (total > MAX_CHALLENGE_RESPONSE_BYTES) return false
++        if (total + chunk.length > MAX_CHALLENGE_RESPONSE_BYTES) {
++          oversized = true
++          return false
++        }
 +        total += chunk.length
 +        chunks.push(chunk)
 +        return true
 +      }),
 +      Stream.runDrain,
 +      Effect.map(() => {
-+        if (total > MAX_CHALLENGE_RESPONSE_BYTES) return undefined
++        if (oversized) return undefined
 +        const bytes = new Uint8Array(total)
 +        let offset = 0
 +        for (const chunk of chunks) {
@@ -3678,18 +3701,21 @@ index 0000000..8df6682
 +    return Option.getOrElse(outcome, (): Outcome => ({ _tag: "Failed", category: "timeout", retryable: true }))
 +  })
 +
-+  // Retries with backoff; gives up after a 410, a 413 or the last attempt.
++  // Retries with backoff; gives up after a 410, a 413 or the last attempt. True once delivered.
 +  const deliver = Effect.fnUntraced(function*(subscription: Subscription, body: string, webhookId: string) {
 +    for (let attempt = 1;; attempt++) {
++      // A subscription that ended may have been replaced under its id; this one speaks no longer.
++      const current = subscriptions.get(subscription.id)
++      if (current !== undefined && current !== subscription) return false
 +      const startedAt = yield* Clock.currentTimeMillis
 +      const outcome = yield* send(subscription, body, webhookId, false)
 +      if (outcome._tag === "Delivered") {
 +        subscription.lastDeliveryAt = yield* Clock.currentTimeMillis
 +        subscription.lastError = undefined
-+        return
++        return true
 +      }
 +      subscription.lastError = outcome.category
-+      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return
++      if (!outcome.retryable || attempt >= MAX_ATTEMPTS) return false
 +      // Counted from the attempt's start, so a slow endpoint does not stretch the window.
 +      const wait = startedAt + FIRST_RETRY_MS * 2 ** (attempt - 1) - (yield* Clock.currentTimeMillis)
 +      if (wait > 0) yield* Effect.sleep(Duration.millis(wait))
@@ -3729,9 +3755,10 @@ index 0000000..8df6682
 +            })
 +          case "Gap":
 +            return control(subscription, "gap", { cursor: item.cursor }).pipe(
-+              Effect.andThen(Effect.sync(() => {
++              Effect.map((delivered) => {
++                if (!delivered) subscription.gapUnacknowledged = true
 +                subscription.watermark = item.cursor
-+              }))
++              })
 +            )
 +          case "Error":
 +            // A webhook has no envelope for an error that leaves the subscription open.
@@ -3818,12 +3845,14 @@ index 0000000..8df6682
 +    )
 +  })
 +
-+  const refresh = (
++  // Waits until the first subscribe's stream opened, so a same-key caller gets the same answer.
++  const refresh = Effect.fnUntraced(function*(
 +    subscription: Subscription,
 +    secret: { readonly text: string; readonly key: Mac.Key },
 +    expiresAt: number,
 +    now: number
-+  ): SubscribeResult => {
++  ) {
++    yield* Deferred.await(subscription.accepted)
 +    if (subscription.secret !== secret.text) {
 +      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS }
 +      subscription.secret = secret.text
@@ -3833,18 +3862,20 @@ index 0000000..8df6682
 +    const moved = subscription.deadlineMoved
 +    subscription.deadlineMoved = Deferred.makeUnsafe()
 +    Deferred.doneUnsafe(moved, Effect.void)
++    const truncated = subscription.gapUnacknowledged
++    subscription.gapUnacknowledged = false
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
 +      cursor: subscription.watermark,
-+      truncated: false,
++      truncated,
 +      deliveryStatus: {
 +        active: true,
 +        lastDeliveryAt: subscription.lastDeliveryAt === undefined ? null : iso(subscription.lastDeliveryAt),
 +        lastError: subscription.lastError ?? null
 +      }
-+    }
-+  }
++    } satisfies SubscribeResult
++  })
 +
 +  const subscribe: Webhooks["subscribe"] = Effect.fnUntraced(function*(request) {
 +    const principal = yield* options.principal
@@ -3856,7 +3887,7 @@ index 0000000..8df6682
 +    const now = yield* Clock.currentTimeMillis
 +    const expiresAt = now + grantTtl(request.ttlMs)
 +    const live = subscriptions.get(id)
-+    if (live !== undefined) return refresh(live, secret, expiresAt, now)
++    if (live !== undefined) return yield* refresh(live, secret, expiresAt, now)
 +    // The slot is taken before anything asynchronous, so concurrent subscribes cannot pass the cap.
 +    let held = pending.get(principal) ?? 0
 +    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++
@@ -3906,18 +3937,17 @@ index 0000000..8df6682
 +      lastDeliveryAt: undefined,
 +      lastError: undefined,
 +      fiber: undefined,
-+      deadlineMoved: Deferred.makeUnsafe()
++      deadlineMoved: Deferred.makeUnsafe(),
++      accepted: Deferred.makeUnsafe(),
++      gapUnacknowledged: false
 +    }
 +    yield* verify(subscription)
 +    // A concurrent subscribe for the same key may have finished while this one verified.
 +    const raced = subscriptions.get(id)
-+    if (raced !== undefined) return refresh(raced, secret, expiresAt, now)
++    if (raced !== undefined) return yield* refresh(raced, secret, expiresAt, now)
 +    release()
 +    subscriptions.set(id, subscription)
-+    const accepted = yield* Deferred.make<
-+      { readonly cursor: string | null; readonly truncated: boolean },
-+      McpCore.EventFailure | McpCore.RequestRejected
-+    >()
++    const { accepted } = subscription
 +    const lifetime = request.open((events) =>
 +      Effect.suspend(() => {
 +        subscription.watermark = events.cursor
