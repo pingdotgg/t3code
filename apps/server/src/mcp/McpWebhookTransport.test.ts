@@ -19,6 +19,9 @@ it.each([
   ["fc00::1", false],
   ["fe80::1", false],
   ["::ffff:127.0.0.1", false],
+  ["fec0::1", false],
+  ["5f00::1", false],
+  ["::ffff:0:102:304", false],
   ["8.8.8.8", true],
   ["2606:4700:4700::1111", true],
 ])("treats %s as globally routable: %s", (address, routable) => {

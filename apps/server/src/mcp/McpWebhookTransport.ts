@@ -22,11 +22,10 @@ export class WebhookAddressRejected extends Schema.TaggedError<WebhookAddressRej
   { message: Schema.String },
 ) {}
 
-// The IANA special-purpose ranges that are not globally reachable, plus the IPv6 forms that
-// embed an IPv4 address, whose IPv4 side could be any of them. Two lists, because a list checks
-// an IPv4 address against its IPv4-mapped IPv6 rules too.
+// The IANA special-purpose ranges that are not globally reachable. An IPv6 address must also be
+// in global unicast (2000::/3), which leaves out every form that embeds an IPv4 address. Two
+// lists, because a list checks an IPv4 address against its IPv4-mapped IPv6 rules too.
 const notGlobalV4 = new NodeNet.BlockList();
-const notGlobalV6 = new NodeNet.BlockList();
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
   ["10.0.0.0", 8],
@@ -46,19 +45,14 @@ for (const [network, prefix] of [
 ] as const) {
   notGlobalV4.addSubnet(network, prefix, "ipv4");
 }
+const globalUnicastV6 = new NodeNet.BlockList();
+globalUnicastV6.addSubnet("2000::", 3, "ipv6");
+const notGlobalV6 = new NodeNet.BlockList();
 for (const [network, prefix] of [
-  ["::", 96],
-  ["::ffff:0:0", 96],
-  ["64:ff9b::", 96],
-  ["64:ff9b:1::", 48],
-  ["100::", 64],
   ["2001::", 23],
   ["2001:db8::", 32],
   ["2002::", 16],
   ["3fff::", 20],
-  ["fc00::", 7],
-  ["fe80::", 10],
-  ["ff00::", 8],
 ] as const) {
   notGlobalV6.addSubnet(network, prefix, "ipv6");
 }
@@ -66,7 +60,9 @@ for (const [network, prefix] of [
 export const isGloballyRoutable = (address: string): boolean => {
   const family = NodeNet.isIP(address);
   if (family === 4) return !notGlobalV4.check(address, "ipv4");
-  return family === 6 && !notGlobalV6.check(address, "ipv6");
+  return (
+    family === 6 && globalUnicastV6.check(address, "ipv6") && !notGlobalV6.check(address, "ipv6")
+  );
 };
 
 const hostOf = (url: URL) => url.hostname.replace(/^\[(.*)\]$/, "$1").toLowerCase();

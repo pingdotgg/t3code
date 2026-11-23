@@ -472,12 +472,38 @@ it.effect("signs like the Standard Webhooks reference", () =>
 it.effect("verifies a webhook endpoint and refuses one that does not echo the challenge", () =>
   Effect.gen(function* () {
     const { call, deliveries, answer, subscribe, subscribeParams } = yield* serve;
-    const failing = yield* Effect.forkChild(
-      call("events/subscribe", subscribeParams({ name: "thread.needs_input" })),
-    );
+    const at = (url: string) =>
+      call(
+        "events/subscribe",
+        subscribeParams({ delivery: { mode: "webhook", url, secret } }),
+      ).pipe(Effect.forkChild);
+    const wrongUrl = `${subscribeParams().delivery.url}?wrong`;
+    const failing = yield* at(wrongUrl);
     const wrong = yield* Queue.take(deliveries);
     yield* answer(wrong, 200, JSON.stringify({ challenge: "not-it" }));
     expect((yield* Fiber.join(failing)).error).toMatchObject({
+      code: -32027,
+      data: { reason: "challenge_failed" },
+    });
+    // A failure is remembered, so subscribing again answers without another POST.
+    const again = yield* at(wrongUrl);
+    const repeated = yield* Effect.raceFirst(
+      Effect.map(Fiber.join(again), (response) => ({ cached: response.error })),
+      Effect.map(Queue.take(deliveries), (delivery) => ({ posted: delivery.body })),
+    );
+    expect(repeated).toMatchObject({
+      cached: { code: -32027, data: { reason: "challenge_failed" } },
+    });
+
+    // At most 8 KiB of the answer is read, so a longer one fails even with the right challenge.
+    const long = yield* at(`${subscribeParams().delivery.url}?long`);
+    const padded = yield* Queue.take(deliveries);
+    yield* answer(
+      padded,
+      200,
+      JSON.stringify({ challenge: padded.body.challenge, padding: "x".repeat(9_000) }),
+    );
+    expect((yield* Fiber.join(long)).error).toMatchObject({
       code: -32027,
       data: { reason: "challenge_failed" },
     });
@@ -504,6 +530,7 @@ it.effect("delivers one signed event at a time and advances the cursor once each
       );
 
     yield* hub.publish(settled("a"));
+    yield* hub.publish(settled("b"));
     const first = yield* Queue.take(deliveries);
     expect(first.body).toMatchObject({ eventId: "a", name: "thread.run_settled" });
     expect(first.headers["x-mcp-subscription-id"]).toBe(subscribed.id);
@@ -516,16 +543,17 @@ it.effect("delivers one signed event at a time and advances the cursor once each
       deliveryStatus: { active: true, lastError: "http_5xx" },
     });
 
-    // The retry keeps its webhook-id, with a fresh timestamp and signature.
+    // "b" waits for "a": the next POST is its retry, which keeps its webhook-id with a fresh
+    // timestamp and signature.
     yield* TestClock.adjust("30 seconds");
     const retry = yield* Queue.take(deliveries);
+    expect(retry.body.eventId).toBe("a");
     expect(retry.headers["webhook-id"]).toBe(first.headers["webhook-id"]);
     expect(retry.headers["webhook-timestamp"]).not.toBe(first.headers["webhook-timestamp"]);
     expect(yield* signedBy(secret, retry.headers, retry.raw)).toBe(true);
     yield* answer(retry, 200);
 
     // Only after "a" resolved does "b" go out; a 410 gives it up without a retry.
-    yield* hub.publish(settled("b"));
     const second = yield* Queue.take(deliveries);
     expect(second.body.eventId).toBe("b");
     expect(yield* refresh()).toMatchObject({
@@ -576,14 +604,14 @@ it.effect("grants a finite TTL and keeps one id for the same subscription", () =
   Effect.gen(function* () {
     const { call, subscribe, subscribeParams } = yield* serve;
     const { response } = yield* subscribe({ ttlMs: 1_000 });
-    // The test clock starts at the epoch; a grant is clamped to between a minute and a day.
-    const day = "1970-01-02T00:00:00.000Z";
+    // The test clock starts at the epoch; a grant is clamped to between a minute and an hour.
+    const hour = "1970-01-01T01:00:00.000Z";
     expect(response.result!.refreshBefore).toBe("1970-01-01T00:01:00.000Z");
     const grant = (params: Record<string, unknown>) =>
       call("events/subscribe", subscribeParams(params)).pipe(Effect.map(({ result }) => result!));
-    expect((yield* grant({ ttlMs: null })).refreshBefore).toBe(day);
-    expect((yield* grant({ ttlMs: 7 * 86_400_000 })).refreshBefore).toBe(day);
-    expect((yield* grant({})).refreshBefore).toBe("1970-01-01T01:00:00.000Z");
+    expect((yield* grant({ ttlMs: null })).refreshBefore).toBe(hour);
+    expect((yield* grant({ ttlMs: 86_400_000 })).refreshBefore).toBe(hour);
+    expect((yield* grant({})).refreshBefore).toBe("1970-01-01T00:15:00.000Z");
 
     // Arguments compare as canonical JSON; a different filter is another subscription.
     const ordered = yield* grant({
@@ -595,6 +623,48 @@ it.effect("grants a finite TTL and keeps one id for the same subscription", () =
     expect(reordered.id).toBe(ordered.id);
     expect(reordered.deliveryStatus).toBeDefined();
     expect(ordered.id).not.toBe(response.result!.id);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("ends a subscription at a deadline a refresh brought forward", () =>
+  Effect.gen(function* () {
+    const { call, subscribe, subscribeParams } = yield* serve;
+    yield* subscribe({ ttlMs: 3_600_000 });
+    const grant = (ttlMs: number) =>
+      call("events/subscribe", subscribeParams({ ttlMs })).pipe(
+        Effect.map(({ result }) => result!),
+      );
+    expect(yield* grant(60_000)).toMatchObject({
+      refreshBefore: "1970-01-01T00:01:00.000Z",
+      deliveryStatus: { active: true },
+    });
+    yield* TestClock.adjust("1 minute");
+    // Gone, so subscribing again starts a new subscription rather than refreshing a live one.
+    expect((yield* grant(3_600_000)).deliveryStatus).toBeUndefined();
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("refuses subscribes past the per-client cap even when they arrive together", () =>
+  Effect.gen(function* () {
+    const { call, deliveries, answer, subscribeParams } = yield* serve;
+    const fibers = yield* Effect.forEach(
+      Array.from({ length: 101 }, (_, index) => index),
+      (index) =>
+        call(
+          "events/subscribe",
+          subscribeParams({ arguments: { threadIds: [`thread:${index}`] } }),
+        ).pipe(Effect.forkChild),
+    );
+    // They share one verification; while it is pending each holds a slot, so one is refused now.
+    const verification = yield* Queue.take(deliveries);
+    const refused = yield* Effect.raceAll(fibers.map(Fiber.join));
+    expect(refused.error).toMatchObject({
+      code: -32025,
+      data: { limit: "subscriptions", max: 100 },
+    });
+    yield* answer(verification, 200, JSON.stringify({ challenge: verification.body.challenge }));
+    const responses = yield* Effect.forEach(fibers, Fiber.join);
+    expect(responses.filter((response) => response.result !== undefined)).toHaveLength(100);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
