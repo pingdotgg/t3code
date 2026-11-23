@@ -73,6 +73,7 @@ import {
 } from "../ui/alert-dialog";
 import { Badge } from "../ui/badge";
 import { Button, type ButtonSize, type ButtonVariant, InlineButton } from "../ui/button";
+import { CardSection } from "../ui/card-section";
 import { Checkbox } from "../ui/checkbox";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import {
@@ -1222,6 +1223,22 @@ function PanelsSection() {
               <span>4 columns</span>
             </PanelFrame.Footer>
           </PanelFrame.Root>
+        </div>
+      </Specimen>
+      <Specimen label="Card section" source='<CardSection divided="top" padding>'>
+        <div className="w-full max-w-xl rounded-card surface-card">
+          <CardSection>
+            <div className="text-label text-foreground">t3-workstation</div>
+            <p className="text-meta text-muted-foreground">This machine, connected (0.1.11)</p>
+          </CardSection>
+          <CardSection divided="top">
+            <div className="space-y-1.5">
+              <div className="text-label text-foreground">Linked machines</div>
+              <p className="text-meta text-muted-foreground">
+                Sections inside a card separate with border-divider rather than hand-rolled borders.
+              </p>
+            </div>
+          </CardSection>
         </div>
       </Specimen>
     </Section>

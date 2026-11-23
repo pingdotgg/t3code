@@ -98,6 +98,14 @@
       "inlineButtonVariants.tone.muted",
       "inlineButtonVariants.touchTarget.padded"
     ],
+    "apps/web/src/components/ui/card-section.tsx": [
+      "cardSectionVariants.divided.bottom",
+      "cardSectionVariants.divided.none",
+      "cardSectionVariants.divided.top",
+      "cardSectionVariants.padding.compact",
+      "cardSectionVariants.padding.default",
+      "cardSectionVariants.padding.none"
+    ],
     "apps/web/src/components/ui/empty.tsx": [
       "emptyMediaVariants.variant.default",
       "emptyMediaVariants.variant.icon"
@@ -257,7 +265,6 @@
     "apps/web/src/components/SlowRpcRequestToastCoordinator.tsx": 1,
     "apps/web/src/components/SourceControlAppAccessNotice.tsx": 1,
     "apps/web/src/components/SurfaceTabIcon.tsx": 1,
-    "apps/web/src/components/ThreadChipHoverCard.tsx": 1,
     "apps/web/src/components/ThreadStatusIndicators.tsx": 3,
     "apps/web/src/components/ThreadTerminalDrawer.tsx": 3,
     "apps/web/src/components/chat/AssistantCitationChip.tsx": 3,
@@ -418,7 +425,6 @@
     "apps/web/src/components/settings/DiagnosticsSettings.tsx": 14,
     "apps/web/src/components/settings/EnvironmentRoutesList.tsx": 4,
     "apps/web/src/components/settings/EnvironmentsMap.tsx": 9,
-    "apps/web/src/components/settings/EnvironmentsMapDetails.tsx": 2,
     "apps/web/src/components/settings/FoldedSettingsSection.tsx": 3,
     "apps/web/src/components/settings/IntegrationsSettings.tsx": 2,
     "apps/web/src/components/settings/IssueTrackerSettings.tsx": 1,
