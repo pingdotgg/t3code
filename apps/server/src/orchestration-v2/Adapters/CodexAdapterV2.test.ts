@@ -5906,6 +5906,79 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("leaves a native Codex capacity reconnect running past the retry budget", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-capacity-reconnect";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          {
+            type: "emit_inbound",
+            label: "error/capacity-reconnect",
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: "Reconnecting... 1/5",
+                  additionalDetails: "Selected model is at capacity. Please try a different model.",
+                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            afterMs: 11 * 60 * 1000,
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const retryShown = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "error"
+          ? Deferred.succeed(retryShown, undefined)
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          text: "Continue.",
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+        }),
+      );
+      yield* Deferred.await(retryShown);
+      yield* TestClock.adjust("10 minutes");
+      assert.isEmpty(harness.terminalEvents());
+      yield* TestClock.adjust("1 minute");
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "retains Codex reasoning parts when the turn is %s",
     (terminalStatus) =>
