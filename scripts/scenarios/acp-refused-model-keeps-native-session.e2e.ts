@@ -3,7 +3,6 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { expect } from "e2e";
-import * as Effect from "effect/Effect";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { makeState, runPromise, test, WEB } from "./t3.ts";
@@ -12,13 +11,13 @@ import { makeState, runPromise, test, WEB } from "./t3.ts";
 // network can, and offers it again once the scenario creates the online flag. Each agent process
 // names its own session, so a reply says which native session answered it.
 const ACP = `
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, watch } from "node:fs";
+import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 
 const onlineFlag = process.argv[2];
 const sessionId = "session-" + process.pid;
 let prompts = 0;
-let restored = false;
 const modelOption = (online) => ({
   id: "model",
   name: "Model",
@@ -32,12 +31,11 @@ const modelOption = (online) => ({
 const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n");
 const respond = (id, result) => send({ id, result });
 const update = (update) => send({ method: "session/update", params: { sessionId, update } });
-setInterval(() => {
-  if (restored || prompts === 0 || !existsSync(onlineFlag)) return;
-  restored = true;
+const watcher = watch(dirname(onlineFlag), (_event, name) => {
+  if (name !== basename(onlineFlag) || !existsSync(onlineFlag)) return;
+  watcher.close();
   update({ sessionUpdate: "config_option_update", configOptions: [modelOption(true)] });
-  writeFileSync(onlineFlag + ".ack", sessionId);
-}, 100);
+});
 for await (const line of createInterface({ input: process.stdin })) {
   const { id, method } = JSON.parse(line);
   if (id === undefined) continue;
@@ -65,7 +63,7 @@ for await (const line of createInterface({ input: process.stdin })) {
 test(
   "An ACP agent that refuses the model keeps its native session for the next message",
   WEB,
-  async ({ t3, app, screen }) => {
+  async ({ t3, app, screen, browser }) => {
     const project = await t3.project("demo");
     const script = NodePath.join(project, "refusing-acp.mjs");
     const onlineFlag = NodePath.join(project, "online.flag");
@@ -129,26 +127,17 @@ test(
         }
       }
 
-      // The agent offers the model again, and the next message is sent.
+      // The composer names the model only once the server has the agent's model list offering it,
+      // which the server publishes after updating the list the next turn start checks.
+      await t3.open({ threadId: first.threadId });
+      const modelLabel = browser.locator("[data-chat-provider-model-picker-label]").first();
       await NodeFSP.writeFile(onlineFlag, "online");
-      await expect
-        .poll(() => NodeFSP.readFile(`${onlineFlag}.ack`, "utf8").catch(() => ""), {
-          timeout: 10_000,
-        })
-        .not.toBe("");
-      // The app applies the agent's update on its own schedule, so a send can still meet the old
-      // model list. Retrying cannot hide the bug: without the fix the pending handoff replaces the
-      // session before the model is checked, and with it a refused send leaves the session in place.
-      let last = await send(first.threadId, "Fourth request");
-      for (let attempt = 0; attempt < 5 && refusedModel(last); attempt++) {
-        await runPromise(Effect.sleep("500 millis"));
-        last = await send(first.threadId, "Fourth request");
-      }
+      await expect(modelLabel).toHaveText("Model A", { timeout: 30_000 });
+      const last = await send(first.threadId, "Fourth request");
       if (last.status !== "completed") {
         throw new Error(`The fourth request did not complete: ${JSON.stringify(last)}`);
       }
 
-      await t3.open({ threadId: first.threadId });
       const reply = screen.getByText(/answered prompt/).last();
       await reply.waitFor({ timeout: 60_000 });
       try {
