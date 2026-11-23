@@ -534,12 +534,13 @@ it.effect("uses vocabulary only for supported transcription and always applies a
               { term: "Bob", aliases: ["Robert"] },
               { term: "T3 Code", aliases: [] },
             ],
+            speechHints: ["Server"],
           };
           const vocabulary =
-            supportsVocabulary && !translate ? ["GitHub", "Bob", "T3 Code"] : undefined;
-          native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert" });
+            supportsVocabulary && !translate ? ["Server", "GitHub", "Bob", "T3 Code"] : undefined;
+          native.transcribe.mockResolvedValueOnce({ text: "git hub and Robert on the server" });
           expect(yield* speech.transcribe(pcm(), options)).toBe(
-            vocabulary ? "git hub and Bob" : "GitHub and Bob",
+            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
           );
           const delivered = native.transcribe.mock.lastCall?.[1];
           expect(delivered).toEqual({
@@ -553,13 +554,15 @@ it.effect("uses vocabulary only for supported transcription and always applies a
             revision: 1,
             text: { committed: "git hub", tentative: "Robert" },
           });
-          native.finish.mockResolvedValueOnce("git hub and Robert");
+          native.finish.mockResolvedValueOnce("git hub and Robert on the server");
           const stream = yield* speech.startStream(options);
           expect(yield* stream.feed(pcm())).toEqual({
             revision: 1,
             text: { committed: vocabulary ? "git hub" : "GitHub", tentative: "Bob" },
           });
-          expect(yield* stream.finish).toBe(vocabulary ? "git hub and Bob" : "GitHub and Bob");
+          expect(yield* stream.finish).toBe(
+            vocabulary ? "git hub and Bob on the server" : "GitHub and Bob on the server",
+          );
           expect(native.begin.mock.lastCall).toEqual([
             { timestamps: "none", language: "fr", ...(vocabulary ? { vocabulary } : {}) },
             true,
