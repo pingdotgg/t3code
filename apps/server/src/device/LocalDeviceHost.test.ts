@@ -190,6 +190,101 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #41190 a daemon left by the previous pin keeps answering /health
+  it.effect("replaces a healthy daemon recorded at a different agent-device version", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: "0.21.36",
+      };
+      expect(previous.version).not.toBe(AGENT_DEVICE_VERSION);
+      const { host, baseDir, stateDir, runs } = yield* agentFixture(
+        (dir) =>
+          fs
+            .writeFileString(
+              `${dir}/daemon.json`,
+              JSON.stringify({
+                httpPort: 23456,
+                token: "next-token",
+                version: AGENT_DEVICE_VERSION,
+              }),
+            )
+            .pipe(Effect.orDie, Effect.as(processOutput(0))),
+        processOutput(0),
+        previous,
+      );
+      const entry = path.join(
+        baseDir,
+        "tools",
+        "agent-device",
+        AGENT_DEVICE_VERSION,
+        "node_modules",
+        "agent-device",
+        "bin",
+        "agent-device.mjs",
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(runs.filter((run) => run.args.includes("devices"))).toEqual([
+        expect.objectContaining({
+          args: [entry, "devices", "--json"],
+          env: expect.objectContaining({ AGENT_DEVICE_STATE_DIR: stateDir }),
+        }),
+      ]);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:23456",
+        token: "next-token",
+        entryPath: entry,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reuses a healthy daemon recorded at the pinned agent-device version", () =>
+    Effect.gen(function* () {
+      const { host, runs } = yield* agentFixture(
+        () => Effect.die("A daemon at the pinned version must be reused"),
+        processOutput(0),
+        {
+          httpPort: 12345,
+          token: "current-token",
+          pid: process.pid,
+          version: AGENT_DEVICE_VERSION,
+        },
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: "http://127.0.0.1:12345",
+        token: "current-token",
+      });
+      expect(runs.filter((run) => run.args.includes("devices"))).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps a mismatched daemon the pinned client leaves registered", () =>
+    Effect.gen(function* () {
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: "0.21.36",
+      };
+      const { host, runs } = yield* agentFixture(
+        () => Effect.succeed(processOutput(1)),
+        processOutput(0),
+        previous,
+      );
+      const ready = yield* host.ensureAgentReady(() => Effect.void);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+      expect(ready.agentDevice).toMatchObject({
+        baseUrl: `http://127.0.0.1:${previous.httpPort}`,
+        token: previous.token,
+      });
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the SDK a later shell environment selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

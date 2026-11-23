@@ -601,8 +601,14 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
-      if (alive) return toEndpoint(existing.value);
-      yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      // A healthy daemon from another pin is not this client. Leave its registration so the
+      // pinned CLI replaces it only when the daemon holds no work.
+      const differentPin =
+        existing.value.version !== undefined && existing.value.version !== AGENT_DEVICE_VERSION;
+      if (alive && !differentPin) return toEndpoint(existing.value);
+      if (!alive) {
+        yield* fs.remove(daemonFilePath(), { force: true }).pipe(Effect.ignore);
+      }
     }
     // No `daemon start` exists; `devices` is the cheapest command that starts and awaits it.
     const runResult = yield* runner
