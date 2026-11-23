@@ -1768,7 +1768,7 @@ mod tests {
             "lineage": {
                 "rootThreadId": root_thread_id,
                 "parentThreadId": parent_thread_id,
-                "relationshipToParent": null
+                "relationshipToParent": parent_thread_id.map(|_| "subagent")
             },
             "forkedFrom": null,
             "activeProviderThreadId": null,

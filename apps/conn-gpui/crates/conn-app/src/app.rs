@@ -6739,7 +6739,7 @@ impl Render for ConnApp {
                                 });
                             },
                         );
-                        let key_entity = entity.clone();
+                        let key_entity = entity;
                         window.on_key_event(
                             move |event: &gpui_kit::KeyDownEvent, phase, _window, cx| {
                                 if phase == gpui_kit::DispatchPhase::Capture

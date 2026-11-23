@@ -2954,7 +2954,7 @@ fn kitchen_sink_with_older_settled(count: usize) -> ShellState {
             pending_kind: None,
         }));
     }
-    ShellState::from_parts(base.projects.clone(), threads, Vec::new(), Some(100))
+    ShellState::from_parts(base.projects, threads, Vec::new(), Some(100))
 }
 
 #[gpui_kit::test]
