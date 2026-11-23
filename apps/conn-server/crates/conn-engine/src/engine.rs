@@ -1230,7 +1230,7 @@ impl Inner {
                     self.drop_kept_tools(|thread, _| thread == thread_id);
                 }
                 if let Some(host) = &self.host {
-                    host.thread_closed(&thread_id, reason);
+                    host.thread_closed(&thread_id, reason).await;
                 }
             }
             Effect::GenerateTitle {

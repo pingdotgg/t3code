@@ -301,6 +301,40 @@ impl Tx<'_> {
             .map_err(err)
     }
 
+    /// The run's end (the parent's wake) is written already: its capture row says so in
+    /// `progress`, which a replay of that row keeps. A run with no capture row had its end
+    /// written by `end_run`.
+    pub(crate) fn run_end_recorded(&self, run_id: &str) -> StoreResult<bool> {
+        self.sql()
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM effect_outbox
+                   WHERE effect_type = 'checkpoint.capture'
+                     AND json_extract(payload, '$.runId') = ?1)
+                 OR EXISTS(SELECT 1 FROM effect_outbox
+                   WHERE effect_type = 'checkpoint.capture'
+                     AND json_extract(payload, '$.runId') = ?1
+                     AND json_extract(progress, '$.runEnded') = 1)",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
+    /// Marks the run's capture row: its end is written, in this transaction.
+    pub(crate) fn record_run_end(&self, run_id: &str) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                "UPDATE effect_outbox
+                 SET progress = json_set(COALESCE(progress, '{}'), '$.runEnded', json('true'))
+                 WHERE effect_type = 'checkpoint.capture'
+                   AND json_extract(payload, '$.runId') = ?1
+                   AND status IN ('pending', 'running')",
+                [run_id],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
     /// An unsettled `checkpoint.capture` row for this run: the restart leaves the capture to it.
     pub(crate) fn capture_queued(&self, run_id: &str) -> StoreResult<bool> {
         self.sql()

@@ -964,6 +964,59 @@ async fn a_failed_restore_leaves_the_live_session_on_its_thread() {
 /// `phase` is what the store then says: `admitted` (sent nothing), `provider` (sent it, no
 /// answer), `provider_done` (its answer kept). A restart finishes the first and the last, as
 /// T3 requeues the effect, and records a failure for the middle one.
+/// The #268 gate's probe: a child with a checkpoint scope that is interrupted (or cancelled)
+/// ends before its capture, which then finds it terminal. Its parent still hears of it, once.
+#[tokio::test(flavor = "current_thread")]
+async fn an_interrupted_child_with_a_checkpoint_wakes_its_parent_once() {
+    let db = TempDb::new("child-interrupted-wake");
+    let repo = Repo::new("child-interrupted-wake");
+    let (engine, _) = with_turns(
+        &db,
+        &repo,
+        FakeProvider::new("claudeAgent"),
+        create_in(&repo, "t1", "c1"),
+        &[],
+    )
+    .await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    dispatch(&engine, super::delegate("d1", "hang", Some("always"))).await;
+    let child = "thread:delegated-task:d1";
+    let child_run = format!("run:{child}:1");
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    until_provider_turn(&mut stream).await;
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "i1", "threadId": child, "runId": child_run}),
+    )
+    .await;
+    let wakes = |p: &Value| {
+        p["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| {
+                m["text"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("Delegated task"))
+            })
+            .count()
+    };
+    let p = until(&engine, |p| wakes(p) > 0).await;
+    assert_eq!(wakes(&p), 1);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(wakes(&projection(&engine, "t1").await), 1);
+}
+
 /// The round-3 gate's probe: an engine is replaced while its provider rollback is in flight.
 /// The new engine records the rollback as interrupted. The old engine, when the provider
 /// answers, is fenced: it must touch no file and delete no ref.

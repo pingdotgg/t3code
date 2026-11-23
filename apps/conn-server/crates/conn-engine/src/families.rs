@@ -18,7 +18,7 @@ use crate::store::{Draft, StoreResult, Tx};
 /// Results longer than this stay out of the wake message; the agent reads them with
 /// `task_status` (`DELEGATED_RESULT_INLINE_BYTES`).
 const RESULT_INLINE_BYTES: usize = 16_000;
-const TERMINAL: [&str; 4] = ["completed", "failed", "cancelled", "interrupted"];
+pub(crate) const TERMINAL: [&str; 4] = ["completed", "failed", "cancelled", "interrupted"];
 
 pub(crate) fn task_node_id(command_id: &str) -> String {
     format!("node:delegated-task:{command_id}")
@@ -191,7 +191,7 @@ pub(crate) fn delegated_task_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
 }
 
 /// The parent's task rows for a child thread, when the thread is a delegated child.
-fn parent_task(tx: &Tx<'_>, child: &Value) -> StoreResult<Option<(String, Value)>> {
+pub(crate) fn parent_task(tx: &Tx<'_>, child: &Value) -> StoreResult<Option<(String, Value)>> {
     if child["lineage"]["relationshipToParent"] != "subagent" {
         return Ok(None);
     }

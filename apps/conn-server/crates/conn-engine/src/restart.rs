@@ -19,7 +19,9 @@
 //!   prompt died with the process and only the user can answer it again.
 //! - A run left `waiting` (its provider turn ended, its checkpoint was not taken) is captured
 //!   and completed (`checkpoint.capture` again).
-//! - Queued runs stay queued and start after the continuation, as after any turn.
+//! - Queued runs are held (T3's held queue): the user sends them, after the continuation if one
+//!   runs. A continuation an earlier restart admitted, whose start was cut off in turn, is sent
+//!   again under the same policy and chain limit; a stored Stop or a waiting request cancels.
 
 use serde_json::{Value, json};
 
@@ -135,15 +137,54 @@ fn accepted(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
         return Ok(false);
     }
     let run_id = run["id"].as_str().unwrap_or_default();
-    if let Some(accepted) = tx.start_settled(run_id)? {
-        return Ok(accepted);
-    }
+    let mut turns = vec![];
     for attempt in tx.entities_where(thread_id, "attempts", "runId", run_id)? {
         let attempt_id = attempt["id"].as_str().unwrap_or_default();
-        if !tx
-            .entities_where(thread_id, "providerTurns", "runAttemptId", attempt_id)?
-            .is_empty()
-        {
+        turns.extend(tx.entities_where(thread_id, "providerTurns", "runAttemptId", attempt_id)?);
+    }
+    // The provider confirmed the turn itself (Codex's `turn/started`, Claude's first usage):
+    // it took the prompt, whatever the start row says. Claude reports a weak turn on a cold
+    // start before its host has the prompt, so a weak turn proves nothing.
+    if turns
+        .iter()
+        .any(|t| t["nativeTurnRef"]["strength"] == "strong")
+    {
+        return Ok(true);
+    }
+    Ok(tx.start_settled(run_id)?.unwrap_or(!turns.is_empty()))
+}
+
+/// `restartStopRequested`: Stop was asked for the run, or for the task that delegated its
+/// thread while that task still runs.
+fn stop_requested(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let run_id = run["id"].as_str().unwrap_or_default();
+    if commands::interrupt_request(tx, thread_id, run_id)?.is_some() {
+        return Ok(true);
+    }
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(false);
+    };
+    let Some((parent_id, task)) = crate::families::parent_task(tx, &thread)? else {
+        return Ok(false);
+    };
+    let Some(task_run) = task["runId"].as_str() else {
+        return Ok(false);
+    };
+    let settled = !task["result"].is_null()
+        || crate::families::TERMINAL.contains(&task["status"].as_str().unwrap_or("failed"));
+    Ok(!settled && commands::interrupt_request(tx, &parent_id, task_run)?.is_some())
+}
+
+/// A runtime request of the run still waits for an answer (`unstartedRuns`).
+fn request_pending(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let run_id = run["id"].as_str().unwrap_or_default();
+    for request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+        let node = request["nodeId"]
+            .as_str()
+            .map(|id| tx.entity(thread_id, "nodes", id))
+            .transpose()?
+            .flatten();
+        if node.is_some_and(|n| n["runId"] == run_id) {
             return Ok(true);
         }
     }
@@ -180,19 +221,30 @@ fn unaccepted(
     let delivered_elsewhere =
         message["notification"].is_object() || message["delegatedCompletion"].is_object();
     let scheduled = message["scheduledTaskId"].is_string();
+    if request_pending(tx, thread_id, run)? {
+        return Ok(Unaccepted::Cancel);
+    }
     if message["createdBy"] == "user" && !scheduled && !delivered_elsewhere {
         return Ok(Unaccepted::Hold);
     }
-    if delivered_elsewhere || !(scheduled || message["creationSource"] == "mcp") {
+    // A continuation an earlier restart admitted: its start was cut off too.
+    let continuation = run["restartContinuationOfRunId"].is_string();
+    if delivered_elsewhere || !(scheduled || continuation || message["creationSource"] == "mcp") {
         return Ok(Unaccepted::Cancel);
     }
     let run_id = run["id"].as_str().unwrap_or_default();
     let project = tx
         .thread(thread_id)?
         .and_then(|t| t["projectId"].as_str().map(str::to_owned));
+    let capped = if continuation {
+        chain_length(tx, thread_id, run)? >= MAX_CHAIN
+    } else {
+        tx.resends(&resend_command(run_id))? >= MAX_RESENDS
+    };
     if !policy.continues(project.as_deref())
         || blocked(tx, thread_id)?
-        || tx.resends(&resend_command(run_id))? >= MAX_RESENDS
+        || capped
+        || stop_requested(tx, thread_id, run)?
     {
         return Ok(Unaccepted::Cancel);
     }
@@ -219,7 +271,7 @@ fn resend_command(run_id: &str) -> String {
 }
 
 /// Puts a run whose prompt never arrived at the head of the held queue, with the thread's
-/// queued runs behind it, all held; its attempt, root node and prompt go back to pending.
+/// queued runs behind it, all held; its prompt goes back to pending.
 fn hold(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let queued = commands::queued_runs(tx, thread_id)?;
@@ -235,6 +287,23 @@ fn hold(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
         let id = other["id"].as_str().unwrap_or_default().to_owned();
         tx.append(Draft::new(thread_id, "run.updated", other).run(Some(&id)))?;
     }
+    let message_id = run["userMessageId"].as_str().unwrap_or_default();
+    if let Some(mut item) = tx.entity(thread_id, "turnItems", &format!("turn-item:{message_id}"))? {
+        let now = tx.now().to_owned();
+        item["inputIntent"] = json!("queued_turn");
+        item["status"] = json!("pending");
+        item["startedAt"] = Value::Null;
+        item["completedAt"] = Value::Null;
+        item["updatedAt"] = json!(now);
+        tx.append(Draft::new(thread_id, "turn-item.updated", item).run(Some(&run_id)))?;
+    }
+    Ok(())
+}
+
+/// A run kept for another start (held or sent again): its running attempt and root node go
+/// back to pending, as T3 resets them for every kept run.
+fn reset_start(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
+    let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     if let Some(attempt_id) = run["activeAttemptId"].as_str()
         && let Some(mut attempt) = tx.entity(thread_id, "attempts", attempt_id)?
         && attempt["status"] == "running"
@@ -256,15 +325,18 @@ fn hold(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
                 .node(Some(root)),
         )?;
     }
-    let message_id = run["userMessageId"].as_str().unwrap_or_default();
-    if let Some(mut item) = tx.entity(thread_id, "turnItems", &format!("turn-item:{message_id}"))? {
-        let now = tx.now().to_owned();
-        item["inputIntent"] = json!("queued_turn");
-        item["status"] = json!("pending");
-        item["startedAt"] = Value::Null;
-        item["completedAt"] = Value::Null;
-        item["updatedAt"] = json!(now);
-        tx.append(Draft::new(thread_id, "turn-item.updated", item).run(Some(&run_id)))?;
+    Ok(())
+}
+
+/// The previous process's provider sessions are gone with it.
+fn stop_sessions(tx: &mut Tx<'_>, thread_id: &str) -> StoreResult<()> {
+    let now = tx.now().to_owned();
+    for mut session in tx.entities(thread_id, "providerSessions")? {
+        if session["status"] != "stopped" {
+            session["status"] = json!("stopped");
+            session["updatedAt"] = json!(now);
+            tx.append(Draft::new(thread_id, "provider-session.updated", session))?;
+        }
     }
     Ok(())
 }
@@ -285,15 +357,18 @@ pub(crate) fn recover(
         }
         return Ok(vec![crate::checkpoint::resume_capture(thread_id, run)]);
     }
+    stop_sessions(tx, thread_id)?;
     let continues = if accepted(tx, thread_id, run)? {
         may_continue(tx, thread_id, run, policy)? && chain_length(tx, thread_id, run)? < MAX_CHAIN
     } else {
         match unaccepted(tx, thread_id, run, policy)? {
             Unaccepted::Hold => {
+                reset_start(tx, thread_id, run)?;
                 hold(tx, thread_id, run)?;
                 return Ok(vec![]);
             }
             Unaccepted::Resend => {
+                reset_start(tx, thread_id, run)?;
                 let mut again = run.clone();
                 again["status"] = json!("starting");
                 again["startedAt"] = Value::Null;
@@ -325,17 +400,11 @@ pub(crate) fn recover(
         )
         .run(Some(&run_id)),
     )?;
-    for mut session in tx.entities(thread_id, "providerSessions")? {
-        if session["status"] != "stopped" {
-            session["status"] = json!("stopped");
-            session["updatedAt"] = json!(now);
-            tx.append(Draft::new(thread_id, "provider-session.updated", session))?;
-        }
-    }
+    // T3 holds the prompts queued behind a cut run: the user decides when they go, whether
+    // or not a continuation runs first.
+    commands::hold_queue(tx, thread_id)?;
     if !continues {
-        return Ok(commands::start_next_queued(tx, thread_id, None)?
-            .into_iter()
-            .collect());
+        return Ok(vec![]);
     }
     let dispatch = commands::handler("message.dispatch").expect("message.dispatch");
     let outcome = dispatch(

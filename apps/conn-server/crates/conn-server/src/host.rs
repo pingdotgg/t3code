@@ -264,9 +264,12 @@ impl EngineHost for Host {
         }
     }
 
-    fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
-        match reason {
-            ThreadClose::Settled => self.terminals.close_on_settle(thread_id),
+    fn thread_closed(&self, thread_id: &str, reason: ThreadClose) -> BoxFuture<'_, ()> {
+        let devices = match reason {
+            ThreadClose::Settled => {
+                self.terminals.close_on_settle(thread_id);
+                None
+            }
             ThreadClose::Archived | ThreadClose::Deleted => {
                 self.terminals.close(TerminalCloseInput {
                     thread_id: thread_id.to_owned(),
@@ -274,23 +277,25 @@ impl EngineHost for Host {
                     delete_history: Some(reason == ThreadClose::Deleted),
                 });
                 // The thread's device sessions end; the devices stay on for other threads.
-                if let Some(devices) = self.devices.get().cloned() {
-                    let thread_id = thread_id.to_owned();
-                    tokio::spawn(async move { devices.cleanup_thread(&thread_id).await });
-                }
+                self.devices.get().cloned()
             }
-        }
-        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
-        if reason == ThreadClose::Deleted
-            && let Some(tasks) = self.scheduled_tasks.get().cloned()
-        {
-            let thread_id = thread_id.to_owned();
-            tokio::spawn(async move {
-                if let Err(error) = tasks.delete_for_thread(&thread_id).await {
-                    eprintln!("scheduled tasks: {error}");
-                }
-            });
-        }
+        };
+        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it. The effect
+        // settles after this, so a close replayed at start finishes it too.
+        let tasks = (reason == ThreadClose::Deleted)
+            .then(|| self.scheduled_tasks.get().cloned())
+            .flatten();
+        let thread_id = thread_id.to_owned();
+        Box::pin(async move {
+            if let Some(devices) = devices {
+                devices.cleanup_thread(&thread_id).await;
+            }
+            if let Some(tasks) = tasks
+                && let Err(error) = tasks.delete_for_thread(&thread_id).await
+            {
+                eprintln!("scheduled tasks: {error}");
+            }
+        })
     }
 }
 

@@ -329,16 +329,16 @@ impl Inner {
         let (tid, rid) = (thread_id.clone(), run_id.clone());
         let effects = self
             .write(move |tx| {
-                // A capture that runs again after a restart finds the run ended: its end (the
-                // parent's wake) was written once already.
-                let ends_run = tx
-                    .entity(&tid, "runs", &rid)?
-                    .is_some_and(|run| run["status"] == "waiting");
+                // The run's end (the parent's wake) is written once, by the first capture to
+                // commit, whatever the run ended as. A capture that runs again after a restart
+                // finds its row marked.
+                let first = !tx.run_end_recorded(&rid)?;
                 if let Some((ctx, events)) = captured {
                     commit_capture(tx, &tid, &rid, &ctx, events)?;
                 }
                 complete_waiting(tx, &tid, &rid)?;
-                let mut effects = if ends_run {
+                let mut effects = if first {
+                    tx.record_run_end(&rid)?;
                     crate::families::on_run_end(tx, &tid, &rid)?
                 } else {
                     vec![]
