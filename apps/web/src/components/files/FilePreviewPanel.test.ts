@@ -158,6 +158,11 @@ describe("document preview contents", () => {
       "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+    [
+      "visible text around hidden character formatting",
+      String.raw`{\rtf1 A{\v hidden{\v0 B}hidden}C\v hidden\v0 D\v hidden\plain E}`,
+      "ABCDE",
+    ],
     ["a tracked replacement", String.raw`{\rtf1 aaa{\deleted bbb}{\revised BBB}ccc}`, "aaaBBBccc"],
     [
       "text after a deletion reset",
@@ -232,6 +237,9 @@ Third}`;
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
     const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
     expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
+      lineBreak,
+    );
     expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
     expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
       lineBreak,
@@ -287,6 +295,14 @@ Third}`;
       const mac = openRtf(bytes(String.raw`{\rtf1` + header + String.raw` Caf\'8e Cr\'8fme}`));
       if (mac.type !== "document") throw new Error("Expected document");
       expect(mac.pages[0]!.html).toBe("<p>Café Crème</p>");
+    }
+    for (const [rtf, expected] of [
+      [String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "<p>Café</p>"],
+      [String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`, "<p>Привет</p>"],
+    ] as const) {
+      const decoded = openRtf(bytes(rtf));
+      if (decoded.type !== "document") throw new Error("Expected document");
+      expect(decoded.pages[0]!.html).toBe(expected);
     }
     expect(() => openRtf(bytes(String.raw`{\rtf1\ansicpg99999 text}`))).toThrow(
       expect.objectContaining({ code: "rtf-code-page" }),
