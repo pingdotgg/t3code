@@ -82,4 +82,19 @@ describe("UsagePriceOverrides", () => {
       .toHaveTextContent("Output is required on workstation.");
     await expect.element(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
   });
+
+  it("asks for a model ID once a new row maps to a model", async () => {
+    await using _screen = await renderPrices();
+    await page.getByRole("button", { name: "Add model price" }).click();
+    const modelId = page.getByLabelText("New model ID");
+    await expect.element(modelId).toHaveValue("");
+
+    expect(page.getByRole("alert").elements()).toEqual([]);
+    await expect.element(modelId).not.toHaveAttribute("aria-invalid");
+
+    await userEvent.type(page.getByLabelText("Map new model to model"), "gpt-4o");
+    await expect.element(page.getByRole("alert")).toHaveTextContent("Enter a model ID.");
+    await expect.element(modelId).toHaveAttribute("aria-invalid", "true");
+    await expect.element(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  });
 });
