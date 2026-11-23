@@ -53,18 +53,26 @@ export function FeedbackRequestCard(props: {
           render={
             <WorkLogRow
               icon={<Icon className="size-3.5 text-icon-muted" aria-hidden />}
+              wrapLabel
               label={
-                <span className="inline-flex min-w-0 items-baseline gap-2">
+                <span className="inline-flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
                   <span className="text-foreground">{m(TITLE)}</span>
                   <span className="text-muted-foreground">{display.label}</span>
                 </span>
               }
-              trailing={<ChevronDownIcon className="size-3.5 text-icon-muted" aria-hidden />}
+              trailing={
+                <span className="flex h-6 shrink-0 items-center">
+                  <ChevronDownIcon
+                    className="size-3.5 text-icon-muted transition-transform motion-reduce:transition-none group-data-panel-open/timeline-row:rotate-180"
+                    aria-hidden
+                  />
+                </span>
+              }
             />
           }
         />
         <CollapsiblePanel>
-          <div className="pt-2 pb-1 pl-5">
+          <div className="pt-2 pb-1 ps-4.75 pe-4.75">
             <FeedbackPreview preview={item.preview} />
           </div>
         </CollapsiblePanel>
@@ -122,58 +130,67 @@ function PendingFeedbackRequest(props: {
     <section
       data-v2-item-type={props.item.type}
       aria-label={m(TITLE)}
-      className="flex min-w-0 flex-col gap-3 surface-card rounded-card p-4"
+      className="flex min-w-0 flex-col rounded-pane surface-tray p-1"
     >
-      <div className="flex min-w-0 flex-col gap-1">
-        <h3 className="flex items-center gap-1.5 text-label text-foreground">
-          <MessageSquareIcon className="size-3.5 shrink-0 text-icon-muted" aria-hidden />
+      <div className="flex min-h-9 min-w-0 items-center gap-2 px-2.5 pb-1">
+        <MessageSquareIcon aria-hidden className="size-4 shrink-0 text-info-foreground" />
+        <h3 className="min-w-0 flex-1 text-label text-foreground">
           <T>Send this report to the T3 team?</T>
         </h3>
-        <p className="text-meta text-muted-foreground">
+      </div>
+      {/* Flat paints wells and secondary buttons with the composer fill, so this box takes the tray fill. */}
+      <div className="flex min-w-0 flex-col gap-2.5 rounded-row-card surface-composer px-2.5 pt-2 pb-2.5 in-data-[surface-style=flat]:[--composer-fill:var(--tray-fill)]">
+        <p className="min-w-0 px-1 text-meta text-muted-foreground">
           <T>This is everything that leaves your machine. Nothing is sent unless you press Send.</T>
         </p>
-      </div>
-      {props.item.conversationTrace !== undefined ? (
-        <label className="flex min-w-0 items-center justify-between gap-3">
-          <span className="flex min-w-0 flex-col">
-            <span className="text-body text-foreground">
-              <T>Include the conversation</T>
+        {props.item.conversationTrace !== undefined ? (
+          <label className="flex min-w-0 items-center justify-between gap-3 px-1">
+            <span className="flex min-w-0 flex-col">
+              <span className="text-body text-foreground">
+                <T>Include the conversation</T>
+              </span>
+              <span className="text-meta text-muted-foreground">
+                {feedbackConversationHint(props.item.conversationTrace, m)}
+              </span>
             </span>
-            <span className="text-meta text-muted-foreground">
-              {feedbackConversationHint(props.item.conversationTrace, m)}
-            </span>
-          </span>
-          <Switch
-            size="sm"
-            checked={includeConversation}
-            onCheckedChange={setIncludeConversation}
+            <Switch
+              size="sm"
+              checked={includeConversation}
+              onCheckedChange={setIncludeConversation}
+              disabled={disabled}
+            />
+          </label>
+        ) : null}
+        <div className="px-1">
+          <FeedbackPreview preview={feedbackCardPreview(props.item, includeConversation)} />
+        </div>
+        {error !== null ? (
+          <p role="alert" className="px-1 text-meta text-destructive">
+            {error}
+          </p>
+        ) : !canAnswer ? (
+          <p className="px-1 text-meta text-muted-foreground">
+            <T>Only someone who can run agents on this machine can send or decline it.</T>
+          </p>
+        ) : null}
+        <div className="flex flex-wrap items-center justify-end gap-1">
+          <Button
+            type="button"
+            variant="secondary"
             disabled={disabled}
-          />
-        </label>
-      ) : null}
-      <FeedbackPreview preview={feedbackCardPreview(props.item, includeConversation)} />
-      {error !== null ? (
-        <p role="alert" className="text-meta text-destructive">
-          {error}
-        </p>
-      ) : !canAnswer ? (
-        <p className="text-meta text-muted-foreground">
-          <T>Only someone who can run agents on this machine can send or decline it.</T>
-        </p>
-      ) : null}
-      <div className="flex items-center justify-end gap-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost-muted"
-          disabled={disabled}
-          onClick={() => void send("decline")}
-        >
-          <T>Don't send</T>
-        </Button>
-        <Button type="button" size="sm" disabled={disabled} onClick={() => void send("send")}>
-          <T>Send</T>
-        </Button>
+            onClick={() => void send("send")}
+          >
+            <T>Send</T>
+          </Button>
+          <Button
+            type="button"
+            variant="ghost-muted"
+            disabled={disabled}
+            onClick={() => void send("decline")}
+          >
+            <T>Don't send</T>
+          </Button>
+        </div>
       </div>
     </section>
   );
@@ -194,8 +211,11 @@ function FeedbackPreview({ preview }: { readonly preview: AgentFeedbackPreview }
       </dl>
       {preview.trace !== null ? (
         <Collapsible>
-          <CollapsibleTrigger className="flex items-center gap-1 text-meta text-muted-foreground hover:text-foreground">
-            <ChevronDownIcon className="size-3.5" aria-hidden />
+          <CollapsibleTrigger className="group flex items-center gap-1 text-meta text-muted-foreground hover:text-foreground">
+            <ChevronDownIcon
+              className="size-3.5 shrink-0 transition-transform motion-reduce:transition-none group-data-panel-open:rotate-180"
+              aria-hidden
+            />
             {feedbackTraceSummary(preview.trace, m)}
           </CollapsibleTrigger>
           <CollapsiblePanel>
