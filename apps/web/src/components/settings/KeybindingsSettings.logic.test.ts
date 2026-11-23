@@ -14,6 +14,7 @@ import {
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
+  shortcutToKeybindingParts,
   unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
@@ -186,6 +187,31 @@ describe("KeybindingsSettings.logic", () => {
         expected: "alt+1",
         defaultInput: "alt+1",
       },
+      {
+        key: "π",
+        code: "KeyP",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+p",
+        defaultInput: "alt+p",
+      },
+      // Dvorak Option+L and AZERTY Option+A: not the US glyph at its US key.
+      {
+        key: "¬",
+        code: "KeyP",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+¬",
+        defaultInput: "alt+¬",
+      },
+      {
+        key: "æ",
+        code: "KeyQ",
+        altKey: true,
+        shiftKey: false,
+        expected: "alt+æ",
+        defaultInput: "alt+æ",
+      },
     ]) {
       const pressed = {
         key,
@@ -223,6 +249,15 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe("mod+m");
+  });
+
+  it("keeps a literal plus key as its own part", () => {
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([
+      "mod",
+      "shift",
+      "+",
+    ]);
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {

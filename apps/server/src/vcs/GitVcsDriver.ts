@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -10,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
@@ -76,6 +78,19 @@ export interface ExecuteGitResult {
   readonly stderrTruncated: boolean;
 }
 
+export class GitNothingToCommitError extends Schema.TaggedError<GitNothingToCommitError>()(
+  "GitNothingToCommitError",
+  {
+    operation: Schema.String,
+    cwd: Schema.String,
+    detail: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Nothing to commit in ${this.operation} (${this.cwd}): ${this.detail}`;
+  }
+}
+
 export interface GitStatusDetails {
   isRepo: boolean;
   sourceControlProvider?: VcsStatusResult["sourceControlProvider"];
@@ -99,6 +114,7 @@ export interface GitLocalStatusOptions {
 
 export interface GitRemoteStatusDetails {
   isRepo: boolean;
+  hasPrimaryRemote: boolean;
   defaultBranch: string | null;
   isDefaultBranch: boolean;
   branch: string | null;
@@ -172,7 +188,11 @@ export interface GitCommitProgress {
 export interface GitCommitOptions {
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
-  readonly stage?: { readonly filePaths?: readonly string[] };
+  readonly stage?: {
+    readonly filePaths?: readonly string[];
+    /** The caller has not run `prepareCommitContext`, so an empty result must keep the index. */
+    readonly unverified?: boolean;
+  };
 }
 
 export interface GitDeleteLocalBranchInput {
@@ -318,6 +338,8 @@ export interface GitSetBranchUpstreamInput {
 
 export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
+  /** False skips the base-branch lookup and reports `aheadOfDefaultCount` as 0. */
+  readonly includeAheadOfDefault?: boolean;
 }
 
 /**
@@ -348,8 +370,10 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
-    /** Refs, HEAD and shallow boundaries. Null when the snapshot cannot be read. */
-    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    /** Refs, HEAD and shallow boundaries. Null on read failure. */
+    readonly readLocalStatusRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    /** Includes worktree paths. Accepts an existing local status ref snapshot to avoid re-reading refs. */
+    readonly readRefSnapshot: (cwd: string, refs?: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
@@ -360,7 +384,7 @@ export class GitVcsDriver extends Context.Service<
       subject: string,
       body: string,
       options?: GitCommitOptions,
-    ) => Effect.Effect<{ commitSha: string }, GitCommandError>;
+    ) => Effect.Effect<{ commitSha: string }, GitCommandError | GitNothingToCommitError>;
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
@@ -1116,11 +1140,72 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       }),
     );
 
+  // Nested checkouts have their own checkpoints; unexcluded, the outer one records them as gitlinks.
+  const excludedPathspecs = (excludePaths: ReadonlyArray<string> | undefined) =>
+    (excludePaths ?? []).map((relativePath) => `:(exclude,literal)${relativePath}`);
+
+  const checkpointIdentity: NodeJS.ProcessEnv = {
+    GIT_AUTHOR_NAME: "T3 Code",
+    GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
+    GIT_COMMITTER_NAME: "T3 Code",
+    GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
+  };
+
+  // Index files known to hold no assume-unchanged or skip-worktree entry, by their stat. Setting
+  // either flag rewrites the index, so a matching stat spares the scan that looks for them.
+  const unflaggedIndexes = new Map<string, string>();
+
+  // Status hides edits to assume-unchanged and skip-worktree entries; a capture reads them.
+  const hasFlaggedIndexEntries = Effect.fn("GitVcsDriver.hasFlaggedIndexEntries")(function* (
+    cwd: string,
+  ) {
+    // A linked worktree keeps its index elsewhere; it is scanned every time.
+    const indexStat = yield* fileSystem.stat(path.join(cwd, ".git", "index")).pipe(
+      Effect.map((info) =>
+        Option.isSome(info.mtime) ? `${info.mtime.value.getTime()}:${info.size}` : null,
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    if (indexStat !== null && unflaggedIndexes.get(cwd) === indexStat) return false;
+    let flagged = false;
+    let recordStart = true;
+    yield* vcsProcess.run({
+      operation: "GitVcsDriver.checkpoints.resolveCleanHead",
+      command: "git",
+      cwd,
+      args: ["ls-files", "-v", "-z"],
+      maxOutputBytes: 1,
+      outputMode: "truncate",
+      // Only each record's leading tag matters; scan NUL-delimited records.
+      onStdoutChunk: (chunk) => {
+        let start = 0;
+        while (start < chunk.length && !flagged) {
+          if (recordStart) {
+            const tag = chunk[start]!;
+            flagged = (tag >= 97 && tag <= 122) || tag === 83;
+          }
+          const end = chunk.indexOf(0, start);
+          recordStart = end !== -1;
+          if (!recordStart) break;
+          start = end + 1;
+        }
+      },
+    });
+    if (flagged) unflaggedIndexes.delete(cwd);
+    else if (indexStat !== null) unflaggedIndexes.set(cwd, indexStat);
+    return flagged;
+  });
   const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+      // git add rejects a pathspec naming an ignored folder, and skips that folder anyway.
+      const exclusionPathspecs = excludedPathspecs(
+        input.excludePaths === undefined || input.excludePaths.length === 0
+          ? undefined
+          : yield* filterIgnoredPaths(input.cwd, input.excludePaths),
+      );
       // Scratch split-index writes can expire sharedindex files still used by the real index.
       const indexConfig = [
         "-c",
@@ -1461,6 +1546,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               workspaceIgnored ? "-u" : "-A",
               "--",
               ".",
+              ...exclusionPathspecs,
               ...exclusions,
             ],
             env: commitEnv,
@@ -1844,6 +1930,74 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       );
     }, Effect.scoped),
 
+    resolveCleanHead: Effect.fn("GitVcsDriver.checkpoints.resolveCleanHead")(function* (cwd) {
+      // One status reads both, so a moving HEAD cannot pair one commit with another's cleanliness.
+      const status = yield* execute({
+        operation: "GitVcsDriver.checkpoints.resolveCleanHead",
+        cwd,
+        args: [
+          "-c",
+          "core.fsmonitor=false",
+          "status",
+          "--porcelain=v2",
+          "--branch",
+          "--untracked-files=normal",
+          "--ignore-submodules=none",
+        ],
+        // A status that refreshes the index would take the lock a user's Git command needs.
+        env: { GIT_OPTIONAL_LOCKS: "0" },
+        maxOutputBytes: 4_096,
+        outputMode: "truncate",
+      });
+      if (status.stdoutTruncated) return null;
+      const lines = status.stdout.split("\n").filter((line) => line.length > 0);
+      if (lines.some((line) => !line.startsWith("# "))) return null;
+      const head = lines.find((line) => line.startsWith("# branch.oid "))?.slice(13);
+      if (head === undefined || !/^[0-9a-f]{40,64}$/.test(head)) return null;
+      return (yield* hasFlaggedIndexEntries(cwd)) ? null : head;
+    }),
+
+    captureHeadCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureHeadCheckpoint")(
+      function* (input) {
+        const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+        // Where HEAD's reflog stood when the folder was seen: the next capture needs the mark to
+        // tell a branch switch. Later moves in that same second count only if they end on `head`.
+        const seenAt = input.seenAt;
+        const headMoves = (yield* readHeadMoves(input.cwd)).filter(
+          (move) => seenAt === undefined || Number(move.at) <= seenAt,
+        );
+        const lastMove = headMoves.at(0);
+        const headMark =
+          lastMove !== undefined && lastMove.to === input.head
+            ? `${lastMove.at} ${headMoves.filter((move) => move.at === lastMove.at).length}`
+            : undefined;
+        const commit = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [
+            ...durableWrite,
+            "commit-tree",
+            `${input.head}^{tree}`,
+            "-p",
+            input.head,
+            "-m",
+            `t3 checkpoint ref=${input.checkpointRef}${
+              headMark === undefined ? "" : `\n\n${HEAD_MARK_TRAILER}: ${headMark}`
+            }`,
+          ],
+          env:
+            input.seenAt === undefined
+              ? checkpointIdentity
+              : { ...checkpointIdentity, GIT_COMMITTER_DATE: `@${input.seenAt} +0000` },
+        });
+        yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...durableWrite, "update-ref", input.checkpointRef, commit.stdout.trim()],
+        });
+      },
+    ),
+
     hasCheckpointRef: (input) =>
       resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
         Effect.map((commit) => commit !== null),
@@ -1861,11 +2015,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       if (!commitOid) {
         return false;
       }
+      // Folders with checkpoints of their own are another restore's to change.
+      const scope = [".", ...excludedPathspecs(input.excludePaths)];
 
       const tracked = yield* execute({
         operation,
         cwd: input.cwd,
-        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
+        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", ...scope],
       });
       const sparseConfig =
         tracked.stdout.length > 0
@@ -1896,7 +2052,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...longPaths, "reset", "--quiet", "--", "."],
+          args: [...longPaths, "reset", "--quiet", "--", ...scope],
         });
       });
       let mutationStarted = false;
@@ -1915,7 +2071,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...restore, ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]), "--", "."],
+          args: [
+            ...restore,
+            ...(sparseCheckout ? [] : ["--ignore-skip-worktree-bits"]),
+            "--",
+            ...scope,
+          ],
           onSpawn,
         });
         if (sparseCheckout) {
@@ -1929,7 +2090,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation,
               command: "git",
               cwd: input.cwd,
-              args: ["ls-files", "--full-name", "--sparse", "-v", "-z", "--", "."],
+              args: ["ls-files", "--full-name", "--sparse", "-v", "-z", "--", ...scope],
               maxOutputBytes: 4_096,
               outputMode: "truncate",
               // The index can be huge; keep only the "S "/"s " records of the NUL-delimited list.
@@ -1992,7 +2153,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const clean = execute({
         operation,
         cwd: input.cwd,
-        args: [...longPaths, "clean", "-fd", "--", "."],
+        args: [...longPaths, "clean", "-fd", "--", ...scope],
         env: { LC_ALL: "C" },
         allowNonZeroExit: true,
         onSpawn,
@@ -2012,7 +2173,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const remaining = yield* execute({
           operation,
           cwd: input.cwd,
-          args: [...longPaths, "clean", "-dn", "--", "."],
+          args: [...longPaths, "clean", "-dn", "--", ...scope],
           env: { LC_ALL: "C" },
         });
         if (/^Would remove /m.test(remaining.stdout)) {
@@ -2089,6 +2250,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         "checkpoint.fallback_from_to_head": input.fallbackFromToHead,
       });
 
+      const diffExclusions = excludedPathspecs(input.excludePaths);
       let fromRevision = yield* resolveTurnStart(input);
       if (input.fallbackFromToHead === true) {
         const resolvedFromCommit = yield* resolveCheckpointCommit(
@@ -2131,8 +2293,10 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           `${input.toCheckpointRef}^{commit}`,
           // Paths are repository-relative, while cwd can be a subdirectory.
           ...(input.filePaths
-            ? ["--", ...input.filePaths.map((file) => `:(top,literal)${file}`)]
-            : []),
+            ? ["--", ...input.filePaths.map((file) => `:(top,literal)${file}`), ...diffExclusions]
+            : diffExclusions.length > 0
+              ? ["--", ":(top)", ...diffExclusions]
+              : []),
         ],
         allowNonZeroExit: true,
         maxOutputBytes: input.maxOutputBytes ?? VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
@@ -2205,34 +2369,101 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
 
-      // A commit is an import when a fetch delivered it since the previous checkpoint and no
-      // reflog in any worktree shows this repository creating it. --all covers every worktree's
-      // HEAD, and with --walk-reflogs --since compares each entry's own time.
-      const listImportedCommits = Effect.gen(function* () {
-        const entries = (yield* listLines([
-          "log",
-          "--walk-reflogs",
-          "--all",
-          `--since=@${capturedAt}`,
-          "--format=%H %gD %gs",
-        ])).map(parseCheckpointReflogEntry);
-        // A push records commits this repository already had.
-        const fetchedTips = new Set(
-          entries
-            .filter((entry) => entry.fetched && entry.subject !== "update by push")
-            .map((entry) => entry.commit),
+      // Refs under `namespace` that contain any of `commits`. Only the oldest commits of the set
+      // are passed on, since a ref containing a descendant also contains its ancestors.
+      const listRefsContaining = Effect.fn("GitVcsDriver.checkpoints.listRefsContaining")(
+        function* (commits: ReadonlySet<string>, namespace: "refs/remotes" | "refs/heads") {
+          const roots = (yield* listLines(
+            ["rev-list", "--no-walk=unsorted", "--parents", "--stdin"],
+            `${[...commits].join("\n")}\n`,
+          )).flatMap((line) => {
+            const [commit = "", ...parents] = line.split(" ");
+            return parents.some((parent) => commits.has(parent)) ? [] : [commit];
+          });
+          const outputs = yield* Effect.forEach(Arr.chunksOf(roots, 256), (chunk) =>
+            execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                "for-each-ref",
+                "--format=%(refname)",
+                ...chunk.flatMap((commit) => ["--contains", commit]),
+                namespace,
+              ],
+              maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+              outputMode: "error",
+            }),
+          );
+          // A ref name that is not UTF-8 would not survive the round trip, so Git lists them.
+          if (outputs.some((output) => output.stdoutInvalidUtf8)) {
+            return {
+              revisionArgs: [namespace === "refs/heads" ? "--branches" : "--remotes"],
+              refs: [],
+            };
+          }
+          const refs = outputs.flatMap((output) => output.stdout.split("\n"));
+          return { revisionArgs: [], refs: [...new Set(refs.filter((ref) => ref !== ""))] };
+        },
+      );
+      // With --walk-reflogs, --max-age compares each entry's own time; --since would guess at a
+      // date and reads a timestamp before 1973 as now. Walking many reflogs at once slows down
+      // quadratically with the refs passed: --all took 40 s in a repository with 29k refs.
+      const walkReflogs = Effect.fn("GitVcsDriver.checkpoints.walkReflogs")(function* (
+        revisionArgs: ReadonlyArray<string>,
+        refs: ReadonlyArray<string>,
+      ) {
+        const lines = yield* listLines(
+          [
+            "log",
+            "--walk-reflogs",
+            ...revisionArgs,
+            `--max-age=${capturedAt}`,
+            "--format=%H %gD %gs",
+            // A listed ref may be pruned before this walk reads it.
+            "--ignore-missing",
+            "--stdin",
+          ],
+          `${refs.join("\n")}\n`,
         );
-        if (fetchedTips.size === 0) return fetchedTips;
-        // Fetching another branch can deliver a commit that was made here and pushed.
-        const createdHere = new Set(
-          entries.filter(isLocalReflogCreation).map((entry) => entry.commit),
-        );
-        const fetched = yield* listLines(
-          ["rev-list", `--since=@${capturedAt}`, "--stdin"],
-          `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
-        );
-        return new Set(fetched.filter((commit) => !createdHere.has(commit)));
+        return lines.map(parseCheckpointReflogEntry);
       });
+
+      // A commit is an import when a fetch delivered it since the previous checkpoint and no
+      // reflog shows this repository creating it. Only refs containing a turn commit are read;
+      // a remote-tracking ref force-moved off one after the fetch is missed, which keeps that
+      // commit attributed to the turn.
+      const listImportedCommits = Effect.fn("GitVcsDriver.checkpoints.listImportedCommits")(
+        function* (candidates: ReadonlySet<string>) {
+          const remote = yield* listRefsContaining(candidates, "refs/remotes");
+          if (remote.revisionArgs.length === 0 && remote.refs.length === 0) {
+            return new Set<string>();
+          }
+          // A push records commits this repository already had.
+          const fetchedTips = new Set(
+            (yield* walkReflogs(remote.revisionArgs, remote.refs))
+              .filter((entry) => entry.fetched && entry.subject !== "update by push")
+              .map((entry) => entry.commit),
+          );
+          if (fetchedTips.size === 0) return fetchedTips;
+          const fetched = new Set(
+            (yield* listLines(
+              ["rev-list", `--max-age=${capturedAt}`, "--stdin"],
+              `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
+            )).filter((commit) => candidates.has(commit)),
+          );
+          if (fetched.size === 0) return fetched;
+          // Fetching another branch can deliver a commit that was made here and pushed. Every
+          // worktree's HEAD reflog is read, since a detached HEAD may have moved off the commit
+          // it made; --all with refs/* excluded yields exactly those HEADs.
+          const local = yield* listRefsContaining(fetched, "refs/heads");
+          const createdHere = new Set(
+            (yield* walkReflogs(["--exclude=refs/*", "--all", ...local.revisionArgs], local.refs))
+              .filter(isLocalReflogCreation)
+              .map((entry) => entry.commit),
+          );
+          return new Set([...fetched].filter((commit) => !createdHere.has(commit)));
+        },
+      );
 
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
       // Older Git gets dense combined diffs, which miss a conflict resolved to one side's
@@ -2279,7 +2510,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ).pipe(Effect.map((lists) => lists.flat()));
       const [recentCommits, ...pathLists] = yield* Effect.all(
         [
-          listLines(["rev-list", `--since=@${capturedAt}`, `${startHead}..${endHead}`]),
+          listLines(["rev-list", `--max-age=${capturedAt}`, `${startHead}..${endHead}`]),
           listPaths(["diff", startHead, `${turnStart}^{commit}`]),
           listPaths(["diff", endHead, `${input.toCheckpointRef}^{commit}`]),
           listCommitPaths([`${endHead}..${startHead}`]),
@@ -2319,7 +2550,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const importedCommits =
         unprovenCommits.size === 0
           ? new Set<string>()
-          : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
+          : yield* listImportedCommits(unprovenCommits).pipe(
+              Effect.orElseSucceed(() => new Set<string>()),
+            );
       const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
       const ownCommitPaths =
         ownCommits.length === 0
