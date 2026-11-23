@@ -216,11 +216,17 @@ export function findThemeBackground(
   return null;
 }
 
-export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
+export const readPublishedThemes = Effect.fn(function* (
+  themesDir: string,
+  onDirectoryMissing = Effect.void,
+) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs
-    .readDirectory(themesDir)
-    .pipe(Effect.orElseSucceed((): Array<string> => []));
+  const entries = yield* fs.readDirectory(themesDir).pipe(
+    Effect.tapError((error) =>
+      error.reason._tag === "NotFound" ? onDirectoryMissing : Effect.void,
+    ),
+    Effect.orElseSucceed((): Array<string> => []),
+  );
 
   const themes: Array<EnvironmentTheme> = [];
   const entryNames = new Set(entries);
@@ -289,6 +295,7 @@ const make = Effect.gen(function* () {
   // Sequence numbers let subscribers drop queued events older than their initial snapshot.
   const changes = yield* PubSub.sliding<PublishedThemes>(1);
   const published = yield* Ref.make<PublishedThemes>({ seq: 0, themes: [] });
+  const directoryMissing = yield* Ref.make(false);
   // Serialize read/compare/publish so slow older reads cannot publish with newer sequence numbers.
   const refreshSemaphore = yield* Semaphore.make(1);
   const watcherScope = yield* Scope.make("sequential");
@@ -296,9 +303,10 @@ const make = Effect.gen(function* () {
 
   const refresh = refreshSemaphore.withPermits(1)(
     Effect.gen(function* () {
-      const themes = yield* readPublishedThemes(environmentThemesDir).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-      );
+      const themes = yield* readPublishedThemes(
+        environmentThemesDir,
+        Ref.set(directoryMissing, true),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
       // Compare the whole value so new fields cannot silently miss republishes.
       const [changed, next] = yield* Ref.modify(
         published,
@@ -338,6 +346,7 @@ const make = Effect.gen(function* () {
   const watchEvents = watchDirectoryPath(
     environmentThemesDir,
     watchDirectory(environmentThemesDir),
+    Ref.getAndSet(directoryMissing, false),
   ).pipe(
     // A save emits several events, and fs.watch can fire before content is flushed.
     Stream.debounce(Duration.millis(100)),

@@ -69,7 +69,11 @@ const watchDirectoryEntry = (path: string, ready: Deferred.Deferred<void>) => {
 };
 
 /** Watch replacements of a configured directory and nearby ancestors of its symlink target. */
-export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<void>) => {
+export const watchDirectoryPath = (
+  directory: string,
+  watchChild: Stream.Stream<void>,
+  consumeMissingObservation: Effect.Effect<boolean>,
+) => {
   const entry = NodePath.resolve(directory);
   return watchDirectoryReplacements(
     (ready) => watchDirectoryEntry(entry, ready),
@@ -92,7 +96,6 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
         });
 
         // One stat per second for linked paths catches ancestor replacements the watches cannot see.
-        // Retry a stopped content watch even when the same directory returns between samples.
         const identity = fs.stat(entry).pipe(
           Effect.map(
             (info) =>
@@ -103,15 +106,33 @@ export const watchDirectoryPath = (directory: string, watchChild: Stream.Stream<
         return watchDirectoryReplacements(
           (ready) => {
             let previous: string | null | undefined;
+            let retryDelay = 1;
+            let nextRetry = 0;
             return Stream.tick("1 second").pipe(
               Stream.mapEffect(() => identity),
-              Stream.map((current) => {
-                const rebuild =
-                  previous !== undefined &&
-                  (current !== previous || (childEnded && current !== null));
-                previous = current;
-                return rebuild;
-              }),
+              Stream.zipWithIndex,
+              Stream.mapEffect(([current, tick]) =>
+                Effect.gen(function* () {
+                  // A catalog read can see the path missing even if both probes see the same inode.
+                  const sawMissing = current !== null && (yield* consumeMissingObservation);
+                  const replaced = previous !== undefined && current !== previous;
+                  const firstProbe = previous === undefined;
+                  previous = current;
+
+                  if (replaced || sawMissing || !childEnded) {
+                    retryDelay = 1;
+                    nextRetry = tick + 1;
+                  }
+                  if (firstProbe) return false;
+                  if (replaced || sawMissing) return true;
+                  if (!childEnded || current === null || tick < nextRetry) return false;
+
+                  // A stable inode can stay unwatchable due to permissions or OS watch limits.
+                  retryDelay = Math.min(60, retryDelay * 2);
+                  nextRetry = tick + retryDelay;
+                  return true;
+                }),
+              ),
               Stream.tap(() => Deferred.succeed(ready, undefined)),
               Stream.filter((rebuild) => rebuild),
             );
