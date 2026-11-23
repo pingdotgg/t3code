@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="agent_activity_channel_alerts">Alertes des agents</string>
+  <string name="agent_activity_channel_ongoing">Activité des agents en cours</string>
+
+  <string name="agent_activity_status_connecting">Connexion</string>
+  <string name="agent_activity_status_working">En cours</string>
+  <string name="agent_activity_status_approval">Approbation</string>
+  <string name="agent_activity_status_input">Réponse</string>
+  <string name="agent_activity_status_waiting">En attente</string>
+  <string name="agent_activity_status_done">Terminé</string>
+  <string name="agent_activity_status_failed">Échec</string>
+
+  <string name="agent_activity_chip_working">Actif</string>
+  <string name="agent_activity_chip_approve">Valider</string>
+  <string name="agent_activity_chip_answer">Rép.</string>
+  <string name="agent_activity_chip_waiting">Attente</string>
+  <string name="agent_activity_chip_done">Terminé</string>
+  <string name="agent_activity_chip_failed">Échec</string>
+  <string name="agent_activity_chip_active">Actif</string>
+  <string name="agent_activity_chip_review">Vérif.</string>
+  <string name="agent_activity_chip_live">%1$s act.</string>
+
+  <string name="agent_activity_action_open">Ouvrir</string>
+  <string name="agent_activity_action_approve">Approuver</string>
+  <string name="agent_activity_action_answer">Répondre</string>
+  <string name="agent_activity_action_dismiss">Ignorer</string>
+
+  <string name="agent_activity_summary_default">Activité des agents</string>
+  <string name="agent_activity_summary_one_needs_you">1 a besoin de vous</string>
+  <string name="agent_activity_summary_many_need_you">%1$d ont besoin de vous</string>
+  <string name="agent_activity_summary_failed">%1$d en échec</string>
+  <string name="agent_activity_summary_working">%1$d en cours</string>
+  <string name="agent_activity_summary_finished_failed">Terminé, %1$d en échec</string>
+  <string name="agent_activity_summary_all_finished">Tout est terminé</string>
+
+  <string name="agent_activity_subtext_active">%1$d actifs</string>
+  <string name="agent_activity_subtext_threads">%1$d fils</string>
+</resources>

@@ -5,6 +5,7 @@ import { GTProvider, initializeGT, useLocale } from "gt-react-native";
 import { createContext, use, useDeferredValue, useEffect, useMemo, type ReactNode } from "react";
 import { Platform, TurboModuleRegistry, View, type TurboModule } from "react-native";
 
+import { setAndroidAgentNotificationsLocale } from "../features/agent-awareness/androidNotifications";
 import { mobilePreferencesAtom } from "../state/preferences";
 import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
@@ -86,7 +87,10 @@ export function I18nProvider(props: { readonly children: ReactNode }) {
 
 function ActiveLocale() {
   const locale = useLocale();
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- call-time m() outside React reads the committed locale, whose catalog GT has loaded
-  useEffect(() => setActiveLocale(locale), [locale]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- call-time m() outside React and Android native notifications read the committed locale
+  useEffect(() => {
+    setActiveLocale(locale);
+    setAndroidAgentNotificationsLocale(locale);
+  }, [locale]);
   return null;
 }

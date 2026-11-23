@@ -2,10 +2,13 @@ import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo";
 import { Linking, Platform } from "react-native";
 
+import { getActiveLocale } from "../../i18n/messages";
+
 interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
   setThreadOnScreen?(path: string | null): void;
+  setLocale?(locale: string): void;
   openLiveUpdateSettings?(): boolean;
   showShowcaseActivity?(scheme: string, data: Record<string, string>): void;
 }
@@ -30,6 +33,11 @@ export function configureAndroidAgentNotifications(
   ongoingEnabled: boolean,
 ): void {
   native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
+  native?.setLocale?.(getActiveLocale());
+}
+
+export function setAndroidAgentNotificationsLocale(locale: string): void {
+  native?.setLocale?.(locale);
 }
 
 export function showAndroidShowcaseAgentActivity(data: Record<string, string>): boolean {

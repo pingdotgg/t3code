@@ -9,8 +9,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
+import java.util.Locale
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -92,9 +94,47 @@ object AgentNotifications {
   }
 
   @Volatile private var threadOnScreen: String? = null
+  private var lastActivityData: Map<String, String>? = null
+  private var lastActivityActive: Boolean = false
+  private var lastActivityExpiresAt: Long = 0L
 
   fun setThreadOnScreen(path: String?) {
     threadOnScreen = path
+  }
+
+  @Synchronized
+  fun setLocale(context: Context, locale: String?) {
+    val normalized = locale?.trim()?.takeIf { it.isNotEmpty() }
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val editor = prefs.edit()
+    if (normalized == null) {
+      editor.remove("locale")
+    } else {
+      editor.putString("locale", normalized)
+    }
+    editor.apply()
+    channels(context)
+    val data = lastActivityData ?: return
+    val hasCard = manager(context).activeNotifications.any {
+      it.tag == ACTIVITY_TAG && it.id == ACTIVITY_ID
+    }
+    val remainingMs = (lastActivityExpiresAt - System.currentTimeMillis()).coerceAtMost(
+      MAX_LIFETIME_MS
+    )
+    if (hasCard && remainingMs > 0) {
+      val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
+      showActivity(context, scheme, data, lastActivityActive, remainingMs)
+    }
+  }
+
+  private fun localizedContext(context: Context): Context {
+    val tag = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+      .getString("locale", null)
+      ?.takeIf { it.isNotBlank() }
+      ?: return context
+    val config = Configuration(context.resources.configuration)
+    config.setLocale(Locale.forLanguageTag(tag))
+    return context.createConfigurationContext(config)
   }
 
   @Synchronized
@@ -295,7 +335,8 @@ object AgentNotifications {
       Intent(context, AgentActivityDismissReceiver::class.java),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
-    val presentation = ActivityPresentation(data, active)
+    val localized = localizedContext(context)
+    val presentation = ActivityPresentation(data, active, localized)
     val openThread = contentIntent(context, scheme, data["activity_path"], ACTIVITY_ID)
     // Retained results still need Android's ongoing flag to remain promoted.
     val ongoing = active || Build.VERSION.SDK_INT >= 36
@@ -308,10 +349,19 @@ object AgentNotifications {
       .setShortCriticalText(if (ongoing) presentation.chip else null)
       .setContentIntent(openThread)
       .setDeleteIntent(dismissIntent)
-    presentation.applyTo(builder, context)
+    presentation.applyTo(builder, localized)
     val action = presentation.action
     if (action != null && openThread != null) builder.addAction(0, action, openThread)
-    if (ongoing) builder.addAction(0, "Dismiss", dismissIntent)
+    if (ongoing) {
+      builder.addAction(
+        0,
+        localized.getString(R.string.agent_activity_action_dismiss),
+        dismissIntent
+      )
+    }
+    lastActivityData = data
+    lastActivityActive = active
+    lastActivityExpiresAt = System.currentTimeMillis() + remainingMs
     manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, builder.build())
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       // Notification timeouts were added in API 26. One inexact alarm also
@@ -334,6 +384,9 @@ object AgentNotifications {
   )
 
   private fun cancelActivity(context: Context) {
+    lastActivityData = null
+    lastActivityActive = false
+    lastActivityExpiresAt = 0L
     manager(context).cancel(ACTIVITY_TAG, ACTIVITY_ID)
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       context.getSystemService(AlarmManager::class.java).cancel(expiryIntent(context))
@@ -345,12 +398,17 @@ object AgentNotifications {
 
   private fun channels(context: Context) {
     if (Build.VERSION.SDK_INT >= 26) {
+      val localized = localizedContext(context)
       manager(context).createNotificationChannels(
         listOf(
-          NotificationChannel(ALERT_CHANNEL, "Agent alerts", NotificationManager.IMPORTANCE_HIGH),
+          NotificationChannel(
+            ALERT_CHANNEL,
+            localized.getString(R.string.agent_activity_channel_alerts),
+            NotificationManager.IMPORTANCE_HIGH
+          ),
           NotificationChannel(
             ACTIVITY_CHANNEL,
-            "Ongoing agent activity",
+            localized.getString(R.string.agent_activity_channel_ongoing),
             NotificationManager.IMPORTANCE_LOW
           ),
         )
