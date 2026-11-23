@@ -74,6 +74,52 @@ const lastFailure = new ConnectionTransientError({ reason: "transport", detail: 
 const newSession = () => Option.some({} as RpcSession.RpcSession);
 
 describe("environment catalog atoms", () => {
+  it.effect("reports a failed catalog load and loads once the runtime is refreshed", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const runtime = Atom.runtime(
+        Layer.effect(
+          EnvironmentRegistry.EnvironmentRegistry,
+          Effect.suspend(() => {
+            attempts += 1;
+            if (attempts === 1) {
+              return Effect.fail(
+                new ConnectionTransientError({ reason: "remote-unavailable", detail: "Locked." }),
+              );
+            }
+            return SubscriptionRef.make(new Map()).pipe(
+              Effect.map((entries) =>
+                EnvironmentRegistry.EnvironmentRegistry.of({
+                  entries,
+                } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]),
+              ),
+            );
+          }),
+        ),
+      );
+      const catalog = createEnvironmentCatalogAtoms(runtime);
+      const atoms = AtomRegistry.make();
+      const unmount = atoms.mount(catalog.catalogValueAtom);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          unmount();
+          atoms.dispose();
+        }),
+      );
+      yield* Effect.yieldNow;
+      expect(atoms.get(catalog.catalogValueAtom)).toMatchObject({
+        isReady: false,
+        loadError: "Locked.",
+      });
+
+      atoms.refresh(runtime);
+      yield* Effect.yieldNow;
+      const loaded = atoms.get(catalog.catalogValueAtom);
+      expect(loaded.isReady).toBe(true);
+      expect(loaded.loadError).toBeUndefined();
+    }),
+  );
+
   it.effect("changes the session generation only when a new session comes up", () =>
     Effect.gen(function* () {
       const { generation, generationAfter } = yield* makeCatalogHarness();

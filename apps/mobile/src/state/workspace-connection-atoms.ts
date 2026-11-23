@@ -15,12 +15,16 @@ export function createWorkspaceConnectionAtoms(input: {
 }) {
   const { environmentsAtom } = createEnvironmentSummaryAtoms(input);
   const isReadyAtom = input.catalogValueAtom.pipe(Atom.map((catalog) => catalog.isReady));
+  const catalogLoadErrorAtom = input.catalogValueAtom.pipe(
+    Atom.map((catalog) => catalog.loadError),
+  );
   const stateAtom = Atom.make((get) =>
     projectWorkspaceConnectionState({
       isReady: get(isReadyAtom),
+      catalogLoadError: get(catalogLoadErrorAtom),
       networkStatus: get(input.networkStatusValueAtom),
       environments: get(environmentsAtom),
     }),
   ).pipe(Atom.withLabel("mobile:workspace-connection-state"));
-  return { environmentsAtom, stateAtom, isReadyAtom };
+  return { environmentsAtom, stateAtom, isReadyAtom, catalogLoadErrorAtom };
 }

@@ -38,6 +38,7 @@ export function useConnectionsReady() {
 export const workspaceStateAtom = Atom.make((get) =>
   projectWorkspaceState({
     isReady: get(workspaceConnections.isReadyAtom),
+    catalogLoadError: get(workspaceConnections.catalogLoadErrorAtom),
     networkStatus: get(environmentCatalog.networkStatusValueAtom),
     environments: get(workspaceConnections.environmentsAtom),
     shellSummary: get(environmentShellSummaryAtom),

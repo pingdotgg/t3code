@@ -1,4 +1,5 @@
 import type { EnvironmentId as EnvironmentIdType } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -23,6 +24,8 @@ import {
 export interface EnvironmentCatalogState {
   readonly isReady: boolean;
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
+  /** Why the saved catalog could not be loaded; refreshing the runtime retries it. */
+  readonly loadError?: string;
 }
 
 export function* enabledEnvironmentIds(
@@ -61,9 +64,17 @@ export function createEnvironmentCatalogAtoms<R, E>(
     { initialValue: EMPTY_ENVIRONMENT_CATALOG_STATE },
   );
 
-  const catalogValueAtom = Atom.make((get) =>
-    AsyncResult.getOrElse(get(catalogAtom), () => EMPTY_ENVIRONMENT_CATALOG_STATE),
-  ).pipe(Atom.withLabel("environment-catalog-value"));
+  const catalogValueAtom = Atom.make((get): EnvironmentCatalogState => {
+    const result = get(catalogAtom);
+    if (AsyncResult.isFailure(result) && !result.waiting) {
+      const error = Cause.squash(result.cause);
+      return {
+        ...EMPTY_ENVIRONMENT_CATALOG_STATE,
+        loadError: error instanceof Error ? error.message : String(error),
+      };
+    }
+    return AsyncResult.getOrElse(result, () => EMPTY_ENVIRONMENT_CATALOG_STATE);
+  }).pipe(Atom.withLabel("environment-catalog-value"));
 
   const pullRequestRoutingPermissionsAtom = runtime.atom(
     Stream.unwrap(

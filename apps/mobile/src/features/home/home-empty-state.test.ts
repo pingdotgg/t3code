@@ -23,6 +23,7 @@ function connectingEnvironment(
 function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState {
   return {
     isLoadingConnections: false,
+    catalogLoadError: null,
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,
@@ -97,8 +98,25 @@ describe("home empty state", () => {
       1,
       { title: "No threads yet", loading: false, showsAddEnvironment: true },
     ],
+    [
+      "offers a retry instead of loading forever when the saved catalog cannot be read",
+      workspaceState({
+        catalogLoadError: "Could not load the local connection catalog: Keychain locked.",
+        hasConnections: false,
+        hasLoadedShellSnapshot: false,
+        hasReadyEnvironment: false,
+        connectionState: "available",
+      }),
+      0,
+      {
+        title: "Could not load environments",
+        detail: "Could not load the local connection catalog: Keychain locked.",
+        loading: false,
+        showsAddEnvironment: false,
+        showsRetryCatalogLoad: true,
+      },
+    ],
   ] as const)("%s", (_name, state, projectCount, expected) => {
-    const { title, loading, showsAddEnvironment } = deriveHomeEmptyState(state, projectCount);
-    expect({ title, loading, showsAddEnvironment }).toEqual(expected);
+    expect(deriveHomeEmptyState(state, projectCount)).toMatchObject(expected);
   });
 });
