@@ -28,13 +28,24 @@ const closesAtBlankLine = (next: string) => next.trim() === "";
 // A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
 const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
-const HTML_COMMENT = /<!--.*?-->/g;
 // An end tag that never comes, or back-to-back wrappers, must not make one huge piece.
 const WRAPPED_MAX_CHARS = 32 * 1024;
 
+function withoutComments(line: string): string {
+  let kept = "";
+  let at = 0;
+  for (let open = line.indexOf("<!--"); open !== -1; open = line.indexOf("<!--", at)) {
+    const close = line.indexOf("-->", open + 4);
+    if (close === -1) break;
+    kept += line.slice(at, open);
+    at = close + 3;
+  }
+  return kept + line.slice(at);
+}
+
 function openedWrappers(line: string): number {
   let opened = 0;
-  for (const [, closing] of line.replaceAll(HTML_COMMENT, "").matchAll(WRAPPER_TAG)) {
+  for (const [, closing] of withoutComments(line).matchAll(WRAPPER_TAG)) {
     opened += closing ? -1 : 1;
   }
   return opened;
