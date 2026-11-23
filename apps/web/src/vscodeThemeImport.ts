@@ -480,6 +480,7 @@ export function resolveThemeLabelCollisions(
     return renamed ?? theme;
   });
 
+  const inputIds = new Set(relabelled.map(({ id }) => id));
   const seen = new Set<string>();
   return relabelled.map((theme) => {
     if (!seen.has(theme.id)) {
@@ -487,8 +488,23 @@ export function resolveThemeLabelCollisions(
       return theme;
     }
     for (let suffix = 2; suffix < 100; suffix += 1) {
-      const candidate = rename(theme, `${theme.label} ${suffix}`);
-      if (candidate && !seen.has(candidate.id)) {
+      const suffixText = String(suffix);
+      const base = [...theme.label];
+      let stem = base.join("").trimEnd();
+      let name = `${stem} ${suffixText}`;
+      let id = themeIdFromName(name);
+      while (
+        name.length > 48 ||
+        id.split("-").at(-1) !== suffixText ||
+        id === themeIdFromName(stem)
+      ) {
+        base.pop();
+        stem = base.join("").trimEnd();
+        name = `${stem} ${suffixText}`;
+        id = themeIdFromName(name);
+      }
+      const candidate = rename(theme, name);
+      if (candidate && !inputIds.has(candidate.id) && !seen.has(candidate.id)) {
         seen.add(candidate.id);
         return candidate;
       }

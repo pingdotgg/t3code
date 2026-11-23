@@ -66,10 +66,11 @@ const fakeAppImage = (canMount = true, app = REPORTER) => {
   return { root, image, appImage, shim };
 };
 
-// Stays up after a signal until the test lets it finish, like a server shutting down.
+// Stays up after a signal until the test lets it finish, like a server shutting down. A group
+// signal and the launcher's forwarded one can both arrive; a re-run trap would read stdin's EOF.
 const SLOW_SERVER = [
   "#!/bin/sh",
-  "trap 'echo stopping >&3; read go; echo stopped >&3; exit 0' TERM HUP",
+  'trap \'trap "" TERM HUP; echo stopping >&3; read go; echo "stopped $go" >&3; exit 7\' TERM HUP',
   "echo ready",
   "while :; do sleep 0.05; done",
   "",
@@ -101,9 +102,16 @@ const lines = (stream: NodeJS.ReadableStream) => {
 };
 
 describe("renderCliShim", () => {
-  it.skipIf(!hasSetsid).each(["SIGTERM", "SIGHUP"] as const)(
-    "keeps the AppImage mounted until the server exits after %s to the process group",
-    async (signal) => {
+  // Ctrl-C, an SSH hangup, or a supervisor signals the process group. systemd's default KillMode
+  // also signals the mounter, and KillMode=mixed signals only the launcher.
+  it.skipIf(!hasSetsid).each([
+    ["SIGTERM", "the process group"],
+    ["SIGHUP", "the process group"],
+    ["SIGTERM", "every process"],
+    ["SIGTERM", "the launcher"],
+  ] as const)(
+    "keeps the AppImage mounted until the server exits after %s to %s",
+    async (signal, target) => {
       const { root, shim } = fakeAppImage(true, SLOW_SERVER);
       const child = NodeChildProcess.spawn(shim, [], {
         detached: true,
@@ -114,12 +122,12 @@ describe("renderCliShim", () => {
       try {
         const stdout = lines(child.stdout!);
         const events = lines(child.stdio[3] as NodeJS.ReadableStream);
-        const exited = new Promise((resolve) => child.on("close", resolve));
+        const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
         await stdout.until((line) => line === "ready");
         mounter = Number(NodeFS.readFileSync(NodePath.join(root, "mounter.pid"), "utf8"));
 
-        // Ctrl-C in a terminal, a closed SSH session, or a service manager signals the whole group.
-        process.kill(-child.pid!, signal);
+        process.kill(target === "the launcher" ? child.pid! : -child.pid!, signal);
+        if (target === "every process") process.kill(mounter, signal);
         // The shell runs pending traps in ascending signal number, and WINCH outnumbers TERM and
         // HUP, so a mounter that also got the group signal unmounts before it answers this probe.
         process.kill(mounter, "SIGWINCH");
@@ -128,8 +136,8 @@ describe("renderCliShim", () => {
 
         await events.until((line) => line === "stopping");
         child.stdin!.end("go\n");
-        await exited;
-        expect(events.seen.slice(-2)).toEqual(["stopped", "unmounted"]);
+        expect(await exited).toBe(7);
+        expect(events.seen.slice(-2)).toEqual(["stopped go", "unmounted"]);
       } finally {
         for (const pid of [-child.pid!, mounter]) {
           if (pid === undefined) continue;
@@ -156,6 +164,8 @@ describe("renderCliShim", () => {
     const result = run(shim, ["--version"]);
     expect(result.status).toBe(3);
     expect(result.stdout).toContain(`appimage=${appImage}`);
+    const closedStdin = NodeChildProcess.spawnSync("sh", ["-c", '"$0" --version <&-', shim]);
+    expect(closedStdin.status).toBe(3);
   });
 
   it("keeps the install's T3 home under sudo, unless one is set", () => {

@@ -163,7 +163,7 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
                 assert.strictEqual(exit._tag, "Failure", testCase.name)
                 assert.deepStrictEqual(yield* peer.requests, [], testCase.name)
               }
-            }).pipe(Effect.scoped)
+            })
         )
 
         it.effect.skipIf(protocol.protocolVersion !== "2025-11-25")(
