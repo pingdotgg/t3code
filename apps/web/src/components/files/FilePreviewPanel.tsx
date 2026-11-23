@@ -1793,19 +1793,10 @@ export default function FilePreviewPanel({
                   compact
                 />
               ) : null}
-              {showsLargeText && absolutePath && relativePath ? (
-                <LargeFileActions
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  absolutePath={absolutePath}
-                  draftCwd={draft ? cwd : null}
-                  name={relativePath}
-                  copyContents={copyLargeText}
-                />
-              ) : null}
               {showsRawText ||
               canOpenInBrowser ||
               copyableContents !== null ||
+              (showsLargeText && absolutePath !== null && relativePath !== null) ||
               (foldActions && canAddToChat) ? (
                 <Menu>
                   <Tooltip>
@@ -1850,6 +1841,16 @@ export default function FilePreviewPanel({
                         {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
                         {isCopied ? <T>Copied</T> : <T>Copy contents</T>}
                       </MenuItem>
+                    ) : null}
+                    {showsLargeText && absolutePath && relativePath ? (
+                      <LargeFileActions
+                        environmentId={environmentId}
+                        threadRef={threadRef}
+                        absolutePath={absolutePath}
+                        draftCwd={draft ? cwd : null}
+                        name={relativePath}
+                        copyContents={copyLargeText}
+                      />
                     ) : null}
                     {canOpenInBrowser ? (
                       <MenuItem onClick={handleOpenInBrowser}>
@@ -2180,9 +2181,9 @@ function LargeFileActions(props: {
   };
   return (
     <>
-      <FileSurfaceAction
-        label={isCopied ? gt("Copied") : gt("Copy contents")}
-        onPress={() => {
+      <MenuItem
+        closeOnClick={false}
+        onClick={() => {
           const copy = props.copyContents.current;
           if (!copy) return;
           void copy()
@@ -2190,12 +2191,12 @@ function LargeFileActions(props: {
             .catch(showError);
         }}
       >
-        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      </FileSurfaceAction>
-      <FileSurfaceAction
-        label={saving ? gt("Preparing file…") : gt("Save file")}
+        {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+        {isCopied ? <T>Copied</T> : <T>Copy contents</T>}
+      </MenuItem>
+      <MenuItem
         disabled={saving}
-        onPress={() => {
+        onClick={() => {
           setSaving(true);
           void (async () => {
             const url = await refreshAssetUrl();
@@ -2213,8 +2214,9 @@ function LargeFileActions(props: {
             .finally(() => setSaving(false));
         }}
       >
-        <DownloadIcon className="size-3.5" />
-      </FileSurfaceAction>
+        <DownloadIcon aria-hidden />
+        {saving ? <T>Preparing file…</T> : <T>Save file</T>}
+      </MenuItem>
     </>
   );
 }

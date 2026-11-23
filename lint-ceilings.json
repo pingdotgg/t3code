@@ -362,7 +362,6 @@
     "apps/web/src/components/files/FileBrowserPanel.tsx": 2,
     "apps/web/src/components/files/FileExplorerPane.tsx": 2,
     "apps/web/src/components/files/FilePreviewPanel.tsx": 2,
-    "apps/web/src/components/files/LargeTextViewer.tsx": 1,
     "apps/web/src/components/files/NotebookPreview.tsx": 4,
     "apps/web/src/components/files/OfficeViewer.tsx": 2,
     "apps/web/src/components/files/PdfViewer.tsx": 3,
