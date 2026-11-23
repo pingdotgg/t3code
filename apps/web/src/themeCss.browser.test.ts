@@ -42,8 +42,9 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
 });
 
-it("plays theme animations a finite number of times so an idle app stops repainting", () => {
-  const probes = ["loop", "variable", "listed", "counted"].map((name) => {
+it("plays infinite theme animations once so an idle app stops repainting", () => {
+  const names = ["loop", "important", "listed", "counted", "varDuration", "varCount"];
+  const probes = names.map((name) => {
     const probe = document.createElement("div");
     probe.dataset.themeCssProbe = name;
     document.body.append(probe);
@@ -54,19 +55,25 @@ it("plays theme animations a finite number of times so an idle app stops repaint
 
   applyThemeCss(`
     @keyframes dot-pulse { to { background-position: 24px 24px; } }
-    :root { --forever: infinite; }
+    :root { --duration: 1s; --count: 3; }
     [data-theme-css-probe="loop"] { animation: dot-pulse 26s linear infinite; }
-    [data-theme-css-probe="variable"] { animation: dot-pulse 26s linear var(--forever) !important; }
-    [data-theme-css-probe="listed"] { animation: dot-pulse 1s, dot-pulse 2s infinite; }
+    [data-theme-css-probe="important"] { animation-iteration-count: infinite !important; }
+    [data-theme-css-probe="listed"] { animation: dot-pulse 1s 3, dot-pulse 2s infinite; }
     [data-theme-css-probe="counted"] { animation: dot-pulse 1s 3; }
+    [data-theme-css-probe="varDuration"] { animation: dot-pulse var(--duration) 3; }
+    [data-theme-css-probe="varCount"] { animation: dot-pulse 1s var(--count); }
   `);
 
-  const [loop, variable, listed, counted] = probes.map((probe) => getComputedStyle(probe));
-  expect(loop?.animationName).toBe("dot-pulse");
-  expect(loop?.animationIterationCount).toBe("1");
-  expect(variable?.animationName).toBe("dot-pulse");
-  expect(variable?.animationDuration).toBe("26s");
-  expect(variable?.animationIterationCount).toBe("1");
-  expect(listed?.animationIterationCount).toBe("1");
-  expect(counted?.animationIterationCount).toBe("3");
+  const counts = Object.fromEntries(
+    probes.map((probe, index) => [names[index], getComputedStyle(probe).animationIterationCount]),
+  );
+  expect(counts).toEqual({
+    loop: "1",
+    important: "1",
+    listed: "3, 1",
+    counted: "3",
+    varDuration: "3",
+    varCount: "3",
+  });
+  expect(getComputedStyle(probes[0]!).animationName).toBe("dot-pulse");
 });

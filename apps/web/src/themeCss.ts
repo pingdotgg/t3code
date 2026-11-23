@@ -14,9 +14,13 @@ type RuleParent = Pick<CSSStyleSheet, "cssRules" | "deleteRule">;
 const isRuleParent = (rule: CSSRule): rule is CSSRule & RuleParent =>
   "cssRules" in rule && "deleteRule" in rule && !(rule instanceof CSSKeyframesRule);
 
-// A looping animation repaints every frame while the app sits idle. An empty value is a shorthand
-// whose var() resolves later.
-const LOOPS = /infinite|var\(|^$/i;
+// A looping animation repaints every frame while the app sits idle, so each infinite count plays once.
+function finiteIterationCounts(value: string): string {
+  return value
+    .split(",")
+    .map((count) => (count.trim().toLowerCase() === "infinite" ? "1" : count.trim()))
+    .join(", ");
+}
 
 function stripDeclarations(rule: CSSRule): boolean {
   if (!("style" in rule) || !(rule.style instanceof CSSStyleDeclaration)) return false;
@@ -26,8 +30,10 @@ function stripDeclarations(rule: CSSRule): boolean {
     const value = style.getPropertyValue(property);
     if (themeCssValueFetches(value)) {
       style.removeProperty(property);
-    } else if (property === "animation-iteration-count" && LOOPS.test(value.trim())) {
-      style.setProperty(property, "1", style.getPropertyPriority(property));
+    } else if (property === "animation-iteration-count") {
+      const finite = finiteIterationCounts(value);
+      if (finite !== value)
+        style.setProperty(property, finite, style.getPropertyPriority(property));
     }
   }
   return true;
