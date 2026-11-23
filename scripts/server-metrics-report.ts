@@ -7,6 +7,19 @@ const Window = Schema.Struct({
   rssPeakMB: Schema.Number,
   rssMB: Schema.Number,
   heapAfterGcMB: Schema.Number,
+  // Files written before these were recorded still decode, and compare shows them as n/a.
+  /** Event-loop delay past the 10 ms sampling interval, from a histogram inside the server. */
+  loopDelayP50Ms: Schema.optional(Schema.Number),
+  loopDelayP99Ms: Schema.optional(Schema.Number),
+  loopDelayMaxMs: Schema.optional(Schema.Number),
+  /**
+   * Delay samples taken. Each can wake an idle loop, so they sit inside `wakeupsPerSec` (up to
+   * 100/s at rest, near none under load, when the loop is already awake); not compared.
+   */
+  loopSamples: Schema.optional(Schema.Number),
+  /** GC events and their summed pause in the window, from a `gc` PerformanceObserver. */
+  gcCount: Schema.optional(Schema.Number),
+  gcPauseMs: Schema.optional(Schema.Number),
 });
 export type Window = typeof Window.Type;
 const Spread = Schema.Struct({ median: Schema.Number, p90: Schema.Number });
@@ -143,6 +156,11 @@ function noiseFloor(metric: string) {
   if (metric.endsWith("cpuPct")) return 1;
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
+  if (metric.endsWith("loopDelayP50Ms")) return 2;
+  if (metric.endsWith("loopDelayP99Ms")) return 5;
+  if (metric.endsWith("loopDelayMaxMs")) return 20;
+  if (metric.endsWith("gcPauseMs")) return 10;
+  if (metric.endsWith("gcCount")) return 20;
   return 300;
 }
 
@@ -193,11 +211,30 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
   const improved: string[] = [];
   let compared = 0;
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
-    if (metric === "soak.minutes" || metric.startsWith("scaling.points")) continue;
+    if (
+      metric === "soak.minutes" ||
+      metric.endsWith("loopSamples") ||
+      metric.startsWith("scaling.points")
+    ) {
+      continue;
+    }
     const x = a.get(metric);
     const y = b.get(metric);
     if (!x || !y) {
       lines.push(`| ${metric} | ${x ? median(x) : "–"} | ${y ? median(y) : "–"} | n/a | | |`);
+      continue;
+    }
+    // Wakeups include the delay sampler's only when `loopSamples` sits beside them, so a file
+    // from before the sampler and one from after measured different things. The per-thread fit
+    // comes from the quiet windows.
+    const window =
+      metric === "scaling.wakeupsPerThread"
+        ? "quiet."
+        : metric.endsWith("wakeupsPerSec")
+          ? metric.slice(0, -"wakeupsPerSec".length)
+          : "";
+    if (window && a.has(`${window}loopSamples`) !== b.has(`${window}loopSamples`)) {
+      lines.push(`| ${metric} | ${median(x)} | ${median(y)} | not comparable | | |`);
       continue;
     }
     compared++;

@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,16 +6,34 @@ import {
   heapGrowth,
   parsePsCpuTime,
   parseRunSelection,
+  ServerMetrics,
   slope,
-  type ServerMetrics,
 } from "./server-metrics-report.ts";
 
-type Quiet = { cpuPct: number; wakeupsPerSec: number | null; rssPeakMB: number };
+const decodeMetrics = Schema.decodeSync(ServerMetrics);
+
+type Quiet = {
+  cpuPct: number;
+  wakeupsPerSec: number | null;
+  rssPeakMB: number;
+  loopDelayP99Ms?: number;
+  loopDelayMaxMs?: number;
+  gcPauseMs?: number;
+};
+const loopAtRest = {
+  loopDelayP50Ms: 0.1,
+  loopDelayP99Ms: 1.5,
+  loopDelayMaxMs: 8,
+  gcCount: 12,
+  gcPauseMs: 6,
+};
 const meta = { commit: "abc", platform: "linux-x64", noAgentScope: true };
 const quietRuns = (...runs: Quiet[]) =>
   ({
     meta,
-    runs: runs.map((quiet) => ({ quiet: { ...quiet, rssMB: 500, heapAfterGcMB: 200 } })),
+    runs: runs.map((quiet) => ({
+      quiet: { ...loopAtRest, ...quiet, rssMB: 500, heapAfterGcMB: 200 },
+    })),
   }) satisfies ServerMetrics;
 const base: Quiet = { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500 };
 const cpuRuns = (...values: number[]) =>
@@ -26,6 +45,10 @@ describe("compareMetrics", () => {
     ["a large relative change under the 1 point CPU floor", { cpuPct: 0.9 }, [], []],
     ["RSS growth under the 15 MB floor", { rssPeakMB: 512 }, [], []],
     ["RSS growth past it", { rssPeakMB: 585 }, ["quiet.rssPeakMB"], []],
+    ["a doubled p99 loop delay under the 5 ms floor", { loopDelayP99Ms: 3 }, [], []],
+    ["a p99 loop delay past it", { loopDelayP99Ms: 40 }, ["quiet.loopDelayP99Ms"], []],
+    ["one longer stall under the 20 ms max floor", { loopDelayMaxMs: 25 }, [], []],
+    ["GC pauses past the 10 ms floor", { gcPauseMs: 30 }, ["quiet.gcPauseMs"], []],
     [
       "an improvement past the floors",
       { cpuPct: 0.1, wakeupsPerSec: 7, rssPeakMB: 400 },
@@ -54,10 +77,51 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9)).regressed).toEqual([]);
   });
 
+  it("reads a file written before loop delay and GC were recorded", () => {
+    const older = decodeMetrics({
+      meta,
+      runs: [
+        {
+          quiet: { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 },
+        },
+      ],
+    });
+    const result = compareMetrics(older, quietRuns(base));
+    expect(result.compared).toBe(5);
+    expect(result.table).toContain("| quiet.loopDelayP99Ms | – | 1.5 | n/a | | |");
+  });
+
+  it("does not compare wakeups counted with and without the delay sampler", () => {
+    const sampled = quietRuns({ ...base, wakeupsPerSec: 160 });
+    const withSamples: ServerMetrics = {
+      meta,
+      runs: sampled.runs.map((run) => ({ quiet: { ...run.quiet, loopSamples: 2_900 } })),
+    };
+    const result = compareMetrics(quietRuns(base), withSamples);
+    expect(result.regressed).toEqual([]);
+    expect(result.table).toContain("| quiet.wakeupsPerSec | 7 | 160 | not comparable | | |");
+    // The per-thread fit comes from the quiet windows, so it follows their method.
+    const scaling = (wakeupsPerThread: number) => ({
+      heapMBPerThread: 1,
+      rssMBPerThread: 2,
+      cpuPctPerThread: 0.1,
+      wakeupsPerThread,
+      points: [],
+    });
+    const fitted = (metrics: ServerMetrics, wakeupsPerThread: number): ServerMetrics => ({
+      meta,
+      runs: metrics.runs.map((run) => ({ ...run, scaling: scaling(wakeupsPerThread) })),
+    });
+    const fit = compareMetrics(fitted(quietRuns(base), 0.5), fitted(withSamples, 6));
+    expect(fit.regressed).toEqual([]);
+    expect(fit.table).toContain("| scaling.wakeupsPerThread | 0.5 | 6 | not comparable | | |");
+    expect(compareMetrics(withSamples, withSamples).compared).toBe(10);
+  });
+
   it("counts how many metrics both sides share", () => {
     const startupOnly: ServerMetrics = { meta, runs: [{ startup: { readyMs: 9_000 } }] };
     expect(compareMetrics(startupOnly, quietRuns(base)).compared).toBe(0);
-    expect(compareMetrics(quietRuns(base), quietRuns(base)).compared).toBe(5);
+    expect(compareMetrics(quietRuns(base), quietRuns(base)).compared).toBe(10);
   });
 });
 

@@ -56,6 +56,16 @@ import {
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
+/** Event-loop delay sampling interval; each sample wakes the loop once. */
+const LOOP_RESOLUTION_MS = 10;
+const LoopStats = Schema.Struct({
+  p50: Schema.Number,
+  p99: Schema.Number,
+  max: Schema.Number,
+  samples: Schema.Number,
+  gcCount: Schema.Number,
+  gcMs: Schema.Number,
+});
 
 export class MetricsError extends Schema.TaggedError<MetricsError>()("MetricsError", {
   message: Schema.String,
@@ -269,6 +279,9 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
   const decodeEvaluated = Schema.decodeUnknownEffect(
     Schema.Struct({ result: Schema.Struct({ value: Schema.Number }) }),
   );
+  const decodeLoop = Schema.decodeUnknownEffect(
+    Schema.Struct({ result: Schema.Struct({ value: Schema.fromJsonString(LoopStats) }) }),
+  );
   const decodeHeapProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: HeapProfile }));
   const decodeCpuProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: CpuProfile }));
   return {
@@ -279,6 +292,54 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       returnByValue: true,
     }).pipe(
       Effect.flatMap(decodeEvaluated),
+      Effect.map(({ result }) => result.value),
+    ),
+    // One histogram and GC observer live in the server; a window resets them and reads them back.
+    // Node delivers GC entries to observers from a later setImmediate, which takeRecords() cannot
+    // reach, so each boundary first lets two turns pass and the pending entries land on its side.
+    loopStart: send("Runtime.evaluate", {
+      awaitPromise: true,
+      expression: `(async () => {
+        const bench = (globalThis.__t3ServerMetrics ??= (() => {
+          const { monitorEventLoopDelay, PerformanceObserver } = process.getBuiltinModule("node:perf_hooks");
+          const state = { delay: monitorEventLoopDelay({ resolution: ${LOOP_RESOLUTION_MS} }), gcCount: 0, gcMs: 0 };
+          state.count = (entries) => {
+            for (const entry of entries) { state.gcCount++; state.gcMs += entry.duration; }
+          };
+          state.gc = new PerformanceObserver((list) => state.count(list.getEntries()));
+          state.gc.observe({ entryTypes: ["gc"] });
+          return state;
+        })());
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        bench.gc.takeRecords();
+        bench.delay.reset();
+        bench.delay.enable();
+        bench.gcCount = 0;
+        bench.gcMs = 0;
+      })()`,
+    }).pipe(Effect.asVoid),
+    loopRead: send("Runtime.evaluate", {
+      awaitPromise: true,
+      expression: `(async () => {
+        const bench = globalThis.__t3ServerMetrics;
+        bench.delay.disable();
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+        bench.count(bench.gc.takeRecords());
+        const ms = (ns) => Math.max(0, ns / 1e6 - ${LOOP_RESOLUTION_MS});
+        return JSON.stringify({
+          p50: ms(bench.delay.percentile(50)),
+          p99: ms(bench.delay.percentile(99)),
+          max: ms(bench.delay.max),
+          samples: bench.delay.count,
+          gcCount: bench.gcCount,
+          gcMs: bench.gcMs,
+        });
+      })()`,
+      returnByValue: true,
+    }).pipe(
+      Effect.flatMap(decodeLoop),
       Effect.map(({ result }) => result.value),
     ),
     heapAfterGc: Effect.gen(function* () {
@@ -514,7 +575,8 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
 
   const readyMs = yield* http.get(`http://127.0.0.1:${port}/`).pipe(
     Effect.timeout(Duration.seconds(1)),
-    Effect.retry({ schedule: Schedule.spaced(Duration.millis(100)), times: 600 }),
+    // A seeded database or a loaded machine can keep startup past a minute.
+    Effect.retry({ schedule: Schedule.spaced(Duration.millis(100)), times: 3_000 }),
     Effect.andThen(nowMs),
     Effect.map((now) => Math.round(now - started)),
     Effect.catch(() =>
@@ -555,6 +617,7 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       const value = yield* read;
       return { value, at: (before + (yield* nowMs)) / 2 };
     });
+    yield* devtools.loopStart;
     const firstSwitches = yield* timed(countSwitches);
     const firstSample = yield* timed(sample(pid));
     const first = firstSample.value;
@@ -568,11 +631,13 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     const last = lastSample.value;
     const cpuElapsed = (lastSample.at - start) / 1_000;
     const lastSwitches = yield* timed(countSwitches);
+    // Read before the forced GC below, which would count as a pause.
+    const loop = yield* devtools.loopRead;
     const switchesElapsed = (lastSwitches.at - firstSwitches.at) / 1_000;
     const switches =
       firstSwitches.value === null || lastSwitches.value === null
         ? null
-        : lastSwitches.value - firstSwitches.value;
+        : Math.max(0, lastSwitches.value - firstSwitches.value);
     const heap = yield* devtools.heapAfterGc;
     const window: Window = {
       cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / cpuElapsed) * 100),
@@ -580,6 +645,12 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
       rssPeakMB: Math.round(Math.max(rssPeak, last.rss) / 1e6),
       rssMB: Math.round((yield* sample(pid)).rss / 1e6),
       heapAfterGcMB: round(heap / 1e6),
+      loopDelayP50Ms: round(loop.p50),
+      loopDelayP99Ms: round(loop.p99),
+      loopDelayMaxMs: round(loop.max),
+      loopSamples: loop.samples,
+      gcCount: loop.gcCount,
+      gcPauseMs: round(loop.gcMs),
     };
     return window;
   });
