@@ -3801,6 +3801,15 @@ async fn fill_credential_answers_with_a_status_only() {
     assert!(!result.to_string().contains("fixture-only"));
 }
 
+async fn projection_of(f: &Fixture, thread: &str) -> Value {
+    f.service
+        .config
+        .engine
+        .get_thread_projection(thread.into())
+        .await
+        .unwrap()
+}
+
 /// T3 `sendToThread` refuses an archived thread (`ThreadManagementService.ts:872`), so a
 /// bound schedule records the failure and sends nothing, from Run now and from the timer.
 #[tokio::test(flavor = "current_thread")]
@@ -3810,7 +3819,9 @@ async fn a_bound_schedule_never_sends_to_an_archived_thread() {
         clock::TestClock,
         scheduled::{Config, EngineRunner, ScheduledTasks},
     };
-    let f = fixture("schedule-archived");
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("schedule-archived", None, Arc::new(fake), None);
     let mut operator = Client::open(&f.service, client(true)).await;
     let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
     operator
@@ -3829,10 +3840,12 @@ async fn a_bound_schedule_never_sends_to_an_archived_thread() {
         start_timer: true,
     })
     .await;
+    // Only `timed` comes due on the timer; `manual` runs by hand.
     let task = |id: &str, thread: Option<&str>| {
+        let every = if id == "timed" { 60_000 } else { 86_400_000 };
         serde_json::from_value(json!({
             "id": id, "title": id, "prompt": id, "enabled": true,
-            "schedule": {"type": "interval", "everyMs": 60_000}, "projectId": project_id(),
+            "schedule": {"type": "interval", "everyMs": every}, "projectId": project_id(),
             "threadId": thread, "workspaceStrategy": {"type": "root"},
             "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
             "runtimeMode": "auto", "interactionMode": "default",
@@ -3848,6 +3861,20 @@ async fn a_bound_schedule_never_sends_to_an_archived_thread() {
     )
     .await;
     let refusal = format!("Thread {thread} is archived and cannot receive messages.");
+    let started = sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let runs = |p: &Value| p["runs"].as_array().map_or(0, Vec::len);
+    let runs_before = runs(&projection_of(&f, &thread).await);
+    // The agent's own send asks the same guard (`threadManagementFailure`).
+    let (code, message) = operator
+        .failure(
+            "conn_thread_send",
+            json!({"threadId": thread, "message": "late", "mode": "queue"}),
+        )
+        .await;
+    assert_eq!(
+        (code.as_str(), message.as_str()),
+        ("thread_not_sendable", refusal.as_str())
+    );
 
     let manual = service.run_now("manual").await.unwrap();
     assert_eq!(manual.thread_id, None);
@@ -3873,13 +3900,7 @@ async fn a_bound_schedule_never_sends_to_an_archived_thread() {
         }
     };
     assert_eq!(timed.last_run_error.as_deref(), Some(refusal.as_str()));
-    let projection = f
-        .service
-        .config
-        .engine
-        .get_thread_projection(thread.as_str().into())
-        .await
-        .unwrap();
+    let projection = projection_of(&f, &thread).await;
     let sent: Vec<&Value> = projection["messages"]
         .as_array()
         .unwrap()
@@ -3887,4 +3908,38 @@ async fn a_bound_schedule_never_sends_to_an_archived_thread() {
         .filter(|m| m["scheduledTaskId"].is_string())
         .collect();
     assert!(sent.is_empty(), "{sent:?}");
+    assert_eq!(runs(&projection), runs_before, "no new turn");
+    assert_eq!(
+        sessions.load(std::sync::atomic::Ordering::SeqCst),
+        started,
+        "no provider start"
+    );
+
+    // Restored, the destination takes the next occurrence.
+    dispatch(
+        &f,
+        json!({"type": "thread.unarchive", "commandId": "unarchive-destination", "threadId": thread}),
+    )
+    .await;
+    let manual = service.run_now("manual").await.unwrap();
+    assert_eq!(
+        manual.task.last_run_status,
+        ScheduledTaskRunStatus::Succeeded
+    );
+    assert_eq!(manual.thread_id.as_deref(), Some(thread.as_str()));
+    let done = operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    assert_eq!(done["status"], "completed");
+    let projection = projection_of(&f, &thread).await;
+    assert!(
+        projection["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["text"] == "echo: manual")
+    );
 }

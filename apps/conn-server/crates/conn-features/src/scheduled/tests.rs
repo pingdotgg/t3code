@@ -1031,6 +1031,35 @@ async fn a_one_time_task_run_early_or_failed_is_kept() {
     assert_eq!(kept.run_count, 1);
     drop(service);
 
+    // An edit while the due run is out moves the task on: its completion keeps the new time.
+    let env = Env::new("once-edited", "2026-11-01T07:00:00.000Z");
+    let (ended, read) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+    let service = env
+        .start(
+            ending_run(RunEnd::Completed, ended.clone(), read.clone()),
+            "UTC",
+            false,
+        )
+        .await;
+    let edit = json!({"id": "task:edited-once", "projectId": "project:test",
+                      "threadId": "thread:once",
+                      "schedule": {"type": "once", "runAt": "2026-11-01T07:01:00.000Z"}});
+    let task = upsert(&service, edit.clone()).await;
+    env.clock.set(ms("2026-11-01T07:02:00.000Z"));
+    service.run_now(&task.id).await.expect("ran");
+    let mut later = edit;
+    later["schedule"]["runAt"] = json!("2026-11-02T07:00:00.000Z");
+    upsert(&service, later).await;
+    ended.notify_one();
+    read.notified().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let kept = service
+        .find(&task.id)
+        .await
+        .expect("an edited task is kept");
+    assert_eq!(next(&kept), Some("2026-11-02T07:00:00.000Z"));
+    drop(service);
+
     let env = Env::new("once-failed", "2026-11-01T07:00:00.000Z");
     let (ended, read) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
     let service = env

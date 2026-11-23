@@ -170,12 +170,8 @@ impl TaskRunner for EngineRunner {
             {
                 return Err(not_found());
             }
-            // `ThreadManagementThreadArchivedError` (`ThreadManagementService.ts:872`).
-            if !thread["archivedAt"].is_null() {
-                return Err(SendError::Other(format!(
-                    "Thread {} is archived and cannot receive messages.",
-                    request.thread_id
-                )));
+            if let Some(refusal) = conn_engine::send_refusal(thread) {
+                return Err(SendError::Other(refusal));
             }
             let command = json!({
                 "type": "message.dispatch",

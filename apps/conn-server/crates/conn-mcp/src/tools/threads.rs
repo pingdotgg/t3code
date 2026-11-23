@@ -589,6 +589,10 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
     let projection = cx.projection(id).await?;
+    // `ThreadManagementThreadArchivedError` maps to `thread_not_sendable`.
+    if let Some(refusal) = conn_engine::send_refusal(&projection["thread"]) {
+        return Err(fail("thread_not_sendable", refusal));
+    }
     let fresh = bool_arg(args, "freshContext") == Some(true);
     // A fresh send never joins a running turn, so it needs none to steer or restart.
     let mode = match str_arg(args, "mode").unwrap_or("auto") {
