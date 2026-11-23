@@ -38,6 +38,8 @@ import { useRemoteConnectionStatus } from "../../state/use-remote-environment-re
 import type { WorkspaceState } from "../../state/workspaceModel";
 import type { MessageResolver } from "../../i18n/messages";
 import { useWorkspaceState } from "../../state/workspace";
+import { retryEnvironmentCatalogLoad } from "../../connection/catalog";
+import { deriveHomeEmptyState } from "../home/home-empty-state";
 
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
 import { useNewTaskFlow } from "./new-task-flow-provider";
@@ -201,7 +203,11 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
             })
     : null;
   const screenTitle = incomingShare ? gt("Start a task") : gt("Choose project");
-  const projectEmptyState = deriveProjectEmptyState(catalogState, m);
+  const homeEmptyState = deriveHomeEmptyState(catalogState, 0, m);
+  const showsRetryCatalogLoad = homeEmptyState.showsRetryCatalogLoad;
+  const projectEmptyState = showsRetryCatalogLoad
+    ? homeEmptyState
+    : deriveProjectEmptyState(catalogState, m);
   const serverConfigs = useServerConfigs();
   const listScopes = pickableProjectGroups(projectScopes).filter(
     (scope) =>
@@ -464,7 +470,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
               <Text className="text-center text-sm leading-normal text-foreground-muted">
                 {projectEmptyState.detail}
               </Text>
-              {Platform.OS === "android" ? (
+              {showsRetryCatalogLoad ? (
+                <View className="mt-1">
+                  <Button
+                    label={gt("Retry")}
+                    tone="primary"
+                    onPress={retryEnvironmentCatalogLoad}
+                  />
+                </View>
+              ) : Platform.OS === "android" ? (
                 <>
                   <View>
                     <Button
