@@ -8,6 +8,7 @@ import * as NodeDns from "node:dns";
 import * as NodeOS from "node:os";
 
 const TAILNET_NAME_LOOKUP_TIMEOUT = "1500 millis";
+const TAILSCALE_RESOLVER = "100.100.100.100";
 // Only the open-source tailscaled creates this; its CLI is not in an app bundle.
 const OPEN_SOURCE_TAILSCALED_SOCKET = "/var/run/tailscaled.socket";
 
@@ -18,18 +19,21 @@ export interface Tailnet {
   readonly fromCli: boolean;
 }
 
-// Other VPNs also use the CGNAT range, so only an address whose reverse lookup returns a
-// MagicDNS name (always under ts.net) is treated as this host's tailnet address.
+// Other VPNs also use the CGNAT range, so only an address whose reverse name is a MagicDNS
+// name (always under ts.net) counts. Ask Tailscale's resolver directly: it answers even when
+// the Mac does not use Tailscale's DNS settings.
 const lookupMagicDnsName = (address: string) =>
-  Effect.promise(() =>
-    NodeDns.promises.lookupService(address, 0).then(
-      ({ hostname }) => {
-        const name = hostname.trim().replace(/\.$/u, "").toLowerCase();
-        return name.endsWith(".ts.net") ? name : null;
-      },
+  Effect.promise(() => {
+    const resolver = new NodeDns.promises.Resolver({ tries: 1 });
+    resolver.setServers([TAILSCALE_RESOLVER]);
+    return resolver.reverse(address).then(
+      (names) =>
+        names
+          .map((name) => name.trim().replace(/\.$/u, "").toLowerCase())
+          .find((name) => name.endsWith(".ts.net")) ?? null,
       () => null,
-    ),
-  ).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
+    );
+  }).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
 
 const readTailnetFromInterfaces = Effect.gen(function* () {
   const candidates = Object.values(NodeOS.networkInterfaces())

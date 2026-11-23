@@ -51,7 +51,7 @@ const useMacTailnet = () => {
     ],
   });
   NodeModule.syncBuiltinESMExports();
-  return vi.spyOn(nodeDns.promises, "lookupService");
+  return vi.spyOn(nodeDns.promises.Resolver.prototype, "reverse");
 };
 
 const TAILSCALE_STATUS_JSON = JSON.stringify({
@@ -217,14 +217,14 @@ describe("RemoteOpenTargets", () => {
 
   it.effect("with a macOS Tailscale app, resolves the tailnet host without the CLI", () =>
     Effect.gen(function* () {
-      const lookupService = useMacTailnet();
-      // The other VPN's resolver answers too, but not with a MagicDNS name.
+      const reverseLookup = useMacTailnet();
+      // The other VPN's address has a reverse name too, but not a MagicDNS one.
       const reverseNames = (tailnetName: string | null) =>
-        lookupService.mockImplementation((address) =>
+        reverseLookup.mockImplementation((address) =>
           address === "100.64.1.2" && tailnetName !== null
-            ? Promise.resolve({ hostname: tailnetName, service: "0" })
+            ? Promise.resolve([tailnetName])
             : address === "100.85.0.1"
-              ? Promise.resolve({ hostname: "gw.vpn.example.com", service: "0" })
+              ? Promise.resolve(["gw.vpn.example.com"])
               : Promise.reject(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })),
         );
       reverseNames("renamed.tail1234.ts.net.");
@@ -257,14 +257,14 @@ describe("RemoteOpenTargets", () => {
       expect(yield* resolve({ ipv4: false, ipv6: false, tailnet: true })).toEqual([
         { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
-      expect(lookupService).toHaveBeenCalledWith("100.64.1.2", 0);
+      expect(reverseLookup).toHaveBeenCalledWith("100.64.1.2");
       expect(spawned).toEqual([]);
     }),
   );
 
   it.effect("with open-source tailscaled on macOS, keeps the Tailscale SSH target", () =>
     Effect.gen(function* () {
-      const lookupService = useMacTailnet();
+      const reverseLookup = useMacTailnet();
       const targets = yield* resolveTargets({
         sshd: { ipv4: false, ipv6: false },
         tailscale: TAILSCALE_SSH,
@@ -276,7 +276,7 @@ describe("RemoteOpenTargets", () => {
       expect(targets).toEqual([
         { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
-      expect(lookupService).not.toHaveBeenCalled();
+      expect(reverseLookup).not.toHaveBeenCalled();
     }),
   );
 

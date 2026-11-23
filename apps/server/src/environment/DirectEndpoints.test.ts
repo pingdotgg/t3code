@@ -440,9 +440,9 @@ describe("DirectEndpoints Tailscale Serve", () => {
     });
     NodeModule.syncBuiltinESMExports();
     // The CLI would answer bb-1; the renamed reverse name proves it was not run.
-    const lookupService = vi
-      .spyOn(nodeDns.promises, "lookupService")
-      .mockResolvedValue({ hostname: "renamed.tail1234.ts.net.", service: "0" });
+    const reverseLookup = vi
+      .spyOn(nodeDns.promises.Resolver.prototype, "reverse")
+      .mockResolvedValue(["renamed.tail1234.ts.net"]);
     return Effect.gen(function* () {
       expect(yield* resolveWithServe(200, "darwin")).toEqual([
         { kind: "tailnet", httpBaseUrl: "https://renamed.tail1234.ts.net/" },
@@ -451,7 +451,7 @@ describe("DirectEndpoints Tailscale Serve", () => {
       Effect.ensuring(
         Effect.sync(() => {
           interfaces.mockRestore();
-          lookupService.mockRestore();
+          reverseLookup.mockRestore();
           NodeModule.syncBuiltinESMExports();
         }),
       ),
