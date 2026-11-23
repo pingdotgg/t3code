@@ -351,6 +351,7 @@ export function makeAntigravityAcpAdapterFlavor(
                         prompt: swarm.prompt,
                         workflow: swarm.workflow,
                         active: swarm.active,
+                        progress: swarm.progress,
                       },
                 ),
               ),

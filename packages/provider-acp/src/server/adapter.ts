@@ -159,6 +159,8 @@ const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
 const ACP_NATIVE_WORKFLOW_POLL = Duration.millis(1_500);
 const ACP_NATIVE_WORKFLOW_UNREADABLE_MILLIS = 60_000;
 // As long as an open prompt may go silent: a workflow whose records stop changing stops holding.
+// Wall-clock on purpose: after a host sleep this can settle the turn early, and the next turn
+// picks a swarm still at work back up from its records.
 const ACP_NATIVE_WORKFLOW_STALL_MILLIS = 15 * 60_000;
 const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
@@ -837,6 +839,8 @@ export interface AcpNativeWorkflowSnapshot {
   readonly workflow: OrchestrationV2SubagentWorkflow;
   /** Any member still works; holds the turn open like a running subagent. */
   readonly active: boolean;
+  /** Changes whenever the team makes progress, shown or not; a stall clock reads it. */
+  readonly progress?: string;
 }
 
 export interface AcpAdapterV2Options {
@@ -1828,6 +1832,7 @@ interface ActiveAcpTurn {
   nativeWorkflowUnreadableSince: number | undefined;
   /** Clock millis when the workflow's records last changed during this turn. */
   nativeWorkflowChangedAt: number | undefined;
+  nativeWorkflowProgress: string | undefined;
 }
 
 const PROMPT_OUTCOME_CHECK_TIMEOUT = Duration.seconds(5);
@@ -4227,9 +4232,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const releaseUnreadableNativeWorkflow = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
         ) {
-          if (heldNativeWorkflow(context) === undefined) return;
+          const owns = [...context.subagents.values()].some(
+            (subagent) => subagent.task.workflow !== undefined,
+          );
+          if (!owns) return;
           const now = yield* Clock.currentTimeMillis;
+          // Recorded even after a stall released the hold, so the next readable read starts fresh.
           context.nativeWorkflowUnreadableSince ??= now;
+          if (heldNativeWorkflow(context) === undefined) return;
           if (now - context.nativeWorkflowUnreadableSince < ACP_NATIVE_WORKFLOW_UNREADABLE_MILLIS) {
             return;
           }
@@ -4311,8 +4321,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const key = [snapshot.title, snapshot.prompt, snapshot.active, snapshot.workflow];
           const previous = nativeWorkflowProjected.get(nativeTaskId);
           const changed = previous === undefined || !Equal.equals(previous, key);
+          const progressed = read.progress !== context.nativeWorkflowProgress;
+          context.nativeWorkflowProgress = read.progress;
           const now = yield* Clock.currentTimeMillis;
-          if (changed || context.nativeWorkflowChangedAt === undefined) {
+          if (changed || progressed || context.nativeWorkflowChangedAt === undefined) {
             context.nativeWorkflowChangedAt = now;
           } else if (now - context.nativeWorkflowChangedAt >= ACP_NATIVE_WORKFLOW_STALL_MILLIS) {
             // Records that read fine but stop changing (a worker whose transcript cannot be
@@ -10313,6 +10325,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeWorkflowMembers: new Set(),
               nativeWorkflowUnreadableSince: undefined,
               nativeWorkflowChangedAt: undefined,
+              nativeWorkflowProgress: undefined,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];

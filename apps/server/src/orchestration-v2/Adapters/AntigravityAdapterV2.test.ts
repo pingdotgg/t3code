@@ -2704,6 +2704,29 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("a worker still adding steps keeps holding the turn past the stall limit", () =>
+    Effect.gen(function* () {
+      const swarm = yield* openSwarmSession();
+      const { startTurn, until, workflows } = swarm;
+      yield* startTurn(1, false);
+      yield* until((event) => workflows([event]).at(-1)?.status === "running");
+      // Each step leaves the shown workflow unchanged, but proves the worker is at work.
+      for (const step of [2, 3]) {
+        yield* swarm.writeLines(swarm.transcript, [
+          ...swarm.parked.slice(0, 1),
+          { step_index: 1, type: "PLANNER_RESPONSE", status: "DONE", tool_calls: [{ name: "x" }] },
+          { step_index: step, type: "GENERIC", status: "DONE" },
+        ]);
+        yield* TestClock.adjust("8 minutes");
+        yield* swarm.readAfterPoll;
+      }
+      yield* swarm.writeLines(swarm.transcript, swarm.parked);
+      yield* swarm.readAfterPoll;
+      const done = yield* until((event) => workflows([event]).length > 0);
+      assert.equal(workflows(done).at(-1)?.status, "completed", "the swarm finished, not stalled");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("a swarm whose records stop changing stops holding the turn", () =>
     Effect.gen(function* () {
       const swarm = yield* openSwarmSession();

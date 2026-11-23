@@ -74,6 +74,7 @@ const Post = Schema.Struct({
 type Post = typeof Post.Type;
 const decodePost = Schema.decodeUnknownOption(Schema.fromJsonString(Post));
 const Step = Schema.Struct({
+  step_index: Schema.optional(Schema.Number),
   type: Schema.String,
   status: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
@@ -164,6 +165,8 @@ interface MemberActivity {
   readonly failed: string | undefined;
   readonly startedAt: number | undefined;
   readonly lastAt: number | undefined;
+  /** The newest step's index: it moves whenever the worker does anything. */
+  readonly lastStep: number | undefined;
   /** Only when the whole transcript was read; a tail would undercount. */
   readonly usage: { readonly totalTokens: number; readonly toolCalls: number } | undefined;
 }
@@ -209,6 +212,7 @@ async function readActivity(
         : undefined,
     startedAt: epochMillis(steps[0]?.created_at),
     lastAt: epochMillis(last?.created_at),
+    lastStep: last?.step_index,
     usage: tail.whole && tokens !== undefined ? { totalTokens: tokens, toolCalls } : undefined,
   };
 }
@@ -236,6 +240,8 @@ export interface AntigravitySwarmSnapshot {
   readonly prompt: string;
   /** True while any worker still works; parked and killed workers do not count. */
   readonly active: boolean;
+  /** Changes whenever any worker records a step, shown or not: proof the swarm progresses. */
+  readonly progress: string;
 }
 
 /**
@@ -302,6 +308,8 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
             (briefs.get(right)?.seq ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right),
       );
     let active = false;
+    // Every worker's newest step, so steps that change nothing shown still count as progress.
+    const progress: Array<string> = [];
     let totalTokens: number | undefined = 0;
     let toolCalls = 0;
     const agents: Array<OrchestrationV2WorkflowAgent> = [];
@@ -311,6 +319,7 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         conversationId !== undefined && NATIVE_ID.test(conversationId)
           ? await readActivity(profileRoot, conversationId).catch(() => undefined)
           : undefined;
+      progress.push(`${name}:${activity?.lastStep ?? ""}`);
       const brief = briefs.get(name);
       const result = results.get(name);
       const isKilled = killed(member);
@@ -357,12 +366,13 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
     }
     // Workers past the cap are not shown, but one queued or at work keeps the swarm active.
     for (const [, member] of workers.slice(MAX_MEMBERS)) {
-      if (active || killed(member)) continue;
+      if (killed(member)) continue;
       const conversationId = member.conversation_id;
       const activity =
         conversationId !== undefined && NATIVE_ID.test(conversationId)
           ? await readActivity(profileRoot, conversationId).catch(() => undefined)
           : undefined;
+      progress.push(`${activity?.lastStep ?? ""}`);
       if (activity === undefined || (!activity.ended && activity.failed === undefined)) {
         active = true;
       }
@@ -379,6 +389,7 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         .flatMap((agent) => (agent.prompt === undefined ? [] : [`@${agent.label} ${agent.prompt}`]))
         .join("\n\n"),
       active,
+      progress: progress.join(","),
     };
   };
   // An unreadable board means no swarm view this poll; the next poll reads again.
