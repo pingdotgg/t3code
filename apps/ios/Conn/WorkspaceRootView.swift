@@ -30,7 +30,7 @@ struct WorkspaceRootView: View {
     @State private var isSearching = false
     @State private var searchQuery = ""
     @State private var selectedProjectFilter: String? = nil
-    @State private var selectedTaskLane: TaskLane = .inProgress
+    @State private var tasks = TasksModel()
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -52,8 +52,8 @@ struct WorkspaceRootView: View {
                         )
                     case .tasks:
                         TasksTabView(
-                            searchQuery: isSearching ? searchQuery : "",
-                            selectedLane: $selectedTaskLane
+                            model: tasks,
+                            searchQuery: isSearching ? searchQuery : ""
                         )
                     case .pullRequests:
                         PullRequestsTabView(
@@ -79,10 +79,13 @@ struct WorkspaceRootView: View {
                     searchQuery: $searchQuery,
                     filterActive: selectedTab == .threads
                         ? selectedProjectFilter != nil
-                        : (selectedTab == .tasks && selectedTaskLane != .inProgress),
+                        : (selectedTab == .tasks && tasks.lane != .inProgress),
                     projects: store.shell?.projects ?? [],
                     selectedProjectFilter: $selectedProjectFilter,
-                    selectedTaskLane: $selectedTaskLane,
+                    taskLanes: selectedTab == .tasks
+                        ? tasks.view(query: isSearching ? searchQuery : "").lanes
+                        : [],
+                    onSelectTaskLane: { tasks.lane = $0 },
                     onOpenSettings: { showingSettings = true },
                     onNewChat: {
                         let defaultProject = store.shell?.projects.first(where: { !isScratchProjectTitle($0.title) })
@@ -163,7 +166,8 @@ private struct WorkspacePhoneBar: View {
     let filterActive: Bool
     let projects: [FfiProject]
     @Binding var selectedProjectFilter: String?
-    @Binding var selectedTaskLane: TaskLane
+    let taskLanes: [FfiPhoneTaskLane]
+    let onSelectTaskLane: (FfiTaskLane) -> Void
     let onOpenSettings: () -> Void
     let onNewChat: () -> Void
 
@@ -338,16 +342,8 @@ private struct WorkspacePhoneBar: View {
                     }
                 }
             } else if selectedTab == .tasks {
-                ForEach(TaskLane.allCases) { lane in
-                    Button {
-                        selectedTaskLane = lane
-                    } label: {
-                        if selectedTaskLane == lane {
-                            Label(lane.label, systemImage: "checkmark")
-                        } else {
-                            Text(lane.label)
-                        }
-                    }
+                Section("Lanes") {
+                    TaskLaneMenuItems(lanes: taskLanes, onSelect: onSelectTaskLane)
                 }
             }
         } label: {
@@ -398,87 +394,6 @@ private struct HomeConnectionStatusOverlay: View {
         case .connecting: "Connecting…"
         case let .reconnecting(attempt): "Reconnecting (\(attempt))…"
         case .failed: "Connection failed"
-        }
-    }
-}
-
-// MARK: - TasksTabView (1:1 port of TasksScreen.tsx)
-
-enum TaskLane: String, CaseIterable, Identifiable {
-    case inProgress = "in-progress"
-    case upNext = "up-next"
-    case done = "done"
-
-    var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .inProgress: "In progress"
-        case .upNext: "Up next"
-        case .done: "Done"
-        }
-    }
-}
-
-struct TasksTabView: View {
-    let searchQuery: String
-    @Binding var selectedLane: TaskLane
-    @Environment(\.connTheme) private var theme
-
-    var body: some View {
-        ZStack(alignment: .top) {
-            ScrollView {
-                VStack(spacing: 12) {
-                    Text(searchQuery.isEmpty ? "Nothing here" : "No matching tasks")
-                        .font(.system(size: 15))
-                        .foregroundStyle(theme.mutedForeground)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 48)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 60)
-            }
-            .background(theme.background)
-
-            // Centered top bar matching TasksTopBar in TasksScreen.tsx
-            HStack {
-                Spacer().frame(width: 44)
-                VStack(spacing: 1) {
-                    Text("Tasks")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(theme.foreground)
-                        .lineLimit(1)
-                    Text("\(selectedLane.label) · 0")
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(theme.mutedForeground)
-                        .lineLimit(1)
-                }
-                .frame(maxWidth: .infinity)
-
-                Menu {
-                    ForEach(TaskLane.allCases) { lane in
-                        Button {
-                            selectedLane = lane
-                        } label: {
-                            if selectedLane == lane {
-                                Label(lane.label, systemImage: "checkmark")
-                            } else {
-                                Text(lane.label)
-                            }
-                        }
-                    }
-                } label: {
-                    ConnIcon("line.3.horizontal.decrease")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(theme.foreground)
-                        .frame(width: 44, height: 44)
-                        .glassEffect(.regular.interactive(), in: .circle)
-                }
-                .accessibilityLabel("Filter tasks")
-            }
-            .padding(.horizontal, 16)
-            .frame(height: 56)
         }
     }
 }

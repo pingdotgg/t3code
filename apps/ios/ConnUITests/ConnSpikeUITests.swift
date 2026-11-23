@@ -56,12 +56,26 @@ final class ConnSpikeUITests: XCTestCase {
             }
         }
 
-        // 2c. Tasks tab
+        // 2c. Tasks tab: Orbit's tasks (or why they cannot be read), then the lane menu.
         let tasksTab = app.buttons["workspace.tab.tasks"].firstMatch
         if tasksTab.waitForExistence(timeout: 5) {
             tasksTab.tap()
+            let answered = NSPredicate(format: "identifier BEGINSWITH 'tasks.row.' OR identifier IN {'tasks.empty', 'tasks.error'}")
+            XCTAssertTrue(
+                app.descendants(matching: .any).matching(answered).firstMatch.waitForExistence(timeout: 20),
+                "The Tasks tab should show tasks, an empty lane or why it cannot read them"
+            )
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
             saveScreenshot(named: "tasks\(themeSuffix)", dir: screensDir)
+            let laneMenu = app.buttons["tasks.laneMenu"].firstMatch
+            if laneMenu.waitForExistence(timeout: 5) {
+                laneMenu.tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+                saveScreenshot(named: "tasks-lanes\(themeSuffix)", dir: screensDir)
+                // Close the menu without picking a lane.
+                app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.55)).tap()
+                RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+            }
         }
 
         // 2d. Pull requests tab

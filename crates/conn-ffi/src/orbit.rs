@@ -1627,7 +1627,7 @@ impl OrbitCore {
         OrbitFleetClient::new(Arc::clone(&self.transport))
     }
 
-    fn tasks_client(&self) -> OrbitTasksClient {
+    pub(crate) fn tasks_client(&self) -> OrbitTasksClient {
         OrbitTasksClient::new(Arc::clone(&self.transport))
     }
 
@@ -1635,7 +1635,7 @@ impl OrbitCore {
         OrbitThreadStartClient::new(Arc::clone(&self.transport))
     }
 
-    async fn spawn_on_rt<F, T>(&self, fut: F) -> Result<T, FfiError>
+    pub(crate) async fn spawn_on_rt<F, T>(&self, fut: F) -> Result<T, FfiError>
     where
         F: std::future::Future<Output = Result<T, FfiError>> + Send + 'static,
         T: Send + 'static,

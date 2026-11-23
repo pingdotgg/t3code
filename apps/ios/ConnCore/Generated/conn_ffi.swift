@@ -471,6 +471,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
+    typealias FfiType = UInt8
+    typealias SwiftType = UInt8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: UInt8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -1879,6 +1895,16 @@ public protocol OrbitCoreProtocol: AnyObject, Sendable {
      */
     func wakeInstance(instanceId: Int64) async throws  -> Int64?
     
+    /**
+     * Every task this device may read, plus each running task's timer (`useOrbitTaskList`).
+     *
+     * # Errors
+     *
+     * Returns [`FfiError::Orbit`] when the list cannot be read. A running task whose detail
+     * cannot be read only loses its timer.
+     */
+    func phoneTasks() async throws  -> FfiPhoneTasks
+    
 }
 /**
  * UniFFI handle to the Orbit Gateway client, Reverb realtime follower, and Tokio runtime.
@@ -2440,6 +2466,30 @@ open func wakeInstance(instanceId: Int64)async throws  -> Int64?  {
             completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
             freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
             liftFunc: FfiConverterOptionInt64.lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
+    /**
+     * Every task this device may read, plus each running task's timer (`useOrbitTaskList`).
+     *
+     * # Errors
+     *
+     * Returns [`FfiError::Orbit`] when the list cannot be read. A running task whose detail
+     * cannot be read only loses its timer.
+     */
+open func phoneTasks()async throws  -> FfiPhoneTasks  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_orbitcore_phone_tasks(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiPhoneTasks_lift,
             errorHandler: FfiConverterTypeFfiError_lift
         )
 }
@@ -4466,6 +4516,391 @@ public func FfiConverterTypeFfiOrbitWorkspace_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFfiOrbitWorkspace_lower(_ value: FfiOrbitWorkspace) -> RustBuffer {
     return FfiConverterTypeFfiOrbitWorkspace.lower(value)
+}
+
+
+/**
+ * A title and a line that explain why the tasks cannot be read (`tasksErrorText`).
+ */
+public struct FfiPhoneNotice: Equatable, Hashable {
+    public var title: String
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneNotice {
+        return
+            try FfiPhoneNotice(
+                title: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneNotice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneNotice_lift(_ buf: RustBuffer) throws -> FfiPhoneNotice {
+    return try FfiConverterTypeFfiPhoneNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneNotice_lower(_ value: FfiPhoneNotice) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneNotice.lower(value)
+}
+
+
+/**
+ * One lane in the lane menu, with how many tasks in it match the search.
+ */
+public struct FfiPhoneTaskLane: Equatable, Hashable {
+    public var id: FfiTaskLane
+    public var label: String
+    public var count: UInt32
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: FfiTaskLane, label: String, count: UInt32, selected: Bool) {
+        self.id = id
+        self.label = label
+        self.count = count
+        self.selected = selected
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTaskLane: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTaskLane: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTaskLane {
+        return
+            try FfiPhoneTaskLane(
+                id: FfiConverterTypeFfiTaskLane.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf), 
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTaskLane, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiTaskLane.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskLane_lift(_ buf: RustBuffer) throws -> FfiPhoneTaskLane {
+    return try FfiConverterTypeFfiPhoneTaskLane.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskLane_lower(_ value: FfiPhoneTaskLane) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTaskLane.lower(value)
+}
+
+
+/**
+ * One row of the Tasks tab (`TaskRow`).
+ */
+public struct FfiPhoneTaskRow: Equatable, Hashable {
+    public var id: Int64
+    public var title: String
+    public var dot: FfiTaskDot
+    /**
+     * Work in progress drops the title to regular weight, like a working thread.
+     */
+    public var recede: Bool
+    /**
+     * The project tile's letter and colour (an index into mobile's eight `PROJECT_COLORS`).
+     */
+    public var tileLetter: String
+    public var tileColorIndex: UInt8
+    /**
+     * `conn · #482 · 1/4 · 12m · nick-mini`: project, number, subtasks, time and machine.
+     */
+    public var detail: String
+    public var pullRequest: FfiTaskPullRequest?
+    public var accessibilityLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, title: String, dot: FfiTaskDot, 
+        /**
+         * Work in progress drops the title to regular weight, like a working thread.
+         */recede: Bool, 
+        /**
+         * The project tile's letter and colour (an index into mobile's eight `PROJECT_COLORS`).
+         */tileLetter: String, tileColorIndex: UInt8, 
+        /**
+         * `conn · #482 · 1/4 · 12m · nick-mini`: project, number, subtasks, time and machine.
+         */detail: String, pullRequest: FfiTaskPullRequest?, accessibilityLabel: String) {
+        self.id = id
+        self.title = title
+        self.dot = dot
+        self.recede = recede
+        self.tileLetter = tileLetter
+        self.tileColorIndex = tileColorIndex
+        self.detail = detail
+        self.pullRequest = pullRequest
+        self.accessibilityLabel = accessibilityLabel
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTaskRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTaskRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTaskRow {
+        return
+            try FfiPhoneTaskRow(
+                id: FfiConverterInt64.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                dot: FfiConverterTypeFfiTaskDot.read(from: &buf), 
+                recede: FfiConverterBool.read(from: &buf), 
+                tileLetter: FfiConverterString.read(from: &buf), 
+                tileColorIndex: FfiConverterUInt8.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                pullRequest: FfiConverterOptionTypeFfiTaskPullRequest.read(from: &buf), 
+                accessibilityLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTaskRow, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeFfiTaskDot.write(value.dot, into: &buf)
+        FfiConverterBool.write(value.recede, into: &buf)
+        FfiConverterString.write(value.tileLetter, into: &buf)
+        FfiConverterUInt8.write(value.tileColorIndex, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeFfiTaskPullRequest.write(value.pullRequest, into: &buf)
+        FfiConverterString.write(value.accessibilityLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskRow_lift(_ buf: RustBuffer) throws -> FfiPhoneTaskRow {
+    return try FfiConverterTypeFfiPhoneTaskRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskRow_lower(_ value: FfiPhoneTaskRow) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTaskRow.lower(value)
+}
+
+
+/**
+ * Every task this device may read, as [`OrbitCore::phone_tasks`] read it.
+ */
+public struct FfiPhoneTasks: Equatable, Hashable {
+    /**
+     * Every task, in Orbit's order.
+     */
+    public var tasks: [FfiTaskSummary]
+    /**
+     * How long each running task has worked. The list carries no metrics, so this comes from
+     * each running task's detail; a task whose detail did not answer has no entry.
+     */
+    public var runningDurationsMs: [Int64: Double]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Every task, in Orbit's order.
+         */tasks: [FfiTaskSummary], 
+        /**
+         * How long each running task has worked. The list carries no metrics, so this comes from
+         * each running task's detail; a task whose detail did not answer has no entry.
+         */runningDurationsMs: [Int64: Double]) {
+        self.tasks = tasks
+        self.runningDurationsMs = runningDurationsMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTasks: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTasks: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTasks {
+        return
+            try FfiPhoneTasks(
+                tasks: FfiConverterSequenceTypeFfiTaskSummary.read(from: &buf), 
+                runningDurationsMs: FfiConverterDictionaryInt64Double.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTasks, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiTaskSummary.write(value.tasks, into: &buf)
+        FfiConverterDictionaryInt64Double.write(value.runningDurationsMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasks_lift(_ buf: RustBuffer) throws -> FfiPhoneTasks {
+    return try FfiConverterTypeFfiPhoneTasks.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasks_lower(_ value: FfiPhoneTasks) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTasks.lower(value)
+}
+
+
+/**
+ * What the Tasks tab shows for one lane and search.
+ */
+public struct FfiPhoneTasksView: Equatable, Hashable {
+    /**
+     * The lane menu, in phone order.
+     */
+    public var lanes: [FfiPhoneTaskLane]
+    /**
+     * The rows of the selected lane that match the search.
+     */
+    public var rows: [FfiPhoneTaskRow]
+    /**
+     * The line under the title: `In progress · 3`.
+     */
+    public var subtitle: String
+    /**
+     * What the list says when the lane has no rows; `None` when it has some.
+     */
+    public var emptyText: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The lane menu, in phone order.
+         */lanes: [FfiPhoneTaskLane], 
+        /**
+         * The rows of the selected lane that match the search.
+         */rows: [FfiPhoneTaskRow], 
+        /**
+         * The line under the title: `In progress · 3`.
+         */subtitle: String, 
+        /**
+         * What the list says when the lane has no rows; `None` when it has some.
+         */emptyText: String?) {
+        self.lanes = lanes
+        self.rows = rows
+        self.subtitle = subtitle
+        self.emptyText = emptyText
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTasksView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTasksView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTasksView {
+        return
+            try FfiPhoneTasksView(
+                lanes: FfiConverterSequenceTypeFfiPhoneTaskLane.read(from: &buf), 
+                rows: FfiConverterSequenceTypeFfiPhoneTaskRow.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                emptyText: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTasksView, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiPhoneTaskLane.write(value.lanes, into: &buf)
+        FfiConverterSequenceTypeFfiPhoneTaskRow.write(value.rows, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterOptionString.write(value.emptyText, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasksView_lift(_ buf: RustBuffer) throws -> FfiPhoneTasksView {
+    return try FfiConverterTypeFfiPhoneTasksView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasksView_lower(_ value: FfiPhoneTasksView) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTasksView.lower(value)
 }
 
 
@@ -9252,6 +9687,101 @@ public func FfiConverterTypeFfiSubtaskStatus_lower(_ value: FfiSubtaskStatus) ->
 
 
 
+/**
+ * The status dot on a row's project tile (`taskDotState`).
+ */
+
+public enum FfiTaskDot: Equatable, Hashable {
+    
+    /**
+     * Grey: needs an answer, or has not started (backlog, to do, cancelled).
+     */
+    case waiting
+    /**
+     * Red: failed, or blocked while it runs.
+     */
+    case failed
+    /**
+     * Blue: runs.
+     */
+    case working
+    /**
+     * Green: done.
+     */
+    case done
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTaskDot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTaskDot: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTaskDot
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTaskDot {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .failed
+        
+        case 3: return .working
+        
+        case 4: return .done
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTaskDot, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .working:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTaskDot_lift(_ buf: RustBuffer) throws -> FfiTaskDot {
+    return try FfiConverterTypeFfiTaskDot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTaskDot_lower(_ value: FfiTaskDot) -> RustBuffer {
+    return FfiConverterTypeFfiTaskDot.lower(value)
+}
+
+
+
 
 public enum FfiTaskEnvironmentState: Equatable, Hashable {
     
@@ -11191,6 +11721,56 @@ fileprivate struct FfiConverterSequenceTypeFfiOrbitWorkspace: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiPhoneTaskLane: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPhoneTaskLane]
+
+    public static func write(_ value: [FfiPhoneTaskLane], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPhoneTaskLane.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPhoneTaskLane] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPhoneTaskLane]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPhoneTaskLane.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPhoneTaskRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPhoneTaskRow]
+
+    public static func write(_ value: [FfiPhoneTaskRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPhoneTaskRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPhoneTaskRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPhoneTaskRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPhoneTaskRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiProject: FfiConverterRustBuffer {
     typealias SwiftType = [FfiProject]
 
@@ -11566,6 +12146,32 @@ fileprivate struct FfiConverterSequenceTypeFfiTimelineEntry: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDictionaryInt64Double: FfiConverterRustBuffer {
+    public static func write(_ value: [Int64: Double], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterInt64.write(key, into: &buf)
+            FfiConverterDouble.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64: Double] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [Int64: Double]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterInt64.read(from: &buf)
+            let value = try FfiConverterDouble.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
     public static func write(_ value: [String: String], into buf: inout [UInt8]) {
         let len = Int32(value.count)
@@ -11665,6 +12271,31 @@ public func orbitWorkspaceMatchesProject(workspace: FfiOrbitWorkspace, projectId
 })
 }
 /**
+ * Why the tasks cannot be read, in mobile's words.
+ */
+public func phoneTasksErrorText(reason: FfiOrbitErrorReason) -> FfiPhoneNotice  {
+    return try!  FfiConverterTypeFfiPhoneNotice_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_phone_tasks_error_text(
+        FfiConverterTypeFfiOrbitErrorReason_lower(reason),uniffiCallStatus
+    )
+})
+}
+/**
+ * The Tasks tab for `lane` and `query` at `now_ms` (Unix milliseconds, for the row times).
+ */
+public func phoneTasksView(list: FfiPhoneTasks, lane: FfiTaskLane, query: String, nowMs: Int64) -> FfiPhoneTasksView  {
+    return try!  FfiConverterTypeFfiPhoneTasksView_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_phone_tasks_view(
+        FfiConverterTypeFfiPhoneTasks_lower(list),
+        FfiConverterTypeFfiTaskLane_lower(lane),
+        FfiConverterString.lower(query),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+/**
  * Returns every built-in Conn theme in the desktop client's canonical order.
  */
 public func builtinThemes() -> [FfiThemeSummary]  {
@@ -11721,6 +12352,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_func_orbit_workspace_matches_project() != 23526) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_phone_tasks_error_text() != 58270) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_phone_tasks_view() != 64462) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_func_builtin_themes() != 50022) {
@@ -11865,6 +12502,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitcore_wake_instance() != 2957) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_method_orbitcore_phone_tasks() != 13244) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_method_orbitlistener_on_tasks_changed() != 39529) {

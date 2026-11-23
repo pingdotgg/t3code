@@ -18,6 +18,7 @@
 		418D760D3144BAD26EF87FFA /* conn_ffi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CE3181F6E68461F996404BA /* conn_ffi.swift */; };
 		51DF3AD000F6B7995E0FCEA7 /* PushRegistration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */; };
 		5202B5BF50FD24ED57D8454C /* MarkdownView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 953DAB675D1E26DF4D62D777 /* MarkdownView.swift */; };
+		53C3272026A88E6B1AA893D4 /* TasksTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = E0F3FADEDA515DE053342539 /* TasksTab.swift */; };
 		69C03BDDBBAF2D4F5AC8F26E /* ThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CCA06E54355676CFB571582 /* ThreadView.swift */; };
 		6A166A14F61CD909AA333A65 /* ConnSymbols.swift in Sources */ = {isa = PBXBuildFile; fileRef = F44D3E63F9DA6645C0DFCA78 /* ConnSymbols.swift */; };
 		9955DFD2D19FE1A3E8D199B7 /* PairingURLParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */; };
@@ -68,6 +69,7 @@
 		CE790160CB877B8F694F27DE /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingURLParser.swift; sourceTree = "<group>"; };
 		E08A1B9DE873B63FCAC345CB /* DesignKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DesignKit; path = "../../../design-kit/DesignKit"; sourceTree = SOURCE_ROOT; };
+		E0F3FADEDA515DE053342539 /* TasksTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksTab.swift; sourceTree = "<group>"; };
 		EA5CC6AF7EE210056A5ED571 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		ED2E8A42C2F26EBE74993384 /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		F0ABEB932FF5357EF1B48C2F /* ConnAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnAppDelegate.swift; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 				45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */,
 				293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */,
 				F7425B395B824B6191534A3E /* SettingsView.swift */,
+				E0F3FADEDA515DE053342539 /* TasksTab.swift */,
 				8CCA06E54355676CFB571582 /* ThreadView.swift */,
 				7008F6E4031009E6DD67DF79 /* TimelineEntryViews.swift */,
 				9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */,
@@ -297,6 +300,7 @@
 				0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */,
 				51DF3AD000F6B7995E0FCEA7 /* PushRegistration.swift in Sources */,
 				2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */,
+				53C3272026A88E6B1AA893D4 /* TasksTab.swift in Sources */,
 				69C03BDDBBAF2D4F5AC8F26E /* ThreadView.swift in Sources */,
 				A399F8620E541780A63B7B9B /* TimelineEntryViews.swift in Sources */,
 				9ADD2E6E60470D1BC518EDF1 /* WorkspaceRootView.swift in Sources */,

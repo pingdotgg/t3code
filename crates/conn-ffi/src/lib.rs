@@ -7,6 +7,7 @@
 mod coalesce;
 mod core;
 mod orbit;
+mod phone_tasks;
 mod theme;
 mod types;
 
@@ -29,6 +30,10 @@ pub use crate::orbit::{
     FfiTaskPullRequest, FfiTaskStatus, FfiTaskSummary, FfiTaskWorkspace, FfiTasksBoard,
     FfiTasksBoardQuery, FfiTasksLiveStatus, OrbitCore, OrbitListener, orbit_derive_instance_name,
     orbit_workspace_matches_project,
+};
+pub use crate::phone_tasks::{
+    FfiPhoneNotice, FfiPhoneTaskLane, FfiPhoneTaskRow, FfiPhoneTasks, FfiPhoneTasksView,
+    FfiTaskDot, phone_tasks_error_text, phone_tasks_view,
 };
 pub use crate::theme::{
     FfiAppearance, FfiColor, FfiShellGeometry, FfiThemeSummary, FfiThemeTokens, builtin_themes,

@@ -601,6 +601,11 @@ uint64_t uniffi_conn_ffi_fn_method_orbitcore_tasks_board(uint64_t ptr, RustBuffe
 uint64_t uniffi_conn_ffi_fn_method_orbitcore_wake_instance(uint64_t ptr, int64_t instance_id
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_ORBITCORE_PHONE_TASKS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_METHOD_ORBITCORE_PHONE_TASKS
+uint64_t uniffi_conn_ffi_fn_method_orbitcore_phone_tasks(uint64_t ptr
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_ORBITLISTENER
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_CLONE_ORBITLISTENER
 uint64_t uniffi_conn_ffi_fn_clone_orbitlistener(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -644,6 +649,16 @@ RustBuffer uniffi_conn_ffi_fn_func_orbit_derive_instance_name(RustBuffer message
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_WORKSPACE_MATCHES_PROJECT
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_ORBIT_WORKSPACE_MATCHES_PROJECT
 int8_t uniffi_conn_ffi_fn_func_orbit_workspace_matches_project(RustBuffer workspace, RustBuffer project_id, RustBuffer project_title, RustBuffer workspace_root, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_ERROR_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_ERROR_TEXT
+RustBuffer uniffi_conn_ffi_fn_func_phone_tasks_error_text(RustBuffer reason, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_VIEW
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_PHONE_TASKS_VIEW
+RustBuffer uniffi_conn_ffi_fn_func_phone_tasks_view(RustBuffer list, RustBuffer lane, RustBuffer query, int64_t now_ms, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_FN_FUNC_BUILTIN_THEMES
@@ -934,6 +949,18 @@ uint16_t uniffi_conn_ffi_checksum_func_orbit_workspace_matches_project(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_ERROR_TEXT
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_ERROR_TEXT
+uint16_t uniffi_conn_ffi_checksum_func_phone_tasks_error_text(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_VIEW
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_PHONE_TASKS_VIEW
+uint16_t uniffi_conn_ffi_checksum_func_phone_tasks_view(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_BUILTIN_THEMES
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_FUNC_BUILTIN_THEMES
 uint16_t uniffi_conn_ffi_checksum_func_builtin_themes(void
@@ -1219,6 +1246,12 @@ uint16_t uniffi_conn_ffi_checksum_method_orbitcore_tasks_board(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITCORE_WAKE_INSTANCE
 #define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITCORE_WAKE_INSTANCE
 uint16_t uniffi_conn_ffi_checksum_method_orbitcore_wake_instance(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITCORE_PHONE_TASKS
+#define UNIFFI_FFIDEF_UNIFFI_CONN_FFI_CHECKSUM_METHOD_ORBITCORE_PHONE_TASKS
+uint16_t uniffi_conn_ffi_checksum_method_orbitcore_phone_tasks(void
     
 );
 #endif
