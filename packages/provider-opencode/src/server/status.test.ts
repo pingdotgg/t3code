@@ -11,6 +11,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -28,6 +29,7 @@ import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
+  readSettledOpenCode2Catalog,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -1311,14 +1313,14 @@ it.effect("lists a catalog whose cold server start outlasts the settle budget", 
     );
     const load = yield* makeOpenCode2ModelLoader(read);
     const fiber = yield* Effect.forkChild(load);
-    yield* TestClock.adjust("10 seconds");
+    yield* TestClock.adjust("12 seconds");
     NodeAssert.deepEqual(yield* Fiber.join(fiber), catalog);
   }),
 );
 
-it.effect(
-  "does not settle on OpenCode's startup snapshot before the live catalog replaces it",
-  () =>
+it.effect.each(["status check", "project folder"] as const)(
+  "does not settle on OpenCode's startup snapshot before the live catalog replaces it (%s)",
+  (caller) =>
     Effect.gen(function* () {
       const snapshot: ReadonlyArray<OpenCode2Model> = [
         {
@@ -1332,11 +1334,14 @@ it.effect(
         { providerID: "github-copilot", id: "gemini-4-neon", name: "Gemini 4 Neon", variants: [] },
       ];
       const startedAt = yield* Clock.currentTimeMillis;
-      // OpenCode 2.3.2 serves its built-in snapshot for ~1.5s, then emits model.updated.
+      // OpenCode 2.3.2 serves its built-in snapshot for seconds; a slow live load outlasts 3s.
       const read = Clock.currentTimeMillis.pipe(
-        Effect.map((now) => (now - startedAt < 1_500 ? snapshot : live)),
+        Effect.map((now) => (now - startedAt < 3_750 ? snapshot : live)),
       );
-      const load = yield* makeOpenCode2ModelLoader(read);
+      const load =
+        caller === "status check"
+          ? yield* makeOpenCode2ModelLoader(read)
+          : readSettledOpenCode2Catalog(read).pipe(Effect.map(Option.getOrThrow));
       const fiber = yield* Effect.forkChild(load);
       yield* TestClock.adjust("10 seconds");
       NodeAssert.deepEqual(yield* Fiber.join(fiber), live);
