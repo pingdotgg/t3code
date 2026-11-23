@@ -410,6 +410,18 @@ describe("server browser element refs", () => {
     expect(await inner.inputValue()).toBe("");
   });
 
+  it("types into a field that builds its value from keydown, with and without clear", async () => {
+    await page.setContent(
+      `<input id=a><input id=b><script>for(const f of[a,b]){f.keys="";f.onkeydown=e=>{if(e.key.length===1){e.preventDefault();f.keys+=e.key}}}</script>`,
+    );
+    const keys = (selector: string) =>
+      page.locator(selector).evaluate((field) => (field as unknown as { keys: string }).keys);
+    await ServerBrowserPage.type(page, { locator: "#a", text: "girona42" });
+    expect(await keys("#a")).toBe("girona42");
+    await ServerBrowserPage.type(page, { locator: "#b", text: "girona42", clear: true });
+    expect(await keys("#b")).toBe("girona42");
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
