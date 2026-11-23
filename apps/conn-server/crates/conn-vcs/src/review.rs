@@ -208,8 +208,8 @@ impl Untracked {
 pub const UNTRACKED_TOTALS_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
 /// Whether a nested repository's HEAD names a commit. Only "no such commit" (exit 1) says no,
-/// as in T3: another exit leaves the folder to Git, and a probe that cannot run (a timeout)
-/// fails the review.
+/// as in T3: another exit leaves the folder to Git, and a probe that does not finish (a timeout
+/// or a signal) fails the review.
 async fn nested_repository_has_head(dir: &Path) -> VcsResult<bool> {
     let probe = git(
         "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
@@ -225,7 +225,7 @@ async fn nested_repository_has_head(dir: &Path) -> VcsResult<bool> {
 fn head_probe_has_commit(probe: Result<GitOutput, ProcessError>) -> VcsResult<bool> {
     match probe {
         Ok(out) => Ok(out.code != 1),
-        Err(ProcessError::Exit { .. }) => Ok(true),
+        Err(error) if error.is_completed_exit() => Ok(true),
         Err(error) => Err(error.into()),
     }
 }
@@ -1135,8 +1135,8 @@ pub async fn branch_commits(
 mod tests {
     use super::*;
 
-    #[test]
-    fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
+    #[tokio::test]
+    async fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
         let exited = |code| {
             Ok(GitOutput {
                 code,
@@ -1166,6 +1166,27 @@ mod tests {
             head_probe_has_commit(Err(timeout.clone())),
             Err(VcsError::Process(timeout))
         );
+        // A probe that a signal ends never finished: T3 fails the command before any exit
+        // code reaches the caller.
+        #[cfg(unix)]
+        {
+            let signalled = GitCommand::host_cli(
+                "test.signalled",
+                "sh",
+                Path::new("/"),
+                ["-c", "kill -TERM $$"],
+            )
+            .allow_exit(&[1])
+            .run()
+            .await;
+            let Err(error) = signalled.clone() else {
+                panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+            };
+            assert_eq!(
+                head_probe_has_commit(signalled),
+                Err(VcsError::Process(error))
+            );
+        }
     }
 
     #[test]
