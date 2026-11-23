@@ -569,9 +569,20 @@ export function makeClaudeDescendantPoll(
   const read = <A>(apply: (rows: ReadonlyArray<ClaudeProcessRow>) => A) =>
     reading.withPermits(1)(readProcessTable.pipe(Effect.map(apply)));
   return {
-    poll: read((rows) => {
-      for (const tracker of live) tracker.record(rows, true);
-    }).pipe(Effect.withSpan("ClaudeAgentSdkQueryRunner.trackDescendants")),
+    // A table read before a CLI started may list an older process under its pid, so a poll records
+    // only into the CLIs tracked when its read began.
+    poll: reading
+      .withPermits(1)(
+        Effect.suspend(() => {
+          const tracked = [...live];
+          return readProcessTable.pipe(
+            Effect.map((rows) => {
+              for (const tracker of tracked) if (live.has(tracker)) tracker.record(rows, true);
+            }),
+          );
+        }),
+      )
+      .pipe(Effect.withSpan("ClaudeAgentSdkQueryRunner.trackDescendants")),
     track: (cliPid: number) => {
       const tracker = makeClaudeDescendantTracker(cliPid);
       live.add(tracker);

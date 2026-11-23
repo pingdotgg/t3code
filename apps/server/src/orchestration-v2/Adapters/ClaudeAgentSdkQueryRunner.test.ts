@@ -864,6 +864,33 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     });
   });
 
+  it.effect("does not record a poll's table into a CLI tracked after the read began", () => {
+    const readStarted = Deferred.makeUnsafe<void>();
+    const table = Deferred.makeUnsafe<ReadonlyArray<ReturnType<typeof processRow>>>();
+    const descendantPoll = makeClaudeDescendantPoll(
+      Deferred.succeed(readStarted, undefined).pipe(Effect.andThen(Deferred.await(table))),
+    );
+    return Effect.gen(function* () {
+      const first = descendantPoll.track(1000);
+      const polling = yield* descendantPoll.poll.pipe(Effect.forkChild);
+      yield* Deferred.await(readStarted);
+      // The earlier process at pid 2000 exited and the pid went to a newly tracked CLI.
+      const late = descendantPoll.track(2000);
+      yield* Deferred.succeed(table, [
+        processRow(1000, 10, 0),
+        processRow(1100, 1000, 1),
+        processRow(2000, 10, 0),
+        processRow(2100, 2000, 1),
+      ]);
+      yield* Fiber.join(polling);
+      assert.deepStrictEqual(
+        [...first.tracked.values()].map((row) => row.pid),
+        [1100],
+      );
+      assert.strictEqual(late.tracked.size, 0);
+    });
+  });
+
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
