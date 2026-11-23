@@ -88,6 +88,7 @@ it.effect.each([
       rootNodes: [],
       targetAttempt: undefined,
       rolledBackAttemptIds: [],
+      pendingRuntimeRequests: [],
       staleCheckpoints: [],
       checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: null },
       scope: { id: scopeId, cwd },

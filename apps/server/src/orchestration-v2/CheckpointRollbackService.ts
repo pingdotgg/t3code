@@ -505,6 +505,25 @@ export const layer: Layer.Layer<
               }),
             );
           }
+          for (const request of context.pendingRuntimeRequests) {
+            events.push(
+              yield* makeEvent({
+                type: "runtime-request.updated",
+                threadId: input.threadId,
+                nodeId: request.nodeId,
+                occurredAt: now,
+                payload: {
+                  ...request,
+                  status: "cancelled",
+                  responseCapability: {
+                    type: "not_resumable",
+                    reason: "The run was rolled back.",
+                  },
+                  resolvedAt: now,
+                },
+              }),
+            );
+          }
           for (const run of runsToRollback) {
             const rootNode = context.rootNodes.find((candidate) => candidate.id === run.rootNodeId);
             events.push(
