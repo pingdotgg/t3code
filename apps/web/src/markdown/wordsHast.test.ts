@@ -178,6 +178,12 @@ describe("wordsHast", () => {
     );
   });
 
+  it("counts an image with empty alt text as an assistant field value", () => {
+    expect(wordsHtml("Logo: ![](logo.png)\nBank: Example", { fieldLines: true })).toBe(
+      '<p dir="ltr">Logo: <img src="logo.png" alt=""><br>\nBank: Example</p>',
+    );
+  });
+
   it("keeps the composer's tildes and list numbers in user messages", () => {
     const markdown = "Install as ~/a/x, then (~/b.md). ~one~ ~~two~~\n\n3. three\n5. five";
     expect(wordsHtml(markdown, { extensions: { userMessage: true } })).toBe(

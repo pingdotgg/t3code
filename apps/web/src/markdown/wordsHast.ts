@@ -401,12 +401,12 @@ function utf16Offsets(source: string): (byte: number) => number {
 const sourceOf = (node: Element, source: string) =>
   node.position ? source.slice(node.position.start.offset, node.position.end.offset) : "";
 
-const textOf = (node: ElementContent): string =>
-  node.type === "text"
-    ? node.value
-    : node.type === "element"
-      ? node.children.map(textOf).join("")
-      : "";
+function textOf(node: ElementContent, imageText = ""): string {
+  if (node.type === "text") return node.value;
+  if (node.type !== "element") return "";
+  if (imageText && isMarkdownImage(node)) return imageText;
+  return node.children.map((child) => textOf(child, imageText)).join("");
+}
 
 /** A directive's attributes, as strings; anything else Words would never write reads as none. */
 function directiveAttributes(node: Element): Record<string, string> {
@@ -711,7 +711,7 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
         walk.options.breaks ||
           (walk.options.fieldLines === true &&
             node.type === "root" &&
-            isAssistantFieldBlock(textOf(child))),
+            isAssistantFieldBlock(textOf(child, "![image]"))),
       );
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
