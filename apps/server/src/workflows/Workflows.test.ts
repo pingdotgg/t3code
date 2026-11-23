@@ -1558,6 +1558,31 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("an engine stops without waiting for a step still going, which the next one runs", () =>
+  Effect.gen(function* () {
+    const { counts, latch, boot, clock } = yield* harness();
+    const runId = yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const busy = yield* workflows.start("owned", { mode: "busy" }, { idempotencyKey: "b" });
+        yield* Deferred.await(latch.entered);
+        // Time stands still from here: a stop that gave the step time to finish would not end.
+        yield* clock.close;
+        return busy.runId;
+      }),
+    );
+    yield* clock.open;
+    yield* Deferred.succeed(latch.release, undefined);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        yield* workflows.waitFor(runId, status("completed"));
+      }),
+    );
+    assert.equal((yield* Ref.get(counts))["work"], 1);
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();

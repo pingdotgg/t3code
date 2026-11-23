@@ -1048,7 +1048,14 @@ export const layer = (
         ? WorkflowEngine.layerMemory
         : ClusterWorkflowEngine.layer.pipe(
             // Merged so the sweep can prune ended runs' journals from the same storage.
-            Layer.provideMerge(SingleRunner.layer({ runnerStorage: "sql" })),
+            // A stopping engine holds every start and delivery until it is gone, and a step it
+            // waited for was cut off after the wait all the same. It runs again on the next one.
+            Layer.provideMerge(
+              SingleRunner.layer({
+                runnerStorage: "sql",
+                shardingConfig: { entityTerminationTimeout: 0 },
+              }),
+            ),
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
