@@ -6500,6 +6500,120 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  // regression: #41564 a reply Codex abandons after a steer never gets item/completed.
+  it.effect("drops an agent message Codex abandoned without completing it", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "native-codex-abandoned-thread";
+      const nativeTurnId = "native-codex-abandoned-turn";
+      const prompt = "Explain the change.";
+      const agentMessageFrames = (
+        id: string,
+        text: string,
+        completed: boolean,
+      ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "emit_inbound",
+          label: `item/started/${id}`,
+          frame: {
+            method: "item/started",
+            params: {
+              item: {
+                type: "agentMessage",
+                id,
+                text: "",
+                phase: "final_answer",
+                memoryCitation: null,
+              },
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              startedAtMs: 1782622440500,
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: `item/agentMessage/delta/${id}`,
+          frame: {
+            method: "item/agentMessage/delta",
+            params: { threadId: nativeThreadId, turnId: nativeTurnId, itemId: id, delta: text },
+          },
+        },
+        ...(completed
+          ? [
+              {
+                type: "emit_inbound",
+                label: `item/completed/${id}`,
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    item: {
+                      type: "agentMessage",
+                      id,
+                      text,
+                      phase: "final_answer",
+                      memoryCitation: null,
+                    },
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    completedAtMs: 1782622441000,
+                  },
+                },
+              } satisfies CodexReplay.CodexAppServerReplayEntry,
+            ]
+          : []),
+      ];
+      const transcript = makeCodexReplayTranscript({
+        scenario: "codex-abandoned-agent-message",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          ...agentMessageFrames("abandoned", "I'll have", false),
+          ...agentMessageFrames("replacement", "I'll have a subagent open the PR.", true),
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-codex-abandoned-agent-message"),
+          text: prompt,
+        }),
+      );
+      yield* harness.awaitTerminal(1);
+
+      const completedAssistantItems = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "assistant_message" &&
+        event.turnItem.status === "completed"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.deepEqual(completedAssistantItems, ["I'll have a subagent open the PR."]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       name: "a text reply gains each saved image once",
