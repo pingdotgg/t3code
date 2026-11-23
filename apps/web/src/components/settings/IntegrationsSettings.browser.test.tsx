@@ -3,7 +3,7 @@ import { EnvironmentId, ProjectId, ServerConfig } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
@@ -88,8 +88,24 @@ vi.mock(import("../../state/environments"), async (original) => ({
     presentationById: new Map(),
   }),
   usePrimaryEnvironmentId: () => environmentId,
-  usePrimaryEnvironment: () => environments[0]!,
+  usePrimaryEnvironment: () => (state.primaryStarted ? environments[0]! : null),
   readEnvironment: () => environments[0]!,
+}));
+// A desktop app with its own environment off has no primary, only this machine's service.
+const state = vi.hoisted(() => ({ primaryStarted: true }));
+vi.mock(import("../../state/primaryEnvironment"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    ...(await original()),
+    localEnvironmentIdAtom: Atom.make(EnvironmentId.make("browser-settings")),
+  };
+});
+vi.mock(import("../preview/previewBridge"), () => ({
+  previewBridge: {
+    listBrowserImportSources: async () => [
+      { id: "chrome", name: "Chrome", profiles: [{ directory: "Default", name: "Person 1" }] },
+    ],
+  } as never,
 }));
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -144,4 +160,26 @@ it.each([
   await expect
     .element(page.getByRole("menuitem", { name: "Set as default" }))
     .toHaveAttribute("aria-disabled", "true");
+});
+
+it("imports cookies into this machine's service when the app's own environment is off", async () => {
+  state.primaryStarted = false;
+  onTestFinished(() => {
+    state.primaryStarted = true;
+  });
+  await ensureClientSettingsHydrated();
+  await using screen = await render(
+    <SettingsScopeProvider search={{}} onChange={() => {}}>
+      <BrowserSettingsPanel />
+    </SettingsScopeProvider>,
+    { router: "/settings/browser" },
+  );
+
+  await userEvent.click(screen.getByRole("button", { name: "Add profile" }));
+  await expect
+    .element(page.getByRole("menuitem", { name: "Chrome" }))
+    .not.toHaveAttribute("aria-disabled", "true");
+  await expect
+    .element(page.getByText("Connect to an environment to import cookies"))
+    .not.toBeInTheDocument();
 });
