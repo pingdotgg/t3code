@@ -3,8 +3,10 @@ import {
   type ContextMenuItem,
   type EditorId,
   type EnvironmentId,
+  type ContextMenuSource,
 } from "@t3tools/contracts";
 
+import { contextMenuSourceOf } from "./contextMenuSource";
 import { resolveDiffPathForWorkspace } from "./diffFileActions";
 import {
   revealInFileExplorerLabelForKind,
@@ -152,6 +154,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
   const show = async (
     target: FileContextMenuTarget,
     position?: { x: number; y: number },
+    source?: ContextMenuSource,
   ): Promise<void> => {
     const api = readLocalApi();
     const items = buildFileContextMenuItems({
@@ -160,7 +163,7 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
       resolve,
     });
     if (items.length === 0 || api === undefined) return;
-    const clicked = await api.contextMenu.show(items, position);
+    const clicked = await api.contextMenu.show(items, position, source);
     if (clicked === null) return;
     await activate(clicked as FileContextMenuAction, target);
   };
@@ -180,7 +183,14 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
 
 export function useFileContextMenuHandler(environmentId: EnvironmentId | null) {
   const contextMenu = useFileContextMenu(environmentId);
-  return (target: FileContextMenuTarget, event?: { clientX: number; clientY: number }) => {
-    void contextMenu.show(target, event ? { x: event.clientX, y: event.clientY } : undefined);
+  return (
+    target: FileContextMenuTarget,
+    event?: Pick<MouseEvent, "type" | "button" | "detail" | "clientX" | "clientY">,
+  ) => {
+    void contextMenu.show(
+      target,
+      event ? { x: event.clientX, y: event.clientY } : undefined,
+      event ? contextMenuSourceOf(event) : undefined,
+    );
   };
 }

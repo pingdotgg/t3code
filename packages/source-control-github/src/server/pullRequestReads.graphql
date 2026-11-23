@@ -42,7 +42,10 @@ fragment CheckContext on StatusCheckRollupContext {
     isRequired(pullRequestNumber: $number) @include(if: $required)
     checkSuite {
       workflowRun {
+        event
+        runNumber
         workflow {
+          id
           name
         }
       }
@@ -83,6 +86,16 @@ query PullRequestCore(
       createdAt
       updatedAt
       mergedAt
+      mergeCommit {
+        oid
+      }
+      mergedBy {
+        login
+        avatarUrl
+        ... on User {
+          name
+        }
+      }
       closedAt
       headRefName
       baseRefName
