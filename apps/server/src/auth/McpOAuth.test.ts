@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthMcpClientAccess,
   AuthStandardClientScopes,
+  EnvironmentId,
   type AuthCreatePairingCredentialInput,
   type EnvironmentCloudLinkStateResult,
   EnvironmentHttpApi,
@@ -14,6 +15,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -35,6 +37,8 @@ import * as McpOAuthHttp from "./mcpOAuthHttp.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as AuthHttp from "./http.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as McpHttpServer from "../mcp/McpHttpServer.ts";
+import * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 
 class AuthTestApi extends HttpApi.make("environment")
   .add(EnvironmentHttpApi.groups.auth)
@@ -910,3 +914,42 @@ it("matches loopback redirects on everything but the port, and https redirects e
   expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
   expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
 });
+
+it.effect("lets peer-link clients use the issue tools a linked environment forwards", () =>
+  Effect.gen(function* () {
+    const auth = yield* EnvironmentAuth.EnvironmentAuth;
+    const authenticator = yield* McpHttpServer.McpClientAuthenticator;
+    const issuesFor = Effect.fn(function* (peerLink: boolean) {
+      const { token } = yield* auth.issueMcpClientSession({
+        label: peerLink ? "Linked environment" : "Outside client",
+        access: "full-access",
+        peerLink,
+        client: { deviceType: "bot" },
+      });
+      const scope = yield* authenticator.authenticate(
+        HttpServerRequest.fromWeb(
+          new Request("http://127.0.0.1/mcp", { headers: { authorization: `Bearer ${token}` } }),
+        ),
+      );
+      expect(scope).toBeDefined();
+      return yield* McpInvocationContext.requireMcpCapability("issues").pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope!),
+        Effect.exit,
+      );
+    });
+    expect(Exit.isSuccess(yield* issuesFor(true))).toBe(true);
+    expect(Exit.isSuccess(yield* issuesFor(false))).toBe(false);
+  }).pipe(
+    Effect.provide(
+      McpOAuth.layerMcpClientAuthenticator.pipe(
+        Layer.provide(
+          Layer.mock(ServerEnvironment.ServerEnvironment)({
+            getEnvironmentId: Effect.succeed(EnvironmentId.make("environment-1")),
+          }),
+        ),
+        Layer.provideMerge(layerEnvironmentAuth),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
+);

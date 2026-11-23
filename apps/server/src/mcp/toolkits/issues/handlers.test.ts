@@ -26,6 +26,7 @@ import * as IssueTrackerRegistry from "../../../issue/IssueTrackerRegistry.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadIssueService from "../../../orchestration-v2/ThreadIssueService.ts";
 import { v2PullRequestThread } from "../../../orchestration-v2/testkit/pullRequestFixtures.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as IssueTrackerBindings from "../../../persistence/IssueTrackerBindings.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../../../project/RepositoryIdentityResolver.ts";
@@ -150,8 +151,19 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
   issueLayer?: Layer.Layer<IssueService.IssueService>,
 ) {
   const links = yield* Ref.make<ReadonlyArray<ThreadIssueService.LinkThreadIssueInput>>([]);
+  const forwarded = yield* Ref.make<
+    ReadonlyArray<{ tool: string; environmentId: EnvironmentId; params: unknown }>
+  >([]);
   const layerDependencies = Layer.mergeAll(
     projectLayer,
+    // Stands in for a linked environment, recording what was sent there.
+    Layer.mock(PeerForwarding.PeerForwarding)({
+      call: (_scope, tool, environmentId, params) =>
+        Ref.update(forwarded, (recorded) => [
+          ...recorded,
+          { tool: tool.name, environmentId, params },
+        ]).pipe(Effect.as({} as never)),
+    }),
     Layer.mock(Orchestrator.OrchestratorV2)({
       getThreadShell: (id) => Effect.succeed(id === THREAD_ID ? makeThread(issues) : null),
     }),
@@ -206,7 +218,7 @@ const makeHarness = Effect.fn("makeIssuesToolkitHarness")(function* (
       Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(capabilities)),
       Effect.provide(layerDependencies),
     );
-  return { links, call };
+  return { links, forwarded, call };
 });
 
 describe("issue toolkit handlers", () => {
@@ -440,6 +452,26 @@ describe("issue toolkit handlers", () => {
       expect(result.issues).toMatchObject([{ key: "7", title: "Seven", displayKey: "#7" }]);
       const unlinked = yield* harness.call("unlink_issue", { url: detail.url });
       expect(unlinked.wasLinked).toBe(true);
+    }),
+  );
+
+  // The pull request tools already reach a linked environment's thread this way.
+  it.effect("sends link, unlink and list to the linked environment the caller names", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const box = EnvironmentId.make("environment-box");
+      const threadOnBox = ThreadId.make("thread-on-box");
+      const url = "https://github.com/T3Tools/T3Code/issues/7";
+      const remote = { environmentId: box, threadId: threadOnBox } as const;
+      yield* Effect.exit(harness.call("link_issue", { ...remote, url } as never));
+      yield* Effect.exit(harness.call("unlink_issue", { ...remote, url } as never));
+      yield* Effect.exit(harness.call("list_thread_issues", remote as never));
+      expect(yield* Ref.get(harness.forwarded)).toEqual([
+        { tool: "link_issue", environmentId: box, params: { ...remote, url } },
+        { tool: "unlink_issue", environmentId: box, params: { ...remote, url } },
+        { tool: "list_thread_issues", environmentId: box, params: remote },
+      ]);
+      expect(yield* Ref.get(harness.links)).toEqual([]);
     }),
   );
 });

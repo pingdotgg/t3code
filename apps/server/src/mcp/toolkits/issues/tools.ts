@@ -6,6 +6,7 @@ import {
   IssueTrackerKind,
   IssueUnavailableError,
   McpCapabilityUnavailableError,
+  OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
   ProjectId,
   ThreadId,
@@ -57,6 +58,7 @@ export const IssueTargetInput = Schema.Struct({
 export type IssueTargetInput = typeof IssueTargetInput.Type;
 
 const ThreadTargetInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: Schema.optional(
     ThreadId.annotate({ description: "Thread to act on. Omit for this thread." }),
   ),
