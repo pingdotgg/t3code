@@ -4637,6 +4637,93 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("marks a reply Pi finished before a steer's work as the final answer", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      fake.deferNextLifecycle("prompt");
+      yield* startTurn(runtime, providerThread);
+      const initial = yield* fake.takeRequest("prompt");
+      fake.deferNextLifecycle("prompt");
+      const running = yield* takeEvent((event) => event.type === "provider_turn.updated");
+      if (running.type !== "provider_turn.updated") return assert.fail("turn did not start");
+      yield* runtime.steerTurn({
+        threadId: THREAD_ID,
+        runId: RunId.make("run:thread-pi-test:1"),
+        providerThread,
+        providerTurnId: running.providerTurn.id,
+        message: {
+          messageId: "message:unrelated-steer" as never,
+          text: "Unrelated steer",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      const steer = yield* fake.takeRequest("prompt");
+      const replies: Array<string> = [];
+      const phases: Array<string | undefined> = [];
+      const reply = (text: string) =>
+        Effect.gen(function* () {
+          yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+          yield* fake.emit({
+            type: "message_update",
+            assistantMessageEvent: { type: "text_end", contentIndex: 0, content: text },
+          });
+          yield* fake.emit({
+            type: "message_end",
+            message: { role: "assistant", content: [{ type: "text", text }], stopReason: "stop" },
+          });
+          const item = yield* takeEvent(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.streaming === false,
+          );
+          if (item.type === "turn_item.updated" && item.turnItem.type === "assistant_message") {
+            replies.push(item.turnItem.text);
+            phases.push(item.turnItem.phase);
+          }
+        });
+      yield* fake.emit({ type: "agent_start" });
+      yield* reply("Answer to the first prompt");
+      yield* fake.emit({
+        type: "tool_execution_start",
+        toolCallId: "steer-read",
+        toolName: "read",
+        args: { path: "f2.txt" },
+      });
+      yield* fake.emit({
+        type: "tool_execution_end",
+        toolCallId: "steer-read",
+        toolName: "read",
+        result: { content: [{ type: "text", text: "file 2" }] },
+        isError: false,
+      });
+      yield* reply("Answer to the steer");
+      for (const prompt of [steer, initial]) {
+        yield* fake.emit({
+          type: "response",
+          id: prompt["id"],
+          command: "prompt",
+          success: true,
+          data: { disposition: "handled" },
+        });
+      }
+      fake.queueState({ isStreaming: false, isCompacting: false, pendingMessageCount: 0 });
+      yield* fake.emit({ type: "agent_settled" });
+      yield* takeEvent((event) => event.type === "turn.terminal");
+      assert.deepStrictEqual(replies, ["Answer to the first prompt", "Answer to the steer"]);
+      // The web timeline folds a run's earlier replies unless they are tagged as answers.
+      assert.equal(phases[0], "final_answer");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([
     { text: "/command-only", data: undefined, compacts: false },
     { text: "Plain handled input", data: { disposition: "handled" }, compacts: false },
