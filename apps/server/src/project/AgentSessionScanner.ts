@@ -1236,7 +1236,15 @@ export const make = Effect.gen(function* () {
                 });
               }
             };
-            let reader = createTranscriptJsonReader(reserveSelected, selectCwdPath);
+            // Claude writes cwd before message, so a record with a large image need not be read to its end.
+            let topLevelCwd: string | null = null;
+            const createReader = () =>
+              createTranscriptJsonReader(reserveSelected, selectCwdPath, {
+                onTopLevelString: (key, value) => {
+                  if (key === "cwd" && value.trim().length > 0) topLevelCwd ??= value;
+                },
+              });
+            let reader = createReader();
             let decoder = new TextDecoder();
             let recordStarted = false;
             const reserveRecord = () => {
@@ -1254,28 +1262,21 @@ export const make = Effect.gen(function* () {
             const finishRecord = () => {
               reader.write(decoder.decode());
               const value = reader.finish();
-              reader = createTranscriptJsonReader(reserveSelected, selectCwdPath);
+              reader = createReader();
               decoder = new TextDecoder();
               recordStarted = false;
               selectedBytes = 0;
               return extractCwd(value, source);
             };
-            // Scan records that start in the first MAX_TRANSCRIPT_SCAN_BYTES; one started there may run past it.
             const scanChunk = (chunk: Uint8Array): string | false | null | undefined => {
               let start = 0;
               while (start < chunk.byteLength) {
-                if (
-                  !recordStarted &&
-                  bytesRead - chunk.byteLength + start >= MAX_TRANSCRIPT_SCAN_BYTES
-                ) {
-                  budget.truncated = true;
-                  return null;
-                }
                 const newline = chunk.indexOf(10, start);
                 const end = newline === -1 ? chunk.byteLength : newline;
                 if (end > start) {
                   recordStarted = true;
                   reader.write(decoder.decode(chunk.subarray(start, end), { stream: true }));
+                  if (topLevelCwd !== null) return reserveRecord() ? topLevelCwd : null;
                 }
                 if (newline === -1) return undefined;
                 if (!reserveRecord()) return null;
@@ -1294,14 +1295,15 @@ export const make = Effect.gen(function* () {
             const readLastRecord = () =>
               !recordStarted || !reserveRecord() ? null : finishRecord();
 
-            while (bytesRead < size && (recordStarted || bytesRead < MAX_TRANSCRIPT_SCAN_BYTES)) {
+            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, size);
+            while (bytesRead < maxBytes) {
               if (budget.bytesRemaining === 0 || budget.operationsRemaining === 0) {
                 budget.truncated = true;
                 return null;
               }
               const readSize = Math.min(
                 METADATA_READ_BYTES,
-                (recordStarted ? size : Math.min(MAX_TRANSCRIPT_SCAN_BYTES, size)) - bytesRead,
+                maxBytes - bytesRead,
                 budget.bytesRemaining,
               );
               budget.operationsRemaining -= 1;
