@@ -9,18 +9,7 @@ import * as PubSub from "effect/PubSub";
 import type * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
-import Migration0100 from "../persistence/Migrations/109_Workflows.ts";
-import Migration0101 from "../persistence/Migrations/110_WorkflowTriggers.ts";
-import Migration0102 from "../persistence/Migrations/111_WorkflowStepEnvironment.ts";
-import Migration0103 from "../persistence/Migrations/112_WorkflowRunInput.ts";
-import Migration0104 from "../persistence/Migrations/113_WorkflowStore.ts";
-import Migration0105 from "../persistence/Migrations/114_WorkflowRunParent.ts";
-import Migration0106 from "../persistence/Migrations/115_WorkflowStepResult.ts";
-import Migration0107 from "../persistence/Migrations/116_WorkflowWaitWatch.ts";
-import Migration0108 from "../persistence/Migrations/117_WorkflowStepTurn.ts";
-import Migration0109 from "../persistence/Migrations/118_WorkflowRunKey.ts";
-import Migration0110 from "../persistence/Migrations/119_WorkflowRunReferences.ts";
-import Migration0111 from "../persistence/Migrations/120_WorkflowEnginePruned.ts";
+import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
@@ -32,27 +21,7 @@ const withStore = <A, E>(
     const path = yield* Path.Path;
     const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-store-" });
     const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-    const migrated = Layer.effectDiscard(
-      Effect.all(
-        [
-          Migration0100,
-          Migration0101,
-          Migration0102,
-          Migration0103,
-          Migration0104,
-          Migration0105,
-          Migration0106,
-          Migration0107,
-          Migration0108,
-          Migration0109,
-          Migration0110,
-          Migration0111,
-        ],
-        {
-          discard: true,
-        },
-      ),
-    );
+    const migrated = Layer.effectDiscard(WorkflowsMigration);
     return yield* Effect.provide(
       use,
       WorkflowStore.layer.pipe(

@@ -11,16 +11,7 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
-import Migration0100 from "../../apps/server/src/persistence/Migrations/109_Workflows.ts";
-import Migration0101 from "../../apps/server/src/persistence/Migrations/110_WorkflowTriggers.ts";
-import Migration0102 from "../../apps/server/src/persistence/Migrations/111_WorkflowStepEnvironment.ts";
-import Migration0103 from "../../apps/server/src/persistence/Migrations/112_WorkflowRunInput.ts";
-import Migration0104 from "../../apps/server/src/persistence/Migrations/113_WorkflowStore.ts";
-import Migration0105 from "../../apps/server/src/persistence/Migrations/114_WorkflowRunParent.ts";
-import Migration0106 from "../../apps/server/src/persistence/Migrations/115_WorkflowStepResult.ts";
-import Migration0107 from "../../apps/server/src/persistence/Migrations/116_WorkflowWaitWatch.ts";
-import Migration0108 from "../../apps/server/src/persistence/Migrations/117_WorkflowStepTurn.ts";
-import Migration0109 from "../../apps/server/src/persistence/Migrations/118_WorkflowRunKey.ts";
+import WorkflowsMigration from "../../apps/server/src/persistence/Migrations/110_Workflows.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -83,26 +74,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-eval-" });
   const database = NodeSqliteClient.layer({ filename: path.join(directory, "state.sqlite") });
-  yield* Effect.provide(
-    Effect.all(
-      [
-        Migration0100,
-        Migration0101,
-        Migration0102,
-        Migration0103,
-        Migration0104,
-        Migration0105,
-        Migration0106,
-        Migration0107,
-        Migration0108,
-        Migration0109,
-      ],
-      {
-        discard: true,
-      },
-    ),
-    database,
-  );
+  yield* Effect.provide(WorkflowsMigration, database);
   const turns: Array<AgentTurnInput> = [];
   const asked = new Map<string, AgentTurnInput>();
   const agents = WorkflowAgents.of({

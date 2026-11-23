@@ -14,18 +14,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
-import Migration0100 from "../persistence/Migrations/109_Workflows.ts";
-import Migration0101 from "../persistence/Migrations/110_WorkflowTriggers.ts";
-import Migration0102 from "../persistence/Migrations/111_WorkflowStepEnvironment.ts";
-import Migration0103 from "../persistence/Migrations/112_WorkflowRunInput.ts";
-import Migration0104 from "../persistence/Migrations/113_WorkflowStore.ts";
-import Migration0105 from "../persistence/Migrations/114_WorkflowRunParent.ts";
-import Migration0106 from "../persistence/Migrations/115_WorkflowStepResult.ts";
-import Migration0107 from "../persistence/Migrations/116_WorkflowWaitWatch.ts";
-import Migration0108 from "../persistence/Migrations/117_WorkflowStepTurn.ts";
-import Migration0109 from "../persistence/Migrations/118_WorkflowRunKey.ts";
-import Migration0110 from "../persistence/Migrations/119_WorkflowRunReferences.ts";
-import Migration0111 from "../persistence/Migrations/120_WorkflowEnginePruned.ts";
+import WorkflowsMigration from "../persistence/Migrations/110_Workflows.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -59,26 +48,7 @@ const setup = Effect.fn("setup")(function* (
   yield* fileSystem.makeDirectory(directory);
   yield* fileSystem.writeFileString(at("hold.ts"), hold);
   const database = NodeSqliteClient.layer({ filename: path.join(home, "state.sqlite") });
-  yield* Effect.provide(
-    Effect.all(
-      [
-        Migration0100,
-        Migration0101,
-        Migration0102,
-        Migration0103,
-        Migration0104,
-        Migration0105,
-        Migration0106,
-        Migration0107,
-        Migration0108,
-        Migration0109,
-        Migration0110,
-        Migration0111,
-      ],
-      { discard: true },
-    ),
-    database,
-  );
+  yield* Effect.provide(WorkflowsMigration, database);
   const made = WorkflowRuntime.make(
     Effect.succeed(
       (definitions: ReadonlyArray<WorkflowDefinition>) =>
