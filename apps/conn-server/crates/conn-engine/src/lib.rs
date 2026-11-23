@@ -80,6 +80,7 @@ pub use engine::{
 pub use guard::{
     CommitDecision, CommitGate, DispatchGuard, GuardRule, OwnedMessage, is_frozen_message,
 };
+pub use restart::RestartPolicy;
 pub use streaming::ResponseStreamingMode;
 pub use t3_import::{
     ImportProgress, ImportReport, import_t3_state, import_t3_state_with_progress, open_t3_read_only,

@@ -1301,6 +1301,11 @@ impl Tx<'_> {
         Ok(status.is_some_and(|s| crate::shell::ACTIVE_RUN_STATUSES.contains(&s.as_str())))
     }
 
+    /// Now, in milliseconds since the epoch, as [`Self::now`].
+    pub(crate) fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
     pub(crate) fn now(&self) -> &str {
         &self.now
     }

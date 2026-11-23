@@ -424,3 +424,32 @@ fn a_queued_capture_is_found_by_its_run() {
     assert!(!tx.capture_queued("run:t1:2").unwrap());
     tx.rollback();
 }
+
+/// The gate's probe: a restart runs a replay-safe row again under the same id. The dropped
+/// engine's worker, still running that row, settles nothing; the new engine's claim stays
+/// running (the engine lease, `Store::take_ownership`).
+#[test]
+fn a_replaced_worker_cannot_settle_the_new_claim_of_a_replayed_row() {
+    let mut t = TempStore::new("replayed-claim");
+    t.1.take_ownership(None).unwrap();
+    enqueue(&mut t.1, &[close("t1")]);
+    let old = claimed(&t.1);
+    assert_eq!(old.len(), 1);
+    let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
+    newer.take_ownership(None).unwrap();
+    newer.reconcile_after_process_loss(true).unwrap();
+    let new = claimed(&newer);
+    assert_eq!(
+        new.first().map(|c| c.0),
+        Some(old[0].0),
+        "the same row runs again"
+    );
+    assert!(
+        !t.1.settle_effect(old[0].0, Settled::Succeeded, None)
+            .unwrap()
+    );
+    assert_eq!(
+        newer.effect_status(old[0].0).unwrap().as_deref(),
+        Some("running")
+    );
+}

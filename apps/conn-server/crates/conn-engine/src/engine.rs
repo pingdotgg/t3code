@@ -74,6 +74,12 @@ pub struct EngineConfig {
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
     pub attention: bool,
+    /// Effects wait in the outbox until [`SqliteEngine::start_effects`]: a server whose host
+    /// services start after the engine sets it, so an effect a restart replays finds them
+    /// ready (T3 starts its worker once its layers are built).
+    pub hold_effects: bool,
+    /// `continueThreadsAfterServerUpdate`, resolved per project by the server.
+    pub restart_policy: crate::RestartPolicy,
     /// Test hook: [`SqliteEngine::open`] stops before it takes the store's lease.
     #[cfg(test)]
     pub(crate) open_pause: Option<OpenPause>,
@@ -146,6 +152,8 @@ impl EngineConfig {
             clock: Arc::new(crate::SystemClock),
             recover_runs: true,
             attention: false,
+            hold_effects: false,
+            restart_policy: crate::RestartPolicy::default(),
             #[cfg(test)]
             open_pause: None,
         }
@@ -280,6 +288,8 @@ pub(crate) struct Inner {
     pub(crate) effects_wake: Arc<tokio::sync::Notify>,
     /// The effect worker started ([`Inner::ensure_effect_worker`]).
     pub(crate) effect_worker: std::sync::atomic::AtomicBool,
+    /// [`EngineConfig::hold_effects`], until [`SqliteEngine::start_effects`].
+    pub(crate) effects_held: std::sync::atomic::AtomicBool,
     /// The [`SqliteEngine`] was dropped: the worker stops, and the store refuses its writes.
     pub(crate) engine_dropped: Arc<std::sync::atomic::AtomicBool>,
     /// The store's lock while the engine lives. A task that changes the workspace upgrades it
@@ -387,6 +397,9 @@ impl SqliteEngine {
         // A rollback a previous process left pending goes first: it was admitted before the
         // restart, and its lane holds the thread's next turn until it ends.
         let mut effects = vec![];
+        if config.recover_runs {
+            tx.settle_finished_rollbacks()?;
+        }
         for pending in pending_rollbacks {
             effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
         }
@@ -394,7 +407,12 @@ impl SqliteEngine {
             .iter()
             .filter(|(_, run)| commands::is_active(run))
         {
-            effects.extend(crate::restart::recover(&mut tx, thread_id, run)?);
+            effects.extend(crate::restart::recover(
+                &mut tx,
+                thread_id,
+                run,
+                &config.restart_policy,
+            )?);
         }
         tx.enqueue(None, &effects)?;
         tx.commit(None)?;
@@ -426,6 +444,7 @@ impl SqliteEngine {
                 idle_session: config.idle_session,
                 effects_wake,
                 effect_worker: std::sync::atomic::AtomicBool::new(false),
+                effects_held: std::sync::atomic::AtomicBool::new(config.hold_effects),
                 engine_dropped,
                 store_lock: Arc::downgrade(&lock),
                 #[cfg(test)]
@@ -554,6 +573,15 @@ impl SqliteEngine {
                 )
             })
             .collect()
+    }
+
+    /// Starts the effect worker of an engine opened with [`EngineConfig::hold_effects`], on the
+    /// caller's runtime.
+    pub fn start_effects(&self) {
+        self.inner
+            .effects_held
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        self.inner.ensure_effect_worker();
     }
 
     /// Raised after each commit that wrote an attention event; `None` when they are off

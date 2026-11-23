@@ -333,6 +333,7 @@ pub async fn serve_with_instances(
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
     config.recover_runs = !inert;
+    config.restart_policy = crate::settings::restart_policy(&environment.settings.raw());
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -350,6 +351,9 @@ pub async fn serve_with_instances(
         None
     };
     config.attention = attention && (provision.is_some() || native_attention.is_some());
+    // The host's services (scheduled tasks, devices, `/mcp`) start below; a replayed effect
+    // must find them, so the worker starts after them.
+    config.hold_effects = true;
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
@@ -414,6 +418,7 @@ pub async fn serve_with_instances(
     if let Some(mcp) = &deps.mcp {
         let _ = host.mcp.set(mcp.clone());
     }
+    sqlite_engine.start_effects();
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),

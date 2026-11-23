@@ -20,10 +20,13 @@ every write checks it in its transaction, so a dropped or replaced engine never 
 settlement retries while the store is locked and otherwise settles the row `failed`, so its
 lane frees without running the effect again. Pruning lets the store go between batches. A
 restart follows T3's process-loss split: process-bound effects are cancelled and replay-safe
-ones run again. A `running` run with no provider turn for its attempt is sent again, not
-continued (`rewindUnacceptedRuns`). Proof: engine tests for each case, failing without the
-change. Left: folding `pending_rollbacks` into the outbox row (a rollback row is cancelled at
-start and enqueued again from that table), and T3's worker retries (a planned follow-up).
+ones run again, in place, so a rollback keeps its place ahead of later work. A run whose start
+never returned (its `provider-turn.start` row did not settle) is not continued and not sent
+again on its own: a user's prompt waits at the head of the held queue, unattended work is sent
+again at most 3 times and never to a resting thread, and anything else is cancelled (T3's
+`reconcileProjection`). Both follow `continueThreadsAfterServerUpdate` per project. A replayed capture wakes a parent once, and the server starts the worker
+after its host services. Proof: engine tests for each case, failing without the change. Left:
+folding `pending_rollbacks` into the outbox row, and T3's worker retries (a planned follow-up).
 
 **Input validators (2026-11-17):** RPC limits and MCP input decode share
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:

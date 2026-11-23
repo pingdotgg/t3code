@@ -1,13 +1,19 @@
 //! What a start does with runs a stopped process left live (`ProviderRuntimeRecoveryService.ts`,
 //! `RestartContinuation.ts`).
 //!
-//! - A run the provider had (`running`) ends `cancelled` with a "Server restarted" notice, and a
+//! - A run the provider had (`running`) ends `cancelled` with a "Server restarted" notice.
+//!   Where `continueThreadsAfterServerUpdate` allows it for the project ([`RestartPolicy`]), a
 //!   continuation message asks the agent to go on in the same provider thread, so it keeps its
 //!   context. At most 3 continuations chain within 5 minutes; a fourth restart only cancels.
-//! - A run the provider never took (`preparing`, `starting`, or `running` with no provider turn
-//!   of its attempts, T3's `rewindUnacceptedRuns`) starts again: its message was not delivered,
-//!   so sending it is not a repeat. Its earlier `provider-turn.start` row was cancelled as
-//!   process-bound (`outbox.rs`).
+//! - A run whose prompt the provider never accepted (T3's `rewindUnacceptedRuns`) is not sent
+//!   again on its own, since the provider may have received it before the process died. A
+//!   user's prompt waits at the head of the held queue for the user to send it again. Unattended
+//!   work (a scheduled task or an MCP agent's prompt) is sent again, at most 3 times, unless the
+//!   thread is archived, deleted, settled or snoozed. Anything else is cancelled.
+//! - The evidence of acceptance is the run's `provider-turn.start` row: it settles only after
+//!   `Session::start_turn` returned. T3 reads a provider turn of the run's attempt instead, but
+//!   our Claude adapter reports its turn before a cold host has the prompt; a store without
+//!   start rows (before the outbox) still falls back to provider turns.
 //! - A `checkpoint.capture` row the previous process left runs again (replay-safe).
 //! - A run waiting on an approval or a question ends `cancelled` with no continuation: the
 //!   prompt died with the process and only the user can answer it again.
@@ -20,6 +26,34 @@ use serde_json::{Value, json};
 use crate::commands::{self, CommandError, Effect, finish_run};
 use crate::store::{Draft, StoreResult, Tx};
 use crate::time::millis_from_iso;
+
+/// `continueThreadsAfterServerUpdate`, resolved per project as T3's `resolveProjectSettings`
+/// does: whether a restart continues a cut turn and sends unattended work again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestartPolicy {
+    /// The machine-wide value (T3's default is on).
+    pub continue_by_default: bool,
+    /// Project overrides, by project id; each wins over the default either way.
+    pub projects: std::collections::HashMap<String, bool>,
+}
+
+impl Default for RestartPolicy {
+    fn default() -> Self {
+        Self {
+            continue_by_default: true,
+            projects: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl RestartPolicy {
+    /// Whether work in `project_id` continues after a restart.
+    pub fn continues(&self, project_id: Option<&str>) -> bool {
+        project_id
+            .and_then(|id| self.projects.get(id).copied())
+            .unwrap_or(self.continue_by_default)
+    }
+}
 
 /// `MAX_CONTINUATION_CHAIN` and `CONTINUATION_LOOP_WINDOW_MS`.
 const MAX_CHAIN: usize = 3;
@@ -56,10 +90,18 @@ fn chain_length(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<usize>
     Ok(length)
 }
 
-fn may_continue(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+fn may_continue(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    policy: &RestartPolicy,
+) -> StoreResult<bool> {
     let Some(thread) = tx.thread(thread_id)? else {
         return Ok(false);
     };
+    if !policy.continues(thread["projectId"].as_str()) {
+        return Ok(false);
+    }
     let resting = !thread["archivedAt"].is_null()
         || thread["settledOverride"] == "settled"
         || !thread["snoozedUntil"].is_null();
@@ -81,30 +123,159 @@ fn may_continue(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> 
     Ok(run["status"] == "running" && !resting && !pending && resumable)
 }
 
-/// `rewindUnacceptedRuns`: a run is marked `running` before its provider takes the prompt, so
-/// only a provider turn of one of its attempts proves the prompt arrived. Without one, the run
-/// never started, and its message goes out again instead of a continuation.
-fn never_delivered(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+/// `MAX_RESENDS`: a prompt whose start keeps cutting the server short is not sent forever.
+const MAX_RESENDS: usize = 3;
+
+/// `rewindUnacceptedRuns`: whether the provider accepted the run's prompt. A run is marked
+/// `running` before the provider takes it, so only evidence of acceptance counts.
+fn accepted(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
     let started =
         run["status"] == "running" || (run["status"] == "starting" && !run["startedAt"].is_null());
     if !started || run["activeAttemptId"].is_null() {
         return Ok(false);
     }
     let run_id = run["id"].as_str().unwrap_or_default();
+    if let Some(accepted) = tx.start_settled(run_id)? {
+        return Ok(accepted);
+    }
     for attempt in tx.entities_where(thread_id, "attempts", "runId", run_id)? {
         let attempt_id = attempt["id"].as_str().unwrap_or_default();
         if !tx
             .entities_where(thread_id, "providerTurns", "runAttemptId", attempt_id)?
             .is_empty()
         {
-            return Ok(false);
+            return Ok(true);
         }
     }
-    Ok(true)
+    Ok(false)
+}
+
+/// What a restart does with a run whose prompt the provider never accepted
+/// (`reconcileProjection`).
+enum Unaccepted {
+    /// A user's prompt: it waits in the held queue for the user.
+    Hold,
+    /// Unattended work nobody reviews: it is sent again.
+    Resend,
+    /// Everything else ends.
+    Cancel,
+}
+
+fn unaccepted(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    policy: &RestartPolicy,
+) -> StoreResult<Unaccepted> {
+    if run["status"] == "preparing" {
+        return Ok(Unaccepted::Cancel);
+    }
+    let message = tx
+        .entity(
+            thread_id,
+            "messages",
+            run["userMessageId"].as_str().unwrap_or_default(),
+        )?
+        .unwrap_or(Value::Null);
+    let delivered_elsewhere =
+        message["notification"].is_object() || message["delegatedCompletion"].is_object();
+    let scheduled = message["scheduledTaskId"].is_string();
+    if message["createdBy"] == "user" && !scheduled && !delivered_elsewhere {
+        return Ok(Unaccepted::Hold);
+    }
+    if delivered_elsewhere || !(scheduled || message["creationSource"] == "mcp") {
+        return Ok(Unaccepted::Cancel);
+    }
+    let run_id = run["id"].as_str().unwrap_or_default();
+    let project = tx
+        .thread(thread_id)?
+        .and_then(|t| t["projectId"].as_str().map(str::to_owned));
+    if !policy.continues(project.as_deref())
+        || blocked(tx, thread_id)?
+        || tx.resends(&resend_command(run_id))? >= MAX_RESENDS
+    {
+        return Ok(Unaccepted::Cancel);
+    }
+    Ok(Unaccepted::Resend)
+}
+
+/// `restartContinuationBlocked`, for the thread: a resting thread gets no unattended work.
+fn blocked(tx: &Tx<'_>, thread_id: &str) -> StoreResult<bool> {
+    let Some(thread) = tx.thread(thread_id)? else {
+        return Ok(true);
+    };
+    let snoozed = thread["snoozedUntil"]
+        .as_str()
+        .and_then(millis_from_iso)
+        .is_some_and(|until| until > tx.now_ms() as i64);
+    Ok(!thread["archivedAt"].is_null()
+        || !thread["deletedAt"].is_null()
+        || thread["settledOverride"] == "settled"
+        || snoozed)
+}
+
+fn resend_command(run_id: &str) -> String {
+    format!("command:restart-resend:{run_id}")
+}
+
+/// Puts a run whose prompt never arrived at the head of the held queue, with the thread's
+/// queued runs behind it, all held; its attempt, root node and prompt go back to pending.
+fn hold(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<()> {
+    let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+    let queued = commands::queued_runs(tx, thread_id)?;
+    let mut held = run.clone();
+    held["status"] = json!("queued");
+    held["queueHeld"] = json!(true);
+    held["queuePosition"] = json!(1);
+    held["startedAt"] = Value::Null;
+    tx.append(Draft::new(thread_id, "run.updated", held).run(Some(&run_id)))?;
+    for (index, mut other) in queued.into_iter().enumerate() {
+        other["queueHeld"] = json!(true);
+        other["queuePosition"] = json!(index + 2);
+        let id = other["id"].as_str().unwrap_or_default().to_owned();
+        tx.append(Draft::new(thread_id, "run.updated", other).run(Some(&id)))?;
+    }
+    if let Some(attempt_id) = run["activeAttemptId"].as_str()
+        && let Some(mut attempt) = tx.entity(thread_id, "attempts", attempt_id)?
+        && attempt["status"] == "running"
+    {
+        attempt["status"] = json!("pending");
+        attempt["startedAt"] = Value::Null;
+        tx.append(Draft::new(thread_id, "run-attempt.updated", attempt).run(Some(&run_id)))?;
+    }
+    let root = run["rootNodeId"].as_str().map(str::to_owned);
+    if let Some(root) = &root
+        && let Some(mut node) = tx.entity(thread_id, "nodes", root)?
+        && node["status"] == "running"
+    {
+        node["status"] = json!("pending");
+        node["startedAt"] = Value::Null;
+        tx.append(
+            Draft::new(thread_id, "node.updated", node)
+                .run(Some(&run_id))
+                .node(Some(root)),
+        )?;
+    }
+    let message_id = run["userMessageId"].as_str().unwrap_or_default();
+    if let Some(mut item) = tx.entity(thread_id, "turnItems", &format!("turn-item:{message_id}"))? {
+        let now = tx.now().to_owned();
+        item["inputIntent"] = json!("queued_turn");
+        item["status"] = json!("pending");
+        item["startedAt"] = Value::Null;
+        item["completedAt"] = Value::Null;
+        item["updatedAt"] = json!(now);
+        tx.append(Draft::new(thread_id, "turn-item.updated", item).run(Some(&run_id)))?;
+    }
+    Ok(())
 }
 
 /// Recovers one live run at start. Returns the effects to run once the runtime is up.
-pub(crate) fn recover(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<Vec<Effect>> {
+pub(crate) fn recover(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    run: &Value,
+    policy: &RestartPolicy,
+) -> StoreResult<Vec<Effect>> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     // The provider finished; only the checkpoint capture was cut off. A capture row the
     // previous process left is replay-safe and runs again by itself.
@@ -114,21 +285,29 @@ pub(crate) fn recover(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreRes
         }
         return Ok(vec![crate::checkpoint::resume_capture(thread_id, run)]);
     }
-    let rewound = never_delivered(tx, thread_id, run)?;
-    if rewound || matches!(run["status"].as_str(), Some("preparing" | "starting")) {
-        let mut again = run.clone();
-        again["status"] = json!("starting");
-        if rewound {
-            again["startedAt"] = Value::Null;
+    let continues = if accepted(tx, thread_id, run)? {
+        may_continue(tx, thread_id, run, policy)? && chain_length(tx, thread_id, run)? < MAX_CHAIN
+    } else {
+        match unaccepted(tx, thread_id, run, policy)? {
+            Unaccepted::Hold => {
+                hold(tx, thread_id, run)?;
+                return Ok(vec![]);
+            }
+            Unaccepted::Resend => {
+                let mut again = run.clone();
+                again["status"] = json!("starting");
+                again["startedAt"] = Value::Null;
+                tx.append(Draft::new(thread_id, "run.updated", again).run(Some(&run_id)))?;
+                let start = Effect::StartTurn {
+                    thread_id: thread_id.to_owned(),
+                    run_id: run_id.clone(),
+                };
+                tx.enqueue(Some(&resend_command(&run_id)), &[start])?;
+                return Ok(vec![]);
+            }
+            Unaccepted::Cancel => false,
         }
-        tx.append(Draft::new(thread_id, "run.updated", again).run(Some(&run_id)))?;
-        return Ok(vec![Effect::StartTurn {
-            thread_id: thread_id.to_owned(),
-            run_id,
-        }]);
-    }
-    let continues =
-        may_continue(tx, thread_id, run)? && chain_length(tx, thread_id, run)? < MAX_CHAIN;
+    };
     finish_run(tx, thread_id, &run_id, "cancelled", None)?;
     let now = tx.now().to_owned();
     tx.append(

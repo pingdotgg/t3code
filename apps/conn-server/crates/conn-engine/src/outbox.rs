@@ -13,7 +13,7 @@
 //! What a server process left `pending` or `running` when it stopped is reconciled at the next
 //! start (`reconcileAfterProcessLoss`): see [`PROCESS_BOUND`].
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::commands::Effect;
 use crate::store::{NOT_OWNER, Store, StoreResult, Tx, owns};
@@ -85,10 +85,6 @@ pub(crate) const PROCESS_BOUND: [&str; 7] = [
     "runtime-request.respond",
     "provider-session.apply-model-selection",
 ];
-
-/// Rows the restart writes again from another journal, so a process loss cancels them too:
-/// `pending_rollbacks` keeps each rollback's phase, and the restart enqueues it from there.
-const REWRITTEN_AT_START: [&str; 1] = ["provider-thread.rollback"];
 
 impl Effect {
     /// The row's `effect_type`: T3's name where T3 has the effect.
@@ -212,6 +208,99 @@ ORDER BY candidate.id
 LIMIT ?1";
 
 impl Tx<'_> {
+    /// Whether the run's `provider-turn.start` returned: `Some(true)` when one of its start rows
+    /// settled after running, `Some(false)` when it has rows and none did (a start the previous
+    /// process was running is cancelled at start), `None` when it has none (an older store).
+    pub(crate) fn start_settled(&self, run_id: &str) -> StoreResult<Option<bool>> {
+        self.sql()
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(status IN ('succeeded', 'failed')), 0)
+                 FROM effect_outbox
+                 WHERE effect_type = 'provider-turn.start'
+                   AND json_extract(payload, '$.runId') = ?1",
+                [run_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map(|(rows, settled)| (rows > 0).then_some(settled > 0))
+            .map_err(err)
+    }
+
+    /// The unsettled row of rollback `command_id` on its thread. Rows match on the payload's
+    /// command id: the outer `command_id` of a row enqueued at a start is empty.
+    pub(crate) fn unsettled_rollback(
+        &self,
+        thread_id: &str,
+        command_id: &str,
+    ) -> StoreResult<Option<i64>> {
+        self.sql()
+            .query_row(
+                "SELECT id FROM effect_outbox
+                 WHERE thread_id = ?1 AND effect_type = 'provider-thread.rollback'
+                   AND status IN ('pending', 'running')
+                   AND json_extract(payload, '$.commandId') = ?2
+                 ORDER BY id LIMIT 1",
+                [thread_id, command_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(err)
+    }
+
+    /// A rollback row goes on from the provider's stored answer (`resumeSnapshot`), in place.
+    pub(crate) fn resume_rollback(&self, id: i64, snapshot: &serde_json::Value) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                "UPDATE effect_outbox SET payload = json_set(payload, '$.resumeSnapshot', json(?2)),
+                   updated_at = ?3
+                 WHERE id = ?1",
+                params![id, snapshot.to_string(), self.now()],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// Ends a rollback row the restart failed: the provider may have rolled back already.
+    pub(crate) fn fail_rollback(&self, id: i64, message: &str) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                "UPDATE effect_outbox
+                 SET status = 'failed', completed_at = ?2, updated_at = ?2, last_error = ?3
+                 WHERE id = ?1",
+                params![id, self.now(), message],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// Settles unsettled rollback rows with no `pending_rollbacks` entry: their result
+    /// committed (and cleared the entry) before the previous process could settle them.
+    pub(crate) fn settle_finished_rollbacks(&self) -> StoreResult<()> {
+        self.sql()
+            .execute(
+                "UPDATE effect_outbox
+                 SET status = 'succeeded', completed_at = ?1, updated_at = ?1
+                 WHERE effect_type = 'provider-thread.rollback'
+                   AND status IN ('pending', 'running')
+                   AND json_extract(payload, '$.commandId')
+                       NOT IN (SELECT command_id FROM pending_rollbacks)",
+                [self.now()],
+            )
+            .map(drop)
+            .map_err(err)
+    }
+
+    /// How many rows of `command_id` a worker claimed: a restart's resends of one prompt.
+    pub(crate) fn resends(&self, command_id: &str) -> StoreResult<usize> {
+        self.sql()
+            .query_row(
+                "SELECT COUNT(*) FROM effect_outbox WHERE command_id = ?1 AND attempt_count > 0",
+                [command_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|n| n.max(0) as usize)
+            .map_err(err)
+    }
+
     /// An unsettled `checkpoint.capture` row for this run: the restart leaves the capture to it.
     pub(crate) fn capture_queued(&self, run_id: &str) -> StoreResult<bool> {
         self.sql()
@@ -401,7 +490,6 @@ impl Store {
                 "effect_type IN ({})",
                 PROCESS_BOUND
                     .iter()
-                    .chain(&REWRITTEN_AT_START)
                     .map(|t| format!("'{t}'"))
                     .collect::<Vec<_>>()
                     .join(", ")

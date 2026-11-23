@@ -78,6 +78,7 @@ impl Inner {
     /// nothing starts, and rows wait in the outbox for a later call.
     pub(crate) fn ensure_effect_worker(self: &Arc<Self>) {
         if tokio::runtime::Handle::try_current().is_err()
+            || self.effects_held.load(Ordering::SeqCst)
             || self.effect_worker.swap(true, Ordering::SeqCst)
         {
             return;
