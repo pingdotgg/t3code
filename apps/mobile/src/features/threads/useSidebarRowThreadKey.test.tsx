@@ -34,12 +34,14 @@ describe("useSidebarRowThreadKey", () => {
     using _registry = { [Symbol.dispose]: () => registry.dispose() };
 
     const envId = EnvironmentId.make("env-1");
+    // Fork: a thread launched from one in its own environment keeps its own row on mobile.
+    const parentEnvId = EnvironmentId.make("env-2");
     const parentId = ThreadId.make("thread-parent");
     const childId = ThreadId.make("thread-child");
-    const parentKey = scopedThreadKey(envId, parentId);
+    const parentKey = scopedThreadKey(parentEnvId, parentId);
     const childKey = scopedThreadKey(envId, childId);
     const parentThread = makeThreadShellFixture({
-      environmentId: envId,
+      environmentId: parentEnvId,
       id: parentId,
       title: "Parent",
     });
@@ -47,7 +49,7 @@ describe("useSidebarRowThreadKey", () => {
       environmentId: envId,
       id: childId,
       title: "Delegated child",
-      delegatedFrom: { environmentId: envId, threadId: parentId, title: "Parent" },
+      delegatedFrom: { environmentId: parentEnvId, threadId: parentId, title: "Parent" },
     });
     const otherThread = (title: string) =>
       makeThreadShellFixture({ environmentId: envId, id: ThreadId.make("thread-other"), title });
