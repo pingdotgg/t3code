@@ -1513,9 +1513,10 @@ export const layer = Layer.effect(
 
     // Unset until a move succeeds, so a failed move is retried on the next settings change.
     let appliedZone: string | undefined;
-    const applyZone = (zone: DateTime.TimeZone) =>
+    const applyZone = (zone: DateTime.TimeZone, onApplied: Effect.Effect<void> = Effect.void) =>
       moveFixedTimeRunsToZone(zone).pipe(
         Effect.tap(() => Effect.sync(() => (appliedZone = DateTime.zoneToString(zone)))),
+        Effect.andThen(onApplied),
         Effect.catchCause((cause) =>
           Effect.sync(() => (appliedZone = undefined)).pipe(
             Effect.andThen(
@@ -1539,7 +1540,7 @@ export const layer = Layer.effect(
           DateTime.zoneToString(zone) === appliedZone
             ? Effect.void
             : // Republish even when no run moved: lists carry the zone label.
-              applyZone(zone).pipe(Effect.andThen(notifyChanged)),
+              applyZone(zone, notifyChanged),
         ),
       );
     }).pipe(Effect.forkIn(serviceScope));
