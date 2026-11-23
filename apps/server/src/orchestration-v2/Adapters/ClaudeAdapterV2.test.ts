@@ -9771,6 +9771,82 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #41125 a turn stopped before any reply still has a recorded prompt to resume at
+  it.effect(
+    "rolls back to a turn stopped after Claude started its prompt but before any reply",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: (sdkMessages) => Queue.shutdown(sdkMessages),
+          freshQueueOnReopen: true,
+        });
+        const now = yield* DateTime.now;
+        const stoppedInput = makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-stopped-before-reply"),
+          text: "Explain the repository layout.",
+          attachments: [],
+        });
+        yield* harness.runtime.startTurn(stoppedInput);
+        for (const [index, state] of (["queued", "started"] as const).entries()) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "command_lifecycle",
+              command_uuid: harness.promptUuid(0),
+              state,
+              uuid: `00000000-0000-4000-8000-00000004112${index}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* harness.runtime.interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${stoppedInput.attemptId}`,
+          }),
+          requestRuntimeRestart: true,
+        });
+        assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+        const stoppedTurn = lastProviderTurn(harness.events);
+
+        const rolledBack = yield* harness.runtime.rollbackThread({
+          providerThread: harness.providerThread,
+          target: {
+            type: "provider_turn",
+            checkpointId: CheckpointId.make("checkpoint-claude-stopped-before-reply"),
+            appRunOrdinal: 1,
+            providerTurn: stoppedTurn,
+            message: { role: "user", text: "Explain the repository layout.", attachments: [] },
+          },
+          providerThreadTurns: [
+            stoppedTurn,
+            {
+              ...stoppedTurn,
+              id: ProviderTurnId.make("provider-turn-claude-after-stopped"),
+              ordinal: stoppedTurn.ordinal + 1,
+              status: "completed",
+            },
+          ],
+        });
+        assert.equal(
+          rolledBack.providerThread.nativeConversationHeadRef?.nativeId,
+          harness.promptUuid(0),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("never records a subagent uuid for a turn with no main-thread assistant message", () =>
     Effect.gen(function* () {
       const forkCalls: Array<ClaudeAdapterV2.ClaudeAgentSdkSessionForkInput> = [];
