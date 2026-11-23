@@ -9281,6 +9281,112 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("keeps an armed auto-resume when a wake run hits the same usage limit", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = yield* addRolledBackRecoveryCandidate("limit-wake");
+      const limited = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      const now = yield* DateTime.now;
+      const reset = DateTime.add(now, { minutes: 30 });
+      const resetAt = DateTime.formatIso(reset);
+      const failRun = Effect.fnUntraced(function* (run: typeof limited, at: DateTime.Utc) {
+        yield* store.apply({
+          id: EventId.make(`event:limit-wake:error:${run.id}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: at,
+          payload: {
+            id: TurnItemId.make(`limit-wake:error:${run.id}`),
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 2,
+            status: "failed",
+            title: "Usage limit reached",
+            startedAt: at,
+            completedAt: at,
+            updatedAt: at,
+            type: "error",
+            failure: {
+              class: "usage_limit",
+              message: "Plan limit reached.",
+              resetAt,
+              code: "usageLimitExceeded",
+              retryable: null,
+            },
+          },
+        });
+        yield* store.apply({
+          id: EventId.make(`event:limit-wake:failed:${run.id}`),
+          type: "run.updated",
+          threadId,
+          occurredAt: at,
+          payload: { ...run, status: "failed", completedAt: at },
+        });
+      });
+      yield* failRun(limited, now);
+      // The user presses "Resume at reset" on the banner for the limited run.
+      const thread = (yield* store.getThreadProjection(threadId)).thread;
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:armed"),
+        type: "thread.metadata-updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          limitRecovery: {
+            runId: limited.id,
+            resetAt,
+            autoResume: true,
+            snooze: false,
+            requestId: CommandId.make("limit-wake:armed"),
+          },
+        },
+      });
+      // A subagent finishes and wakes the parent, which hits the same limit again.
+      const wokeAt = DateTime.add(now, { minutes: 1 });
+      const wake = {
+        ...limited,
+        id: RunId.make("run:limit-wake:wake"),
+        ordinal: limited.ordinal + 1,
+        rootNodeId: NodeId.make("node:limit-wake:wake"),
+        userMessageId: MessageId.make("message:limit-wake:wake"),
+        status: "running" as const,
+        requestedAt: wokeAt,
+        startedAt: wokeAt,
+        completedAt: null,
+      };
+      yield* store.apply({
+        id: EventId.make("event:limit-wake:wake-created"),
+        type: "run.created",
+        threadId,
+        runId: wake.id,
+        nodeId: wake.rootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: wokeAt,
+        payload: wake,
+      });
+      yield* failRun(wake, wokeAt);
+
+      // Global auto-resume is off: only the user's per-thread choice can resume it.
+      const due = (yield* store.getLimitRecoveryCandidates({
+        now: reset,
+        autoResume: false,
+        snooze: false,
+      })).find((row) => row.id === threadId);
+      assert.isDefined(due, "the armed thread is still due at the reset");
+      assert.equal(
+        limitRecoveryCommand(due, false, DateTime.toEpochMillis(reset))?.type,
+        "message.dispatch",
+      );
+    }),
+  );
+
   it.effect("does not freshly arm limit recovery for a subagent of a put-away parent", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
