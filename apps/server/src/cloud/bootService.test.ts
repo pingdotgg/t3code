@@ -1317,12 +1317,14 @@ process.disconnect();
       yield* fs.symlink(baseDir, aliasDir);
 
       const alias = yield* makeService(undefined, "1.2.3", aliasDir);
+      expect(yield* alias.status).toMatchObject({ current: true });
       expect((yield* alias.status).otherBaseDir).toBeUndefined();
       expect(yield* alias.restart).toBe("restarted");
       commands.length = 0;
       yield* alias.withStopped(Effect.void);
       expect(commands).toContain("systemctl --user stop t3code.service");
       expect((yield* alias.install()).baseDir).toBe(aliasDir);
+      expect(yield* service.status).toMatchObject({ current: true });
       expect((yield* service.status).otherBaseDir).toBeUndefined();
     }),
   );
