@@ -7,6 +7,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import { agentControlledBrowserCloseConfirmation } from "../components/ChatView.logic";
+import { rightPanelGroupOf } from "../components/RightPanelTabs.logic";
 import { closePreviewSession } from "../components/preview/closePreviewSession";
 import { useThreadTerminalActions } from "../components/terminal/useThreadTerminalActions";
 import { m } from "../i18n/messages";
@@ -25,7 +26,6 @@ import { previewEnvironment } from "../state/preview";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useStableCallback } from "./useStableCallback";
 
 /**
@@ -45,7 +45,6 @@ export function useRightPanelSurfaceClose(input: {
   );
   const previewState = useThreadPreviewState(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
-  const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
@@ -65,7 +64,6 @@ export function useRightPanelSurfaceClose(input: {
       readEnvironmentScope(ref.environmentId, AuthTerminalOperateScope)
     ) {
       for (const terminalId of surface.terminalIds) {
-        storeCloseTerminal(ref, terminalId);
         terminalActions.closeTerminalSession(terminalId, ref);
       }
     }
@@ -106,7 +104,10 @@ export function useRightPanelSurfaceClose(input: {
   const finishClose = (toClose: readonly RightPanelSurface[]) => {
     if (!threadRef) return;
     const store = useRightPanelStore.getState();
-    const activeId = selectThreadRightPanelState(store.byThreadKey, threadRef).activeSurfaceId;
+    const { activeSurfaceId: activeId, activeTerminalSurfaceId } = selectThreadRightPanelState(
+      store.byThreadKey,
+      threadRef,
+    );
     const ordered = toClose.toSorted(
       (left, right) => Number(left.id === activeId) - Number(right.id === activeId),
     );
@@ -123,7 +124,7 @@ export function useRightPanelSurfaceClose(input: {
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
       setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
     }
-    focusPanelTerminalAfterClose(threadRef, activeId);
+    focusPanelTerminalAfterClose(threadRef, activeTerminalSurfaceId);
   };
   const labelFor = (terminalId: string) =>
     terminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
@@ -168,15 +169,21 @@ export function useRightPanelSurfaceClose(input: {
       },
     );
   });
+  // Bulk closes act on the clicked surface's group, so a tool's menu never ends a terminal.
+  const groupOf = (surface: RightPanelSurface) =>
+    surfaces.filter((entry) => rightPanelGroupOf(entry) === rightPanelGroupOf(surface));
   const closeOtherSurfaces = useStableCallback((surface: RightPanelSurface) =>
-    closeSurfaces(surfaces.filter((entry) => entry.id !== surface.id)),
+    closeSurfaces(groupOf(surface).filter((entry) => entry.id !== surface.id)),
   );
   const closeSurfacesToRight = useStableCallback((surface: RightPanelSurface) => {
-    const surfaceIndex = surfaces.findIndex((entry) => entry.id === surface.id);
+    const group = groupOf(surface);
+    const surfaceIndex = group.findIndex((entry) => entry.id === surface.id);
     if (surfaceIndex < 0) return;
-    closeSurfaces(surfaces.slice(surfaceIndex + 1));
+    closeSurfaces(group.slice(surfaceIndex + 1));
   });
-  const closeAllSurfaces = useStableCallback(() => closeSurfaces(surfaces));
+  const closeAllSurfaces = useStableCallback((surface: RightPanelSurface) =>
+    closeSurfaces(groupOf(surface)),
+  );
 
   return { closeSurface, closeOtherSurfaces, closeSurfacesToRight, closeAllSurfaces };
 }

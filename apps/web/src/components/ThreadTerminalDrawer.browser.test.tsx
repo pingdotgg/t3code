@@ -15,7 +15,6 @@ import { Atom, AsyncResult } from "effect/reactivity";
 import type { GhosttyTerminalSurfaceOptions } from "~/terminal/ghostty/surface";
 import { AppAtomRegistryProvider, appAtomRegistry } from "../rpc/atomRegistry";
 import { useRightPanelStore } from "../rightPanelStore";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { extractTerminalLinks } from "../terminal-links";
 import { expect, it, vi } from "vite-plus/test";
 import { act, fakeTimers, render } from "../../test/render";
@@ -224,7 +223,6 @@ function Drawer(props: {
       threadRef={props.threadRef}
       threadId={props.threadRef.threadId}
       cwd={props.cwd ?? "/repo"}
-      height={240}
       terminalIds={["term-1"]}
       activeTerminalId="term-1"
       terminalGroups={[{ id: "group-1", terminalIds: ["term-1"] }]}
@@ -234,7 +232,6 @@ function Drawer(props: {
       onNewTerminal={() => {}}
       onActiveTerminalChange={() => {}}
       onCloseTerminal={props.onCloseTerminal}
-      onHeightChange={() => {}}
       onAddTerminalContext={() => {}}
       keybindings={props.keybindings ?? []}
     />
@@ -266,7 +263,6 @@ function setup(originalStatus: "starting" | "exited" = "exited") {
   fixture.runWrite = () => Promise.resolve({ _tag: "Success" });
   fixture.metadata.clear();
   useRightPanelStore.setState(useRightPanelStore.getInitialState());
-  useTerminalUiStateStore.setState(useTerminalUiStateStore.getInitialState());
   return { original, other };
 }
 

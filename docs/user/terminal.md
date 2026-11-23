@@ -1,5 +1,20 @@
 # Terminal
 
+## Terminal drawer
+
+Terminals live in a drawer at the foot of the right panel, under whichever tool is open, so you
+can watch a diff or the browser and a terminal together. Press `mod+j` or click the terminal icon
+at the bottom of the panel's icon bar to open or collapse it; if the panel is closed, it opens
+too. A thread without a terminal gets one when you open the drawer.
+
+Each terminal is a tab in the drawer. Collapsed, the drawer shows one line with the active
+terminal's name and whether its command is running, finished, or failed. Drag its top edge to
+resize it, and use the maximize button to cover the tool above it; picking a tool or collapsing the
+drawer restores it. Closing or collapsing the drawer and switching tools never stop a terminal. Terminals started in the background, such as a
+worktree setup shell, appear as tabs with a dot on the terminal icon instead of opening the drawer.
+When the server restarts, its terminals end; their tabs say so and offer **Restart terminal**, which
+starts a new shell under the same tab, or **Close**.
+
 ## Choose a shell
 
 Set `T3CODE_TERMINAL_SHELL` in the environment that launches the T3 Code server

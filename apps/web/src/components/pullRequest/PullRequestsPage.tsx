@@ -1587,6 +1587,7 @@ export function PullRequestsPage() {
 
         {rightPanelPresent && renderedPullRequestSurface && panelEnvironmentId !== null ? (
           <RightPanelTabs
+            rail={null}
             mode="inline"
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}

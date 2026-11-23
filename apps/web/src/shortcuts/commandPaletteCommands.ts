@@ -12,9 +12,12 @@ import { toggleThemeEditorForTheme } from "../components/settings/themeEditorSto
 import { toastManager } from "../components/ui/toast";
 import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
 import { m } from "../i18n/messages";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectTerminalDrawerVisible,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
-import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 
 function consume(event: KeyboardEvent): void {
@@ -110,10 +113,7 @@ export function installCommandPaletteCommands(
         const threadRef = readRouteThreadRef();
         return {
           terminalOpen: threadRef
-            ? selectThreadTerminalUiState(
-                useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-                threadRef,
-              ).terminalOpen
+            ? selectTerminalDrawerVisible(useRightPanelStore.getState(), threadRef)
             : false,
           previewOpen: threadRef
             ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, threadRef) ===

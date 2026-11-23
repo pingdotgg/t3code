@@ -18,10 +18,7 @@ import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore"
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
 import { type RightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
-import {
-  PersistentThreadTerminalPanel,
-  type PersistentThreadTerminalPanelProps,
-} from "../PersistentThreadTerminals";
+import type { PersistentThreadTerminalPanelProps } from "../PersistentThreadTerminals";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
@@ -38,7 +35,7 @@ const DevicePanel = lazy(() =>
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
-type RightPanelTerminalProps = Omit<
+export type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
   "visible" | "threadRef" | "surface"
 >;
@@ -79,7 +76,6 @@ export function RightPanelSurfaceContent(props: {
     image: ComposerImageAttachment | null,
   ) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
-  readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
   readonly issuesSupported: boolean;
   readonly files: RightPanelFileProps;
@@ -103,14 +99,7 @@ export function RightPanelSurfaceContent(props: {
         </Suspense>
       );
     case "terminal":
-      return (
-        <PersistentThreadTerminalPanel
-          {...props.terminal}
-          visible={visible}
-          threadRef={threadRef}
-          surface={surface}
-        />
-      );
+      return null;
     case "diff":
       return (
         <Suspense fallback={null}>

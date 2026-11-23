@@ -28,7 +28,7 @@ import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../../lib/w
 import { setActivePreviewTab } from "../../previewStateStore";
 import { isBrowserSettingsReadError } from "../../browser/openFileInPreview";
 import { addBrowserSurface } from "../preview/addBrowserSurface";
-import { focusActivePanelTerminal, focusTerminal } from "../../lib/terminalFocus";
+import { focusTerminal } from "../../lib/terminalFocus";
 import { subscribePreviewAction } from "../preview/previewActionBus";
 import { floatDeviceSurface } from "../preview/agentOpenedPreviews";
 import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "../../previewMiniPlayerStore";
@@ -235,8 +235,8 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       closePreviewPanel();
       return;
     }
+    // The drawer is global, so opening the panel leaves focus where the user had it.
     useRightPanelStore.getState().toggleVisibility(activeThreadRef);
-    focusActivePanelTerminal(activeThreadRef);
   };
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {

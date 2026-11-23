@@ -130,7 +130,8 @@ Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `rightPanelOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
 `draftThreadRoute`, `turnRunning`, `composerEmpty`, `editableFocus`, `isWeb`, and `isDesktop`.
 In a thread, `rightPanelOpen` is true while its right panel is open; the default
-`mod+t` uses it to open the panel's new-tab menu.
+`mod+t` uses it to open the panel's tool launcher. `terminalOpen` is true while the
+right panel's terminal drawer is open, even when it has no terminal yet.
 `draftThreadRoute` is true on a draft thread, including a restored draft, until it is first sent.
 `composerEmpty` is true while the composer has no text, attachments, or context, and is not
 editing a queued message or answering a question.

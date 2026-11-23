@@ -1,7 +1,6 @@
 import { useGT } from "gt-react";
 import {
   type CSSProperties,
-  type FocusEvent,
   type MouseEventHandler,
   type ReactNode,
   useLayoutEffect,
@@ -106,15 +105,30 @@ function PreviewPanelShellFrame(
   const attachHost = (host: HTMLDivElement) => {
     hostRef.current = host;
     const stopObservingRow = observeRow(host);
+    // Drawer terminals render through a portal from ChatView and are moved into the panel, so
+    // their React focus events never reach this shell; only native events see them.
+    const fromDrawerTerminal = (event: FocusEvent) =>
+      event.target instanceof Element &&
+      event.target.closest("[data-right-panel-terminal-body]") !== null;
+    const onFocusIn = (event: FocusEvent) => {
+      if (fromDrawerTerminal(event)) rememberFocusOrigin(event);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      if (fromDrawerTerminal(event)) lastBlurred.current = event.target;
+    };
+    host.addEventListener("focusin", onFocusIn);
+    host.addEventListener("focusout", onFocusOut);
     return () => {
       hostRef.current = null;
       stopObservingRow();
+      host.removeEventListener("focusin", onFocusIn);
+      host.removeEventListener("focusout", onFocusOut);
     };
   };
   // React focus events, unlike a listener added in attachHost, also see content that focuses
   // itself while mounting (a terminal does, from a ref that attaches before the host's).
   // Focus moving within the panel, portalled menus included, first blurs an element of it.
-  const rememberFocusOrigin = (event: FocusEvent<HTMLDivElement>) => {
+  const rememberFocusOrigin = (event: { readonly relatedTarget: EventTarget | null }) => {
     const from = event.relatedTarget;
     if (from === null || from === lastBlurred.current) return;
     focusOrigin.current = from instanceof HTMLElement ? from : null;

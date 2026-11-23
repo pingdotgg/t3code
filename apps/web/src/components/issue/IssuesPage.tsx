@@ -786,6 +786,7 @@ export function IssuesPage() {
         panelEnvironmentId !== null &&
         rightPanelRef !== null ? (
           <RightPanelTabs
+            rail={null}
             mode="inline"
             open={rightPanelState.isOpen}
             keybindings={keybindings}

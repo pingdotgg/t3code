@@ -156,12 +156,6 @@ vi.mock("../composerDraftStore", () => ({
       clearProjectDraftThreadById: () => state.localEffects.push("clear-project-draft"),
     }),
 }));
-vi.mock("../terminalUiStateStore", () => ({
-  useTerminalUiStateStore: (select: (store: unknown) => unknown) =>
-    select({
-      clearTerminalUiState: () => state.localEffects.push("clear-terminal-ui"),
-    }),
-}));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: (select: (store: unknown) => unknown) =>
     select({
@@ -388,7 +382,6 @@ describe("thread action permissions", () => {
       "release-uploads:side-chat",
       "clear-draft:side-chat",
       "refresh-archive",
-      "clear-terminal-ui",
     ]);
     expect(state.localEffects).not.toContain("clear-draft:fork");
     expect(state.localEffects).not.toContain("clear-draft:other-side-chat");
@@ -426,7 +419,6 @@ describe("thread action permissions", () => {
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
-    expect(state.localEffects).toContain("clear-terminal-ui");
     expect(threadPanelStatePresence(target)).toEqual(panelStateCleared);
   });
 
@@ -491,7 +483,6 @@ describe("thread action permissions", () => {
       expect(result._tag).toBe("Success");
       expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
       expect(state.toasts).toContain("Failed to delete worktree");
-      expect(state.localEffects).toContain("clear-terminal-ui");
     } finally {
       consoleError.mockRestore();
     }

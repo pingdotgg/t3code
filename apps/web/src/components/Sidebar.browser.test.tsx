@@ -25,8 +25,8 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
+import { useRightPanelStore } from "../rightPanelStore";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
@@ -167,12 +167,12 @@ describe("sidebar render isolation", () => {
       routeThreadRef,
     });
     const terminal = document.createElement("div");
-    terminal.dataset.terminalOwner = "drawer";
+    terminal.dataset.terminalOwner = "right-panel";
     const terminalInput = document.createElement("textarea");
     terminal.append(terminalInput);
     document.body.append(terminal);
     stack.defer(() => terminal.remove());
-    stack.defer(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, false));
+    stack.defer(() => useRightPanelStore.getState().setTerminalDrawerOpen(routeThreadRef, false));
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
@@ -185,7 +185,7 @@ describe("sidebar render isolation", () => {
     const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
     const beforeShortcut = rowRenders();
     await userEvent.keyboard(`{${modifier}>}`);
-    await act(() => useTerminalUiStateStore.getState().setTerminalOpen(routeThreadRef, true));
+    await act(() => useRightPanelStore.getState().openTerminal(routeThreadRef, "term-1"));
     await act(() => terminalInput.focus());
     await userEvent.keyboard(`{/${modifier}}`);
     await act(() => terminalInput.blur());

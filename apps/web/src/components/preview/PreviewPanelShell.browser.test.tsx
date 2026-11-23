@@ -66,6 +66,32 @@ describe("PreviewPanelShell focus", () => {
     await expect.element(screen.getByRole("textbox", { name: "Message New thread" })).toHaveFocus();
   });
 
+  it("returns focus to the composer from a drawer terminal rendered elsewhere and moved into the panel", async () => {
+    // Drawer terminals render through a portal from ChatView, so their React events skip the shell.
+    const host = document.createElement("div");
+    const hostedTerminal = createPortal(
+      <div role="region" aria-label="Hosted terminal" tabIndex={-1} />,
+      host,
+    );
+    const slot = (element: HTMLElement | null) => element?.append(host);
+    const layout = (open: boolean) => (
+      <>
+        <Workspace open={open}>
+          <div data-right-panel-terminal-body ref={slot} />
+        </Workspace>
+        {hostedTerminal}
+      </>
+    );
+    await using screen = await render(layout(false));
+    await userEvent.click(screen.getByRole("textbox", { name: "Message New thread" }));
+    await screen.rerender(layout(true));
+    await act(() => page.getByRole("region", { name: "Hosted terminal" }).element().focus());
+
+    await screen.rerender(layout(false));
+
+    await expect.element(screen.getByRole("textbox", { name: "Message New thread" })).toHaveFocus();
+  });
+
   it("keeps the composer as the origin after focus visits a menu portalled from the panel", async () => {
     const panel = (open: boolean) => (
       <Workspace open={open}>

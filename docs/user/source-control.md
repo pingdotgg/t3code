@@ -11,15 +11,16 @@ committed it, or fixed a conflict in it. Use the branch comparison to review eve
 against your base branch, or **All turns** to review everything this thread changed since its first
 turn. Restore still returns the complete saved workspace.
 
-The right panel opens on **Changes**, beside **Terminal** and **Browser**. Its count is the number of
-files the latest turn changed. Below the diff, **Commit** and **Create PR** run the same actions as
-the thread's Git menu.
+The right panel opens on **Changes**. Its header shows the lines added and removed and the number
+of files the latest turn changed. A dot on the Changes icon means a newer turn changed files while
+you were on another tool. Below the diff, **Commit** and **Create PR** run the same actions as the
+thread's Git menu.
 
 On web and desktop, open the Changes source picker and choose **Commits** to review one local
 commit at a time. The list shows the newest 100 commits in the branch comparison. A merge commit
 shows its changes against its first parent.
 
-A commit link from a supported code host opens in the Changes tab when the thread's repository has
+A commit link from a supported code host opens in Changes when the thread's repository has
 that commit locally, on any branch. Otherwise a pull request commit link opens the pull request. Other
 commit links follow your **Open links in** setting; on web, when that opens a new tab, T3 Code first
 shows an **Open link** button. Command/Ctrl+Click always opens the link in your browser. Commit links follow the **Open pull requests in T3 Code**

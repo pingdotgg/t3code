@@ -23,7 +23,7 @@ describe("sidebar toggle shortcut", () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(
       <AppSidebarLayout>
-        <div data-terminal-owner="drawer">
+        <div data-terminal-owner="right-panel">
           <textarea aria-label="Terminal input" />
         </div>
         <button type="button">Outside</button>

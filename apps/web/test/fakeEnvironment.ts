@@ -628,6 +628,20 @@ export function installFakeEnvironment(
     })),
   ];
   holdCommand = options?.holdCommand ?? (() => false);
+  // An earlier test in this module may still hold the shell subscription, which lists its threads.
+  if (shellSubscriber !== null) {
+    for (const thread of fixtures.filter((fixture) => !fixture.olderSettled)) {
+      sequence += 1;
+      Effect.runSync(
+        Queue.offer(shellSubscriber, {
+          kind: "thread.updated",
+          sequence,
+          location: "active",
+          thread: shellOf(thread),
+        }),
+      );
+    }
+  }
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);

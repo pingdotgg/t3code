@@ -750,7 +750,8 @@ it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel"
   const toggle = page.getByRole("button", { name: "Toggle right panel", exact: true });
   await expect.element(toggle).toHaveAttribute("aria-pressed", "false");
   await toggle.click();
-  await page.getByRole("button", { name: /^Files/ }).click();
+  // The empty panel's launcher row, not the rail's Files icon.
+  await page.getByRole("button", { name: "FilesF" }).click();
   await composer.click();
   await userEvent.keyboard("{Control>}t{/Control}");
   await expect.element(page.getByRole("menuitem", { name: /Files/ })).toBeVisible();

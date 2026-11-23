@@ -18,7 +18,14 @@ import {
   type LinkedThreadSurface,
 } from "./linkedThreadSurface";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
-import type { ChatFileAttachment } from "./types";
+import { DEFAULT_THREAD_TERMINAL_HEIGHT, type ChatFileAttachment } from "./types";
+import {
+  nextUnseenRightPanelGroups,
+  reconcileTerminalSurfaceIds,
+  rightPanelGroupOf,
+  visibleRightPanelGroups,
+  type RightPanelRailGroup,
+} from "./components/RightPanelTabs.logic";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -130,7 +137,8 @@ export function decodeThreadSurface(surface: object): ThreadSurface | null {
 }
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
-const RIGHT_PANEL_STORAGE_VERSION = 16;
+const RIGHT_PANEL_STORAGE_VERSION = 17;
+const LEGACY_TERMINAL_UI_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
   EnvironmentId.make("pull-requests-panel"),
@@ -157,6 +165,22 @@ export interface ThreadRightPanelState {
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
   proactiveDiffTurnId?: RunId;
+  /** The drawer's sub-tab: always a terminal surface of `surfaces`, never the active tool. */
+  activeTerminalSurfaceId?: string;
+  /** The latest turn the open panel accounted for, so the Changes dot compares against it. */
+  changesSeenTurnCount?: number;
+}
+
+export type TerminalPanelSurface = Extract<RightPanelSurface, { kind: "terminal" }>;
+
+export interface TerminalDrawerPreference {
+  open: boolean;
+  height: number;
+}
+
+interface TerminalServerObservation {
+  ids: readonly string[];
+  snapshotId: string | symbol | undefined;
 }
 
 export interface ThreadPanelVisibility {
@@ -166,6 +190,13 @@ export interface ThreadPanelVisibility {
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
+  /** Global, not per thread: the drawer stays where the user left it across threads. */
+  terminalDrawer: TerminalDrawerPreference;
+  terminalDrawerMaximized: boolean;
+  unseenGroupsByThreadKey: Record<string, readonly RightPanelRailGroup[]>;
+  terminalServerObservationByThreadKey: Record<string, TerminalServerObservation>;
+  /** Session only: ids the user opened that the server has not listed yet. */
+  claimedTerminalIdsByThreadKey: Record<string, readonly string[]>;
   pendingMaximizeThreadKey: string | null;
   requestMaximize: (ref: ScopedThreadRef) => void;
   consumeMaximizeRequest: (ref: ScopedThreadRef) => boolean;
@@ -230,7 +261,20 @@ interface RightPanelStoreState {
   ) => void;
   /** Clears the surface's pending link only while it is still `revealUrl`. */
   settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
+  /** Shows the drawer (and the panel); background terminals arrive through reconcile. */
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
+  activateTerminalSurface: (ref: ScopedThreadRef, surfaceId: string) => void;
+  /** Opening also opens the thread's panel. */
+  setTerminalDrawerOpen: (ref: ScopedThreadRef, open: boolean) => void;
+  setTerminalDrawerHeight: (height: number) => void;
+  setTerminalDrawerMaximized: (maximized: boolean) => void;
+  reconcileTerminalSurfaces: (
+    ref: ScopedThreadRef,
+    serverIds: readonly string[],
+    snapshotId: string | symbol | undefined,
+    closingIds: readonly string[],
+  ) => void;
+  markChangesSeen: (ref: ScopedThreadRef, turnCount: number) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -426,19 +470,72 @@ const upsertSurface = (
   activeSurfaceId: activate ? surface.id : current.activeSurfaceId,
 });
 
+const isTerminalSurface = (surface: RightPanelSurface): surface is TerminalPanelSurface =>
+  surface.kind === "terminal";
+const isToolSurface = (surface: RightPanelSurface) => surface.kind !== "terminal";
+
+/**
+ * The one place that keeps `activeSurfaceId` on a tool and `activeTerminalSurfaceId` on a
+ * terminal, so no fallback, reconcile or saved state can show a terminal as the tool.
+ */
+function withValidActivePointers(
+  previous: ThreadRightPanelState,
+  next: ThreadRightPanelState,
+): ThreadRightPanelState {
+  let result = next;
+  const activeId = next.activeSurfaceId;
+  if (activeId !== null) {
+    const index = next.surfaces.findIndex((surface) => surface.id === activeId);
+    if (index < 0 || next.surfaces[index]!.kind === "terminal") {
+      const split =
+        index >= 0
+          ? index
+          : Math.max(
+              0,
+              previous.surfaces.findIndex((surface) => surface.id === activeId),
+            );
+      const right = next.surfaces.slice(index >= 0 ? index + 1 : split).find(isToolSurface);
+      const left = next.surfaces.slice(0, split).findLast(isToolSurface);
+      result = { ...result, activeSurfaceId: (right ?? left)?.id ?? null };
+    }
+  }
+  const terminals = next.surfaces.filter(isTerminalSurface);
+  const terminalId = next.activeTerminalSurfaceId;
+  if (terminals.length === 0) {
+    if (terminalId === undefined) return result;
+    const { activeTerminalSurfaceId: _dropped, ...rest } = result;
+    return rest;
+  }
+  if (terminalId !== undefined && terminals.some((surface) => surface.id === terminalId)) {
+    return result;
+  }
+  const previousTerminals = previous.surfaces.filter(isTerminalSurface);
+  const previousIndex = previousTerminals.findIndex((surface) => surface.id === terminalId);
+  const present = (surface: TerminalPanelSurface) =>
+    terminals.some((entry) => entry.id === surface.id);
+  const neighbor =
+    previousIndex < 0
+      ? undefined
+      : (previousTerminals.slice(previousIndex + 1).find(present) ??
+        previousTerminals.slice(0, previousIndex).findLast(present));
+  return { ...result, activeTerminalSurfaceId: (neighbor ?? terminals[0]!).id };
+}
+
 const updateThreadStateMap = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const next = updater(current);
+  const next = withValidActivePointers(current, updater(current));
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
     next.surfaces.length === 0 &&
     !next.dismissedDeviceSurfaceIds?.length &&
-    next.proactiveDiffTurnId === undefined
+    next.proactiveDiffTurnId === undefined &&
+    next.activeTerminalSurfaceId === undefined &&
+    next.changesSeenTurnCount === undefined
   ) {
     if (!(threadKey in byThreadKey)) return byThreadKey;
     const { [threadKey]: _removed, ...rest } = byThreadKey;
@@ -466,17 +563,52 @@ const updateThreadPanelVisibilityMap = (
 
 type RightPanelStoreData = Pick<
   RightPanelStoreState,
-  "byThreadKey" | "threadPanelVisibilityByThreadKey"
+  "byThreadKey" | "threadPanelVisibilityByThreadKey" | "unseenGroupsByThreadKey" | "terminalDrawer"
 >;
+
+const EMPTY_UNSEEN: readonly RightPanelRailGroup[] = [];
+const EMPTY_IDS: readonly string[] = [];
+
+const updateUnseenGroups = (
+  unseenGroupsByThreadKey: Record<string, readonly RightPanelRailGroup[]>,
+  threadKey: string,
+  before: ThreadRightPanelState,
+  after: ThreadRightPanelState,
+  drawerOpen: boolean,
+): Record<string, readonly RightPanelRailGroup[]> => {
+  const unseen = unseenGroupsByThreadKey[threadKey] ?? EMPTY_UNSEEN;
+  const next = nextUnseenRightPanelGroups({
+    before: before.surfaces,
+    after,
+    drawerOpen,
+    unseen,
+  });
+  if (next === unseen) return unseenGroupsByThreadKey;
+  if (next.length === 0) {
+    const { [threadKey]: _cleared, ...rest } = unseenGroupsByThreadKey;
+    return rest;
+  }
+  return { ...unseenGroupsByThreadKey, [threadKey]: next };
+};
 
 const updateThread = (
   state: RightPanelStoreData,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
-): RightPanelStoreData => {
+): Pick<
+  RightPanelStoreData,
+  "byThreadKey" | "threadPanelVisibilityByThreadKey" | "unseenGroupsByThreadKey"
+> => {
   const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   const byThreadKey = updateThreadStateMap(state.byThreadKey, threadKey, updater);
   const next = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+  const unseenGroupsByThreadKey = updateUnseenGroups(
+    state.unseenGroupsByThreadKey,
+    threadKey,
+    current,
+    next,
+    state.terminalDrawer.open,
+  );
   let threadPanelVisibilityByThreadKey = state.threadPanelVisibilityByThreadKey;
 
   if (!current.isOpen && next.isOpen) {
@@ -496,8 +628,63 @@ const updateThread = (
     );
   }
 
-  return { byThreadKey, threadPanelVisibilityByThreadKey };
+  return { byThreadKey, threadPanelVisibilityByThreadKey, unseenGroupsByThreadKey };
 };
+
+/** Runs `update` against the store as if the drawer were already open, and opens it. */
+const withDrawerOpen = (
+  state: RightPanelStoreState,
+  update: (state: RightPanelStoreState) => Partial<RightPanelStoreState>,
+): Partial<RightPanelStoreState> => {
+  const terminalDrawer = state.terminalDrawer.open
+    ? state.terminalDrawer
+    : { ...state.terminalDrawer, open: true };
+  return { ...update({ ...state, terminalDrawer }), terminalDrawer };
+};
+
+const withClaimedTerminal = (
+  state: RightPanelStoreState,
+  threadKey: string,
+  terminalId: string,
+): Partial<RightPanelStoreState> => {
+  const claimed = state.claimedTerminalIdsByThreadKey[threadKey] ?? EMPTY_IDS;
+  const listed = state.terminalServerObservationByThreadKey[threadKey]?.ids.includes(terminalId);
+  return claimed.includes(terminalId) || listed
+    ? {}
+    : {
+        claimedTerminalIdsByThreadKey: {
+          ...state.claimedTerminalIdsByThreadKey,
+          [threadKey]: [...claimed, terminalId],
+        },
+      };
+};
+
+const withTerminal = (
+  current: ThreadRightPanelState,
+  terminalId: string,
+): ThreadRightPanelState => {
+  const owner = current.surfaces.find(
+    (surface): surface is TerminalPanelSurface =>
+      surface.kind === "terminal" && surface.terminalIds.includes(terminalId),
+  );
+  if (!owner) {
+    const surface = terminalSurface(terminalId);
+    return {
+      ...current,
+      surfaces: [...current.surfaces, surface],
+      activeTerminalSurfaceId: surface.id,
+    };
+  }
+  return {
+    ...current,
+    activeTerminalSurfaceId: owner.id,
+    surfaces: current.surfaces.map((surface) =>
+      surface === owner ? { ...owner, activeTerminalId: terminalId } : surface,
+    ),
+  };
+};
+
+const isTerminalSurfaceId = (surfaceId: string) => surfaceId.startsWith("terminal:");
 
 const automaticUpdate = (
   state: RightPanelStoreState,
@@ -578,6 +765,14 @@ const activated = (current: ThreadRightPanelState, surfaceId: string): ThreadRig
     ? { ...current, isOpen: true, activeSurfaceId: surfaceId }
     : current;
 
+const activatedTerminal = (
+  current: ThreadRightPanelState,
+  surfaceId: string,
+): ThreadRightPanelState =>
+  current.surfaces.some((surface) => surface.id === surfaceId && surface.kind === "terminal")
+    ? { ...current, isOpen: true, activeTerminalSurfaceId: surfaceId }
+    : current;
+
 const closeAction = (
   state: RightPanelStoreState,
   threadKey: string,
@@ -589,13 +784,24 @@ function normalizeRevealLine(line: number | undefined): number | null {
   return Math.max(1, Math.trunc(line));
 }
 
+const DEFAULT_TERMINAL_DRAWER: TerminalDrawerPreference = {
+  open: false,
+  height: DEFAULT_THREAD_TERMINAL_HEIGHT,
+};
+
 export function migratePersistedRightPanelState(persistedState: unknown): {
   byThreadKey: Record<string, ThreadRightPanelState>;
   threadPanelVisibilityByThreadKey: Record<string, ThreadPanelVisibility>;
+  terminalDrawer: TerminalDrawerPreference;
 } {
   if (!persistedState || typeof persistedState !== "object") {
-    return { byThreadKey: {}, threadPanelVisibilityByThreadKey: {} };
+    return {
+      byThreadKey: {},
+      threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: DEFAULT_TERMINAL_DRAWER,
+    };
   }
+  let openThreadHadActiveTerminal = false;
   const byThreadKey =
     "byThreadKey" in persistedState &&
     persistedState.byThreadKey &&
@@ -729,15 +935,37 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                 (typeof validThreadState?.isOpen === "boolean"
                   ? validThreadState.isOpen
                   : persistedActiveSurfaceId !== null);
-              const activeSurfaceId =
+              let activeSurfaceId =
                 persistedActiveSurfaceId ??
                 (isOpen || rawActiveSurfaceId === "agents" ? (surfaces[0]?.id ?? null) : null);
+              const savedTerminalSurfaceId = validThreadState?.activeTerminalSurfaceId;
+              let activeTerminalSurfaceId =
+                typeof savedTerminalSurfaceId === "string" ? savedTerminalSurfaceId : undefined;
+              // Builds before the drawer showed terminals as the tool; the tool falls back to
+              // Changes and the drawer opens on that terminal.
+              if (
+                persistedActiveSurfaceId !== null &&
+                isTerminalSurfaceId(persistedActiveSurfaceId)
+              ) {
+                activeTerminalSurfaceId = persistedActiveSurfaceId;
+                activeSurfaceId = "diff";
+                if (!surfaces.some((surface) => surface.id === "diff")) {
+                  surfaces.push(singletonSurface("diff"));
+                }
+                if (isOpen) openThreadHadActiveTerminal = true;
+              }
+              const changesSeenTurnCount = validThreadState?.changesSeenTurnCount;
               return [
                 threadKey,
-                {
+                withValidActivePointers(EMPTY_THREAD_STATE, {
                   isOpen,
                   surfaces,
                   activeSurfaceId,
+                  ...(activeTerminalSurfaceId === undefined ? {} : { activeTerminalSurfaceId }),
+                  ...(typeof changesSeenTurnCount === "number" &&
+                  Number.isSafeInteger(changesSeenTurnCount)
+                    ? { changesSeenTurnCount }
+                    : {}),
                   ...(typeof validThreadState?.proactiveDiffTurnId === "string"
                     ? { proactiveDiffTurnId: RunId.make(validThreadState.proactiveDiffTurnId) }
                     : {}),
@@ -750,7 +978,7 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                       }
                     : {}),
                   ...(validThreadState?.maximized === true ? { maximized: true as const } : {}),
-                },
+                }),
               ];
             }),
         )
@@ -770,13 +998,34 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
           }),
         )
       : {};
-  return { byThreadKey, threadPanelVisibilityByThreadKey };
+  const savedDrawer =
+    "terminalDrawer" in persistedState &&
+    persistedState.terminalDrawer &&
+    typeof persistedState.terminalDrawer === "object"
+      ? (persistedState.terminalDrawer as Partial<Record<keyof TerminalDrawerPreference, unknown>>)
+      : null;
+  const terminalDrawer: TerminalDrawerPreference = {
+    open:
+      typeof savedDrawer?.open === "boolean"
+        ? savedDrawer.open || openThreadHadActiveTerminal
+        : openThreadHadActiveTerminal,
+    height:
+      typeof savedDrawer?.height === "number" && Number.isFinite(savedDrawer.height)
+        ? savedDrawer.height
+        : DEFAULT_THREAD_TERMINAL_HEIGHT,
+  };
+  return { byThreadKey, threadPanelVisibilityByThreadKey, terminalDrawer };
 }
 
 export const useRightPanelStore = create<RightPanelStoreState>()(
   persist(
     (set, get) => ({
       byThreadKey: {},
+      terminalDrawer: DEFAULT_TERMINAL_DRAWER,
+      terminalDrawerMaximized: false,
+      unseenGroupsByThreadKey: {},
+      terminalServerObservationByThreadKey: {},
+      claimedTerminalIdsByThreadKey: {},
       pendingMaximizeThreadKey: null,
       requestMaximize: (ref) => set({ pendingMaximizeThreadKey: scopedThreadKey(ref) }),
       consumeMaximizeRequest: (ref) => {
@@ -823,7 +1072,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           if (
             (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
           ) {
-            return state;
+            // The user chose something else since; the PR waits behind the reviews icon.
+            return automaticUpdate(state, threadKey, (current) =>
+              current.surfaces.some((entry) => entry.id === request.id)
+                ? current
+                : { ...current, surfaces: [...current.surfaces, request] },
+            );
           }
           // Keep an existing PR tab where the user left it when revisiting a thread.
           if (
@@ -1077,36 +1331,168 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           }),
         ),
       openTerminal: (ref, terminalId) =>
+        set((state) => ({
+          ...withDrawerOpen(state, (opened) =>
+            userAction(opened, scopedThreadKey(ref), (current) => ({
+              ...withTerminal(current, terminalId),
+              isOpen: true,
+            })),
+          ),
+          ...withClaimedTerminal(state, scopedThreadKey(ref), terminalId),
+        })),
+      activateTerminalSurface: (ref, surfaceId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) =>
-            upsertSurface(current, terminalSurface(terminalId)),
+            activatedTerminal(current, surfaceId),
           ),
         ),
-      splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
+      setTerminalDrawerOpen: (ref, open) =>
+        set((state) => {
+          if (!open) {
+            return state.terminalDrawer.open
+              ? {
+                  terminalDrawer: { ...state.terminalDrawer, open: false },
+                  terminalDrawerMaximized: false,
+                }
+              : state;
+          }
+          return withDrawerOpen(state, (opened) =>
+            userAction(opened, scopedThreadKey(ref), (current) =>
+              current.isOpen ? current : { ...current, isOpen: true },
+            ),
+          );
+        }),
+      setTerminalDrawerHeight: (height) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => ({
-            ...current,
-            isOpen: true,
-            activeSurfaceId: surfaceId,
-            surfaces: current.surfaces.map((surface) => {
-              if (surface.id !== surfaceId || surface.kind !== "terminal") return surface;
-              const { splitDirection: _splitDirection, ...baseSurface } = surface;
+          !Number.isFinite(height) || state.terminalDrawer.height === height
+            ? state
+            : { terminalDrawer: { ...state.terminalDrawer, height } },
+        ),
+      setTerminalDrawerMaximized: (maximized) =>
+        set((state) =>
+          state.terminalDrawerMaximized === maximized
+            ? state
+            : { terminalDrawerMaximized: maximized },
+        ),
+      reconcileTerminalSurfaces: (ref, serverIds, snapshotId, closingIds) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const current = state.byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
+          const ownedIds = new Set(
+            current.surfaces.flatMap((surface) =>
+              surface.kind === "terminal" ? surface.terminalIds : [],
+            ),
+          );
+          const previous = state.terminalServerObservationByThreadKey[threadKey];
+          const { adopt, drop } = reconcileTerminalSurfaceIds({
+            ownedIds,
+            serverIds,
+            previous,
+            snapshotId,
+            closingIds,
+          });
+          const ids = [...serverIds].toSorted();
+          const observationUnchanged =
+            previous !== undefined &&
+            previous.snapshotId === snapshotId &&
+            previous.ids.length === ids.length &&
+            previous.ids.every((id, index) => id === ids[index]);
+          const observation = observationUnchanged
+            ? {}
+            : {
+                terminalServerObservationByThreadKey: {
+                  ...state.terminalServerObservationByThreadKey,
+                  [threadKey]: { ids, snapshotId },
+                },
+              };
+          // A restarted server never saw a pending claim; a listed one no longer needs it.
+          const claimed = state.claimedTerminalIdsByThreadKey[threadKey] ?? EMPTY_IDS;
+          const restarted = previous !== undefined && previous.snapshotId !== snapshotId;
+          const stillClaimed = restarted
+            ? EMPTY_IDS
+            : claimed.filter((id) => !serverIds.includes(id));
+          let claims: Partial<RightPanelStoreState> = {};
+          if (stillClaimed.length !== claimed.length) {
+            const { [threadKey]: _claimed, ...claimedTerminalIdsByThreadKey } =
+              state.claimedTerminalIdsByThreadKey;
+            claims = {
+              claimedTerminalIdsByThreadKey:
+                stillClaimed.length === 0
+                  ? claimedTerminalIdsByThreadKey
+                  : { ...claimedTerminalIdsByThreadKey, [threadKey]: stillClaimed },
+            };
+          }
+          if (adopt.length === 0 && drop.length === 0) {
+            return observationUnchanged && stillClaimed.length === claimed.length
+              ? state
+              : { ...observation, ...claims };
+          }
+          const dropped = new Set(drop);
+          return {
+            ...claims,
+            ...automaticUpdate(state, threadKey, (thread) => {
+              const surfaces = thread.surfaces.flatMap<RightPanelSurface>((surface) => {
+                if (surface.kind !== "terminal") return [surface];
+                const terminalIds = surface.terminalIds.filter((id) => !dropped.has(id));
+                if (terminalIds.length === surface.terminalIds.length) return [surface];
+                if (terminalIds.length === 0) return [];
+                return [
+                  {
+                    ...surface,
+                    terminalIds,
+                    activeTerminalId: terminalIds.includes(surface.activeTerminalId)
+                      ? surface.activeTerminalId
+                      : terminalIds[0]!,
+                  },
+                ];
+              });
+              const adopted = [...surfaces, ...adopt.map(terminalSurface)];
               return {
-                ...baseSurface,
-                terminalIds: surface.terminalIds.includes(terminalId)
-                  ? surface.terminalIds
-                  : [...surface.terminalIds, terminalId],
-                activeTerminalId: terminalId,
-                ...(direction === "vertical" ? { splitDirection: "vertical" as const } : {}),
+                ...thread,
+                isOpen: adopted.length > 0 && thread.isOpen,
+                surfaces: adopted,
               };
             }),
-          })),
+            ...observation,
+          };
+        }),
+      markChangesSeen: (ref, turnCount) =>
+        set((state) =>
+          selectThreadRightPanelState(state.byThreadKey, ref).changesSeenTurnCount === turnCount
+            ? state
+            : automaticUpdate(state, scopedThreadKey(ref), (current) => ({
+                ...current,
+                changesSeenTurnCount: turnCount,
+              })),
         ),
+      splitTerminal: (ref, surfaceId, terminalId, direction = "horizontal") =>
+        set((state) => ({
+          ...withClaimedTerminal(state, scopedThreadKey(ref), terminalId),
+          ...withDrawerOpen(state, (opened) =>
+            userAction(opened, scopedThreadKey(ref), (current) => ({
+              ...current,
+              isOpen: true,
+              activeTerminalSurfaceId: surfaceId,
+              surfaces: current.surfaces.map((surface) => {
+                if (surface.id !== surfaceId || surface.kind !== "terminal") return surface;
+                const { splitDirection: _splitDirection, ...baseSurface } = surface;
+                return {
+                  ...baseSurface,
+                  terminalIds: surface.terminalIds.includes(terminalId)
+                    ? surface.terminalIds
+                    : [...surface.terminalIds, terminalId],
+                  activeTerminalId: terminalId,
+                  ...(direction === "vertical" ? { splitDirection: "vertical" as const } : {}),
+                };
+              }),
+            })),
+          ),
+        })),
       activateTerminal: (ref, surfaceId, terminalId) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => ({
             ...current,
-            activeSurfaceId: surfaceId,
+            activeTerminalSurfaceId: surfaceId,
             surfaces: current.surfaces.map((surface) =>
               surface.id === surfaceId &&
               surface.kind === "terminal" &&
@@ -1125,18 +1511,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             if (!surface || surface.kind !== "terminal") return current;
             const terminalIds = surface.terminalIds.filter((id) => id !== terminalId);
             if (terminalIds.length === 0) {
-              const index = current.surfaces.findIndex((entry) => entry.id === surfaceId);
               const surfaces = current.surfaces.filter((entry) => entry.id !== surfaceId);
-              const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-              return {
-                ...current,
-                isOpen: surfaces.length > 0 && current.isOpen,
-                surfaces,
-                activeSurfaceId:
-                  current.activeSurfaceId === surfaceId
-                    ? (fallback?.id ?? null)
-                    : current.activeSurfaceId,
-              };
+              return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
             }
             return {
               ...current,
@@ -1157,43 +1533,49 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       activateSurface: (ref, surfaceId) =>
         set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
+          isTerminalSurfaceId(surfaceId)
+            ? withDrawerOpen(state, (opened) =>
+                userAction(opened, scopedThreadKey(ref), (current) =>
+                  activatedTerminal(current, surfaceId),
+                ),
+              )
+            : userAction(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
         ),
       revealSurface: (ref, surfaceId) =>
         set((state) =>
-          automaticUpdate(state, scopedThreadKey(ref), (current) => activated(current, surfaceId)),
+          automaticUpdate(state, scopedThreadKey(ref), (current) =>
+            isTerminalSurfaceId(surfaceId)
+              ? activatedTerminal(current, surfaceId)
+              : activated(current, surfaceId),
+          ),
         ),
       closeSurface: (ref, surfaceId) =>
         set((state) =>
           closeAction(state, scopedThreadKey(ref), (current) => {
-            const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
-            if (index < 0) return current;
             const surfaces = current.surfaces.filter((surface) => surface.id !== surfaceId);
-            const next = {
-              ...current,
-              isOpen: surfaces.length > 0 && current.isOpen,
-              surfaces,
-            };
-            if (current.activeSurfaceId !== surfaceId) {
-              return next;
-            }
-            const fallback = surfaces[Math.min(index, surfaces.length - 1)] ?? null;
-            return {
-              ...next,
-              activeSurfaceId: fallback?.id ?? null,
-            };
+            if (surfaces.length === current.surfaces.length) return current;
+            return { ...current, isOpen: surfaces.length > 0 && current.isOpen, surfaces };
           }),
         ),
+      // Bulk closes stay inside the clicked surface's group, and never take a terminal along.
       closeOtherSurfaces: (ref, surfaceId) =>
         set((state) =>
           closeAction(state, scopedThreadKey(ref), (current) => {
             const surface = current.surfaces.find((entry) => entry.id === surfaceId);
-            if (!surface || current.surfaces.length === 1) return current;
+            if (!surface) return current;
+            const group = rightPanelGroupOf(surface);
+            const surfaces = current.surfaces.filter(
+              (entry) => entry === surface || rightPanelGroupOf(entry) !== group,
+            );
+            if (surfaces.length === current.surfaces.length) return current;
+            const activeStillExists = surfaces.some(
+              (entry) => entry.id === current.activeSurfaceId,
+            );
             return {
               ...current,
               isOpen: true,
-              surfaces: [surface],
-              activeSurfaceId: surface.id,
+              surfaces,
+              activeSurfaceId: activeStillExists ? current.activeSurfaceId : surface.id,
             };
           }),
         ),
@@ -1201,8 +1583,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) =>
           closeAction(state, scopedThreadKey(ref), (current) => {
             const index = current.surfaces.findIndex((surface) => surface.id === surfaceId);
-            if (index < 0 || index === current.surfaces.length - 1) return current;
-            const surfaces = current.surfaces.slice(0, index + 1);
+            if (index < 0) return current;
+            const group = rightPanelGroupOf(current.surfaces[index]!);
+            const surfaces = current.surfaces.filter(
+              (surface, i) => i <= index || rightPanelGroupOf(surface) !== group,
+            );
+            if (surfaces.length === current.surfaces.length) return current;
             const activeStillExists = surfaces.some(
               (surface) => surface.id === current.activeSurfaceId,
             );
@@ -1215,11 +1601,12 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         ),
       closeAllSurfaces: (ref) =>
         set((state) =>
-          closeAction(state, scopedThreadKey(ref), (current) =>
-            current.surfaces.length === 0
+          closeAction(state, scopedThreadKey(ref), (current) => {
+            const surfaces = current.surfaces.filter(isTerminalSurface);
+            return surfaces.length === current.surfaces.length
               ? current
-              : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
-          ),
+              : { ...current, isOpen: false, surfaces, activeSurfaceId: null };
+          }),
         ),
       moveSurface: (ref, surfaceId, toIndex) =>
         set((state) =>
@@ -1359,10 +1746,19 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             !(threadKey in state.byThreadKey) &&
             !(threadKey in state.threadPanelVisibilityByThreadKey) &&
             !(threadKey in state.userActionRevisionByThreadKey) &&
-            !(threadKey in state.closeRevisionByThreadKey)
+            !(threadKey in state.closeRevisionByThreadKey) &&
+            !(threadKey in state.unseenGroupsByThreadKey) &&
+            !(threadKey in state.terminalServerObservationByThreadKey) &&
+            !(threadKey in state.claimedTerminalIdsByThreadKey)
           ) {
             return state;
           }
+          const { [threadKey]: _claimed, ...claimedTerminalIdsByThreadKey } =
+            state.claimedTerminalIdsByThreadKey;
+          const { [threadKey]: _unseen, ...unseenGroupsByThreadKey } =
+            state.unseenGroupsByThreadKey;
+          const { [threadKey]: _observation, ...terminalServerObservationByThreadKey } =
+            state.terminalServerObservationByThreadKey;
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _visibility, ...threadPanelVisibilityByThreadKey } =
             state.threadPanelVisibilityByThreadKey;
@@ -1375,6 +1771,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             threadPanelVisibilityByThreadKey,
             userActionRevisionByThreadKey,
             closeRevisionByThreadKey,
+            unseenGroupsByThreadKey,
+            terminalServerObservationByThreadKey,
+            claimedTerminalIdsByThreadKey,
           };
         }),
     }),
@@ -1385,6 +1784,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
       partialize: (state) => ({
+        terminalDrawer: state.terminalDrawer,
         byThreadKey: Object.fromEntries(
           Object.entries(state.byThreadKey).flatMap(([threadKey, threadState]) =>
             isPullRequestsPanelKey(threadKey)
@@ -1404,7 +1804,13 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           ),
         ),
       }),
-      migrate: migratePersistedRightPanelState,
+      migrate: (persistedState) => {
+        // The chat drawer's own store is gone; its terminals are adopted from the server list.
+        if (typeof window !== "undefined") {
+          resolveStorage(window.localStorage).removeItem(LEGACY_TERMINAL_UI_STATE_STORAGE_KEY);
+        }
+        return migratePersistedRightPanelState(persistedState);
+      },
     },
   ),
 );
@@ -1484,4 +1890,49 @@ export function selectSelectedRightPanelSurface(
 ): RightPanelSurface | null {
   const state = selectThreadRightPanelState(byThreadKey, ref);
   return state.surfaces.find((surface) => surface.id === state.activeSurfaceId) ?? null;
+}
+
+export function selectActiveTerminalSurface(
+  byThreadKey: Record<string, ThreadRightPanelState>,
+  ref: ScopedThreadRef | null | undefined,
+): TerminalPanelSurface | null {
+  const state = selectThreadRightPanelState(byThreadKey, ref);
+  return (
+    state.surfaces.find(
+      (surface): surface is TerminalPanelSurface =>
+        surface.kind === "terminal" && surface.id === state.activeTerminalSurfaceId,
+    ) ?? null
+  );
+}
+
+export function selectClaimedTerminalIds(
+  state: Pick<RightPanelStoreState, "claimedTerminalIdsByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): readonly string[] {
+  return (ref && state.claimedTerminalIdsByThreadKey[scopedThreadKey(ref)]) || EMPTY_IDS;
+}
+
+/** What `terminalOpen` means: the drawer is open in an open panel, even with no terminal. */
+export function selectTerminalDrawerVisible(
+  state: Pick<RightPanelStoreState, "byThreadKey" | "terminalDrawer">,
+  ref: ScopedThreadRef | null | undefined,
+): boolean {
+  return state.terminalDrawer.open && selectThreadRightPanelState(state.byThreadKey, ref).isOpen;
+}
+
+/** The drawer flag is global, so a group another thread already shows is filtered here. */
+export function selectRightPanelUnseenGroups(
+  state: Pick<RightPanelStoreState, "byThreadKey" | "terminalDrawer" | "unseenGroupsByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): readonly RightPanelRailGroup[] {
+  if (!ref) return EMPTY_UNSEEN;
+  const unseen = state.unseenGroupsByThreadKey[scopedThreadKey(ref)] ?? EMPTY_UNSEEN;
+  if (unseen.length === 0) return unseen;
+  const visible = visibleRightPanelGroups(
+    selectThreadRightPanelState(state.byThreadKey, ref),
+    state.terminalDrawer.open,
+  );
+  return unseen.some((group) => visible.has(group))
+    ? unseen.filter((group) => !visible.has(group))
+    : unseen;
 }

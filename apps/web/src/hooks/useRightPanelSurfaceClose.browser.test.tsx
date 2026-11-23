@@ -3,7 +3,6 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
 import { act, render } from "../../test/render";
 import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
-import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useRightPanelSurfaceClose } from "./useRightPanelSurfaceClose";
 
 const fixture = vi.hoisted(() => ({
@@ -73,7 +72,6 @@ function setup(mode: "single" | "all") {
   fixture.sessions = new Map();
   fixture.failClose = false;
   useRightPanelStore.setState({ byThreadKey: {} });
-  useTerminalUiStateStore.setState({ terminalUiStateByThreadKey: {} });
   const original: ScopedThreadRef = {
     environmentId: EnvironmentId.make("environment-a"),
     threadId: ThreadId.make("thread-a"),
@@ -99,7 +97,7 @@ function setup(mode: "single" | "all") {
       terminalLabelsById: new Map(),
     });
     return (
-      <button onClick={() => (mode === "all" ? closeAllSurfaces() : closeSurface(surface))}>
+      <button onClick={() => (mode === "all" ? closeAllSurfaces(surface) : closeSurface(surface))}>
         Close original terminal
       </button>
     );
@@ -156,3 +154,34 @@ it.each([
     ).toHaveLength(1);
   },
 );
+
+it("close all from a tool's menu closes only that group and never a terminal", async () => {
+  const { original } = setup("all");
+  const confirm = vi.fn(() => Promise.resolve(true));
+  fixture.confirm = confirm;
+  const store = useRightPanelStore.getState();
+  store.openBrowser(original, null);
+  store.openFile(original, "src/a.ts");
+  store.openFile(original, "src/b.ts");
+  const fileSurface = selectThreadRightPanelState(
+    useRightPanelStore.getState().byThreadKey,
+    original,
+  ).surfaces.find((surface) => surface.id === "file:src/a.ts")!;
+  function CloseFiles() {
+    const { closeAllSurfaces } = useRightPanelSurfaceClose({
+      threadRef: original,
+      terminalLabelsById: new Map(),
+    });
+    return <button onClick={() => closeAllSurfaces(fileSurface)}>Close all files</button>;
+  }
+  await using screen = await render(<CloseFiles />);
+  await screen.getByRole("button").click();
+
+  expect(confirm).not.toHaveBeenCalled();
+  expect(fixture.sessions.size).toBe(2);
+  expect(
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, original).surfaces.map(
+      (surface) => surface.id,
+    ),
+  ).toEqual(["terminal:term-1", "browser:new"]);
+});

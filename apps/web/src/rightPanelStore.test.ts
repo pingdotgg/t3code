@@ -12,6 +12,10 @@ import {
   pullRequestSurfaceId,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
+  selectActiveTerminalSurface,
+  selectClaimedTerminalIds,
+  selectRightPanelUnseenGroups,
+  selectTerminalDrawerVisible,
   selectThreadPanelVisibility,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -27,6 +31,11 @@ beforeEach(() => {
     threadPanelVisibilityByThreadKey: {},
     userActionRevisionByThreadKey: {},
     closeRevisionByThreadKey: {},
+    terminalDrawer: { open: false, height: 280 },
+    terminalDrawerMaximized: false,
+    unseenGroupsByThreadKey: {},
+    terminalServerObservationByThreadKey: {},
+    claimedTerminalIdsByThreadKey: {},
   });
 });
 
@@ -65,18 +74,24 @@ describe("rightPanelStore", () => {
       repository: "pingdotgg/t3code",
       number: 42,
     });
-    store.openFile(refA, "src/app.ts");
-    store.open(refA, "device");
+    store.openFile(refA, "src/a.ts");
+    store.openFile(refA, "src/b.ts");
+    store.openFile(refA, "src/c.ts");
     store.openPullRequest(refA, pr);
     store.open(refA, "diff");
     store.closeSurface(refA, pr.id);
-    store.closeSurfacesToRight(refA, "device");
-    store.closeOtherSurfaces(refA, "file:src/app.ts");
+    store.closeSurfacesToRight(refA, "file:src/b.ts");
+    store.closeOtherSurfaces(refA, "file:src/b.ts");
     expect(
       useClosedViewStore
         .getState()
         .entries.map((entry) => (entry.kind === "panel-tab" ? entry.surface.id : null)),
-    ).toEqual(["device", "diff", pr.id]);
+    ).toEqual(["file:src/a.ts", "file:src/c.ts", pr.id]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      ),
+    ).toEqual(["file:src/b.ts", "diff"]);
   });
 
   it("reopens the active tab first after a bulk close", () => {
@@ -211,28 +226,25 @@ describe("rightPanelStore", () => {
         name: "Pixel",
         platform: "android",
       } as const;
-      store.open(refA, "files");
+      // Bulk closes stay within the clicked tab's group, so they start from another device.
+      store.openDevice(refA, { ...target, deviceId: "emulator-5590" });
       store.openDevice(refA, target);
       if (mode === "one") store.closeSurface(refA, "device:nucbox:emulator-5580");
       if (mode === "all") store.closeAllSurfaces(refA);
-      if (mode === "others") store.closeOtherSurfaces(refA, "files");
-      if (mode === "right") store.closeSurfacesToRight(refA, "files");
+      if (mode === "others") store.closeOtherSurfaces(refA, "device:nucbox:emulator-5590");
+      if (mode === "right") store.closeSurfacesToRight(refA, "device:nucbox:emulator-5590");
       const persisted = JSON.parse(
         JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
       );
       useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+      const hasTarget = () =>
+        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
+          (surface) => surface.id === "device:nucbox:emulator-5580",
+        );
       store.openDevice(refA, target, true);
-      expect(
-        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
-          (surface) => surface.kind === "device",
-        ),
-      ).toBe(false);
+      expect(hasTarget()).toBe(false);
       store.openDevice(refA, target);
-      expect(
-        selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.some(
-          (surface) => surface.kind === "device",
-        ),
-      ).toBe(true);
+      expect(hasTarget()).toBe(true);
     },
   );
 
@@ -313,11 +325,15 @@ describe("rightPanelStore", () => {
       useRightPanelStore.getState().byThreadKey,
       refA,
     );
-    expect({ isOpen, activeSurfaceId, surfaces }).toEqual({
+    expect({ isOpen, activeSurfaceId }).toEqual({
       isOpen: chosen.isOpen,
       activeSurfaceId: chosen.activeSurfaceId,
-      surfaces: chosen.surfaces,
     });
+    // Refused PR offers wait behind the reviews icon instead of disappearing.
+    expect(surfaces.slice(0, chosen.surfaces.length)).toEqual(chosen.surfaces);
+    expect(
+      surfaces.slice(chosen.surfaces.length).every((surface) => surface.kind.startsWith("pull-")),
+    ).toBe(true);
   });
 
   it.each([
@@ -372,6 +388,21 @@ describe("rightPanelStore", () => {
       activeSurfaceId: relinkedPullRequest.id,
       isOpen: false,
     });
+
+    store.open(refA, "diff");
+    const laterPullRequest = pullRequestSurface({ ...linkedPullRequest, number: 44 });
+    expect(store.openProactive(refA, laterPullRequest, revision)).toBe(false);
+    const state = useRightPanelStore.getState();
+    expect(selectThreadRightPanelState(state.byThreadKey, refA)).toMatchObject({
+      activeSurfaceId: "diff",
+      isOpen: true,
+    });
+    expect(
+      selectThreadRightPanelState(state.byThreadKey, refA).surfaces.some(
+        (surface) => surface.id === laterPullRequest.id,
+      ),
+    ).toBe(true);
+    expect(selectRightPanelUnseenGroups(state, refA)).toContain("reviews");
   });
 
   it("refocuses an existing diff for a later turn after a manual choice", () => {
@@ -487,6 +518,13 @@ describe("rightPanelStore", () => {
 
     expect(store.openProactive(refA, completedDiff, revision)).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+
+    store.reconcileBrowserSurfaces(refA, ["agent-browser", "second-browser"]);
+    expect(selectRightPanelUnseenGroups(useRightPanelStore.getState(), refA)).toContain("browser");
+    store.activateSurface(refA, "browser:second-browser");
+    expect(selectRightPanelUnseenGroups(useRightPanelStore.getState(), refA)).not.toContain(
+      "browser",
+    );
   });
 
   it("keeps a maximized panel per thread without counting it as a manual choice", () => {
@@ -655,7 +693,42 @@ describe("rightPanelStore", () => {
         },
       },
       threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: { open: false, height: 280 },
     });
+  });
+
+  it("migrates a saved terminal-active panel to Changes with the drawer open on that terminal", () => {
+    const migrated = migratePersistedRightPanelState({
+      byThreadKey: {
+        "env-1:thread-A": {
+          isOpen: true,
+          activeSurfaceId: "terminal:a",
+          surfaces: [{ id: "terminal:a", kind: "terminal", resourceId: "a" }],
+        },
+        // Open, no valid active id, and the first surface is a terminal.
+        "env-1:thread-B": {
+          isOpen: true,
+          activeSurfaceId: "missing",
+          surfaces: [
+            { id: "terminal:b", kind: "terminal", resourceId: "b" },
+            { id: "files", kind: "files" },
+          ],
+        },
+      },
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]).toMatchObject({
+      activeSurfaceId: "diff",
+      activeTerminalSurfaceId: "terminal:a",
+    });
+    expect(migrated.byThreadKey["env-1:thread-A"]!.surfaces.map((surface) => surface.id)).toEqual([
+      "terminal:a",
+      "diff",
+    ]);
+    expect(migrated.byThreadKey["env-1:thread-B"]).toMatchObject({
+      activeSurfaceId: "files",
+      activeTerminalSurfaceId: "terminal:b",
+    });
+    expect(migrated.terminalDrawer.open).toBe(true);
   });
 
   it("upgrades saved single-session terminal surfaces to split-capable surfaces", () => {
@@ -664,8 +737,11 @@ describe("rightPanelStore", () => {
         byThreadKey: {
           "env-1:thread-A": {
             isOpen: true,
-            activeSurfaceId: "terminal:term-1",
-            surfaces: [{ id: "terminal:term-1", kind: "terminal", resourceId: "term-1" }],
+            activeSurfaceId: "diff",
+            surfaces: [
+              { id: "diff", kind: "diff" },
+              { id: "terminal:term-1", kind: "terminal", resourceId: "term-1" },
+            ],
           },
         },
       }),
@@ -673,8 +749,10 @@ describe("rightPanelStore", () => {
       byThreadKey: {
         "env-1:thread-A": {
           isOpen: true,
-          activeSurfaceId: "terminal:term-1",
+          activeSurfaceId: "diff",
+          activeTerminalSurfaceId: "terminal:term-1",
           surfaces: [
+            { id: "diff", kind: "diff" },
             {
               id: "terminal:term-1",
               kind: "terminal",
@@ -686,6 +764,7 @@ describe("rightPanelStore", () => {
         },
       },
       threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: { open: false, height: 280 },
     });
   });
 
@@ -730,6 +809,7 @@ describe("rightPanelStore", () => {
         },
       },
       threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: { open: false, height: 280 },
     });
   });
 
@@ -762,6 +842,7 @@ describe("rightPanelStore", () => {
     ).toEqual({
       byThreadKey: { "env-1:thread-A": panelState },
       threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: { open: false, height: 280 },
     });
   });
 
@@ -802,6 +883,7 @@ describe("rightPanelStore", () => {
         },
       },
       threadPanelVisibilityByThreadKey: {},
+      terminalDrawer: { open: false, height: 280 },
     });
   });
 
@@ -818,6 +900,7 @@ describe("rightPanelStore", () => {
       threadPanelVisibilityByThreadKey: {
         "env-1:thread-A": { inlineOpen: false, popoverOpen: false },
       },
+      terminalDrawer: { open: false, height: 280 },
     });
   });
 
@@ -1271,26 +1354,38 @@ describe("rightPanelStore", () => {
   });
 
   it("tracks split panes and the active pane within a terminal surface", () => {
+    useRightPanelStore.getState().open(refA, "diff");
+    useRightPanelStore.getState().openTerminal(refA, "term-0");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().setTerminalDrawerOpen(refA, false);
     useRightPanelStore.getState().splitTerminal(refA, "terminal:term-1", "term-2");
 
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    const afterSplit = useRightPanelStore.getState();
+    expect(selectActiveTerminalSurface(afterSplit.byThreadKey, refA)).toEqual({
       id: "terminal:term-1",
       kind: "terminal",
       resourceId: "term-1",
       terminalIds: ["term-1", "term-2"],
       activeTerminalId: "term-2",
     });
+    expect(selectThreadRightPanelState(afterSplit.byThreadKey, refA).activeSurfaceId).toBe("diff");
+    expect(afterSplit.terminalDrawer.open).toBe(true);
 
+    useRightPanelStore.getState().activateTerminal(refA, "terminal:term-0", "term-0");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)
+        .activeTerminalSurfaceId,
+    ).toBe("terminal:term-0");
     useRightPanelStore.getState().activateTerminal(refA, "terminal:term-1", "term-1");
     useRightPanelStore.getState().closeTerminal(refA, "terminal:term-1", "term-1");
-    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(selectActiveTerminalSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
       id: "terminal:term-1",
       kind: "terminal",
       resourceId: "term-1",
       terminalIds: ["term-2"],
       activeTerminalId: "term-2",
     });
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
   it("closing the final terminal pane removes its surface and closes the panel", () => {
@@ -1302,30 +1397,169 @@ describe("rightPanelStore", () => {
       activeSurfaceId: null,
       surfaces: [],
     });
+
+    useRightPanelStore.getState().open(refA, "diff");
+    useRightPanelStore.getState().openTerminal(refA, "term-2");
+    useRightPanelStore.getState().closeTerminal(refA, "terminal:term-2", "term-2");
+    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      surfaces: [{ id: "diff", kind: "diff" }],
+    });
   });
 
   it("closing the active surface activates a neighboring surface", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
+    useRightPanelStore.getState().openFile(refA, "src/a.ts");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
-    useRightPanelStore.getState().closeSurface(refA, "terminal:term-1");
+    useRightPanelStore.getState().closeSurface(refA, "file:src/a.ts");
 
     expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)?.id).toBe(
       "browser:tab-a",
     );
+
+    useRightPanelStore.getState().closeSurface(refA, "browser:tab-a");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: null,
+      activeTerminalSurfaceId: "terminal:term-1",
+    });
   });
 
   it("closing surfaces to the right activates the selected surface when active was removed", () => {
     useRightPanelStore.getState().openBrowser(refA, "tab-a");
     useRightPanelStore.getState().openFile(refA, "src/index.ts");
     useRightPanelStore.getState().openTerminal(refA, "term-1");
+    useRightPanelStore.getState().openBrowser(refA, "tab-b");
 
     useRightPanelStore.getState().closeSurfacesToRight(refA, "browser:tab-a");
 
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toEqual({
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
       isOpen: true,
       activeSurfaceId: "browser:tab-a",
-      surfaces: [{ id: "browser:tab-a", kind: "preview", resourceId: "tab-a" }],
+      surfaces: [{ id: "browser:tab-a" }, { id: "file:src/index.ts" }, { id: "terminal:term-1" }],
     });
+  });
+
+  it("user openTerminal opens panel and drawer without changing the active tool", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.close(refA);
+    store.openTerminal(refA, "term-1");
+    const state = useRightPanelStore.getState();
+    expect(selectThreadRightPanelState(state.byThreadKey, refA)).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "diff",
+      activeTerminalSurfaceId: "terminal:term-1",
+    });
+    expect(state.terminalDrawer.open).toBe(true);
+    expect(selectRightPanelUnseenGroups(state, refA)).toEqual([]);
+  });
+
+  it("adopts server terminals in the background without opening the drawer, and marks terminal unseen", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.close(refA);
+    const revision = store.getUserActionRevision(refA);
+    store.reconcileTerminalSurfaces(refA, ["x"], "manager-1", []);
+    const state = useRightPanelStore.getState();
+    expect(
+      selectThreadRightPanelState(state.byThreadKey, refA).surfaces.some(
+        (surface) => surface.id === "terminal:x",
+      ),
+    ).toBe(true);
+    expect(state.terminalDrawer.open).toBe(false);
+    expect(selectThreadRightPanelState(state.byThreadKey, refA).isOpen).toBe(false);
+    expect(selectRightPanelUnseenGroups(state, refA)).toContain("terminal");
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+  });
+
+  it("drops a terminal the server stopped listing, but not on the first listing or a new snapshot", () => {
+    const store = useRightPanelStore.getState();
+    const terminalIds = () =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces.map(
+        (surface) => surface.id,
+      );
+    store.openTerminal(refA, "local");
+    store.reconcileTerminalSurfaces(refA, [], "manager-1", []);
+    expect(terminalIds()).toEqual(["terminal:local"]);
+    store.reconcileTerminalSurfaces(refA, ["local", "x"], "manager-1", []);
+    expect(terminalIds()).toEqual(["terminal:local", "terminal:x"]);
+    store.reconcileTerminalSurfaces(refA, [], "manager-2", []);
+    expect(terminalIds()).toEqual(["terminal:local", "terminal:x"]);
+    store.reconcileTerminalSurfaces(refA, ["local", "x"], "manager-2", []);
+    store.reconcileTerminalSurfaces(refA, ["local"], "manager-2", []);
+    expect(terminalIds()).toEqual(["terminal:local"]);
+  });
+
+  it("claims a terminal the user opens until the server lists it or restarts, never one it adopts", () => {
+    const store = useRightPanelStore.getState();
+    const claimed = () => selectClaimedTerminalIds(useRightPanelStore.getState(), refA);
+    store.openTerminal(refA, "launched");
+    store.reconcileTerminalSurfaces(refA, ["adopted"], "manager-1", []);
+    expect(claimed()).toEqual(["launched"]);
+    store.reconcileTerminalSurfaces(refA, ["adopted", "launched"], "manager-1", []);
+    expect(claimed()).toEqual([]);
+    store.openTerminal(refA, "pending");
+    store.reconcileTerminalSurfaces(refA, ["adopted", "launched"], "manager-2", []);
+    expect(claimed()).toEqual([]);
+    // Already listed: a claim would outlive the session if the server later dropped it.
+    store.openTerminal(refA, "adopted");
+    expect(claimed()).toEqual([]);
+  });
+
+  it("terminalOpen follows the drawer in an open panel, also when it shows no terminal", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.open(refB, "diff");
+    const state = useRightPanelStore.getState();
+    expect(state.terminalDrawer.open).toBe(true);
+    expect(selectTerminalDrawerVisible(state, refA)).toBe(true);
+    expect(selectTerminalDrawerVisible(state, refB)).toBe(true);
+    store.close(refA);
+    expect(selectTerminalDrawerVisible(useRightPanelStore.getState(), refA)).toBe(false);
+  });
+
+  it("opening the drawer clears the terminal dot; activating a group clears its dot", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    store.reconcileTerminalSurfaces(refA, ["x"], "manager-1", []);
+    store.openProactive(refA, linkedPullRequest, -1);
+    expect(selectRightPanelUnseenGroups(useRightPanelStore.getState(), refA)).toEqual([
+      "terminal",
+      "reviews",
+    ]);
+    store.setTerminalDrawerOpen(refA, true);
+    expect(selectRightPanelUnseenGroups(useRightPanelStore.getState(), refA)).toEqual(["reviews"]);
+    store.activateSurface(refA, linkedPullRequest.id);
+    expect(selectRightPanelUnseenGroups(useRightPanelStore.getState(), refA)).toEqual([]);
+  });
+
+  it("collapsing the drawer ends maximize", () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.setTerminalDrawerMaximized(true);
+    store.setTerminalDrawerOpen(refA, false);
+    store.setTerminalDrawerOpen(refA, true);
+    expect(useRightPanelStore.getState().terminalDrawerMaximized).toBe(false);
+  });
+
+  it("keeps drawer open and height global across threads and persists them, not maximize", async () => {
+    const store = useRightPanelStore.getState();
+    store.openTerminal(refA, "term-1");
+    store.setTerminalDrawerHeight(333);
+    store.setTerminalDrawerMaximized(true);
+    store.openTerminal(refB, "term-2");
+    expect(useRightPanelStore.getState().terminalDrawer).toEqual({ open: true, height: 333 });
+    await reloadRightPanelStore();
+    const state = useRightPanelStore.getState();
+    expect(state.terminalDrawer).toEqual({ open: true, height: 333 });
+    expect(state.terminalDrawerMaximized).toBe(false);
+    expect(selectTerminalDrawerVisible(state, refB)).toBe(true);
   });
 
   it("does not replace a stale surface with a hidden tab, but preserves explicit opens", () => {

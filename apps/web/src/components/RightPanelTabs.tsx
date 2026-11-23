@@ -1,7 +1,7 @@
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   threadRuntimeIsActive,
   type EnvironmentThreadShell,
@@ -44,8 +44,7 @@ import {
   CircleDotIcon,
   Smartphone,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
+  Ellipsis,
   FileDiff,
   Files,
   Globe2,
@@ -56,7 +55,6 @@ import {
   VolumeOffIcon,
 } from "lucide-react";
 import {
-  type ComponentType,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -73,11 +71,17 @@ import { linkedThreadTitle } from "~/linkedThreadSurface";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
 import {
-  rightPanelDynamicTabSurfaces,
-  rightPanelSectionOf,
-  rightPanelSectionTarget,
-  type RightPanelSection,
+  rightPanelGroupOf,
+  rightPanelGroupTarget,
+  type RightPanelRailGroup,
+  type RightPanelToolGroup,
 } from "./RightPanelTabs.logic";
+import {
+  RIGHT_PANEL_GROUP_LABELS,
+  RightPanelRail,
+  type RightPanelRailProps,
+} from "./RightPanelRail";
+import { DiffStatLabel } from "./chat/DiffStatLabel";
 import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
@@ -122,6 +126,10 @@ import { resolvePullRequestState } from "./pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { surfaceShortcutKey } from "~/lib/surfaceShortcutKey";
+import {
+  RightPanelTerminalDrawer,
+  type RightPanelTerminalDrawerProps,
+} from "./RightPanelTerminalDrawer";
 
 export interface RightPanelTabsProps {
   mode: PreviewPanelMode;
@@ -151,7 +159,8 @@ export interface RightPanelTabsProps {
   ) => void;
   onCloseOtherSurfaces: (surface: RightPanelSurface) => void;
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
-  onCloseAllSurfaces: () => void;
+  /** Closes the surfaces of `surface`'s group. */
+  onCloseAllSurfaces: (surface: RightPanelSurface) => void;
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
   onAddBrowser: () => void;
@@ -176,10 +185,20 @@ export interface RightPanelTabsProps {
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
-  /** Files the latest turn changed, shown on the Changes tab. */
-  changesCount?: number | null;
+  /** The latest turn's changes, shown in the Changes header. */
+  changeTotals?: { count: number; additions: number; deletions: number } | null;
+  /** Null on the pull-request and issue pages, which show every surface as a sub-tab instead. */
+  rail: RightPanelRailInput | null;
+  /** Absent on pages without a thread, such as the pull-request and issue lists. */
+  terminalDrawer?: RightPanelTerminalDrawerProps | null;
   children: ReactNode;
 }
+
+/** What the thread knows about its rail; the panel adds the active group, creation and the launcher. */
+export type RightPanelRailInput = Pick<
+  RightPanelRailProps,
+  "groups" | "dots" | "terminalOpen" | "shortcutLabels" | "onToggleTerminal"
+>;
 
 export interface PullRequestTabStatus {
   projectId: string;
@@ -906,44 +925,6 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
-function RightPanelSectionTab(props: {
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-  count: number | null;
-  active: boolean;
-  available: boolean;
-  disabledReason: string;
-  ownsDesktopTitleBar: boolean;
-  onSelect: () => void;
-}) {
-  const Icon = props.icon;
-  const button = (
-    <button
-      type="button"
-      aria-pressed={props.active}
-      aria-disabled={!props.available || undefined}
-      onClick={props.available ? props.onSelect : undefined}
-      className={cn(
-        "flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium",
-        props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
-        !props.available
-          ? "cursor-not-allowed text-muted-foreground/60"
-          : props.active
-            ? "cursor-pointer bg-accent text-foreground"
-            : "cursor-pointer text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-      )}
-    >
-      <Icon className="size-3.5" />
-      {props.label}
-      {props.count !== null && props.count > 0 ? (
-        <span className="text-muted-foreground tabular-nums">{props.count}</span>
-      ) : null}
-    </button>
-  );
-  if (props.available) return button;
-  return <DisabledReasonTooltip reason={props.disabledReason} trigger={button} />;
-}
-
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   /** The full surface list, since drops move by index into it, not into the shown tabs. */
@@ -1168,6 +1149,14 @@ function RightPanelTab(
   );
 }
 
+const MULTI_INSTANCE_GROUPS = new Set<RightPanelRailGroup>([
+  "browser",
+  "files",
+  "reviews",
+  "devices",
+  "threads",
+]);
+
 export function RightPanelTabs(props: RightPanelTabsProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -1179,11 +1168,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
-  const [tabScrollState, setTabScrollState] = useState({
-    hasOverflow: false,
-    canScrollLeft: false,
-    canScrollRight: false,
-  });
+  const [tabStripOverflows, setTabStripOverflows] = useState(false);
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
@@ -1220,34 +1205,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       unsubscribe?.();
     };
   }, [props.open]);
-
-  const updateTabScrollState = (viewport: HTMLDivElement) => {
-    const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
-    const canScrollRight =
-      hasOverflow &&
-      viewport.scrollLeft + viewport.clientWidth < viewport.scrollWidth - TAB_SCROLL_EDGE_TOLERANCE;
-    setTabScrollState((current) => {
-      if (
-        current.hasOverflow === hasOverflow &&
-        current.canScrollLeft === canScrollLeft &&
-        current.canScrollRight === canScrollRight
-      ) {
-        return current;
-      }
-      return { hasOverflow, canScrollLeft, canScrollRight };
-    });
-  };
-
-  const scrollTabs = (direction: -1 | 1) => {
-    const viewport = tabScrollViewport(tabListRef.current);
-    if (!viewport) return;
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    viewport.scrollBy({
-      left: direction * Math.max(120, viewport.clientWidth * 0.75),
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-  };
 
   const addSurfaceActions = [
     {
@@ -1321,45 +1278,81 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       : []),
   ] as const;
 
-  const dynamicSurfaces = rightPanelDynamicTabSurfaces(props.surfaces);
-  const activeSection = rightPanelSectionOf(focusedSurface);
-  const sectionTabs = [
-    {
-      section: "changes",
-      label: msg("Changes"),
-      icon: FileDiff,
-      count: props.changesCount ?? null,
+  const rail = props.rail ?? null;
+  const activeGroup =
+    focusedSurface && focusedSurface.kind !== "terminal"
+      ? (rightPanelGroupOf(focusedSurface) as RightPanelToolGroup)
+      : null;
+  const showTabStrip =
+    rail === null || (activeGroup !== null && MULTI_INSTANCE_GROUPS.has(activeGroup));
+  const headerSurfaces =
+    rail === null
+      ? props.surfaces.filter((surface) => surface.kind !== "terminal")
+      : showTabStrip
+        ? props.surfaces.filter((surface) => rightPanelGroupOf(surface) === activeGroup)
+        : [];
+
+  const sideChatCanStart =
+    props.onAddSideChat !== undefined &&
+    props.sideChatAvailable === true &&
+    !props.sideChatDisabledReason;
+  const groupCreation = {
+    changes: {
       available: props.diffAvailable,
-      disabledReason: messages(SURFACE_DISABLED_REASONS.diff),
+      reason: messages(SURFACE_UNAVAILABLE_HINTS.diff),
       create: props.onAddDiff,
     },
-    {
-      section: "terminal",
-      label: msg("Terminal"),
-      icon: TerminalSquare,
-      count: null,
-      available: props.terminalAvailable,
-      disabledReason: messages(SURFACE_DISABLED_REASONS.terminal),
-      create: props.onAddTerminal,
-    },
-    {
-      section: "browser",
-      label: msg("Browser"),
-      icon: Globe2,
-      count: null,
+    browser: {
       available: props.browserAvailable,
-      disabledReason: messages(SURFACE_DISABLED_REASONS.browser),
+      reason: messages(SURFACE_UNAVAILABLE_HINTS.browser),
       create: props.onAddBrowser,
     },
-  ] as const;
-  const showSection = (section: RightPanelSection) => {
-    const target = rightPanelSectionTarget(props.surfaces, props.activeSurfaceId, section);
+    files: {
+      available: props.filesAvailable,
+      reason: messages(SURFACE_UNAVAILABLE_HINTS.files),
+      create: props.onAddFiles,
+    },
+    reviews: {
+      available: props.pullRequestAvailable || props.pullRequestsAvailable,
+      reason: messages(SURFACE_UNAVAILABLE_HINTS.pullRequests),
+      create: props.pullRequestAvailable ? props.onAddPullRequest : props.onAddPullRequests,
+    },
+    devices: {
+      available: props.deviceAvailable,
+      reason: messages(SURFACE_UNAVAILABLE_HINTS.device),
+      create: props.onAddDevice,
+    },
+    threads: {
+      available: sideChatCanStart,
+      reason: props.sideChatDisabledReason ?? messages(SURFACE_UNAVAILABLE_HINTS.sideChat),
+      create: () => props.onAddSideChat?.(),
+    },
+  } satisfies Record<
+    RightPanelToolGroup,
+    { available: boolean; reason: string; create: () => void }
+  >;
+  // A maximized drawer covers the tool, so picking one restores it.
+  const restoreFromMaximizedDrawer = () => {
+    if (props.terminalDrawer?.open && props.terminalDrawer.maximized) {
+      props.terminalDrawer.onToggleMaximized();
+    }
+  };
+  const selectGroup = (group: RightPanelToolGroup) => {
+    restoreFromMaximizedDrawer();
+    const target = rightPanelGroupTarget(props.surfaces, props.activeSurfaceId, group);
     if (target) {
       props.onActivate(target);
       return;
     }
-    sectionTabs.find((tab) => tab.section === section)?.create();
+    if (groupCreation[group].available) groupCreation[group].create();
   };
+  const railUnavailable = Object.fromEntries(
+    (rail?.groups ?? []).flatMap((group) =>
+      groupCreation[group].available || rightPanelGroupTarget(props.surfaces, null, group) !== null
+        ? []
+        : [[group, groupCreation[group].reason]],
+    ),
+  ) as Partial<Record<RightPanelToolGroup, string>>;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1370,60 +1363,60 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     action.onClick();
   };
 
-  const handleTabContextMenu = async (event: ReactMouseEvent, surface: RightPanelSurface) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const api = readLocalApi();
-    if (!api) return;
-
-    const surfaceIndex = props.surfaces.findIndex((entry) => entry.id === surface.id);
-    if (surfaceIndex < 0) return;
-
+  const surfaceMenuItems = (
+    surface: RightPanelSurface,
+    resolve: MessageResolver,
+  ): ContextMenuItem<TabContextMenuAction>[] => {
+    const group = props.surfaces.filter(
+      (entry) => rightPanelGroupOf(entry) === rightPanelGroupOf(surface),
+    );
+    const groupIndex = group.findIndex((entry) => entry.id === surface.id);
     const items: ContextMenuItem<TabContextMenuAction>[] = [];
     if ((surface.kind === "thread" || surface.kind === "linked-thread") && props.onOpenInMainView) {
-      items.push({ id: "open-in-main-view", label: gt("Open in main view") });
+      items.push({ id: "open-in-main-view", label: resolve(msg("Open in main view")) });
     }
     if (surface.kind === "device" && props.onRenameDevice)
-      items.push({ id: "rename", label: gt("Rename") });
+      items.push({ id: "rename", label: resolve(msg("Rename")) });
     if (surface.kind === "file" && surface.attachment === undefined) {
-      items.push({ id: "copy-path", label: gt("Copy path") });
+      items.push({ id: "copy-path", label: resolve(msg("Copy path")) });
     }
-    const menuPreviewTabId = previewTabIdOf(surface, props.previewSessions);
-    const menuOverlay = menuPreviewTabId ? (props.desktopByTabId[menuPreviewTabId] ?? null) : null;
-    const menuMuted = menuOverlay?.audioMuted ?? false;
     if (surface.kind === "preview") {
+      const previewTabId = previewTabIdOf(surface, props.previewSessions);
       items.push({
         id: "toggle-mute",
         ...tabMuteMenuItem(
           {
-            overlay: menuOverlay,
+            overlay: previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
             canResolveRuntimeTabId: props.previewRuntimeTabId !== undefined,
           },
-          messages,
+          resolve,
         ),
       });
     }
     items.push(
-      { id: "close", label: gt("Close") },
+      { id: "close", label: resolve(msg("Close")) },
       {
         id: "close-others",
-        label: gt("Close others"),
-        disabled: props.surfaces.length <= 1,
+        label: resolve(msg("Close others")),
+        disabled: group.length <= 1,
       },
       {
         id: "close-to-right",
-        label: gt("Close to the right"),
-        disabled: surfaceIndex >= props.surfaces.length - 1,
+        label: resolve(msg("Close to the right")),
+        disabled: groupIndex >= group.length - 1,
       },
       {
         id: "close-all",
-        label: gt("Close all"),
-        disabled: props.surfaces.length === 0,
+        label: resolve(msg("Close all in this group")),
+        disabled: group.length === 0,
       },
     );
-
-    const action = await api.contextMenu.show(items, { x: event.clientX, y: event.clientY });
+    return items;
+  };
+  const runSurfaceMenuAction = (
+    action: TabContextMenuAction | null,
+    surface: RightPanelSurface,
+  ) => {
     switch (action) {
       case "open-in-main-view":
         if (surface.kind === "thread" || surface.kind === "linked-thread") {
@@ -1439,12 +1432,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         }
         break;
       case "toggle-mute": {
+        const previewTabId = previewTabIdOf(surface, props.previewSessions);
+        const overlay = previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null;
         const runtimeTabId =
-          menuPreviewTabId && menuOverlay
-            ? (props.previewRuntimeTabId?.(menuPreviewTabId) ?? null)
-            : null;
+          previewTabId && overlay ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null;
         if (runtimeTabId) {
-          void previewBridge?.setAudioMuted(runtimeTabId, !menuMuted).catch(() => undefined);
+          void previewBridge
+            ?.setAudioMuted(runtimeTabId, !(overlay?.audioMuted ?? false))
+            .catch(() => undefined);
         }
         break;
       }
@@ -1458,11 +1453,24 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         props.onCloseSurfacesToRight(surface);
         break;
       case "close-all":
-        props.onCloseAllSurfaces();
+        props.onCloseAllSurfaces(surface);
         break;
       case null:
         break;
     }
+  };
+
+  const handleTabContextMenu = async (event: ReactMouseEvent, surface: RightPanelSurface) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const api = readLocalApi();
+    if (!api) return;
+    if (!props.surfaces.some((entry) => entry.id === surface.id)) return;
+    const action = await api.contextMenu.show(surfaceMenuItems(surface, messages), {
+      x: event.clientX,
+      y: event.clientY,
+    });
+    runSurfaceMenuAction(action, surface);
   };
   const handleTabAuxClick = (event: ReactMouseEvent, surface: RightPanelSurface) => {
     if (event.button !== 1) return;
@@ -1470,7 +1478,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.stopPropagation();
     props.onCloseSurface(surface);
   };
-  const onActivateTab = useStableCallback(props.onActivate);
+  const onActivateTab = useStableCallback((surface: RightPanelSurface) => {
+    restoreFromMaximizedDrawer();
+    props.onActivate(surface);
+  });
   const onCloseTab = useStableCallback(props.onCloseSurface);
   const onTabAuxClick = useStableCallback(handleTabAuxClick);
   const onTabContextMenu = useStableCallback(
@@ -1487,17 +1498,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   // A newly active tab, or tabs that start overflowing, can sit outside the scrolled strip.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the active tab DOM node into view after it changes or the tab strip starts overflowing
   useEffect(() => {
-    if (!props.activeSurfaceId || !tabScrollState.hasOverflow) return;
+    if (!props.activeSurfaceId || !tabStripOverflows) return;
     const activeTab = tabListRef.current?.querySelector<HTMLElement>("[data-active-tab='true']");
     activeTab?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [props.activeSurfaceId, tabScrollState.hasOverflow]);
+  }, [props.activeSurfaceId, tabStripOverflows]);
 
   const attachTabList = (root: HTMLDivElement | null) => {
     tabListRef.current = root;
     const viewport = tabScrollViewport(root);
     if (!viewport) return;
 
-    const update = () => updateTabScrollState(viewport);
+    const update = () =>
+      setTabStripOverflows(viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE);
     // Only a vertical mouse wheel is translated. Horizontal input scrolls natively, since
     // consuming it keeps Chromium from starting the gesture scroll that swipe navigation tracks.
     const handleWheel = (event: WheelEvent) => {
@@ -1510,22 +1522,204 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       viewport.scrollLeft += delta;
       if (viewport.scrollLeft === previousScrollLeft) return;
       event.preventDefault();
-      update();
     };
 
     const content = viewport.firstElementChild;
     const stopObserving = observeResize(content ? [viewport, content] : viewport, update);
-    viewport.addEventListener("scroll", update, { passive: true });
     viewport.addEventListener("wheel", handleWheel, { passive: false });
     update();
 
     return () => {
       tabListRef.current = null;
       stopObserving();
-      viewport.removeEventListener("scroll", update);
       viewport.removeEventListener("wheel", handleWheel);
     };
   };
+
+  const launcher =
+    props.open !== false ? (
+      <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
+        <MenuTrigger
+          ref={addSurfaceTriggerRef}
+          render={
+            rail === null ? (
+              <Button
+                aria-label={gt("Add panel surface")}
+                className="shrink-0"
+                size="icon-xs"
+                variant="ghost-muted"
+              />
+            ) : (
+              // The launcher opens from mod+t; it anchors at the rail's top with no visible button.
+              <button
+                type="button"
+                tabIndex={-1}
+                aria-label={gt("Add panel surface")}
+                className="pointer-events-none absolute top-1.5 left-1/2 size-px opacity-0"
+              />
+            )
+          }
+        >
+          {rail === null ? <Plus className="size-3.5" /> : null}
+        </MenuTrigger>
+        <MenuPopup
+          align="start"
+          side={rail === null ? "bottom" : "left"}
+          sideOffset={6}
+          onKeyDownCapture={handleAddSurfaceMenuKeyDown}
+        >
+          {addSurfaceActions.map((action) => {
+            const Icon = action.icon;
+            if (action.label === "Browser" && action.available) {
+              return (
+                <MenuSub key={action.label}>
+                  <MenuSubTrigger
+                    className="[&>svg:last-child]:ms-0"
+                    aria-keyshortcuts={action.shortcut}
+                    onClick={(event) => {
+                      const pointerType =
+                        "pointerType" in event.nativeEvent &&
+                        typeof event.nativeEvent.pointerType === "string"
+                          ? event.nativeEvent.pointerType
+                          : undefined;
+                      if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType)) return;
+                      setAddSurfaceMenuOpen(false);
+                      action.onClick();
+                    }}
+                  >
+                    <Icon />
+                    {messages(action.label)}
+                    <MenuShortcut>{action.shortcut}</MenuShortcut>
+                  </MenuSubTrigger>
+                  <MenuSubPopup className="max-w-56">
+                    {browserProfiles.map((profile) => (
+                      <MenuItem
+                        key={profile.id}
+                        onClick={() => props.onAddBrowserInProfile(profile.id)}
+                      >
+                        <span className="min-w-0 truncate">{profile.name}</span>
+                      </MenuItem>
+                    ))}
+                  </MenuSubPopup>
+                </MenuSub>
+              );
+            }
+            return (
+              <SurfaceMenuItem
+                key={action.label}
+                available={action.available}
+                disabledReason={action.disabledReason}
+                shortcut={action.shortcut}
+                onClick={action.onClick}
+              >
+                <Icon />
+                {messages(action.label)}
+              </SurfaceMenuItem>
+            );
+          })}
+        </MenuPopup>
+      </Menu>
+    ) : null;
+
+  const groupLabel = activeGroup === null ? null : messages(RIGHT_PANEL_GROUP_LABELS[activeGroup]);
+  const groupAddButton = (() => {
+    if (rail === null || activeGroup === null) return null;
+    const addLabel = gt("New {group} tab", { group: groupLabel ?? "" });
+    const plainButton = (onClick: () => void, available: boolean) => (
+      <Button
+        aria-label={addLabel}
+        disabled={!available}
+        onClick={onClick}
+        size="icon-xs"
+        variant="ghost-muted"
+      >
+        <Plus />
+      </Button>
+    );
+    switch (activeGroup) {
+      case "browser":
+        return browserProfiles.length > 1 && props.browserAvailable ? (
+          <Menu>
+            <MenuTrigger
+              render={<Button aria-label={addLabel} size="icon-xs" variant="ghost-muted" />}
+            >
+              <Plus />
+            </MenuTrigger>
+            <MenuPopup align="start" side="bottom" sideOffset={6} className="max-w-56">
+              {browserProfiles.map((profile) => (
+                <MenuItem key={profile.id} onClick={() => props.onAddBrowserInProfile(profile.id)}>
+                  <span className="min-w-0 truncate">{profile.name}</span>
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        ) : (
+          plainButton(props.onAddBrowser, props.browserAvailable)
+        );
+      case "reviews":
+        return (
+          <Menu>
+            <MenuTrigger
+              render={<Button aria-label={addLabel} size="icon-xs" variant="ghost-muted" />}
+            >
+              <Plus />
+            </MenuTrigger>
+            <MenuPopup align="start" side="bottom" sideOffset={6}>
+              <MenuItem disabled={!props.pullRequestAvailable} onClick={props.onAddPullRequest}>
+                <PullRequestGlyph.pullRequest />
+                {gt("Pull request")}
+              </MenuItem>
+              <MenuItem disabled={!props.pullRequestsAvailable} onClick={props.onAddPullRequests}>
+                <PullRequestGlyph.link />
+                {gt("Linked items")}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        );
+      case "devices":
+        return plainButton(props.onAddDevice, props.deviceAvailable);
+      case "threads":
+        return props.onAddSideChat
+          ? plainButton(() => props.onAddSideChat?.(), sideChatCanStart)
+          : null;
+      case "changes":
+      case "files":
+        return null;
+    }
+  })();
+
+  const moreMenuItems =
+    focusedSurface && focusedSurface.kind !== "terminal"
+      ? surfaceMenuItems(focusedSurface, messages)
+      : [];
+  const moreMenu =
+    focusedSurface && moreMenuItems.length > 0 ? (
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              aria-label={gt("More actions")}
+              className="shrink-0"
+              size="icon-xs"
+              variant="ghost-muted"
+            />
+          }
+        >
+          <Ellipsis className="size-3.5" />
+        </MenuTrigger>
+        <MenuPopup align="end" side="bottom" sideOffset={6}>
+          {moreMenuItems.map((item) => (
+            <MenuItem
+              key={item.id}
+              disabled={item.disabled === true}
+              onClick={() => runSurfaceMenuAction(item.id, focusedSurface)}
+            >
+              {item.label}
+            </MenuItem>
+          ))}
+        </MenuPopup>
+      </Menu>
+    ) : null;
 
   return (
     <PreviewPanelShell
@@ -1559,7 +1753,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
+          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-3",
           props.mode === "inline" && !props.layoutControls ? "pr-28" : "pr-3",
           ownsDesktopTitleBar && "drag-region",
           ownsDesktopTitleBar && "wco:pr-(--workspace-native-controls-inset)",
@@ -1567,213 +1761,108 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         )}
         data-right-panel-tabbar
       >
-        <ScrollArea
-          radius="none"
-          ref={attachTabList}
-          hideScrollbars
-          scrollFade
-          className={cn(
-            "min-w-0 flex-1",
-            ownsDesktopTitleBar && tabScrollState.hasOverflow && "[-webkit-app-region:no-drag]",
-          )}
-          data-right-panel-tab-list
-        >
-          <div className="flex h-full w-max min-w-full items-center gap-1">
-            <div
-              role="group"
-              aria-label={gt("Panel sections")}
-              className="flex shrink-0 items-center gap-0.5"
-              data-right-panel-sections
-            >
-              {sectionTabs.map((tab) => (
-                <RightPanelSectionTab
-                  key={tab.section}
-                  label={messages(tab.label)}
-                  icon={tab.icon}
-                  count={tab.count}
-                  active={activeSection === tab.section}
-                  available={tab.available}
-                  disabledReason={tab.disabledReason}
-                  ownsDesktopTitleBar={ownsDesktopTitleBar}
-                  onSelect={() => showSection(tab.section)}
-                />
-              ))}
-            </div>
-            {dynamicSurfaces.length > 0 ? (
-              <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />
-            ) : null}
-            <SortableTabList
-              surfaces={dynamicSurfaces}
-              indexSurfaces={props.surfaces}
-              onMove={props.onMoveSurface}
-            >
-              {dynamicSurfaces.map((surface) => {
-                const previewTabId = previewTabIdOf(surface, props.previewSessions);
-                const favicon = previewFaviconOf(
-                  surface,
-                  props.previewSessions,
-                  props.desktopByTabId,
-                );
-                return (
-                  <RightPanelTab
-                    key={surface.id}
-                    surface={surface}
-                    dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
-                    active={surface.id === props.activeSurfaceId}
-                    pending={props.pendingSurfaceIds.has(surface.id)}
-                    title={surfaceTitle(
-                      surface,
-                      props.previewSessions,
-                      props.terminalLabelsById,
-                      messages,
-                    )}
-                    audio={tabAudioState(
-                      previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
-                    )}
-                    audioRuntimeTabId={
-                      previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
-                    }
-                    previewUrl={favicon.url}
-                    previewCapturedUrl={favicon.capturedUrl}
-                    theme={resolvedTheme}
-                    environmentId={props.environmentId}
-                    pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
-                    renaming={renamingDevice === surface.id}
-                    canRename={props.onRenameDevice !== undefined}
-                    ownsDesktopTitleBar={ownsDesktopTitleBar}
-                    onActivate={onActivateTab}
-                    onClose={onCloseTab}
-                    onAuxClick={onTabAuxClick}
-                    onContextMenu={onTabContextMenu}
-                    onStartRename={onStartRenameTab}
-                    onFinishRename={onFinishRenameTab}
-                  />
-                );
-              })}
-            </SortableTabList>
-            {props.open !== false ? (
-              <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
-                <MenuTrigger
-                  ref={addSurfaceTriggerRef}
-                  render={
-                    <Button
-                      aria-label={gt("Add panel surface")}
-                      className="shrink-0"
-                      size="icon-xs"
-                      variant="ghost-muted"
-                    />
-                  }
-                >
-                  <Plus className="size-3.5" />
-                </MenuTrigger>
-                <MenuPopup
-                  align="start"
-                  side="bottom"
-                  sideOffset={6}
-                  onKeyDownCapture={handleAddSurfaceMenuKeyDown}
-                >
-                  {addSurfaceActions.map((action) => {
-                    const Icon = action.icon;
-                    if (action.label === "Browser" && action.available) {
-                      return (
-                        <MenuSub key={action.label}>
-                          <MenuSubTrigger
-                            className="[&>svg:last-child]:ms-0"
-                            aria-keyshortcuts={action.shortcut}
-                            onClick={(event) => {
-                              const pointerType =
-                                "pointerType" in event.nativeEvent &&
-                                typeof event.nativeEvent.pointerType === "string"
-                                  ? event.nativeEvent.pointerType
-                                  : undefined;
-                              if (!shouldOpenDefaultBrowserProfileFromMenuClick(pointerType))
-                                return;
-                              setAddSurfaceMenuOpen(false);
-                              action.onClick();
-                            }}
-                          >
-                            <Icon />
-                            {messages(action.label)}
-                            <MenuShortcut>{action.shortcut}</MenuShortcut>
-                          </MenuSubTrigger>
-                          <MenuSubPopup className="max-w-56">
-                            {browserProfiles.map((profile) => (
-                              <MenuItem
-                                key={profile.id}
-                                onClick={() => props.onAddBrowserInProfile(profile.id)}
-                              >
-                                <span className="min-w-0 truncate">{profile.name}</span>
-                              </MenuItem>
-                            ))}
-                          </MenuSubPopup>
-                        </MenuSub>
-                      );
-                    }
-                    return (
-                      <SurfaceMenuItem
-                        key={action.label}
-                        available={action.available}
-                        disabledReason={action.disabledReason}
-                        shortcut={action.shortcut}
-                        onClick={action.onClick}
-                      >
-                        <Icon />
-                        {messages(action.label)}
-                      </SurfaceMenuItem>
-                    );
-                  })}
-                </MenuPopup>
-              </Menu>
-            ) : null}
-          </div>
-        </ScrollArea>
-        {tabScrollState.hasOverflow ? (
-          <div
-            className="flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
-            role="group"
-            aria-label={gt("Scroll panel tabs")}
+        {groupLabel !== null && rail !== null ? (
+          <span
+            data-right-panel-tool-name
+            className="shrink-0 truncate text-xs font-medium text-foreground"
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label={gt("Scroll tabs left")}
-                      disabled={!tabScrollState.canScrollLeft}
-                      onClick={() => scrollTabs(-1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronLeft />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>
-                <T>Scroll tabs left</T>
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="inline-flex">
-                    <Button
-                      aria-label={gt("Scroll tabs right")}
-                      disabled={!tabScrollState.canScrollRight}
-                      onClick={() => scrollTabs(1)}
-                      size="icon-xs"
-                      variant="ghost"
-                    >
-                      <ChevronRight />
-                    </Button>
-                  </span>
-                }
-              />
-              <TooltipPopup>
-                <T>Scroll tabs right</T>
-              </TooltipPopup>
-            </Tooltip>
-          </div>
+            {groupLabel}
+          </span>
+        ) : null}
+        {activeGroup === "changes" && props.changeTotals ? (
+          <span
+            data-right-panel-change-totals
+            className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+          >
+            {/* The totals are the latest turn's, whatever scope the diff below shows. */}
+            <span>
+              {gt("Last turn", { $context: "the Changes header totals cover the latest turn" })}
+            </span>
+            <DiffStatLabel
+              additions={props.changeTotals.additions}
+              deletions={props.changeTotals.deletions}
+              layout="inline"
+            />
+            <span className="tabular-nums">
+              {gt("{count, plural, one {# file} other {# files}}", {
+                count: props.changeTotals.count,
+              })}
+            </span>
+          </span>
+        ) : null}
+        {showTabStrip ? (
+          <ScrollArea
+            radius="none"
+            ref={attachTabList}
+            hideScrollbars
+            scrollFade
+            className={cn(
+              "min-w-0 flex-1",
+              ownsDesktopTitleBar && tabStripOverflows && "[-webkit-app-region:no-drag]",
+            )}
+            data-right-panel-tab-list
+          >
+            <div className="flex h-full w-max min-w-full items-center gap-1">
+              <SortableTabList
+                surfaces={headerSurfaces}
+                indexSurfaces={props.surfaces}
+                onMove={props.onMoveSurface}
+              >
+                {headerSurfaces.map((surface) => {
+                  const previewTabId = previewTabIdOf(surface, props.previewSessions);
+                  const favicon = previewFaviconOf(
+                    surface,
+                    props.previewSessions,
+                    props.desktopByTabId,
+                  );
+                  return (
+                    <RightPanelTab
+                      key={surface.id}
+                      surface={surface}
+                      dragDisabled={!props.onMoveSurface || renamingDevice === surface.id}
+                      active={surface.id === props.activeSurfaceId}
+                      pending={props.pendingSurfaceIds.has(surface.id)}
+                      title={surfaceTitle(
+                        surface,
+                        props.previewSessions,
+                        props.terminalLabelsById,
+                        messages,
+                      )}
+                      audio={tabAudioState(
+                        previewTabId ? (props.desktopByTabId[previewTabId] ?? null) : null,
+                      )}
+                      audioRuntimeTabId={
+                        previewTabId ? (props.previewRuntimeTabId?.(previewTabId) ?? null) : null
+                      }
+                      previewUrl={favicon.url}
+                      previewCapturedUrl={favicon.capturedUrl}
+                      theme={resolvedTheme}
+                      environmentId={props.environmentId}
+                      pullRequestStatusSeed={props.pullRequestStatusSeeds?.[surface.id]}
+                      renaming={renamingDevice === surface.id}
+                      canRename={props.onRenameDevice !== undefined}
+                      ownsDesktopTitleBar={ownsDesktopTitleBar}
+                      onActivate={onActivateTab}
+                      onClose={onCloseTab}
+                      onAuxClick={onTabAuxClick}
+                      onContextMenu={onTabContextMenu}
+                      onStartRename={onStartRenameTab}
+                      onFinishRename={onFinishRenameTab}
+                    />
+                  );
+                })}
+              </SortableTabList>
+              {groupAddButton ? (
+                <span className="flex shrink-0 [-webkit-app-region:no-drag]">{groupAddButton}</span>
+              ) : null}
+              {rail === null ? launcher : null}
+            </div>
+          </ScrollArea>
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
+        {moreMenu ? (
+          <span className="flex shrink-0 [-webkit-app-region:no-drag]">{moreMenu}</span>
         ) : null}
         {props.layoutControls}
         {ownsDesktopTitleBar && !props.layoutControls ? (
@@ -1786,32 +1875,61 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
-        {props.activeSurfaceId === null ? (
-          <RightPanelEmptyState
-            onAddBrowser={props.onAddBrowser}
-            onAddBrowserInProfile={props.onAddBrowserInProfile}
-            browserProfiles={browserProfiles}
-            onAddTerminal={props.onAddTerminal}
-            onAddDiff={props.onAddDiff}
-            onAddFiles={props.onAddFiles}
-            onAddPullRequest={props.onAddPullRequest}
-            onAddPullRequests={props.onAddPullRequests}
-            onAddDevice={props.onAddDevice}
-            onAddSideChat={props.onAddSideChat}
-            browserAvailable={props.browserAvailable}
-            terminalAvailable={props.terminalAvailable}
-            diffAvailable={props.diffAvailable}
-            filesAvailable={props.filesAvailable}
-            pullRequestAvailable={props.pullRequestAvailable}
-            pullRequestsAvailable={props.pullRequestsAvailable}
-            deviceAvailable={props.deviceAvailable}
-            sideChatAvailable={props.sideChatAvailable === true}
-            sideChatDisabledReason={props.sideChatDisabledReason ?? null}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col",
+              props.terminalDrawer?.open && props.terminalDrawer.maximized && "hidden",
+            )}
+            data-right-panel-surface-content
+          >
+            {props.activeSurfaceId === null ? (
+              <RightPanelEmptyState
+                onAddBrowser={props.onAddBrowser}
+                onAddBrowserInProfile={props.onAddBrowserInProfile}
+                browserProfiles={browserProfiles}
+                onAddTerminal={props.onAddTerminal}
+                onAddDiff={props.onAddDiff}
+                onAddFiles={props.onAddFiles}
+                onAddPullRequest={props.onAddPullRequest}
+                onAddPullRequests={props.onAddPullRequests}
+                onAddDevice={props.onAddDevice}
+                onAddSideChat={props.onAddSideChat}
+                browserAvailable={props.browserAvailable}
+                terminalAvailable={props.terminalAvailable}
+                diffAvailable={props.diffAvailable}
+                filesAvailable={props.filesAvailable}
+                pullRequestAvailable={props.pullRequestAvailable}
+                pullRequestsAvailable={props.pullRequestsAvailable}
+                deviceAvailable={props.deviceAvailable}
+                sideChatAvailable={props.sideChatAvailable === true}
+                sideChatDisabledReason={props.sideChatDisabledReason ?? null}
+              />
+            ) : (
+              props.children
+            )}
+          </div>
+          {props.terminalDrawer ? (
+            <RightPanelTerminalDrawer
+              key={scopedThreadKey(props.terminalDrawer.threadRef)}
+              {...props.terminalDrawer}
+            />
+          ) : null}
+        </div>
+        {rail ? (
+          <RightPanelRail
+            groups={rail.groups}
+            activeGroup={activeGroup}
+            dots={rail.dots}
+            unavailable={railUnavailable}
+            terminalOpen={rail.terminalOpen}
+            shortcutLabels={rail.shortcutLabels}
+            onSelectGroup={selectGroup}
+            onToggleTerminal={rail.onToggleTerminal}
+            newMenu={launcher}
           />
-        ) : (
-          props.children
-        )}
+        ) : null}
       </div>
     </PreviewPanelShell>
   );
