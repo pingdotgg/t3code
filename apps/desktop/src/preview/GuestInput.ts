@@ -185,7 +185,12 @@ export const routeMouseToFrame =
 /** Chromium can drop the reply to input on a frame that detaches before acknowledging it. */
 const sendToFrame = (debuggee: Electron.Debugger, method: string, route: FrameRoute) =>
   new Promise<unknown>((resolve, reject) => {
-    const stop = route.onDetach(route.sessionId, () => reject(new Error(FRAME_GONE_MESSAGE)));
+    let gone = false;
+    const stop = route.onDetach(route.sessionId, () => {
+      gone = true;
+      reject(new Error(FRAME_GONE_MESSAGE));
+    });
+    if (gone) return;
     debuggee.sendCommand(method, route.params, route.sessionId).then(resolve, reject).finally(stop);
   });
 

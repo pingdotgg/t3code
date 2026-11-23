@@ -658,6 +658,10 @@ export const make = Effect.gen(function* () {
     tab.relay = null;
     tab.debuggee.debugger.off("message", tab.onMessage);
     tab.debuggee.webContents.off("did-navigate", tab.onNewDocument);
+    // Input routed to a frame would wait for a detach event the tab no longer hears.
+    const listeners = [...tab.frameDetachListeners.values()].flatMap((set) => [...set]);
+    tab.frameDetachListeners.clear();
+    for (const listener of listeners) listener();
     syncPainting(tab);
     if (announced) emit({ type: "detached", ...key });
   };
