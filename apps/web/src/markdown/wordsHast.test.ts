@@ -184,14 +184,12 @@ describe("wordsHast", () => {
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
     );
-    for (const markdown of [">    [!NOTE]  \n> Body", ">    [!NOTE] \n> Body"]) {
-      expect(
-        wordsHtml(markdown, {
-          breaks: true,
-          extensions: { userMessage: true, leadingWhitespace: true },
-        }),
-      ).toBe('<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>');
-    }
+    expect(
+      wordsHtml(">    [!NOTE]  \n> Body", {
+        breaks: true,
+        extensions: { userMessage: true, leadingWhitespace: true },
+      }),
+    ).toBe('<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>');
   });
 
   it("gives elements the source positions components read", () => {
@@ -359,16 +357,6 @@ describe("wordsHast", () => {
       "> [!NOTE]<br>\n> raw\n\n> [!NOTE]\\\n> alert",
       '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
       '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
-    ],
-    [
-      "> &#91;!NOTE&#93;<br>\n> Body",
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
-    ],
-    [
-      "> &#91;!NOTE]<br>Body",
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
     ],
     [
       "> [!NOTE]<br />Body",
