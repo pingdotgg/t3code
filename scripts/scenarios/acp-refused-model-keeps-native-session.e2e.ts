@@ -3,9 +3,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { makeState, runPromise, test, WEB } from "./t3.ts";
+import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 // The agent drops "model-a" from its model list after its first reply, as an agent that lost its
 // network can, and offers it again once the scenario creates the online flag. Each agent process
@@ -79,6 +81,23 @@ test(
     };
     try {
       await NodeFSP.writeFile(settingsPath, JSON.stringify(settings));
+      // The settings watcher registers the agent asynchronously; start once the server lists it.
+      await runPromise(
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, app.baseUrl ?? "");
+          yield* client.subscribeServerConfig({}).pipe(
+            Stream.filter((event) =>
+              (event.type === "snapshot"
+                ? event.config.providers
+                : event.type === "providerStatuses"
+                  ? event.payload.providers
+                  : []
+              ).some((provider) => provider.instanceId === "refusing-agent"),
+            ),
+            Stream.runHead,
+          );
+        }).pipe(Effect.scoped),
+      );
       const { cli } = makeState(T3_HOME);
       type Run = { threadId: string; status: string; reply: string | null; error: string | null };
       const refusedModel = (run: Run) =>
@@ -89,32 +108,27 @@ test(
         );
         return JSON.parse(sent.stdout) as Run;
       };
-      // The watcher reloads settings asynchronously. Retry only before a thread was created.
-      let first: Run | undefined;
-      for (let attempt = 0; attempt < 8 && first === undefined; attempt++) {
-        const started = await runPromise(
-          cli(
-            [
-              "thread",
-              "start",
-              project,
-              "First request",
-              "--title",
-              "Refused model",
-              "--provider",
-              "refusing-agent",
-              "--model",
-              "model-a",
-              "--wait",
-              "--json",
-            ],
-            [0, 1],
-          ),
-        );
-        if (!started.stdout.includes("threadId")) continue;
-        first = JSON.parse(started.stdout) as Run;
-      }
-      if (first?.status !== "completed" || first.reply === null) {
+      const started = await runPromise(
+        cli(
+          [
+            "thread",
+            "start",
+            project,
+            "First request",
+            "--title",
+            "Refused model",
+            "--provider",
+            "refusing-agent",
+            "--model",
+            "model-a",
+            "--wait",
+            "--json",
+          ],
+          [0, 1],
+        ),
+      );
+      const first = JSON.parse(started.stdout) as Run;
+      if (first.status !== "completed" || first.reply === null) {
         throw new Error(`The first turn did not complete: ${JSON.stringify(first)}`);
       }
       const session = first.reply.split(" ")[0];
