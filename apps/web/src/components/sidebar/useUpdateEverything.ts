@@ -1,5 +1,6 @@
 import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
+import { connectionErrorText } from "@t3tools/client-runtime/connection";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 
 import { APP_VERSION } from "~/branding";
@@ -65,6 +66,8 @@ export function useUpdateEverything(
     label: environment.label,
     serverConfig: environment.serverConfig,
     connected: environment.connection.phase === "connected",
+    connectionError: connectionErrorText(environment.connection, resolve),
+    turnedOff: !environment.entry.enabled,
     hostedByThisApp: isHostedByThisApp(environment),
     canMaintain: canUpdateServer(sessionStates[index]!),
     updateState: updateStates[index]!,
