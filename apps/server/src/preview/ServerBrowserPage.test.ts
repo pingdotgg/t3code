@@ -410,6 +410,21 @@ describe("server browser element refs", () => {
     expect(await inner.inputValue()).toBe("");
   });
 
+  it("sends key events for typed text to a field that reads keydown", async () => {
+    await page.setContent(
+      `<input id="w" aria-label="Word"><script>w.onkeydown = (e) => { if (e.key.length === 1) { e.preventDefault(); w.dataset.keys = (w.dataset.keys ?? "") + e.key; w.value = w.dataset.keys; } };</script>`,
+    );
+    await ServerBrowserPage.type(page, { locator: "#w", text: "girona42" });
+    expect(await page.locator("#w").getAttribute("data-keys")).toBe("girona42");
+
+    await page.locator("#w").evaluate((input: HTMLInputElement) => {
+      delete input.dataset.keys;
+      input.value = "";
+    });
+    await ServerBrowserPage.type(page, { locator: "#w", text: "girona42", clear: true });
+    expect(await page.locator("#w").getAttribute("data-keys")).toBe("girona42");
+  });
+
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
     await page.setContent(`
       <table><tr><td>password:</td><td><input id="pw" type="password" aria-label="Password"></td></tr></table>
