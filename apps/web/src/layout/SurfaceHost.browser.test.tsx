@@ -333,6 +333,22 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     }),
   );
   expect(strip.scrollLeft).toBe(revealed - 30);
+  // At the left edge nothing moves, so a vertical wheel is not swallowed; buttons skip measuring.
+  strip.scrollLeft = 0;
+  const atEdge = new WheelEvent("wheel", {
+    deltaY: -30,
+    clientX: stripBox.left + stripBox.width / 2,
+    clientY: stripBox.top + stripBox.height / 2,
+    bubbles: true,
+    cancelable: true,
+  });
+  header.dispatchEvent(atEdge);
+  expect(atEdge.defaultPrevented).toBe(false);
+  using stripMeasure = vi.spyOn(strip, "getBoundingClientRect");
+  header
+    .querySelector('button[aria-label="New tab"]')!
+    .dispatchEvent(new WheelEvent("wheel", { deltaY: -30, bubbles: true, cancelable: true }));
+  expect(stripMeasure).not.toHaveBeenCalled();
   strip.scrollLeft = 100;
   const before = workspace.scrollLeft;
 

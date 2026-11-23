@@ -393,9 +393,9 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         strip.scrollWidth <= strip.clientWidth
       )
         return;
+      if (!scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event))) return;
       event.preventDefault();
       event.stopPropagation();
-      scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
     },
     { passive: false },
   );
@@ -879,13 +879,16 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
 function scrollStripFromGap(event: WheelEvent, strip: HTMLElement): void {
   if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
   if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  if (event.target instanceof Node && strip.contains(event.target)) return;
+  if (event.target instanceof Element && event.target.closest("button, [role='button'], a, input"))
+    return;
   if (strip.scrollWidth <= strip.clientWidth) return;
   const box = strip.getBoundingClientRect();
   if (event.clientX < box.left || event.clientX >= box.right) return;
   if (event.clientY < box.top || event.clientY >= box.bottom) return;
+  if (!scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event))) return;
   event.preventDefault();
   event.stopPropagation();
-  scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
 }
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
