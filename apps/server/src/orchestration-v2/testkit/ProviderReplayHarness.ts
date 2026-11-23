@@ -17,6 +17,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import type { MigrationError } from "effect/sql/Migrator";
 import type { SqlError } from "effect/sql/SqlError";
 
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -317,11 +318,29 @@ export function layerWithRegistry<Error>(
     ServerConfig.ServerConfig,
     makeReplayServerConfig(scenario.name).pipe(Effect.orDie),
   ).pipe(Layer.provide(NodeServices.layer));
+  // A thread without a worktree would otherwise fall back to process.cwd(), so checkpoints
+  // would run git against the checkout running the tests and race its other users.
+  const layerScenarioWorkspacePolicy = Layer.effect(
+    RuntimePolicy.RuntimePolicyV2,
+    Effect.gen(function* () {
+      const workspace = yield* checkpointWorkspace(
+        scenario.name.replace(/[^a-z0-9_-]+/gi, "-"),
+      ).pipe(Effect.orDie);
+      return {
+        resolve: (input) =>
+          Effect.succeed({
+            runtimeMode: input.thread.runtimeMode,
+            interactionMode: input.thread.interactionMode,
+            cwd: input.thread.worktreePath ?? workspace,
+          }),
+      };
+    }),
+  );
   const layerRuntimeBase =
     scenario.runtimePolicyOverride === undefined
-      ? RuntimePolicy.layer
+      ? layerScenarioWorkspacePolicy
       : RuntimePolicy.layerWithOverride(scenario.runtimePolicyOverride).pipe(
-          Layer.provide(RuntimePolicy.layer),
+          Layer.provide(layerScenarioWorkspacePolicy),
         );
   const layerDatabase = options.databaseLayer ?? SqlitePersistence.layerMemory;
   // Share one continuation queue across adapters, orchestrator, and worker through layer memoization.
