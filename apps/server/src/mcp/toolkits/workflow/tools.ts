@@ -29,7 +29,14 @@ const WorkflowTool = Tool.make("t3_workflow", {
     idempotencyKey: Schema.optional(TrimmedNonEmptyString),
     runId: Schema.optional(TrimmedNonEmptyString),
     status: Schema.optional(WorkflowRunStatus),
-    wait: Schema.optional(TrimmedNonEmptyString),
+    // Waits match by exact name, so a name keeps its spaces.
+    wait: Schema.optional(
+      Schema.String.check(
+        Schema.makeFilter((name: string) => name.trim().length > 0, {
+          expected: "a non-blank string",
+        }),
+      ),
+    ),
     key: Schema.optional(TrimmedNonEmptyString),
     channel: Schema.optional(TrimmedNonEmptyString),
     value: Schema.optional(Schema.Json),
