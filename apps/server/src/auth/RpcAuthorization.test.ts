@@ -54,6 +54,13 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets only a session that operates threads approve sending a feedback report", () => {
+    // Guest links have no RPC session, and read-only sessions lack this scope.
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentFeedbackAnswerRequest)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("keeps triage, which seeds an agent that reads logs and the database, behind operate scope", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.serverPrepareTriage)).toBe(
       AuthOrchestrationOperateScope,
@@ -81,6 +88,13 @@ describe("RPC authorization scopes", () => {
     for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }
+  });
+
+  it("lets file readers see a task folder and takes source control to add a repository to it", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.workspaceTaskFolder)).toBe(AuthFilesystemReadScope);
+    expect(requiredScopeForRpcMethod(WS_METHODS.workspaceAddTaskFolderRepository)).toBe(
+      AuthSourceControlWriteScope,
+    );
   });
 
   it("still lets readers load settings the way installed Swift clients ask", () => {

@@ -140,4 +140,4 @@ the old one.
 
 ## Setup
 
-See the [development runbook](docs/operations/development.md#first-checkout).
+See the [development runbook](docs/operations/00_development.md#first-checkout).

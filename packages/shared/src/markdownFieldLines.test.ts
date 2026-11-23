@@ -5,7 +5,7 @@ import { hardBreakAssistantFieldLines } from "./markdownFieldLines.ts";
 it("hard-breaks only paragraphs made entirely of label/value lines", () => {
   const text = [
     "Name: Acme Ltd",
-    "**Bank:** Example Bank",
+    "  **Bank:** Example Bank",
     "",
     "Wrapped prose: split by",
     "a newline in the source.",
@@ -16,7 +16,7 @@ it("hard-breaks only paragraphs made entirely of label/value lines", () => {
     "```",
   ].join("\n");
   expect(hardBreakAssistantFieldLines(text)).toBe(
-    text.replace("Name: Acme Ltd\n**Bank:**", "Name: Acme Ltd  \n**Bank:**"),
+    text.replace("Name: Acme Ltd\n  **Bank:**", "Name: Acme Ltd  \n  **Bank:**"),
   );
 });
 

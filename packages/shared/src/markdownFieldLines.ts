@@ -1,10 +1,11 @@
 import type { Nodes, RootContent } from "mdast";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
-
-// `Label: value`, also with the label in bold or italics (`**Label:** value`, `*Label*: value`).
-const ASSISTANT_FIELD_LINE = /^(\*{1,2}|_{1,2})?[\p{L}][\p{L}\p{N} /_-]{0,31}(?:\1:|:\1)[ \t]+\S/u;
-const LINE_BREAK = /\r\n?|\n/;
+import {
+  FIELD_LINE_BREAK,
+  isAssistantFieldBlock,
+  isAssistantFieldLine,
+} from "./markdownFieldBlock.ts";
 
 /** A multi-line top-level paragraph whose every line is a `Label: value` field. */
 export function isAssistantFieldParagraph(node: RootContent, source: string): boolean {
@@ -14,10 +15,7 @@ export function isAssistantFieldParagraph(node: RootContent, source: string): bo
     start.line !== end.line &&
     start.offset !== undefined &&
     end.offset !== undefined &&
-    source
-      .slice(start.offset, end.offset)
-      .split(LINE_BREAK)
-      .every((line) => ASSISTANT_FIELD_LINE.test(line))
+    isAssistantFieldBlock(source.slice(start.offset, end.offset))
   );
 }
 
@@ -25,11 +23,10 @@ const parser = unified().use(remarkParse);
 
 /** Source-level form of the field-line rule, for renderers that cannot break one paragraph's soft breaks. */
 export function hardBreakAssistantFieldLines(markdown: string): string {
-  const lines = markdown.split(LINE_BREAK);
+  const lines = markdown.split(FIELD_LINE_BREAK);
   if (
     !lines.some(
-      (line, index) =>
-        ASSISTANT_FIELD_LINE.test(line) && ASSISTANT_FIELD_LINE.test(lines[index + 1] ?? ""),
+      (line, index) => isAssistantFieldLine(line) && isAssistantFieldLine(lines[index + 1] ?? ""),
     )
   ) {
     return markdown;
