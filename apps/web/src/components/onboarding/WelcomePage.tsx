@@ -1951,6 +1951,7 @@ const IMPORT_SOURCE_NAMES: Record<AgentSessionSource, string> = {
   claudeAgent: "Claude Code",
   codex: "Codex",
   pi: "Pi",
+  opencode: "OpenCode",
 };
 function useImportSourcesLabel() {
   return new Intl.ListFormat(useLocale(), { type: "conjunction" }).format(
