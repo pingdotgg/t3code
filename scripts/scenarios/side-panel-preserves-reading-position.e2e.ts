@@ -34,7 +34,12 @@ test(
           const scroller = document.querySelector<HTMLElement>(
             draft ? ".composer-tiptap" : ".messages-timeline-scroll",
           )!;
-          const content = draft ? scroller : scroller.querySelector("[data-user-message-body]")!;
+          const content = draft
+            ? scroller
+            : Array.from(scroller.querySelectorAll("[data-user-message-body]")).find(
+                (body) => (body.textContent?.length ?? 0) >= 3000,
+              );
+          if (!content) throw new Error("The long message is not rendered");
           const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
           let node = walker.nextNode();
           while (node && (node.textContent?.length ?? 0) < 3000) node = walker.nextNode();
