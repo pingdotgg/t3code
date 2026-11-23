@@ -73,36 +73,85 @@ fn wait_timeout(args: &Args) -> Duration {
 async fn delegate_remote(cx: &Cx<'_>, args: &Args, environment: &str) -> ToolResult {
     let caller = cx.require_thread("delegate_task")?.clone();
     let task_id = crate::remote_tasks::delegate(cx, args, environment, &task_prompt(args)).await?;
-    let mut timed_out = false;
-    if str_arg(args, "mode") == Some("wait") {
-        timed_out = crate::remote_tasks::wait_for_result(
+    if str_arg(args, "mode") != Some("wait") {
+        return read_task(
             cx,
             &caller.thread_id,
             &task_id,
-            wait_timeout(args),
+            false,
+            Acknowledge::Terminal,
         )
-        .await?;
-        if timed_out {
-            // After a wait times out, a later completion wakes the parent (`upgradeWake`).
-            let _ = cx
-                .dispatch(json!({
-                    "type": "delegated_task.wake-policy",
-                    "commandId": format!("{task_id}:wake-always"),
-                    "parentThreadId": caller.thread_id,
-                    "taskId": task_id,
-                    "completionWake": "always",
-                }))
-                .await;
-        }
+        .await;
     }
-    read_task(
+    let upgrade = WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &task_id);
+    let timed_out =
+        crate::remote_tasks::wait_for_result(cx, &caller.thread_id, &task_id, wait_timeout(args))
+            .await?;
+    let read = read_task(
         cx,
         &caller.thread_id,
         &task_id,
         timed_out,
         Acknowledge::Terminal,
     )
-    .await
+    .await?;
+    upgrade.settle(cx, &read).await;
+    Ok(read)
+}
+
+/// `awaitTask`'s exit (`OrchestratorMcpService.ts:1984`): a blocking wait that ends without
+/// returning a terminal result upgrades the task's wake to `always`, so a later result still
+/// reaches the parent. Dropped unsettled, as when the call goes away or fails, it upgrades in
+/// the background.
+struct WakeUpgrade {
+    engine: std::sync::Arc<dyn conn_engine::Engine>,
+    command: Option<Value>,
+}
+
+impl WakeUpgrade {
+    fn arm(cx: &Cx<'_>, parent: &str, task_id: &str, command_id: &str) -> Self {
+        Self {
+            engine: cx.config().engine.clone(),
+            command: Some(json!({
+                "type": "delegated_task.wake-policy",
+                "commandId": format!("{command_id}:wake-always"),
+                "parentThreadId": parent,
+                "taskId": task_id,
+                "completionWake": "always",
+            })),
+        }
+    }
+
+    /// After the read the wait returns: the upgrade runs unless that read is terminal, read
+    /// first so a result returned here never also wakes the parent.
+    async fn settle(mut self, cx: &Cx<'_>, read: &Value) {
+        let command = self.command.take();
+        if TERMINAL.contains(&read["status"].as_str().unwrap_or_default()) {
+            return;
+        }
+        if let Some(command) = command {
+            // Refused only when the task already wakes the parent.
+            let _ = cx.dispatch(command).await;
+        }
+    }
+}
+
+impl Drop for WakeUpgrade {
+    fn drop(&mut self) {
+        let Some(command) = self.command.take() else {
+            return;
+        };
+        let (Ok(command), Ok(runtime)) = (
+            conn_contract::from_json::<conn_contract::Command>(command),
+            tokio::runtime::Handle::try_current(),
+        ) else {
+            return;
+        };
+        let engine = self.engine.clone();
+        runtime.spawn(async move {
+            let _ = engine.dispatch(command).await;
+        });
+    }
 }
 
 pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
@@ -237,37 +286,14 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }
 
     if wait {
+        let upgrade = WakeUpgrade::arm(cx, &caller.thread_id, &task_id, &command_id);
         let deadline = tokio::time::Instant::now() + wait_timeout(args);
-        let (_, mut timed_out, _) = threads::wait_for_run(
-            cx,
-            &child,
-            None,
-            wait_timeout(args),
-            threads::Until::EndedOrWaiting,
-        )
-        .await?;
-        // `awaitTask`: the child's turn ended, but the task may still wait for its children.
-        if !timed_out {
-            timed_out = wait_for_task(cx, &caller.thread_id, &task_id, deadline).await?;
-        }
-        if timed_out {
-            cx.dispatch(json!({
-                "type": "delegated_task.wake-policy",
-                "commandId": format!("{command_id}:wake-always"),
-                "parentThreadId": caller.thread_id,
-                "taskId": task_id,
-                "completionWake": "always",
-            }))
-            .await?;
-        }
-        return read_task(
-            cx,
-            &caller.thread_id,
-            &task_id,
-            timed_out,
-            Acknowledge::Terminal,
-        )
-        .await;
+        let read = match wait_for_task(cx, &caller.thread_id, &child, &task_id, deadline).await? {
+            Some(read) => read,
+            None => read_task(cx, &caller.thread_id, &task_id, true, Acknowledge::Terminal).await?,
+        };
+        upgrade.settle(cx, &read).await;
+        return Ok(read);
     }
     read_task(
         cx,
@@ -279,57 +305,67 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     .await
 }
 
-/// `waitForTask`: follows the parent's task rows until the task's read ends a wait (a result,
-/// a question or an approval) or `deadline` passes. `true` when it timed out.
+/// `waitForTask` (`OrchestratorMcpService.ts:2090`): follows the task until a read of it ends a
+/// wait (a result, a question or an approval) and returns that read, or `None` when `deadline`
+/// passes first or a stream ends. Both threads are followed from before the first read, so
+/// nothing that lands after it is missed.
 async fn wait_for_task(
     cx: &Cx<'_>,
     parent: &str,
+    child: &str,
     task_id: &str,
     deadline: tokio::time::Instant,
-) -> Result<bool, ToolError> {
-    let subscribe = |thread: String| async move {
-        let input =
-            conn_contract::from_json(json!({"threadId": thread})).map_err(super::internal)?;
-        cx.engine().subscribe_thread(input).await.map_err(|_| {
-            fail(
-                "thread_not_found",
-                format!("Thread {thread} is no longer available."),
-            )
-        })
+) -> Result<Option<Value>, ToolError> {
+    let subscribe = |thread: &str| {
+        let thread = thread.to_owned();
+        async move {
+            let input =
+                conn_contract::from_json(json!({"threadId": thread})).map_err(super::internal)?;
+            cx.engine().subscribe_thread(input).await.map_err(|_| {
+                fail(
+                    "thread_not_found",
+                    format!("Thread {thread} is no longer available."),
+                )
+            })
+        }
     };
-    // `waitForTask` (`OrchestratorMcpService.ts:2090`): both threads are followed from before the
-    // first read, so the task's row settling and a question or approval in the child both end it.
-    let mut parent_events = subscribe(parent.to_owned()).await?;
-    let first = read_task(cx, parent, task_id, false, Acknowledge::Never).await?;
-    let child = first["childThreadId"]
-        .as_str()
-        .unwrap_or_default()
-        .to_owned();
+    let mut parent_events = subscribe(parent).await?;
     let mut child_events = subscribe(child).await?;
-    let mut read = first;
+    let mut read = read_task(cx, parent, task_id, false, Acknowledge::Terminal).await?;
+    #[cfg(test)]
+    crate::tests::after_first_task_read().await;
     loop {
         if read.get("next").is_none() {
-            return Ok(false);
+            return Ok(Some(read));
         }
         loop {
-            let item = tokio::select! {
-                item = parent_events.recv() => item,
-                item = child_events.recv() => item,
-                () = tokio::time::sleep_until(deadline) => return Ok(true),
+            let (item, from_child) = tokio::select! {
+                item = parent_events.recv() => (item, false),
+                item = child_events.recv() => (item, true),
+                () = tokio::time::sleep_until(deadline) => return Ok(None),
             };
             let item = match item {
-                None | Some(Err(_)) => return Ok(false),
+                None | Some(Err(_)) => return Ok(None),
                 Some(Ok(item)) => conn_contract::to_json(&item),
             };
+            // `TASK_WAKE_EVENTS`: the parent's row of this task, and the child's work.
             let kind = item["event"]["type"].as_str().unwrap_or_default();
-            if (kind == "subagent.updated" && item["event"]["payload"]["id"] == task_id)
-                || kind.starts_with("runtime-request.")
-                || kind.starts_with("run.")
-            {
+            let wakes = if from_child {
+                matches!(
+                    kind,
+                    "run.updated"
+                        | "subagent.updated"
+                        | "provider-thread.updated"
+                        | "runtime-request.updated"
+                )
+            } else {
+                kind == "subagent.updated" && item["event"]["payload"]["id"] == task_id
+            };
+            if wakes {
                 break;
             }
         }
-        read = read_task(cx, parent, task_id, false, Acknowledge::Never).await?;
+        read = read_task(cx, parent, task_id, false, Acknowledge::Terminal).await?;
     }
 }
 
@@ -433,22 +469,9 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .unwrap_or_default()
         .to_owned();
     let child = cx.projection(&child_id).await?;
-    // The task's own queued turns (`OrchestratorMcpService.ts:2947`): Stop keeps the queue for
-    // Resume, so cancelling the task removes them.
-    let queued: Vec<String> = child["runs"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|run| {
-            run["status"] == "queued"
-                && (run["delegatedTaskId"] == task_id || run["id"] == current["childRunId"])
-        })
-        .filter_map(|run| run["id"].as_str().map(str::to_owned))
-        .collect();
-    if current["workState"] != "waiting_for_children"
-        && view::active_run(&child).is_none()
-        && queued.is_empty()
-    {
+    let waiting = current["workState"] == "waiting_for_children";
+    let running = view::active_run(&child).is_some();
+    if !waiting && !running && task_queued_runs(&child, task_id, &current).is_empty() {
         return Err(fail(
             "task_not_cancellable",
             format!("Delegated task {task_id} has no interruptible child run."),
@@ -464,7 +487,9 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
     }))
     .await?;
     let reason = str_arg(args, "reason").unwrap_or("Cancelled by its parent agent.");
-    if view::active_run(&child).is_some() {
+    // A task waiting for children has no turn to stop; Stop still reaches its delegates and
+    // the background work it awaits (`OrchestratorMcpService.ts:3026`).
+    if waiting || running {
         cx.dispatch(json!({
             "type": "thread.stop",
             "commandId": cx.stable_id("command", "task-cancel", &key),
@@ -473,7 +498,10 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
         }))
         .await?;
     }
-    for run in queued {
+    // Stop keeps the queue for Resume, so cancelling the task removes its queued turns, read
+    // after the Stop.
+    let child = cx.projection(&child_id).await?;
+    for run in task_queued_runs(&child, task_id, &current) {
         cx.dispatch(json!({
             "type": "queued-run.cancel",
             "commandId": cx.stable_id("command", &format!("cancel-task-queued-run:{run}"), &key),
@@ -483,6 +511,20 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .await?;
     }
     Ok(json!({"taskId": task_id, "status": "cancel_requested"}))
+}
+
+/// The task's own queued turns in its child (`OrchestratorMcpService.ts:2947`).
+fn task_queued_runs(child: &Value, task_id: &str, current: &Value) -> Vec<String> {
+    child["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|run| {
+            run["status"] == "queued"
+                && (run["delegatedTaskId"] == task_id || run["id"] == current["childRunId"])
+        })
+        .filter_map(|run| run["id"].as_str().map(str::to_owned))
+        .collect()
 }
 
 /// The parent's row of `task_id` when the task runs in a linked environment.
@@ -571,19 +613,13 @@ async fn read_task(
     };
     let terminal = TERMINAL.contains(&status);
     let terminal_run = runs.iter().rev().find(|run| !view::is_live(run)).copied();
-    // `readTask`: the task's published result first (`OrchestratorMcpService.ts:1819`); a later
-    // untagged run in the same child never replaces it.
-    let summary = terminal
-        .then(|| {
-            row["result"]
-                .as_str()
-                .filter(|_| published)
-                .map(str::to_owned)
-                .or_else(|| {
-                    terminal_run.and_then(|r| view::run_result_text(&child, r["id"].as_str()?))
-                })
-        })
-        .flatten();
+    // `readTask`: the result the task was published with (`OrchestratorMcpService.ts:1819`);
+    // a later run in the same child never replaces it.
+    let summary = if terminal {
+        row["result"].clone()
+    } else {
+        Value::Null
+    };
     let requests: Vec<&Value> = child["runtimeRequests"]
         .as_array()
         .map(|r| r.iter().filter(|r| r["status"] == "pending").collect())
@@ -673,8 +709,10 @@ async fn acknowledge_result(cx: &Cx<'_>, parent: &Value, row: &Value) -> Result<
     }
     let observing = parent["runs"].as_array().and_then(|runs| {
         runs.iter()
+            // `latestActiveRun`: a queued turn has not run, so it observed nothing.
             .filter(|run| {
                 view::is_live(run)
+                    && run["status"] != "queued"
                     && run["providerInstanceId"] == caller.provider_instance_id.as_str()
             })
             .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))

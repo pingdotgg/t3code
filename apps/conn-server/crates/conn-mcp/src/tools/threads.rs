@@ -678,8 +678,6 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
 /// When a wait is over.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Until {
-    /// The run ended or waits on a person (`delegate_task`'s wait).
-    EndedOrWaiting,
     /// The run reached a terminal status (`waitForThread`, `isTerminalRunStatus`).
     Ended,
     /// As `Ended`, then the thread's other work too: `untilDelegatedWorkSettled`.
@@ -724,10 +722,21 @@ fn work_result(projection: &Value) -> Option<Value> {
         .as_array()
         .map(|r| r.iter().collect())
         .unwrap_or_default();
+    // `monitorUpdateRunIds`: a turn that only answers a monitor update is no work.
+    let monitor: Vec<&Value> = projection["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|m| {
+            m["notification"]["source"]["kind"] == "monitor"
+                && m["notification"]["outcome"] == "updated"
+        })
+        .map(|m| &m["runId"])
+        .collect();
     let work: Vec<&Value> = runs
         .iter()
         .copied()
-        .filter(|run| run["status"] != "rolled_back")
+        .filter(|run| run["status"] != "rolled_back" && !monitor.contains(&&run["id"]))
         .collect();
     let result = work
         .iter()
@@ -790,9 +799,6 @@ pub(super) async fn wait_for_run(
                 return Ok((run, Some(None)));
             };
             let over = match until {
-                Until::EndedOrWaiting => {
-                    (!view::is_live(current) || current["status"] == "waiting").then_some(None)
-                }
                 Until::Ended => is_terminal(current).then_some(None),
                 Until::WorkSettled => {
                     if is_terminal(current) {

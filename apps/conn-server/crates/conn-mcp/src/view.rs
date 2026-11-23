@@ -565,20 +565,6 @@ pub(crate) fn timeline_item_within(
     longest_text(&cut_title(title_chars.max(0)))
 }
 
-/// The last assistant answer of a run, or its failure (TS `subagentResultForRun`).
-pub(crate) fn run_result_text(projection: &Value, run_id: &str) -> Option<String> {
-    let items = projection["turnItems"].as_array()?;
-    items
-        .iter()
-        .rev()
-        .filter(|item| item["runId"] == run_id)
-        .find_map(|item| match item["type"].as_str() {
-            Some("assistant_message") => text(&item["text"]).filter(|t| !t.is_empty()),
-            Some("error") => text(&item["failure"]["message"]),
-            _ => None,
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

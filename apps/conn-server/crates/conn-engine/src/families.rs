@@ -224,6 +224,93 @@ fn run_result(tx: &Tx<'_>, thread_id: &str, run_id: &str) -> StoreResult<Option<
     Ok(text(&["assistant_message"]).or_else(|| text(&["error"])))
 }
 
+/// `subagentResultForRun` (`subagentProjection.ts:255`): the result a task is published with.
+/// A completed run that said nothing reports the same task's earlier completed run that did;
+/// a run with no report says so.
+fn task_result(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<String> {
+    let run_id = run["id"].as_str().unwrap_or_default();
+    if let Some(text) = run_result(tx, thread_id, run_id)? {
+        return Ok(text);
+    }
+    let status = run["status"].as_str().unwrap_or("failed");
+    if status != "completed" {
+        return Ok(format!("Child task ended with status {status}."));
+    }
+    let notice = tx
+        .entity(
+            thread_id,
+            "turnItems",
+            &format!("turn-item:{run_id}:provider-stop-reason"),
+        )?
+        .filter(|item| item["type"] == "system_notice")
+        .and_then(|item| item["message"].as_str().map(str::to_owned));
+    if notice.is_none() {
+        let runs = tx.entities(thread_id, "runs")?;
+        let monitor = monitor_update_runs(tx, thread_id)?;
+        for earlier in report_runs(&runs, &monitor, run) {
+            if let Some(text) = run_result(tx, thread_id, earlier["id"].as_str().unwrap_or(""))? {
+                return Ok(text);
+            }
+        }
+    }
+    let mut text = "Child task completed without an assistant result.".to_owned();
+    if let Some(notice) = notice {
+        text.push_str("\n\n");
+        text.push_str(&notice);
+    }
+    Ok(text)
+}
+
+/// `runRanAfter`'s order: when a run ended (a run that has not ended, last), then its ordinal.
+fn end_key(run: &Value) -> (bool, &str, u64) {
+    let end = run["completedAt"].as_str().filter(|at| !at.is_empty());
+    (
+        end.is_none(),
+        end.unwrap_or_default(),
+        run["ordinal"].as_u64().unwrap_or(0),
+    )
+}
+
+/// `delegatedTaskReportRuns`: the same task's completed runs before `run`, latest first,
+/// ending at another task's run or any other outcome.
+fn report_runs<'a>(runs: &'a [Value], monitor: &[Value], run: &Value) -> Vec<&'a Value> {
+    if run["status"] != "completed" {
+        return vec![];
+    }
+    let mut earlier: Vec<&Value> = runs
+        .iter()
+        .filter(|candidate| {
+            candidate["id"] != run["id"]
+                && !candidate["startedAt"].is_null()
+                && candidate["status"] != "rolled_back"
+                && !monitor.contains(&candidate["id"])
+                && end_key(run) > end_key(candidate)
+        })
+        .collect();
+    earlier.sort_by_key(|candidate| std::cmp::Reverse(end_key(candidate)));
+    earlier
+        .into_iter()
+        .take_while(|candidate| {
+            candidate["status"] == "completed"
+                && candidate["delegatedTaskId"] == run["delegatedTaskId"]
+        })
+        .collect()
+}
+
+/// `monitorUpdateRunIds`: runs that only answer a monitor update are never a task's work.
+fn monitor_update_runs(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Vec<Value>> {
+    Ok(tx
+        .entities(thread_id, "messages")?
+        .into_iter()
+        .filter(|m| {
+            m["notification"]["source"]["kind"] == "monitor"
+                && m["notification"]["outcome"] == "updated"
+                && m["runId"].is_string()
+        })
+        .map(|m| m["runId"].clone())
+        .collect())
+}
+
 /// Called in the write that ends a run. Delivers what this thread's own children left pending
 /// while it ran, then publishes the thread's settled tasks to its parent.
 pub(crate) fn on_run_end(
@@ -287,6 +374,7 @@ pub(crate) fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec
         return Ok(effects);
     }
     let runs = tx.entities(child_id, "runs")?;
+    let monitor = monitor_update_runs(tx, child_id)?;
     let subagents = tx.entities(child_id, "subagents")?;
     let background: Vec<Value> = tx
         .entities(child_id, "providerThreads")?
@@ -302,13 +390,14 @@ pub(crate) fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec
         let id = row["id"].as_str().unwrap_or_default();
         let is_original = id == original;
         // `delegatedTaskRuns`: a follow-up's runs are tagged with it; the original owns the rest.
+        // A turn that only answers a monitor update is no task's work (`delegatedTaskProgress`).
         let owned: Vec<&Value> = runs
             .iter()
             .filter(|run| match run["delegatedTaskId"].as_str() {
                 Some(task) => task == id,
                 None => is_original,
             })
-            .filter(|run| run["status"] != "rolled_back")
+            .filter(|run| run["status"] != "rolled_back" && !monitor.contains(&run["id"]))
             .collect();
         let active = owned.iter().any(|run| {
             !TERMINAL.contains(&run["status"].as_str().unwrap_or_default())
@@ -423,7 +512,6 @@ fn publish(
     mut row: Value,
     run: &Value,
 ) -> StoreResult<Vec<Effect>> {
-    let run_id = run["id"].as_str().unwrap_or_default();
     let status = run["status"].as_str().unwrap_or("failed");
     let status = if status == "rolled_back" {
         "cancelled"
@@ -431,7 +519,7 @@ fn publish(
         status
     };
     let now = tx.now().to_owned();
-    let result = run_result(tx, child_id, run_id)?;
+    let result = task_result(tx, child_id, run)?;
     let cancelled = row["cancelledRunId"].is_string();
     row["status"] = json!(if cancelled && status == "completed" {
         "interrupted"

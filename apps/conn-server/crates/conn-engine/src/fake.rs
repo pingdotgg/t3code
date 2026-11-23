@@ -646,6 +646,11 @@ impl Session for FakeSession {
                     started.push(terminal(&turn,TurnStatus::Completed,None));
                 }
                 "hang" | "stuck" => {}
+                // `silent`: the turn completes without saying anything.
+                "silent" => {
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
                 t if t.starts_with("latestart") => {}
                 "ask" => started.push(event(json!({"type": "runtime_request.updated",
                     "threadId": turn.thread_id, "runtimeRequest": {
