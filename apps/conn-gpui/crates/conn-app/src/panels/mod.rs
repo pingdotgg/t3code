@@ -9,7 +9,6 @@ mod browser_context_menu;
 pub(crate) mod chrome;
 mod color;
 mod database;
-mod laravel_toolbar;
 mod device;
 mod diff;
 mod diff_parser;
@@ -18,6 +17,7 @@ pub(crate) mod file_path;
 mod files;
 pub(crate) mod header;
 mod highlight;
+mod laravel_toolbar;
 mod linked_items;
 mod mcp;
 mod pull_request;
@@ -42,13 +42,13 @@ use gpui_kit::{
 
 use self::api::ApiPanel;
 use self::browser::BrowserPanel;
-use self::laravel_toolbar::LaravelToolbarEvent;
 use self::color::to_hsla;
 use self::database::DatabasePanel;
 use self::device::DevicePanel;
 use self::diff::DiffPanel;
 use self::files::FilesPanel;
 use self::header::{PanelHeaderCallbacks, PanelHeaderProps, render_panel_header};
+use self::laravel_toolbar::LaravelToolbarEvent;
 use self::linked_items::LinkedItemsPanel;
 use self::mcp::McpPanel;
 use self::pull_request::PullRequestPanel;
@@ -166,23 +166,29 @@ impl RightPanel {
         .detach();
         // "Open in Database" on a query of the debug bar.
         let toolbar = browser.read(cx).laravel_toolbar();
-        cx.subscribe(&toolbar, |this, _, event: &LaravelToolbarEvent, cx| match event {
-            LaravelToolbarEvent::OpenQuery(sql) => {
-                this.database
-                    .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
-                cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
-            }
-        })
+        cx.subscribe(
+            &toolbar,
+            |this, _, event: &LaravelToolbarEvent, cx| match event {
+                LaravelToolbarEvent::OpenQuery(sql) => {
+                    this.database
+                        .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
+                }
+            },
+        )
         .detach();
         let api = cx.new(|cx| ApiPanel::new(tokens.clone(), window, cx));
         let api_toolbar = api.read(cx).laravel_toolbar();
-        cx.subscribe(&api_toolbar, |this, _, event: &LaravelToolbarEvent, cx| match event {
-            LaravelToolbarEvent::OpenQuery(sql) => {
-                this.database
-                    .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
-                cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
-            }
-        })
+        cx.subscribe(
+            &api_toolbar,
+            |this, _, event: &LaravelToolbarEvent, cx| match event {
+                LaravelToolbarEvent::OpenQuery(sql) => {
+                    this.database
+                        .update(cx, |panel, cx| panel.set_agent_sql(sql.clone(), cx));
+                    cx.emit(RightPanelEvent::OpenTab(RightPanelTab::Database));
+                }
+            },
+        )
         .detach();
         let database = cx.new(|cx| DatabasePanel::new(tokens.clone(), window, cx));
         let mcp = cx.new(|cx| McpPanel::new(tokens.clone(), window, cx));
@@ -421,10 +427,12 @@ impl RightPanel {
 
     /// The Conn server (Orbit environment) the thread runs on.
     pub fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
-        self.api
-            .update(cx, |api, cx| api.set_environment(environment_id.clone(), cx));
-        self.browser
-            .update(cx, |browser, cx| browser.set_environment(environment_id, cx));
+        self.api.update(cx, |api, cx| {
+            api.set_environment(environment_id.clone(), cx)
+        });
+        self.browser.update(cx, |browser, cx| {
+            browser.set_environment(environment_id, cx)
+        });
     }
 
     /// Updates the active project, workspace root, and thread context.

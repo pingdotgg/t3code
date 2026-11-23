@@ -3902,12 +3902,18 @@ fn a_saved_environment_lists_its_threads_while_it_is_offline_and_its_switch_take
     });
     cx.read(|cx| {
         let app = app.read(cx);
-        assert!(app.merged_thread_ids_for_test().contains(&"thread-mini".to_owned()));
+        assert!(
+            app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
         let rows = app.linked_settings_rows();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].label, "superheroicons / studio");
         assert!(rows[0].enabled);
-        assert_eq!(rows[0].state, crate::orbit_sync::LinkedEnvironmentState::Offline);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Offline
+        );
         assert_eq!(rows[0].thread_count, 1);
     });
 
@@ -3919,18 +3925,26 @@ fn a_saved_environment_lists_its_threads_while_it_is_offline_and_its_switch_take
     });
     cx.read(|cx| {
         let app = app.read(cx);
-        assert!(!app.merged_thread_ids_for_test().contains(&"thread-mini".to_owned()));
+        assert!(
+            !app.merged_thread_ids_for_test()
+                .contains(&"thread-mini".to_owned())
+        );
         let rows = app.linked_settings_rows();
-        assert_eq!(rows.len(), 1, "it stays listed in Settings, to switch back on");
+        assert_eq!(
+            rows.len(),
+            1,
+            "it stays listed in Settings, to switch back on"
+        );
         assert!(!rows[0].enabled);
-        assert_eq!(rows[0].state, crate::orbit_sync::LinkedEnvironmentState::Off);
+        assert_eq!(
+            rows[0].state,
+            crate::orbit_sync::LinkedEnvironmentState::Off
+        );
     });
 }
 
 #[gpui_kit::test]
-fn a_scratch_thread_on_another_machine_names_its_machine_on_the_meta_line(
-    cx: &mut TestAppContext,
-) {
+fn a_scratch_thread_on_another_machine_names_its_machine_on_the_meta_line(cx: &mut TestAppContext) {
     let (window, app) = mount_app(cx);
     cx.update(|cx| {
         app.update(cx, |app, cx| {
@@ -4014,21 +4028,17 @@ fn the_composer_reads_the_catalog_of_the_open_threads_environment(cx: &mut TestA
                 std::sync::Arc::new(conn_state::providers::ServerConfigState::new()),
             );
             // A thread of this environment: its own catalog.
-            app.set_thread_for_test(
-                "thread-selected".to_owned(),
-                kitchen_sink_thread(),
-                cx,
-            );
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
             assert!(app.active_server_config_is_primary_for_test());
             // A thread of mini: mini's catalog.
-            app.set_thread_for_test("thread-mini".to_owned(), ThreadState::new("thread-mini"), cx);
-            assert!(!app.active_server_config_is_primary_for_test());
-            // And back.
             app.set_thread_for_test(
-                "thread-selected".to_owned(),
-                kitchen_sink_thread(),
+                "thread-mini".to_owned(),
+                ThreadState::new("thread-mini"),
                 cx,
             );
+            assert!(!app.active_server_config_is_primary_for_test());
+            // And back.
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
             assert!(app.active_server_config_is_primary_for_test());
         });
     });
@@ -4238,7 +4248,10 @@ fn the_rail_plus_opens_the_workspace_editor_and_a_created_workspace_scopes_the_s
 
     // The picker lists the projects of every connected environment, under their machines.
     let listed = cx.read(|cx| editor.read(cx).listed_for_test());
-    assert!(listed.contains(&"primary:proj-parity".to_owned()), "{listed:?}");
+    assert!(
+        listed.contains(&"primary:proj-parity".to_owned()),
+        "{listed:?}"
+    );
     assert!(listed.contains(&"mini:proj-mini".to_owned()), "{listed:?}");
 
     let _ = cx.update_window(window, |_, window, cx| {
@@ -4253,7 +4266,10 @@ fn the_rail_plus_opens_the_workspace_editor_and_a_created_workspace_scopes_the_s
         let app = app.read(cx);
         let saved = app.workspaces_for_test();
         assert_eq!(saved.len(), 1);
-        assert_eq!(saved[0].name, "Orbit work", "the name is trimmed and collapsed");
+        assert_eq!(
+            saved[0].name, "Orbit work",
+            "the name is trimmed and collapsed"
+        );
         assert_eq!(saved[0].color, "violet");
         assert_eq!(saved[0].icon.as_deref(), Some("rocket"));
         assert_eq!(saved[0].project_refs, ["mini:proj-mini"]);
@@ -4262,7 +4278,10 @@ fn the_rail_plus_opens_the_workspace_editor_and_a_created_workspace_scopes_the_s
             Some(saved[0].id.as_str()),
             "a created workspace is selected"
         );
-        assert!(app.workspace_editor_for_test().is_none(), "the editor closes");
+        assert!(
+            app.workspace_editor_for_test().is_none(),
+            "the editor closes"
+        );
     });
     // The sidebar now shows only the threads of its projects.
     let _ = cx.update_window(window, |_, window, cx| {
@@ -4294,7 +4313,13 @@ fn the_workspace_editor_refuses_a_taken_name_edits_and_deletes(cx: &mut TestAppC
         editor
     };
     let first = create(cx, "Orbit");
-    cx.read(|cx| assert!(app.read(cx).workspace_editor_for_test().is_none(), "{:?}", first.read(cx).error_for_test()));
+    cx.read(|cx| {
+        assert!(
+            app.read(cx).workspace_editor_for_test().is_none(),
+            "{:?}",
+            first.read(cx).error_for_test()
+        )
+    });
 
     // The same name in another case is taken: the editor stays open and says why.
     let second = create(cx, "orbit");
@@ -4345,7 +4370,9 @@ fn the_workspace_editor_refuses_a_taken_name_edits_and_deletes(cx: &mut TestAppC
 
     // Delete removes it, and the sidebar shows every project again.
     let _ = cx.update_window(window, |_, window, cx| {
-        app.update(cx, |app, cx| app.open_workspace_editor(Some(id.clone()), window, cx));
+        app.update(cx, |app, cx| {
+            app.open_workspace_editor(Some(id.clone()), window, cx)
+        });
     });
     let deleting = cx
         .read(|cx| app.read(cx).workspace_editor_for_test())
@@ -4410,4 +4437,3 @@ fn a_letter_an_icon_and_an_image_workspace_tile_have_the_same_size_and_shape(
         );
     });
 }
-

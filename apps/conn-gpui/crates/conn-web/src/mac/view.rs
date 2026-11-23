@@ -4,8 +4,8 @@
 //! device scale factor and forwards mouse, wheel, keyboard, and focus events
 //! explicitly from GPUI.
 
-use crate::load_error::{self, LoadError};
 use crate::context_menu::{self, ContextCommand, Entry, LinkTarget, MenuParams};
+use crate::load_error::{self, LoadError};
 use crate::menu::{
     self, Answer, ContextMenuEvent, ContextMenuReply, ContextMenuRequest, RawKind, RawMenuItem,
 };

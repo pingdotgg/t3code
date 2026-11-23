@@ -137,7 +137,9 @@ impl ConnApp {
     ) {
         let weak = editor.downgrade();
         if !crate::orbit_sync::orbit_sync_enabled_by_env() {
-            let _ = weak.update(cx, |editor, cx| editor.set_orbit_projects(Some(Vec::new()), cx));
+            let _ = weak.update(cx, |editor, cx| {
+                editor.set_orbit_projects(Some(Vec::new()), cx)
+            });
             return;
         }
         cx.spawn(async move |_this, cx| {

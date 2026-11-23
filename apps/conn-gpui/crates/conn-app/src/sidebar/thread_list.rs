@@ -460,7 +460,10 @@ pub(crate) fn render_thread_sidebar(
 
     // Projects group by repository across every listed environment; a folder is one project only
     // within its environment (`derivePhysicalProjectKey`).
-    let project_labels = match hover.origins.filter(|o| !o.linked_environments().is_empty()) {
+    let project_labels = match hover
+        .origins
+        .filter(|o| !o.linked_environments().is_empty())
+    {
         Some(origins) => conn_state::project_groups::project_group_labels_across_environments(
             &shell.projects,
             |id| origins.environment_of_project(id).to_owned(),

@@ -1363,7 +1363,10 @@ impl SettingsModal {
             );
             instance_rows.push(settings_row(
                 &title,
-                Some(&format!("{subtitle} · {}", if is_linked { "linked" } else { "not linked" })),
+                Some(&format!(
+                    "{subtitle} · {}",
+                    if is_linked { "linked" } else { "not linked" }
+                )),
                 div()
                     .flex()
                     .flex_row()

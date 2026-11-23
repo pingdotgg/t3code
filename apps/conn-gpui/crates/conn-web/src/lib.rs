@@ -12,9 +12,9 @@ mod archive;
 #[cfg(any(target_os = "macos", test))]
 mod context_menu;
 mod download;
+mod load_error;
 #[cfg(target_os = "macos")]
 mod mac;
-mod load_error;
 mod menu;
 mod trace;
 

@@ -39,11 +39,11 @@ use super::annotations::{
     AnnotationAction, AnnotationSubject, AnnotationUiState, QueuePopoverAnchor,
     QueuePopoverCallbacks, render_queue_popover,
 };
-use super::laravel_toolbar::{LaravelToolbar, host_script};
 use super::browser_context_menu::{MenuActions, OpenMenu, render_context_menu};
 use super::chrome::{self, ConnTooltipExt as _};
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use super::laravel_toolbar::{LaravelToolbar, host_script};
 
 const UI_TEXT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
@@ -252,9 +252,8 @@ impl BrowserPanel {
         let annotations = AnnotationUiState::new(AnnotationSubject::Page, window, cx, |_, _, _| {});
         let view = Rc::new(RefCell::new(None));
         let last_bounds = Rc::new(Cell::new(None));
-        let laravel_toolbar = cx.new(|cx| {
-            LaravelToolbar::new(tokens.clone(), view.clone(), last_bounds.clone(), cx)
-        });
+        let laravel_toolbar =
+            cx.new(|cx| LaravelToolbar::new(tokens.clone(), view.clone(), last_bounds.clone(), cx));
 
         Self {
             tokens,
@@ -1221,31 +1220,41 @@ impl BrowserPanel {
                                         }
                                         BrowserOverlayEvent::LaravelToolbar { kind, data, url } => {
                                             let map = data.as_object().cloned();
-                                            panel.laravel_toolbar.update(cx, |bar, cx| match (kind.as_str(), map) {
-                                                ("page", Some(map)) => bar.on_page_data(Some(map), &url, cx),
-                                                ("ready", _) => bar.on_page_data(None, &url, cx),
-                                                ("update", Some(map)) => bar.on_page_update(map, cx),
-                                                _ => {}
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                match (kind.as_str(), map) {
+                                                    ("page", Some(map)) => {
+                                                        bar.on_page_data(Some(map), &url, cx)
+                                                    }
+                                                    ("ready", _) => {
+                                                        bar.on_page_data(None, &url, cx)
+                                                    }
+                                                    ("update", Some(map)) => {
+                                                        bar.on_page_update(map, cx)
+                                                    }
+                                                    _ => {}
+                                                }
                                             });
                                             cx.notify();
                                         }
                                         BrowserOverlayEvent::LaravelToolbarDetails { id, raw } => {
                                             if let Some(map) = raw.as_object().cloned() {
-                                                panel
-                                                    .laravel_toolbar
-                                                    .update(cx, |bar, cx| bar.on_details(&id, map, cx));
+                                                panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                    bar.on_details(&id, map, cx)
+                                                });
                                             }
                                         }
                                         BrowserOverlayEvent::ToolbarResponse(response) => {
-                                            panel
-                                                .laravel_toolbar
-                                                .update(cx, |bar, cx| bar.on_response(response, cx));
+                                            panel.laravel_toolbar.update(cx, |bar, cx| {
+                                                bar.on_response(response, cx)
+                                            });
                                         }
                                         BrowserOverlayEvent::LoadStart => {
                                             if let Some(view) = panel.view.borrow().as_ref() {
                                                 view.execute_javascript(&host_script());
                                             }
-                                            panel.laravel_toolbar.update(cx, |bar, cx| bar.on_load_start(cx));
+                                            panel
+                                                .laravel_toolbar
+                                                .update(cx, |bar, cx| bar.on_load_start(cx));
                                         }
                                         BrowserOverlayEvent::PreviewResult {
                                             request_id,

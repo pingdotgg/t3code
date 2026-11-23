@@ -742,13 +742,13 @@ mod tests {
             }))
             .expect("a match decodes")
         };
-        let both = merge_environment_matches(vec![
-            Ok(vec![found("t-nick")]),
-            Ok(vec![found("t-mini")]),
-        ])
-        .expect("answered");
+        let both =
+            merge_environment_matches(vec![Ok(vec![found("t-nick")]), Ok(vec![found("t-mini")])])
+                .expect("answered");
         assert_eq!(
-            both.iter().map(|m| m.thread_id.as_str()).collect::<Vec<_>>(),
+            both.iter()
+                .map(|m| m.thread_id.as_str())
+                .collect::<Vec<_>>(),
             ["t-nick", "t-mini"]
         );
         let one_down = merge_environment_matches(vec![
@@ -763,5 +763,4 @@ mod tests {
         );
         assert!(merge_environment_matches(vec![]).is_err());
     }
-
 }

@@ -805,9 +805,8 @@ impl ShellState {
     /// Where the shelf stands on older settled threads, for its count and its "Show more".
     #[must_use]
     pub fn older_settled(&self) -> OlderSettledView<'_> {
-        let statuses = || {
-            std::iter::once(self.older.status).chain(self.foreign.iter().map(|f| f.status))
-        };
+        let statuses =
+            || std::iter::once(self.older.status).chain(self.foreign.iter().map(|f| f.status));
         // Any environment reading a page, or failing to, is what the shelf's footer shows.
         let status = if statuses().any(|s| s == PageStatus::Pending) {
             PageStatus::Pending
@@ -848,7 +847,9 @@ impl ShellState {
                     .filter(|(project, _)| in_scope(project))
                     .map(|(_, held)| *held)
                     .sum();
-                Some(usize::try_from(counted - i64::try_from(held).unwrap_or(i64::MAX)).unwrap_or(0))
+                Some(
+                    usize::try_from(counted - i64::try_from(held).unwrap_or(i64::MAX)).unwrap_or(0),
+                )
             })
             .sum();
         own + others

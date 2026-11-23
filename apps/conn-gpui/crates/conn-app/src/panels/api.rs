@@ -26,13 +26,13 @@ use gpui_kit::{
     SharedString, Styled, Subscription, Window, div, px,
 };
 
-use super::laravel_toolbar::LaravelToolbar;
 use super::chrome::{
     self, ConnTooltipExt as _, MenuEntry, MenuRow, SectionTab, UI_LINE_HEIGHT_PX, UI_TEXT_PX,
     XS_LINE_HEIGHT_PX, XS_TEXT_PX,
 };
 use super::color::to_hsla;
 use super::header::superhero_icon;
+use super::laravel_toolbar::LaravelToolbar;
 use crate::theme::MONO_FONT;
 
 /// Which popup menu is open in the toolbar.
@@ -117,7 +117,12 @@ impl ApiPanel {
         });
         let area = Rc::new(Cell::new(None));
         let laravel_toolbar = cx.new(|cx| {
-            LaravelToolbar::new(tokens.clone(), Rc::new(RefCell::new(None)), area.clone(), cx)
+            LaravelToolbar::new(
+                tokens.clone(),
+                Rc::new(RefCell::new(None)),
+                area.clone(),
+                cx,
+            )
         });
         Self {
             tokens,
@@ -143,16 +148,20 @@ impl ApiPanel {
 
     /// The workspace root: the debug bar opens source files only inside it.
     pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
-        self.laravel_toolbar.update(cx, |bar, cx| bar.set_project_root(root.map(PathBuf::from), cx));
+        self.laravel_toolbar.update(cx, |bar, cx| {
+            bar.set_project_root(root.map(PathBuf::from), cx)
+        });
     }
 
     /// The Conn server the thread runs on: the debug bar changes only its Orbit Instance.
     pub(crate) fn set_environment(&mut self, environment_id: String, cx: &mut Context<'_, Self>) {
-        self.laravel_toolbar.update(cx, |bar, cx| bar.set_environment(environment_id, cx));
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_environment(environment_id, cx));
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
-        self.laravel_toolbar.update(cx, |bar, cx| bar.set_tokens(tokens.clone(), cx));
+        self.laravel_toolbar
+            .update(cx, |bar, cx| bar.set_tokens(tokens.clone(), cx));
         self.tokens = tokens;
         cx.notify();
     }
@@ -167,7 +176,8 @@ impl ApiPanel {
             self.store.ensure_request(key, None);
             // One history per project, as `api:{projectKey}` tabs of the web store.
             let tab = format!("api:{key}");
-            self.laravel_toolbar.update(cx, |bar, cx| bar.set_tab_key(&tab, cx));
+            self.laravel_toolbar
+                .update(cx, |bar, cx| bar.set_tab_key(&tab, cx));
         }
         self.synced_request = None;
         self.menu = None;
@@ -854,7 +864,11 @@ impl Render for ApiPanel {
         let toolbar = self.render_toolbar(&request, cx);
         let editor = self.render_editor(&request, window, cx);
         let response = self.render_response(&request, cx);
-        let bar = self.laravel_toolbar.read(cx).is_visible().then(|| self.laravel_toolbar.clone());
+        let bar = self
+            .laravel_toolbar
+            .read(cx)
+            .is_visible()
+            .then(|| self.laravel_toolbar.clone());
         let area = self.area.clone();
         v_flex()
             .id("api-panel")

@@ -28,10 +28,9 @@ use conn_state::{RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::{
-    AnyElement, Bounds, Context, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, ParentElement as _, Pixels, Point, SharedString,
-    StatefulInteractiveElement as _, Styled as _, TestSupportExt as _, WindowControlArea, anchored,
-    canvas, deferred, div, point, px,
+    AnyElement, Bounds, Context, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, WindowControlArea, anchored, canvas, deferred, div, point, px,
 };
 
 use crate::a11y::ConnA11yExt as _;

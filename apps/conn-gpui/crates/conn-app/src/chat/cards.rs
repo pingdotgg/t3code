@@ -1539,8 +1539,7 @@ impl ChatView {
             .child(line2);
 
         if let Some(detail) = summary.map(str::trim).filter(|s| !s.is_empty()) {
-            card =
-                card.child(self.render_subagent_summary(id, detail, detail_color, cx));
+            card = card.child(self.render_subagent_summary(id, detail, detail_color, cx));
         }
 
         if let Some(child) = child_thread_id {
