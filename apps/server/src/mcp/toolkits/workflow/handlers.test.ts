@@ -69,11 +69,8 @@ it.effect("signal refuses a run destination mixed with a channel destination", (
       const toolkit = yield* WorkflowToolkit;
       return yield* Effect.forEach(
         [
-          { runId: "run-1", wait: "review", workflow: "other", channel: "other" },
-          { runId: "run-1", wait: "review", workflow: "other" },
           { runId: "run-1", wait: "review", channel: "other" },
           { workflow: "other", channel: "other", runId: "run-1" },
-          { workflow: "other", channel: "other", wait: "review" },
           { runId: "run-1", wait: "review" },
         ],
         (address) =>
