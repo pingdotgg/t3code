@@ -738,7 +738,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border outline-ring;
   }
   /* The app's 2px outlines stay inside controls at clipped and scrollport edges. */
   *,
