@@ -1127,7 +1127,7 @@ it.live("keeps a task folder whose checkout's git metadata cannot be deleted", (
         expect.objectContaining({
           path: checkout,
           outcome: "kept",
-          reason: expect.stringContaining("Permission denied"),
+          reason: expect.stringContaining("git metadata"),
         }),
       );
       expect(yield* fs.exists(root)).toBe(true);

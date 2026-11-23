@@ -269,7 +269,10 @@ export const removeMissingWorktree = Effect.fn("WorktreeRemoval.removeMissingWor
         operation: input.operation,
         command: "git worktree remove",
         cwd: input.repository,
-        detail: result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
+        exitCode: result.exitCode,
+        stderrLength: result.stderr.length,
+        detail: "failed to delete the worktree's git metadata",
+        cause: result.stderr,
       });
   },
 );
