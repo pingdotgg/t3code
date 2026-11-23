@@ -466,7 +466,7 @@ describe("cached VCS refs", () => {
 
       yield* atoms.refreshLocalStatusForPicker.run(registry, {
         environmentId: TARGET.environmentId,
-        input: { cwd: "/repo", localOnly: true },
+        input: { cwd: "/repo" },
       });
       expect(yield* Ref.get(clears)).toBe(3);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
@@ -489,8 +489,9 @@ describe("cached VCS refs", () => {
       const refreshStarted = yield* Deferred.make<void>();
       const releaseRefresh = yield* Deferred.make<void>();
       const client = {
-        [WS_METHODS.vcsRefreshStatus]: () =>
+        [WS_METHODS.vcsRefreshStatus]: (input: { cwd: string; localOnly?: boolean }) =>
           Deferred.succeed(refreshStarted, undefined).pipe(
+            Effect.tap(() => Effect.sync(() => expect(input.localOnly).toBe(true))),
             Effect.andThen(Deferred.await(releaseRefresh)),
             Effect.as({}),
           ),
@@ -527,12 +528,7 @@ describe("cached VCS refs", () => {
       const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
 
       const refresh = yield* Effect.forkChild(
-        Effect.exit(
-          atoms.refreshLocalStatusForPicker.run(registry, {
-            ...target,
-            input: { cwd: "/repo", localOnly: true },
-          }),
-        ),
+        Effect.exit(atoms.refreshLocalStatusForPicker.run(registry, target)),
         { startImmediately: true },
       );
       yield* Deferred.await(refreshStarted);
