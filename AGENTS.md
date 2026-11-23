@@ -192,6 +192,27 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 - `packages/client-runtime` - client code shared by web and mobile.
 - `.repos/` - vendored read-only references. Prefer their patterns over invented ones. Never edit or import from them. Sync with `vpr sync:repos` when bumping the matching dependency. If it is missing (sparse checkout), read a file with `git show origin/main:.repos/<path>`.
 
+### Internal docs by area
+
+Read the matching doc before changing code in that area; code review enforces them.
+
+| Area                                       | Read first                                                                                                                                                                      |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Architecture & orchestration               | [overview.md](docs/internals/overview.md), [glossary.md](docs/internals/glossary.md)                                                                                            |
+| Server Effect services & errors            | [effect-services.md](docs/internals/effect-services.md)                                                                                                                         |
+| Providers & ACP                            | [providers.md](docs/internals/providers.md)                                                                                                                                     |
+| Auth, MCP, guest links, assets, security   | [environment-auth.md](docs/internals/environment-auth.md), [SECURITY.md](SECURITY.md)                                                                                           |
+| Remote routes, peer links, previews        | [remote.md](docs/internals/remote.md)                                                                                                                                           |
+| T3 Connect & relay                         | [t3-connect.md](docs/internals/t3-connect.md)                                                                                                                                   |
+| Client connection & sync runtime           | [connection-runtime.md](docs/internals/connection-runtime.md)                                                                                                                   |
+| Server updates & crash recovery            | [server-updates.md](docs/internals/server-updates.md)                                                                                                                           |
+| Telemetry & analytics                      | [product-analytics.md](docs/internals/product-analytics.md)                                                                                                                     |
+| Wire budgets, server metrics & perf        | [performance-regressions.md](docs/internals/performance-regressions.md)                                                                                                         |
+| Web UI primitives, styles & React Compiler | [web-ui.md](docs/internals/web-ui.md)                                                                                                                                           |
+| Mobile layout, navigation & dev lifecycle  | [mobile-layout.md](docs/internals/mobile-layout.md), [mobile-navigation.md](docs/internals/mobile-navigation.md), [mobile-development.md](docs/internals/mobile-development.md) |
+| Translations & UI copy                     | [i18n.md](docs/internals/i18n.md)                                                                                                                                               |
+| Writing & reviewing tests                  | [testing.md](docs/internals/testing.md)                                                                                                                                         |
+
 ## Taste
 
 - Complexity belongs at the adapter boundary. Orchestration stays pure, UI stays dumb.
