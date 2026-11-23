@@ -385,6 +385,12 @@ it.effect("lists Android devices without probing the host again once it reports 
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual(["probe", ""]);
 
+    // The hub started without the SDK, so the connection restarts it once with adb on its PATH.
+    yield* host.ensureReady(() => Effect.void);
+    expect(modes.splice(0)).toEqual(["probe", "start"]);
+    yield* host.ensureReady(() => Effect.void);
+    expect(modes.splice(0)).toEqual([]);
+
     // Android is now known to be available, so listing only runs `emulator -list-avds`.
     expect(yield* androidNames).toEqual(["Pixel_8"]);
     expect(modes.splice(0)).toEqual([""]);

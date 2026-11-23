@@ -94,6 +94,7 @@ interface HubProcess {
   readonly scope: Scope.Closeable;
   readonly origin: string;
   readonly startedAtMillis: number;
+  readonly sdkRoot: string | null;
   readonly emulatorExtraArgs: string | undefined;
   readonly emulatorStamp: string | undefined;
 }
@@ -426,6 +427,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     env: NodeJS.ProcessEnv,
   ): Effect.fn.Return<HubProcess, DeviceHost.DeviceHostError> {
     yield* reapStaleHub;
+    const sdk = yield* currentSdk;
     const stamp = yield* emulatorStamp;
     yield* fs
       .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
@@ -486,6 +488,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         origin,
         startedAtMillis,
         nodePath,
+        sdkRoot: sdk.root,
         emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
         emulatorStamp: stamp,
       };
@@ -713,7 +716,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     // daemon outlives the hub, and close needs its endpoint if the restart fails.
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
-      if (alive) {
+      // The hub's vendored tools spawn adb from the PATH it started with, so a new SDK needs a new hub.
+      if (alive && (yield* currentSdk).root === running.hub.sdkRoot) {
         const stamp = yield* emulatorStamp;
         if (stamp === running.hub.emulatorStamp) return running;
         // An updated emulator can change the camera overrides; replace the hub only if they did.
@@ -723,8 +727,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           yield* Ref.set(runningRef, next);
           return next;
         }
-        yield* stopHub(running.hub);
       }
+      if (alive) yield* stopHub(running.hub);
     }
     const nodePath = yield* resolveNodeExecutable(
       "Local device support",

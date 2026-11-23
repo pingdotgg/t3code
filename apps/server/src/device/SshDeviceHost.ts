@@ -118,6 +118,8 @@ const bootstrap = (
   );
 
 const isSshCommandError = Schema.is(SshCommandError);
+const androidAvailable = (platforms: DeviceHostSummary["platforms"]) =>
+  platforms.some((p) => p.platform === "android" && p.available);
 
 // ssh exits 255 for its own failures; the remote bootstrap never does.
 const SSH_CONNECT_FAILURES: ReadonlyArray<readonly [SshConnectError["reason"], RegExp]> = [
@@ -288,6 +290,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       })
     | null = null;
   let connectionScope: Scope.Closeable | null = null;
+  let connectedWithAndroid = false;
   let summary: DeviceHostSummary = {
     id: config.id,
     label: config.label,
@@ -352,6 +355,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
           }),
       ),
     );
+    connectedWithAndroid = androidAvailable(remote.platforms);
     summary = {
       ...summary,
       platforms: remote.platforms,
@@ -566,7 +570,9 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     lock.withPermit(
       Effect.gen(function* () {
         stopped = false;
-        if (ready) return ready;
+        // The hub spawns adb from the PATH it started with, so an SDK found since then needs a new hub.
+        if (ready && (connectedWithAndroid || !androidAvailable(summary.platforms))) return ready;
+        if (ready) yield* closeConnection;
         summary = yield* provide(probe(config, owner));
         yield* onPhase(
           summary.hubInstalled ? "starting" : "installing",

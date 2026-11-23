@@ -279,6 +279,27 @@ describe("AgentDevice startup", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("restarts a live hub once an Android SDK is installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-sdk-home-" });
+      const { host, hub } = yield* agentFixture(
+        () => Effect.succeed(processOutput(0)),
+        processOutput(0),
+        undefined,
+        { HOME: home, PATH: `${home}/bin` },
+      );
+      const sdk = `${home}/Library/Android/sdk`;
+      yield* fs.makeDirectory(`${sdk}/platform-tools`, { recursive: true });
+      yield* fs.writeFileString(`${sdk}/platform-tools/adb`, "");
+      yield* host.ensureReady(() => Effect.void);
+      expect(hub.spawnedEnvironments.map((env) => [env?.ANDROID_HOME, env?.PATH])).toEqual([
+        [undefined, `${home}/bin`],
+        [sdk, `${sdk}/platform-tools:${sdk}/emulator:${home}/bin`],
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reports an incompatible lock immediately and retains it for manual repair", () =>
     Effect.gen(function* () {
       const result = processOutput(
