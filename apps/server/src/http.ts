@@ -22,6 +22,7 @@ import { cast, pipe } from "effect/Function";
 import {
   HttpClient,
   HttpClientResponse,
+  HttpEffect,
   HttpMiddleware,
   HttpRouter,
   HttpServerResponse,
@@ -50,7 +51,6 @@ import {
   failEnvironmentInternal,
 } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
-import { WEBHOOK_ROUTE_PREFIX } from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   browserApiCorsAllowedHeaders,
   browserApiCorsAllowedMethods,
@@ -275,28 +275,58 @@ export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compres
   global: true,
 });
 
+function withVaryOrigin(
+  response: HttpServerResponse.HttpServerResponse,
+): HttpServerResponse.HttpServerResponse {
+  const existing = response.headers.vary;
+  if (
+    existing !== undefined &&
+    existing.split(",").some((token) => token.trim().toLowerCase() === "origin")
+  ) {
+    return response;
+  }
+  return HttpServerResponse.setHeader(
+    response,
+    "vary",
+    existing ? `${existing}, Origin` : "Origin",
+  );
+}
+
 export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
-    // Credentialed dev requests need explicit Vite/Electron origins; packaged desktop uses the default wildcard.
-    const cors = HttpMiddleware.cors({
-      ...(devOrigin
-        ? {
-            allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
-            credentials: true,
-          }
-        : {}),
+    // Credentialed dev requests need explicit Vite/Electron origins; originless desktop/native
+    // requests and packaged servers use the non-credentialed wildcard.
+    const wildcardCors = HttpMiddleware.cors({
       allowedMethods: browserApiCorsAllowedMethods,
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    const devCors = devOrigin
+      ? HttpMiddleware.cors({
+          allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
+          credentials: true,
+          allowedMethods: browserApiCorsAllowedMethods,
+          allowedHeaders: browserApiCorsAllowedHeaders,
+          maxAge: 600,
+        })
+      : undefined;
     return HttpRouter.middleware(
       (httpEffect) => {
-        const withCors = cors(httpEffect);
-        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
-          request.url.split("?", 1)[0] === MCP_HTTP_PATH ? httpEffect : withCors,
-        );
+        const withWildcardCors = wildcardCors(httpEffect);
+        const withDevCors = devCors ? devCors(httpEffect) : undefined;
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+          if (request.url.split("?", 1)[0] === MCP_HTTP_PATH) return httpEffect;
+          if (!withDevCors) return withWildcardCors;
+          if (request.headers.origin !== undefined) return withDevCors;
+          if (request.method === "OPTIONS") {
+            return Effect.map(withWildcardCors, withVaryOrigin);
+          }
+          return HttpEffect.appendPreResponseHandler((_request, response) =>
+            Effect.succeed(withVaryOrigin(response)),
+          ).pipe(Effect.andThen(withWildcardCors));
+        });
       },
       { global: true },
     );
@@ -422,15 +452,13 @@ const UNTRACED_REQUEST_PATHS: ReadonlySet<string> = new Set([OTLP_TRACES_PROXY_P
 // HttpRouter.serve builds routes privately; provide the server-wide TracerDisabledWhen to the served layer.
 const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((request) => {
   const queryIndex = request.url.indexOf("?");
-  const path = queryIndex === -1 ? request.url : request.url.slice(0, queryIndex);
-  // Signed URLs carry bearer tokens in the path, so they never reach a trace.
-  return (
-    UNTRACED_REQUEST_PATHS.has(path) ||
-    path.startsWith(`${WEBHOOK_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ASSET_ROUTE_PREFIX}/`) ||
-    path.startsWith(`${ATTACHMENT_UPLOAD_ROUTE_PREFIX}/`)
+  return UNTRACED_REQUEST_PATHS.has(
+    queryIndex === -1 ? request.url : request.url.slice(0, queryIndex),
   );
 });
+
+// Signed URLs carry their bearer token in the path; spans and request logs record it as REDACTED.
+const SIGNED_URL_ROUTE_OPTIONS = { redactedParams: ["*"] };
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
 
@@ -502,6 +530,7 @@ export const layerAssetRoute = HttpRouter.add(
       Effect.orElseSucceed(() => HttpServerResponse.text("Internal Server Error", { status: 500 })),
     );
   }),
+  SIGNED_URL_ROUTE_OPTIONS,
 );
 
 export const layerAttachmentUploadRoute = HttpRouter.add(
@@ -541,6 +570,7 @@ export const layerAttachmentUploadRoute = HttpRouter.add(
       ? HttpServerResponse.empty({ status: 204 })
       : HttpServerResponse.text(stored.detail, { status: stored.status });
   }),
+  SIGNED_URL_ROUTE_OPTIONS,
 );
 
 const decodeBuildManifest = Schema.decodeUnknownEffect(

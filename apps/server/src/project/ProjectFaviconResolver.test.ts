@@ -196,11 +196,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+        yield* writeTextFile(cwd, "web/favicon.png", "flutter");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        const flutterCwd = yield* makeTempDir;
+        yield* writeTextFile(flutterCwd, "web/favicon.png", "flutter");
+        expect(yield* resolver.resolvePath(flutterCwd)).toBe(
+          (yield* Path.Path).join(flutterCwd, "web", "favicon.png"),
+        );
 
         const paddedCwd = yield* makeTempDir;
         yield* writeTextFile(
@@ -211,6 +218,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         yield* writeTextFile(paddedCwd, "brand/custom.svg", "<svg>custom</svg>");
         expect(yield* resolver.resolvePath(paddedCwd)).toBe(
           (yield* Path.Path).join(paddedCwd, "brand", "custom.svg"),
+        );
+
+        const tokenListCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          tokenListCwd,
+          "index.html",
+          `<link rel="apple-touch-icon" href="touch.svg"><link rel="icon's" href="touch.svg"><link rel="Icon\tshortcut" href="brand.svg">`,
+        );
+        yield* writeTextFile(tokenListCwd, "touch.svg", "<svg>touch</svg>");
+        yield* writeTextFile(tokenListCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(tokenListCwd)).toBe(
+          (yield* Path.Path).join(tokenListCwd, "brand.svg"),
         );
       }),
     );
@@ -241,7 +260,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   head: () => ({
     links: [
       { rel: "stylesheet", href: "/app.css" },
-      { rel: "icon", href: "/brand/logo.svg" },
+      { rel: "icon shortcut", href: "/brand/logo.svg" },
     ],
   }),
 });`,

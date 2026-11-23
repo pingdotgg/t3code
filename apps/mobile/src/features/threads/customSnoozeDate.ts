@@ -14,3 +14,15 @@ export function applySnoozePickerTime(date: Date, selected: Date): Date {
   next.setHours(selected.getHours(), selected.getMinutes(), 0, 0);
   return next;
 }
+
+/** Format the segment labels without changing the device's hour-cycle setting. */
+export function snoozePickerLabels(date: Date, locale: string, is24Hour: boolean) {
+  return {
+    date: date.toLocaleDateString(locale, { month: "short", day: "numeric" }),
+    time: date.toLocaleTimeString(locale, {
+      hour: "numeric",
+      minute: "2-digit",
+      hourCycle: is24Hour ? "h23" : "h12",
+    }),
+  };
+}
