@@ -21,6 +21,7 @@ import {
 
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
+const COMMAND_LINE_TRUNCATED = "\n\n[Command truncated]";
 const QUESTION_LABEL_LIMIT = 512;
 
 const NativeToolFields = Schema.Struct({
@@ -54,6 +55,12 @@ const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]
  */
 export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
   if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
+  return antigravityCommandOutlivesPrompt(toolCall);
+}
+
+/** A non-daemon command the agent awaits; unlike a schedule, it reports progress while it runs. */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return false;
   const input = toolCall.data.rawInput;
   return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
 }
@@ -194,11 +201,21 @@ function boundCommandText(text: string, limit = TOOL_TEXT_LIMIT): string {
   return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
 }
 
+// A command line's program and target are at its start, so it keeps its head.
+function boundCommandLine(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + COMMAND_LINE_TRUNCATED.length && text.endsWith(COMMAND_LINE_TRUNCATED))
+  ) {
+    return text;
+  }
+  const head = text.slice(0, limit).replace(/[\uD800-\uDBFF]$/u, "");
+  return copyBoundedText(`${head}${COMMAND_LINE_TRUNCATED}`);
+}
+
+const COMMAND_LINE_FIELDS = new Set(["CommandLine", "command_line", "commandLine", "command"]);
+
 const COMMAND_TEXT_FIELDS = new Set([
-  "CommandLine",
-  "command_line",
-  "commandLine",
-  "command",
   "aggregatedOutput",
   "combinedOutput",
   "combined_output",
@@ -231,7 +248,13 @@ function sanitizeToolValue(
       return undefined;
     }
     const bound =
-      field !== undefined && COMMAND_TEXT_FIELDS.has(field) ? boundCommandText : boundText;
+      field === undefined
+        ? boundText
+        : COMMAND_LINE_FIELDS.has(field)
+          ? boundCommandLine
+          : COMMAND_TEXT_FIELDS.has(field)
+            ? boundCommandText
+            : boundText;
     const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
@@ -468,7 +491,7 @@ export function normalizeAntigravityToolCall(
     output?.commandLine ??
     output?.command_line ??
     toolCall.command;
-  const command = nativeCommand?.trim() ? boundCommandText(nativeCommand.trim()) : undefined;
+  const command = nativeCommand?.trim() ? boundCommandLine(nativeCommand.trim()) : undefined;
   const nativeCwd =
     input?.Cwd ??
     input?.WorkingDirectory ??
