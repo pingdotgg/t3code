@@ -481,18 +481,41 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), observation, options);
   });
 
+  // A branch read while a HEAD watch was ready stays current for that watch's lifetime: any
+  // checkout after it reaches the cache through the watch. A reconnect burst then forks git once.
+  const branchConfirmedUnder = new Map<string, Fiber.Fiber<void, never>>();
+  const readyHeadWatch = (cwd: string) =>
+    SynchronizedRef.get(headWatchersRef).pipe(
+      Effect.map((watchers) => {
+        const watcher = watchers.get(cwd);
+        return watcher &&
+          watcher.fiber.pollUnsafe() === undefined &&
+          Deferred.isDoneUnsafe(watcher.ready)
+          ? watcher.fiber
+          : undefined;
+      }),
+    );
+
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string) {
+      const watch = yield* readyHeadWatch(cwd);
+      const confirm = <A>(value: A) => {
+        if (watch !== undefined) branchConfirmedUnder.set(cwd, watch);
+        return value;
+      };
       const cached = yield* getCachedStatus(cwd);
       if (cached?.local) {
         if (cached.local.includesBranchChanges || !wantsBranchChanges(cwd)) {
+          if (watch !== undefined && branchConfirmedUnder.get(cwd) === watch) {
+            return cached.local.value;
+          }
           const branch = yield* workflow.currentBranch(cwd);
-          if (branch === cached.local.value.refName) return cached.local.value;
+          if (branch === cached.local.value.refName) return confirm(cached.local.value);
         }
         yield* workflow.invalidateLocalStatus(cwd);
-        return yield* loadLocalStatus(cwd, { publish: true });
+        return confirm(yield* loadLocalStatus(cwd, { publish: true }));
       }
-      return yield* loadLocalStatus(cwd);
+      return confirm(yield* loadLocalStatus(cwd));
     },
   );
 
@@ -1182,6 +1205,7 @@ export const make = Effect.gen(function* () {
       return [existing.fiber, nextWatchers] as const;
     });
     if (watcherToInterrupt) {
+      if (branchConfirmedUnder.get(cwd) === watcherToInterrupt) branchConfirmedUnder.delete(cwd);
       yield* Fiber.interrupt(watcherToInterrupt).pipe(Effect.ignore);
     }
   });

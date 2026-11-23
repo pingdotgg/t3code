@@ -2102,22 +2102,28 @@ describe("VcsStatusBroadcaster", () => {
     }),
   );
 
-  it.effect("subscribers share one HEAD watch that ends with the last of them", () =>
+  it.effect("subscribers share one HEAD watch and branch check until the last leaves", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const gitDir = yield* fs.makeTempDirectoryScoped({ prefix: "vcs-head-watch-" });
       const headPath = path.join(gitDir, "HEAD");
       yield* fs.writeFileString(headPath, "ref: refs/heads/main\n");
-      const state = {
+      let branchReads = 0;
+      const state: Parameters<typeof layerTestFor>[0] = {
         currentLocalStatus: baseLocalStatus,
-        currentRemoteStatus: baseRemoteStatus as VcsStatusRemoteResult | null,
+        currentRemoteStatus: baseRemoteStatus,
         localStatusCalls: 0,
         remoteStatusCalls: 0,
         localInvalidationCalls: 0,
         remoteInvalidationCalls: 0,
         headPath,
         headPathCalls: 0,
+        branchRead: () =>
+          Effect.sync(() => {
+            branchReads += 1;
+            return baseLocalStatus.refName;
+          }),
       };
 
       yield* Effect.gen(function* () {
@@ -2135,11 +2141,15 @@ describe("VcsStatusBroadcaster", () => {
         const first = yield* subscribe;
         const second = yield* subscribe;
         assert.strictEqual(state.headPathCalls, 1);
+        // The live watch reports any checkout, so the cached branch needs no re-check.
+        assert.strictEqual(branchReads, 0);
 
         yield* Fiber.interrupt(first);
         yield* Fiber.interrupt(second);
         yield* subscribe;
+        yield* subscribe;
         assert.strictEqual(state.headPathCalls, 2);
+        assert.strictEqual(branchReads, 1);
       }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
