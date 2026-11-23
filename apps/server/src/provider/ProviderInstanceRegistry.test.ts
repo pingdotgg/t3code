@@ -368,12 +368,17 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
           displayName: "Account A",
           config: makeCodexConfig({}),
         };
-        const { mutator } = yield* makeProviderInstanceRegistry({
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
           drivers: [driver],
           configMap: { [instanceId]: entry },
         });
+        const instance = yield* registry.getInstance(instanceId);
+        const changes = yield* registry.subscribeChanges;
         yield* mutator.reconcile({ [instanceId]: { ...entry, ...presentation } });
         expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        yield* PubSub.take(changes);
+        expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
       }).pipe(Effect.provide(layerTest)),
   );
 
