@@ -1080,6 +1080,66 @@ it.live("removes a task folder's clean worktrees and keeps the one with uncommit
   ),
 );
 
+it.live("keeps a task folder whose checkout's git metadata cannot be deleted", () =>
+  runCleanupTest(
+    Effect.gen(function* () {
+      const { service, fs, repo, command, setTaskFolders, setThreads } = yield* cleanupFixture();
+      const web = { name: "web", path: `${repo}/dist/web` };
+      yield* fs.makeDirectory(web.path, { recursive: true });
+      yield* command(web.path, ["init", "-b", "main"]);
+      yield* command(web.path, ["config", "user.email", "cleanup@example.test"]);
+      yield* command(web.path, ["config", "user.name", "Cleanup test"]);
+      yield* fs.writeFileString(`${web.path}/tracked.txt`, "original\n");
+      yield* command(web.path, ["add", "."]);
+      yield* command(web.path, ["commit", "-m", "initial"]);
+      const context = yield* Layer.build(
+        layerTaskFoldersWithGit({ workspaceRoot: repo, trackedFolders: [web], thread: null }).pipe(
+          Layer.provide(NodeCrypto.layer),
+        ),
+      );
+      const taskFolders = Context.get(context, TaskFolders.TaskFolders);
+      const plan = yield* taskFolders.plan({ projectId: ProjectId.make("project-1") });
+      const { taskFolder } = yield* taskFolders.create({
+        plan: plan!,
+        branch: "task",
+        projectStart: { refName: "main", baseRefName: "main" },
+        startFromOrigin: false,
+      });
+      const root = taskFolder.root;
+      const checkout = `${root}/dist/web`;
+      const adminDir = (yield* command(checkout, [
+        "rev-parse",
+        "--absolute-git-dir",
+      ])).stdout.trim();
+      // Stands in for root-owned files a container wrote into the checkout's git dir.
+      const stuck = `${adminDir}/scratch/fanal`;
+      yield* fs.makeDirectory(stuck, { recursive: true });
+      yield* fs.writeFileString(`${stuck}/f`, "x\n");
+      yield* fs.chmod(stuck, 0o555);
+      yield* Effect.addFinalizer(() => fs.chmod(stuck, 0o755).pipe(Effect.ignore));
+      setTaskFolders(taskFolders);
+      setThreads([shell({ branch: "task", worktreePath: root })]);
+
+      yield* service.runNow;
+      const later = yield* service.runNow;
+
+      expect(later.entries).toContainEqual(
+        expect.objectContaining({
+          path: checkout,
+          outcome: "kept",
+          reason: expect.stringContaining("Permission denied"),
+        }),
+      );
+      expect(yield* fs.exists(root)).toBe(true);
+
+      yield* fs.chmod(stuck, 0o755);
+      yield* service.runNow;
+      expect(yield* fs.exists(adminDir)).toBe(false);
+      expect(yield* fs.exists(root)).toBe(false);
+    }),
+  ),
+);
+
 it.live("removes clean submodules recursively, including deinitialized repositories", () =>
   runCleanupTest(
     Effect.gen(function* () {

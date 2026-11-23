@@ -214,3 +214,62 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   // The folder is gone, so Git only drops the worktree's metadata.
   return yield* input.run(["worktree", "remove", "--force", "--force", "--", worktreePath]);
 }, Effect.scoped);
+
+/**
+ * `git worktree remove` deletes the checkout before its metadata, and `git worktree prune`
+ * exits 0 when deleting that metadata fails. While Git still lists the missing checkout as
+ * prunable (never a locked one), retry the removal so the failure surfaces.
+ */
+export const removeMissingWorktree = Effect.fn("WorktreeRemoval.removeMissingWorktree")(
+  function* (input: {
+    readonly operation: string;
+    readonly repository: string;
+    readonly worktreePath: string;
+    readonly execute: GitVcsDriver.GitVcsDriver["Service"]["execute"];
+  }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const windows = yield* HostProcess.isWindows;
+    const key = (target: string) => {
+      const resolved = path.resolve(input.repository, target);
+      return windows ? resolved.toLowerCase() : resolved;
+    };
+    const parent = yield* fileSystem
+      .realPath(path.dirname(input.worktreePath))
+      .pipe(Effect.orElseSucceed(() => path.dirname(input.worktreePath)));
+    const targets = [input.worktreePath, path.join(parent, path.basename(input.worktreePath))].map(
+      key,
+    );
+    const listed = yield* input
+      .execute({
+        operation: input.operation,
+        cwd: input.repository,
+        args: ["worktree", "list", "--porcelain", "-z"],
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(listed)) return;
+    const registered = listed.value.stdout.split("\0\0").some((record) => {
+      const fields = record.split("\0");
+      const worktree = fields.find((field) => field.startsWith("worktree "));
+      return (
+        worktree !== undefined &&
+        fields.some((field) => field.startsWith("prunable")) &&
+        targets.includes(key(worktree.slice("worktree ".length)))
+      );
+    });
+    if (!registered) return;
+    const result = yield* input.execute({
+      operation: input.operation,
+      cwd: input.repository,
+      args: ["worktree", "remove", "--", input.worktreePath],
+      allowNonZeroExit: true,
+    });
+    if (result.exitCode !== 0)
+      return yield* new GitCommandError({
+        operation: input.operation,
+        command: "git worktree remove",
+        cwd: input.repository,
+        detail: result.stderr.trim().split(/\r?\n/)[0]?.slice(0, 1000) || "command failed",
+      });
+  },
+);

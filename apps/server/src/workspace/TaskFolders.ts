@@ -40,6 +40,7 @@ import {
   removeEmptyDirectory,
   type RemoveEmptyDirectoryError,
 } from "../vcs/removeEmptyDirectory.ts";
+import { removeMissingWorktree } from "../vcs/worktreeRemoval.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
 import { isWithinRoot } from "./KnownWorkspaces.ts";
 import * as TaskFolderStore from "./TaskFolderStore.ts";
@@ -760,7 +761,22 @@ const make = Effect.gen(function* () {
         yield* git
           .pruneWorktrees({ cwd: checkout.repositoryPath })
           .pipe(Effect.ignoreCause({ log: true }));
-        return true;
+        return yield* removeMissingWorktree({
+          operation: "TaskFolders.remove",
+          repository: checkout.repositoryPath,
+          worktreePath: checkout.worktreePath,
+          execute: gitDriver.execute,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.as(true),
+          Effect.catch((cause) =>
+            Effect.sync(() => {
+              kept.push({ path: checkout.worktreePath, reason: failureDetail(cause) });
+              return false;
+            }),
+          ),
+        );
       }
       const { keep, force } = yield* verdict(checkout);
       if (keep !== null) {
