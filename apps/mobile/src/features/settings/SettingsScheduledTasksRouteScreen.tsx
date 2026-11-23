@@ -558,25 +558,26 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
   const gt = useGT();
   const writable = useEnvironmentsWithScope(targets, AuthSettingsWriteScope);
   const writeSettings = useSettingsWriter();
-  const scoped = resolveMobileSettingsTargets(targets, null);
-  const saved = uniformMobileSetting(scoped, "scheduledTaskTimeZone");
+  const editable = targets.filter((target) => writable.has(target.environmentId));
+  const canWrite = editable.length > 0;
+  // Only environments a save reaches decide the value and the hint, so a save can settle both.
+  const shown = resolveMobileSettingsTargets(canWrite ? editable : targets, null);
+  const saved = uniformMobileSetting(shown, "scheduledTaskTimeZone");
   const device = deviceTimeZone();
   const scheduleZones = useAtomValue(
-    scheduleZonesAtom(targets.map((target) => target.environmentId).join("\n")),
+    scheduleZonesAtom(editable.map((target) => target.environmentId).join("\n")),
   );
   const machine = gt("Each machine's time zone");
-  const canWrite = targets.some((target) => writable.has(target.environmentId));
   const description = gt(
     "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
   );
   const save = (zone: string) =>
     void writeSettings(
-      scoped,
-      targets.flatMap((target) =>
-        writable.has(target.environmentId)
-          ? [{ environmentId: target.environmentId, patch: { scheduledTaskTimeZone: zone } }]
-          : [],
-      ),
+      shown,
+      editable.map((target) => ({
+        environmentId: target.environmentId,
+        patch: { scheduledTaskTimeZone: zone },
+      })),
     );
   return (
     <SettingsSection

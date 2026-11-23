@@ -1,11 +1,13 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "@effect/vitest";
 import { ScheduledTaskUpsertInput, type ServerSettings } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -42,7 +44,11 @@ const settingsLayer = (timeZone: string) =>
     ),
   );
 
-const serviceLayer = (timeZone: string) =>
+const serviceLayer = (
+  timeZone: string,
+  threadLaunch: Partial<ThreadLaunchService.ThreadLaunchService["Service"]> = {},
+  webhookOrigin?: Effect.Effect<{ readonly relayHookBaseUrl: string | null }>,
+) =>
   ScheduledTaskService.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
@@ -50,7 +56,10 @@ const serviceLayer = (timeZone: string) =>
         Scheduler.layer,
         ManagedPolicy.layerTest(),
         settingsLayer(timeZone),
-        Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+        webhookOrigin === undefined
+          ? Layer.empty
+          : Layer.succeed(ScheduledTaskService.ScheduledTaskWebhookOrigin, webhookOrigin),
+        Layer.mock(ThreadLaunchService.ThreadLaunchService)(threadLaunch),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: "/projects",
           isScratchProject: () => Effect.succeed(false),
@@ -61,7 +70,7 @@ const serviceLayer = (timeZone: string) =>
     ),
   );
 
-const task = (id: string, schedule: unknown) =>
+const task = (id: string, schedule: unknown, workspaceStrategy: unknown = { type: "root" }) =>
   decodeUpsertInput({
     id,
     title: id,
@@ -69,7 +78,7 @@ const task = (id: string, schedule: unknown) =>
     enabled: true,
     schedule,
     projectId: "project-time-zone",
-    workspaceStrategy: { type: "root" },
+    workspaceStrategy,
     modelSelection: { instanceId: "codex", model: "gpt-5.4" },
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -183,5 +192,100 @@ it.effect("moves a future run to the next occurrence even when it is valid in th
       // Wednesday 09:00 Kiritimati comes first.
       expect(list.tasks[0]?.nextRunAt).toBe("2026-07-07T19:00:00.000Z");
     }).pipe(Effect.provide(serviceLayer("Pacific/Honolulu")));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+/** Waits for the list a zone switch republishes after its reconciliation commits. */
+const switchZone = (timeZone: string) =>
+  Effect.gen(function* () {
+    const service = yield* ScheduledTaskService.ScheduledTaskService;
+    const settings = yield* ServerSettingsModule.ServerSettingsService;
+    const switched = yield* service.subscribeList().pipe(
+      Stream.filter((list) => list.timeZone === timeZone),
+      Stream.runHead,
+      Effect.forkChild,
+    );
+    yield* settings.updateSettings({ scheduledTaskTimeZone: timeZone });
+    yield* Fiber.join(switched);
+  });
+
+it.effect("a save that waits across a zone switch stores its run in the new zone", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      // Read the zone, then wait on Git detection while the zone switches.
+      const saving = yield* service
+        .upsert(
+          yield* task(
+            "scheduled-task:worktree",
+            { type: "fixed_time", timeOfDay: "09:00" },
+            { type: "worktree", baseRef: "main" },
+          ),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* switchZone("Asia/Tokyo");
+      yield* Deferred.succeed(release, undefined);
+      const { task: saved } = yield* Fiber.join(saving);
+      expect(saved.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
+    }).pipe(
+      Effect.provide(
+        serviceLayer("America/Denver", {
+          isNonGitProject: () =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.as(false),
+            ),
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("a run that completes across a zone switch schedules its next run in the new zone", () =>
+  Effect.gen(function* () {
+    yield* TestClock.setTime(NOW);
+    const armed = yield* Ref.make(false);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    // The run reads the webhook origin after taking its completion time; pause it there.
+    const webhookOrigin = Ref.getAndSet(armed, false).pipe(
+      Effect.flatMap((pause) =>
+        pause
+          ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))
+          : Effect.void,
+      ),
+      Effect.as({ relayHookBaseUrl: null }),
+    );
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const { task: created } = yield* service.upsert(
+        yield* task("scheduled-task:daily", { type: "fixed_time", timeOfDay: "09:00" }),
+      );
+      const running = yield* service.runNow({ id: created.id }).pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      yield* switchZone("Asia/Tokyo");
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(running);
+      const [listed] = (yield* service.list()).tasks;
+      expect(listed?.lastRunStatus).toBe("succeeded");
+      expect(listed?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
+    }).pipe(
+      Effect.provide(
+        serviceLayer(
+          "America/Denver",
+          {
+            launch: () =>
+              Ref.set(armed, true).pipe(
+                Effect.as({ threadId: "thread-time-zone", resumed: false } as never),
+              ),
+          },
+          webhookOrigin,
+        ),
+      ),
+    );
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );

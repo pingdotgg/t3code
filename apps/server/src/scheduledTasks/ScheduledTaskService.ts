@@ -500,10 +500,18 @@ export const layer = Layer.effect(
     const secretRequests = yield* SecretRequests.SecretRequests;
     const scheduler = yield* Scheduler.Scheduler;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
-    const currentZone = serverSettings.getSettings.pipe(
-      Effect.map((settings) => scheduleZone(settings.scheduledTaskTimeZone)),
-      Effect.orElseSucceed(DateTime.zoneMakeLocal),
+    // Subscribe before reading, so a change made during startup is not lost.
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    const configuredZone = yield* Effect.result(
+      serverSettings.getSettings.pipe(
+        Effect.map((settings) => scheduleZone(settings.scheduledTaskTimeZone)),
+      ),
     );
+    // Held in memory so writes read it inside their SQLite transaction without file reads.
+    const zoneRef = yield* Ref.make(
+      Result.isSuccess(configuredZone) ? configuredZone.success : DateTime.zoneMakeLocal(),
+    );
+    const currentZone = Ref.get(zoneRef);
     const localNow = currentZone.pipe(
       Effect.flatMap((zone) => DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone))),
     );
@@ -1186,9 +1194,13 @@ export const layer = Layer.effect(
             updatedAt: iso(completedAt),
             lastRunAt: startedAtIso,
             // A manual run that starts before a one-time run must not use it up.
+            // Read the zone here: a switch committed before this transaction must apply to it.
             nextRunAt: nextRunAt(
               scheduleSource,
-              scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+              DateTime.setZone(
+                scheduleSource.schedule.type === "once" ? startedAt : completedAt,
+                yield* currentZone,
+              ),
             ),
             lastRunStatus,
             lastRunError,
@@ -1466,13 +1478,22 @@ export const layer = Layer.effect(
           Effect.logWarning("Could not move scheduled tasks to the schedule time zone", { cause }),
         ),
       );
-    const settingsChanges = yield* serverSettings.subscribeChanges;
-    yield* applyZone(yield* currentZone);
+    // Unreadable settings leave stored runs alone rather than moving them to this machine's zone.
+    yield* Result.isSuccess(configuredZone)
+      ? applyZone(configuredZone.success)
+      : Effect.logWarning("Could not read the schedule time zone", {
+          cause: configuredZone.failure,
+        });
     yield* Stream.runForEach(settingsChanges, (settings) => {
       const zone = scheduleZone(settings.scheduledTaskTimeZone);
-      if (DateTime.zoneToString(zone) === appliedZone) return Effect.void;
-      // Republish even when no run moved: lists carry the zone label.
-      return applyZone(zone).pipe(Effect.andThen(notifyChanged));
+      return Ref.set(zoneRef, zone).pipe(
+        Effect.andThen(
+          DateTime.zoneToString(zone) === appliedZone
+            ? Effect.void
+            : // Republish even when no run moved: lists carry the zone label.
+              applyZone(zone).pipe(Effect.andThen(notifyChanged)),
+        ),
+      );
     }).pipe(Effect.forkIn(serviceScope));
 
     yield* scheduler.register("scheduled-tasks", runDueTasks());
@@ -1674,23 +1695,43 @@ export const layer = Layer.effect(
         creationSource: input.creationSource ?? "web",
         createdAt: existingTask?.createdAt ?? iso(now),
         updatedAt: iso(now),
-        nextRunAt: scheduleUnchanged
-          ? existingTask.nextRunAt
-          : nextRunAt({ enabled: input.enabled, schedule }, now),
+        nextRunAt: scheduleUnchanged ? existingTask.nextRunAt : null,
         lastRunAt: existingTask?.lastRunAt ?? null,
         lastRunStatus: existingTask?.lastRunStatus ?? "never",
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(
-        task,
-        input.requireExisting === true,
-        scheduleUnchanged ? existingTask.schedule : null,
-        threadId === null && input.unbindThread === true ? (existingTask?.threadId ?? null) : null,
-        webhook,
+      // The next run is computed inside the write, so a zone switch committed first applies to it.
+      const saved = yield* Effect.gen(function* () {
+        const toSave = scheduleUnchanged
+          ? task
+          : {
+              ...task,
+              nextRunAt: nextRunAt(
+                { enabled: input.enabled, schedule },
+                DateTime.setZone(now, yield* currentZone),
+              ),
+            };
+        yield* saveTask(
+          toSave,
+          input.requireExisting === true,
+          scheduleUnchanged ? existingTask.schedule : null,
+          threadId === null && input.unbindThread === true
+            ? (existingTask?.threadId ?? null)
+            : null,
+          webhook,
+        );
+        return toSave;
+      }).pipe(
+        sql.withTransaction,
+        Effect.mapError((cause) =>
+          isScheduledTaskError(cause)
+            ? cause
+            : taskError("Could not save schedule task.", { taskId: id, cause }),
+        ),
       );
       yield* notifyChanged;
-      return { task: (yield* findTask(id)) ?? task };
+      return { task: (yield* findTask(id)) ?? saved };
     });
 
     const setEnabled: ScheduledTaskService["Service"]["setEnabled"] = Effect.fn(

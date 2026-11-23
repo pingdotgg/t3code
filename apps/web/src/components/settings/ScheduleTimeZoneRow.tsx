@@ -49,13 +49,17 @@ export function ScheduleTimeZoneRow({
 }) {
   const gt = useGT();
   const setting = useSearchableSetting();
-  const zones = environments.map(
+  const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
+  const editable = environments.flatMap((environment, index) =>
+    writable.has(environment.environmentId) ? [{ environment, zone: scheduleZones[index] }] : [],
+  );
+  const canWrite = editable.length > 0;
+  // Only environments a save reaches decide the value and the prompt, so a save can settle both.
+  const zones = (canWrite ? editable.map((entry) => entry.environment) : environments).map(
     (environment) => environment.serverConfig?.settings.scheduledTaskTimeZone ?? "",
   );
   const saved = zones[0] ?? "";
   const mixed = zones.some((zone) => zone !== saved);
-  const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
-  const canWrite = environments.some((environment) => writable.has(environment.environmentId));
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: "schedule time zone update",
   });
@@ -70,9 +74,11 @@ export function ScheduleTimeZoneRow({
     ? choices.filter((zone) => contains(label(zone), query) || contains(zone, query))
     : choices;
   const save = (zone: string) => {
-    for (const { environmentId } of environments) {
-      if (!writable.has(environmentId)) continue;
-      void updateSettings({ environmentId, input: { patch: { scheduledTaskTimeZone: zone } } });
+    for (const { environment } of editable) {
+      void updateSettings({
+        environmentId: environment.environmentId,
+        input: { patch: { scheduledTaskTimeZone: zone } },
+      });
     }
   };
 
@@ -85,7 +91,11 @@ export function ScheduleTimeZoneRow({
         "Daily and weekly tasks on every connected environment run at their set time in this zone. Changing it moves upcoming runs.",
       )}
       status={
-        canWrite && schedulesDifferFromDevice(scheduleZones, device) ? (
+        canWrite &&
+        schedulesDifferFromDevice(
+          editable.map((entry) => entry.zone),
+          device,
+        ) ? (
           <span className="flex flex-wrap items-center gap-2" role="status">
             <T>
               This device is in <Var>{zoneName(device)}</Var>.
