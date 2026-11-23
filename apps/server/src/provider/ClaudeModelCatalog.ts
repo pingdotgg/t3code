@@ -32,6 +32,8 @@ export interface ClaudeCatalogModel {
   readonly model: ServerProviderModel;
   readonly runtime: ClaudeCodeProfile;
   readonly compatibility: ClaudeCodeCompatibility;
+  /** What to send Claude Code instead of the slug, from its own model list. */
+  readonly apiModel?: string;
 }
 
 export interface ClaudeModelCatalog {
@@ -221,7 +223,7 @@ export function claudeReportedModels(
   return models;
 }
 
-function resolveClaudeCatalogModel(
+export function resolveClaudeCatalogModel(
   catalog: ClaudeModelCatalog,
   slugOrAlias: string | null | undefined,
 ): ClaudeCatalogModel | undefined {
@@ -233,6 +235,44 @@ function resolveClaudeCatalogModel(
       entry.model.aliases?.some((alias) => alias.toLowerCase() === value.toLowerCase()),
     )
   );
+}
+
+// Cloud backends decorate first-party ids: Bedrock adds a region prefix and a
+// version ("us.anthropic.claude-opus-4-6-v1"), Vertex adds "@<date>".
+function stripClaudeBackendDecoration(wireModel: string): string {
+  return wireModel
+    .replace(/^(?:[a-z-]+\.)?anthropic\./, "")
+    .replace(/-v\d+(?::\d+)?$/, "")
+    .replace(/@[^@]*$/, "");
+}
+
+/**
+ * On Bedrock, Vertex and similar backends Claude Code does not accept the first-party slug: it
+ * either sends it verbatim or, when `availableModels` excludes it, silently runs the default
+ * model instead. Its model list names the id that does work, often a family alias that
+ * `ANTHROPIC_DEFAULT_*_MODEL` points at a backend id.
+ */
+export function withClaudeCodeModelRoutes(
+  catalog: ClaudeModelCatalog,
+  reportedModels: ReadonlyArray<Pick<ClaudeModelInfo, "value" | "resolvedModel">>,
+): ClaudeModelCatalog {
+  const apiModels = new Map<string, string>();
+  for (const reported of reportedModels) {
+    if (reported.value === "default") continue;
+    const wireModel = stripClaudeContextWindowSuffix(reported.resolvedModel ?? reported.value);
+    const firstPartyModel = stripClaudeBackendDecoration(wireModel);
+    if (firstPartyModel === wireModel) continue;
+    const entry = resolveClaudeCatalogModel(catalog, firstPartyModel);
+    if (!entry || apiModels.has(entry.model.slug)) continue;
+    apiModels.set(entry.model.slug, stripClaudeContextWindowSuffix(reported.value));
+  }
+  if (apiModels.size === 0) return catalog;
+  return {
+    models: catalog.models.map((entry) => {
+      const apiModel = apiModels.get(entry.model.slug);
+      return apiModel ? { ...entry, apiModel } : entry;
+    }),
+  };
 }
 
 export function resolveClaudeModelSlug(catalog: ClaudeModelCatalog, slugOrAlias: string): string {
@@ -304,9 +344,15 @@ export function resolveClaudeUpdateRequiredModels(
   });
 }
 
+// The two casks conflict, so moving to the faster channel means replacing the install.
+const HOMEBREW_STABLE_CASK_UPDATE_COMMAND = "brew upgrade --cask claude-code";
+const HOMEBREW_LATEST_CASK_SWITCH_COMMAND =
+  "brew uninstall --cask claude-code && brew install --cask claude-code@latest";
+
 export function formatClaudeVersionUpgradeMessage(
   catalog: ClaudeModelCatalog,
   version: string | null,
+  channel?: { readonly latestVersion: string | null; readonly updateCommand: string | null },
 ): string | undefined {
   const unavailable = catalog.models
     .filter(
@@ -319,7 +365,169 @@ export function formatClaudeVersionUpgradeMessage(
     )[0];
   if (!unavailable?.compatibility.minVersion) return undefined;
   const versionLabel = version ? `v${version}` : "the installed version";
-  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${unavailable.compatibility.minVersion} or newer to access it.`;
+  const minVersion = unavailable.compatibility.minVersion;
+  const latestVersion = channel?.latestVersion;
+  if (latestVersion && compareSemverVersions(latestVersion, minVersion) < 0) {
+    const tooOld = `Claude Code ${versionLabel} is too old for ${unavailable.model.name}, which needs v${minVersion} or newer`;
+    if (channel?.updateCommand === HOMEBREW_STABLE_CASK_UPDATE_COMMAND) {
+      return `${tooOld}, but the claude-code Homebrew cask only has v${latestVersion}. Switch to the claude-code@latest cask: ${HOMEBREW_LATEST_CASK_SWITCH_COMMAND}`;
+    }
+    return `${tooOld}, but the newest version this install can update to is v${latestVersion}. Install Claude Code another way or wait for a newer release.`;
+  }
+  return `Claude Code ${versionLabel} is too old for ${unavailable.model.name}. Upgrade to v${minVersion} or newer to access it.`;
+}
+
+/** The status check words the upgrade before the install channel reports its newest version. */
+export function scopeClaudeUpgradeMessageToChannel<
+  P extends {
+    readonly message?: string | undefined;
+    readonly version: string | null;
+    readonly versionAdvisory?:
+      | { readonly latestVersion: string | null; readonly updateCommand: string | null }
+      | undefined;
+  },
+>(catalog: ClaudeModelCatalog, provider: P): P {
+  const channel = provider.versionAdvisory;
+  if (
+    !channel?.latestVersion ||
+    provider.message === undefined ||
+    provider.message !== formatClaudeVersionUpgradeMessage(catalog, provider.version)
+  ) {
+    return provider;
+  }
+  const message = formatClaudeVersionUpgradeMessage(catalog, provider.version, channel);
+  return message === undefined ? provider : { ...provider, message };
+}
+
+/** Claude Code's effort levels, lowest first. */
+export const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
+
+function claudeEffortRank(level: string | undefined): number {
+  return CLAUDE_EFFORT_LEVELS.indexOf(level as ClaudeEffortLevel);
+}
+
+/** One settings source's effort caps, with `modelSettings` keys as the user wrote them. */
+export interface ClaudeEffortCapSource {
+  readonly maxEffortLevel?: ClaudeEffortLevel;
+  readonly modelMaxEffortLevels?: ReadonlyMap<string, ClaudeEffortLevel>;
+}
+
+const CLAUDE_1M_SUFFIX = "[1m]";
+const CLAUDE_CODE_FAMILY_ALIASES: ReadonlySet<string> = new Set([
+  "opus",
+  "sonnet",
+  "haiku",
+  "fable",
+]);
+
+/**
+ * Names the model a `modelSettings` key caps the way Claude Code does, which is narrower than the
+ * catalog's aliases: only a family alias (optionally `[1m]`) resolves as an alias, and any other key
+ * names the most specific model id it contains, so `claude-opus-5-5-20260101` and Bedrock ids match
+ * while `claude-opus-5.5` matches nothing.
+ */
+function resolveClaudeModelSettingsKey(
+  catalog: ClaudeModelCatalog,
+  key: string,
+): string | undefined {
+  const lowered = key.trim().toLowerCase();
+  const unsuffixed = lowered.endsWith(CLAUDE_1M_SUFFIX)
+    ? lowered.slice(0, -CLAUDE_1M_SUFFIX.length)
+    : lowered;
+  if (CLAUDE_CODE_FAMILY_ALIASES.has(unsuffixed)) {
+    return catalog.models.find(
+      (entry) => !entry.model.isCustom && entry.model.aliases?.includes(unsuffixed),
+    )?.model.slug;
+  }
+  let match: string | undefined;
+  for (const { model } of catalog.models) {
+    if (!model.isCustom && lowered.includes(model.slug) && model.slug.length > (match?.length ?? 0))
+      match = model.slug;
+  }
+  return match;
+}
+
+/** Keys `modelSettings` caps by canonical slug, keeping the lowest cap when several keys name one model. */
+function resolveClaudeModelMaxEffortLevels(
+  catalog: ClaudeModelCatalog,
+  levels: ReadonlyMap<string, ClaudeEffortLevel> | undefined,
+): ReadonlyMap<string, ClaudeEffortLevel> {
+  const resolved = new Map<string, ClaudeEffortLevel>();
+  for (const [key, level] of levels ?? []) {
+    const slug = resolveClaudeModelSettingsKey(catalog, key);
+    if (!slug) continue;
+    const current = resolved.get(slug);
+    if (!current || claudeEffortRank(level) < claudeEffortRank(current)) resolved.set(slug, level);
+  }
+  return resolved;
+}
+
+/**
+ * Claude Code clamps efforts above `maxEffortLevel` to the model's highest level under it, so
+ * such options are relabelled, not removed, keeping stored selections valid. Per-model caps
+ * replace their own source's top-level cap and `max` means none; across sources the lowest wins.
+ */
+export function capClaudeCatalogEffort(
+  catalog: ClaudeModelCatalog,
+  models: ReadonlyArray<ServerProviderModel>,
+  sources: ReadonlyArray<ClaudeEffortCapSource>,
+): ReadonlyArray<ServerProviderModel> {
+  if (sources.length === 0) return models;
+  const resolvedSources = sources.map((source) => ({
+    maxEffortLevel: source.maxEffortLevel,
+    modelMaxEffortLevels: resolveClaudeModelMaxEffortLevels(catalog, source.modelMaxEffortLevels),
+  }));
+  return models.map((model) => {
+    // Custom model labels are user-authored, so they are left alone.
+    if (model.isCustom || !model.capabilities?.optionDescriptors) return model;
+    const modelMaxEffortLevel = resolvedSources.reduce<ClaudeEffortLevel | undefined>(
+      (lowest, source) => {
+        const level = source.modelMaxEffortLevels.get(model.slug) ?? source.maxEffortLevel;
+        return level &&
+          level !== "max" &&
+          (!lowest || claudeEffortRank(level) < claudeEffortRank(lowest))
+          ? level
+          : lowest;
+      },
+      undefined,
+    );
+    if (!modelMaxEffortLevel) return model;
+    const capRank = claudeEffortRank(modelMaxEffortLevel);
+    return {
+      ...model,
+      capabilities: {
+        ...model.capabilities,
+        optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
+          if (descriptor.id !== "effort" || descriptor.type !== "select") return descriptor;
+          const cap = descriptor.options.reduce<{ rank: number; label: string } | undefined>(
+            (best, option) => {
+              const rank = claudeEffortRank(option.id);
+              return rank >= 0 && rank <= capRank && rank > (best?.rank ?? -1)
+                ? { rank, label: option.label }
+                : best;
+            },
+            undefined,
+          );
+          if (!cap) return descriptor;
+          return {
+            ...descriptor,
+            options: descriptor.options.map((option) => {
+              const idRank = claudeEffortRank(option.id);
+              const sentRank = claudeEffortRank(
+                normalizeClaudeCatalogEffort(catalog, option.id, model.slug),
+              );
+              const displayedRank = idRank >= 0 ? idRank : sentRank;
+              const runsRank = sentRank >= 0 ? sentRank : idRank;
+              return displayedRank > cap.rank && runsRank > cap.rank
+                ? { ...option, label: `${option.label} (capped to ${cap.label})` }
+                : option;
+            }),
+          };
+        }),
+      },
+    };
+  });
 }
 
 export function resolveClaudeCatalogEffort(
@@ -329,7 +537,7 @@ export function resolveClaudeCatalogEffort(
 ): string | undefined {
   if (!resolveClaudeCatalogModel(catalog, model)) {
     const effort = raw?.trim();
-    return effort && ["low", "medium", "high", "xhigh", "max"].includes(effort)
+    return effort && (CLAUDE_EFFORT_LEVELS as ReadonlyArray<string>).includes(effort)
       ? effort
       : undefined;
   }
@@ -375,7 +583,7 @@ export function resolveClaudeCatalogApiModelId(
   modelSelection: ModelSelection,
 ): string {
   const entry = resolveClaudeCatalogModel(catalog, modelSelection.model);
-  const slug = entry?.model.slug ?? modelSelection.model;
+  const slug = entry?.apiModel ?? entry?.model.slug ?? modelSelection.model;
   const descriptors = getProviderOptionDescriptors({
     caps: entry?.model.capabilities ?? EMPTY_CAPABILITIES,
     selections: modelSelection.options,
