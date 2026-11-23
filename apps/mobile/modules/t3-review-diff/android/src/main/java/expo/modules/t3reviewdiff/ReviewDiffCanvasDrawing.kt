@@ -70,6 +70,11 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     )
   }
 
+  fun fileHeaderCheckboxHitRect(top: Int, bottom: Int, width: Int, style: DiffStyle): RectF {
+    val checkbox = fileHeaderCheckboxRect(top, bottom, width, style)
+    return RectF(checkbox.left - 14f * density, top.toFloat(), width.toFloat(), bottom.toFloat())
+  }
+
   fun drawDisclosureChevron(
     canvas: Canvas,
     rect: RectF,

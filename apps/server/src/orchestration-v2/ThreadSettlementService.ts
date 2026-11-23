@@ -3,6 +3,7 @@ import {
   isPullRequestWatchTask,
   turnItemUpdateCanEndBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { resolveProjectScripts, settleProjectScript } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import {
@@ -20,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
@@ -440,6 +442,7 @@ export const make = Effect.gen(function* () {
         ),
     );
 
+    const deferred = new Set<ThreadId>();
     const lookupCandidates = (yield* Effect.forEach(
       candidates,
       (thread) => {
@@ -454,7 +457,17 @@ export const make = Effect.gen(function* () {
           autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
         });
-        return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
+        if (settledAt === null) return Effect.succeed(thread);
+        if (
+          projectSettings.sidebarAutoSettleKeepPullRequests &&
+          thread.branch !== null &&
+          visibleThreadPullRequests(thread.pullRequests ?? []).length === 0
+        ) {
+          // Retention needs the branch lookup to see whether an open PR keeps this thread.
+          deferred.add(thread.id);
+          return Effect.succeed(thread);
+        }
+        return settleThread(thread, null);
       },
       { concurrency: 8 },
     ))
@@ -634,7 +647,10 @@ export const make = Effect.gen(function* () {
       }
       const refresh = group.filter((member) => shellClosedThreads.delete(member.id)).length > 0;
       const key = lookupKey(thread);
-      if (scheduledLookups !== null && !refresh && !scheduledLookups.has(key)) return undefined;
+      const hasDeferred = group.some((member) => deferred.has(member.id));
+      if (scheduledLookups !== null && !refresh && !hasDeferred && !scheduledLookups.has(key)) {
+        return undefined;
+      }
       // Remembered git state is enough to rule a thread out; only an answer
       // that would settle it is confirmed against fresh git state.
       const remembered = yield* git.branchPullRequest(
@@ -642,9 +658,16 @@ export const make = Effect.gen(function* () {
         { refresh, confirmTerminal: false },
       );
       noPullRequestRechecks.record(key, nowMs, remembered !== null);
-      if (ownedByAnotherThread(remembered)) return undefined;
-      if (refresh || remembered === null || remembered.state === "open") return remembered;
-      if (!(yield* wouldSettle(group, remembered))) return undefined;
+      if (refresh || remembered === null || remembered.state === "open") {
+        return ownedByAnotherThread(remembered) ? undefined : remembered;
+      }
+      // A deferred thread confirms first: a reused branch can have a new open PR.
+      if (
+        !hasDeferred &&
+        (ownedByAnotherThread(remembered) || !(yield* wouldSettle(group, remembered)))
+      ) {
+        return undefined;
+      }
       const fresh = yield* git.branchPullRequest(
         { cwd, branch: thread.branch },
         { freshGitState: true },
@@ -659,12 +682,22 @@ export const make = Effect.gen(function* () {
         : noPullRequestRechecks.select(
             nowMs,
             [...groups]
-              .filter(([key]) => key.startsWith('["branch",'))
+              .filter(
+                ([key, group]) =>
+                  key.startsWith('["branch",') && !group.some((member) => deferred.has(member.id)),
+              )
               .map(([key, group]) => ({
                 key,
                 activityAtMs: Math.max(...group.map(threadActivityAtMs)),
               })),
           );
+
+    const settleDeferred = (group: ReadonlyArray<(typeof lookupCandidates)[number]>) =>
+      Effect.forEach(
+        group.filter((thread) => deferred.has(thread.id)),
+        (thread) => settleThread(thread, null),
+        { discard: true },
+      );
 
     yield* Effect.forEach(
       groups.values(),
@@ -677,10 +710,16 @@ export const make = Effect.gen(function* () {
               () => Effect.void,
             ),
           );
-          if (pullRequest === undefined) return;
-          yield* Effect.forEach(group, (thread) => settleThread(thread, pullRequest), {
-            discard: true,
-          });
+          if (pullRequest === undefined) return yield* settleDeferred(group);
+          yield* Effect.forEach(
+            group,
+            (thread) =>
+              settleThread(
+                thread,
+                deferred.has(thread.id) && pullRequest?.state !== "open" ? null : pullRequest,
+              ),
+            { discard: true },
+          );
         }).pipe(
           Effect.catchCauseIf(
             (cause) => !Cause.hasInterruptsOnly(cause),
@@ -688,7 +727,7 @@ export const make = Effect.gen(function* () {
               Effect.logWarning("automatic thread settlement skipped", {
                 threadIds: group.map((thread) => thread.id),
                 cause: Cause.pretty(cause),
-              }),
+              }).pipe(Effect.andThen(settleDeferred(group))),
           ),
         ),
       { concurrency: 8, discard: true },
@@ -758,7 +797,21 @@ export const make = Effect.gen(function* () {
       if (settled.deletedAt !== null || settled.settledOverride !== "settled") return;
       yield* terminals.closeOnSettle({ threadId });
       const worktreePath = settled.worktreePath;
-      if (worktreePath === null || !(yield* fileSystem.exists(worktreePath))) return;
+      if (worktreePath === null) return;
+      if (!(yield* fileSystem.exists(worktreePath))) {
+        // A settle script that tears something down would otherwise be skipped with no trace.
+        const project = Option.getOrUndefined(yield* projectStore.getShell(settled.projectId));
+        if (
+          project !== undefined &&
+          settleProjectScript(resolveProjectScripts(yield* settingsService.getSettings, project))
+        ) {
+          yield* Effect.logWarning(
+            "settle script skipped: the thread's worktree no longer exists",
+            { threadId, worktreePath },
+          );
+        }
+        return;
+      }
       // Recheck after closing and worktree I/O; only live, settled threads may run scripts.
       const thread = yield* projections.getThread(threadId);
       if (thread.deletedAt !== null || thread.settledOverride !== "settled") return;
