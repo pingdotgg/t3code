@@ -11,6 +11,7 @@ import {
   type PreviewAutomationHoverInput,
   type PreviewAutomationNetworkEntry,
   type PreviewAutomationPressInput,
+  type PreviewAutomationScriptInput,
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSelectResult,
@@ -1291,6 +1292,121 @@ export const evaluate = async (
     });
   }
   return value;
+};
+
+export interface PreviewScriptOpenOptions {
+  readonly keep?: boolean;
+}
+
+export interface PreviewScriptHost {
+  readonly openPage: (
+    url: string,
+    options?: PreviewScriptOpenOptions,
+  ) => Promise<{ readonly page: Page; readonly cleanup?: () => Promise<void> }>;
+}
+
+type AsyncScriptFunction = (
+  page: Page,
+  context: ReturnType<Page["context"]>,
+  cdp: CDPSession,
+  open: (url: string, options?: PreviewScriptOpenOptions) => Promise<Page>,
+) => Promise<unknown>;
+
+const AsyncFunctionConstructor = Object.getPrototypeOf(async function () {}).constructor as new (
+  ...args: ReadonlyArray<string>
+) => AsyncScriptFunction;
+
+export const runScript = async (
+  page: Page,
+  cdp: CDPSession,
+  input: PreviewAutomationScriptInput,
+  timeoutMs: number,
+  host?: PreviewScriptHost,
+) => {
+  let compiled: AsyncScriptFunction;
+  try {
+    compiled = new AsyncFunctionConstructor("page", "context", "cdp", "open", input.script);
+  } catch (cause) {
+    throw new ServerBrowserOperationError({
+      tag: "PreviewAutomationExecutionError",
+      message: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+
+  const temporaryCleanups: Array<() => Promise<void>> = [];
+  const openedPages: Array<Page> = [];
+  const open = async (url: string, options?: PreviewScriptOpenOptions): Promise<Page> => {
+    if (host) {
+      const opened = await host.openPage(url, options);
+      openedPages.push(opened.page);
+      if (opened.cleanup && options?.keep !== true) {
+        temporaryCleanups.push(opened.cleanup);
+      }
+      return opened.page;
+    }
+    const created = await page.context().newPage();
+    openedPages.push(created);
+    if (options?.keep !== true) {
+      temporaryCleanups.push(async () => {
+        if (!created.isClosed()) await created.close().catch(constVoid);
+      });
+    }
+    await created.goto(url, { waitUntil: "domcontentloaded" });
+    return created;
+  };
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new ServerBrowserOperationError({
+          tag: "PreviewAutomationTimeoutError",
+          message: `Playwright script did not finish within ${timeoutMs}ms.`,
+        }),
+      );
+    }, timeoutMs);
+  });
+
+  try {
+    const execution = compiled(page, page.context(), cdp, open).catch((cause: unknown) => {
+      if (isServerBrowserOperationError(cause)) throw cause;
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: cause instanceof Error ? cause.message : String(cause),
+      });
+    });
+    void execution.catch(constVoid);
+    const rawResult = await Promise.race([execution, expired]);
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(rawResult ?? null);
+    } catch (cause) {
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationExecutionError",
+        message: `Script result is not JSON-serializable: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    const actualBytes = Buffer.byteLength(serialized, "utf8");
+    if (actualBytes > MAX_EVALUATION_BYTES) {
+      throw new ServerBrowserOperationError({
+        tag: "PreviewAutomationResultTooLargeError",
+        message: `Script result is ${actualBytes} bytes; the limit is ${MAX_EVALUATION_BYTES}.`,
+        detail: { maximumBytes: MAX_EVALUATION_BYTES },
+      });
+    }
+    return JSON.parse(serialized) as unknown;
+  } finally {
+    clearTimeout(timer);
+    await page.unrouteAll({ behavior: "ignoreErrors" }).catch(constVoid);
+    for (const openedPage of openedPages) {
+      if (!openedPage.isClosed()) {
+        await openedPage.unrouteAll({ behavior: "ignoreErrors" }).catch(constVoid);
+      }
+    }
+    for (const cleanup of temporaryCleanups.reverse()) {
+      await cleanup().catch(constVoid);
+    }
+  }
 };
 
 export const waitFor = async (page: Page, input: PreviewAutomationWaitForInput) => {

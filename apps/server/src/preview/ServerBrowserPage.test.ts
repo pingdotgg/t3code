@@ -723,6 +723,57 @@ describe("server browser element refs", () => {
     );
     expect(result).toEqual({ clicked: true });
   });
+
+  it("runScript supports page.route, waitForResponse, and open(url) with automatic cleanup", async () => {
+    const result = await ServerBrowserPage.runScript(
+      page,
+      cdp,
+      {
+        script: `
+          await page.route("http://preview.test/api", (route) =>
+            route.fulfill({ contentType: "application/json", body: JSON.stringify({ ok: true }) }),
+          );
+          await page.route("http://preview.test/", (route) =>
+            route.fulfill({ contentType: "text/html", body: "<title>Main</title>" }),
+          );
+          await page.goto("http://preview.test/");
+          const [response] = await Promise.all([
+            page.waitForResponse("http://preview.test/api"),
+            page.evaluate(() => fetch("/api").then((r) => r.json())),
+          ]);
+          const data = await response.json();
+          const second = await open("data:text/html,<title>Second</title>");
+          const secondTitle = await second.title();
+          return { mainTitle: await page.title(), data, secondTitle };
+        `,
+      },
+      10_000,
+    );
+    expect(result).toEqual({
+      mainTitle: "Main",
+      data: { ok: true },
+      secondTitle: "Second",
+    });
+    // Temporary open() tab was closed on exit.
+    expect(context.pages()).toHaveLength(1);
+  });
+
+  it("runScript rejects oversized results, syntax errors, and timeouts", async () => {
+    await expect(
+      ServerBrowserPage.runScript(page, cdp, { script: "return 'x'.repeat(70_000);" }, 5_000),
+    ).rejects.toThrow("limit is 64000");
+    await expect(
+      ServerBrowserPage.runScript(page, cdp, { script: "const = ;" }, 5_000),
+    ).rejects.toThrow();
+    await expect(
+      ServerBrowserPage.runScript(
+        page,
+        cdp,
+        { script: "await new Promise((resolve) => setTimeout(resolve, 5_000));" },
+        50,
+      ),
+    ).rejects.toThrow("did not finish within 50ms");
+  });
 });
 
 describe("server browser snapshot screenshot", () => {

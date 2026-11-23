@@ -12,6 +12,7 @@ import {
   PreviewAutomationRecordingStatus,
   PreviewAutomationResizeInput,
   PreviewAutomationResizeResult,
+  PreviewAutomationScriptInput,
   PreviewAutomationSelectResult,
   PreviewAutomationSetColorSchemeInput,
   PreviewAutomationSetColorSchemeResult,
@@ -212,6 +213,17 @@ const PreviewEvaluateTool = browserTool(
   }).annotate(Tool.Title, "Evaluate JavaScript in preview"),
 );
 
+const PreviewScriptTool = browserTool(
+  Tool.make("preview_script", {
+    description:
+      "Run an async Playwright script body with `(page, context, cdp, open)` in scope for multi-step flows, `page.route`, `page.waitForResponse`, or parallel tabs via `open(url, { keep?: boolean })`. Routes and temporary `open()` tabs clean up when the script ends. Returns `{value}` up to 64 KB.",
+    parameters: PreviewAutomationScriptInput,
+    success: PreviewEvaluateResult,
+    failure: PreviewToolFailure,
+    dependencies,
+  }).annotate(Tool.Title, "Run Playwright script in preview"),
+);
+
 const PreviewWaitForTool = readonlyBrowserTool(
   Tool.make("preview_wait_for", {
     description:
@@ -254,6 +266,7 @@ export const PreviewToolkit = Toolkit.make(
   PreviewSnapshotTool,
   PreviewActTool,
   PreviewEvaluateTool,
+  PreviewScriptTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,
@@ -268,6 +281,7 @@ export const PreviewStandardToolkit = Toolkit.make(
   PreviewSetAppearanceTool,
   PreviewActTool,
   PreviewEvaluateTool,
+  PreviewScriptTool,
   PreviewWaitForTool,
   PreviewRecordingStartTool,
   PreviewRecordingStopTool,

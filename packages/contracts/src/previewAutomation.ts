@@ -57,6 +57,7 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "select",
   "drag",
   "fill",
+  "script",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -555,6 +556,17 @@ export const PreviewAutomationEvaluateInput = Schema.Struct({
   awaitPromise: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
 });
 export type PreviewAutomationEvaluateInput = typeof PreviewAutomationEvaluateInput.Type;
+
+export const PreviewAutomationScriptInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  script: Schema.String.check(Schema.isTrimmed())
+    .check(Schema.isNonEmpty())
+    .check(Schema.isMaxLength(64_000)),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(300_000)),
+  ).annotate({ description: "Default 30000, max 300000." }),
+});
+export type PreviewAutomationScriptInput = typeof PreviewAutomationScriptInput.Type;
 
 export const PreviewAutomationWaitForInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,

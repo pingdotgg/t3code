@@ -83,7 +83,10 @@ const invoke = Effect.fn("PreviewToolkit.invoke")(function* <A>(
   });
   if (["status", "open", "navigate", "snapshot"].includes(operation)) return { result };
   const statusTabId =
-    (operation !== "evaluate" && typeof result === "object" && result !== null
+    (operation !== "evaluate" &&
+    operation !== "script" &&
+    typeof result === "object" &&
+    result !== null
       ? (result as { tabId?: PreviewTabId }).tabId
       : undefined) ?? targetTabId;
   const page = yield* broker
@@ -257,6 +260,14 @@ const handlers = {
   ),
   preview_evaluate: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
     invoke<unknown>("evaluate", input, undefined, tabId).pipe(
+      Effect.map(({ result, toolIcon }) => ({
+        value: result ?? null,
+        ...(toolIcon ? { toolIcon } : {}),
+      })),
+    ),
+  ),
+  preview_script: McpToolAccess.actsAsCaller(({ tabId, ...input }) =>
+    invoke<unknown>("script", input, input.timeoutMs ?? 30_000, tabId).pipe(
       Effect.map(({ result, toolIcon }) => ({
         value: result ?? null,
         ...(toolIcon ? { toolIcon } : {}),

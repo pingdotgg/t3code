@@ -31,6 +31,7 @@ import {
   type PreviewAutomationPressInput,
   type PreviewAutomationRequest,
   type PreviewAutomationResizeInput,
+  type PreviewAutomationScriptInput,
   type PreviewAutomationScrollInput,
   type PreviewAutomationSelectInput,
   type PreviewAutomationSetColorSchemeInput,
@@ -3089,6 +3090,50 @@ const make = Effect.gen(function* () {
           input as PreviewAutomationEvaluateInput,
           request.timeoutMs,
         );
+      case "script": {
+        const scriptInput = input as PreviewAutomationScriptInput;
+        const scriptTimeoutMs = Math.min(
+          scriptInput.timeoutMs ?? 30_000,
+          Math.max(1, Math.floor(deadlineMs - performance.now())),
+        );
+        return ServerBrowserPage.runScript(tab.page, tab.cdp, scriptInput, scriptTimeoutMs, {
+          openPage: async (url, options) => {
+            const normalizedUrl = normalizePreviewUrl(url);
+            const opened = await runPromise(
+              openTab(
+                {
+                  threadId: ThreadId.make(tab.threadId),
+                  url: normalizedUrl,
+                  runtime: "server",
+                  ...(tab.profileId === undefined ? {} : { profileId: tab.profileId }),
+                  colorScheme: tab.colorScheme,
+                  ...(tab.control.agentId === null ? {} : { automationOwner: tab.control.agentId }),
+                },
+                { reclaimIdleSlot: true },
+              ),
+            );
+            if (opened.page.url() === "about:blank") {
+              await opened.page.goto(normalizedUrl, { waitUntil: "domcontentloaded" });
+            }
+            return {
+              page: opened.page,
+              ...(options?.keep === true
+                ? {}
+                : {
+                    cleanup: () =>
+                      runPromise(
+                        manager
+                          .close({
+                            threadId: ThreadId.make(opened.threadId),
+                            tabId: opened.tabId,
+                          })
+                          .pipe(Effect.ignore),
+                      ),
+                  }),
+            };
+          },
+        });
+      }
       case "waitFor":
         return ServerBrowserPage.waitFor(tab.page, input as PreviewAutomationWaitForInput);
       case "recordingStart": {
