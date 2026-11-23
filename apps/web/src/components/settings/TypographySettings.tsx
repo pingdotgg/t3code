@@ -501,6 +501,7 @@ function FontFamilySettingsRow({
           setInputFocused(false);
           flushDraft();
         }}
+        onClick={discoverInstalledFonts}
         onChange={(event) => {
           const next = event.currentTarget.value;
           setDraft(next);
