@@ -1,4 +1,5 @@
 import { NodeId, RunId } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -34,7 +35,7 @@ describe.each([
     expect(
       isVisible({
         item: { type: "run_interrupt_result", runId, nodeId },
-        runs: [{ id: runId, status: "running" }],
+        runs: [{ id: runId, status: "running", startedAt: null }],
         attempts: [{ runId, rootNodeId: nodeId, status: "superseded" }],
         items: [{ type: "run_interrupt_result", runId, nodeId }],
       }),
@@ -51,7 +52,7 @@ describe.each([
       expect(
         isVisible({
           item: { type: "run_interrupt_result", runId, nodeId },
-          runs: [{ id: runId, status }],
+          runs: [{ id: runId, status, startedAt: null }],
           attempts: [{ runId, rootNodeId: nodeId, status: "superseded" }],
           items: [
             { type: "run_interrupt_request", runId, nodeId },
@@ -66,7 +67,7 @@ describe.each([
     expect(
       isVisible({
         item: { type: "run_interrupt_result", runId, nodeId },
-        runs: [{ id: runId, status: "interrupted" }],
+        runs: [{ id: runId, status: "interrupted", startedAt: null }],
         attempts: [{ runId, rootNodeId: nodeId, status: "interrupted" }],
         items: [{ type: "run_interrupt_result", runId, nodeId }],
       }),
@@ -77,7 +78,7 @@ describe.each([
     expect(
       isVisible({
         item: { type: "run_interrupt_result", runId, nodeId },
-        runs: [{ id: runId, status: "interrupted" }],
+        runs: [{ id: runId, status: "interrupted", startedAt: null }],
         attempts: [
           {
             runId,
@@ -128,7 +129,7 @@ describe.each([
       },
     ] satisfies ReadonlyArray<VisibilityInput["items"][number] & { id: string }>;
     const input = {
-      runs: [{ id: runId, status }],
+      runs: [{ id: runId, status, startedAt: null }],
       attempts: [],
       items: rows,
     } satisfies VisibilityInput;
@@ -149,10 +150,27 @@ describe.each([
   });
 
   it.each([
+    { name: "queued", status: "queued", startedAt: null, visible: false },
+    { name: "withdrawn before it started", status: "cancelled", startedAt: null, visible: false },
+    { name: "cut short after it started", status: "cancelled", startedAt: "set", visible: true },
+  ] as const)("shows a queued turn's message only once its run started ($name)", (row) => {
+    const item = { type: "user_message", inputIntent: "queued_turn", runId, nodeId } as const;
+    const startedAt = row.startedAt === null ? null : DateTime.makeUnsafe(0);
+    expect(
+      isVisible({
+        item,
+        runs: [{ id: runId, status: row.status, startedAt }],
+        attempts: [],
+        items: [item],
+      }),
+    ).toBe(row.visible);
+  });
+
+  it.each([
     { name: "empty history", runs: [], attempts: [] },
     {
       name: "ordinary attempts",
-      runs: [{ id: runId, status: "completed" }],
+      runs: [{ id: runId, status: "completed", startedAt: null }],
       attempts: [{ runId, rootNodeId: nodeId, status: "completed" }],
     },
   ] satisfies ReadonlyArray<Pick<VisibilityInput, "runs" | "attempts"> & { name: string }>)(
@@ -247,7 +265,7 @@ describe("indexed timeline visibility", () => {
       const queued = { type: "user_message", inputIntent: "queued_turn", runId, nodeId } as const;
       const ordinary = { type: "assistant_message", runId, nodeId } as const;
       const isVisible = createOrchestrationV2TurnItemVisibility({
-        runs: statuses.map((status) => ({ id: runId, status })),
+        runs: statuses.map((status) => ({ id: runId, status, startedAt: null })),
         attempts: [],
         items: [queued, ordinary],
       });
@@ -268,7 +286,9 @@ describe("indexed timeline visibility", () => {
     const attempts = Object.freeze([
       Object.freeze({ runId, rootNodeId: nodeId, status: "superseded" } as const),
     ]);
-    const runs = Object.freeze([Object.freeze({ id: runId, status: "running" } as const)]);
+    const runs = Object.freeze([
+      Object.freeze({ id: runId, status: "running", startedAt: null } as const),
+    ]);
     const input = Object.freeze({ runs, attempts, items });
     const before = structuredClone(input);
     const visible = items.filter(createOrchestrationV2TurnItemVisibility(input));
@@ -282,7 +302,7 @@ describe("indexed timeline visibility", () => {
       items.filter(
         createOrchestrationV2TurnItemVisibility({
           ...input,
-          runs: [{ id: runId, status: "cancelled" }],
+          runs: [{ id: runId, status: "cancelled", startedAt: null }],
         }),
       ),
     ).toEqual([]);

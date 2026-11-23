@@ -11676,6 +11676,132 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("keeps a queued turn's message when its started run is cut short", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:projection-cut-short-queued");
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${threadId}:created`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:projection-cut-short-queued"),
+          title: threadId,
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      // A server restart cancels a run that already started; removing a queued message
+      // cancels one that never did.
+      for (const [ordinal, name, startedAt] of [
+        [1, "withdrawn", null],
+        [2, "cut-short", now],
+      ] as const) {
+        const runId = RunId.make(`run:${threadId}:${name}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${runId}:cancelled`),
+          type: "run.updated",
+          threadId,
+          runId,
+          nodeId: NodeId.make(`node:${runId}`),
+          driver,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:${runId}`),
+            rootNodeId: NodeId.make(`node:${runId}`),
+            activeAttemptId: null,
+            status: "cancelled",
+            requestedAt: now,
+            startedAt,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:${runId}:item`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: TurnItemId.make(`turn-item:${runId}`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId: MessageId.make(`message:${runId}`),
+            inputIntent: "queued_turn",
+            text: name,
+            attachments: [],
+          },
+        });
+      }
+
+      // The first page read finds hidden rows with its own SQL, before any full index is cached.
+      const page = yield* projectionStore.getTimelinePage(threadId, {
+        view: "activity",
+        limit: 10,
+      });
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      const window = yield* projectionStore.getThreadSnapshotWindow(threadId, { rowLimit: 10 });
+      for (const rows of [
+        page.items,
+        projection.visibleTurnItems,
+        window.projection.visibleTurnItems,
+      ]) {
+        assert.deepEqual(
+          rows.map((row) => (row.item.type === "user_message" ? row.item.text : row.item.type)),
+          ["cut-short"],
+        );
+      }
+      const shellSnapshot = yield* projectionStore.getShellSnapshot();
+      for (const shell of [
+        yield* projectionStore.getThreadShell(threadId),
+        shellSnapshot.threads.find((thread) => thread.id === threadId),
+      ]) {
+        assert.equal(shell?.visibleItemCount, 1);
+      }
+    }),
+  );
+
   it.effect("hides source turns rewound before the fork from a fork's visible items", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
