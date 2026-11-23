@@ -803,7 +803,30 @@ pub(crate) async fn merge(cx: &Cx<'_>, args: &Args) -> ToolResult {
             action[key] = value;
         }
     }
-    cx.panel("runAction", located.with(action)).await?;
+    // A merge now is the calling thread's own, as an agent's `gh pr merge` is: its watch
+    // ends quietly. An auto-merge lands later, when the merge should still wake the thread.
+    let own = (args.get("auto") != Some(&Value::Bool(true))).then(|| {
+        json!({
+            "threadId": located.thread["id"],
+            "itemId": format!("mcp-merge:{}", conn_support::uuid_v4()),
+            "number": located.target.json().get("number").cloned().unwrap_or(Value::Null),
+            "any": args.get("stack") == Some(&Value::Bool(true)),
+        })
+    });
+    let mark = |phase: &str| {
+        own.clone().map(|mut own| {
+            own["phase"] = json!(phase);
+            own
+        })
+    };
+    if let Some(own) = mark("running") {
+        let _ = cx.forge_call("agentMerge", own).await;
+    }
+    let merged = cx.panel("runAction", located.with(action)).await;
+    if let Some(own) = mark(if merged.is_ok() { "merged" } else { "failed" }) {
+        let _ = cx.forge_call("agentMerge", own).await;
+    }
+    merged?;
     let after = cx.fresh("summary", located.with(json!({}))).await?;
     let mut result = located.identity();
     result.insert("state".into(), after["state"].clone());

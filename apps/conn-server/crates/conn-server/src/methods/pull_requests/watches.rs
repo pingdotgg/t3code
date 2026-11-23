@@ -10,10 +10,11 @@
 
 use super::{
     Panel, ReadKey,
+    agent_ends::{AgentEnds, AgentRead},
     links::{self, Links, Request},
 };
 use conn_source_control::{
-    close_commands::{self, ClosedBy},
+    close_commands,
     pull_requests::{
         link_sync,
         normalize::{array, text},
@@ -128,31 +129,11 @@ pub(super) struct Watcher {
     last_reads: HashMap<String, LastRead>,
     failures: HashMap<String, u32>,
     held: Vec<Held>,
-    /// T3's `agentEnds`: per thread, the merge or close commands its agent is running or just
-    /// finished, until the read after them ends or the run stops.
-    agent_ends: HashMap<String, Vec<(String, ClosedBy)>>,
-}
-
-/// A thread's agent ran a command that merges or closes pull requests, or its run ended.
-#[derive(Debug)]
-pub(super) enum AgentEvent {
-    Command {
-        thread_id: String,
-        item_id: String,
-        closed: ClosedBy,
-        /// `None` while the command runs; whether it succeeded once it ended.
-        succeeded: Option<bool>,
-    },
-    RunEnded {
-        thread_id: String,
-    },
 }
 
 /// Command items a thread's agent ran that the feed already saw end, so a later update of
 /// the same item is not taken for a second merge (T3's `finished`).
 const FINISHED_COMMANDS_KEPT: usize = 1024;
-/// Merge or close commands one thread may hold open at once.
-const AGENT_ENDS_PER_THREAD: usize = 64;
 
 /// `checksPendingBefore`: lets the engine tell that a push cleared the answer during the read.
 fn identity(target: &Target) -> serde_json::Map<String, Value> {
@@ -199,48 +180,22 @@ impl Watcher {
             last_reads: HashMap::new(),
             failures: HashMap::new(),
             held: Vec::new(),
-            agent_ends: HashMap::new(),
         }
     }
 
     /// `endedByAgent`: the watching thread's own agent merged or closed this pull request.
     fn ended_by_agent(&self, target: &Target) -> bool {
-        self.agent_ends
-            .get(target.thread_id())
-            .is_some_and(|ends| ends.iter().any(|(_, c)| c.closes(target.number())))
+        self.panel
+            .agent_ends
+            .ends(target.thread_id(), target.number())
     }
 
-    /// The command stream's handling (T3's `start`): a close command marks the thread's watches
-    /// as ending by its agent while it runs; once it ends, the thread's watches are read at
-    /// once, quietly for those it closed. A failed command ended nothing.
-    pub(super) async fn agent_event(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::RunEnded { thread_id } => {
-                // A run can stop before its command reports that it ended.
-                self.agent_ends.remove(&thread_id);
-            }
-            AgentEvent::Command {
-                thread_id,
-                item_id,
-                closed,
-                succeeded,
-            } => {
-                let ends = self.agent_ends.entry(thread_id.clone()).or_default();
-                ends.retain(|(id, _)| *id != item_id);
-                if succeeded != Some(false) && ends.len() < AGENT_ENDS_PER_THREAD {
-                    ends.push((item_id.clone(), closed));
-                }
-                if succeeded.is_some() {
-                    self.read_thread_watches(&thread_id).await;
-                    if let Some(ends) = self.agent_ends.get_mut(&thread_id) {
-                        ends.retain(|(id, _)| *id != item_id);
-                    }
-                }
-                if self.agent_ends.get(&thread_id).is_some_and(Vec::is_empty) {
-                    self.agent_ends.remove(&thread_id);
-                }
-            }
-        }
+    /// The read after an agent's close command ended (T3's `readThreadWatches` and `done`):
+    /// the thread's watches are read at once, quietly for those it closed, then the command
+    /// lets go of them.
+    pub(super) async fn read_after_agent(&mut self, read: AgentRead) {
+        self.read_thread_watches(&read.thread_id).await;
+        self.panel.agent_ends.read_done(&read);
     }
 
     /// `readThreadWatches`: each watched pull request of the thread, read now and in full.
@@ -891,9 +846,15 @@ pub(super) async fn run(panel: Arc<Panel>) {
         }
     });
     let _stop_links = AbortOnDrop(links_task);
-    let (agent_tx, mut agent_rx) = mpsc::channel::<AgentEvent>(64);
+    // Ownership changes apply as events arrive; only the reads after them queue here.
+    let (agent_tx, mut agent_rx) = mpsc::channel::<AgentRead>(64);
+    let _ = panel.agent_reads.set(agent_tx.clone());
     let _stop_agents = match panel.engine.subscribe_command_events().await {
-        Ok(events) => Some(AbortOnDrop(tokio::spawn(agent_events(events, agent_tx)))),
+        Ok(events) => Some(AbortOnDrop(tokio::spawn(agent_events(
+            events,
+            panel.agent_ends.clone(),
+            agent_tx,
+        )))),
         Err(e) => {
             eprintln!("conn-server: pull request watches cannot follow agent merges: {e}");
             None
@@ -906,7 +867,7 @@ pub(super) async fn run(panel: Arc<Panel>) {
         tokio::select! {
             _ = sweep.tick() => watcher.pass(None).await,
             Some(key) = rx.recv() => watcher.pass(Some(&key)).await,
-            Some(event) = agent_rx.recv() => watcher.agent_event(event).await,
+            Some(read) = agent_rx.recv() => watcher.read_after_agent(read).await,
         }
         if overflow.swap(false, std::sync::atomic::Ordering::Relaxed) {
             watcher.pass(None).await;
@@ -922,48 +883,43 @@ fn run_ended(status: &str) -> bool {
     )
 }
 
-/// Turns the engine's command events into [`AgentEvent`]s for the watch loop: only commands
-/// that merge or close a change request, and run ends.
+/// Applies the engine's command events to [`AgentEnds`] as they arrive, and asks the watch
+/// loop for the read after each close command that ended. Other commands are skipped.
 pub(super) async fn agent_events(
     mut events: mpsc::Receiver<(String, Value)>,
-    tx: mpsc::Sender<AgentEvent>,
+    ends: AgentEnds,
+    reads: mpsc::Sender<AgentRead>,
 ) {
     let mut finished: std::collections::VecDeque<String> = Default::default();
     while let Some((thread_id, event)) = events.recv().await {
         let payload = &event["payload"];
-        let agent_event = if event["type"] == "run.updated" {
-            if !run_ended(text(payload, "status")) {
-                continue;
+        if event["type"] == "run.updated" {
+            if run_ended(text(payload, "status")) {
+                ends.run_ended(&thread_id);
             }
-            AgentEvent::RunEnded { thread_id }
-        } else {
-            let input = text(payload, "input");
-            let item_id = text(payload, "id").to_owned();
-            if finished.contains(&item_id) {
-                continue;
-            }
-            let Some(closed) = close_commands::closed_by(input) else {
-                continue;
-            };
-            let active = matches!(text(payload, "status"), "pending" | "running" | "waiting");
-            let succeeded = (!active).then(|| {
-                // Some providers report a command that failed as completed.
-                text(payload, "status") == "completed" && !close_commands::command_failed(payload)
-            });
-            if succeeded.is_some() {
-                if finished.len() >= FINISHED_COMMANDS_KEPT {
-                    finished.pop_front();
-                }
-                finished.push_back(item_id.clone());
-            }
-            AgentEvent::Command {
-                thread_id,
-                item_id,
-                closed,
-                succeeded,
-            }
+            continue;
+        }
+        let item_id = text(payload, "id").to_owned();
+        if finished.contains(&item_id) {
+            continue;
+        }
+        let Some(closed) = close_commands::closed_by(text(payload, "input")) else {
+            continue;
         };
-        if tx.send(agent_event).await.is_err() {
+        let active = matches!(text(payload, "status"), "pending" | "running" | "waiting");
+        let succeeded = (!active).then(|| {
+            // Some providers report a command that failed as completed.
+            text(payload, "status") == "completed" && !close_commands::command_failed(payload)
+        });
+        if succeeded.is_some() {
+            if finished.len() >= FINISHED_COMMANDS_KEPT {
+                finished.pop_front();
+            }
+            finished.push_back(item_id.clone());
+        }
+        if let Some(read) = ends.command(&thread_id, &item_id, closed, succeeded)
+            && reads.send(read).await.is_err()
+        {
             return;
         }
     }
