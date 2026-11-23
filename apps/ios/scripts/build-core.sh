@@ -28,6 +28,15 @@ if [[ ! -f "$GENERATED_DIR/conn_ffiFFI.h" || ! -f "$GENERATED_DIR/conn_ffiFFI.mo
   exit 1
 fi
 
+# Build the C parts (ring) for the app's deployment target, not the SDK's version.
+# Otherwise the linker warns that the objects were built for a newer iOS than the app.
+DEPLOYMENT_TARGET="$(sed -n 's/^ *iOS: "\([0-9.]*\)"$/\1/p' "$IOS_ROOT/project.yml" | head -1)"
+if [[ -z "$DEPLOYMENT_TARGET" ]]; then
+  echo "Could not read the iOS deploymentTarget from $IOS_ROOT/project.yml" >&2
+  exit 1
+fi
+export IPHONEOS_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET"
+
 # conn-ffi is a member of the repo-root crates/ workspace, which pins the toolchain.
 cd "$REPO_ROOT"
 TOOLCHAIN_BIN="$(dirname "$(rustup which cargo)")"
