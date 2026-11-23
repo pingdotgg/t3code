@@ -2270,7 +2270,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const now = yield* DateTime.now;
         return {
           providerThread: current,
-          providerTurns: [],
           messages: items.flatMap((item): OrchestrationV2ConversationMessage[] =>
             item.kind === "agentMessage" || item.kind === "userMessage"
               ? [
