@@ -549,9 +549,10 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           Effect.tryPromise({
             try: () =>
               new Promise<NodeHttp.Server>((resolve, reject) => {
+                const callbackBase = "http://127.0.0.1/auth/callback";
                 const server = NodeHttp.createServer((request, response) => {
-                  const url = new URL(request.url ?? "/", "http://127.0.0.1");
-                  if (request.method !== "GET" || url.pathname !== "/auth/callback") {
+                  const url = URL.parse(request.url ?? "/", callbackBase);
+                  if (request.method !== "GET" || url?.pathname !== "/auth/callback") {
                     response.writeHead(404).end();
                     return;
                   }
@@ -559,8 +560,18 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
                     response.writeHead(410).end("Sign-in is no longer active.");
                     return;
                   }
+                  // Reject a stray request without ending the sign-in, so the real redirect still lands.
+                  let returned: URL;
+                  try {
+                    returned = codexCallbackUrl(url.toString(), callbackBase, state);
+                  } catch {
+                    response
+                      .writeHead(400)
+                      .end("This response does not belong to the active sign-in.");
+                    return;
+                  }
                   used = true;
-                  callback.resolve({ url, response });
+                  callback.resolve({ url: returned, response });
                 });
                 server.once("error", reject);
                 server.listen(0, "127.0.0.1", () => resolve(server));
