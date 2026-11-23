@@ -193,6 +193,40 @@ reset times only when its provider's endpoint has the same address as the hub, f
 `http://127.0.0.1:8317` for both. Remove the hub from the same settings section when you no longer
 need it.
 
+## Connect an HTTP quota source
+
+In **Settings → Providers → Usage providers → Add HTTP source**, choose the environment that can
+reach your quota server and enter the full endpoint URL. If the endpoint requires authentication,
+supply a bearer token. The selected T3 environment sends a read-only GET with
+`Accept: application/json` and shows the result in **Usage → Limits**.
+
+Return JSON in this format, with stable IDs for accounts and their windows.
+
+```json
+{
+  "version": 1,
+  "accounts": [
+    {
+      "id": "primary",
+      "label": "My coding plan",
+      "windows": [
+        {
+          "id": "monthly",
+          "kind": "monthly",
+          "label": "Monthly budget",
+          "usedPercent": 35,
+          "resetsAt": "2026-12-01T00:00:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Set `kind` to `session`, `weekly`, `monthly`, or `other`. Use a percentage from 0 to 100 and
+omit `resetsAt` when the reset time is unknown. Your quota server handles the upstream provider
+credentials and APIs. HTTP sources supply display data for the Limits view.
+
 ## Subscription usage widget
 
 Add **Subscription usage** from your iOS or Android widget gallery to see remaining Codex and

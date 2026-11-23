@@ -320,6 +320,25 @@ export interface LimitAccount {
   readonly limits: ServerProviderUsageLimits;
 }
 
+export function collectHttpQuotaSources(presentations: Parameters<typeof collectLimitAccounts>[0]) {
+  return [...presentations].flatMap(([environmentId, presentation]) =>
+    (presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) =>
+      source.kind === "http" && source.quotaAccounts?.length
+        ? [
+            {
+              ...source,
+              key: `${environmentId}:${source.id}`,
+              label:
+                presentations.size > 1
+                  ? `${presentation.entry.target.label} · ${source.label}`
+                  : source.label,
+            },
+          ]
+        : [],
+    ),
+  );
+}
+
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
