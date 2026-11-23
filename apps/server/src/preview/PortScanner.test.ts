@@ -838,11 +838,63 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
 );
 
 effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips the DevTools port of a browser an agent's tool launched on %s",
+  (platform) => {
+    const appPort = 43_126;
+    const devToolsPort = 43_127;
+    const agentEnvironment = `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`;
+    const procFiles: Record<string, string> = {
+      "/proc/4242/environ": agentEnvironment,
+      "/proc/4242/cmdline": "node\0server.js\0",
+      "/proc/6000/environ": agentEnvironment,
+      "/proc/6000/cmdline": "/opt/google/chrome/chrome\0--remote-debugging-port=0\0about:blank\0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed(
+                processOutput(
+                  input.command === "lsof"
+                    ? `p4242\ncnode\nn127.0.0.1:${appPort}\np6000\ncchrome\nn127.0.0.1:${devToolsPort}\n`
+                    : `  4242 1 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                        `  6000 1 /opt/google/chrome/chrome --remote-debugging-port=0 about:blank PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`,
+                ),
+              ),
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
   "attributes listeners to the agent thread in their environment on %s, after the agent exits",
   (platform) => {
     const agentPort = 43_124;
     const otherPort = 43_125;
-    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
+    // The agent CLI has the thread in its environment too; its own port is not a server.
+    const agentListener =
+      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` + `p4300\ncagy\nn127.0.0.1:43126\n`;
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;
@@ -855,11 +907,18 @@ effectIt.effect.each(["linux", "darwin"] as const)(
       "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
+    const procAgent: Record<string, string> = {
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
+      "/proc/4300/stat": `4300 (agy acp) S ${process.pid} 4300 4300 0`,
+    };
     const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
             readFileString: (path) => {
+              const agent = procAgent[path];
+              if (agent !== undefined) return Effect.succeed(agent);
               const content = procEnviron[path];
               if (content === undefined) return missing.readFileString(path);
               environmentReads += 1;
@@ -881,9 +940,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
-              // A direct child of this process, so stop refuses it without signaling anything.
+              // In its agent CLI's process group, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
-                return Effect.succeed(processOutput(`4242 ${process.pid} 4242\n`));
+                return Effect.succeed(processOutput(`4242 4300 4300\n4300 ${process.pid} 4300\n`));
               }
               if (environmentFails) {
                 return Effect.fail(
@@ -897,8 +956,9 @@ effectIt.effect.each(["linux", "darwin"] as const)(
               environmentReads += 1;
               return Effect.succeed(
                 processOutput(
-                  `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
-                    "  5000 postgres -D /data PATH=/usr/bin\n",
+                  `  4242 4300 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n` +
+                    `  4300 ${process.pid} agy acp ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                    "  5000     1 postgres -D /data PATH=/usr/bin\n",
                 ),
               );
             },
