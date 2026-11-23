@@ -8,10 +8,24 @@ import type {
   AcpAdapterV2SubagentUpdate,
 } from "@t3tools/provider-acp/server/adapter";
 
+import type { AcpRegistrySettings } from "../settings.ts";
+
 // The opt-in raw feed identifies each chunk by the preceding assistant.*_delta task call id.
 
 const COPILOT_META_KEY = "github.com/copilot";
 const COPILOT_SESSION_EVENT = "github.com/copilot/sessionEvent";
+const COPILOT_REGISTRY_AGENT_ID = "github-copilot-cli";
+const COPILOT_LOCAL_COMMAND_PATTERN = /^copilot(\.exe|\.cmd)?$/i;
+
+export function isCopilotAcpSettings(
+  settings: Pick<AcpRegistrySettings, "source" | "agentId" | "commandPath">,
+): boolean {
+  return (
+    (settings.source !== "local" && settings.agentId === COPILOT_REGISTRY_AGENT_ID) ||
+    (settings.source === "local" &&
+      COPILOT_LOCAL_COMMAND_PATTERN.test(settings.commandPath.split(/[\\/]/).pop() ?? ""))
+  );
+}
 
 export const copilotClientCapabilitiesMeta = {
   [COPILOT_META_KEY]: {
