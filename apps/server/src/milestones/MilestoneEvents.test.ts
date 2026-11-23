@@ -299,8 +299,7 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     expect(discovered.result!.capabilities.extensions).toEqual({
       "io.modelcontextprotocol/events": {},
     });
-    // TODO(#41158): drop with the bridge for clients predating SEP-3415.
-    expect(discovered.result!.capabilities.events).toEqual({});
+    expect(discovered.result!.capabilities.events).toBeUndefined();
 
     const { events } = (yield* call("events/list")).result!;
     expect(events).toHaveLength(12);
@@ -369,19 +368,18 @@ it.effect("polls from now, then pages forward and says when a cursor fell behind
 
 it.effect("rejects a mismatched Mcp-Name, an unknown event and a bad webhook callback", () =>
   Effect.gen(function* () {
-    const { post, call, deliveries, answer, subscribeParams } = yield* serve;
+    const { post, call, deliveries, subscribeParams } = yield* serve;
     const params = { name: "thread.run_settled", cursor: null };
     const missing = yield* post("events/poll", params, { name: null });
     expect(missing.status).toBe(400);
     expect(((yield* missing.json) as JsonRpcResponse).error?.code).toBe(-32020);
     const mismatched = yield* post("events/poll", params, { name: "thread.needs_input" });
     expect(mismatched.status).toBe(400);
-    // TODO(#41158): drop with the bridge for clients predating SEP-3415. Subscribing needs no Mcp-Name,
-    // but one that is sent must match.
-    const wrongName = yield* post("events/subscribe", subscribeParams(), {
-      name: "thread.needs_input",
-    });
-    expect(((yield* wrongName.json) as JsonRpcResponse).error?.code).toBe(-32020);
+    // Subscribing needs a matching Mcp-Name like the other routed methods.
+    for (const name of [null, "thread.needs_input"]) {
+      const named = yield* post("events/subscribe", subscribeParams(), { name });
+      expect(((yield* named.json) as JsonRpcResponse).error?.code).toBe(-32020);
+    }
     // Arguments are checked before the endpoint hears anything.
     const badArguments = yield* call(
       "events/subscribe",
@@ -393,13 +391,6 @@ it.effect("rejects a mismatched Mcp-Name, an unknown event and a bad webhook cal
         Effect.map(Queue.take(deliveries), (delivery) => ({ posted: delivery.body })),
       ),
     ).toMatchObject({ answered: { code: -32602 } });
-    const unnamed = yield* post("events/subscribe", subscribeParams(), { name: null }).pipe(
-      Effect.flatMap((response) => response.json),
-      Effect.forkChild,
-    );
-    const verification = yield* Queue.take(deliveries);
-    yield* answer(verification, 200, JSON.stringify({ challenge: verification.body.challenge }));
-    expect(((yield* Fiber.join(unnamed)) as JsonRpcResponse).result?.id).toMatch(/^sub_/);
 
     expect((yield* call("events/poll", { name: "nope", cursor: null })).error).toMatchObject({
       code: -32023,
@@ -452,7 +443,7 @@ it.effect("streams live milestones after active, replays from a cursor and sends
     expect(event).toMatchObject({
       method: "notifications/events/event",
       params: {
-        eventId: expect.stringMatching(/^evt_[\w-]{22}$/),
+        eventId: "b",
         name: "thread.run_settled",
         data: { id: "b", projectId: "project:b" },
         _meta: { "io.modelcontextprotocol/subscriptionId": 7 },
@@ -578,9 +569,10 @@ it.effect("delivers one signed event at a time and advances the cursor once each
     yield* hub.publish(settled("b"));
     const first = yield* Queue.take(deliveries);
     expect(first.body).toMatchObject({ data: { id: "a" }, name: "thread.run_settled" });
-    // TODO(#41158): drop with the bridge for clients predating SEP-3415. An event's webhook-id is its eventId.
-    expect(first.body.eventId).toMatch(/^[A-Za-z0-9_-]+$/);
-    expect(first.headers["webhook-id"]).toBe(first.body.eventId);
+    // Generated per message, never derived from the eventId.
+    expect(first.body.eventId).toBe("a");
+    expect(first.headers["webhook-id"]).toMatch(/^msg_[\w-]+$/);
+    expect(first.headers["webhook-id"]).not.toBe(first.body.eventId);
     expect(first.headers["x-mcp-subscription-id"]).toBe(subscribed.id);
     expect(yield* signedBy(secret, first.headers, first.raw)).toBe(true);
     yield* answer(first, 500);
@@ -662,7 +654,7 @@ it.effect("reports a gap the endpoint never took on the next refresh", () =>
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 
-it.effect("gives each subscription to one URL its own delivery id for an event", () =>
+it.effect("gives each subscription to one URL its own webhook-id for an event", () =>
   Effect.gen(function* () {
     const hub = yield* MilestoneHub.MilestoneHub;
     const { call, deliveries, answer, subscribe, subscribeParams } = yield* serve;
@@ -671,8 +663,7 @@ it.effect("gives each subscription to one URL its own delivery id for an event",
     yield* hub.publish(settled("a"));
     const both = [yield* Queue.take(deliveries), yield* Queue.take(deliveries)];
     for (const delivery of both) {
-      expect(delivery.body.data.id).toBe("a");
-      expect(delivery.headers["webhook-id"]).toBe(delivery.body.eventId);
+      expect(delivery.body.eventId).toBe("a");
       yield* answer(delivery, 200);
     }
     expect(both[0]!.headers["webhook-id"]).not.toBe(both[1]!.headers["webhook-id"]);
