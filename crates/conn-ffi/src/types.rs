@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use conn_client::{ClientError, ConnectionStatus, Credential, commands::format_client_error};
-use conn_contract::{ChatAttachment, OrchestrationV2AppThread};
+use conn_contract::{
+    ChatAttachment, OrchestrationV2AppThread, OrchestrationV2ProviderFailureClass,
+    OrchestrationV2ShellThreadStatus,
+};
 use conn_state::{
     EntryTiming, ItemStatus, PLAN_PREVIEW_MAX_LINES, SecretRequestStatus, ShellState,
     ThreadActivity, ThreadShell, ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus,
@@ -135,6 +138,12 @@ pub struct FfiThreadSummary {
     pub is_subagent: bool,
     pub pinned: bool,
     pub unread: bool,
+    /// The provider's error (`lastError`) while the thread has failed; `None` otherwise.
+    /// Conn mobile shows it as a third row line (`ThreadListV2Row`).
+    pub failure_message: Option<String>,
+    /// The failure is a usage limit (`lastErrorClass: usage_limit`), which mobile shows as a
+    /// warning ("limited") instead of an error.
+    pub usage_limited: bool,
 }
 
 /// Point-in-time shell snapshot emitted to [`crate::CoreListener::on_shell`].
@@ -692,7 +701,30 @@ fn map_thread_summary(shell: &ShellState, thread: &ThreadShell, settled: bool) -
         is_subagent: ShellState::is_subagent(thread),
         pinned: is_pinned(thread),
         unread: has_unseen_completion(thread),
+        failure_message: failure_message(thread),
+        usage_limited: is_usage_limited(thread),
     }
+}
+
+/// `lastError` while the thread has failed, like Conn mobile's `showsError` in `ThreadListV2Row`.
+fn failure_message(thread: &ThreadShell) -> Option<String> {
+    if thread.status != OrchestrationV2ShellThreadStatus::Failed {
+        return None;
+    }
+    thread
+        .last_error
+        .as_ref()
+        .and_then(Option::as_deref)
+        .and_then(non_empty_str)
+}
+
+/// Mobile's `resolveThreadListV2Status`: a failure of class `usage_limit` is "limited".
+fn is_usage_limited(thread: &ThreadShell) -> bool {
+    thread.status == OrchestrationV2ShellThreadStatus::Failed
+        && matches!(
+            thread.last_error_class,
+            Some(Some(OrchestrationV2ProviderFailureClass::UsageLimit))
+        )
 }
 
 fn entry_duration_ms(timing: Option<&EntryTiming>) -> Option<u64> {
@@ -1757,6 +1789,90 @@ mod tests {
             "lastVisitedAt": last_visited_at,
             "deletedAt": null
         })
+    }
+
+    #[test]
+    fn thread_summary_carries_the_failure_message_only_while_failed() {
+        let thread = |id: &str, status: &str, error: &str, class: &str| {
+            let mut json = thread_shell_json(
+                id,
+                "p-active",
+                id,
+                "2026-11-22T12:00:00Z",
+                status,
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            json["lastError"] = json!(error);
+            json["lastErrorClass"] = json!(class);
+            json
+        };
+        let item: OrchestrationV2ShellStreamItem = serde_json::from_value(json!({
+            "kind": "snapshot",
+            "snapshot": {
+                "schemaVersion": 1,
+                "snapshotSequence": 1,
+                "projects": [{
+                    "id": "p-active",
+                    "title": "Conn",
+                    "workspaceRoot": "/tmp/conn",
+                    "defaultModelSelection": null,
+                    "scripts": [],
+                    "createdAt": "2026-11-20T00:00:00Z",
+                    "updatedAt": "2026-11-20T00:00:00Z",
+                    "archivedAt": null
+                }],
+                "threads": [
+                    thread("t-failed", "failed", "Model claude-x is not available", "provider_error"),
+                    thread("t-limited", "failed", "Usage limit reached", "usage_limit"),
+                    thread("t-recovered", "idle", "Old error", "provider_error"),
+                    thread("t-blank", "failed", "  ", "unknown"),
+                ],
+                "archivedThreads": []
+            }
+        }))
+        .unwrap_or_else(|e| panic!("deserialize shell snapshot: {e}"));
+        let mut shell = ShellState::default();
+        shell.apply(item);
+
+        let snap = build_shell_snapshot(&shell);
+        let row = |id: &str| {
+            snap.threads
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap_or_else(|| panic!("row {id} missing from shell snapshot"))
+        };
+        assert_eq!(
+            row("t-failed").failure_message.as_deref(),
+            Some("Model claude-x is not available"),
+            "a failed thread shows its provider error"
+        );
+        assert!(
+            !row("t-failed").usage_limited,
+            "a provider error is not a usage limit"
+        );
+        assert_eq!(
+            row("t-limited").failure_message.as_deref(),
+            Some("Usage limit reached"),
+            "a usage-limited thread shows its error"
+        );
+        assert!(
+            row("t-limited").usage_limited,
+            "usage_limit marks the row limited"
+        );
+        assert_eq!(
+            row("t-recovered").failure_message,
+            None,
+            "a thread that is no longer failed hides its old error"
+        );
+        assert_eq!(
+            row("t-blank").failure_message,
+            None,
+            "a blank error shows nothing"
+        );
     }
 
     #[test]

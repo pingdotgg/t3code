@@ -236,7 +236,7 @@ struct ThreadView: View {
                     }
                     Button {
                     } label: {
-                        Label("Git", systemImage: "arrow.triangle.branch")
+                        Label("Git controls", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                     }
                     Button {
                     } label: {

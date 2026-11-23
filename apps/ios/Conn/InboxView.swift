@@ -437,13 +437,16 @@ private struct ThreadListV2RowView: View {
             }
             .padding(.leading, iconSize + titleGap)
 
-            // Line 3 (failed threads only): red error line as in Expo
-            if thread.activity == .failed {
-                Text("Failed")
+            // Line 3 (failed threads only): the provider's error, as in Expo's ThreadListV2Row
+            // (`text-xs` = 13pt, same gap as line 2; a usage limit shows as a warning).
+            if let failureMessage = thread.failureMessage {
+                Text(failureMessage)
                     .font(.system(size: 13))
-                    .foregroundStyle(theme.destructive)
+                    .foregroundStyle(thread.usageLimited ? theme.warning : theme.destructive)
                     .lineLimit(1)
+                    .truncationMode(.tail)
                     .padding(.leading, iconSize + titleGap)
+                    .accessibilityIdentifier("inbox.threadFailureMessage")
             }
         }
         .padding(.horizontal, 16)

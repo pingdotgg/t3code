@@ -16,6 +16,12 @@ final class ConnSpikeUITests: XCTestCase {
         let expectedThreadTitle = env["CONN_THREAD_TITLE"] ?? "Inspect main.rs and greeting"
         let expectedReplySnippet = env["CONN_REPLY_SNIPPET"] ?? "main.rs"
         let runMutations = env["CONN_SKIP_MUTATIONS"] != "1"
+        // CONN_APPEARANCE=dark|light captures the dark/light comparison pairs.
+        switch env["CONN_APPEARANCE"] {
+        case "dark": XCUIDevice.shared.appearance = .dark
+        case "light": XCUIDevice.shared.appearance = .light
+        default: break
+        }
 
         let app = XCUIApplication()
         app.launchArguments = ["--reset-session"]

@@ -6321,10 +6321,28 @@ public struct FfiThreadSummary: Equatable, Hashable {
     public var isSubagent: Bool
     public var pinned: Bool
     public var unread: Bool
+    /**
+     * The provider's error (`lastError`) while the thread has failed; `None` otherwise.
+     * Conn mobile shows it as a third row line (`ThreadListV2Row`).
+     */
+    public var failureMessage: String?
+    /**
+     * The failure is a usage limit (`lastErrorClass: usage_limit`), which mobile shows as a
+     * warning ("limited") instead of an error.
+     */
+    public var usageLimited: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(id: String, projectId: String, title: String, branch: String?, activity: FfiThreadActivity, updatedAt: String?, settled: Bool, isSubagent: Bool, pinned: Bool, unread: Bool) {
+    public init(id: String, projectId: String, title: String, branch: String?, activity: FfiThreadActivity, updatedAt: String?, settled: Bool, isSubagent: Bool, pinned: Bool, unread: Bool, 
+        /**
+         * The provider's error (`lastError`) while the thread has failed; `None` otherwise.
+         * Conn mobile shows it as a third row line (`ThreadListV2Row`).
+         */failureMessage: String?, 
+        /**
+         * The failure is a usage limit (`lastErrorClass: usage_limit`), which mobile shows as a
+         * warning ("limited") instead of an error.
+         */usageLimited: Bool) {
         self.id = id
         self.projectId = projectId
         self.title = title
@@ -6335,6 +6353,8 @@ public struct FfiThreadSummary: Equatable, Hashable {
         self.isSubagent = isSubagent
         self.pinned = pinned
         self.unread = unread
+        self.failureMessage = failureMessage
+        self.usageLimited = usageLimited
     }
 
     
@@ -6362,7 +6382,9 @@ public struct FfiConverterTypeFfiThreadSummary: FfiConverterRustBuffer {
                 settled: FfiConverterBool.read(from: &buf), 
                 isSubagent: FfiConverterBool.read(from: &buf), 
                 pinned: FfiConverterBool.read(from: &buf), 
-                unread: FfiConverterBool.read(from: &buf)
+                unread: FfiConverterBool.read(from: &buf), 
+                failureMessage: FfiConverterOptionString.read(from: &buf), 
+                usageLimited: FfiConverterBool.read(from: &buf)
         )
     }
 
@@ -6377,6 +6399,8 @@ public struct FfiConverterTypeFfiThreadSummary: FfiConverterRustBuffer {
         FfiConverterBool.write(value.isSubagent, into: &buf)
         FfiConverterBool.write(value.pinned, into: &buf)
         FfiConverterBool.write(value.unread, into: &buf)
+        FfiConverterOptionString.write(value.failureMessage, into: &buf)
+        FfiConverterBool.write(value.usageLimited, into: &buf)
     }
 }
 
