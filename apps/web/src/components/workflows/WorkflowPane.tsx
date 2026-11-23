@@ -70,7 +70,7 @@ export default function WorkflowPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b ps-2 pe-2">
+      <div className="flex h-(--workspace-topbar-height) shrink-0 items-center gap-1 border-b border-divider ps-2 pe-2">
         <div
           role="tablist"
           aria-label={gt("Open beside the run")}
@@ -82,17 +82,18 @@ export default function WorkflowPane({
                 "thread" in tab ? `thread:${tab.env ?? ""}:${tab.thread}` : `${tab.kind}:${tab.key}`
               }
               className={cn(
-                "flex max-w-56 min-w-0 shrink-0 items-center rounded-md text-xs",
+                "flex max-w-56 min-w-0 shrink-0 items-center rounded-control text-meta",
                 index === activeIndex
-                  ? "bg-muted text-foreground"
+                  ? "surface-selected text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="xs"
                 role="tab"
                 aria-selected={index === activeIndex}
-                className="flex min-w-0 cursor-pointer items-center gap-1.5 py-1 ps-2 pe-1"
+                className="min-w-0"
                 onClick={() => onChange(openWorkflowPaneTab(state, tab))}
               >
                 {"thread" in tab ? (
@@ -105,7 +106,7 @@ export default function WorkflowPane({
                 ) : (
                   <ReferenceTabLabel reference={referenceOf(tab)} fallback={tab.kind} />
                 )}
-              </button>
+              </Button>
               <Button
                 variant="ghost"
                 size="icon-xs"
@@ -153,7 +154,7 @@ export default function WorkflowPane({
             reference={activeReference}
           />
         ) : (
-          <p className="p-3 text-xs text-muted-foreground" role="status">
+          <p className="p-3 text-meta text-muted-foreground" role="status">
             {detail.data === null ? gt("Loading…") : gt("This run no longer lists it.")}
           </p>
         )}

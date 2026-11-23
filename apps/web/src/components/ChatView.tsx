@@ -979,7 +979,7 @@ export default function ChatView(props: ChatViewProps) {
     const workflowRun = activeThread?.workflowRun ?? null;
     if (workflowRun !== null) {
       return {
-        title: `${workflowRun.workflow} · ${workflowRun.step}`,
+        title: `${workflowRun.workflow}: ${workflowRun.step}`,
         relation: { label: gt("Step of the workflow run"), actionLabel: gt("Open run") },
         open: (): void => {
           void navigate({

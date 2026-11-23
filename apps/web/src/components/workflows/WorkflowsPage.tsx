@@ -16,7 +16,7 @@ import {
   usePrimaryEnvironmentId,
 } from "../../state/environments";
 import { useWorkflowEnvironmentIds } from "./useWorkflowEnvironmentIds";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SidebarInset } from "../ui/sidebar";
 import {
@@ -137,28 +137,25 @@ export function WorkflowsPage() {
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Below md there is room for one thing, and an open pane is that thing. */}
         <div
-          className={cn(
-            "min-h-0 min-w-0 flex-1 flex-col bg-background",
-            paneOpen ? "hidden md:flex" : "flex",
-          )}
+          className={cn("min-h-0 min-w-0 flex-1 flex-col", paneOpen ? "hidden md:flex" : "flex")}
         >
           <WorkspacePageHeader
             electron={isElectron}
             reserveNativeControls={!paneOpen}
-            className="border-b"
+            className="border-b border-divider"
           >
             <WorkspaceBreadcrumb ariaLabel={gt("Workflows breadcrumb")} className="flex-1">
               <WorkspaceBreadcrumbItem current={!editing}>
                 {editing ? (
-                  <button
-                    type="button"
+                  <InlineButton
+                    tone="muted"
                     onClick={() => go({ ...env, ...run })}
-                    className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    className="min-w-0 max-w-full"
                   >
                     <WorkspaceBreadcrumbText>
                       <T>Workflows</T>
                     </WorkspaceBreadcrumbText>
-                  </button>
+                  </InlineButton>
                 ) : (
                   <h1 className="truncate">
                     <T>Workflows</T>
@@ -176,15 +173,15 @@ export function WorkflowsPage() {
                         <T context="workflow definition files">Definitions</T>
                       </h1>
                     ) : (
-                      <button
-                        type="button"
+                      <InlineButton
+                        tone="muted"
                         onClick={() => openDefinitions(null)}
-                        className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        className="min-w-0 max-w-full"
                       >
                         <WorkspaceBreadcrumbText>
                           <T context="workflow definition files">Definitions</T>
                         </WorkspaceBreadcrumbText>
-                      </button>
+                      </InlineButton>
                     )}
                   </WorkspaceBreadcrumbItem>
                 </>
@@ -240,7 +237,7 @@ export function WorkflowsPage() {
               <div ref={setFileActions} className="flex shrink-0 items-center gap-2" />
             )}
             {environmentId === null || editing ? null : (
-              <Button size="sm" variant="outline" onClick={() => openDefinitions(null)}>
+              <Button size="sm" variant="secondary" onClick={() => openDefinitions(null)}>
                 <FileCode2Icon />
                 <T context="workflow definition files">Definitions</T>
               </Button>
@@ -249,7 +246,7 @@ export function WorkflowsPage() {
           {editing && fileEnvironmentId !== null ? (
             <Suspense
               fallback={
-                <p className="p-6 text-sm text-muted-foreground" role="status">
+                <p className="p-6 text-body text-muted-foreground" role="status">
                   <T>Loading the editor…</T>
                 </p>
               }
@@ -312,7 +309,7 @@ export function WorkflowsPage() {
         {environmentId === null || !paneOpen ? null : (
           <aside
             aria-label={gt("Beside the run")}
-            className="min-h-0 w-full shrink-0 bg-background md:w-1/2 md:max-w-2xl md:border-s"
+            className="min-h-0 w-full shrink-0 md:w-1/2 md:max-w-2xl md:border-s md:border-divider"
           >
             <WorkflowPane
               environmentId={environmentId}

@@ -12589,17 +12589,16 @@
   "3d9761e81798fcd8": "Fortsetzen",
   "8cebd63fc4c967d5": "Nur der fehlgeschlagene Schritt läuft erneut; zuvor Abgeschlossenes bleibt erhalten.",
   "bc1e0a2a0f1e9552": "Braucht dich",
-  "a812f51e970740f1": [
-    "gefragt",
+  "694f59372930958b": [
+    "asked",
     " ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
-    },
-    " ",
-    "· die Ausführung wartet auf dich"
+    }
   ],
+  "28262f82d9fb00e6": "the run waits for you",
   "02dfe6c63fd0b8a1": "Begründung hinzufügen",
   "19abd94828a3bdbc": "Erst den Agenten fragen",
   "a18721fa8f328361": "Braucht dich",
@@ -12656,7 +12655,7 @@
   ],
   "5d8d278ff828102d": "Alle Workflows",
   "39459da07479f482": "Agent",
-  "7741243632056b81": "{step} · Transkript",
+  "e5203745e46dfd79": "{step} transcript",
   "c512071143a5ba32": "Diesen Thread gibt es nicht mehr.",
   "ed169d23683fb6ac": "Thread wird geladen…",
   "290e0ab40b87dc17": "Workflows-Breadcrumb",

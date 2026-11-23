@@ -12598,17 +12598,16 @@
   "3d9761e81798fcd8": "Resume",
   "8cebd63fc4c967d5": "Only the failed step runs again; what finished before it is kept.",
   "bc1e0a2a0f1e9552": "Needs you",
-  "a812f51e970740f1": [
+  "694f59372930958b": [
     "asked",
     " ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
-    },
-    " ",
-    "· the run waits for you"
+    }
   ],
+  "28262f82d9fb00e6": "the run waits for you",
   "02dfe6c63fd0b8a1": "Add a reason",
   "19abd94828a3bdbc": "Ask the agent first",
   "a18721fa8f328361": "Needs you",
@@ -12642,7 +12641,7 @@
     "This environment has no run with that link.",
     " ",
     {
-      "t": "button",
+      "t": "InlineButton",
       "i": 1,
       "c": "Back to the runs"
     }
@@ -12651,21 +12650,21 @@
     "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one under",
     " ",
     {
-      "t": "button",
+      "t": "InlineButton",
       "i": 1,
       "c": "Definitions"
     },
     ", or ask an agent to.",
     " ",
     {
-      "t": "a",
+      "t": "InlineButton",
       "i": 2,
       "c": "Read the guide"
     }
   ],
   "5d8d278ff828102d": "All workflows",
   "39459da07479f482": "Agent",
-  "7741243632056b81": "{step} · transcript",
+  "e5203745e46dfd79": "{step} transcript",
   "c512071143a5ba32": "This thread is no longer there.",
   "ed169d23683fb6ac": "Loading the thread…",
   "290e0ab40b87dc17": "Workflows breadcrumb",

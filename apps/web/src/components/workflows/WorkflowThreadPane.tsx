@@ -24,7 +24,7 @@ export function WorkflowThreadTabLabel({ threadRef }: { readonly threadRef: Scop
   const step = shell?.workflowRun?.step;
   return step === undefined
     ? (shell?.title ?? gt("Agent", { $context: "fallback title of a coding agent's thread" }))
-    : gt("{step} · transcript", { step, $context: "tab: the agent thread of a workflow step" });
+    : gt("{step} transcript", { step, $context: "tab: the agent thread of a workflow step" });
 }
 
 /**
@@ -44,7 +44,7 @@ export default function WorkflowThreadPane({ threadRef }: { readonly threadRef: 
     runShellCommand: openFull,
   };
   return shell === null ? (
-    <p className="p-3 text-xs text-muted-foreground" role="status">
+    <p className="p-3 text-meta text-muted-foreground" role="status">
       {snapshotLoaded ? gt("This thread is no longer there.") : gt("Loading the thread…")}
     </p>
   ) : (

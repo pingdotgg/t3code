@@ -48,7 +48,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { Button } from "../ui/button";
+import { Button, ContentButton, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
@@ -144,7 +144,7 @@ export function WorkflowChip({ name }: { readonly name: string }) {
     <span
       aria-hidden
       className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-sm text-4xs leading-none font-bold",
+        "grid size-4 shrink-0 place-items-center rounded-badge text-micro leading-none",
         CHIP_TONES[chip.tone],
       )}
     >
@@ -168,7 +168,7 @@ export function WorkflowStateWord({ node }: { readonly node: WorkflowRunNode }) 
   return (
     <span
       className={cn(
-        "flex shrink-0 items-center gap-1 text-xs font-medium whitespace-nowrap",
+        "flex shrink-0 items-center gap-1 text-meta whitespace-nowrap",
         WORKFLOW_TONE_CLASS[state.tone],
       )}
     >
@@ -453,18 +453,16 @@ export function WorkflowRunFeed({
             <T context="noun, the list of workflow runs">Runs</T>
           </Button>
           {parent === null ? null : (
-            <button
-              type="button"
-              className="block cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              onClick={() => onSelect(parent.runId)}
-            >
-              <T>
-                Part of <Var>{parent.title}</Var>
-              </T>
-            </button>
+            <div className="text-meta">
+              <InlineButton tone="muted" onClick={() => onSelect(parent.runId)}>
+                <T>
+                  Part of <Var>{parent.title}</Var>
+                </T>
+              </InlineButton>
+            </div>
           )}
           <div className="flex items-center gap-2">
-            <h2 className="min-w-0 flex-1 text-base font-semibold break-words">{run.title}</h2>
+            <h2 className="min-w-0 flex-1 text-title break-words">{run.title}</h2>
             <WorkflowStateWord node={node} />
             {ended ? null : (
               <Button
@@ -479,10 +477,11 @@ export function WorkflowRunFeed({
               </Button>
             )}
           </div>
-          <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-            <WorkflowChip name={run.workflow} />
-            <span>{run.workflow}</span>
-            <span aria-hidden>·</span>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <WorkflowChip name={run.workflow} />
+              <span>{run.workflow}</span>
+            </span>
             <span>
               <T>
                 started{" "}
@@ -492,22 +491,16 @@ export function WorkflowRunFeed({
               </T>
             </span>
             {run.status === "paused" ? null : (
-              <>
-                <span aria-hidden>·</span>
-                <span>
-                  {ended
-                    ? gt("took {duration}", { duration: formatDuration(ranMs) })
-                    : gt("{duration} so far", { duration: formatDuration(ranMs) })}
-                </span>
-              </>
+              <span>
+                {ended
+                  ? gt("took {duration}", { duration: formatDuration(ranMs) })
+                  : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+              </span>
             )}
             {run.retired ? (
-              <>
-                <span aria-hidden>·</span>
-                <span>
-                  <T>its version is no longer registered</T>
-                </span>
-              </>
+              <span>
+                <T>its version is no longer registered</T>
+              </span>
             ) : null}
           </p>
           {references.length === 0 ? null : (
@@ -526,15 +519,15 @@ export function WorkflowRunFeed({
         (feed.length === 0 && run.status === "paused" && loose.length === 0) ? (
           <>
             {detail.error ? (
-              <p className="mt-4 text-xs text-destructive">{detail.error}</p>
+              <p className="mt-4 text-meta text-destructive">{detail.error}</p>
             ) : feed === null ? (
-              <p className="mt-4 text-xs text-muted-foreground" role="status">
+              <p className="mt-4 text-meta text-muted-foreground" role="status">
                 <T>Loading steps…</T>
               </p>
             ) : null}
             {/* A question the run already asks is answerable without its step history. */}
             {run.status === "paused" ? (
-              <div className="mt-4 border-t border-border pt-4">
+              <div className="mt-4 border-t border-divider pt-4">
                 <div className="max-w-2xl">{pause(null, run.pauses, run.detail)}</div>
               </div>
             ) : null}
@@ -569,7 +562,7 @@ export function WorkflowRunFeed({
             <section
               ref={panel}
               aria-label={gt("What happened")}
-              className="min-w-0 flex-1 border-t border-border pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:ps-6 @2xl/feed:pt-1"
+              className="min-w-0 flex-1 border-t border-divider pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:border-divider @2xl/feed:ps-6 @2xl/feed:pt-1"
             >
               {shownBeat !== undefined ? (
                 // Keyed by the step: a reason typed for one question must not follow to the next.
@@ -604,12 +597,12 @@ export function WorkflowRunFeed({
                     sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
                   />
                   {run.status !== "completed" && run.detail ? (
-                    <p className="mt-3 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
+                    <p className="mt-3 text-body break-words whitespace-pre-wrap">{run.detail}</p>
                   ) : null}
                   <ResultLines lines={resultLines} />
                 </FeedCard>
               ) : (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   <T>Nothing yet.</T>
                 </p>
               )}
@@ -765,86 +758,101 @@ function TimelineRow({
 }) {
   const live = tone === "working" || tone === "input";
   return (
-    <button
-      type="button"
+    <ContentButton
       aria-current={selected}
-      className={cn(
-        "group/row relative flex w-full min-w-0 cursor-pointer items-center gap-2.5 pe-2 text-left",
-        sub ? "py-1 ps-1" : "py-1.5",
-        enters ? "motion-safe:animate-step-in" : null,
-      )}
+      className="group/row relative block w-full min-w-0 cursor-pointer text-left"
       onClick={onPick}
     >
-      {/* The highlight starts past the mark, so the rail and the branch stay whole. */}
       <span
-        aria-hidden
         className={cn(
-          "pointer-events-none absolute inset-y-0 end-0 rounded-lg",
-          "start-6",
-          selected ? "bg-accent" : "group-hover/row:bg-accent/60",
+          "relative flex w-full min-w-0 items-center gap-2.5 pe-2 group-focus-visible/row:ring-2 group-focus-visible/row:ring-ring/70 group-focus-visible/row:ring-inset",
+          sub ? "py-1 ps-1" : "py-1.5",
+          enters ? "motion-safe:animate-step-in" : null,
         )}
-      />
-      {sub ? (
-        <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
-          <span
-            className={cn(
-              "size-2.5 rounded-full border-2",
-              tone === "done"
-                ? "border-transparent bg-muted-foreground/45"
-                : tone === "failed"
-                  ? "border-destructive bg-destructive"
-                  : tone === "input"
-                    ? "border-warning bg-warning"
-                    : tone === "working"
-                      ? "border-info bg-info"
-                      : "border-muted-foreground/50 bg-background",
-            )}
-          />
-        </span>
-      ) : (
-        <StepMark tone={tone} pulse={enters} draw={draw} />
-      )}
-      {/* Read left to right: the step, then what came of it. The name keeps its room. */}
-      <span className="relative flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="flex max-w-[60%] min-w-0 shrink-0 items-baseline gap-1.5">
-          {lead === undefined ? null : <span className="self-center">{lead}</span>}
-          <span
-            className={cn(
-              "min-w-0 truncate text-sm",
-              live || selected || current ? "font-medium text-foreground" : "text-foreground/75",
-            )}
-          >
-            {name}
+      >
+        {/* The highlight starts past the mark, so the rail and the branch stay whole. */}
+        <span
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute inset-y-0 end-0 rounded-row",
+            "start-6",
+            selected ? "surface-selected" : "group-hover/row:surface-ghost-hover",
+          )}
+        />
+        {sub ? (
+          <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
+            <svg viewBox="0 0 12 12" className="size-2.5 overflow-visible">
+              <circle
+                cx="6"
+                cy="6"
+                r="4.5"
+                strokeWidth="2"
+                className={cn(
+                  tone === "done"
+                    ? "stroke-transparent fill-muted-foreground/45"
+                    : tone === "failed"
+                      ? "stroke-destructive fill-destructive"
+                      : tone === "input"
+                        ? "stroke-warning fill-warning"
+                        : tone === "working"
+                          ? "stroke-info fill-info"
+                          : "stroke-muted-foreground/50 fill-background",
+                )}
+              />
+            </svg>
           </span>
+        ) : (
+          <StepMark tone={tone} pulse={enters} draw={draw} />
+        )}
+        {/* Read left to right: the step, then what came of it. The name keeps its room. */}
+        <span className="relative flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="flex max-w-[60%] min-w-0 shrink-0 items-baseline gap-1.5">
+            {lead === undefined ? null : <span className="self-center">{lead}</span>}
+            <span
+              className={cn(
+                "min-w-0 truncate",
+                live || selected || current
+                  ? "text-label text-foreground"
+                  : "text-body text-foreground/75",
+              )}
+            >
+              {name}
+            </span>
+          </span>
+          {note || aside ? (
+            <span
+              className={cn(
+                "min-w-0 truncate text-meta",
+                asideTone === "failed" ? "text-destructive" : "text-muted-foreground",
+              )}
+            >
+              {aside ?? note}
+            </span>
+          ) : null}
         </span>
-        {note || aside ? (
+        {verb ? (
           <span
-            className={cn(
-              "min-w-0 truncate text-xs",
-              asideTone === "failed" ? "text-destructive" : "text-muted-foreground",
-            )}
+            className={cn("relative max-w-[40%] shrink-0 truncate text-meta", VERB_TONE[verbTone])}
           >
-            {aside ?? note}
+            {verb}
           </span>
         ) : null}
-      </span>
-      {verb ? (
-        <span className={cn("relative max-w-[40%] shrink-0 truncate text-xs", VERB_TONE[verbTone])}>
-          {verb}
+        <span className="relative min-w-12 shrink-0 text-right text-meta text-muted-foreground tabular-nums">
+          {duration ?? ""}
         </span>
-      ) : null}
-      <span className="relative min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-        {duration ?? ""}
+        {/* Points at the pane beside the timeline; no background moves on its own. */}
+        <span
+          aria-hidden
+          className="relative hidden w-3 shrink-0 place-items-center @2xl/feed:grid"
+        >
+          {selected || current ? (
+            <ChevronRightIcon
+              className={cn("size-3", selected ? "text-foreground" : "text-muted-foreground")}
+            />
+          ) : null}
+        </span>
       </span>
-      {/* Points at the pane beside the timeline; no background moves on its own. */}
-      <span aria-hidden className="relative hidden w-3 shrink-0 place-items-center @2xl/feed:grid">
-        {selected || current ? (
-          <ChevronRightIcon
-            className={cn("size-3", selected ? "text-foreground" : "text-muted-foreground")}
-          />
-        ) : null}
-      </span>
-    </button>
+    </ContentButton>
   );
 }
 
@@ -994,9 +1002,9 @@ function WorkflowTimeline({
             draw={row.endMs > openedAtMs}
             name={
               names.length <= 2
-                ? names.join(" · ")
+                ? names.join(", ")
                 : gt("{names} and {count} more", {
-                    names: names.slice(0, 2).join(" · "),
+                    names: names.slice(0, 2).join(", "),
                     count: names.length - 2,
                   })
             }
@@ -1045,18 +1053,18 @@ function WorkflowTimeline({
               />
               <span
                 className={cn(
-                  "min-w-0 flex-1 truncate text-sm",
-                  running > 0 ? "font-medium" : "text-muted-foreground",
+                  "min-w-0 flex-1 truncate",
+                  running > 0 ? "text-label" : "text-body text-muted-foreground",
                 )}
               >
                 {gt("{count} in parallel", { count: row.beats.length })}
               </span>
               {working ? (
-                <span className="text-xs text-info-foreground">
+                <span className="text-meta text-info-foreground">
                   {gt("{count} running", { count: running })}
                 </span>
               ) : null}
-              <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+              <span className="min-w-12 shrink-0 text-right text-meta text-muted-foreground tabular-nums">
                 {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
               </span>
               <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
@@ -1177,7 +1185,7 @@ function WorkflowTimeline({
         <div className="flex items-start gap-2.5">
           <span
             aria-hidden
-            className="ms-[9px] block h-5 w-0 border-s-2 border-dashed border-border"
+            className="ms-[9px] block h-5 w-0 border-s-2 border-dashed border-muted-foreground/30"
           />
         </div>
       ) : null}
@@ -1341,7 +1349,7 @@ function WorkflowBeatRow({
 const CARD_TONE = {
   plain: "",
   quiet: "",
-  ask: "rounded-xl border border-warning/30 bg-warning-surface px-3 py-2.5",
+  ask: "surface-tint [--surface-tint:var(--warning)] rounded-card px-3 py-2.5",
   failed: "",
   done: "",
 } as const;
@@ -1386,11 +1394,13 @@ function CardHead({
         {mark === null || mark === undefined ? null : (
           <span className="grid h-6 shrink-0 place-items-center">{mark}</span>
         )}
-        <div className="min-w-0 flex-1 truncate text-base leading-6 font-semibold">{name}</div>
+        <div className="min-w-0 flex-1 truncate text-title leading-6">{name}</div>
         {action === undefined || action === null ? null : <div className="shrink-0">{action}</div>}
       </div>
       {sub === undefined || sub === null || sub === "" ? null : (
-        <div className="mt-0.5 text-xs break-words text-muted-foreground">{sub}</div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-meta break-words text-muted-foreground">
+          {sub}
+        </div>
       )}
     </div>
   );
@@ -1404,7 +1414,7 @@ function ResultLines({
   if (lines.length === 0) return null;
   if (lines.every((line) => line.label === null)) {
     return (
-      <div className="mt-3 space-y-1 text-sm">
+      <div className="mt-3 space-y-1 text-body">
         {lines.map((line) => (
           <p key={line.value} className="break-words whitespace-pre-wrap">
             {line.value}
@@ -1423,7 +1433,7 @@ function Facts({
   readonly facts: ReadonlyArray<{ readonly label: string; readonly value: string }>;
 }) {
   return (
-    <dl className="mt-3 grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+    <dl className="mt-3 grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-body">
       {facts.map((fact) => (
         <div key={fact.label} className="contents">
           <dt className="truncate text-muted-foreground">{fact.label}</dt>
@@ -1456,10 +1466,10 @@ function WorkflowQuickStepsCard({ row }: { readonly row: WorkflowQuickSteps }) {
   const gt = useGT();
   return (
     <FeedCard label={gt("Quick steps")}>
-      <ul className="space-y-1.5 text-sm">
+      <ul className="space-y-1.5 text-body">
         {row.steps.map((step) => (
           <li key={step.name} className="break-words">
-            <span className="font-semibold">{step.name}</span>
+            <span className="text-label">{step.name}</span>
             <ResultLines lines={workflowResultLines(step.result)} />
           </li>
         ))}
@@ -1489,7 +1499,7 @@ function WorkflowBeatCard({
   const m = useMessages();
   const under = beat.status === "running";
   const length = formatDuration(elapsedOf(beat));
-  const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
+  const tries = beat.attempts > 1 ? <span>{nthTry(beat.attempts, m)}</span> : null;
   switch (beat.kind) {
     case "agent":
       return (
@@ -1503,15 +1513,20 @@ function WorkflowBeatCard({
     case "ask": {
       const answer = workflowAnswer(beat.result);
       if (answer === null)
-        return <Note label={beat.name}>{`${gt("nobody answered")} · ${length}`}</Note>;
+        return (
+          <Note label={beat.name}>
+            <span>{gt("nobody answered")}</span>
+            <span>{length}</span>
+          </Note>
+        );
       return (
         <FeedCard label={beat.name}>
           <CardHead mark={null} name={beat.name} sub={length} />
-          <p className="mt-3 text-sm">
+          <p className="mt-3 text-body">
             {answer.reason === null ? (
               <T>
                 You said{" "}
-                <span className="font-semibold">
+                <span className="text-label">
                   <Var>{answer.choice}</Var>
                 </span>
                 .
@@ -1519,7 +1534,7 @@ function WorkflowBeatCard({
             ) : (
               <T>
                 You said{" "}
-                <span className="font-semibold">
+                <span className="text-label">
                   <Var>{answer.choice}</Var>
                 </span>
                 : <Var>{answer.reason}</Var>
@@ -1530,7 +1545,13 @@ function WorkflowBeatCard({
       );
     }
     case "sleep": {
-      if (!under) return <Note label={beat.name}>{`${gt("slept")} · ${length}`}</Note>;
+      if (!under)
+        return (
+          <Note label={beat.name}>
+            <span>{gt("slept")}</span>
+            <span>{length}</span>
+          </Note>
+        );
       const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
       return (
         <FeedCard tone="quiet" label={beat.name}>
@@ -1549,7 +1570,13 @@ function WorkflowBeatCard({
       );
     }
     case "wait":
-      if (!under) return <Note label={beat.name}>{`${gt("waited")} · ${length}`}</Note>;
+      if (!under)
+        return (
+          <Note label={beat.name}>
+            <span>{gt("waited")}</span>
+            <span>{length}</span>
+          </Note>
+        );
       return (
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
@@ -1567,16 +1594,24 @@ function WorkflowBeatCard({
             mark={<WorkflowChip name={beat.childRun?.workflow ?? beat.name} />}
             name={title}
             sub={
-              child === null
-                ? `${beat.childRun?.workflow ?? ""} · ${length}`
-                : `${child.run.workflow} · ${workflowRunNow(child, m)}`
+              child === null ? (
+                <>
+                  {beat.childRun?.workflow ? <span>{beat.childRun.workflow}</span> : null}
+                  <span>{length}</span>
+                </>
+              ) : (
+                <>
+                  <span>{child.run.workflow}</span>
+                  <span>{workflowRunNow(child, m)}</span>
+                </>
+              )
             }
             action={
               <>
                 {child === null ? null : <WorkflowStateWord node={child} />}
                 <Button
                   size="compact"
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => onSelect(beat.childRun?.runId ?? null)}
                 >
                   <T>Open run</T>
@@ -1594,7 +1629,12 @@ function WorkflowBeatCard({
             <CardHead
               mark={<span aria-hidden className="size-1.5 rounded-full bg-info" />}
               name={beat.name}
-              sub={`${gt("running for {duration}", { duration: length })}${tries}`}
+              sub={
+                <>
+                  <span>{gt("running for {duration}", { duration: length })}</span>
+                  {tries}
+                </>
+              }
             />
           </FeedCard>
         );
@@ -1602,7 +1642,8 @@ function WorkflowBeatCard({
       const lines = workflowResultLines(beat.result);
       return (
         <Note label={beat.name} detail={<ResultLines lines={lines} />}>
-          {beat.status === "failed" ? `${gt("failed")} · ${length}` : length}
+          {beat.status === "failed" ? <span>{gt("failed")}</span> : null}
+          <span>{length}</span>
           {tries}
         </Note>
       );
@@ -1652,7 +1693,7 @@ function WorkflowAgentCard({
         : shell?.runtime?.status === "preparing" || shell?.runtime?.status === "starting"
           ? gt("starting")
           : gt("working");
-  const sub = [
+  const subParts = [
     shell === null ? null : formatModelSlugName(shell.modelSelection.model),
     liveWord,
     length,
@@ -1660,9 +1701,7 @@ function WorkflowAgentCard({
     elsewhere
       ? gt("on {environment}", { environment: threadEnvironment?.label ?? threadEnvironmentId })
       : null,
-  ]
-    .filter((part) => part !== null)
-    .join(" · ");
+  ].filter((part): part is string => part !== null);
   return (
     <FeedCard label={beat.name}>
       <CardHead
@@ -1682,10 +1721,12 @@ function WorkflowAgentCard({
           )
         }
         name={beat.name}
-        sub={sub}
+        sub={subParts.map((part) => (
+          <span key={part}>{part}</span>
+        ))}
         action={
           beat.thread === null ? null : threadEnvironment === null ? (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               <T>
                 Thread on <Var>{threadEnvironmentId}</Var>
               </T>
@@ -1706,28 +1747,25 @@ function WorkflowAgentCard({
         }
       />
       {beat.status === "failed" && beat.detail ? (
-        <p className="mt-3 flex gap-1.5 text-sm text-destructive">
+        <p className="mt-3 flex gap-1.5 text-body text-destructive">
           <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           <span className="break-words whitespace-pre-wrap">{beat.detail}</span>
         </p>
       ) : null}
       {summary.said === null ? null : (
         // Set off from the head, so headings in the reply read as the agent's, not the page's.
-        <div className="mt-3 border-t border-border/60 pt-3">
+        <div className="mt-3 border-t border-divider pt-3">
           <ChatMarkdown
             text={start !== null && !all ? start : summary.said}
             cwd={undefined}
-            className="text-sm"
+            className="text-body"
           />
           {start !== null ? (
-            <button
-              type="button"
-              aria-expanded={all}
-              className="mt-1 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              onClick={() => setAll(!all)}
-            >
-              {all ? gt("Show less") : gt("Show more")}
-            </button>
+            <div className="mt-1 text-meta">
+              <InlineButton tone="muted" aria-expanded={all} onClick={() => setAll(!all)}>
+                {all ? gt("Show less") : gt("Show more")}
+              </InlineButton>
+            </div>
           ) : null}
         </div>
       )}
@@ -1778,8 +1816,11 @@ function WorkflowPauseCard({
         }
         sub={
           <>
-            {attempts > 0 ? `${nthTry(attempts, m)} · ` : null}
-            <RelativeLabel value={run.updatedAt} /> · {next}
+            {attempts > 0 ? <span>{nthTry(attempts, m)}</span> : null}
+            <span>
+              <RelativeLabel value={run.updatedAt} />
+            </span>
+            <span>{next}</span>
           </>
         }
         action={
@@ -1788,9 +1829,9 @@ function WorkflowPauseCard({
           </Button>
         }
       />
-      {reason ? <p className="mt-3 text-sm break-words whitespace-pre-wrap">{reason}</p> : null}
+      {reason ? <p className="mt-3 text-body break-words whitespace-pre-wrap">{reason}</p> : null}
       {kept ? (
-        <p className="mt-2 text-xs text-muted-foreground">
+        <p className="mt-2 text-meta text-muted-foreground">
           <T>Only the failed step runs again; what finished before it is kept.</T>
         </p>
       ) : null}
@@ -1849,8 +1890,8 @@ function WorkflowQuestionCard({
   return (
     <FeedCard tone="ask" label={view.title} reveal>
       {inline ? null : (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
-          <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>
+        <p className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+          <span className={cn("text-label", WORKFLOW_TONE_CLASS.input)}>
             <T context="the workflow run waits on a person">Needs you</T>
           </span>
           <span>
@@ -1858,24 +1899,24 @@ function WorkflowQuestionCard({
               asked{" "}
               <Var>
                 <RelativeLabel value={question.askedAt} />
-              </Var>{" "}
-              · the run waits for you
+              </Var>
             </T>
+          </span>
+          <span>
+            <T>the run waits for you</T>
           </span>
         </p>
       )}
-      <h3 className={cn("text-sm font-semibold break-words", inline ? null : "mt-1")}>
-        {view.title}
-      </h3>
+      <h3 className={cn("text-label break-words", inline ? null : "mt-1")}>{view.title}</h3>
       {view.body ? (
-        <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-sm" />
+        <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-body" />
       ) : null}
       <div className="mt-2.5 flex flex-wrap items-center gap-2">
         {view.choices.map((choice, index) => (
           <Button
             key={choice}
             size="sm"
-            variant={index === 0 ? "default" : "outline"}
+            variant={index === 0 ? "default" : "secondary"}
             disabled={busy || !canAnswer}
             onClick={() => void choose(choice)}
           >
@@ -1884,25 +1925,19 @@ function WorkflowQuestionCard({
         ))}
       </div>
       {reason === null || (question.thread !== null && reachable) ? (
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-meta text-muted-foreground">
           {reason === null ? (
-            <button
-              type="button"
-              disabled={busy}
-              className="cursor-pointer hover:text-foreground disabled:cursor-default"
-              onClick={() => setReason("")}
-            >
+            <InlineButton tone="muted" disabled={busy} onClick={() => setReason("")}>
               <T>Add a reason</T>
-            </button>
+            </InlineButton>
           ) : null}
           {question.thread === null || !reachable ? null : (
-            <button
-              type="button"
-              className="cursor-pointer hover:text-foreground"
+            <InlineButton
+              tone="muted"
               onClick={() => question.thread !== null && onOpenThread(question.thread)}
             >
               <T>Ask the agent first</T>
-            </button>
+            </InlineButton>
           )}
         </div>
       ) : null}

@@ -12588,17 +12588,16 @@
   "3d9761e81798fcd8": "Reprendre",
   "8cebd63fc4c967d5": "Seule l’étape en échec est relancée ; ce qui s’est terminé avant est conservé.",
   "bc1e0a2a0f1e9552": "Vous attendent",
-  "a812f51e970740f1": [
-    "question posée",
+  "694f59372930958b": [
+    "asked",
     " ",
     {
       "i": 1,
       "k": "_gt_value_1",
       "v": "v"
-    },
-    " ",
-    "· l’exécution vous attend"
+    }
   ],
+  "28262f82d9fb00e6": "the run waits for you",
   "02dfe6c63fd0b8a1": "Ajouter une raison",
   "19abd94828a3bdbc": "Demander d’abord à l’agent",
   "a18721fa8f328361": "Vous attendent",
@@ -12655,7 +12654,7 @@
   ],
   "5d8d278ff828102d": "Tous les workflows",
   "39459da07479f482": "Agent",
-  "7741243632056b81": "{step} · transcription",
+  "e5203745e46dfd79": "{step} transcript",
   "c512071143a5ba32": "Ce fil n’existe plus.",
   "ed169d23683fb6ac": "Chargement du fil…",
   "290e0ab40b87dc17": "Fil d’Ariane des workflows",
