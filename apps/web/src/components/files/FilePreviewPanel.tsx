@@ -92,7 +92,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
-import { AttachmentFilePreview } from "./AttachmentFilePreview";
+import { AttachmentFilePreview, clickDownload, streamsDownload } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
@@ -1974,10 +1974,8 @@ function LargeFileActions(props: {
     target: namedClipboardTarget(props.name),
   });
   const [saving, setSaving] = useState(false);
-  const refreshAssetUrl = useAssetUrlRefresh(
-    props.environmentId,
-    largeFileResource(props.threadRef, props.absolutePath, props.draftCwd),
-  );
+  const resource = largeFileResource(props.threadRef, props.absolutePath, props.draftCwd);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
   const showError = (cause: unknown) => {
     toastManager.add({
       type: "error",
@@ -2007,20 +2005,22 @@ function LargeFileActions(props: {
           void (async () => {
             const url = await refreshAssetUrl();
             if (!url) throw new Error(gt("Reconnect to the environment and try again."));
+            const name = props.name.split(/[\\/]/).at(-1) || props.name;
+            if (streamsDownload(resource)) {
+              clickDownload(url, name);
+              return;
+            }
             const response = await fetch(url);
             if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
             const downloadUrl = URL.createObjectURL(await response.blob());
             setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-            const anchor = document.createElement("a");
-            anchor.href = downloadUrl;
-            anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
-            anchor.click();
+            clickDownload(downloadUrl, name);
           })()
             .catch(showError)
             .finally(() => setSaving(false));
         }}
       >
-        <DownloadIcon className="size-3.5" />
+        {saving ? <Spinner aria-hidden /> : <DownloadIcon className="size-3.5" />}
       </FileSurfaceAction>
     </>
   );

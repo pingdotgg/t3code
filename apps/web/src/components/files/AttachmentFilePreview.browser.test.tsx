@@ -2294,7 +2294,7 @@ it.each([
   );
 });
 
-it("hands a saved attachment's download URL to the browser instead of buffering it", async () => {
+it("hands a saved workspace file's download URL to the browser instead of buffering it", async () => {
   refresh.mockReset().mockResolvedValue("https://example.test/big.bin");
   const fetchSpy = vi.fn(async () => new Response(new Uint8Array([0])));
   using _fetch = stubGlobal("fetch", fetchSpy);
@@ -2303,8 +2303,11 @@ it("hands a saved attachment's download URL to the browser instead of buffering 
     <AttachmentFilePreview
       name="big.bin"
       mimeType="application/octet-stream"
-      sizeBytes={60_000_000}
-      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "big" }}
+      sizeBytes={0}
+      asset={{
+        environmentId: EnvironmentId.make("test"),
+        resource: { _tag: "media-file", threadId: ThreadId.make("test"), path: "/repo/big.bin" },
+      }}
     />,
   );
   fetchSpy.mockClear();
@@ -2314,4 +2317,32 @@ it("hands a saved attachment's download URL to the browser instead of buffering 
   expect(anchor.href).toBe("https://example.test/big.bin");
   expect(anchor.download).toBe("big.bin");
   expect(fetchSpy).not.toHaveBeenCalled();
+});
+
+it("shows a spinner while a chat attachment is buffered for saving", async () => {
+  refresh.mockReset().mockResolvedValue("https://example.test/clip.mp4");
+  const gate = Promise.withResolvers<void>();
+  using _fetch = stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      await gate.promise;
+      return new Response(new Uint8Array([0]));
+    }),
+  );
+  using click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  await using screen = await render(
+    <AttachmentFilePreview
+      name="clip.bin"
+      mimeType="application/octet-stream"
+      sizeBytes={60_000_000}
+      asset={{ environmentId: EnvironmentId.make("test"), attachmentId: "clip" }}
+    />,
+  );
+  await screen.getByRole("button", { name: "Save file" }).click();
+  const button = screen.getByRole("button", { name: "Preparing file…" });
+  await expect.element(button.getByRole("status", { includeHidden: true })).toBeInTheDocument();
+  gate.resolve();
+  await vi.waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+  expect((click.mock.contexts[0] as HTMLAnchorElement).href).toMatch(/^blob:/);
+  await expect.element(screen.getByRole("button", { name: "Save file" })).toBeInTheDocument();
 });

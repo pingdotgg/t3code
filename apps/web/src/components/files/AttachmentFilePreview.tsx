@@ -31,6 +31,7 @@ import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Spinner } from "~/components/ui/spinner";
 import { toastManager } from "~/components/ui/toast";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -260,8 +261,7 @@ export function AttachmentFilePreview(props: {
       if (!file) {
         const target = await prepareDownload();
         if (!target) throw new Error(gt("Reconnect to the environment and try again."));
-        // Browsers stream an attachment URL into their own download manager right away.
-        if (!isElectron && downloadResource?.disposition === "attachment") {
+        if (downloadResource && streamsDownload(downloadResource)) {
           clickDownload(target, props.name);
           return;
         }
@@ -494,7 +494,7 @@ export function AttachmentFilePreview(props: {
             disabled={saving}
             onPress={save}
           >
-            <DownloadIcon className="size-3.5" />
+            {saving ? <Spinner aria-hidden /> : <DownloadIcon className="size-3.5" />}
           </FileSurfaceAction>
         ) : null}
         {props.onRemove ? (
@@ -526,7 +526,20 @@ export function AttachmentFilePreview(props: {
   );
 }
 
-function clickDownload(href: string, name: string) {
+/**
+ * Browsers stream a download URL into their own download manager right away. The server always
+ * serves these workspace resources as downloads; chat attachments it may serve inline (videos),
+ * where a cross-origin `download` attribute is ignored. Desktop's custom scheme needs a Blob.
+ */
+export function streamsDownload(resource: AssetResource): boolean {
+  return (
+    !isElectron &&
+    (resource._tag === "media-file" || resource._tag === "draft-workspace-file") &&
+    resource.disposition === "attachment"
+  );
+}
+
+export function clickDownload(href: string, name: string) {
   const anchor = document.createElement("a");
   anchor.href = href;
   anchor.download = name;
