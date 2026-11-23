@@ -374,7 +374,7 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   // A symlink, `..` or another letter case can name the live database; compare where they lead.
-  const canonical = (file: string) =>
+  const resolve = (file: string) =>
     fs.realPath(file).pipe(
       Effect.catch(() =>
         fs
@@ -382,15 +382,34 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
           .pipe(Effect.map((dir) => path.join(dir, path.basename(file)))),
       ),
       Effect.orElseSucceed(() => path.resolve(file)),
-      Effect.map((resolved) => (platform === "linux" ? resolved : resolved.toLowerCase())),
+    );
+  const comparable = (resolved: string) =>
+    platform === "linux" ? resolved : resolved.toLowerCase();
+  // A hard link has its own path, so the file itself is compared too.
+  const identity = (file: string) =>
+    fs.stat(file).pipe(
+      Effect.map((info) => Option.map(info.ino, (ino) => `${info.dev}:${ino}`)),
+      Effect.orElseSucceed(() => Option.none<string>()),
     );
   const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
-  const [target, live] = yield* Effect.all([
-    canonical(databasePath),
-    canonical(path.join(sharedHome, "userdata", "statev2.sqlite")),
-  ]);
-  if (target === live) return yield* new MigrateDevDbSharedHomeError();
-  yield* ensureNotInUse(databasePath);
+  const liveDatabase = path.join(sharedHome, "userdata", "statev2.sqlite");
+  const [target, live] = yield* Effect.all([resolve(databasePath), resolve(liveDatabase)]);
+  const targetIdentity = yield* identity(target);
+  const liveIdentities = yield* Effect.forEach(
+    [liveDatabase, `${liveDatabase}-wal`, `${liveDatabase}-shm`],
+    identity,
+  );
+  if (
+    comparable(target) === comparable(live) ||
+    (Option.isSome(targetIdentity) &&
+      liveIdentities.some(
+        (candidate) => Option.isSome(candidate) && candidate.value === targetIdentity.value,
+      ))
+  ) {
+    return yield* new MigrateDevDbSharedHomeError();
+  }
+  // Beside the real file, where a running server keeps its runtime state.
+  yield* ensureNotInUse(target);
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const resumable = yield* resumableThreadIds();
@@ -432,9 +451,7 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
     return resumable.length;
   }).pipe(
     Effect.provide(
-      ProjectionStore.layer.pipe(
-        Layer.provideMerge(NodeSqliteClient.layer({ filename: databasePath })),
-      ),
+      ProjectionStore.layer.pipe(Layer.provideMerge(NodeSqliteClient.layer({ filename: target }))),
     ),
   );
 });

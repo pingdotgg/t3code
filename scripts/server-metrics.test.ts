@@ -260,6 +260,11 @@ describe("pathSpellings", () => {
       "C:\\Users\\dev\\repo",
       ["C:\\Users\\dev\\repo", "C:\\\\Users\\\\dev\\\\repo", "C:/Users/dev/repo"],
     ],
+    [
+      "a path with a quote, escaped the way JSON stores it",
+      '/mnt/dev/quote"repo',
+      ['/mnt/dev/quote"repo', '/mnt/dev/quote\\"repo'],
+    ],
   ])("%s", (_name, path, spellings) => {
     expect(pathSpellings(path)).toEqual(spellings);
   });

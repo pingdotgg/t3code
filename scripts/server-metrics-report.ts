@@ -395,8 +395,8 @@ export function heapGrowth(
 
 const spellings: ReadonlyArray<(path: string) => string> = [
   (path) => path,
-  // JSON stores each backslash of a Windows path doubled.
-  (path) => path.replaceAll("\\", "\\\\"),
+  // JSON stores a backslash doubled and escapes a quote.
+  (path) => path.replaceAll("\\", "\\\\").replaceAll('"', '\\"'),
   (path) => path.replaceAll("\\", "/"),
 ];
 

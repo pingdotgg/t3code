@@ -289,7 +289,7 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     }),
   );
 
-  it.effect("refuses to drop from the shared database through a symlink", () =>
+  it.effect("refuses to drop from the shared database through a symlink or a hard link", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -299,11 +299,16 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
       const live = path.join(sharedHome, "userdata", "statev2.sqlite");
       yield* fs.makeDirectory(path.dirname(live), { recursive: true });
       yield* fs.rename(fixture, live);
-      const link = path.join(elsewhere, "statev2.sqlite");
-      yield* fs.symlink(live, link);
+      const symlink = path.join(elsewhere, "statev2.sqlite");
+      yield* fs.symlink(live, symlink);
+      // A hard link has its own path; only the file's identity gives it away.
+      const hardLink = path.join(elsewhere, "copy.sqlite");
+      yield* fs.link(live, hardLink);
 
-      const refused = yield* Effect.flip(dropResumableFamilies(link, { sharedHome }));
-      assert.equal(refused._tag, "MigrateDevDbSharedHomeError");
+      for (const link of [symlink, hardLink]) {
+        const refused = yield* Effect.flip(dropResumableFamilies(link, { sharedHome }));
+        assert.equal(refused._tag, "MigrateDevDbSharedHomeError", link);
+      }
       const threads = yield* withDatabase(
         live,
         Effect.gen(function* () {
