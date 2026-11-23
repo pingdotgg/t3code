@@ -213,6 +213,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     // Per-instance capabilities cache: keyed on binary + resolved HOME so
     // account-specific probes never share auth metadata across instances.
     // A transient miss may reuse the last account once, but its usage windows keep their age.
+    const resetCreditsReader = yield* ClaudeResetCredits.makeClaudeResetCreditsReader();
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
@@ -285,11 +286,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
               catalog,
               scopedLimitNames,
               (version) =>
-                ClaudeResetCredits.readClaudeResetCredits(configDir, version).pipe(
-                  Effect.provideService(HttpClient.HttpClient, httpClient),
-                  Effect.provideService(FileSystem.FileSystem, fileSystem),
-                  Effect.provideService(Path.Path, path),
-                ),
+                resetCreditsReader
+                  .read({ configDir, accountConfigPath, version })
+                  .pipe(
+                    Effect.provideService(HttpClient.HttpClient, httpClient),
+                    Effect.provideService(FileSystem.FileSystem, fileSystem),
+                    Effect.provideService(Path.Path, path),
+                  ),
             ),
           ),
           Effect.tap((provider) =>
@@ -400,6 +403,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           outcome,
           getSnapshot: snapshot.getSnapshot,
           refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+            Effect.andThen(resetCreditsReader.forget),
             Effect.andThen(snapshot.refresh),
           ),
         }).pipe(

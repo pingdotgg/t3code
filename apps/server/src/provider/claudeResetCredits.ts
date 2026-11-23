@@ -4,11 +4,13 @@ import type {
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -207,27 +209,79 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
+// Retry-After is delay-seconds or an HTTP date (RFC 9110 §10.2.3).
+const MAX_RETRY_AFTER_MILLIS = 60 * 60 * 1000;
+const retryAfterMillis = (value: string | undefined, nowMs: number) => {
+  const trimmed = value?.trim() ?? "";
+  const millis = /^\d+$/.test(trimmed) ? Number(trimmed) * 1000 : Date.parse(trimmed) - nowMs;
+  return Number.isFinite(millis) && millis > 0 ? Math.min(millis, MAX_RETRY_AFTER_MILLIS) : 0;
+};
+
+export type ClaudeResetCreditsRead =
+  | { readonly _tag: "read"; readonly credits: ServerProviderResetCredits | undefined }
+  | { readonly _tag: "rateLimited"; readonly retryAfterMillis: number };
+
+const unread: ClaudeResetCreditsRead = { _tag: "read", credits: undefined };
+
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
     const token = yield* readAccessToken(configDir);
-    if (!token) return undefined;
+    if (!token) return unread;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
         urlParams: { cedar_ember: "1", skip_spend: "1" },
       }).pipe(withClaudeHeaders(token, version)),
     );
+    const nowMs = yield* Clock.currentTimeMillis;
+    if (response.status === 429) {
+      return {
+        _tag: "rateLimited",
+        retryAfterMillis: retryAfterMillis(response.headers["retry-after"], nowMs),
+      } satisfies ClaudeResetCreditsRead;
+    }
     const body = yield* HttpClientResponse.schemaBodyJson(UsageResponse)(
       yield* HttpClientResponse.filterStatusOk(response),
     );
-    return claudeResetCreditsToContract(
-      body.cedar_ember,
-      DateTime.toEpochMillis(yield* DateTime.now),
-    );
+    return {
+      _tag: "read",
+      credits: claudeResetCreditsToContract(body.cedar_ember, nowMs),
+    } satisfies ClaudeResetCreditsRead;
   },
   Effect.timeout("10 seconds"),
-  Effect.orElseSucceed(() => undefined),
+  Effect.orElseSucceed(() => unread),
 );
+
+/** Keeps an account's last credits through a rate limit and skips reads until Retry-After. */
+export const makeClaudeResetCreditsReader = Effect.fn("makeClaudeResetCreditsReader")(function* () {
+  const known = yield* Ref.make<{
+    readonly account?: string | undefined;
+    readonly credits?: ServerProviderResetCredits | undefined;
+    readonly retryAtMs: number;
+  }>({ retryAtMs: 0 });
+  const read = Effect.fn("ClaudeResetCreditsReader.read")(function* (input: {
+    readonly configDir: string;
+    readonly accountConfigPath: string;
+    readonly version: string;
+  }) {
+    const account = yield* readClaudeOrganizationId(input.accountConfigPath);
+    const state = yield* Ref.get(known);
+    const sameAccount = state.account === account;
+    const kept = sameAccount ? state.credits : undefined;
+    if (sameAccount && (yield* Clock.currentTimeMillis) < state.retryAtMs) return kept;
+    const result = yield* readClaudeResetCredits(input.configDir, input.version);
+    if (result._tag === "read") {
+      yield* Ref.set(known, { account, credits: result.credits, retryAtMs: 0 });
+      return result.credits;
+    }
+    const retryAtMs = (yield* Clock.currentTimeMillis) + result.retryAfterMillis;
+    yield* Ref.set(known, { account, credits: kept, retryAtMs });
+    return kept;
+  });
+  /** A redeemed credit is gone; never show it again from memory. */
+  const forget = Ref.update(known, ({ account, retryAtMs }) => ({ account, retryAtMs }));
+  return { read, forget };
+});
 
 export const readClaudeOauthAccount = (accountConfigPath: string) =>
   readJson(Config, accountConfigPath).pipe(
