@@ -46,6 +46,7 @@ import {
   type ServerProviderModel,
   isDelegatedAppThread,
   ThreadId,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1390,6 +1391,7 @@ interface ActiveCodexTurnContext {
   capacityRetryAttempt?: number;
   capacityRetryPending?: Deferred.Deferred<ActiveCodexTurnContext | undefined>;
   closedCommandItemIds?: ReadonlySet<string>;
+  recoveredProviderRetries?: number;
   latestProviderFailure?: {
     readonly nativeMessage: string;
     readonly nativeCode: string | null;
@@ -1432,6 +1434,24 @@ interface ActiveCodexProviderRetry {
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
   readonly itemOrdinal: number;
+  readonly id: TurnItemId | undefined;
+}
+
+// Each retry episode after a recovery gets its own row, placed after the turn's progress so far.
+function codexFailureItemKey(context: ActiveCodexTurnContext): string {
+  const key = `terminal-failure:${context.providerTurnId}`;
+  return context.recoveredProviderRetries === undefined
+    ? key
+    : `${key}:${context.recoveredProviderRetries}`;
+}
+
+function codexFailureItemId(context: ActiveCodexTurnContext): TurnItemId | undefined {
+  return context.recoveredProviderRetries === undefined
+    ? undefined
+    : IdAllocator.derive.turnItemFromProviderItem({
+        driver: CODEX_PROVIDER,
+        nativeItemId: codexFailureItemKey(context),
+      });
 }
 
 function codexRetryTurnItem(
@@ -1443,6 +1463,7 @@ function codexRetryTurnItem(
   // A continuation keeps the retry row attached to the native turn that failed.
   const context = state.context ?? activeContext;
   return makeProviderRetryTurnItem({
+    ...(state.id === undefined ? {} : { id: state.id }),
     driver: CODEX_PROVIDER,
     threadId: context.projectionThreadId,
     runId: context.projectionRunId,
@@ -2614,8 +2635,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           if (providerRetry === undefined) {
             return;
           }
-          // A later retry episode or the turn's failure must sort after progress made since.
-          releaseItemPosition(context, `terminal-failure:${context.providerTurnId}`);
+          context.recoveredProviderRetries = (context.recoveredProviderRetries ?? 0) + 1;
           yield* emitProviderEvent({
             type: "turn_item.updated",
             driver: CODEX_PROVIDER,
@@ -3100,14 +3120,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             context.itemPositions.set(nativeItemId, position);
             return position;
           });
-
-        // Ordinals count reservations, so the released slot stays taken under a retired key.
-        const releaseItemPosition = (context: ActiveCodexTurnContext, nativeItemId: string) => {
-          const position = context.itemPositions.get(nativeItemId);
-          if (position === undefined) return;
-          context.itemPositions.delete(nativeItemId);
-          context.itemPositions.set(`${nativeItemId}:released:${position.ordinal}`, position);
-        };
 
         const resolveItemOrdinal = (context: ActiveCodexTurnContext, nativeItemId: string) =>
           resolveItemPosition(context, nativeItemId).pipe(
@@ -5438,8 +5450,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             );
             const itemOrdinal =
               previous?.itemOrdinal ??
-              (yield* resolveItemOrdinal(context, `terminal-failure:${context.providerTurnId}`));
+              (yield* resolveItemOrdinal(context, codexFailureItemKey(context)));
             const state: ActiveCodexProviderRetry = {
+              id: codexFailureItemId(context),
               ...(previous?.context === undefined ? {} : { context: previous.context }),
               nativeMessage: payload.error.message,
               nativeCode: code,
@@ -6619,6 +6632,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ) {
                 failure = { ...failure, class: "transport_error" };
               }
+              const failureItemId = codexFailureItemId(input.context);
               return {
                 type: "turn.terminal",
                 driver: CODEX_PROVIDER,
@@ -6627,8 +6641,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 runOrdinal: input.context.input.runOrdinal,
                 failureItemOrdinal: yield* resolveItemOrdinal(
                   input.context,
-                  `terminal-failure:${input.context.providerTurnId}`,
+                  codexFailureItemKey(input.context),
                 ),
+                ...(failureItemId === undefined ? {} : { failureItemId }),
                 status: terminalStatus,
                 failure:
                   failure.class === "usage_limit"
@@ -7425,10 +7440,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 retry: { attempt, maxAttempts: CODEX_CAPACITY_MAX_RETRIES, retryDelayMs },
                 itemOrdinal:
                   previous?.itemOrdinal ??
-                  (yield* resolveItemOrdinal(
-                    context,
-                    `terminal-failure:${context.providerTurnId}`,
-                  )),
+                  (yield* resolveItemOrdinal(context, codexFailureItemKey(context))),
+                id: codexFailureItemId(context),
                 startedAt: previous?.startedAt ?? now,
               };
               yield* Ref.update(providerRetries, (current) =>

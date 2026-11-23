@@ -5908,13 +5908,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const command = items.find((item) => item.type === "command_execution");
         assert.isDefined(command);
         const terminal = harness.terminalEvents()[0];
-        const latestOrdinal =
+        const firstRetry = items.find((item) => item.type === "error");
+        const latest =
           tail === "retry"
-            ? items.findLast((item) => item.type === "error")?.ordinal
+            ? items.findLast((item) => item.type === "error")
             : terminal?.status === "failed"
-              ? terminal.failureItemOrdinal
+              ? { id: terminal.failureItemId, ordinal: terminal.failureItemOrdinal }
               : undefined;
-        assert.isAbove(latestOrdinal ?? 0, command?.ordinal ?? Infinity);
+        assert.isAbove(latest?.ordinal ?? 0, command?.ordinal ?? Infinity);
+        // Stored positions are per row, so the later notice needs its own row to sort after.
+        assert.isDefined(latest?.id);
+        assert.notStrictEqual(latest?.id, firstRetry?.id);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
