@@ -477,6 +477,8 @@ export function IssueDetailPanel({
   const tracker = issueTrackerPresentation(detail.tracker);
   const currentState = issueStatePresentation(detail.state);
 
+  // Where the server placed the issue: a ClickUp link names no list until the task is read.
+  const placed = { ...reference, projectId: detail.projectId, scope: detail.scope };
   const host = reference.host === undefined ? {} : { host: reference.host };
   const openEventSource = (source: IssueEventReference) => {
     if (source.kind === "pull-request") {
@@ -627,7 +629,7 @@ export function IssueDetailPanel({
             <IssueThreadLinks
               key={`${environmentId}:${detail.url}`}
               environmentId={environmentId}
-              reference={{ ...reference, host: reference.host ?? detail.host }}
+              reference={{ ...placed, host: reference.host ?? detail.host }}
               issue={detail}
               threadRef={threadRef}
             />
@@ -746,7 +748,7 @@ export function IssueDetailPanel({
                 {detail.capabilities.labels ? (
                   <IssueLabelPicker
                     environmentId={environmentId}
-                    reference={reference}
+                    reference={placed}
                     detail={detail}
                     allowed={canLabel}
                     disabledReason={
@@ -770,7 +772,7 @@ export function IssueDetailPanel({
                 {detail.capabilities.assignees ? (
                   <IssueAssigneePicker
                     environmentId={environmentId}
-                    reference={reference}
+                    reference={placed}
                     detail={detail}
                     allowed={canAssign}
                     disabledReason={

@@ -789,6 +789,47 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect("serves a placed issue through the project bound to its scope", () =>
+    Effect.gen(function* () {
+      const commented: string[] = [];
+      const tracker: StandaloneIssueTrackerApi = {
+        ...fakeStandaloneTracker({
+          issueScope: () => Effect.succeed("901"),
+          getIssue: (input) =>
+            Effect.succeed({ ...issue(input.key), url: `https://tasks.test/t/${input.key}` }),
+          comment: (input) => Effect.sync(() => void commented.push(`${input.scope} ${input.key}`)),
+        }),
+        parseIssueUrl: (url) => {
+          const key = /^\/t\/(\w+)$/.exec(url.pathname)?.[1];
+          return key === undefined
+            ? null
+            : { host: "linear.app", workspace: "all", scope: "task", key };
+        },
+      };
+      const service = yield* makeService({
+        projects: [project({ id: "web" }), project({ id: "api" })],
+        trackers: [tracker],
+        bindings: {
+          web: { tracker: LINEAR, scope: "900" },
+          api: { tracker: LINEAR, scope: "901" },
+        },
+      });
+
+      // The client opened the link through `web`, the first project bound to the tracker.
+      const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
+      expect(yield* service.detail({ ...ref, scope: "task", key: "xyz" })).toMatchObject({
+        projectId: "api",
+        scope: "901",
+        writable: true,
+      });
+      yield* service.comment({ ...ref, scope: "task", key: "xyz", body: "hi" });
+      expect(commented).toEqual(["901 xyz"]);
+      expect(
+        yield* service.resolveUrl("https://tasks.test/t/xyz", "web" as ProjectId),
+      ).toMatchObject({ projectId: "api", scope: "901", writable: true });
+    }),
+  );
+
   it.effect("lists a bound project's standalone scopes beside its git host and serves them", () =>
     Effect.gen(function* () {
       const listed: string[] = [];

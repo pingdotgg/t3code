@@ -60,6 +60,7 @@ const ClickUpTask = Schema.Struct({
   watchers: Schema.optional(Schema.Array(ClickUpUser)),
   tags: Schema.Array(ClickUpTag),
   list: Schema.Struct({ id: Schema.String }),
+  permission_level: OptionalString,
   description: OptionalString,
   markdown_description: OptionalString,
 });
@@ -208,24 +209,37 @@ export const make = Effect.gen(function* () {
           ),
         );
     }
+    // ClickUp's own wording stays in `cause`; the detail is built from the status and code.
     const body = decodeErrorBody(json);
-    const message = body._tag === "Some" ? body.value.err?.trim() : undefined;
+    const ecode = body._tag === "Some" ? body.value.ECODE?.trim() : undefined;
+    const code = ecode !== undefined && /^[A-Z]+_\d{1,4}$/.test(ecode) ? ecode : undefined;
+    const cause = { status: response.status, body: json };
     if (response.status === 429) {
       const now = yield* Clock.currentTimeMillis;
       return yield* fail(input.operation, "rate-limited", "ClickUp's rate limit was reached.", {
         retryAt: resetAtFromHeader(response.headers["x-ratelimit-reset"], now),
+        cause,
       });
     }
-    if (response.status === 401 && (message === undefined || /token/i.test(message))) {
-      return yield* fail(input.operation, "unauthenticated", "ClickUp rejected the API token.");
+    // An id this token cannot see, missing or in another workspace, is OAUTH_027, not a 404.
+    if (response.status === 404 || code === "OAUTH_027") {
+      return yield* fail(
+        input.operation,
+        "not-found",
+        "ClickUp has no such item, or this account cannot see it.",
+        { cause },
+      );
     }
-    if (response.status === 404) {
-      return yield* fail(input.operation, "not-found", message || "ClickUp has no such item.");
+    if (response.status === 401) {
+      return yield* fail(input.operation, "unauthenticated", "ClickUp rejected the API token.", {
+        cause,
+      });
     }
     return yield* fail(
       input.operation,
       "failed",
-      message || `ClickUp returned HTTP ${response.status}.`,
+      `ClickUp refused the request (HTTP ${response.status}${code === undefined ? "" : `, ${code}`}).`,
+      { cause },
     );
   });
 

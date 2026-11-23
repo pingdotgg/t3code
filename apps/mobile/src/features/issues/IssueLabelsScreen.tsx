@@ -20,7 +20,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { PullRequestLabelDot } from "../pull-requests/PullRequestLabelDot";
 import { pullRequestLabelColor } from "../pull-requests/pullRequestList";
 import { IssueCandidatesSheet } from "./IssueCandidatesSheet";
-import { issueParamsKey, issueTarget, type IssueParams } from "./issueParams";
+import { issueParamsKey, issueTarget, placedIssueTarget, type IssueParams } from "./issueParams";
 import { issueLabelPicksFamily } from "./issuePicks";
 import { issueCommandError, useIssueAccess } from "./issuePresentation";
 
@@ -30,7 +30,9 @@ export function IssueLabelsScreen({ route }: StaticScreenProps<IssueParams>) {
   const target = issueTarget(route.params);
   const detail = useEnvironmentQuery(issueEnvironment.detail(target)).data;
   const access = useIssueAccess(route.params, detail);
-  const result = useEnvironmentQuery(issueEnvironment.candidates(target));
+  const result = useEnvironmentQuery(
+    issueEnvironment.candidates(placedIssueTarget(target, detail)),
+  );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const [query, setQuery] = useState("");
   // The atom carries a closed sheet's picks to the next one; this sheet's own live here.

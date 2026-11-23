@@ -3,6 +3,7 @@ import {
   EnvironmentId,
   IssueTrackerKind,
   ProjectId,
+  type IssueDetail,
   type IssueListEntry,
   type IssueRef,
 } from "@t3tools/contracts";
@@ -28,6 +29,16 @@ export function issueTarget(params: IssueParams) {
     key: params.issueKey,
   };
   return { environmentId: EnvironmentId.make(params.environmentId), input };
+}
+
+/** Where the server placed the issue: a ClickUp link names no list until the task is read. */
+export function placedIssueTarget(
+  target: ReturnType<typeof issueTarget>,
+  detail: Pick<IssueDetail, "projectId" | "scope"> | null | undefined,
+) {
+  return detail == null
+    ? target
+    : { ...target, input: { ...target.input, projectId: detail.projectId, scope: detail.scope } };
 }
 
 /** The params without the list row, for the screens an issue opens. */

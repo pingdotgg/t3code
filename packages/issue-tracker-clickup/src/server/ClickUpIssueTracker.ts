@@ -3,6 +3,7 @@
  * closed when its type is `closed` or `done`. ClickUp tags are the labels, scoped to the
  * list's space. Its API has no free-text search, history, or reactions, so none are offered.
  */
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import type {
@@ -10,6 +11,7 @@ import type {
   IssueCapabilities,
   IssueComment,
   IssueState,
+  IssueTrackerScope,
   IssueViewerPermissions,
   StandaloneIssueTrackerDescriptor,
 } from "@t3tools/contracts";
@@ -48,20 +50,28 @@ const CAPABILITIES: IssueCapabilities = {
   search: false,
 };
 
-/** Everything granted: ClickUp reports no per-task permissions and refuses with a message. */
-const VIEWER_PERMISSIONS: IssueViewerPermissions = {
-  setState: true,
-  comment: true,
-  edit: true,
-  labels: true,
-  assignees: true,
-};
+/**
+ * ClickUp's `permission_level` on the task: `read`, `comment`, `edit`, `create`. A level it does
+ * not report grants everything, so ClickUp refuses with its own reason rather than a missing control.
+ */
+function viewerPermissions(level: string | null | undefined): IssueViewerPermissions {
+  const edit = level == null || level === "edit" || level === "create";
+  return {
+    setState: edit,
+    comment: edit || level === "comment",
+    edit,
+    labels: edit,
+    assignees: edit,
+  };
+}
 
 /** ClickUp's fixed page sizes. */
 const TASKS_PAGE = 100;
 const COMMENTS_PAGE = 25;
 const CLOSED_STATUS_TYPES = ["closed", "done"];
 const SCOPE_CONCURRENCY = 4;
+/** Discovering lists costs two requests a space against a 100-a-minute limit; reuse it a while. */
+const DISCOVERY_TTL_MS = 10 * 60_000;
 
 const isoFromMillis = (value: string | null | undefined): string | null =>
   value == null || !/^\d+$/.test(value)
@@ -266,28 +276,49 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             ),
           );
 
-    /** Logins, emails or ids to ClickUp user ids, among the list's members. */
-    const memberIds = (operation: string, listId: string, assignees: ReadonlyArray<string>) =>
-      assignees.length === 0
-        ? Effect.succeed([])
-        : listMembers(operation, listId).pipe(
-            Effect.flatMap((members) =>
-              Effect.forEach(assignees, (wanted) => {
-                const value = wanted.trim().toLowerCase();
-                const member = members.find(
-                  (user) =>
-                    String(user.id) === value ||
-                    user.email?.toLowerCase() === value ||
-                    sameLogin(user, value),
-                );
-                return member === undefined
-                  ? Effect.fail(
-                      failed(operation, `"${wanted}" is not a member of this ClickUp list.`),
-                    )
-                  : Effect.succeed(member.id);
-              }),
-            ),
-          );
+    /**
+     * Ids, logins or emails to ClickUp user ids. An id passes as-is and ClickUp decides who may be
+     * assigned; a name is looked up among the current assignees, then the list's members, which
+     * leave out people with access only through the space.
+     */
+    const memberIds = Effect.fn("ClickUpIssueTracker.memberIds")(function* (
+      operation: string,
+      listId: string,
+      assignees: ReadonlyArray<string>,
+      current: ReadonlyArray<ClickUpApi.ClickUpUser> = [],
+    ) {
+      const find = (people: ReadonlyArray<ClickUpApi.ClickUpUser>, wanted: string) => {
+        const value = wanted.trim().toLowerCase();
+        if (/^\d+$/.test(value)) return Number(value);
+        return people.find((user) => user.email?.toLowerCase() === value || sameLogin(user, value))
+          ?.id;
+      };
+      const known = assignees.map((wanted) => find(current, wanted));
+      if (known.every((id) => id !== undefined)) return known;
+      const members = yield* listMembers(operation, listId);
+      return yield* Effect.forEach(assignees, (wanted, index) => {
+        const id = known[index] ?? find(members, wanted);
+        return id === undefined
+          ? Effect.fail(failed(operation, `"${wanted}" is not a member of this ClickUp list.`))
+          : Effect.succeed(id);
+      });
+    });
+
+    /**
+     * The task a write names, refused unless it is in the list the service placed it in: the
+     * service read that a moment ago, so this is the last check before ClickUp is changed.
+     */
+    const requireListTask = Effect.fn("ClickUpIssueTracker.requireListTask")(function* (
+      operation: string,
+      input: { readonly scope: string; readonly key: string },
+    ) {
+      const id = yield* requireTaskId(operation, input.key);
+      const task = yield* getTask(operation, id);
+      if (task.list.id !== input.scope.trim()) {
+        return yield* failed(operation, "This task is no longer in the selected ClickUp list.");
+      }
+      return task;
+    });
 
     const listStates = (list: ClickUpApi.ClickUpList, current: ClickUpApi.ClickUpStatus) => {
       const statuses = list.statuses ?? [];
@@ -368,20 +399,36 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       return perTeam.flat(2);
     });
 
+    const discovered = new Map<
+      string,
+      { readonly at: number; readonly scopes: ReadonlyArray<IssueTrackerScope> }
+    >();
+    const cachedLists = Effect.fn("ClickUpIssueTracker.cachedLists")(function* (token: string) {
+      const now = yield* Clock.currentTimeMillis;
+      const hit = discovered.get(token);
+      if (hit !== undefined && now - hit.at < DISCOVERY_TTL_MS) return hit.scopes;
+      const scopes = yield* reachableLists(token);
+      for (const [key, entry] of discovered)
+        if (now - entry.at >= DISCOVERY_TTL_MS) discovered.delete(key);
+      discovered.set(token, { at: now, scopes });
+      return scopes;
+    });
+
     const api: StandaloneIssueTrackerApi = {
       kind: ClickUpApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
       parseIssueUrl: parseClickUpIssueUrl,
 
-      probeCredential: (token) =>
-        Effect.all([viewer(token), reachableLists(token)], { concurrency: 2 }).pipe(
-          Effect.map(([user, scopes]) => ({
-            account: toActor(user).login,
-            workspace: CLICKUP_LINK_WORKSPACE,
-            scopes,
-          })),
-        ),
+      // The token is checked on every probe; only the list discovery behind it is reused.
+      probeCredential: Effect.fn("ClickUpIssueTracker.probeCredential")(function* (token) {
+        const user = yield* viewer(token);
+        return {
+          account: toActor(user).login,
+          workspace: CLICKUP_LINK_WORKSPACE,
+          scopes: yield* cachedLists(token),
+        };
+      }),
 
       getViewer: () => viewer().pipe(Effect.map((user) => toActor(user).login)),
 
@@ -473,7 +520,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           ...toSummary(task, comments.length),
           body: task.markdown_description ?? task.description ?? "",
           viewer: me._tag === "Some" ? toActor(me.value).login : null,
-          viewerPermissions: VIEWER_PERMISSIONS,
+          viewerPermissions: viewerPermissions(task.permission_level),
           states:
             list._tag === "Some"
               ? listStates(list.value, task.status).map(toState)
@@ -523,7 +570,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       }),
 
       comment: Effect.fn("ClickUpIssueTracker.comment")(function* (input) {
-        const id = yield* requireTaskId("comment", input.key);
+        const { id } = yield* requireListTask("comment", input);
         yield* clickup.request({
           operation: "comment",
           method: "POST",
@@ -534,15 +581,18 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       }),
 
       update: Effect.fn("ClickUpIssueTracker.update")(function* (input) {
-        const id = yield* requireTaskId("update", input.key);
-        const task =
-          input.labels !== undefined || input.assignees !== undefined
-            ? yield* getTask("update", id)
-            : null;
+        const task = yield* requireListTask("update", input);
+        // Every requested value is checked before the first write, so a refusal changes nothing.
         const assignees =
-          task === null || input.assignees === undefined
+          input.assignees === undefined
             ? undefined
-            : yield* memberIds("update", task.list.id, input.assignees);
+            : yield* memberIds("update", task.list.id, input.assignees, task.assignees);
+        const wantedTags =
+          input.labels === undefined
+            ? undefined
+            : yield* getList("update", task.list.id).pipe(
+                Effect.flatMap((list) => tagNames("update", list.space.id, input.labels ?? [])),
+              );
         const fields = {
           ...(input.title === undefined ? {} : { name: input.title }),
           // ClickUp ignores an empty description; a single space is how it clears one.
@@ -551,7 +601,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             : input.body === ""
               ? { description: " " }
               : { markdown_content: input.body }),
-          ...(task === null || assignees === undefined
+          ...(assignees === undefined
             ? {}
             : {
                 assignees: {
@@ -568,21 +618,23 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           yield* clickup.request({
             operation: "update",
             method: "PUT",
-            path: `/task/${encodeURIComponent(id)}`,
+            path: `/task/${encodeURIComponent(task.id)}`,
             body: fields,
             decode: Responses.ignored,
           });
         }
-        if (task === null || input.labels === undefined) return;
+        if (wantedTags === undefined) return;
         // ClickUp's update has no tags field; each tag is added or removed on its own.
-        const list = yield* getList("update", task.list.id);
-        const wanted = yield* tagNames("update", list.space.id, input.labels);
         const has = (name: string, among: ReadonlyArray<string>) =>
           among.some((other) => other.toLowerCase() === name.toLowerCase());
         const current = task.tags.map((tag) => tag.name);
         const writes = [
-          ...wanted.filter((name) => !has(name, current)).map((name) => ["POST", name] as const),
-          ...current.filter((name) => !has(name, wanted)).map((name) => ["DELETE", name] as const),
+          ...wantedTags
+            .filter((name) => !has(name, current))
+            .map((name) => ["POST", name] as const),
+          ...current
+            .filter((name) => !has(name, wantedTags))
+            .map((name) => ["DELETE", name] as const),
         ];
         yield* Effect.forEach(
           writes,
@@ -590,7 +642,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             clickup.request({
               operation: "update",
               method,
-              path: `/task/${encodeURIComponent(id)}/tag/${encodeURIComponent(name)}`,
+              path: `/task/${encodeURIComponent(task.id)}/tag/${encodeURIComponent(name)}`,
               decode: Responses.ignored,
             }),
           { concurrency: SCOPE_CONCURRENCY, discard: true },
@@ -598,8 +650,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       }),
 
       setState: Effect.fn("ClickUpIssueTracker.setState")(function* (input) {
-        const id = yield* requireTaskId("setState", input.key);
-        const task = yield* getTask("setState", id);
+        const task = yield* requireListTask("setState", input);
         const list = yield* getList("setState", task.list.id);
         const wanted = listStates(list, task.status).find(
           (status) => status.status.toLowerCase() === input.state.trim().toLowerCase(),
@@ -609,7 +660,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
         yield* clickup.request({
           operation: "setState",
           method: "PUT",
-          path: `/task/${encodeURIComponent(id)}`,
+          path: `/task/${encodeURIComponent(task.id)}`,
           body: { status: wanted.status },
           decode: Responses.ignored,
         });
@@ -629,7 +680,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             description: null,
           })),
           assignees: members.map((user) => ({ ...toActor(user), id: String(user.id) })),
-          truncated: false,
+          // List members leave out people who reach the list only through its space.
+          truncated: true,
         };
       }),
     };

@@ -322,7 +322,7 @@ const make = Effect.gen(function* () {
   /**
    * The project serving a reference, read-only unless the scope is one of its own. A tracker
    * that reports each issue's scope (`issueScope`) is asked, so a link naming none, or a client
-   * naming the wrong one, cannot misplace a write.
+   * naming the wrong one, cannot misplace a write; another project bound to that scope serves it.
    */
   const requireProject = (
     ref: IssueScopeRef & { readonly key?: string | undefined },
@@ -354,7 +354,20 @@ const make = Effect.gen(function* () {
           key: ref.key,
         }).pipe(
           Effect.mapError(toIssueError("scope")),
-          Effect.map((scope) => place(scope) ?? placed),
+          Effect.flatMap((scope) => {
+            const here = place(scope) ?? placed;
+            if (here.writable) return Effect.succeed(here);
+            return listProjects({ host: placed.host }).pipe(
+              Effect.map(({ supported: everywhere }) => {
+                const bound = everywhere.find(
+                  (candidate) =>
+                    candidate.tracker === ref.tracker &&
+                    candidate.scope.toLowerCase() === scope.toLowerCase(),
+                );
+                return bound === undefined ? here : { ...bound, writable: true };
+              }),
+            );
+          }),
         );
       }),
     );
@@ -856,6 +869,10 @@ const make = Effect.gen(function* () {
         return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
       }
       let failure: IssueError | null = null;
+      // A tracker that places issues itself may read one through an account that does not bind
+      // its scope; a later account that does is preferred, this read kept as the fallback.
+      let readable: (IssueRef & { host: string; writable: boolean; issue: IssueDetail }) | null =
+        null;
       for (const accountId of accounts) {
         const candidates = onTracker.filter((project) => project.accountId === accountId);
         const found = serve(candidates);
@@ -889,9 +906,12 @@ const make = Effect.gen(function* () {
                     key: link.key,
                   }).pipe(Effect.mapError(toIssueError("resolveUrl"))),
                 ) ?? found);
-          return { ...placed.resolved, issue: toDetail(placed.served, read.success) };
+          const result = { ...placed.resolved, issue: toDetail(placed.served, read.success) };
+          if (issueScope === undefined || result.writable) return result;
+          readable ??= result;
         }
       }
+      if (readable !== null) return readable;
       return yield* (
         failure ??
           new IssueOperationError({

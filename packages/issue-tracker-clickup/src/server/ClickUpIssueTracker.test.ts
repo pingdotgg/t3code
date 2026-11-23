@@ -352,6 +352,106 @@ describe("ClickUpIssueTracker", () => {
     }),
   );
 
+  it.effect("refuses a write to a task that left the list it was placed in", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc", { list: { id: "901" } }),
+        "GET /list/900": () => LIST,
+      });
+      const api = yield* tracker;
+      const ref = { ...target, key: "abc" };
+      for (const write of [
+        api.comment({ ...ref, body: "hi" }),
+        api.update({ ...ref, title: "New" }),
+        api.setState({ ...ref, state: "complete" }),
+      ]) {
+        const refused = yield* Effect.flip(write);
+        expect(refused.detail).toContain("no longer in the selected ClickUp list");
+      }
+      expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    }),
+  );
+
+  it.effect("checks every requested value before writing any of them", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc"),
+        "GET /list/900": () => LIST,
+        "GET /space/77/tag": () => ({ tags: [{ name: "bug" }] }),
+      });
+      const api = yield* tracker;
+      const refused = yield* Effect.flip(
+        api.update({ ...target, key: "abc", title: "Renamed", labels: ["missing"] }),
+      );
+      expect(refused.detail).toContain("missing");
+      expect(requests.filter((request) => request.method !== "GET")).toEqual([]);
+    }),
+  );
+
+  it.effect("keeps a current assignee the list's members leave out", () =>
+    Effect.gen(function* () {
+      const OUTSIDER = user(9, "outsider");
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc", { assignees: [OUTSIDER] }),
+        "PUT /task/abc": () => ({}),
+      });
+      const api = yield* tracker;
+      yield* api.update({ ...target, key: "abc", assignees: ["outsider", "2"] });
+      expect(requests.find((request) => request.method === "PUT")?.body).toEqual({
+        assignees: { add: [2], rem: [] },
+      });
+      expect(requests.some((request) => request.path.endsWith("/member"))).toBe(false);
+    }),
+  );
+
+  it.effect("offers only what the account's permission level allows", () =>
+    Effect.gen(function* () {
+      const answers = (level: string) => ({
+        "GET /task/abc": () => task("abc", { permission_level: level }),
+        "GET /task/abc/comment": () => ({ comments: [] }),
+        "GET /list/900": () => LIST,
+        "GET /user": () => ({ user: JULIUS }),
+      });
+      const read = yield* (yield* fakeClickUp(answers("read")).tracker).getIssue({
+        ...target,
+        key: "abc",
+      });
+      expect(Object.values(read.viewerPermissions).every((granted) => !granted)).toBe(true);
+      const comment = yield* (yield* fakeClickUp(answers("comment")).tracker).getIssue({
+        ...target,
+        key: "abc",
+      });
+      expect(comment.viewerPermissions).toMatchObject({ comment: true, edit: false });
+    }),
+  );
+
+  it.effect("reads an id this account cannot see as not found", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeClickUp({
+        "GET /task/abc": () =>
+          new Response(JSON.stringify({ err: "Team not authorized", ECODE: "OAUTH_027" }), {
+            status: 401,
+          }),
+      });
+      const missing = yield* Effect.flip((yield* tracker).issueScope({ ...target, key: "abc" }));
+      expect(missing.reason).toBe("not-found");
+      expect(missing.detail).not.toContain("Team not authorized");
+    }),
+  );
+
+  it.effect("checks the token on every probe but discovers lists once a while", () =>
+    Effect.gen(function* () {
+      const { tracker, requests } = fakeClickUp({
+        "GET /user": () => ({ user: JULIUS }),
+        "GET /team": () => ({ teams: [] }),
+      });
+      const api = yield* tracker;
+      yield* api.probeCredential("pk_new");
+      yield* api.probeCredential("pk_new");
+      expect(requests.map((request) => request.path)).toEqual(["/user", "/team", "/user"]);
+    }),
+  );
+
   it.effect("places a task by the list it is in", () =>
     Effect.gen(function* () {
       const { tracker } = fakeClickUp({
