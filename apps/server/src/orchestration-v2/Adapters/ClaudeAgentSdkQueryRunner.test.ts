@@ -31,7 +31,7 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
-  makeClaudeDescendantTracker,
+  makeClaudeDescendantPoll,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
 
@@ -734,10 +734,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
     "keeps only the descendants the CLI still has running, however many jobs it ran",
     () => {
       let table: ReadonlyArray<ReturnType<typeof processRow>> = [];
-      const tracker = makeClaudeDescendantTracker(
-        1000,
-        Effect.sync(() => table),
-      );
+      const tracker = makeClaudeDescendantPoll(Effect.sync(() => table)).track(1000);
       const jobs = (poll: number) => [0, 1, 2, 3].map((job) => 1100 + poll * 4 + job);
       return Effect.gen(function* () {
         for (let poll = 0; poll < 50; poll++) {
@@ -781,10 +778,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         [processRow(1000, 10, 0), ...unrelated, orphan],
         [...unrelated, orphan],
       ];
-      const tracker = makeClaudeDescendantTracker(
-        1000,
-        Effect.sync(() => tables.shift() ?? []),
-      );
+      const tracker = makeClaudeDescendantPoll(Effect.sync(() => tables.shift() ?? [])).track(1000);
       return Effect.gen(function* () {
         yield* tracker.refresh;
         yield* tracker.refresh;
@@ -811,10 +805,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
         processRow(1001, 1000, 0),
         processRow(1100, 1001, 1),
       ]);
-      const tracker = makeClaudeDescendantTracker(
-        1000,
-        Effect.suspend(() => read),
-      );
+      const tracker = makeClaudeDescendantPoll(Effect.suspend(() => read)).track(1000);
       return Effect.gen(function* () {
         yield* tracker.refresh;
         read = Deferred.succeed(olderReadStarted, undefined).pipe(
@@ -839,6 +830,39 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       });
     },
   );
+
+  it.effect("reads the process table once per poll for every running CLI", () => {
+    let reads = 0;
+    const descendantPoll = makeClaudeDescendantPoll(
+      Effect.sync(() => {
+        reads++;
+        return [
+          processRow(1000, 10, 0),
+          processRow(1100, 1000, 1),
+          processRow(2000, 10, 0),
+          processRow(2100, 2000, 1),
+        ];
+      }),
+    );
+    const first = descendantPoll.track(1000);
+    const second = descendantPoll.track(2000);
+    return Effect.gen(function* () {
+      yield* descendantPoll.poll;
+      assert.strictEqual(reads, 1);
+      assert.deepStrictEqual(
+        [...first.tracked.values()].map((row) => row.pid),
+        [1100],
+      );
+      assert.deepStrictEqual(
+        [...second.tracked.values()].map((row) => row.pid),
+        [2100],
+      );
+      yield* first.leftovers;
+      assert.isTrue(descendantPoll.hasLive());
+      yield* second.leftovers;
+      assert.isFalse(descendantPoll.hasLive());
+    });
+  });
 
   const rootRefusal =
     "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
