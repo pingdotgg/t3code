@@ -1696,9 +1696,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             );
             return { action: "deny" };
           }
+          const { postBody } = details;
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
-              wc.loadURL(details.url),
+              postBody
+                ? wc.loadURL(details.url, {
+                    postData: postBody.data,
+                    extraHeaders: postBody.boundary
+                      ? `content-type: ${postBody.contentType}; boundary=${postBody.boundary}`
+                      : `content-type: ${postBody.contentType}`,
+                  })
+                : wc.loadURL(details.url),
             ).pipe(Effect.ignore),
           );
           return { action: "deny" };
