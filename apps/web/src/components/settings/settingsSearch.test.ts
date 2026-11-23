@@ -173,6 +173,31 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
+  it("finds cloud sandboxes only when a connected environment supports them", () => {
+    const availability = {
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      localEnvironmentDisabled: true,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const results = (hasCloudSandboxEnvironment: boolean) =>
+      searchSettings(
+        "cloud sandboxes",
+        filterAvailableSettingsSearchItems({ ...availability, hasCloudSandboxEnvironment }),
+      );
+    expect(results(false).map((item) => item.id)).not.toContain("cloud-sandboxes");
+    expect(results(true)).toContainEqual(
+      expect.objectContaining({
+        id: "cloud-sandboxes",
+        to: "/settings/connections",
+        targetId: "cloud-sandboxes",
+      }),
+    );
+  });
+
   it("finds linked environments on a remote host without local maintenance access", () => {
     const availability = {
       hasCloudPublicConfig: false,

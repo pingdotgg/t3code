@@ -570,6 +570,22 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("names the Linux executable to match the packaged AppStream metadata", () =>
+    Effect.gen(function* () {
+      const linux = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.nestedPropertyVal(linux, "linux.executableName", "kbcode");
+    }),
+  );
+
   it.effect("names updatable AppImages without a version and apart per channel", () =>
     Effect.gen(function* () {
       const appImageName = (version: string) =>

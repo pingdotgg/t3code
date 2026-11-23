@@ -2959,7 +2959,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     buildConfig.afterPack = path.join(repoRoot, "scripts/linux-after-pack.ts");
     buildConfig.linux = {
       target: target === "AppImage" ? [target, "deb"] : [target],
-      executableName: "t3code",
+      executableName: "kbcode",
       icon: "icons",
       category: "Development",
       synopsis: "Desktop GUI for coding agents",

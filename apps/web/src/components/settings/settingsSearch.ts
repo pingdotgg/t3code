@@ -71,6 +71,7 @@ export interface SettingsSearchItem {
   readonly wslAvailableOnly?: boolean;
   readonly managedTunnelOnly?: boolean;
   readonly peerLinksOnly?: boolean;
+  readonly cloudSandboxesOnly?: boolean;
   readonly fastWorktreeCheckoutOnly?: boolean;
   readonly agentFeedbackOnly?: boolean;
   readonly textGeneratorsOnly?: boolean;
@@ -88,6 +89,7 @@ export interface SettingsSearchAvailability {
   readonly hasThreadAutoSettlement: boolean;
   readonly managedTunnelActive?: boolean;
   readonly hasPeerLinkHost?: boolean;
+  readonly hasCloudSandboxEnvironment?: boolean;
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   readonly hasAgentFeedbackEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
@@ -1474,6 +1476,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("add pair backend host code ssh config agent tunnel saved t3 connect")],
   },
   {
+    id: "cloud-sandboxes",
+    cloudSandboxesOnly: true,
+    title: msg("Cloud Sandboxes"),
+    to: "/settings/connections",
+    targetId: "cloud-sandboxes",
+  },
+  {
     id: "load-balancing",
     title: msg("Load balancing"),
     to: "/settings/connections",
@@ -1676,6 +1685,7 @@ export function filterAvailableSettingsSearchItems(
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement) &&
       (!item.managedTunnelOnly || availability.managedTunnelActive === true) &&
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
+      (!item.cloudSandboxesOnly || availability.hasCloudSandboxEnvironment === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
       (!item.agentFeedbackOnly || availability.hasAgentFeedbackEnvironment === true) &&
