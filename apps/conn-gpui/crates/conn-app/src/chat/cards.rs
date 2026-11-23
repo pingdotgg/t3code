@@ -209,7 +209,7 @@ impl ChatView {
         &self,
         image: &conn_contract::ChatImageAttachment,
         cx: &mut Context<'_, Self>,
-    ) -> Option<std::sync::Arc<gpui_kit::Image>> {
+    ) -> Option<(std::sync::Arc<gpui_kit::Image>, Option<f32>)> {
         let connection = self.connection.clone()?;
         let mut images = self.attachment_images.borrow_mut();
         let (state, _) = images.entry(image.id.clone()).or_insert_with(|| {
@@ -225,7 +225,9 @@ impl ChatView {
             (state, subscription)
         });
         match &state.read(cx).load {
-            super::attachment_thumb::AttachmentImageLoad::Ready(image) => Some(image.clone()),
+            super::attachment_thumb::AttachmentImageLoad::Ready(image, aspect) => {
+                Some((image.clone(), *aspect))
+            }
             _ => None,
         }
     }
@@ -259,19 +261,35 @@ impl ChatView {
             let chip_id = (SharedString::from(format!("att-{key}")), idx);
             let chip = match att {
                 conn_contract::ChatAttachment::Image(img) => {
-                    let loaded = self.attachment_image(img, cx);
-                    div()
+                    use super::attachment_thumb::{ThumbFit, thumbnail};
+                    let (loaded, aspect) = match self.attachment_image(img, cx) {
+                        Some((image, aspect)) => (Some(image), aspect),
+                        None => (None, None),
+                    };
+                    let cell = div()
                         .id(chip_id)
-                        .flex_none()
-                        .w(px(image_w))
-                        .max_w_full()
-                        .h(px(image_h))
                         .overflow_hidden()
                         .rounded(px(8.0))
                         .border_1()
                         .border_color(hsla_alpha(self.tokens.border, 0.80))
-                        .conn_tooltip(img.name.clone(), &self.tokens)
-                        .child(super::attachment_thumb::thumbnail(loaded, &self.tokens))
+                        .conn_tooltip(img.name.clone(), &self.tokens);
+                    // One image takes the bubble's full width at its own aspect ratio (Nick,
+                    // #343); several keep web's two-column 4:3 cells. The picture inside the
+                    // 1px border paints a 7px radius (#342).
+                    if image_count == 1 {
+                        cell.w_full().child(thumbnail(
+                            loaded,
+                            &self.tokens,
+                            7.0,
+                            ThumbFit::FullWidth(aspect),
+                        ))
+                    } else {
+                        cell.flex_none()
+                            .w(px(image_w))
+                            .max_w_full()
+                            .h(px(image_h))
+                            .child(thumbnail(loaded, &self.tokens, 7.0, ThumbFit::Cover))
+                    }
                 }
                 conn_contract::ChatAttachment::File(file) => {
                     let file_icon = crate::file_icons::file_icon(&file.name);
