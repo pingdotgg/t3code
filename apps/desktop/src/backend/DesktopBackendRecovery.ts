@@ -198,12 +198,15 @@ export function make(input: {
   // Use Application Support even when the T3 home or the app lives on removable storage.
   const directory = NodePath.join(input.appDataDirectory, directoryName);
   const scope = async () => {
-    const [home, executable] = await Promise.all([
+    const appImage = isDarwin ? undefined : NodeProcess.env.APPIMAGE?.trim();
+    const [home, executable, installation] = await Promise.all([
       canonicalHome(input.stateDir),
       NodeFSP.realpath(NodeProcess.execPath),
+      // An AppImage runs from a new mount path each launch; its file path is the stable install.
+      appImage ? NodeFSP.realpath(appImage) : undefined,
     ]);
     const prefix = NodeCrypto.createHash("sha256")
-      .update(JSON.stringify([home, executable]))
+      .update(JSON.stringify([home, installation ?? executable]))
       .digest("hex");
     return { prefix, executable };
   };

@@ -61,12 +61,13 @@ async function spawnTrackedBackend(
   appDataDirectory: string,
   stateDir: string,
   cleanup: AsyncDisposableStack,
+  options: { readonly execPath?: string; readonly env?: NodeJS.ProcessEnv } = {},
 ) {
   const moduleUrl = new URL("./DesktopBackendRecovery.ts", import.meta.url).href;
   const launcher = NodeChildProcess.spawn(
-    NodeProcess.execPath,
+    options.execPath ?? NodeProcess.execPath,
     ["--input-type=module", "-e", launcherCode, moduleUrl, appDataDirectory, stateDir, childCode],
-    { stdio: ["ignore", "ignore", "inherit", "ipc"] },
+    { stdio: ["ignore", "ignore", "inherit", "ipc"], env: options.env ?? NodeProcess.env },
   );
   const exited = NodeEvents.EventEmitter.once(launcher, "exit");
   const stopLauncher = async () => {
@@ -209,5 +210,52 @@ describe.runIf(NodeProcess.platform === "darwin" || NodeProcess.platform === "li
       await checkPortIsFree(orphan.port);
       assert.equal(native.read(live.pid), live.token);
     });
+
+    it.runIf(NodeProcess.platform === "linux")(
+      "recovers an AppImage orphan after a relaunch mounts the app at a new path",
+      async () => {
+        await using cleanup = new AsyncDisposableStack();
+        const appDataDirectory = await NodeFSP.realpath(
+          await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-appimage-recovery-")),
+        );
+        cleanup.defer(() => NodeFSP.rm(appDataDirectory, { recursive: true, force: true }));
+        const stateDir = NodePath.join(appDataDirectory, "home");
+        const appImage = NodePath.join(appDataDirectory, "T3-Code.AppImage");
+        await NodeFSP.writeFile(appImage, "");
+        // The previous launch ran from another mount, so its executable path differs from ours.
+        const previousMount = NodePath.join(appDataDirectory, "mount-previous");
+        await NodeFSP.mkdir(previousMount);
+        const previousExecutable = NodePath.join(previousMount, "node");
+        await NodeFSP.link(NodeProcess.execPath, previousExecutable).catch(() =>
+          NodeFSP.copyFile(NodeProcess.execPath, previousExecutable),
+        );
+        const orphan = await spawnTrackedBackend(appDataDirectory, stateDir, cleanup, {
+          execPath: previousExecutable,
+          env: { ...NodeProcess.env, APPIMAGE: appImage },
+        });
+        const native = await loadNative();
+        NodeProcess.kill(orphan.pid, "SIGSTOP");
+        await orphan.stopLauncher();
+
+        const recovered: number[] = [];
+        const errors: unknown[] = [];
+        const previousAppImage = NodeProcess.env.APPIMAGE;
+        NodeProcess.env.APPIMAGE = appImage;
+        cleanup.defer(() => {
+          if (previousAppImage === undefined) delete NodeProcess.env.APPIMAGE;
+          else NodeProcess.env.APPIMAGE = previousAppImage;
+        });
+        await make({
+          appDataDirectory,
+          stateDir,
+          launcherPid: NodeProcess.pid,
+          onRecovery: (pid) => recovered.push(pid),
+          onError: (_, error) => errors.push(error),
+        }).recover();
+        assert.deepEqual(errors, []);
+        assert.deepEqual(recovered, [orphan.pid]);
+        assert.isUndefined(native.read(orphan.pid));
+      },
+    );
   },
 );
