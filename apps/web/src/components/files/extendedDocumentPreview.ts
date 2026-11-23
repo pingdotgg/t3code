@@ -672,7 +672,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         const character = RTF_CHARACTERS.get(next!);
         if (character) emit(character);
         // A backslash before a line break is \par; TextEdit ends paragraphs this way.
-        else if ((next === "\n" || next === "\r") && !hidden()) html += "<br>";
+        else if (next === "\n" || next === "\r") {
+          if (fallback > 0) fallback--;
+          else if (!hidden()) html += "<br>";
+        }
         i++;
         continue;
       }

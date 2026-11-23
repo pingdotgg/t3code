@@ -227,6 +227,9 @@ describe("document preview contents", () => {
     const fallbacks = openRtf(bytes("{\\rtf1\\b\\uc1\\u-10179\\_\\uc0\\u-8576 }"));
     if (fallbacks.type !== "document") throw new Error("Expected document");
     expect(fallbacks.pages[0]!.html).toBe("<p><strong>🚀</strong></p>");
+    const escapedBreak = openRtf(bytes("{\\rtf1\\b A\\u66\\\nC\\par D}"));
+    if (escapedBreak.type !== "document") throw new Error("Expected document");
+    expect(escapedBreak.pages[0]!.html).toBe("<p><strong>ABC</strong><br><strong>D</strong></p>");
   });
 
   it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
