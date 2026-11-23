@@ -77,7 +77,7 @@ export const issueFilterProjects = (
   for (const project of projects) {
     const repository =
       project.isScratch !== true && project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
+        ? repositoryGroupingKeyOf(project.repositoryIdentity).toLowerCase()
         : undefined;
     const key = JSON.stringify(repository ?? [project.environmentId, project.id]);
     const group = groups.get(key);

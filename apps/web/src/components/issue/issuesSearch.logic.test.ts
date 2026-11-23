@@ -102,4 +102,32 @@ describe("issueFilterProjects", () => {
       ["t3code · laptop · /work/scratch", [key(laptop, "scratch")]],
     ]);
   });
+
+  it("groups case variants of one repository into a single choice", () => {
+    const laptop = EnvironmentId.make("laptop");
+    const vps = EnvironmentId.make("vps");
+    const project = (id: string, environmentId: EnvironmentId, canonicalKey: string) =>
+      ({
+        id: ProjectId.make(id),
+        environmentId,
+        title: "t3code",
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: { canonicalKey },
+        isScratch: false,
+      }) as unknown as EnvironmentProject;
+    const choices = issueFilterProjects(
+      [
+        project("main", laptop, "github.com/PingDotGG/T3Code"),
+        project("main", vps, "github.com/pingdotgg/t3code"),
+      ],
+      new Map([
+        [laptop, "laptop"],
+        [vps, "vps"],
+      ]),
+    );
+    const key = (environmentId: EnvironmentId, id: string) =>
+      JSON.stringify([environmentId, ProjectId.make(id)]);
+    expect(choices).toHaveLength(1);
+    expect(choices[0]?.memberProjectKeys).toEqual([key(laptop, "main"), key(vps, "main")]);
+  });
 });
