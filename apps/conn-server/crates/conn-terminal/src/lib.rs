@@ -271,6 +271,34 @@ impl TerminalManager {
         Ok(key)
     }
 
+    /// Copies a T3 server's history for a terminal that has none here yet (see `store`), on a
+    /// blocking thread. Call it before the open or attach that starts the terminal.
+    pub async fn adopt_t3_history(&self, thread_id: &str, terminal_id: &str) {
+        let Some(store) = self.inner.store.clone() else {
+            return;
+        };
+        let (thread_id, terminal_id) = (thread_id.to_owned(), terminal_id.to_owned());
+        let max = self.inner.config.history_bytes;
+        let _ = tokio::task::spawn_blocking(move || store.adopt_t3(&thread_id, &terminal_id, max))
+            .await;
+    }
+
+    /// Whether [`Self::attach`] with `input` would start or restart the shell, as opposed to
+    /// joining the running one. Only then does it take a launch environment
+    /// (`openOrAttachForStream`).
+    pub fn attach_starts_shell(&self, input: &TerminalAttachInput) -> bool {
+        if input.cwd.is_none() {
+            return false;
+        }
+        let key = (input.thread_id.clone(), input.terminal_id.clone());
+        let resume = input.resume == Some(true);
+        let state = self.inner.lock();
+        match state.sessions.get(&key) {
+            None => !(resume && state.closed.contains(&key)),
+            Some(s) => !resume && s.proc.is_none() && input.restart_if_not_running == Some(true),
+        }
+    }
+
     /// `terminal.attach`: the terminal's stream, starting with a snapshot (or `closed`).
     /// Opens the shell when the terminal is unknown and `cwd` is given; with `resume`, a
     /// terminal closed earlier stays closed.

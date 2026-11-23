@@ -1216,3 +1216,27 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
 }
+
+/// The lease a terminal holds while it restores a worktree (`Engine::workspace_lease`) is the
+/// lock checkpoint capture and turn preparation take: a capture waits for it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_workspace_lease_holds_off_checkpoint_capture() {
+    let db = TempDb::new("lease");
+    let repo = Repo::new("lease");
+    let (engine, _) = open_repo(&db, &repo);
+    let root = repo.root();
+    let lease = engine
+        .workspace_lease(&root)
+        .await
+        .expect("checkpoints take locks");
+    let waiting = tokio::time::timeout(
+        Duration::from_millis(200),
+        engine.test_hold_workspace(&root),
+    )
+    .await;
+    assert!(waiting.is_err(), "the capture lock waits for the lease");
+    drop(lease);
+    let _capture = tokio::time::timeout(Duration::from_secs(5), engine.test_hold_workspace(&root))
+        .await
+        .expect("the capture lock follows the lease");
+}

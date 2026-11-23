@@ -587,6 +587,7 @@ async fn opens_a_t3_servers_scrollback_once() {
             ("term-1", "second-from-T3", "other-terminal-from-T3"),
             ("term-2", "other-terminal-from-T3", "first-from-T3"),
         ] {
+            manager.adopt_t3_history("t3-thread", terminal).await;
             let mut resume = attach_input("t3-thread", terminal);
             resume.resume = Some(true);
             let mut sub = manager.attach(resume, 1).unwrap();
@@ -610,15 +611,17 @@ async fn opens_a_t3_servers_scrollback_once() {
         }
         manager.shutdown().await;
     }
-    assert_eq!(std::fs::read_dir(&t3).unwrap().count(), 0);
+    // T3's files stay as they were.
+    assert_eq!(std::fs::read_dir(&t3).unwrap().count(), 2);
 
-    // Native history wins over a T3 file that turns up later.
+    // Native history wins over T3's from then on.
     std::fs::write(
         t3.join(format!("terminal_{}.log", b64("t3-thread"))),
         "stale-from-T3\n",
     )
     .unwrap();
     let manager = TerminalManager::new(with_dir());
+    manager.adopt_t3_history("t3-thread", "term-1").await;
     let mut resume = attach_input("t3-thread", "term-1");
     resume.resume = Some(true);
     let mut sub = manager.attach(resume, 1).unwrap();

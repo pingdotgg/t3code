@@ -4,14 +4,18 @@
 //! Inputs are checked against the contract's bounds here, as Effect's schema does in the T3
 //! server: a payload outside them is a defect, not a typed error.
 
-use std::{future::Future, path::PathBuf, sync::Arc};
+use std::{
+    future::Future,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use conn_contract::{
     TerminalAttachInput, TerminalAttachStreamEvent, TerminalClearInput, TerminalCloseInput,
     TerminalMetadataStreamEvent, TerminalOpenError, TerminalOpenInput, TerminalResizeInput,
-    TerminalWriteInput, ThreadId, to_json,
+    TerminalWriteInput, to_json,
 };
-use conn_engine::Engine;
+use conn_engine::{Engine, ThreadWorktree};
 use conn_terminal::{MetadataSubscription, Subscription, TerminalConfig, TerminalManager};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -58,9 +62,14 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
                 input.provider_instance_id.as_deref(),
                 input.env.take(),
             )?;
+            m.adopt_t3_history(&input.thread_id, &input.terminal_id)
+                .await;
+            let worktree = r.worktree_of(&input.thread_id, &input.cwd).await;
+            // Held across the open, the restore and the retry, as turns and captures hold it.
+            let _lease = r.lease(worktree.as_ref()).await;
             match m.open(input.clone()) {
                 Err(TerminalOpenError::TerminalCwdNotFoundError(_))
-                    if r.worktree(&input.thread_id, &input.cwd).await =>
+                    if r.restore(worktree.as_ref()).await =>
                 {
                     m.open(input)
                 }
@@ -77,18 +86,24 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
             async move {
                 check_session(&input.thread_id, &input.terminal_id)?;
                 check_grid(input.cols, input.rows)?;
-                input.env = launch_env(
-                    r.environment.as_deref(),
-                    input.provider_instance_id.as_deref(),
-                    input.env.take(),
-                )?;
+                // A reconnect joins the running shell as it is (T3 resolves only to launch).
+                let launches = m.attach_starts_shell(&input);
+                let mut worktree = None;
+                if launches {
+                    m.adopt_t3_history(&input.thread_id, &input.terminal_id)
+                        .await;
+                    input.env = launch_env(
+                        r.environment.as_deref(),
+                        input.provider_instance_id.as_deref(),
+                        input.env.take(),
+                    )?;
+                    let cwd = input.cwd.as_deref().unwrap_or_default();
+                    worktree = r.worktree_of(&input.thread_id, cwd).await;
+                }
+                let _lease = r.lease(worktree.as_ref()).await;
                 let sub = match m.attach(input.clone(), ctx.connection_id) {
                     Err(TerminalOpenError::TerminalCwdNotFoundError(_))
-                        if r.worktree(
-                            &input.thread_id,
-                            input.cwd.as_deref().unwrap_or_default(),
-                        )
-                        .await =>
+                        if r.restore(worktree.as_ref()).await =>
                     {
                         m.attach(input, ctx.connection_id)
                     }
@@ -209,66 +224,62 @@ fn forward(mut source: impl Source) -> ItemStream {
 struct Restore {
     engine: Option<Arc<dyn Engine>>,
     environment: Option<Arc<crate::environment::Environment>>,
-    /// One restore per worktree at a time; a second open waits and finds it back.
+    /// For an engine without workspace locks of its own.
     locks: Arc<conn_vcs::locks::WorkspaceLocks>,
 }
 
 impl Restore {
-    /// Whether the thread's worktree holding `cwd` is back: restored now, or by an open that
-    /// held the lock first.
-    async fn worktree(&self, thread_id: &str, cwd: &str) -> bool {
-        let (Some(engine), Some(environment)) = (&self.engine, &self.environment) else {
-            return false;
-        };
-        let Ok(projection) = engine
-            .get_thread_projection(ThreadId::from(thread_id.to_owned()))
+    /// The thread's worktree when the terminal's `cwd` lies in it.
+    async fn worktree_of(&self, thread_id: &str, cwd: &str) -> Option<ThreadWorktree> {
+        let worktree = self
+            .engine
+            .as_ref()?
+            .thread_worktree(thread_id)
             .await
-        else {
+            .ok()??;
+        let root = PathBuf::from(&worktree.worktree_path);
+        let target = conn_files::paths::normalize(&root.join(cwd));
+        conn_files::paths::is_within(&target, &root).then_some(worktree)
+    }
+
+    /// The workspace lease for `worktree` (`withWorkspaceLease`), shared with the engine's turn
+    /// preparation and checkpoint capture.
+    async fn lease<'a>(
+        &'a self,
+        worktree: Option<&'a ThreadWorktree>,
+    ) -> Option<conn_vcs::locks::WorkspaceLock<'a>> {
+        let root = worktree?.worktree_path.as_str();
+        if let Some(engine) = &self.engine
+            && let Some(lease) = engine.workspace_lease(root).await
+        {
+            return Some(lease);
+        }
+        Some(self.locks.workspace(root).await)
+    }
+
+    /// Whether `worktree` is a checkout again: recreated now, as a managed worktree whose
+    /// branch survives. The caller holds its lease.
+    async fn restore(&self, worktree: Option<&ThreadWorktree>) -> bool {
+        let (Some(worktree), Some(environment)) = (worktree, &self.environment) else {
             return false;
-        };
-        let thread = if projection["thread"].is_object() {
-            &projection["thread"]
-        } else {
-            &projection
         };
         // A thread without a branch has a scratch folder, not a worktree to restore.
-        let (Some(worktree), Some(branch), Some(project_id)) = (
-            thread["worktreePath"].as_str(),
-            thread["branch"].as_str(),
-            thread["projectId"].as_str(),
-        ) else {
+        let (Some(branch), Some(root)) = (&worktree.branch, &worktree.project_root) else {
             return false;
         };
-        let worktree = PathBuf::from(worktree);
-        let target = conn_files::paths::normalize(&worktree.join(cwd));
-        if !conn_files::paths::is_within(&target, &worktree) {
-            return false;
-        }
-        let Some(root) = engine.projects_snapshot().await.ok().and_then(|projects| {
-            projects
-                .iter()
-                .find(|p| p["id"] == project_id)
-                .and_then(|p| p["workspaceRoot"].as_str())
-                .map(PathBuf::from)
-        }) else {
-            return false;
-        };
+        let path = PathBuf::from(&worktree.worktree_path);
         let dirs = crate::host::managed_worktree_dirs(environment);
-        let path = worktree.clone();
+        let candidate = path.clone();
         let managed = tokio::task::spawn_blocking(move || {
-            crate::host::is_managed_worktree_path(&dirs, &path)
+            crate::host::is_managed_worktree_path(&dirs, &candidate)
         })
         .await
         .unwrap_or(false);
         if !managed {
             return false;
         }
-        let _lock = self.locks.workspace(&worktree.to_string_lossy()).await;
-        match conn_vcs::worktree::restore_missing_worktree(&root, &worktree, branch).await {
-            Ok(true) => true,
-            Ok(false) => tokio::fs::try_exists(worktree.join(".git"))
-                .await
-                .unwrap_or(false),
+        match conn_vcs::worktree::restore_missing_worktree(Path::new(root), &path, branch).await {
+            Ok(restored) => restored,
             Err(error) => {
                 eprintln!("conn-server: could not recreate a missing worktree: {error}");
                 false
@@ -461,10 +472,9 @@ mod tests {
         );
         let mut seen = String::new();
         loop {
-            let (_, frame) = client
-                .next(Duration::from_secs(15))
-                .await
-                .expect("shell output");
+            let Some((_, frame)) = client.next(Duration::from_secs(15)).await else {
+                panic!("no marker from {terminal}; the shell printed {seen:?}");
+            };
             if frame["_tag"] == "Chunk" && frame["requestId"] == id {
                 client.send(json!({"_tag": "Ack", "requestId": id}));
             }
@@ -552,6 +562,23 @@ mod tests {
             profile_marker(&mut client, 30, "plain", None).await,
             "unset"
         );
+        // A reconnect to a running shell joins it, even when its instance is gone since.
+        client.request(
+            40,
+            "terminal.attach",
+            json!({"threadId": "thread-p", "terminalId": "first", "cwd": std::env::temp_dir(),
+                "providerInstanceId": "removed-since"}),
+        );
+        let joined = client
+            .until(|f| (f["_tag"] == "Chunk" || f["_tag"] == "Exit") && f["requestId"] == 40)
+            .await;
+        let joined = joined.last().unwrap();
+        assert_eq!(joined["_tag"], "Chunk", "{joined}");
+        assert_eq!(
+            joined["values"][0]["snapshot"]["status"], "running",
+            "{joined}"
+        );
+        client.send(json!({"_tag": "Ack", "requestId": 40}));
         client.request(
             4,
             "terminal.close",
@@ -561,10 +588,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// Serves one thread and its project, for the worktree restore.
+    /// Serves one thread's worktree and a workspace lock, for the worktree restore.
     struct OneThread {
-        thread: Value,
-        projects: Vec<Value>,
+        worktree: ThreadWorktree,
+        locks: conn_vcs::locks::WorkspaceLocks,
     }
 
     impl Engine for OneThread {
@@ -610,24 +637,18 @@ mod tests {
         > {
             Box::pin(async { Err(conn_engine::EngineError::Internal("not called".into())) })
         }
-        fn get_thread_projection(
+        fn thread_worktree(
             &self,
-            _: ThreadId,
-        ) -> conn_engine::BoxFuture<
-            '_,
-            Result<Value, conn_engine::EngineError<conn_contract::GetThreadProjectionError>>,
-        > {
-            let thread = self.thread.clone();
-            Box::pin(async move { Ok(json!({"thread": thread})) })
+            _: &str,
+        ) -> conn_engine::BoxFuture<'_, Result<Option<ThreadWorktree>, String>> {
+            let worktree = self.worktree.clone();
+            Box::pin(async move { Ok(Some(worktree)) })
         }
-        fn projects_snapshot(
-            &self,
-        ) -> conn_engine::BoxFuture<
-            '_,
-            Result<Vec<Value>, conn_engine::EngineError<conn_contract::GetShellSnapshotError>>,
-        > {
-            let projects = self.projects.clone();
-            Box::pin(async move { Ok(projects) })
+        fn workspace_lease<'a>(
+            &'a self,
+            root: &'a str,
+        ) -> conn_engine::BoxFuture<'a, Option<conn_vcs::locks::WorkspaceLock<'a>>> {
+            Box::pin(async move { Some(self.locks.workspace(root).await) })
         }
     }
 
@@ -694,13 +715,17 @@ mod tests {
             Default::default(),
         )
         .unwrap();
+        let engine = Arc::new(OneThread {
+            worktree: ThreadWorktree {
+                worktree_path: worktree.to_string_lossy().into_owned(),
+                branch: Some("feature/restore".into()),
+                project_root: Some(project.to_string_lossy().into_owned()),
+            },
+            locks: conn_vcs::locks::WorkspaceLocks::default(),
+        });
         let deps = Deps {
             environment: Some(Arc::new(environment)),
-            engine: Some(Arc::new(OneThread {
-                thread: json!({"id": "thread-r", "projectId": "p1", "branch": "feature/restore",
-                    "worktreePath": worktree}),
-                projects: vec![json!({"id": "p1", "workspaceRoot": project})],
-            })),
+            engine: Some(engine.clone() as Arc<dyn Engine>),
             ..Deps::default()
         };
         let mut client = Client::connect_with(&deps);
@@ -708,8 +733,13 @@ mod tests {
             json!({"threadId": "thread-r", "terminalId": terminal, "cwd": cwd,
                 "env": {"PS1": "$ ", "HISTFILE": "/dev/null"}})
         };
+        // A turn or a capture holds the workspace: both opens wait and nothing restores yet.
+        let held = engine.locks.workspace(&worktree.to_string_lossy()).await;
         client.request(1, "terminal.open", open("one", &worktree));
         client.request(2, "terminal.open", open("two", &worktree));
+        assert!(client.next(Duration::from_millis(500)).await.is_none());
+        assert!(!worktree.exists());
+        drop(held);
         let mut exits = Vec::new();
         while exits.len() < 2 {
             let (_, frame) = client

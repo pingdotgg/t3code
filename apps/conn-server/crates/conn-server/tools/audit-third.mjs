@@ -5,8 +5,11 @@ import {execFileSync} from "node:child_process";
 import {peerFixture} from "./peer-fixture.mjs";
 import {gitEnv} from "../../../tools/sealed-env.mjs";
 
+// Usage: audit-third.mjs <ts|rs> [replay_server]; the binary is the one under review.
 const ts = process.argv[2] === "ts";
-const f = peerFixture(path.resolve("/Users/nckrtl/apps/conn-gpui-dev/target/audit3", "debug/examples/replay_server"), "conn-third-");
+const binary = path.resolve(process.argv[3] ?? "target/debug/examples/replay_server");
+if (!ts && !fs.existsSync(binary)) throw new Error(`no replay_server at ${binary}`);
+const f = peerFixture(binary, "conn-third-");
 async function run() {
   const s = ts ? await f.startTs("host",{script:fs.readFileSync(new URL("../../conn-provider-claude/testdata/cli/e01_turn.ndjson",import.meta.url),"utf8")}) : await f.startRust("host");
   const dir = path.join(f.root, "host");
@@ -182,10 +185,12 @@ async function run() {
   console.log(s.kind,JSON.stringify(results));
   assert.deepEqual(results, {
     checkpoint:[ts,!ts],deleteOnResume:ts?"thread.deleted":"OrchestrationV2GetThreadProjectionError",modulePresentWhenOff:!ts,
-    fetchedWhileOff:!ts,autoPulled:ts,restore:[ts?"Success":"Failure",ts],
-    alias:[true,ts,ts],largeText:[ts?1:0,false],scrollback:ts,
-    unknownProvider:ts?"TerminalProviderInstanceNotFoundError":"opened",profile:ts?"fixture-value":"unset",
-    excludedPresent:!ts,managedWrite:ts?"saved":"workspace_path_outside_root",moduleAvailable:ts,
+    fetchedWhileOff:!ts,autoPulled:ts,alias:[true,ts,ts],largeText:[ts?1:0,false],
+    excludedPresent:!ts,moduleAvailable:ts,
+    // Fixed in Conn as in T3: 3.2 instance environment, 3.6 restore, 3.7 managed save,
+    // 3.8 T3 scrollback.
+    unknownProvider:"TerminalProviderInstanceNotFoundError",profile:"fixture-value",
+    restore:["Success",true],managedWrite:"saved",scrollback:true,
   });
 }
 run().then(()=>process.exit(0),error=>{console.error(error);process.exit(1);});

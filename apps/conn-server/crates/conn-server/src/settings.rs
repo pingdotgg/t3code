@@ -441,6 +441,7 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
     translate_legacy_project_overrides(settings, &mut patch);
     let idle_compaction = patched_idle_compaction(settings, &patch);
     let background_profile = preset_background_profile(&patch);
+    remember_worktrees_directory(settings, &mut patch);
 
     let set_favorites = patch.remove("setModelFavorites");
     let set_hidden = patch.remove("setModelsHidden");
@@ -586,6 +587,36 @@ pub fn apply_patch(settings: &mut Map<String, Value>, mut patch: Map<String, Val
 /// `translateLegacyProjectOverridePatch`: the legacy per-project maps become
 /// `projectSettingsOverrides` entries. A project the patch names there keeps its canonical
 /// entry; an entry left empty becomes `null` (removed).
+/// `applyServerSettingsPatch`: a moved `worktreesDirectory` keeps the one it replaces in
+/// `previousWorktreesDirectories`, so worktrees made there stay managed.
+fn remember_worktrees_directory(settings: &Map<String, Value>, patch: &mut Map<String, Value>) {
+    let Some(next) = patch.get("worktreesDirectory").and_then(Value::as_str) else {
+        return;
+    };
+    let current = settings
+        .get("worktreesDirectory")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if next == current {
+        return;
+    }
+    let mut previous: Vec<Value> = settings
+        .get("previousWorktreesDirectories")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let remember = !current.is_empty() && !previous.iter().any(|d| d == current);
+    let current = json!(current);
+    previous.retain(|d| d != next);
+    if remember {
+        previous.push(current);
+    }
+    patch.insert(
+        "previousWorktreesDirectories".into(),
+        Value::Array(previous),
+    );
+}
+
 fn translate_legacy_project_overrides(
     settings: &Map<String, Value>,
     patch: &mut Map<String, Value>,
@@ -919,6 +950,28 @@ pub fn provider_terminal_env(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_moved_worktrees_directory_is_remembered() {
+        let mut settings = Map::new();
+        let patch = |dir: &str| {
+            let Value::Object(patch) = json!({"worktreesDirectory": dir}) else {
+                unreachable!()
+            };
+            patch
+        };
+        apply_patch(&mut settings, patch("/a"));
+        assert_eq!(
+            settings.get("previousWorktreesDirectories"),
+            Some(&json!([]))
+        );
+        apply_patch(&mut settings, patch("/b"));
+        apply_patch(&mut settings, patch("/b"));
+        assert_eq!(settings["previousWorktreesDirectories"], json!(["/a"]));
+        apply_patch(&mut settings, patch("/a"));
+        assert_eq!(settings["previousWorktreesDirectories"], json!(["/b"]));
+        assert_eq!(settings["worktreesDirectory"], "/a");
+    }
+
     #[test]
     fn a_terminal_takes_its_provider_instances_environment() {
         let Value::Object(settings) = serde_json::json!({"providerInstances": {

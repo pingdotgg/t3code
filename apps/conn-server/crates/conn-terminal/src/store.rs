@@ -4,9 +4,9 @@
 //! the new tail and rewrite the file once it grows past twice the history cap, as
 //! `apps/server` does. The files are bounded by the history cap; nothing else is kept.
 //!
-//! A T3 server's history for the same terminal (`<state>/logs/terminals`, named as in
-//! `terminal/Manager.ts` `historyPaths`) moves here on first read, as T3 migrates its own
-//! older names, so a T3 home opened by this server keeps its scrollback.
+//! A terminal with no history here takes the tail of a T3 server's history for it
+//! (`<state>/logs/terminals`, named as in `terminal/Manager.ts` `historyPaths`), so a T3 home
+//! opened by this server keeps its scrollback. T3's file stays as it is.
 
 use std::{
     fs, io,
@@ -14,9 +14,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone)]
 pub(crate) struct Store {
     dir: PathBuf,
-    /// The T3 server's history folder, read once per terminal and then emptied of it.
+    /// The T3 server's history folder, read when a terminal has no history here.
     t3_dir: Option<PathBuf>,
 }
 
@@ -55,23 +56,23 @@ impl Store {
         names.into_iter().map(|name| dir.join(name)).collect()
     }
 
-    /// Moves T3's history for this terminal here when this server has none yet.
-    fn adopt_t3(&self, thread_id: &str, terminal_id: &str, path: &Path) {
+    /// Copies the last `max_bytes` of T3's history for this terminal here when this server
+    /// has none yet. The copy appears whole or not at all; T3's file is left as it is.
+    /// Blocking: run it on a blocking thread.
+    pub(crate) fn adopt_t3(&self, thread_id: &str, terminal_id: &str, max_bytes: usize) {
+        let path = self.path(thread_id, terminal_id);
         if path.exists() {
             return;
         }
-        for source in self.t3_paths(thread_id, terminal_id) {
-            if !source.is_file() {
-                continue;
-            }
-            if fs::create_dir_all(&self.dir).is_err() {
-                return;
-            }
-            if fs::rename(&source, path).is_err() && fs::copy(&source, path).is_ok() {
-                let _ = fs::remove_file(&source);
-            }
+        let Some(tail) = self
+            .t3_paths(thread_id, terminal_id)
+            .into_iter()
+            .find(|source| source.is_file())
+            .and_then(|source| tail(&source, max_bytes).ok())
+        else {
             return;
-        }
+        };
+        let _ = self.write(thread_id, terminal_id, &tail);
     }
 
     fn path(&self, thread_id: &str, terminal_id: &str) -> PathBuf {
@@ -84,22 +85,7 @@ impl Store {
 
     /// The last `max_bytes` of the file, starting at a code point.
     pub(crate) fn read(&self, thread_id: &str, terminal_id: &str, max_bytes: usize) -> String {
-        let path = self.path(thread_id, terminal_id);
-        self.adopt_t3(thread_id, terminal_id, &path);
-        let Ok(mut file) = fs::File::open(path) else {
-            return String::new();
-        };
-        let len = file.metadata().map(|m| m.len()).unwrap_or(0);
-        let start = len.saturating_sub(max_bytes as u64);
-        let mut bytes = Vec::new();
-        if file.seek(SeekFrom::Start(start)).is_err() || file.read_to_end(&mut bytes).is_err() {
-            return String::new();
-        }
-        let skip = bytes
-            .iter()
-            .take_while(|b| (*b & 0b1100_0000) == 0b1000_0000)
-            .count();
-        String::from_utf8_lossy(&bytes[skip..]).into_owned()
+        tail(&self.path(thread_id, terminal_id), max_bytes).unwrap_or_default()
     }
 
     /// Appends `tail`, or rewrites the file with `full` when appending would pass `limit`.
@@ -157,6 +143,20 @@ impl Store {
             });
         }
     }
+}
+
+/// The last `max_bytes` of a file, starting at a code point.
+fn tail(path: &Path, max_bytes: usize) -> io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(max_bytes as u64)))?;
+    let mut bytes = Vec::new();
+    file.take(max_bytes as u64).read_to_end(&mut bytes)?;
+    let skip = bytes
+        .iter()
+        .take_while(|b| (*b & 0b1100_0000) == 0b1000_0000)
+        .count();
+    Ok(String::from_utf8_lossy(bytes.get(skip..).unwrap_or_default()).into_owned())
 }
 
 fn remove_matching(dir: &Path, matches: impl Fn(&str) -> bool) {
@@ -252,14 +252,18 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
-    /// T3's history for a terminal (default and named, the oldest name too) shows here once,
-    /// then lives only here; deleting a thread removes T3's names for it.
+    /// T3's history for a terminal (default and named, the oldest name too) shows here, capped
+    /// to the history limit, and T3's files stay; deleting a thread removes T3's names for it.
     #[test]
     fn adopts_the_t3_servers_history() {
         let root = std::env::temp_dir().join(format!("conn-terminal-t3-{}", std::process::id()));
         let (dir, t3) = (root.join("terminals"), root.join("logs/terminals"));
         fs::create_dir_all(&t3).unwrap();
         let store = Store::new(dir, Some(t3.clone()));
+        let adopted = |thread: &str, terminal: &str| {
+            store.adopt_t3(thread, terminal, 100);
+            store.read(thread, terminal, 100)
+        };
         let current = t3.join(format!("terminal_{}.log", b64(b"thread")));
         fs::write(&current, "from T3\n").unwrap();
         let named = t3.join(format!(
@@ -272,17 +276,42 @@ mod tests {
         let long = "x".repeat(120);
         let hashed = t3.join(format!("terminal_sha256.{}.log", t3_hash(&long)));
         fs::write(&hashed, "hashed\n").unwrap();
+        // A large log: only the capped tail is copied.
+        let large = t3.join(format!("terminal_{}.log", b64(b"large")));
+        fs::write(
+            &large,
+            format!("{}end-of-log\n", "older line\n".repeat(100_000)),
+        )
+        .unwrap();
         fs::write(t3.join(format!("terminal_{}_x.log", b64(b"gone"))), "gone").unwrap();
 
-        assert_eq!(store.read("thread", "term-1", 100), "from T3\n");
-        assert!(!current.exists());
+        assert_eq!(adopted("thread", "term-1"), "from T3\n");
+        assert_eq!(
+            fs::read_to_string(&current).unwrap(),
+            "from T3\n",
+            "T3's file stays"
+        );
+        assert_eq!(adopted("thread", "term-2"), "named\n");
+        assert_eq!(adopted("old thread", "term-1"), "oldest\n");
+        assert_eq!(adopted(&long, "term-1"), "hashed\n");
+        let copied = adopted("large", "term-1");
+        assert!(
+            copied.len() <= 100 && copied.ends_with("end-of-log\n"),
+            "{copied:?}"
+        );
+        assert!(fs::metadata(store.path("large", "term-1")).unwrap().len() <= 100);
+        // Native history wins over T3's from then on.
+        store.write("thread", "term-1", "native\n").unwrap();
+        assert_eq!(adopted("thread", "term-1"), "native\n");
         store.delete("thread", "term-1");
-        assert_eq!(store.read("thread", "term-1", 100), "");
-        assert_eq!(store.read("thread", "term-2", 100), "named\n");
-        assert_eq!(store.read("old thread", "term-1", 100), "oldest\n");
-        assert_eq!(store.read(&long, "term-1", 100), "hashed\n");
+        assert!(!current.exists());
         store.delete_thread("gone");
-        assert_eq!(fs::read_dir(&t3).unwrap().count(), 0);
+        assert!(fs::read_dir(&t3).unwrap().all(|e| {
+            !e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&format!("terminal_{}_", b64(b"gone")))
+        }));
         let _ = fs::remove_dir_all(root);
     }
 }

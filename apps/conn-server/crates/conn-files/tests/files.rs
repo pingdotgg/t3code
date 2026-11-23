@@ -285,6 +285,41 @@ fn writes_only_inside_known_workspaces_and_outside_git() {
         fs::read_to_string(worktree.join("audit.txt")).unwrap(),
         "probe"
     );
+    // A worktree of a repository nested in the project, as `vcs.createWorktree` makes from
+    // that folder, saves too.
+    let nested = f.project.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    git(&nested, &["init", "-q"]);
+    git(
+        &nested,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ],
+    );
+    let nested_worktree = managed.join("nested/probe-4567");
+    git(
+        &nested,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "probe",
+            &nested_worktree.to_string_lossy(),
+        ],
+    );
+    assert_eq!(
+        save(&nested_worktree, &with_managed).unwrap().relative_path,
+        "audit.txt"
+    );
     // A link in the worktree cannot carry the save out of it.
     symlink(&f.outside, worktree.join("escape")).unwrap();
     assert_eq!(

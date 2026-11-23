@@ -1323,6 +1323,53 @@ fn projection_error(
 }
 
 impl Engine for SqliteEngine {
+    fn thread_worktree(
+        &self,
+        thread_id: &str,
+    ) -> BoxFuture<'_, Result<Option<crate::ThreadWorktree>, String>> {
+        let id = thread_id.to_owned();
+        Box::pin(async move {
+            self.inner
+                .db(move |store| -> StoreResult<Option<crate::ThreadWorktree>> {
+                    let tx = store.tx()?;
+                    let read = (|| {
+                        let Some(thread) = tx.thread(&id)? else {
+                            return Ok(None);
+                        };
+                        let Some(worktree_path) = thread["worktreePath"].as_str() else {
+                            return Ok(None);
+                        };
+                        let project_root = match thread["projectId"].as_str() {
+                            Some(project) => tx
+                                .project(project)?
+                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned)),
+                            None => None,
+                        };
+                        Ok(Some(crate::ThreadWorktree {
+                            worktree_path: worktree_path.to_owned(),
+                            branch: thread["branch"].as_str().map(str::to_owned),
+                            project_root,
+                        }))
+                    })();
+                    tx.rollback();
+                    read
+                })
+                .await
+        })
+    }
+
+    fn workspace_lease<'a>(
+        &'a self,
+        root: &'a str,
+    ) -> BoxFuture<'a, Option<conn_vcs::locks::WorkspaceLock<'a>>> {
+        Box::pin(async move {
+            match &self.inner.checkpoints {
+                Some(locks) => Some(locks.workspace(root).await),
+                None => None,
+            }
+        })
+    }
+
     fn provider_instance_enabled(&self, project_id: &str, instance_id: &str) -> bool {
         self.inner
             .host

@@ -5,7 +5,6 @@
 //! the file system or a short `git` call; the server runs them on `spawn_blocking`.
 
 use std::{
-    cell::OnceCell,
     io,
     path::{Path, PathBuf},
 };
@@ -61,16 +60,15 @@ impl Files {
 
 /// The folders `projects.writeFile` may write in: project roots, thread worktrees that
 /// `git worktree list` names for their project, and, with [`KnownWorkspaces::with_managed`],
-/// any worktree such a list names inside a managed worktree folder (`KnownWorkspaces.ts`).
+/// a managed worktree whose repository lies in a project and lists it (`KnownWorkspaces.ts`).
 /// Built per call from the engine's shell snapshot; never cached.
 #[derive(Debug, Default)]
 pub struct KnownWorkspaces {
     roots: Vec<PathBuf>,
+    /// Project roots, resolved.
     projects: Vec<PathBuf>,
     /// Managed worktree folders, resolved.
     managed: Vec<PathBuf>,
-    /// The projects' worktrees inside `managed`, listed on the first path that needs them.
-    managed_worktrees: OnceCell<Vec<PathBuf>>,
 }
 
 impl KnownWorkspaces {
@@ -97,14 +95,15 @@ impl KnownWorkspaces {
             }
         }
         Self {
+            projects: projects.iter().filter_map(|p| real_root(p)).collect(),
             roots,
-            projects: projects.iter().map(PathBuf::from).collect(),
-            ..Self::default()
+            managed: Vec::new(),
         }
     }
 
-    /// Also allows worktrees of these projects inside `dirs`, the managed worktree folders,
-    /// before any thread names them: a worktree made by `vcs.createWorktree`.
+    /// Also allows a worktree inside `dirs`, the managed worktree folders, before any thread
+    /// names it, such as one `vcs.createWorktree` just made: its repository (the project's or
+    /// one nested in it) must lie in a project and list the checkout as its worktree.
     #[must_use]
     pub fn with_managed(mut self, dirs: &[PathBuf]) -> Self {
         self.managed = dirs
@@ -119,20 +118,36 @@ impl KnownWorkspaces {
         if self.roots.iter().any(|root| real.starts_with(root)) {
             return true;
         }
-        if !self.managed.iter().any(|dir| real.starts_with(dir)) {
+        // `<managed>/<repo>/<name>`: the checkout `real` lies in.
+        let Some(checkout) = self.managed.iter().find_map(|dir| {
+            let mut parts = real.strip_prefix(dir).ok()?.components();
+            let (repo, name) = (parts.next()?, parts.next()?);
+            Some(dir.join(repo).join(name))
+        }) else {
             return false;
-        }
-        self.managed_worktrees
-            .get_or_init(|| {
-                self.projects
-                    .iter()
-                    .flat_map(|project| git_worktrees(project))
-                    .filter(|w| self.managed.iter().any(|dir| w.starts_with(dir)))
-                    .collect()
-            })
-            .iter()
-            .any(|worktree| real.starts_with(worktree))
+        };
+        let Some(repository) = worktree_repository(&checkout) else {
+            return false;
+        };
+        self.projects.iter().any(|p| repository.starts_with(p))
+            && git_worktrees(&repository).contains(&checkout)
     }
+}
+
+/// The main worktree of the repository a checkout belongs to (`--git-common-dir`'s parent).
+fn worktree_repository(checkout: &Path) -> Option<PathBuf> {
+    let output = git::run(
+        checkout,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        None,
+        64 * 1024,
+        std::time::Duration::from_secs(5),
+    )?;
+    if output.code != Some(0) {
+        return None;
+    }
+    let common = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    std::fs::canonicalize(common.parent()?).ok()
 }
 
 /// A canonical, absolute folder that is not a filesystem root.
