@@ -869,6 +869,40 @@ describe("large text preview recovery", () => {
     expect(screen.container.textContent).toContain("C19");
   });
 
+  it("remeasures column widths when the header row changes", async () => {
+    const view = (header: readonly string[], rows: readonly (readonly string[])[]) => (
+      <div style={{ display: "flex", height: 300, width: 600 }}>
+        <VirtualTablePreview
+          name="data.csv"
+          count={rows.length}
+          columns={header.length}
+          header={header}
+          getRows={() => rows}
+        />
+      </div>
+    );
+    const initialHeader = ["id", "notes"];
+    const initialRows = [
+      initialHeader,
+      ["1", "A very long description that makes the second column wide"],
+    ];
+    await using screen = await render(view(initialHeader, initialRows));
+    await vi.waitFor(() => {
+      const cells = screen.container.querySelectorAll('[role="columnheader"]');
+      expect(cells.length).toBe(2);
+      expect(cells[0]?.textContent).toBe("id");
+    });
+
+    const nextHeader = ["very_long_primary_column_header", "id"];
+    const nextRows = [nextHeader, ["Long primary value spanning many characters", "1"]];
+    await screen.rerender(view(nextHeader, nextRows));
+    await vi.waitFor(() => {
+      const firstHeader = screen.container.querySelector<HTMLElement>('[role="columnheader"]');
+      expect(firstHeader?.textContent).toBe("very_long_primary_column_header");
+      expect(firstHeader!.scrollWidth).toBeLessThanOrEqual(firstHeader!.clientWidth);
+    });
+  });
+
   it("keeps row height and vertical position stable across horizontal scroll, fresh row arrays, resize, and typography changes", async () => {
     const columns = 35;
     const header = Array.from({ length: columns }, (_, i) => `Col ${i}`);

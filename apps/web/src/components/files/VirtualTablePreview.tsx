@@ -21,10 +21,14 @@ export default function VirtualTablePreview(props: {
   const [left, setLeft] = useState(0);
   const [size, setSize] = useState({ width: 0, height: 600 });
   const { width } = size;
-  const widthRef = useRef(0);
   const measureRef = useRef<HTMLTableElement>(null);
-  const [measured, setMeasured] = useState<number[] | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the viewport before paint and observe container resizes to invalidate column measurements.
+  const [measured, setMeasured] = useState<{ key: string; widths: number[] } | null>(null);
+  const measurementKey =
+    props.header?.length && props.columns <= 30 && width > 0
+      ? `${width}\0${props.columns}\0${props.header.join("\0")}`
+      : null;
+  const measuredWidths = measured?.key === measurementKey ? measured.widths : null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Measure the viewport before paint and observe container resizes.
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
@@ -32,29 +36,28 @@ export default function VirtualTablePreview(props: {
       const width = node.clientWidth;
       const height = node.clientHeight;
       setSize((old) => (old.width === width && old.height === height ? old : { width, height }));
-      if (widthRef.current !== width) {
-        widthRef.current = width;
-        setMeasured(null);
-      }
     };
     update();
     return observeResize(node, update);
   }, []);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read the browser's laid-out table column widths before displaying the virtual table.
   useLayoutEffect(() => {
-    if (!width || !props.header || !measureRef.current || measured) return;
+    if (!measurementKey || !measureRef.current || measuredWidths) return;
     const widths = [...measureRef.current.querySelectorAll("thead th")].map(
       (cell) => cell.getBoundingClientRect().width,
     );
-    if (widths.length) setMeasured(widths);
-  }, [measured, width, props.header]);
+    // A hidden ancestor lays the table out at zero width; measure again once it is shown.
+    if (widths.every((cellWidth) => cellWidth > 0)) setMeasured({ key: measurementKey, widths });
+  }, [measuredWidths, measurementKey]);
   const columnWidth = props.source
     ? 0
     : Math.max(128, Math.min(320, (width - 56) / Math.min(props.columns, 6)));
   const rowHeader = 56;
+  // The previous widths stay in place until the new measurement lands before paint.
+  const displayWidths = measurementKey ? measured?.widths : null;
   const sizes = Array.from(
     { length: props.columns },
-    (_, column) => measured?.[column] ?? columnWidth,
+    (_, column) => displayWidths?.[column] ?? columnWidth,
   );
   const offsets = [0];
   for (const size of sizes) offsets.push(offsets[offsets.length - 1]! + size);
@@ -86,7 +89,7 @@ export default function VirtualTablePreview(props: {
         setLeft(event.currentTarget.scrollLeft);
       }}
     >
-      {props.header && props.columns <= 30 && !measured && width > 0 ? (
+      {props.header && measurementKey && !measuredWidths ? (
         <table
           ref={measureRef}
           aria-hidden="true"
@@ -98,7 +101,7 @@ export default function VirtualTablePreview(props: {
               {props.header.map((cell, i) => (
                 <th
                   key={i}
-                  className="min-w-32 max-w-80 border-b px-3 py-1.5 text-left font-medium whitespace-nowrap"
+                  className="min-w-32 max-w-80 border-r border-b px-3 py-1.5 text-left font-medium whitespace-nowrap"
                 >
                   {cell}
                 </th>
@@ -124,7 +127,8 @@ export default function VirtualTablePreview(props: {
           </tbody>
         </table>
       ) : null}
-      {width > 0 && (!props.header || props.columns > 30 || measured) ? (
+      {/* Any earlier measurement keeps the table mounted through re-measuring, so scroll position survives. */}
+      {width > 0 && (!measurementKey || measured) ? (
         <div
           role={props.source ? "region" : "table"}
           aria-label={props.name}
