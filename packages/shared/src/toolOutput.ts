@@ -253,6 +253,26 @@ export function previewRecordingIdFromToolItem(item: {
   return result.failed || budget.exceeded ? undefined : boundedId(result.data?.id);
 }
 
+/**
+ * Compact structured result a T3 MCP tool carries on its turn item.
+ * Preserves every metadata field clients, summaries, and attachment retention read.
+ */
+export function compactT3McpToolOutput(
+  toolName: string | null | undefined,
+  value: unknown,
+): Record<string, unknown> | undefined {
+  const resolved = resolveT3McpToolId(toolName);
+  if (resolved === null) return undefined;
+  const compact = compactDynamicToolOutput(value);
+  if (resolved === "preview_recording_stop" && !compact?.isError) {
+    const recordingId = previewRecordingIdFromToolItem({ toolName: resolved, output: value });
+    if (recordingId !== undefined) {
+      return { ...compact, id: recordingId };
+    }
+  }
+  return compact === undefined ? undefined : { ...compact };
+}
+
 /** Accept app references only when server and tool match the item, so tools cannot impersonate another app source. */
 export function mcpAppFromToolItem(item: {
   readonly toolName: string | null | undefined;

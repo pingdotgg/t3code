@@ -175,6 +175,39 @@ it("keeps the painted page while its width changes, then repaints it without a b
   }
 });
 
+it("keeps the page in view, with its painted canvas, when the pane narrows", async () => {
+  const page = { box: "0 0 612 792", rotate: 0, text: "BT /F1 24 Tf 30 700 Td (Text) Tj ET" };
+  const url = URL.createObjectURL(testPdf(Array.from({ length: 6 }, () => page)));
+  try {
+    const container = document.createElement("div");
+    container.style.cssText = "display:flex;width:500px;height:300px";
+    await using screen = await render(
+      <PdfViewer
+        src={url}
+        title="Narrowed PDF"
+        initialView={{ page: 3, offset: 100, zoom: null, left: 0 }}
+      />,
+      { container },
+    );
+    await expect.element(screen.getByText("4 / 6 pages"), { timeout: 10_000 }).toBeVisible();
+    const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
+    const canvas = region.querySelector<HTMLCanvasElement>('canvas[aria-label="Page 4"]')!;
+    await vi.waitFor(() => expect(canvas.width).toBeGreaterThan(300));
+
+    container.style.width = "300px";
+    await vi.waitFor(() => {
+      const top = region.getBoundingClientRect().top;
+      const box = canvas.getBoundingClientRect();
+      expect(box.width).toBe(region.clientWidth - 32);
+      expect(box.top).toBeLessThanOrEqual(top);
+      expect(box.bottom).toBeGreaterThan(top);
+    });
+    await expect.element(screen.getByText("4 / 6 pages")).toBeVisible();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
 it("jumps to the first hit while still counting and keeps later manual navigation", async () => {
   setup(4);
   const page = (text: string) => ({

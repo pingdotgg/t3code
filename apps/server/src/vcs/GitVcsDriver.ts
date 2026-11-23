@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -758,7 +759,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       16_384,
     );
     if (stdout === null) return null;
-    const lines = stdout.replace(/\r?\n$/u, "").split(/\r?\n/u);
+    const lines = stdout.replace(/\n$/, "").split("\n");
     if (lines[0]?.trim() !== "true") return null;
     // A newline inside a path breaks the line framing; ask for each path on its own.
     if (lines.length !== 3) {
@@ -772,16 +773,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ]).pipe(Effect.orElseSucceed(() => null));
       return {
         kind: "git" as const,
-        rootPath: root.stdout.trim(),
-        metadataPath: gitCommonDir?.stdout.trim() || null,
+        rootPath: root.stdout.replace(/\n$/, ""),
+        metadataPath: gitCommonDir?.stdout.replace(/\n$/, "") || null,
         freshness: yield* nowFreshness(),
       };
     }
 
     return {
       kind: "git" as const,
-      rootPath: lines[1]!.trim(),
-      metadataPath: lines[2]!.trim() || null,
+      rootPath: lines[1]!,
+      metadataPath: lines[2] || null,
       freshness: yield* nowFreshness(),
     };
   });
@@ -2368,35 +2369,101 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
 
-      // A commit is an import when a fetch delivered it since the previous checkpoint and no
-      // reflog in any worktree shows this repository creating it. --all covers every worktree's
-      // HEAD, and with --walk-reflogs --max-age compares each entry's own time. --since would
-      // guess at a date, and reads a timestamp before 1973 as the current time.
-      const listImportedCommits = Effect.gen(function* () {
-        const entries = (yield* listLines([
-          "log",
-          "--walk-reflogs",
-          "--all",
-          `--max-age=${capturedAt}`,
-          "--format=%H %gD %gs",
-        ])).map(parseCheckpointReflogEntry);
-        // A push records commits this repository already had.
-        const fetchedTips = new Set(
-          entries
-            .filter((entry) => entry.fetched && entry.subject !== "update by push")
-            .map((entry) => entry.commit),
+      // Refs under `namespace` that contain any of `commits`. Only the oldest commits of the set
+      // are passed on, since a ref containing a descendant also contains its ancestors.
+      const listRefsContaining = Effect.fn("GitVcsDriver.checkpoints.listRefsContaining")(
+        function* (commits: ReadonlySet<string>, namespace: "refs/remotes" | "refs/heads") {
+          const roots = (yield* listLines(
+            ["rev-list", "--no-walk=unsorted", "--parents", "--stdin"],
+            `${[...commits].join("\n")}\n`,
+          )).flatMap((line) => {
+            const [commit = "", ...parents] = line.split(" ");
+            return parents.some((parent) => commits.has(parent)) ? [] : [commit];
+          });
+          const outputs = yield* Effect.forEach(Arr.chunksOf(roots, 256), (chunk) =>
+            execute({
+              operation,
+              cwd: input.cwd,
+              args: [
+                "for-each-ref",
+                "--format=%(refname)",
+                ...chunk.flatMap((commit) => ["--contains", commit]),
+                namespace,
+              ],
+              maxOutputBytes: VcsDriver.CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+              outputMode: "error",
+            }),
+          );
+          // A ref name that is not UTF-8 would not survive the round trip, so Git lists them.
+          if (outputs.some((output) => output.stdoutInvalidUtf8)) {
+            return {
+              revisionArgs: [namespace === "refs/heads" ? "--branches" : "--remotes"],
+              refs: [],
+            };
+          }
+          const refs = outputs.flatMap((output) => output.stdout.split("\n"));
+          return { revisionArgs: [], refs: [...new Set(refs.filter((ref) => ref !== ""))] };
+        },
+      );
+      // With --walk-reflogs, --max-age compares each entry's own time; --since would guess at a
+      // date and reads a timestamp before 1973 as now. Walking many reflogs at once slows down
+      // quadratically with the refs passed: --all took 40 s in a repository with 29k refs.
+      const walkReflogs = Effect.fn("GitVcsDriver.checkpoints.walkReflogs")(function* (
+        revisionArgs: ReadonlyArray<string>,
+        refs: ReadonlyArray<string>,
+      ) {
+        const lines = yield* listLines(
+          [
+            "log",
+            "--walk-reflogs",
+            ...revisionArgs,
+            `--max-age=${capturedAt}`,
+            "--format=%H %gD %gs",
+            // A listed ref may be pruned before this walk reads it.
+            "--ignore-missing",
+            "--stdin",
+          ],
+          `${refs.join("\n")}\n`,
         );
-        if (fetchedTips.size === 0) return fetchedTips;
-        // Fetching another branch can deliver a commit that was made here and pushed.
-        const createdHere = new Set(
-          entries.filter(isLocalReflogCreation).map((entry) => entry.commit),
-        );
-        const fetched = yield* listLines(
-          ["rev-list", `--max-age=${capturedAt}`, "--stdin"],
-          `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
-        );
-        return new Set(fetched.filter((commit) => !createdHere.has(commit)));
+        return lines.map(parseCheckpointReflogEntry);
       });
+
+      // A commit is an import when a fetch delivered it since the previous checkpoint and no
+      // reflog shows this repository creating it. Only refs containing a turn commit are read;
+      // a remote-tracking ref force-moved off one after the fetch is missed, which keeps that
+      // commit attributed to the turn.
+      const listImportedCommits = Effect.fn("GitVcsDriver.checkpoints.listImportedCommits")(
+        function* (candidates: ReadonlySet<string>) {
+          const remote = yield* listRefsContaining(candidates, "refs/remotes");
+          if (remote.revisionArgs.length === 0 && remote.refs.length === 0) {
+            return new Set<string>();
+          }
+          // A push records commits this repository already had.
+          const fetchedTips = new Set(
+            (yield* walkReflogs(remote.revisionArgs, remote.refs))
+              .filter((entry) => entry.fetched && entry.subject !== "update by push")
+              .map((entry) => entry.commit),
+          );
+          if (fetchedTips.size === 0) return fetchedTips;
+          const fetched = new Set(
+            (yield* listLines(
+              ["rev-list", `--max-age=${capturedAt}`, "--stdin"],
+              `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
+            )).filter((commit) => candidates.has(commit)),
+          );
+          if (fetched.size === 0) return fetched;
+          // Fetching another branch can deliver a commit that was made here and pushed. Every
+          // worktree's HEAD reflog is read, since a detached HEAD may have moved off the commit
+          // it made; --all with refs/* excluded yields exactly those HEADs.
+          const local = yield* listRefsContaining(fetched, "refs/heads");
+          const createdHere = new Set(
+            (yield* walkReflogs(["--exclude=refs/*", "--all", ...local.revisionArgs], local.refs))
+              .filter(isLocalReflogCreation)
+              .map((entry) => entry.commit),
+          );
+          return new Set([...fetched].filter((commit) => !createdHere.has(commit)));
+        },
+      );
 
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
       // Older Git gets dense combined diffs, which miss a conflict resolved to one side's
@@ -2483,7 +2550,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const importedCommits =
         unprovenCommits.size === 0
           ? new Set<string>()
-          : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
+          : yield* listImportedCommits(unprovenCommits).pipe(
+              Effect.orElseSucceed(() => new Set<string>()),
+            );
       const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
       const ownCommitPaths =
         ownCommits.length === 0
