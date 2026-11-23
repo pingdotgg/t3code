@@ -515,9 +515,6 @@ const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FLAGGED_INDEX_ENTRIES_MAX_BYTES = 1024 * 1024;
 const CHECKPOINT_RECOVERY_MAX_CANDIDATES = 64;
 const CHECKPOINT_RECOVERY_TIMEOUT = "5 seconds";
-// Twice VcsProcess's default command timeout: a clean filter that wrote nothing for this long is
-// stalled far past the point where a capture would have killed its own.
-const LFS_TEMP_SETTLED_MS = 60_000;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 // Reflog subjects that only point a ref at an existing commit. Anything else counts as creating
 // one, so an unknown subject keeps its commit attributed.
@@ -1200,88 +1197,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   });
   const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
 
-  // git-lfs's clean filter copies each file into lfs/tmp and leaves the copy when it is killed.
-  // Entries that appear while staging fails are recorded. A later capture removes one once no other
-  // capture of the repository is staging and the entry has sat unchanged for LFS_TEMP_SETTLED_MS,
-  // since any git-lfs process can hold its entry unchanged while it waits for input.
-  const strandedLfsTemp = new Map<
-    string,
-    Map<string, { readonly signature: string; readonly mtimeMs: number }>
-  >();
-  const lfsTempStaging = new Map<string, number>();
-  const withLfsTempStaging = <A, E, R>(directory: string, effect: Effect.Effect<A, E, R>) =>
-    Effect.acquireUseRelease(
-      Effect.sync(() => lfsTempStaging.set(directory, (lfsTempStaging.get(directory) ?? 0) + 1)),
-      () => effect,
-      () =>
-        Effect.sync(() => {
-          const remaining = (lfsTempStaging.get(directory) ?? 1) - 1;
-          if (remaining > 0) lfsTempStaging.set(directory, remaining);
-          else lfsTempStaging.delete(directory);
-        }),
-    );
-  // A missing directory has no entries; any other failure leaves the listing unknown.
-  const lfsTempEntries = (directory: string) =>
-    fileSystem.readDirectory(directory).pipe(
-      Effect.catchIf(
-        (cause) => cause.reason._tag === "NotFound",
-        (): Effect.Effect<ReadonlyArray<string>> => Effect.succeed([]),
-      ),
-      Effect.orElseSucceed(() => undefined),
-    );
-  const lfsTempStat = (file: string) =>
-    fileSystem.stat(file).pipe(
-      Effect.map((info) =>
-        info.type === "File" && Option.isSome(info.mtime)
-          ? {
-              signature: `${info.size}:${info.mtime.value.getTime()}`,
-              mtimeMs: info.mtime.value.getTime(),
-            }
-          : undefined,
-      ),
-      Effect.orElseSucceed(() => undefined),
-    );
-  const removeStrandedLfsTemp = Effect.fn("GitVcsDriver.removeStrandedLfsTemp")(function* (
-    directory: string,
-  ) {
-    const stranded = strandedLfsTemp.get(directory);
-    if (stranded === undefined || lfsTempStaging.has(directory)) return;
-    const settledBefore = (yield* Clock.currentTimeMillis) - LFS_TEMP_SETTLED_MS;
-    for (const [name, recorded] of stranded) {
-      const file = path.join(directory, name);
-      const current = yield* lfsTempStat(file);
-      // Another process renamed or wrote it, so it was never this capture's to remove.
-      if (current?.signature !== recorded.signature) stranded.delete(name);
-      else if (recorded.mtimeMs < settledBefore) {
-        // A failed removal stays recorded for the next capture to retry.
-        const removed = yield* fileSystem.remove(file).pipe(
-          Effect.as(true),
-          Effect.orElseSucceed(() => false),
-        );
-        if (removed) stranded.delete(name);
-      }
-    }
-    if (stranded.size === 0) strandedLfsTemp.delete(directory);
-  });
-  const recordStrandedLfsTemp = Effect.fn("GitVcsDriver.recordStrandedLfsTemp")(function* (
-    directory: string,
-    before: ReadonlySet<string> | undefined,
-  ) {
-    // Without a listing from before staging, a new entry cannot be told from an older one.
-    if (before === undefined) return;
-    const observed = new Map<string, { readonly signature: string; readonly mtimeMs: number }>();
-    for (const name of (yield* lfsTempEntries(directory)) ?? []) {
-      if (before.has(name) || strandedLfsTemp.get(directory)?.has(name)) continue;
-      const current = yield* lfsTempStat(path.join(directory, name));
-      if (current !== undefined) observed.set(name, current);
-    }
-    if (observed.size === 0) return;
-    // Merge into the current map: a concurrent capture may have recorded entries meanwhile.
-    const stranded = strandedLfsTemp.get(directory) ?? new Map();
-    for (const [name, current] of observed) if (!stranded.has(name)) stranded.set(name, current);
-    strandedLfsTemp.set(directory, stranded);
-  });
-
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
@@ -1344,6 +1259,36 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             ),
           ),
       );
+      // A stopped add strands git-lfs's copy in lfs/tmp, which other git-lfs writers share, so this
+      // capture gives git-lfs its own storage that reaches the shared objects through a symlink.
+      const lfsObjects = path.join(gitCommonDir, "lfs", "objects");
+      const privateLfsStorage = yield* Effect.gen(function* () {
+        if (!(yield* fileSystem.exists(lfsObjects))) return undefined;
+        const configuredStorage = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "--get", "lfs.storage"],
+          allowNonZeroExit: true,
+        });
+        if (configuredStorage.stdout.trim() !== "") return undefined;
+        const directory = yield* Effect.acquireRelease(
+          fileSystem.makeTempDirectory({
+            directory: path.dirname(lfsObjects),
+            prefix: "t3-checkpoint-",
+          }),
+          (directory) =>
+            fileSystem.remove(directory, { recursive: true, force: true }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not remove private checkpoint LFS storage", {
+                  reason: cause.reason._tag,
+                }),
+              ),
+            ),
+        );
+        // Windows can refuse the symlink; git-lfs then uses its shared storage as before.
+        yield* fileSystem.symlink(lfsObjects, path.join(directory, "objects"));
+        return directory;
+      }).pipe(Effect.orElseSucceed(() => undefined));
       const commitEnv: NodeJS.ProcessEnv = {
         GIT_INDEX_FILE: tempIndexPath,
         GIT_OBJECT_DIRECTORY: privateObjects,
@@ -1623,6 +1568,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               // safecrlf=true refuses LF files under CRLF conversion; capture them as Git's default does.
               "-c",
               "core.safecrlf=false",
+              ...(privateLfsStorage === undefined
+                ? []
+                : ["-c", `lfs.storage=${privateLfsStorage}`]),
               "add",
               // Unreadable files keep their indexed version and unreadable new files are left out.
               ...(ignoreErrors ? ["--ignore-errors"] : []),
@@ -1643,12 +1591,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               () => Effect.void,
             ),
           );
-        const lfsTemp = path.join(gitCommonDir, "lfs", "tmp");
-        yield* removeStrandedLfsTemp(lfsTemp);
-        const lfsTempListing = yield* lfsTempEntries(lfsTemp);
-        const lfsTempBefore = lfsTempListing === undefined ? undefined : new Set(lfsTempListing);
         const stagingAt = yield* Clock.currentTimeMillis;
-        const staging = stageFiles([]).pipe(
+        yield* stageFiles([]).pipe(
           Effect.catchTags({
             VcsProcessExitError: (error) =>
               Effect.gen(function* () {
@@ -1703,10 +1647,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }),
               ),
           }),
-          // Runs after a failed or interrupted add's process group has been killed and awaited.
-          Effect.onError(() => recordStrandedLfsTemp(lfsTemp, lfsTempBefore)),
         );
-        yield* withLfsTempStaging(lfsTemp, staging);
 
         const stagingMs = (yield* Clock.currentTimeMillis) - stagingAt;
 
