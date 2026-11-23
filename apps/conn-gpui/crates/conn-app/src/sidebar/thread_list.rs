@@ -643,6 +643,7 @@ pub(crate) fn render_thread_sidebar(
         };
         let settled_header = div()
             .id("sidebar-settled-footer")
+            .test_support()
             .a11y_button(
                 "sidebar.settled-toggle",
                 format!("Settled ({settled_count})"),
@@ -1369,6 +1370,7 @@ fn render_drag_boundary(
     };
     div()
         .id(SharedString::from(format!("sidebar-drag-boundary-{label}")))
+        .test_support()
         .a11y_group(
             SharedString::from(format!("sidebar.drag.boundary.{}", label.to_lowercase())),
             label,
@@ -1415,6 +1417,7 @@ fn render_section_placeholder(
     };
     div()
         .id(SharedString::from(format!("sidebar-placeholder-{label}")))
+        .test_support()
         .a11y_group(
             SharedString::from(format!("sidebar.drag.placeholder.{}", label.to_lowercase())),
             label,
@@ -1453,6 +1456,7 @@ fn render_drop_badge(verb: DropVerb, tokens: &Tokens) -> gpui_kit::AnyElement {
             "sidebar-drop-badge-{}",
             verb.label()
         )))
+        .test_support()
         .a11y_group(SharedString::from("sidebar.drop-verb"), verb.label())
         .flex()
         .flex_row()
@@ -1492,6 +1496,7 @@ fn render_show_more(
     let loading = state == MoreState::Loading;
     div()
         .id("sidebar-settled-more")
+        .test_support()
         .a11y_button("sidebar.settled-more", label.clone())
         .relative()
         .track_focus(&focus.handle)

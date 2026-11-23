@@ -73,7 +73,6 @@ pub(crate) struct Drag {
     pub(crate) pinned: Vec<String>,
     pub(crate) active: Vec<String>,
     pub(crate) settled: Vec<String>,
-    pub(crate) shelf_open: bool,
 }
 
 /// A run of rows swept with the Settle or Un-settle button (`SidebarActionSweep`).
@@ -525,12 +524,8 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.sidebar.suppress_click = false;
-        #[cfg(test)]
-        let offline = self.sidebar.offline_gestures;
-        #[cfg(not(test))]
-        let offline = false;
         let blocked = !plain
-            || (self.connection.is_none() && !offline)
+            || !self.gestures_allowed()
             || self.sidebar.pending_drop.is_some()
             || self.renaming_thread_id.as_deref() == Some(thread_id)
             || !self.sidebar_search_query(cx).trim().is_empty();
@@ -543,6 +538,15 @@ impl ConnApp {
             mode,
         });
         cx.notify();
+    }
+
+    /// Rows can be held and their commands sent: there is a server (or a window under test).
+    fn gestures_allowed(&self) -> bool {
+        #[cfg(test)]
+        if self.sidebar.offline_gestures {
+            return true;
+        }
+        self.connection.is_some()
     }
 
     /// The click that ended a drag or sweep opens or settles nothing.
@@ -683,7 +687,6 @@ impl ConnApp {
             pinned,
             active,
             settled,
-            shelf_open: self.sidebar.settled_expanded,
             items,
             extents,
         });
@@ -710,7 +713,7 @@ impl ConnApp {
             }
         }
         let scrolled = f32::from(scroll.offset().y);
-        let supports = self.connection.is_some();
+        let supports = self.gestures_allowed();
         let Some(drag) = &mut self.sidebar.drag else {
             return;
         };
@@ -777,7 +780,7 @@ impl ConnApp {
             &drag.active,
             &drag.pinned_keys,
             &drag.active_keys,
-            self.connection.is_some(),
+            self.gestures_allowed(),
         );
         #[cfg(test)]
         {
@@ -1101,6 +1104,11 @@ fn plan_for(
 
 #[cfg(test)]
 impl ConnApp {
+    /// Scrolls the sidebar list the least that shows the row `key`.
+    pub(crate) fn reveal_sidebar_row_for_test(&self, key: &str) {
+        self.sidebar_tree.reveal_row(key);
+    }
+
     /// Lets rows be held and swept with no server to take the commands.
     pub(crate) fn allow_gestures_offline_for_test(&mut self) {
         self.sidebar.offline_gestures = true;

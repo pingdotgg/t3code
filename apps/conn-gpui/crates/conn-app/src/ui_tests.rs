@@ -1261,7 +1261,8 @@ fn pending_question_banner_sits_on_the_composer_and_digits_pick_its_options(
         window.pointer_down(vmpal, MouseButton::Left, cx);
         window.pointer_up(vmpal, MouseButton::Left, cx);
         assert_eq!(selected(window, cx, "VMPal"), Some(true));
-        window.press("cmd-2", cx);
+        // `⌘3` is the open thread's own jump (the third row), so it opens nothing else.
+        window.press("cmd-3", cx);
         window.press("3", cx);
         window.press("shift-2", cx);
         assert_eq!(selected(window, cx, "VMPal"), Some(true));
@@ -2971,6 +2972,8 @@ fn an_open_subagent_keeps_its_parents_row_current_for_the_walk(cx: &mut TestAppC
         pending_kind: None,
     });
     subagent.lineage.parent_thread_id = Some("thread-waiting".to_owned());
+    subagent.lineage.relationship_to_parent =
+        Some(conn_contract::OrchestrationV2AppThreadLineageRelationshipToParent::Subagent);
     shell.threads.push(subagent);
     cx.update(|cx| {
         app.update(cx, |app, cx| {
@@ -3035,34 +3038,41 @@ fn the_settled_shelf_shows_ten_rows_and_its_footer_adds_a_page(cx: &mut TestAppC
         });
     });
     render_twice(cx, window);
+    let rows = sidebar_rows(cx, &app);
+    assert!(rows.contains(&"old-08".to_owned()), "ten rows show");
+    assert!(!rows.contains(&"old-09".to_owned()));
+    assert!(
+        rows.contains(&"shelf:settled:more".to_owned()),
+        "the footer is a row the keyboard reaches"
+    );
+    // The list scrolls; what is below the fold is not on screen to be found.
+    reveal_row(cx, window, &app, "shelf:settled:more");
     assert!(
         labelled(cx, window, "Settled (13)"),
         "the header counts every settled thread"
     );
-    assert!(labelled(cx, window, "Older settled 08"), "ten rows show");
-    assert!(!labelled(cx, window, "Older settled 09"));
     assert!(
         labelled(cx, window, "Show 3 more"),
         "the footer offers the rest"
     );
-    assert!(
-        sidebar_rows(cx, &app).contains(&"shelf:settled:more".to_owned()),
-        "and is a row the keyboard reaches"
-    );
 
     click_row(cx, window, "Show 3 more", MouseButton::Left);
+    let rows = sidebar_rows(cx, &app);
+    assert!(rows.contains(&"old-11".to_owned()), "a page more shows");
     assert!(
-        labelled(cx, window, "Older settled 11"),
-        "a page more shows"
-    );
-    assert!(
-        !labelled(cx, window, "Show 3 more"),
+        !rows.contains(&"shelf:settled:more".to_owned()),
         "and the footer is gone"
     );
 
     // Closing the shelf keeps the choice, and drops the rows and the footer.
+    reveal_row(cx, window, &app, "shelf:settled");
     click_row(cx, window, "Settled (13)", MouseButton::Left);
-    assert!(!labelled(cx, window, "Older settled 00"));
+    assert!(!sidebar_rows(cx, &app).contains(&"old-00".to_owned()));
+}
+
+fn reveal_row(cx: &mut TestAppContext, window: AnyWindowHandle, app: &Entity<ConnApp>, key: &str) {
+    cx.update(|cx| app.update(cx, |app, _| app.reveal_sidebar_row_for_test(key)));
+    render_twice(cx, window);
 }
 
 #[gpui_kit::test]
@@ -3078,7 +3088,7 @@ fn enter_on_the_shelf_footer_shows_more_and_does_not_close_the_shelf(cx: &mut Te
     focus_sidebar_row(cx, window, &app, "shelf:settled:more");
     press(cx, window, "enter");
     assert!(
-        labelled(cx, window, "Older settled 11"),
+        sidebar_rows(cx, &app).contains(&"old-11".to_owned()),
         "a page more shows"
     );
     assert!(cx.read(|cx| app.read(cx).settled_shelf_open_for_test()));

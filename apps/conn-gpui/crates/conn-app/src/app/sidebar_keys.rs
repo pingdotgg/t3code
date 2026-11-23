@@ -386,6 +386,12 @@ impl ConnApp {
         self.keystroke_consumed = false;
         let keystroke = &event.keystroke;
         let mods = key_mods(&keystroke.modifiers);
+        // `Escape` lets go of a row held or swept (`SidebarPointerSensor` `keydown`).
+        if self.pointer_captured() && keystroke.key == "escape" {
+            self.cancel_pointer_gesture(cx);
+            self.consume_keystroke(cx);
+            return;
+        }
         if self.thread_menu.is_some() && self.thread_menu_focus.is_focused(window) {
             if let Some(key) = menu_key(&keystroke.key, mods)
                 && self.thread_menu_key(key, keystroke.modifiers.shift, window, cx)

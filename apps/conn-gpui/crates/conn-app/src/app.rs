@@ -6585,7 +6585,8 @@ impl Render for ConnApp {
                     &drag.pinned,
                     &drag.active,
                     &drag.settled,
-                    drag.shelf_open,
+                    // The held row shows in the shelf where it would settle, closed or not.
+                    true,
                 ),
                 None => conn_state::sidebar_drag::Projection {
                     pinned: drag.pinned.clone(),
@@ -6754,18 +6755,6 @@ impl Render for ConnApp {
                                 });
                             },
                         );
-                        let key_entity = entity;
-                        window.on_key_event(
-                            move |event: &gpui_kit::KeyDownEvent, phase, _window, cx| {
-                                if phase == gpui_kit::DispatchPhase::Capture
-                                    && event.keystroke.key == "escape"
-                                {
-                                    let _ = key_entity.update(cx, |app, cx| {
-                                        app.cancel_pointer_gesture(cx);
-                                    });
-                                }
-                            },
-                        );
                     },
                 )
                 .absolute()
@@ -6804,7 +6793,7 @@ impl Render for ConnApp {
                                 });
                             },
                         );
-                        let up_entity = entity.clone();
+                        let up_entity = entity;
                         window.on_mouse_event(
                             move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
                                 if phase != gpui_kit::DispatchPhase::Capture {
