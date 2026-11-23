@@ -283,10 +283,13 @@ const definitionProblems = (
   ];
 };
 
+type Starts = Pick<Workflows.Workflows["Service"], "start" | "deliver">;
+
 /**
  * `engine` gives the layer that runs a set of definitions. It is asked for only once there is
  * something to run or `kept` says there are runs to read, since the engine's modules are not worth
- * loading for nothing. `where` is the folder of definition files, or one file.
+ * loading for nothing. `where` is the folder of definition files, or one file. `intake` takes
+ * starts and deliveries for definitions whose engine is not up yet, and tells of each start.
  */
 export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   engine: Effect.Effect<
@@ -294,6 +297,12 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   >,
   where: string,
   kept: Effect.Effect<boolean>,
+  intake?: Effect.Effect<
+    (
+      definitions: ReadonlyArray<WorkflowDefinition>,
+      taken: (...input: Parameters<Starts["start"]>) => Effect.Effect<void>,
+    ) => Effect.Effect<Starts, E, R>
+  >,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -310,6 +319,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   // The engine that last came up. Its reads are plain queries that need nothing of its scope, so
   // they go on answering while it stops and the next one starts.
   let serving: Workflows.Workflows["Service"] | undefined;
+  // Set while an engine stops and the next is not up: what takes starts and deliveries meanwhile.
+  let accepting: Starts | undefined;
   let engineScope: Scope.Closeable | undefined;
   let running: ReadonlyArray<WorkflowDefinition> = [];
   let imported = false;
@@ -370,16 +381,42 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     return built;
   });
 
+  const handOver = (...input: Parameters<Starts["start"]>) =>
+    Effect.suspend(() => Deferred.await(ready)).pipe(
+      Effect.flatMap((live) => live.start(...input)),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("A workflow run taken during a reload did not start", {
+          workflow: input[0],
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.forkIn(outer),
+      Effect.asVoid,
+    );
+
   const boot = Effect.fn("WorkflowRuntime.boot")(
     function* (definitions: ReadonlyArray<WorkflowDefinition>) {
       const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
       const settle = (service: Workflows.Workflows["Service"]) => {
+        accepting = undefined;
         serving = service;
         return Deferred.succeed(next, service);
       };
       ready = next;
       const previous = running;
-      if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
+      if (engineScope !== undefined) {
+        // The engine gives its steps time to finish as it stops. A run started meanwhile is taken
+        // for the next one, which runs it once it is up: its start under the same key is that run.
+        if (intake !== undefined && definitions.length > 0) {
+          const taking = yield* Effect.flatMap(intake, (take) => take(definitions, handOver)).pipe(
+            Effect.provideContext(services),
+            Effect.exit,
+          );
+          if (Exit.isSuccess(taking)) accepting = taking.value;
+          else yield* Effect.logWarning("Workflow starts wait for the reload", taking.cause);
+        }
+        yield* Scope.close(engineScope, Exit.void);
+      }
       engineScope = undefined;
       running = [];
       if (definitions.length === 0 && !imported && !(yield* kept)) {
@@ -606,7 +643,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     );
   const service = Workflows.Workflows.of({
     start: Effect.fn("Workflows.start")(function* (...input) {
-      return yield* (yield* current).start(...input);
+      return yield* (accepting ?? (yield* current)).start(...input);
     }),
     signal: Effect.fn("Workflows.signal")(function* (...input) {
       return yield* (yield* current).signal(...input);
@@ -646,7 +683,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     unfinished: Effect.flatMap(reading, (live) => live.unfinished),
     hooks: Effect.flatMap(reading, (live) => live.hooks),
     deliver: Effect.fn("Workflows.deliver")(function* (...input) {
-      return yield* (yield* current).deliver(...input);
+      return yield* (accepting ?? (yield* current)).deliver(...input);
     }),
     stored: Effect.fn("Workflows.stored")(function* (...input) {
       return yield* (yield* reading).stored(...input);
@@ -955,10 +992,13 @@ export const layer = Layer.effectContext(
     const settings = yield* ServerSettings.ServerSettingsService;
     const where = Option.getOrElse(override, () => config.workflowsDir);
     const changes = yield* settings.subscribeChanges;
+    const engineModule = Effect.promise(
+      (): Promise<typeof WorkflowEngine> => import("./WorkflowEngine.ts"),
+    );
     const gated = yield* gate(
       make(
         Effect.map(
-          Effect.promise((): Promise<typeof WorkflowEngine> => import("./WorkflowEngine.ts")),
+          engineModule,
           (engine) => (definitions) =>
             engine
               .layer(definitions)
@@ -969,6 +1009,7 @@ export const layer = Layer.effectContext(
           Effect.map((rows) => rows.length > 0),
           Effect.orElseSucceed(() => true),
         ),
+        Effect.map(engineModule, (engine) => engine.intake),
       ),
       where,
     );

@@ -38,9 +38,16 @@ workflow("greet", { version: 1, payload: Schema.Struct({}), returns: Schema.Stri
  * A folder holding `hold.ts`, and the workflow runtime over it on a fresh database. `engine`
  * stands in for the real one, which needs the clock to run for as long as it is up.
  */
+type Starts = Pick<Workflows.Workflows["Service"], "start" | "deliver">;
 const setup = Effect.fn("setup")(function* (
   wrap: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem = (fileSystem) => fileSystem,
   engine?: (definitions: ReadonlyArray<WorkflowDefinition>) => Layer.Layer<Workflows.Workflows>,
+  intake?: Effect.Effect<
+    (
+      definitions: ReadonlyArray<WorkflowDefinition>,
+      taken: (...input: Parameters<Starts["start"]>) => Effect.Effect<void>,
+    ) => Effect.Effect<Starts>
+  >,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -63,6 +70,7 @@ const setup = Effect.fn("setup")(function* (
     ),
     directory,
     Effect.succeed(true),
+    intake,
   ).pipe(Effect.provideService(FileSystem.FileSystem, wrap(fileSystem)));
   return { fileSystem, at, directory, made, runtime: Layer.effectContext(made) };
 });
@@ -426,22 +434,34 @@ it.effect("a change held back by a run goes in once that run ends, with no furth
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("reads answer while a reload waits for the old engine to stop", () =>
+it.effect("reads answer and starts are taken while a reload waits for the old engine", () =>
   Effect.gen(function* () {
     // The old engine stops only once its step in flight finishes, which `release` stands for.
     const closing = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
+    const ran = yield* Deferred.make<string>();
     let builds = 0;
-    const { runtime } = yield* setup(undefined, () =>
-      Layer.effect(
-        Workflows.Workflows,
-        Effect.gen(function* () {
-          if (builds++ === 0) {
-            yield* Effect.addFinalizer(() =>
-              Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
-            );
-          }
-          return Workflows.disabled;
+    const { runtime } = yield* setup(
+      undefined,
+      () =>
+        Layer.effect(
+          Workflows.Workflows,
+          Effect.gen(function* () {
+            if (builds++ === 0) {
+              yield* Effect.addFinalizer(() =>
+                Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
+              );
+            }
+            return Workflows.Workflows.of({
+              ...Workflows.disabled,
+              start: (name) => Effect.as(Deferred.succeed(ran, name), { runId: "taken" }),
+            });
+          }),
+        ),
+      Effect.succeed((_definitions, taken) =>
+        Effect.succeed({
+          start: (...input) => Effect.as(taken(...input), { runId: "taken" }),
+          deliver: () => Effect.succeedNone,
         }),
       ),
     );
@@ -457,8 +477,13 @@ it.effect("reads answer while a reload waits for the old engine to stop", () =>
           Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
         );
       assert.isTrue(Option.isSome(listed), "list waited for the old engine's step to finish");
+      // Taken at once, and run by the engine that comes up, which the old one still holds back.
+      const started = yield* workflows.start("greet", {}, { idempotencyKey: "g" });
+      assert.deepStrictEqual(started, { runId: "taken" });
+      assert.isFalse(yield* Deferred.isDone(ran));
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(saving);
+      assert.equal(yield* Deferred.await(ran), "greet");
     }).pipe(
       Effect.ensuring(Deferred.succeed(release, undefined)),
       Effect.provide(runtime),

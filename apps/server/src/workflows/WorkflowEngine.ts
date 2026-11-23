@@ -90,6 +90,203 @@ const CANCEL_WAITS = Duration.seconds(30);
 // Times of day are the server's own, as they are for scheduled tasks.
 const localNow = DateTime.withCurrentZoneLocal(DateTime.nowInCurrentZone);
 
+type Registered = ReadonlyArray<readonly [WorkflowDefinition, EngineWorkflow]>;
+const latestOf = (registered: Registered, name: string) =>
+  registered
+    .filter(([definition]) => definition.name === name)
+    .toSorted(([left], [right]) => right.version - left.version)[0];
+const latestDefinitionsOf = (registered: Registered) =>
+  [...new Set(registered.map(([definition]) => definition.name))].map(
+    (name) => latestOf(registered, name)![0],
+  );
+
+/** `Workflows.start` for `registered`; `run` gives the engine a run whose row is written. */
+const starting = (
+  registered: Registered,
+  store: WorkflowStore.WorkflowStore["Service"],
+  run: (
+    engine: EngineWorkflow,
+    payload: { readonly idempotencyKey: string; readonly input: Schema.Json },
+  ) => Effect.Effect<unknown>,
+): Workflows["Service"]["start"] => {
+  const byTag = new Map(registered.map(([, engine]) => [engine._tag, engine] as const));
+  return Effect.fn("Workflows.start")(function* (name, input, options) {
+    // A parent written against one version of a child must not get another one's payload.
+    const found =
+      options.version === undefined
+        ? latestOf(registered, name)
+        : registered.find(
+            ([candidate]) => candidate.name === name && candidate.version === options.version,
+          );
+    if (found === undefined) {
+      return yield* new WorkflowNotRegisteredError({
+        workflow: name,
+        ...(options.version === undefined ? {} : { version: options.version }),
+      });
+    }
+    const [definition, engine] = found;
+    // A key is one run of the workflow: the engine's own id also counts the version, so a
+    // start after a new version would otherwise begin the same work again.
+    const other = Effect.fnUntraced(function* (earlier: WorkflowStore.RunRow) {
+      if (
+        options.parent !== undefined &&
+        (earlier.parent_run_id !== options.parent.runId ||
+          earlier.parent_wait !== options.parent.wait)
+      ) {
+        return yield* new WorkflowInputError({
+          problem: `Run ${earlier.run_id} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
+        });
+      }
+      // A start cut off between its row and the engine left a run nothing executes. Executing
+      // one the engine has is a no-op.
+      const its = byTag.get(earlier.engine_tag);
+      if (earlier.ended_at === null && its !== undefined && earlier.input_json !== null) {
+        yield* run(its, {
+          idempotencyKey: earlier.idempotency_key,
+          input: WorkflowStore.jsonValue(earlier.input_json),
+        });
+      }
+      return { runId: earlier.run_id };
+    });
+    const earlier = yield* store.runByKey(name, options.idempotencyKey);
+    // An ended run's journal may be pruned, so executing it again would start the work over.
+    if (
+      earlier !== undefined &&
+      (earlier.engine_tag !== engineTag(definition) || earlier.ended_at !== null)
+    ) {
+      return yield* other(earlier);
+    }
+    const payloadCodec = Schema.toCodecJson(definition.payload);
+    const encode = Schema.encodeUnknownEffect(payloadCodec);
+    const encoded = yield* encode(input).pipe(
+      Effect.mapError(
+        (error) =>
+          new WorkflowInputError({
+            problem: `The payload does not fit workflow ${name}: ${text(error)}`,
+          }),
+      ),
+    );
+    const payload = { idempotencyKey: options.idempotencyKey, input: encoded as Schema.Json };
+    // The row is written first, with who waits for it: the run's own first step writes the same
+    // row without that, and whichever write lands first is the one that stays.
+    const runId = yield* engine.executionId(payload);
+    yield* store.runStarted({
+      runId,
+      workflow: definition.name,
+      version: definition.version,
+      engineTag: engineTag(definition),
+      idempotencyKey: options.idempotencyKey,
+      input: payload.input,
+      parent: options.parent,
+    });
+    // The key is unique, so the row holding it is the run, even one another version started.
+    const holder = yield* store.runByKey(name, options.idempotencyKey);
+    if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
+    yield* run(engine, payload);
+    if (options.parent !== undefined) {
+      // The key named a run that someone else started: it would never tell this parent.
+      const row = yield* store.run(runId);
+      if (row?.parent_run_id !== options.parent.runId || row.parent_wait !== options.parent.wait) {
+        return yield* new WorkflowInputError({
+          problem: `Run ${runId} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
+        });
+      }
+    }
+    return { runId };
+  });
+};
+
+const hooksOf = Effect.fnUntraced(function* (
+  registered: Registered,
+  store: WorkflowStore.WorkflowStore["Service"],
+  random: SecureRandom.SecureRandom["Service"],
+) {
+  return yield* Effect.forEach(
+    latestDefinitionsOf(registered).flatMap((definition) =>
+      definition.triggers.flatMap((trigger) =>
+        trigger.kind === "webhook" ? [{ definition, trigger }] : [],
+      ),
+    ),
+    Effect.fnUntraced(function* ({ definition, trigger }) {
+      const hookId = hookIdOf(definition.name, trigger.name);
+      const token = yield* store.hookToken(hookId, yield* random.uuidV4());
+      return {
+        hookId,
+        token,
+        trigger,
+        workflow: definition.name,
+        name: trigger.name,
+        path: `/api/hooks/${encodeURIComponent(hookId)}/${token}`,
+      };
+    }),
+  );
+});
+
+const delivering = (
+  hooks: Effect.Success<ReturnType<typeof hooksOf>>,
+  start: Workflows["Service"]["start"],
+  digest: Digest.Digest["Service"],
+  random: SecureRandom.SecureRandom["Service"],
+): Workflows["Service"]["deliver"] =>
+  Effect.fn("Workflows.deliver")(function* (delivery) {
+    const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
+    // A wrong token reads the same as an unknown hook, so the URL does not say which exist.
+    const known =
+      hook !== undefined &&
+      (yield* constantTimeEquals(delivery.token, hook.token).pipe(
+        Effect.provideService(Digest.Digest, digest),
+        Effect.orElseSucceed(() => false),
+      ));
+    if (!known) return Option.none();
+    const authored = yield* Effect.try({
+      try: () => hook.trigger.key?.(delivery.request),
+      catch: (error) =>
+        new WorkflowInputError({
+          problem: `The key of hook ${hook.name} could not be read from the request: ${text(error)}`,
+        }),
+    });
+    // A sender's own delivery id is kept on its retry, so the retry is the same run.
+    const sent = DELIVERY_HEADERS.find((header) => delivery.request.headers[header]);
+    const key =
+      authored ??
+      (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
+      delivery.deliveryId ??
+      (yield* random.uuidV4());
+    return Option.some(
+      yield* start(hook.workflow, delivery.request, {
+        idempotencyKey: `hook:${hook.hookId}:${key}`,
+      }),
+    );
+  });
+
+/**
+ * Starts and webhook deliveries for an engine with these definitions that is not up yet: the run
+ * gets its row and its id here, and `taken` is told of the start so that engine can run it. Its
+ * own start under the same key is the same run.
+ */
+export const intake = Effect.fn("WorkflowEngine.intake")(function* (
+  definitions: ReadonlyArray<WorkflowDefinition>,
+  taken: (...input: Parameters<Workflows["Service"]["start"]>) => Effect.Effect<void>,
+) {
+  const registered = definitions.map(
+    (definition) => [definition, engineWorkflow(definition)] as const,
+  );
+  const store = yield* WorkflowStore.make;
+  const random = yield* SecureRandom.SecureRandom;
+  const accept = starting(registered, store, () => Effect.void);
+  const start: Workflows["Service"]["start"] = (...input) =>
+    Effect.tap(accept(...input), () => taken(...input));
+  return {
+    start,
+    deliver: delivering(
+      yield* hooksOf(registered, store, random),
+      start,
+      yield* Digest.Digest,
+      random,
+    ),
+  };
+});
+
 const make = Effect.fn("WorkflowEngine.make")(function* (
   registered: ReadonlyArray<readonly [WorkflowDefinition, EngineWorkflow]>,
 ) {
@@ -135,10 +332,6 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const definitionByTag = new Map(
     registered.map(([definition]) => [engineTag(definition), definition] as const),
   );
-  const latest = (name: string) =>
-    registered
-      .filter(([definition]) => definition.name === name)
-      .toSorted(([left], [right]) => right.version - left.version)[0];
 
   /** When the sweep resumes a paused run; undefined once it has used up its tries. */
   const resumesAt = (row: WorkflowStore.RunRow) => {
@@ -193,104 +386,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     yield* send(wait, value);
   });
 
-  const start: Workflows["Service"]["start"] = Effect.fn("Workflows.start")(
-    function* (name, input, options) {
-      // A parent written against one version of a child must not get another one's payload.
-      const found =
-        options.version === undefined
-          ? latest(name)
-          : registered.find(
-              ([candidate]) => candidate.name === name && candidate.version === options.version,
-            );
-      if (found === undefined) {
-        return yield* new WorkflowNotRegisteredError({
-          workflow: name,
-          ...(options.version === undefined ? {} : { version: options.version }),
-        });
-      }
-      const [definition, engine] = found;
-      // A key is one run of the workflow: the engine's own id also counts the version, so a
-      // start after a new version would otherwise begin the same work again.
-      const other = Effect.fnUntraced(function* (earlier: WorkflowStore.RunRow) {
-        if (
-          options.parent !== undefined &&
-          (earlier.parent_run_id !== options.parent.runId ||
-            earlier.parent_wait !== options.parent.wait)
-        ) {
-          return yield* new WorkflowInputError({
-            problem: `Run ${earlier.run_id} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
-          });
-        }
-        // A start cut off between its row and the engine left a run nothing executes. Executing
-        // one the engine has is a no-op.
-        const its = byTag.get(earlier.engine_tag);
-        if (earlier.ended_at === null && its !== undefined && earlier.input_json !== null) {
-          yield* withEngine(
-            its.execute(
-              {
-                idempotencyKey: earlier.idempotency_key,
-                input: WorkflowStore.jsonValue(earlier.input_json),
-              },
-              { discard: true },
-            ),
-          );
-        }
-        return { runId: earlier.run_id };
-      });
-      const earlier = yield* store.runByKey(name, options.idempotencyKey);
-      // An ended run's journal may be pruned, so executing it again would start the work over.
-      if (
-        earlier !== undefined &&
-        (earlier.engine_tag !== engineTag(definition) || earlier.ended_at !== null)
-      ) {
-        return yield* other(earlier);
-      }
-      const payloadCodec = Schema.toCodecJson(definition.payload);
-      const encode = Schema.encodeUnknownEffect(payloadCodec);
-      const encoded = yield* encode(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new WorkflowInputError({
-              problem: `The payload does not fit workflow ${name}: ${text(error)}`,
-            }),
-        ),
-      );
-      const payload = { idempotencyKey: options.idempotencyKey, input: encoded as Schema.Json };
-      // The row is written first, with who waits for it: the run's own first step writes the same
-      // row without that, and whichever write lands first is the one that stays.
-      const runId = yield* engine.executionId(payload);
-      yield* store.runStarted({
-        runId,
-        workflow: definition.name,
-        version: definition.version,
-        engineTag: engineTag(definition),
-        idempotencyKey: options.idempotencyKey,
-        input: payload.input,
-        parent: options.parent,
-      });
-      // The key is unique, so the row holding it is the run, even one another version started.
-      const holder = yield* store.runByKey(name, options.idempotencyKey);
-      if (holder !== undefined && holder.run_id !== runId) return yield* other(holder);
-      yield* withEngine(engine.execute(payload, { discard: true }));
-      if (options.parent !== undefined) {
-        // The key named a run that someone else started: it would never tell this parent.
-        const row = yield* store.run(runId);
-        if (
-          row?.parent_run_id !== options.parent.runId ||
-          row.parent_wait !== options.parent.wait
-        ) {
-          return yield* new WorkflowInputError({
-            problem: `Run ${runId} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
-          });
-        }
-      }
-      return { runId };
-    },
+  const start = starting(registered, store, (engine, payload) =>
+    withEngine(engine.execute(payload, { discard: true })),
   );
 
-  const latestDefinitions = [...new Set(registered.map(([definition]) => definition.name))].map(
-    (name) => latest(name)![0],
-  );
+  const latestDefinitions = latestDefinitionsOf(registered);
   // A schedule taken out and put back is new again: its first run is one interval away.
   yield* store.triggersKeep(
     latestDefinitions.flatMap((definition) =>
@@ -484,57 +584,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
   }).pipe(Effect.withSpan("Workflows.fireWatches"));
 
-  const hooks = yield* Effect.forEach(
-    latestDefinitions.flatMap((definition) =>
-      definition.triggers.flatMap((trigger) =>
-        trigger.kind === "webhook" ? [{ definition, trigger }] : [],
-      ),
-    ),
-    Effect.fnUntraced(function* ({ definition, trigger }) {
-      const hookId = hookIdOf(definition.name, trigger.name);
-      const token = yield* store.hookToken(hookId, yield* random.uuidV4());
-      return {
-        hookId,
-        token,
-        trigger,
-        workflow: definition.name,
-        name: trigger.name,
-        path: `/api/hooks/${encodeURIComponent(hookId)}/${token}`,
-      };
-    }),
-  );
-  const deliver: Workflows["Service"]["deliver"] = Effect.fn("Workflows.deliver")(
-    function* (delivery) {
-      const hook = hooks.find((candidate) => candidate.hookId === delivery.hookId);
-      // A wrong token reads the same as an unknown hook, so the URL does not say which exist.
-      const known =
-        hook !== undefined &&
-        (yield* constantTimeEquals(delivery.token, hook.token).pipe(
-          Effect.provideService(Digest.Digest, digest),
-          Effect.orElseSucceed(() => false),
-        ));
-      if (!known) return Option.none();
-      const authored = yield* Effect.try({
-        try: () => hook.trigger.key?.(delivery.request),
-        catch: (error) =>
-          new WorkflowInputError({
-            problem: `The key of hook ${hook.name} could not be read from the request: ${text(error)}`,
-          }),
-      });
-      // A sender's own delivery id is kept on its retry, so the retry is the same run.
-      const sent = DELIVERY_HEADERS.find((header) => delivery.request.headers[header]);
-      const key =
-        authored ??
-        (sent === undefined ? undefined : `${sent}:${delivery.request.headers[sent]}`) ??
-        delivery.deliveryId ??
-        (yield* random.uuidV4());
-      return Option.some(
-        yield* start(hook.workflow, delivery.request, {
-          idempotencyKey: `hook:${hook.hookId}:${key}`,
-        }),
-      );
-    },
-  );
+  const hooks = yield* hooksOf(registered, store, random);
+  const deliver = delivering(hooks, start, digest, random);
 
   /** With `pause`, the sweep's own resume, which only resumes that pause and not a later one. */
   const resumeRun = Effect.fn("WorkflowEngine.resumeRun")(function* (
@@ -751,7 +802,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   };
   const summaries = [...new Set(registered.map(([definition]) => definition.name))].flatMap(
     (name) => {
-      const found = latest(name);
+      const found = latestOf(registered, name);
       return found === undefined
         ? []
         : [{ name, version: found[0].version, triggers: found[0].triggers.map(triggerText) }];
@@ -1048,14 +1099,7 @@ export const layer = (
         ? WorkflowEngine.layerMemory
         : ClusterWorkflowEngine.layer.pipe(
             // Merged so the sweep can prune ended runs' journals from the same storage.
-            // A stopping engine holds every start and delivery until it is gone, and a step it
-            // waited for was cut off after the wait all the same. It runs again on the next one.
-            Layer.provideMerge(
-              SingleRunner.layer({
-                runnerStorage: "sql",
-                shardingConfig: { entityTerminationTimeout: 0 },
-              }),
-            ),
+            Layer.provideMerge(SingleRunner.layer({ runnerStorage: "sql" })),
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),

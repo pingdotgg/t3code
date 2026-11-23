@@ -729,7 +729,12 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
       Effect.scoped(Effect.provide(use, engineOf(registered))),
       Effect.forever(Effect.andThen(clock.await, TestClock.adjust("1 second"))),
     );
-  return { counts, failures, latch, boot, agents, forge, clock, database };
+  /** What takes starts for a server with every definition before its engine is up. */
+  const intake = (taken: Parameters<typeof WorkflowEngine.intake>[1]) =>
+    Effect.flatMap(Layer.build(Layer.merge(database, NodeCrypto.layer)), (context) =>
+      Effect.provideContext(WorkflowEngine.intake(all, taken), context),
+    );
+  return { counts, failures, latch, boot, agents, forge, clock, database, intake };
 });
 
 /** The store the engine writes to, for a test to leave what a crash would have left. */
@@ -1558,29 +1563,53 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
-it.effect("an engine stops without waiting for a step still going, which the next one runs", () =>
-  Effect.gen(function* () {
-    const { counts, latch, boot, clock } = yield* harness();
-    const runId = yield* boot(
-      Effect.gen(function* () {
-        const workflows = yield* Workflows.Workflows;
-        const busy = yield* workflows.start("owned", { mode: "busy" }, { idempotencyKey: "b" });
-        yield* Deferred.await(latch.entered);
-        // Time stands still from here: a stop that gave the step time to finish would not end.
-        yield* clock.close;
-        return busy.runId;
-      }),
-    );
-    yield* clock.open;
-    yield* Deferred.succeed(latch.release, undefined);
-    yield* boot(
-      Effect.gen(function* () {
-        const workflows = yield* Workflows.Workflows;
-        yield* workflows.waitFor(runId, status("completed"));
-      }),
-    );
-    assert.equal((yield* Ref.get(counts))["work"], 1);
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+it.effect(
+  "a stopping engine lets a step finish, and a start taken meanwhile is the next engine's run",
+  () =>
+    Effect.gen(function* () {
+      const { counts, latch, boot, intake } = yield* harness();
+      const busy = yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const { runId } = yield* workflows.start(
+            "owned",
+            { mode: "busy" },
+            { idempotencyKey: "b" },
+          );
+          yield* Deferred.await(latch.entered);
+          // The step ends two seconds into the engine's stop, which begins as this returns.
+          yield* Effect.forkChild(
+            Effect.andThen(Effect.sleep("2 seconds"), Deferred.succeed(latch.release, undefined)),
+          );
+          return runId;
+        }),
+      );
+      assert.equal((yield* Ref.get(counts))["work"], 1);
+
+      const taken: Array<Parameters<Workflows.Workflows["Service"]["start"]>> = [];
+      const taking = yield* intake((...input) => Effect.sync(() => void taken.push(input)));
+      const early = yield* taking.start("review", { change: "c1" }, { idempotencyKey: "c1" });
+      const unknown = yield* taking.start("nothing", {}, { idempotencyKey: "n" }).pipe(Effect.flip);
+      assert.equal(unknown._tag, "WorkflowNotRegisteredError");
+      assert.deepStrictEqual(
+        taken.map(([name]) => name),
+        ["review"],
+      );
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          // Taken in, it is a run a person can see before anything runs it.
+          assert.equal((yield* workflows.get(early.runId)).run.status, "running");
+          assert.deepStrictEqual(yield* workflows.start(...taken[0]!), early);
+          yield* workflows.waitFor(early.runId, atVerdict);
+          // The step that finished as the engine stopped was not cut off and is not run again.
+          yield* workflows.waitFor(busy, status("completed"));
+          const work = (yield* workflows.get(busy)).steps.find((step) => step.name === "work");
+          assert.deepStrictEqual([work?.status, work?.attempts], ["completed", 1]);
+          assert.equal((yield* Ref.get(counts))["work"], 1);
+        }),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
 it.effect("an invoked run reports how it ended, and cancelling the parent cancels it", () =>
