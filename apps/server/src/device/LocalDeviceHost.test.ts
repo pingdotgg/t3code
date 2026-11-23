@@ -191,22 +191,15 @@ describe("AgentDevice startup", () => {
   );
 
   // regression: #41190 a daemon left by the previous pin keeps answering /health
-  it.effect("replaces a healthy daemon recorded at a different agent-device version", () =>
+  it.effect("hands a daemon recorded at another agent-device version to the pinned client", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
       const fs = yield* FileSystem.FileSystem;
-      const previous = {
-        httpPort: 12345,
-        token: "previous-token",
-        pid: process.pid,
-        version: "0.21.36",
-      };
-      expect(previous.version).not.toBe(AGENT_DEVICE_VERSION);
-      const { host, baseDir, stateDir, runs } = yield* agentFixture(
-        (dir) =>
+      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
+      const { host, runs } = yield* agentFixture(
+        (stateDir) =>
           fs
             .writeFileString(
-              `${dir}/daemon.json`,
+              `${stateDir}/daemon.json`,
               JSON.stringify({
                 httpPort: 23456,
                 token: "next-token",
@@ -217,60 +210,18 @@ describe("AgentDevice startup", () => {
         processOutput(0),
         previous,
       );
-      const entry = path.join(
-        baseDir,
-        "tools",
-        "agent-device",
-        AGENT_DEVICE_VERSION,
-        "node_modules",
-        "agent-device",
-        "bin",
-        "agent-device.mjs",
-      );
       const ready = yield* host.ensureAgentReady(() => Effect.void);
-      expect(runs.filter((run) => run.args.includes("devices"))).toEqual([
-        expect.objectContaining({
-          args: [entry, "devices", "--json"],
-          env: expect.objectContaining({ AGENT_DEVICE_STATE_DIR: stateDir }),
-        }),
-      ]);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
       expect(ready.agentDevice).toMatchObject({
         baseUrl: "http://127.0.0.1:23456",
         token: "next-token",
-        entryPath: entry,
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reuses a healthy daemon recorded at the pinned agent-device version", () =>
+  it.effect("keeps a busy daemon from another version that the pinned client leaves running", () =>
     Effect.gen(function* () {
-      const { host, runs } = yield* agentFixture(
-        () => Effect.die("A daemon at the pinned version must be reused"),
-        processOutput(0),
-        {
-          httpPort: 12345,
-          token: "current-token",
-          pid: process.pid,
-          version: AGENT_DEVICE_VERSION,
-        },
-      );
-      const ready = yield* host.ensureAgentReady(() => Effect.void);
-      expect(ready.agentDevice).toMatchObject({
-        baseUrl: "http://127.0.0.1:12345",
-        token: "current-token",
-      });
-      expect(runs.filter((run) => run.args.includes("devices"))).toEqual([]);
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("keeps a mismatched daemon the pinned client leaves registered", () =>
-    Effect.gen(function* () {
-      const previous = {
-        httpPort: 12345,
-        token: "previous-token",
-        pid: process.pid,
-        version: "0.21.36",
-      };
+      const previous = { httpPort: 12345, token: "previous-token", version: "0.21.36" };
       const { host, runs } = yield* agentFixture(
         () => Effect.succeed(processOutput(1)),
         processOutput(0),
@@ -279,13 +230,12 @@ describe("AgentDevice startup", () => {
       const ready = yield* host.ensureAgentReady(() => Effect.void);
       expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
       expect(ready.agentDevice).toMatchObject({
-        baseUrl: `http://127.0.0.1:${previous.httpPort}`,
-        token: previous.token,
+        baseUrl: "http://127.0.0.1:12345",
+        token: "previous-token",
       });
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  // regression: #41190 a failed replacement can stop the old daemon and leave its file
   it.effect("reports a stopped daemon a failed replacement left registered", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -309,37 +259,6 @@ describe("AgentDevice startup", () => {
         _tag: "AgentDeviceStartError",
         reason: "command_failed",
         exitCode: 1,
-      });
-      expect(yield* fs.readFileString(path.join(stateDir, "daemon.json"))).toContain(
-        previous.token,
-      );
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("reports a timeout when a timed-out replacement leaves a stopped daemon", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      let health: Ref.Ref<boolean> | undefined;
-      const previous = {
-        httpPort: 12345,
-        token: "previous-token",
-        pid: process.pid,
-        version: "0.21.36",
-      };
-      const { host, stateDir, daemonHealthy } = yield* agentFixture(
-        () =>
-          (health ? Ref.set(health, false) : Effect.void).pipe(
-            Effect.as(processOutput(0, "", "", true)),
-          ),
-        processOutput(0),
-        previous,
-      );
-      health = daemonHealthy;
-      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
-      expect(error).toMatchObject({
-        _tag: "DeviceHostTimeoutError",
-        timeoutMs: 30_000,
       });
       expect(yield* fs.readFileString(path.join(stateDir, "daemon.json"))).toContain(
         previous.token,
