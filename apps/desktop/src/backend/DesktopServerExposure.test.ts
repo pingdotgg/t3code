@@ -181,59 +181,44 @@ describe("DesktopServerExposure", () => {
     );
   });
 
-  it.effect(
-    "binds 0.0.0.0 on startup when persisted network-accessible precedes DHCP and advertises once LAN comes up",
-    () => {
-      const networkInterfaces: Record<
-        string,
-        readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
-      > = {};
-      return withHarness(
-        networkInterfaces,
-        Effect.gen(function* () {
-          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+  it.effect("keeps a saved network-accessible mode when boot finishes before DHCP", () => {
+    const networkInterfaces: Record<
+      string,
+      readonly DesktopNetworkInterfaces.DesktopNetworkInterfaceInfo[] | undefined
+    > = {};
 
-          yield* settings.setServerExposureMode("network-accessible");
+    return withHarness(
+      networkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setServerExposureMode("network-accessible");
 
-          const state = yield* serverExposure.configureFromSettings({ port: 4173 });
-          assert.equal(state.mode, "network-accessible");
-          assert.equal(state.endpointUrl, null);
-          assert.equal((yield* settings.get).serverExposureMode, "network-accessible");
+        const state = yield* serverExposure.configureFromSettings({ port: 4173 });
+        assert.equal(state.mode, "network-accessible");
+        assert.equal(state.endpointUrl, null);
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "0.0.0.0");
 
-          const backendConfig = yield* serverExposure.backendConfig;
-          assert.equal(backendConfig.bindHost, "0.0.0.0");
-          assert.equal(backendConfig.httpBaseUrl.href, "http://127.0.0.1:4173/");
+        networkInterfaces.en0 = lanNetworkInterfaces.en0;
+        assert.equal((yield* serverExposure.getState).endpointUrl, "http://192.168.1.20:4173");
+      }),
+    );
+  });
 
-          // Once the network interface comes up after boot, state & advertised endpoints pick it up
-          // without needing a restart.
-          networkInterfaces.en0 = lanNetworkInterfaces.en0;
-          const afterDhcp = yield* serverExposure.getState;
-          assert.equal(afterDhcp.mode, "network-accessible");
-          assert.equal(afterDhcp.advertisedHost, "192.168.1.20");
-          assert.equal(afterDhcp.endpointUrl, "http://192.168.1.20:4173");
-          const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-          assert.deepEqual(
-            endpoints.map((endpoint) => endpoint.httpBaseUrl),
-            ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
-          );
-        }),
-      );
-    },
-  );
+  it.effect("refuses to switch to network-accessible without a network address", () =>
+    withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
 
-  it.effect(
-    "rejects interactive setMode(network-accessible) when no network interface exists",
-    () =>
-      withHarness(
-        emptyNetworkInterfaces,
-        Effect.gen(function* () {
-          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-          yield* serverExposure.configureFromSettings({ port: 4173 });
-          const exit = yield* serverExposure.setMode("network-accessible").pipe(Effect.exit);
-          assert.equal(exit._tag, "Failure");
-        }),
-      ),
+        const error = yield* Effect.flip(serverExposure.setMode("network-accessible"));
+        assert.equal(error._tag, "DesktopServerExposureNoNetworkAddressError");
+        assert.equal((yield* settings.get).serverExposureMode, "local-only");
+        assert.equal((yield* serverExposure.backendConfig).bindHost, "127.0.0.1");
+      }),
+    ),
   );
 
   it.effect("starts local-only, Serve off, when a managed policy keeps clients local", () =>
