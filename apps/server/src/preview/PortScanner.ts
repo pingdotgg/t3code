@@ -27,6 +27,7 @@ import { FetchHttpClient, HttpClient } from "effect/http";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as WindowsTcpListeners from "../process/windowsTcpListeners.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { probeTlsListener } from "./tlsProbe.ts";
 
 export class PortDiscovery extends Context.Service<
   PortDiscovery,
@@ -68,6 +69,15 @@ export class PortDiscovery extends Context.Service<
     readonly stopServer: (
       input: PreviewStopLocalServerInput,
     ) => Effect.Effect<void, PreviewStopLocalServerError>;
+    /**
+     * Whether the loopback listener on `port` speaks TLS. Probed on demand when a user
+     * opens a discovered server, never during a scan: scanning lists owned listeners as
+     * plain HTTP without sending them a request.
+     */
+    readonly probeTls: (input: {
+      readonly host: string;
+      readonly port: number;
+    }) => Effect.Effect<boolean>;
   }
 >()("t3/preview/PortScanner/PortDiscovery") {}
 
@@ -808,11 +818,34 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         return cachedProbe?.pid === pid && cachedProbe.expiresAtMillis > nowMillis
           ? Effect.succeed({ group, probe: cachedProbe, fresh: false })
           : probeWebUrl(group.url).pipe(
-              Effect.map((result) => ({
-                group,
-                probe: { pid, isWeb: result !== null, expiresAtMillis: 0 },
-                fresh: true,
-              })),
+              Effect.flatMap((result) => {
+                if (result !== null) {
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: true, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                if (new URL(group.url).protocol !== "https:") {
+                  return Effect.succeed({
+                    group,
+                    probe: { pid, isWeb: false, expiresAtMillis: 0 },
+                    fresh: true,
+                  });
+                }
+                // A failed https:// probe falls back to a TLS handshake, so a listener with
+                // a locally issued certificate (mkcert) still counts as web.
+                return probeTlsListener({
+                  host: group.server.host,
+                  port: group.server.port,
+                }).pipe(
+                  Effect.map((tls) => ({
+                    group,
+                    probe: { pid, isWeb: tls, expiresAtMillis: 0 },
+                    fresh: true,
+                  })),
+                );
+              }),
             );
       },
       { concurrency: WEB_PROBE_CONCURRENCY },
@@ -1260,6 +1293,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     // Subscribers see the server leave now rather than on the next poll.
     signalUntilStopped(input).pipe(Effect.andThen(pollIfRetained));
 
+  const probeTls: PortDiscovery["Service"]["probeTls"] = (input) => probeTlsListener(input);
+
   return PortDiscovery.of({
     scan: scanOnce,
     subscribe,
@@ -1269,6 +1304,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     trackAgent,
     watchAgentCommandStops,
     stopServer,
+    probeTls,
   });
 }).pipe(Effect.withSpan("PortDiscovery.make"));
 

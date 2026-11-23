@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- the stop test drives real server processes.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
+import * as NodeHttps from "node:https";
 
 import { it as effectIt } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -385,6 +388,86 @@ effectIt.effect(
       ]);
       expect(requests).toEqual(Array.from({ length: 3 }, () => [configuredUrl, "manual"]));
     }).pipe(Effect.provide(layer));
+  },
+);
+
+// Non-secret, self-signed localhost certificate for the TLS probe tests.
+const testCertificates = {
+  key: NodeFS.readFileSync(new URL("./fixtures/localhost-key.pem", import.meta.url)),
+  cert: NodeFS.readFileSync(new URL("./fixtures/localhost-cert.pem", import.meta.url)),
+};
+
+const listenOnLoopback = (server: NodeHttp.Server | NodeHttps.Server) =>
+  Effect.promise(
+    () =>
+      new Promise<number>((resolve) => {
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          resolve(typeof address === "object" && address !== null ? address.port : 0);
+        });
+      }),
+  );
+
+/** What Node's fetch rejects with when it refuses a locally issued certificate. */
+const certFailureFetch = ((_input: Parameters<typeof globalThis.fetch>[0]) => {
+  const cause = new Error("unable to verify the first certificate") as Error & {
+    code: string;
+  };
+  cause.code = "UNABLE_TO_VERIFY_LEAF_SIGNATURE";
+  return Promise.reject(new TypeError("fetch failed", { cause }));
+}) as typeof globalThis.fetch;
+
+effectIt.effect(
+  "keeps an unowned configured HTTPS URL when the HTTP probe fails but the listener speaks TLS",
+  () => {
+    const server = NodeHttps.createServer(testCertificates, (_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("ok");
+    });
+    return Effect.acquireUseRelease(
+      listenOnLoopback(server),
+      (port) => {
+        const configuredUrl = `https://localhost:${port}/app`;
+        const layer = layerLsofScanner({
+          pid: () => 1234,
+          fetch: certFailureFetch,
+          stdout: () => `p1234\ncnode\nn*:${port}\n`,
+        });
+        return Effect.gen(function* () {
+          const scanner = yield* PortScanner.PortDiscovery;
+          expect(yield* scanner.scan([configuredUrl])).toMatchObject([
+            { pid: 1234, url: configuredUrl },
+          ]);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+      () => Effect.sync(() => server.close()),
+    );
+  },
+);
+
+effectIt.effect(
+  "still drops an unowned configured HTTPS URL when the listener is plain HTTP",
+  () => {
+    const server = NodeHttp.createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("ok");
+    });
+    return Effect.acquireUseRelease(
+      listenOnLoopback(server),
+      (port) => {
+        const configuredUrl = `https://localhost:${port}/app`;
+        const layer = layerLsofScanner({
+          pid: () => 1234,
+          fetch: certFailureFetch,
+          stdout: () => `p1234\ncnode\nn*:${port}\n`,
+        });
+        return Effect.gen(function* () {
+          const scanner = yield* PortScanner.PortDiscovery;
+          expect(yield* scanner.scan([configuredUrl])).toHaveLength(0);
+        }).pipe(Effect.scoped, Effect.provide(layer));
+      },
+      () => Effect.sync(() => server.close()),
+    );
   },
 );
 

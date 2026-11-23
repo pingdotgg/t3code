@@ -76,6 +76,10 @@ export function createPreviewEnvironmentAtoms<R, E>(
       label: "environment-data:preview:stop-local-server",
       tag: WS_METHODS.previewStopLocalServer,
     }),
+    probeDiscoveredServerTls: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:preview:probe-discovered-server-tls",
+      tag: WS_METHODS.previewProbeDiscoveredServerTls,
+    }),
     reportStatus: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:preview:report-status",
       tag: WS_METHODS.previewReportStatus,

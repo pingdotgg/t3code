@@ -327,6 +327,19 @@ export const PreviewStopLocalServerInput = Schema.Struct({
 });
 export type PreviewStopLocalServerInput = typeof PreviewStopLocalServerInput.Type;
 
+/** Asks the environment's server whether a discovered loopback listener speaks TLS. */
+export const PreviewProbeDiscoveredServerTlsInput = Schema.Struct({
+  host: TrimmedNonEmptyString,
+  port: LocalServerPort,
+});
+export type PreviewProbeDiscoveredServerTlsInput = typeof PreviewProbeDiscoveredServerTlsInput.Type;
+
+export const PreviewProbeDiscoveredServerTlsResult = Schema.Struct({
+  tls: Schema.Boolean,
+});
+export type PreviewProbeDiscoveredServerTlsResult =
+  typeof PreviewProbeDiscoveredServerTlsResult.Type;
+
 export class PreviewStopLocalServerError extends Schema.TaggedError<PreviewStopLocalServerError>()(
   "PreviewStopLocalServerError",
   {
