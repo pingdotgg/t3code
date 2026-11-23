@@ -12,6 +12,18 @@ const PanelFrameDensityContext = createContext<PanelFrameDensity>("default");
 const panelFrameToolbarVariants = cva(
   "flex shrink-0 items-center border-b border-divider surface-card-fill text-muted-foreground",
   {
+    compoundVariants: [
+      {
+        className: "gap-2 px-3 py-2 text-meta",
+        density: "default",
+        flush: false,
+      },
+      {
+        className: "gap-1.5 px-3 py-1.5 text-caption",
+        density: "compact",
+        flush: false,
+      },
+    ],
     defaultVariants: {
       density: "default",
       flush: false,
@@ -19,8 +31,8 @@ const panelFrameToolbarVariants = cva(
     },
     variants: {
       density: {
-        default: "gap-2 px-3 py-2 text-meta",
-        compact: "gap-1.5 px-3 py-1.5 text-caption",
+        default: "",
+        compact: "",
       },
       flush: {
         true: "gap-0 p-0",
