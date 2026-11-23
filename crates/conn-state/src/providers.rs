@@ -1781,7 +1781,6 @@ pub struct ServerConfigState {
     catalog: ModelCatalog,
     scratch_workspace_root: Option<String>,
     model_catalog_refresh: bool,
-    managed_policy: Option<conn_contract::ManagedPolicySummary>,
     loaded: bool,
 }
 
@@ -1863,13 +1862,6 @@ impl ServerConfigState {
             .find(|provider| provider.instance_id == instance_id)
     }
 
-    /// `ServerConfig.managedPolicy`: what an administrator's policy locks, or `None` when the
-    /// environment is unmanaged.
-    #[must_use]
-    pub fn managed_policy(&self) -> Option<&conn_contract::ManagedPolicySummary> {
-        self.managed_policy.as_ref()
-    }
-
     /// `ServerConfig.scratchWorkspaceRoot`.
     #[must_use]
     pub fn scratch_workspace_root(&self) -> Option<&str> {
@@ -1911,11 +1903,9 @@ impl ServerConfigState {
         let refresh = config.environment.capabilities.model_catalog_refresh == Some(true);
         let config_changed = !was_loaded
             || scratch != self.scratch_workspace_root
-            || refresh != self.model_catalog_refresh
-            || config.managed_policy != self.managed_policy;
+            || refresh != self.model_catalog_refresh;
         self.scratch_workspace_root = scratch;
         self.model_catalog_refresh = refresh;
-        self.managed_policy.clone_from(&config.managed_policy);
         let settings_changed = self.settings.as_ref() != Some(&config.settings);
         self.settings = Some(config.settings.clone());
         let mut change = self.set_providers(config.providers.iter().flatten().cloned().collect());

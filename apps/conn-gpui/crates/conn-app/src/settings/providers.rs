@@ -927,12 +927,9 @@ impl Render for ProvidersView {
                         "settings.providers.add".to_owned(),
                         "Add provider",
                         false,
-                        (self.adding.is_none()
-                            && config.settings().is_some()
-                            && conn_state::provider_settings::can_add_provider(
-                                config.managed_policy(),
-                            ))
-                        .then(|| cx.listener(|view, _, window, cx| view.open_add_form(window, cx))),
+                        (self.adding.is_none() && config.settings().is_some()).then(|| {
+                            cx.listener(|view, _, window, cx| view.open_add_form(window, cx))
+                        }),
                     ),
                 )
                 .child(self.button(

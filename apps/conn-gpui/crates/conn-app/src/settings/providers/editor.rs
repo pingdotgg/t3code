@@ -1,6 +1,5 @@
 //! The provider instance editor behind Settings → Providers (`ProviderSettingsPanel.tsx`,
-//! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`,
-//! `ManagedPolicy.tsx`).
+//! `ProviderInstanceCard.tsx`, `ProviderSettingsForm.tsx`, `AddProviderInstanceDialog.tsx`).
 //!
 //! Every edit is one `server.updateSettings` call carrying a `providerInstanceMutation`, a
 //! project override or a model preference (`conn_state::provider_settings`,
@@ -20,8 +19,7 @@ use conn_contract::{
 };
 use conn_state::provider_auth::{ProviderSummary, StatusKey};
 use conn_state::provider_settings::{
-    self as settings_logic, Control, DRIVERS, DriverDef, EnvField, FieldDef, InstanceLocks,
-    InstanceRow,
+    self as settings_logic, Control, DRIVERS, DriverDef, EnvField, FieldDef, InstanceRow,
 };
 use conn_state::providers::ProviderGroup;
 use gpui_kit::Focusable as _;
@@ -38,7 +36,6 @@ use serde_json::Value;
 
 use super::{ProvidersView, settings_row, settings_section};
 use crate::a11y::ConnA11yExt as _;
-use crate::panels::chrome::ConnTooltipExt as _;
 use crate::settings::controls::pill_switch;
 use crate::theme::hsla;
 
@@ -129,10 +126,6 @@ fn accent_color(hex: Option<&str>) -> Option<Hsla> {
 impl ProvidersView {
     fn settings(&self) -> Option<&ServerSettings> {
         self.config.settings()
-    }
-
-    pub(super) fn locks(&self, driver: &str) -> Option<InstanceLocks> {
-        settings_logic::managed_instance_locks(self.config.managed_policy(), driver)
     }
 
     /// The row and instance being edited, as the server's settings have them.
@@ -266,9 +259,6 @@ impl ProvidersView {
             return;
         };
         let instance_id = editor.instance_id.clone();
-        let locks = self
-            .current_instance(&instance_id)
-            .and_then(|(row, _)| self.locks(&row.driver));
         match what {
             Commit::DisplayName => {
                 let name = editor.display_name.read(cx).value().to_string();
@@ -287,9 +277,6 @@ impl ProvidersView {
                 else {
                     return;
                 };
-                if locks.as_ref().is_some_and(|l| l.locks_config(key)) {
-                    return;
-                }
                 let value = input.read(cx).value().to_string();
                 let field = *def;
                 // A saved secret never shows, so an empty box keeps it.
@@ -306,9 +293,6 @@ impl ProvidersView {
                 let Some(row) = editor.env_fields.iter().find(|f| f.def.name == name) else {
                     return;
                 };
-                if locks.as_ref().is_some_and(|l| l.locks_variable(name)) {
-                    return;
-                }
                 let value = row.input.read(cx).value().to_string();
                 if value.is_empty() {
                     return;
@@ -319,23 +303,15 @@ impl ProvidersView {
                     cx,
                 );
             }
-            Commit::Variables => self.commit_variables(&instance_id, locks.as_ref(), cx),
+            Commit::Variables => self.commit_variables(&instance_id, cx),
             Commit::CustomModel => self.add_custom_model(window, cx),
         }
     }
 
-    fn commit_variables(
-        &mut self,
-        instance_id: &str,
-        locks: Option<&InstanceLocks>,
-        cx: &mut Context<'_, Self>,
-    ) {
+    fn commit_variables(&mut self, instance_id: &str, cx: &mut Context<'_, Self>) {
         let Some(editor) = &self.editor else {
             return;
         };
-        if locks.is_some_and(|l| l.whole_environment) {
-            return;
-        }
         let rows: Vec<EnvironmentVariable> = editor
             .variables
             .iter()
@@ -351,8 +327,6 @@ impl ProvidersView {
                     _ => settings_logic::variable(&name, &value, row.sensitive),
                 }
             })
-            // A row named like a pinned variable is the policy's, never the user's.
-            .filter(|variable| !locks.is_some_and(|l| l.locks_variable(&variable.name)))
             .collect();
         let driver = settings_logic::driver_def(
             &self
@@ -370,7 +344,7 @@ impl ProvidersView {
                     .filter(|variable| {
                         driver.is_some_and(|def| {
                             def.env_fields.iter().any(|f| f.name == variable.name)
-                        }) || locks.is_some_and(|l| l.locks_variable(&variable.name))
+                        })
                     })
                     .cloned()
                     .collect();
@@ -817,20 +791,16 @@ impl ProvidersView {
 
     // --- Add provider -------------------------------------------------------------------
 
-    /// The drivers Add provider offers: those the policy allows, without the ACP Registry.
-    fn addable_drivers(&self) -> Vec<&'static DriverDef> {
-        let policy = self.config.managed_policy();
+    /// The drivers Add provider offers: all but the ACP Registry.
+    fn addable_drivers() -> Vec<&'static DriverDef> {
         DRIVERS
             .iter()
-            .filter(|def| {
-                def.kind != "acpRegistry"
-                    && settings_logic::is_managed_driver_allowed(policy, def.kind)
-            })
+            .filter(|def| def.kind != "acpRegistry")
             .collect()
     }
 
     pub(super) fn open_add_form(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
-        let Some(first) = self.addable_drivers().first().copied() else {
+        let Some(first) = Self::addable_drivers().first().copied() else {
             return;
         };
         let driver = first.kind.to_owned();
@@ -967,12 +937,6 @@ impl ProvidersView {
         let selected = self.selected.as_deref() == Some(id.as_str());
         let refreshing = self.refreshing.contains(&id);
         let confirming = self.confirm_remove.as_deref() == Some(id.as_str());
-        // The policy refuses switching it on; switching it off stays the user's call.
-        let denial = settings_logic::managed_enable_denial(
-            self.config.managed_policy(),
-            &row.driver,
-            enabled,
-        );
 
         let title = div()
             .flex()
@@ -1065,29 +1029,13 @@ impl ProvidersView {
                 tokens,
                 {
                     let handle = cx.entity().downgrade();
-                    let denied = denial.is_some();
                     move |_, cx| {
-                        if denied {
-                            return;
-                        }
                         if let Some(view) = handle.upgrade() {
                             view.update(cx, |view, cx| view.set_enabled(&toggle_id, !enabled, cx));
                         }
                     }
                 },
             );
-            let switch = match &denial {
-                Some(reason) => div()
-                    .id(SharedString::from(format!(
-                        "settings.providers.{id}.managed"
-                    )))
-                    .a11y_group(format!("settings.providers.{id}.managed"), reason.clone())
-                    .conn_tooltip(reason.clone(), tokens)
-                    .opacity(0.5)
-                    .child(switch)
-                    .into_any_element(),
-                None => switch.into_any_element(),
-            };
             if let (Some(_), Some((project, _))) = (project_value, &scope) {
                 let reset_id = id.clone();
                 let project = project.clone();
@@ -1180,18 +1128,6 @@ impl ProvidersView {
             .into_any_element()
     }
 
-    /// `ManagedControl`: a control the policy owns, shown as its reason.
-    fn managed_note(&self, ax_id: String, reason: &str) -> AnyElement {
-        div()
-            .id(SharedString::from(ax_id.clone()))
-            .a11y_group(ax_id, reason.to_owned())
-            .max_w(px(260.0))
-            .opacity(0.7)
-            .child(self.muted_line(reason.to_owned()))
-            .test_support()
-            .into_any_element()
-    }
-
     /// The sections of the instance being edited.
     pub(super) fn editor_sections(
         &mut self,
@@ -1209,7 +1145,6 @@ impl ProvidersView {
         let geometry = self.geometry;
         let name = settings_logic::instance_label(&instance);
         let enabled = settings_logic::resolve_instance_enabled(&instance);
-        let locks = self.locks(&row.driver);
         let ax = |suffix: &str| format!("settings.providers.{selected}.{suffix}");
         let mut sections = Vec::new();
 
@@ -1334,10 +1269,7 @@ impl ProvidersView {
                 let name = field.name;
                 let variable = settings_logic::environment_variable(&instance, name);
                 let saved = variable.is_some();
-                let control = if let Some(locks) = locks.as_ref().filter(|l| l.locks_variable(name))
-                {
-                    self.managed_note(ax(&format!("env.{name}.managed")), &locks.reason)
-                } else {
+                let control = {
                     let clear_id = selected.clone();
                     div()
                         .flex()
@@ -1377,65 +1309,59 @@ impl ProvidersView {
             let mut runtime = Vec::new();
             for field_row in &editor.fields {
                 let field: &'static FieldDef = field_row.def;
-                let control = if let Some(locks) =
-                    locks.as_ref().filter(|l| l.locks_config(field.key))
-                {
-                    self.managed_note(ax(&format!("field.{}.managed", field.key)), &locks.reason)
-                } else {
-                    match (field.control, &field_row.input) {
-                        (Control::Select(options), _) => {
-                            let current = settings_logic::config_string(&instance, field.key);
-                            let current = if current.is_empty() {
-                                options.first().map_or("", |(value, _)| *value).to_owned()
-                            } else {
-                                current
-                            };
-                            let mut group = div()
-                                .flex()
-                                .flex_row()
-                                .flex_wrap()
-                                .justify_end()
-                                .gap(px(6.0));
-                            for (value, label) in options {
-                                let option_id = selected.clone();
-                                let value: &'static str = value;
-                                group = group.child(self.button(
-                                    ax(&format!("field.{}.{value}", field.key)),
-                                    label,
-                                    current == value,
-                                    (!self.write.pending).then(|| {
-                                        cx.listener(move |view, _, _, cx| {
-                                            view.pick_option(&option_id, field, value, cx);
-                                        })
-                                    }),
-                                ));
-                            }
-                            group.into_any_element()
+                let control = match (field.control, &field_row.input) {
+                    (Control::Select(options), _) => {
+                        let current = settings_logic::config_string(&instance, field.key);
+                        let current = if current.is_empty() {
+                            options.first().map_or("", |(value, _)| *value).to_owned()
+                        } else {
+                            current
+                        };
+                        let mut group = div()
+                            .flex()
+                            .flex_row()
+                            .flex_wrap()
+                            .justify_end()
+                            .gap(px(6.0));
+                        for (value, label) in options {
+                            let option_id = selected.clone();
+                            let value: &'static str = value;
+                            group = group.child(self.button(
+                                ax(&format!("field.{}.{value}", field.key)),
+                                label,
+                                current == value,
+                                (!self.write.pending).then(|| {
+                                    cx.listener(move |view, _, _, cx| {
+                                        view.pick_option(&option_id, field, value, cx);
+                                    })
+                                }),
+                            ));
                         }
-                        (_, Some(input)) => {
-                            let saved = field.secret
-                                && settings_logic::config_secret_saved(&instance, field.key);
-                            let clear_id = selected.clone();
-                            div()
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(6.0))
-                                .child(self.input_box(input))
-                                .when(saved, |el| {
-                                    el.child(self.button(
-                                        ax(&format!("field.{}.clear", field.key)),
-                                        "Clear",
-                                        false,
-                                        Some(cx.listener(move |view, _, _, cx| {
-                                            view.clear_secret(&clear_id, field, cx);
-                                        })),
-                                    ))
-                                })
-                                .into_any_element()
-                        }
-                        _ => div().into_any_element(),
+                        group.into_any_element()
                     }
+                    (_, Some(input)) => {
+                        let saved = field.secret
+                            && settings_logic::config_secret_saved(&instance, field.key);
+                        let clear_id = selected.clone();
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(self.input_box(input))
+                            .when(saved, |el| {
+                                el.child(self.button(
+                                    ax(&format!("field.{}.clear", field.key)),
+                                    "Clear",
+                                    false,
+                                    Some(cx.listener(move |view, _, _, cx| {
+                                        view.clear_secret(&clear_id, field, cx);
+                                    })),
+                                ))
+                            })
+                            .into_any_element()
+                    }
+                    _ => div().into_any_element(),
                 };
                 let description = (!field.description.is_empty()).then_some(field.description);
                 runtime.push(settings_row(
@@ -1453,42 +1379,8 @@ impl ProvidersView {
         // Environment: free-form variables.
         if let Some(editor) = &self.editor {
             let mut rows = Vec::new();
-            let whole = locks.as_ref().filter(|l| l.whole_environment);
-            if let Some(locks) = whole {
-                rows.push(self.note_row(locks.reason.clone(), false, &ax("environment.managed")));
-            }
-            // Variables a policy pins show by name only (`ProviderEnvironmentSection`).
-            if let Some(locks) = locks.as_ref().filter(|l| !l.whole_environment) {
-                for name in &locks.environment_names {
-                    if def_has_env_field(&row.driver, name) {
-                        continue;
-                    }
-                    rows.push(settings_row(
-                        name,
-                        Some(&locks.reason),
-                        div().into_any_element(),
-                        &tokens,
-                        &geometry,
-                    ));
-                }
-            }
             for variable in &editor.variables {
                 let key = variable.key;
-                let name = variable.name.read(cx).value().to_string();
-                if let Some(locks) = whole {
-                    // Under a runtime-mode ceiling every variable is the administrator's.
-                    rows.push(settings_row(
-                        &name,
-                        Some(&locks.reason),
-                        div().into_any_element(),
-                        &tokens,
-                        &geometry,
-                    ));
-                    continue;
-                }
-                if locks.as_ref().is_some_and(|l| l.locks_variable(&name)) {
-                    continue;
-                }
                 let vax = ax(&format!("var.{key}"));
                 let value = div()
                     .flex_1()
@@ -1528,20 +1420,18 @@ impl ProvidersView {
                     ));
                 rows.push(line.into_any_element());
             }
-            if whole.is_none() {
-                rows.push(settings_row(
-                    "Variables",
-                    Some("API keys, base URLs, and other per-instance CLI settings. Sensitive values are stored separately and never returned to the app."),
-                    self.button(
-                        ax("var.add"),
-                        "Add variable",
-                        false,
-                        Some(cx.listener(|view, _, window, cx| view.add_variable(window, cx))),
-                    ),
-                    &tokens,
-                    &geometry,
-                ));
-            }
+            rows.push(settings_row(
+                "Variables",
+                Some("API keys, base URLs, and other per-instance CLI settings. Sensitive values are stored separately and never returned to the app."),
+                self.button(
+                    ax("var.add"),
+                    "Add variable",
+                    false,
+                    Some(cx.listener(|view, _, window, cx| view.add_variable(window, cx))),
+                ),
+                &tokens,
+                &geometry,
+            ));
             sections
                 .push(settings_section("Environment", rows, &tokens, &geometry).into_any_element());
         }
@@ -1565,7 +1455,7 @@ impl ProvidersView {
         let existing: Vec<&str> = existing.iter().map(String::as_str).collect();
         let id_error = settings_logic::validate_instance_id(&id, &existing).err();
         let mut drivers = div().flex().flex_row().flex_wrap().gap(px(6.0));
-        for def in self.addable_drivers() {
+        for def in Self::addable_drivers() {
             let kind = def.kind;
             drivers = drivers.child(self.button(
                 format!("settings.providers.add.driver.{kind}"),
@@ -1664,11 +1554,6 @@ impl ProvidersView {
             .clone()
             .map(|message| self.note_row(message, true, "settings.providers.write-error"))
     }
-}
-
-fn def_has_env_field(driver: &str, name: &str) -> bool {
-    settings_logic::driver_def(driver)
-        .is_some_and(|def| def.env_fields.iter().any(|f| f.name == name))
 }
 
 /// `CUSTOM_MODEL_PLACEHOLDER_BY_KIND`.

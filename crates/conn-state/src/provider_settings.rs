@@ -7,7 +7,7 @@
 //! patch, built here so the iOS app sends the same bytes.
 
 use conn_contract::{
-    ManagedPolicySummary, ProjectProviderInstanceOverride, ServerProvidersItemItem, ServerSettings,
+    ProjectProviderInstanceOverride, ServerProvidersItemItem, ServerSettings,
     ServerSettingsProjectSettingsOverridesValue,
     ServerSettingsProviderInstancesValue as InstanceConfig,
     ServerSettingsProviderInstancesValueEnvironmentItem as EnvironmentVariable,
@@ -941,121 +941,6 @@ pub fn project_overrides<'a>(
         .get(project_id)
 }
 
-// --- managed policy ----------------------------------------------------------------------
-
-/// What an administrator's policy pins on instances of one driver (`ManagedInstanceLocks`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct InstanceLocks {
-    /// Keys inside the instance's `config` users cannot change.
-    pub config_keys: Vec<String>,
-    /// Environment variables users cannot edit, rename or remove.
-    pub environment_names: Vec<String>,
-    /// Under a runtime-mode ceiling every variable is the administrator's.
-    pub whole_environment: bool,
-    /// `Managed by <organization>.`
-    pub reason: String,
-}
-
-impl InstanceLocks {
-    /// Whether the config key `key` is locked.
-    #[must_use]
-    pub fn locks_config(&self, key: &str) -> bool {
-        self.config_keys.iter().any(|k| k == key)
-    }
-
-    /// Whether the environment variable `name` is locked.
-    #[must_use]
-    pub fn locks_variable(&self, name: &str) -> bool {
-        self.whole_environment || self.environment_names.iter().any(|n| n == name)
-    }
-}
-
-/// `managedInstanceLocks`: what the policy pins on instances of `driver`, or `None`.
-#[must_use]
-pub fn managed_instance_locks(
-    policy: Option<&ManagedPolicySummary>,
-    driver: &str,
-) -> Option<InstanceLocks> {
-    let policy = policy?;
-    let paths = policy
-        .limits
-        .as_ref()?
-        .providers
-        .as_ref()?
-        .locked_instance_fields
-        .as_ref()?
-        .get(driver)?;
-    if paths.is_empty() {
-        return None;
-    }
-    let under = |prefix: &str| -> Vec<String> {
-        paths
-            .iter()
-            .filter_map(|path| path.strip_prefix(prefix).map(str::to_owned))
-            .collect()
-    };
-    Some(InstanceLocks {
-        config_keys: under("config."),
-        environment_names: under("environment."),
-        whole_environment: paths.iter().any(|path| path == "environment"),
-        reason: format!("Managed by {}.", policy.organization),
-    })
-}
-
-/// `isManagedDriverAllowed`: whether the policy lets `driver` run.
-#[must_use]
-pub fn is_managed_driver_allowed(policy: Option<&ManagedPolicySummary>, driver: &str) -> bool {
-    policy
-        .and_then(|p| {
-            p.limits
-                .as_ref()?
-                .providers
-                .as_ref()?
-                .allowed_drivers
-                .as_ref()
-        })
-        .is_none_or(|allowed| allowed.iter().any(|d| d == driver))
-}
-
-/// `disallowedProviderMessage`: why a provider the policy leaves out cannot be used.
-#[must_use]
-pub fn disallowed_provider_message(organization: Option<&str>, label: &str) -> String {
-    let owner = organization.map_or_else(|| "Your organization".to_owned(), |o| format!("{o}'s"));
-    format!("{owner} policy does not allow the {label} provider.")
-}
-
-/// Why switching `driver` on is refused, or `None`. Switching off stays the user's call.
-#[must_use]
-pub fn managed_enable_denial(
-    policy: Option<&ManagedPolicySummary>,
-    driver: &str,
-    enabled: bool,
-) -> Option<String> {
-    if enabled || is_managed_driver_allowed(policy, driver) {
-        return None;
-    }
-    let label = driver_def(driver).map_or(driver, |def| def.label);
-    Some(disallowed_provider_message(
-        policy.map(|p| p.organization.as_str()),
-        label,
-    ))
-}
-
-/// Whether Add provider is offered: a policy that allows no driver leaves nothing to add.
-#[must_use]
-pub fn can_add_provider(policy: Option<&ManagedPolicySummary>) -> bool {
-    policy
-        .and_then(|p| {
-            p.limits
-                .as_ref()?
-                .providers
-                .as_ref()?
-                .allowed_drivers
-                .as_ref()
-        })
-        .is_none_or(|allowed| !allowed.is_empty())
-}
-
 // --- text generation ----------------------------------------------------------------------
 
 /// `DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection`.
@@ -1363,51 +1248,6 @@ mod tests {
             "An instance named 'codex' already exists."
         );
         assert!(validate_instance_id(&"a".repeat(65), &[]).is_err());
-    }
-
-    fn policy(value: &Value) -> ManagedPolicySummary {
-        serde_json::from_value(value.clone()).expect("policy decode")
-    }
-
-    #[test]
-    fn managed_policy_locks_fields_and_refuses_disallowed_drivers() {
-        let summary = policy(&json!({
-            "organization": "Acme",
-            "lockedSettings": [],
-            "limits": { "providers": {
-                "allowedDrivers": ["codex"],
-                "lockedInstanceFields": {
-                    "codex": ["config.binaryPath", "environment.OPENAI_API_KEY"],
-                    "claudeAgent": ["environment"],
-                },
-            } },
-        }));
-        let locks = managed_instance_locks(Some(&summary), "codex").expect("codex locks");
-        assert!(locks.locks_config("binaryPath") && !locks.locks_config("homePath"));
-        assert!(locks.locks_variable("OPENAI_API_KEY") && !locks.locks_variable("OTHER"));
-        assert_eq!(locks.reason, "Managed by Acme.");
-        let claude = managed_instance_locks(Some(&summary), "claudeAgent").expect("claude");
-        assert!(claude.whole_environment && claude.locks_variable("ANY"));
-        assert_eq!(managed_instance_locks(Some(&summary), "grok"), None);
-        assert_eq!(managed_instance_locks(None, "codex"), None);
-
-        assert!(is_managed_driver_allowed(Some(&summary), "codex"));
-        assert!(!is_managed_driver_allowed(Some(&summary), "grok"));
-        assert!(is_managed_driver_allowed(None, "grok"));
-        assert_eq!(
-            managed_enable_denial(Some(&summary), "grok", false).as_deref(),
-            Some("Acme's policy does not allow the Grok provider.")
-        );
-        assert_eq!(
-            managed_enable_denial(Some(&summary), "grok", true),
-            None,
-            "turning it off stays allowed"
-        );
-        assert_eq!(
-            disallowed_provider_message(None, "Pi"),
-            "Your organization policy does not allow the Pi provider."
-        );
-        assert!(can_add_provider(Some(&summary)) && can_add_provider(None));
     }
 
     fn provider(id: &str, enabled: bool, text: Option<bool>) -> ServerProvidersItemItem {
