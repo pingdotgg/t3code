@@ -1691,7 +1691,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
   // an empty pending list and a finished reply above Stop.
   it.effect("settles a silent background command after the post-settle hold timeout", () =>
     Effect.gen(function* () {
-      const { command, offers, startTurn, until, throughPromptSettled } =
+      const { session, command, offers, startTurn, until, throughPromptSettled, runtimeDies } =
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
       const prompt = yield* throughPromptSettled;
@@ -1718,6 +1718,77 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
         "the silent command is no longer left as live activity on a settled run",
       );
+      assert.isTrue(yield* session.hasPendingBackgroundWork!, "idle release must keep agy alive");
+      yield* runtimeDies;
+      assert.isFalse(yield* session.hasPendingBackgroundWork!, "a dead runtime cannot wake");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("pins both silent commands and continues on their independent wakes", () =>
+    Effect.gen(function* () {
+      const commands = ["call_fetch", "call_tests"].map(
+        (toolCallId): EffectAcpSchema.SessionUpdate => ({
+          sessionUpdate: "tool_call",
+          toolCallId,
+          kind: "execute",
+          title: `node ${toolCallId}.mjs`,
+          rawInput: { CommandLine: `node ${toolCallId}.mjs`, WaitMsBeforeAsync: 10000 },
+          status: "in_progress",
+        }),
+      );
+      const { session, offers, startTurn, send, usage, throughPromptSettled, throughTerminal } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: commands,
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("31 minutes");
+      yield* throughTerminal;
+      yield* TestClock.adjust("31 minutes");
+      assert.isTrue(
+        yield* session.hasPendingBackgroundWork!,
+        "both commands outlive the idle window",
+      );
+      assert.lengthOf(offers, 0, "elapsed time alone cannot start a continuation");
+
+      // The first wake has no task id. It must run without dropping either command's pin.
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The fetch finished." },
+      });
+      assert.lengthOf(offers, 1);
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_fetch",
+        status: "completed",
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(JSON.stringify(yield* throughTerminal), "The fetch finished.");
+      assert.isTrue(
+        yield* session.hasPendingBackgroundWork!,
+        "the second command is still running",
+      );
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_tests",
+        status: "failed",
+      });
+      assert.lengthOf(offers, 2);
+      yield* offers[1]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(3, true);
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The tests failed." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      assert.include(JSON.stringify(yield* throughTerminal), "The tests failed.");
+      assert.isFalse(yield* session.hasPendingBackgroundWork!, "all command pins have cleared");
+      assert.lengthOf(offers, 2);
     }).pipe(Effect.provide(layerSession)),
   );
 

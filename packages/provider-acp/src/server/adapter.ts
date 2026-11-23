@@ -2698,6 +2698,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         // Grok re-prompts on stale monitor notices; suppress output until a genuine terminal or app turn.
         const suppressPostSettleMonitorPrompt = yield* Ref.make(false);
         const runningBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // These commands keep the session alive but must not gate other commands' wakes.
+        const expiredHoldCommandIds = new Set<string>();
         // Background command task id → the completed turn that owns its row. Ended commands stay,
         // bounded, so a later authoritative terminal still corrects the row on its run.
         const detachedBackgroundCommands = yield* Ref.make<ReadonlyMap<string, ActiveAcpTurn>>(
@@ -2842,6 +2844,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
+              expiredHoldCommandIds.clear();
               if (!followsAgentWorkState) {
                 // An open prompt fails with its transport. A turn held open for a running tool
                 // has no prompt, so nothing else ends it.
@@ -7292,6 +7295,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* markSessionCompacted(normalized.sessionId, normalized.update.compactionId);
               }
               yield* handleSessionUpdate(normalized);
+              const update = normalized.update;
+              if (
+                (update.sessionUpdate === "tool_call" ||
+                  update.sessionUpdate === "tool_call_update") &&
+                (update.status === "completed" ||
+                  update.status === "failed" ||
+                  update.status === "cancelled")
+              ) {
+                expiredHoldCommandIds.delete(
+                  sessionScopedId(normalized.sessionId, update.toolCallId),
+                );
+              }
             },
             Effect.mapError(
               (cause) =>
@@ -8166,6 +8181,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(wakeReports, noWakeReports);
                 yield* Ref.set(continuationRequested, false);
                 yield* Ref.set(runningBackgroundTaskIds, new Set());
+                expiredHoldCommandIds.clear();
                 yield* Ref.set(detachedBackgroundCommands, new Map());
                 yield* Ref.set(endedBackgroundTaskIds, new Set());
                 yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -8730,6 +8746,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
+              expiredHoldCommandIds.clear();
               yield* Ref.set(detachedBackgroundCommands, new Map());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
@@ -9013,6 +9030,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const timeoutMillis = Duration.toMillis(hold.timeout);
             const isRunningCommand = (tool: AcpToolCallState) =>
               toolStatus(tool.status) === "running" && hold.isCommand(tool);
+            const generation = yield* Ref.get(runtimeCallbackGeneration);
             let quietSince = yield* Clock.currentTimeMillis;
             // Armed even without a command yet: a pending reply can still start one.
             yield* Effect.gen(function* () {
@@ -9024,13 +9042,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   yield* Effect.sleep(Duration.millis(remaining));
                   continue;
                 }
-                if (
-                  context.tools.values().some(isRunningCommand) &&
-                  !hasDeferredBackgroundWork(context, isRunningCommand)
-                ) {
-                  yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
-                  return;
-                }
+                const settled = yield* runRuntimeCallbackAtGeneration(
+                  generation,
+                  Effect.gen(function* () {
+                    if (context.finalized || context.interrupted) return true;
+                    if (context.lastProgressAt + timeoutMillis > now) return false;
+                    const commands = [...context.tools.values()].filter(isRunningCommand);
+                    if (
+                      commands.length === 0 ||
+                      hasDeferredBackgroundWork(context, isRunningCommand)
+                    )
+                      return false;
+                    const status = context.promptSettledStatus ?? "completed";
+                    if (status === "completed") {
+                      for (const { toolCallId } of commands) {
+                        expiredHoldCommandIds.add(
+                          sessionScopedId(context.nativeThreadId, toolCallId),
+                        );
+                      }
+                    }
+                    yield* finalizeTurn(context, status);
+                    return true;
+                  }),
+                );
+                if (Option.getOrElse(settled, () => true)) return;
                 // Something else still holds the turn; count silence again once it clears.
                 quietSince = now;
               }
@@ -10313,6 +10348,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if ((yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0) return true;
                   if (yield* Ref.get(continuationRequested)) return true;
                   if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+                  if (expiredHoldCommandIds.size > 0) return true;
                   const active = yield* Ref.get(activeTurn);
                   if (
                     active !== null &&
