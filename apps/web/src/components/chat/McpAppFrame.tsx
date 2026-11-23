@@ -19,6 +19,8 @@ import {
   mcpAppFileName,
   type McpAppReference,
 } from "@t3tools/shared/mcpApp";
+import { localHostedThreadRef } from "@t3tools/shared/threadLinks";
+import { useNavigate } from "@tanstack/react-router";
 import { msg, T, useGT, Var } from "gt-react";
 import { Minimize2Icon } from "lucide-react";
 import { useEffect, useRef, useState, type FocusEvent, type ToggleEvent } from "react";
@@ -95,6 +97,7 @@ export function McpAppFrame(props: {
   const gt = useGT();
   const theme = useHtmlRenderTheme();
   const nativeTitlebarHeight = useNativeTitlebarHeight();
+  const navigate = useNavigate();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -171,6 +174,7 @@ export function McpAppFrame(props: {
 
   // Read live values without rebuilding the host and losing the app session.
   const readLive = useStableCallback(() => ({
+    navigate,
     theme,
     width,
     props,
@@ -311,6 +315,15 @@ export function McpAppFrame(props: {
       openLink: async (url) => {
         if (document.activeElement !== frameRef.current || !navigator.userActivation?.isActive) {
           throw new McpAppHostRefusal({ message: "Links open only from a click in the app." });
+        }
+        const current = readLive();
+        const target = localHostedThreadRef(url, current.props.environmentId);
+        if (target) {
+          await current.navigate({
+            to: "/$environmentId/$threadId",
+            params: target,
+          });
+          return;
         }
         window.open(url, "_blank", "noopener,noreferrer");
       },
