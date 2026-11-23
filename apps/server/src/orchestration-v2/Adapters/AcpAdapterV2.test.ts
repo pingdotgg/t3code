@@ -1642,6 +1642,97 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(promptTexts.slice(3), ["continue"], "a turn resumes only once");
     }).pipe(Effect.provide(layerTest)),
   );
+  it.live("fails a prompt steer whose prompt never reaches a closed runtime", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-test-steer-closed-runtime");
+      const threadId = ThreadId.make("thread-acp-steer-closed-runtime");
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const releaseFirstPrompt = yield* Deferred.make<void>();
+      let prompts = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          steersWithPrompt: () => true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              prompt: (_payload, promptOptions) =>
+                Effect.suspend(() => {
+                  prompts += 1;
+                  if (prompts === 1) {
+                    return Deferred.succeed(promptOptions!.dispatched!, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseFirstPrompt)),
+                      Effect.as({ stopReason: "end_turn" as const }),
+                    );
+                  }
+                  // AcpSessionRuntime.prompt fails in ensureConnected before it settles dispatched.
+                  return Effect.fail(
+                    new EffectAcpErrors.AcpTransportError({
+                      detail: "The ACP session runtime is closed.",
+                      cause: undefined,
+                    }),
+                  );
+                }),
+            }),
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-steer-closed-runtime"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnInput = makeTurnInput({
+        threadId,
+        providerThread,
+        instanceId,
+        runtimePolicy,
+        now: yield* DateTime.now,
+      });
+      yield* runtime.startTurn(turnInput);
+      const steer = yield* Effect.forkChild(
+        Effect.exit(
+          runtime.steerTurn({
+            threadId,
+            runId: turnInput.runId,
+            providerThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: ACP_TEST_DRIVER,
+              nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+            }),
+            message: { ...turnInput.message, text: "steer" },
+          }),
+        ),
+      );
+      const terminal = Array.from(
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
+      ).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "failed");
+      yield* Deferred.succeed(releaseFirstPrompt, undefined);
+      const steered = yield* Fiber.join(steer);
+      assert.isTrue(Exit.isFailure(steered), "the steer reports the failed prompt");
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");
