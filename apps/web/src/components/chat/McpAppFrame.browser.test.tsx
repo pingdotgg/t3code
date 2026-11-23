@@ -70,9 +70,9 @@ describe("McpAppFrame", () => {
     await initialized;
     using external = vi.spyOn(window, "open").mockReturnValue(null);
     await userEvent.click(screen.getByTitle("Demo app"));
-    await expect
-      .poll(() => screen.router?.state.location.pathname)
-      .toBe("/environment/thread%3Aprovider%252F1");
+    await vi.waitFor(() =>
+      expect(screen.router?.state.location.pathname).toBe("/environment/thread%3Aprovider%252F1"),
+    );
     expect(external).not.toHaveBeenCalled();
   });
 
