@@ -1,11 +1,13 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  type LocalApi,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
@@ -16,14 +18,17 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
@@ -36,10 +41,12 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
 });
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/use-orchestration-command", { spy: true });
+vi.mock("../localApi", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -47,6 +54,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -124,6 +132,68 @@ describe("sidebar header new thread", () => {
   });
 });
 
+// regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
+describe("sidebar numbered jumps", () => {
+  it("numbers the unsent draft at the top before the threads below it", async () => {
+    const initial = useComposerDraftStore.getState();
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const web = project("web");
+    vi.mocked(useProjects).mockReturnValue([web]);
+    const thread = threadShell(web.id, 0);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    const draftId = DraftId.make("unsent-draft");
+    initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+      threadId: ThreadId.make("unsent-draft-thread"),
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    initial.setPrompt(draftId, "Unsent prompt");
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const draftRow = screen.getByTestId("sidebar-draft-row");
+    await expect.element(draftRow).toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}");
+    await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(draftRow.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("{/Control}");
+
+    // Previous thread from the open thread steps up to the draft above it.
+    await userEvent.keyboard("{Control>}{Shift>}{BracketLeft}{/Shift}{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}2{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).not.toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}1{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
+  });
+});
+
 function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShell {
   return makeThreadFixture({
     environmentId: EnvironmentId.make("local"),
@@ -144,6 +214,8 @@ describe("sidebar render isolation", () => {
       threadId: threads[0]!.id,
     };
     threads.unshift(threadShell(activeProject.id, 100));
+    // A real wall-clock minute tick mid-test re-renders every row and reads as a leak.
+    vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue(threads);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
@@ -255,6 +327,96 @@ describe("sidebar thread rename", () => {
       expect(updateMetadata).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("sidebar thread click", () => {
+  // regression: #40715 macOS counts quick clicks on different rows, so the next row got detail 2 and was ignored
+  it("opens another thread when the click arrives with a double-click count", async () => {
+    const activeProject = project("active");
+    const threads = [threadShell(activeProject.id, 0), threadShell(activeProject.id, 1)];
+    const routeThreadRef: ScopedThreadRef = {
+      environmentId: activeProject.environmentId,
+      threadId: threads[0]!.id,
+    };
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+      { router: "/local/thread-0" },
+    );
+    const navigate = vi.spyOn(screen.router!, "navigate").mockResolvedValue(undefined);
+
+    const openRow = screen.getByText("Thread 0").first().element();
+    await act(() => {
+      openRow.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }),
+      );
+    });
+    expect(navigate).not.toHaveBeenCalled();
+
+    const row = screen.getByText("Thread 1").first().element();
+    await act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }));
+    });
+
+    expect(navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: expect.objectContaining({ threadId: "thread-1" }) }),
+    );
+  });
+});
+
+describe("sidebar thread menu", () => {
+  it("tells the menu whether the keyboard opened it", async () => {
+    const activeProject = project("active");
+    const thread = threadShell(activeProject.id, 0);
+    const threadRef = { environmentId: activeProject.environmentId, threadId: thread.id };
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const row = screen.getByText("Thread 0").first();
+    await expect.element(row).toBeInTheDocument();
+    row.element().closest<HTMLElement>("[data-sidebar-row]")!.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    expect(show.mock.lastCall?.[2]).toBe("keyboard");
+    await userEvent.click(row, { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
+    expect(show.mock.lastCall?.[2]).toBe("mouse");
+  });
 });
 
 describe("sidebar settled pagination", () => {

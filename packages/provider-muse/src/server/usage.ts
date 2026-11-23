@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { providerProbeEnvironment } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   tokenCount,
   totalTokens,
@@ -137,7 +138,7 @@ export const museUsageReader: ProviderUsageReader<
     const binaryPath = expandHomePath(config?.binaryPath ?? "muse", home);
     const museHome = yield* usageHome.resolve({
       binaryPath,
-      environment: makeMuseEnvironment(processEnvironment),
+      environment: providerProbeEnvironment(makeMuseEnvironment(processEnvironment)),
       awaitRefresh,
     });
     if (Option.isNone(museHome)) return [{ dir: binaryPath, refreshing: true }];

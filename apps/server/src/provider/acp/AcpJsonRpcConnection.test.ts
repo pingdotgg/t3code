@@ -15,13 +15,17 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
+import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
 const mockAgentPath = NodePath.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -43,6 +47,136 @@ const setProcessEnv = (name: string, value: string) => {
     else process.env[name] = previous;
   };
 };
+
+const isPromptStarted = (event: AcpSessionRuntime.AcpSessionRequestLogEvent) =>
+  event.method === "session/prompt" && event.status === "started";
+
+const isOutgoing = (tag: string) => (event: EffectAcpProtocol.AcpProtocolLogEvent) =>
+  event.direction === "outgoing" &&
+  event.stage === "decoded" &&
+  typeof event.payload === "object" &&
+  event.payload !== null &&
+  Reflect.get(event.payload, "tag") === tag;
+
+// The methods the mock agent read, in order, keeping only the given ones.
+const readReceived = (requestLogPath: string, methods: ReadonlyArray<string>) =>
+  NodeFS.readFileSync(requestLogPath, "utf8")
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => (JSON.parse(line) as { readonly method?: string }).method)
+    .filter((method) => method !== undefined && methods.includes(method));
+
+// Prompts, then cancels while the prompt is held on its way out: in its started request record,
+// in its outgoing protocol log record, or by its fiber yielding every few operations. The cancel
+// comes on dispatch or from inside the held record. Returns the prompt's exit
+// and the order in which the agent read the prompt, the cancel and the request that ends it.
+const promptThenCancel = (input: {
+  readonly cancelBehavior: "interrupt" | "wait-for-prompt";
+  readonly holdPrompt: {
+    readonly in: "request-log" | "protocol-log" | "scheduler";
+    readonly cancelOn: "dispatch" | "log";
+  };
+}) =>
+  Effect.gen(function* () {
+    const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+    );
+    const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+    const { holdPrompt } = input;
+    const promptHeld = yield* Deferred.make<void>();
+    const promptReleased = yield* Deferred.make<void>();
+    yield* Effect.addFinalizer(() => Deferred.succeed(promptReleased, undefined));
+    const testScope = yield* Scope.Scope;
+    const runtimeMade = yield* Deferred.make<AcpSessionRuntime.AcpSessionRuntime["Service"]>();
+    const cancelledFromLog = yield* Deferred.make<Fiber.Fiber<void, EffectAcpErrors.AcpError>>();
+    const hold = (
+      holdPrompt.cancelOn === "log"
+        ? Deferred.await(runtimeMade).pipe(
+            Effect.flatMap((made) =>
+              made.cancel.pipe(Effect.forkIn(testScope, { startImmediately: true })),
+            ),
+            Effect.flatMap((fiber) => Deferred.succeed(cancelledFromLog, fiber)),
+          )
+        : Effect.void
+    ).pipe(
+      Effect.andThen(Deferred.succeed(promptHeld, undefined)),
+      Effect.andThen(Deferred.await(promptReleased)),
+    );
+    const runtime = yield* AcpSessionRuntime.make({
+      ...mockRuntimeOptions,
+      spawn: {
+        ...mockRuntimeOptions.spawn,
+        env: {
+          T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        },
+      },
+      cancelBehavior: input.cancelBehavior,
+      interruptPromptOnCancel: false,
+      protocolLogging: {
+        logOutgoing: holdPrompt.in === "protocol-log",
+        logger: (event) => (isOutgoing("session/prompt")(event) ? hold : Effect.void),
+      },
+      requestLogger: (event) =>
+        holdPrompt.in === "request-log" && isPromptStarted(event) ? hold : Effect.void,
+    });
+    yield* Deferred.succeed(runtimeMade, runtime);
+    const cancelReceived = yield* Deferred.make<void>();
+    yield* runtime.getEvents().pipe(
+      Stream.runForEach((event) => {
+        if (event._tag === "EventStreamBarrier") {
+          return Deferred.succeed(event.acknowledge, undefined);
+        }
+        if (event._tag === "ThoughtDelta" && event.text === "native-cancel-received") {
+          return Deferred.succeed(cancelReceived, undefined);
+        }
+        return Effect.void;
+      }),
+      Effect.forkChild,
+    );
+    yield* runtime.start();
+    const dispatched = yield* Deferred.make<void>();
+    const prompt = yield* runtime
+      .prompt({ prompt: [{ type: "text", text: "first" }] }, { dispatched })
+      .pipe(
+        holdPrompt.in === "scheduler"
+          ? Effect.provideService(Scheduler.MaxOpsBeforeYield, 3)
+          : (effect) => effect,
+        Effect.forkChild,
+      );
+    // A round trip: whatever was queued before it reaches the agent first.
+    const roundTrip = runtime.request("_test/environment", {});
+    let cancel: Fiber.Fiber<void, EffectAcpErrors.AcpError>;
+    if (holdPrompt.in === "scheduler") {
+      yield* Deferred.await(dispatched);
+      cancel = yield* runtime.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+    } else {
+      yield* Deferred.await(promptHeld);
+      if (holdPrompt.cancelOn === "dispatch") {
+        cancel = yield* Deferred.await(dispatched).pipe(
+          Effect.andThen(runtime.cancel),
+          Effect.forkChild({ startImmediately: true }),
+        );
+      } else {
+        cancel = yield* Deferred.await(cancelledFromLog);
+      }
+      yield* roundTrip;
+      yield* Deferred.succeed(promptReleased, undefined);
+    }
+    yield* Deferred.await(cancelReceived);
+    yield* runtime.request("_test/finish-cancel", {});
+    // The agent answers it only after reading every earlier line.
+    yield* roundTrip;
+    const received = readReceived(requestLogPath, [
+      "session/prompt",
+      "session/cancel",
+      "_test/finish-cancel",
+    ]);
+    const promptExit = yield* Fiber.await(prompt);
+    yield* Fiber.join(cancel);
+    return { received, promptExit };
+  }).pipe(Effect.scoped);
 
 describe("AcpSessionRuntime", () => {
   it.effect.each(["session/new", "session/resume"] as const)(
@@ -475,6 +609,8 @@ describe("AcpSessionRuntime", () => {
       expect(created?.payload).toMatchObject({
         mcpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
       });
+      // This agent does not advertise additional directories, so the thread's other folders stay out.
+      expect(created?.payload).not.toHaveProperty("additionalDirectories");
     }).pipe(
       Effect.provide(
         AcpSessionRuntime.layer({
@@ -488,6 +624,7 @@ describe("AcpSessionRuntime", () => {
           authMethodId: "test",
           mcpServers: [{ type: "stdio", name: "t3-code", command: "/usr/bin/node", args: [] }],
           acpMcpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+          extraRoots: ["/tmp/t3-tracked"],
           requestLogger: (event) =>
             Effect.sync(() => {
               requestEvents.push(event);
@@ -976,7 +1113,7 @@ describe("AcpSessionRuntime", () => {
           requestEvents.find((event) => event.method === method && event.status === "started")
             ?.payload,
         ).toMatchObject({
-          additionalDirectories: ["/tmp/t3-attachments"],
+          additionalDirectories: ["/tmp/t3-attachments", "/tmp/t3-tracked"],
           _meta: { negotiated: "0.0.0" },
         });
       }
@@ -992,6 +1129,7 @@ describe("AcpSessionRuntime", () => {
             },
           },
           additionalDirectories: ["/tmp/t3-attachments"],
+          extraRoots: ["/tmp/t3-tracked"],
           sessionMeta: (initializeResult) => ({
             negotiated: initializeResult.agentInfo?.version ?? "none",
           }),
@@ -1085,6 +1223,161 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  // Live clock: the replay-idle gap must elapse in real time against the mock agent process.
+  it.live("adopts config options from a session/load response that arrives after replay idle", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        sessionLoadReplayIdleReadiness: true,
+      });
+      const started = yield* runtime.start();
+      expect(started.sessionSetupResult._meta).toMatchObject({ t3SessionLoadReady: "replay_idle" });
+
+      yield* runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConfigOptionsUpdated"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.timeoutOption("5 seconds"),
+      );
+
+      expect((yield* runtime.getConfigOptions).map((option) => option.id)).toEqual([
+        "mode",
+        "model",
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response when a selection was sent before it", () =>
+    Effect.gen(function* () {
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY: "1",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        sessionLoadReplayIdleReadiness: true,
+        requestLogger: (event) =>
+          event.method === "session/load" &&
+          event.status === "succeeded" &&
+          (event.result as { readonly configOptions?: unknown } | undefined)?.configOptions !==
+            undefined
+            ? Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const started = yield* runtime.start();
+      // The agent answers the load before this request, so no config change
+      // is visible when the late response arrives.
+      yield* runtime.setConfigOption("model", "gpt-5.4");
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
+      const model = (yield* runtime.getConfigOptions).find((option) => option.id === "model");
+      expect(model?.currentValue).toBe("gpt-5.4");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response when the agent changed mode before it", () =>
+    Effect.gen(function* () {
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+            T3_ACP_NOTIFY_MODE_BEFORE_LOAD_REPLY: "code",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        sessionLoadReplayIdleReadiness: true,
+        // The mock speaks ACP v2, which has no current_mode_update; decode it as a v1 agent's.
+        transformSessionUpdate: (notification) =>
+          notification.update.sessionUpdate === "_t3_unknown" &&
+          notification.update.originalSessionUpdate === "current_mode_update"
+            ? {
+                ...notification,
+                update: notification.update.raw as EffectAcpSchema.SessionNotification["update"],
+              }
+            : notification,
+        requestLogger: (event) =>
+          event.method === "session/load" &&
+          event.status === "succeeded" &&
+          (event.result as { readonly configOptions?: unknown } | undefined)?.configOptions !==
+            undefined
+            ? Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+      });
+      const started = yield* runtime.start();
+      // No mode metadata yet, so the notification leaves the mode state as is.
+      expect(yield* runtime.getModeState).toBeUndefined();
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect((yield* runtime.start()).sessionSetupResult).toBe(started.sessionSetupResult);
+      expect(yield* runtime.getModeState).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("drops a late session/load response that startup metadata superseded", () =>
+    Effect.gen(function* () {
+      const provisionalLogged = yield* Deferred.make<void>();
+      const allowStartup = yield* Deferred.make<void>();
+      const lateLoadLogged = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: {
+            T3_ACP_DELAY_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "500",
+          },
+        },
+        resumeSessionId: "mock-session-1",
+        sessionLoadReplayIdleGap: "100 millis",
+        sessionLoadReplayIdleReadiness: true,
+        requestLogger: (event) => {
+          if (event.method !== "session/load" || event.status !== "succeeded") {
+            return Effect.void;
+          }
+          return (event.result as { readonly configOptions?: unknown } | undefined)
+            ?.configOptions === undefined
+            ? Deferred.succeed(provisionalLogged, undefined).pipe(
+                Effect.andThen(Deferred.await(allowStartup)),
+              )
+            : Deferred.succeed(lateLoadLogged, undefined).pipe(Effect.asVoid);
+        },
+      });
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(provisionalLogged);
+      yield* runtime.request("_test/startup-metadata", {});
+      yield* Deferred.succeed(allowStartup, undefined);
+      yield* Fiber.join(startup);
+      yield* Deferred.await(lateLoadLogged).pipe(Effect.timeout("5 seconds"));
+
+      expect(yield* runtime.getModeState).toMatchObject({ currentModeId: "code" });
+      expect(
+        (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
+      ).toMatchObject({ currentValue: "gpt-5.4" });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("keeps active configuration after a candidate session load fails", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
@@ -1145,6 +1438,72 @@ describe("AcpSessionRuntime", () => {
           },
           cwd: process.cwd(),
           resumeSessionId: "mock-session-1",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
+  // regression: #37106 prompt sent before session/load replied
+  it.live("does not prompt before session/load replies after replay goes idle", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      yield* runtime.start();
+
+      const result = yield* runtime.prompt({
+        prompt: [{ type: "text", text: "hi" }],
+      });
+      expect(result.stopReason).toBe("end_turn");
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_LOAD_REPLAY: "1",
+              T3_ACP_LOAD_REPLY_DELAY_MS: "500",
+              T3_ACP_REJECT_PROMPT_UNTIL_LOADED: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "50 millis",
+          clientInfo: { name: "t3-test", version: "0.0.0" },
+        }),
+      ),
+      Effect.scoped,
+      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    ),
+  );
+
+  it.live("treats replay idle as loaded when the agent opts in", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+      const started = yield* runtime.start();
+
+      expect(started.sessionSetupResult._meta).toMatchObject({
+        t3SessionLoadReady: "replay_idle",
+      });
+    }).pipe(
+      Effect.provide(
+        AcpSessionRuntime.layer({
+          authMethodId: "test",
+          spawn: {
+            command: mockAgentCommand,
+            args: mockAgentArgs,
+            env: {
+              T3_ACP_EMIT_LOAD_REPLAY: "1",
+              T3_ACP_LOAD_NEVER_REPLIES: "1",
+            },
+          },
+          cwd: process.cwd(),
+          resumeSessionId: "mock-session-1",
+          sessionLoadReplayIdleGap: "50 millis",
+          sessionLoadReplayIdleReadiness: true,
           clientInfo: { name: "t3-test", version: "0.0.0" },
         }),
       ),
@@ -1239,4 +1598,124 @@ describe("AcpSessionRuntime", () => {
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  it.effect.each(
+    (["interrupt", "wait-for-prompt"] as const).flatMap((cancelBehavior) =>
+      (
+        [
+          { in: "request-log", cancelOn: "dispatch" },
+          { in: "protocol-log", cancelOn: "log" },
+          { in: "scheduler", cancelOn: "dispatch" },
+        ] as const
+      ).map((holdPrompt) => ({ cancelBehavior, holdPrompt })),
+    ),
+  )(
+    "sends session/prompt before a cancel issued while the prompt is held in the $holdPrompt.in ($cancelBehavior, cancel on $holdPrompt.cancelOn)",
+    ({ cancelBehavior, holdPrompt }) =>
+      Effect.gen(function* () {
+        const run = yield* promptThenCancel({ cancelBehavior, holdPrompt });
+        expect(run.received).toEqual(["session/prompt", "session/cancel", "_test/finish-cancel"]);
+        expect(run.promptExit).toEqual(
+          Exit.succeed({ stopReason: "cancelled", _meta: { nativeCancel: true } }),
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("fails startup when the agent never answers initialize", () =>
+    Effect.gen(function* () {
+      const initializeSent = yield* Deferred.make<void>();
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        // A live child that reads stdin and never replies, like one stuck in disk sleep.
+        spawn: { command: "node", args: ["-e", "process.stdin.resume()"] },
+        requestLogger: (event) =>
+          event.method === "initialize" && event.status === "started"
+            ? Deferred.succeed(initializeSent, undefined)
+            : Effect.void,
+      });
+      const startup = yield* runtime.start().pipe(Effect.forkChild);
+      yield* Deferred.await(initializeSent);
+      yield* TestClock.adjust("30 minutes");
+      const exit = yield* Fiber.await(startup);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("sends a cancel after the cancel timeout when its prompt never goes out", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        interruptPromptOnCancel: false,
+        cancelTimeout: "5 seconds",
+        requestLogger: (event) => (isPromptStarted(event) ? Effect.never : Effect.void),
+      });
+      yield* runtime.start();
+      const dispatched = yield* Deferred.make<void>();
+      yield* runtime
+        .prompt({ prompt: [{ type: "text", text: "first" }] }, { dispatched })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(dispatched);
+      const cancel = yield* runtime.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(cancel);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect(
+    "sends a cancel before the next prompt when the prompt it waited for never went out",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => NodeFS.rmSync(tempDir, { recursive: true, force: true })),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        let promptsStarted = 0;
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: { ...mockRuntimeOptions.spawn, env: { T3_ACP_REQUEST_LOG_PATH: requestLogPath } },
+          interruptPromptOnCancel: false,
+          // The cancel spends a test-clock second in its outgoing record, the window in which the
+          // next prompt could overtake it.
+          protocolLogging: {
+            logOutgoing: true,
+            logger: (event) =>
+              isOutgoing("session/cancel")(event) ? Effect.sleep("1 second") : Effect.void,
+          },
+          requestLogger: (event) =>
+            isPromptStarted(event) && promptsStarted++ === 0 ? Effect.never : Effect.void,
+        });
+        yield* runtime.getEvents().pipe(
+          Stream.runForEach((event) =>
+            event._tag === "EventStreamBarrier"
+              ? Deferred.succeed(event.acknowledge, undefined)
+              : Effect.void,
+          ),
+          Effect.forkChild,
+        );
+        yield* runtime.start();
+        const dispatched = yield* Deferred.make<void>();
+        const first = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "first" }] }, { dispatched })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(dispatched);
+        const cancel = yield* runtime.cancel.pipe(Effect.forkChild({ startImmediately: true }));
+        const next = yield* runtime
+          .prompt({ prompt: [{ type: "text", text: "next" }] })
+          .pipe(Effect.forkChild);
+        // The first prompt ends before it is queued, which releases the cancel's wait.
+        yield* Effect.sleep("1 second").pipe(
+          Effect.andThen(Fiber.interrupt(first)),
+          Effect.forkChild,
+        );
+        yield* TestClock.adjust("1 second");
+        yield* TestClock.adjust("1 second");
+        yield* Fiber.join(cancel);
+        yield* Fiber.join(next);
+        expect(readReceived(requestLogPath, ["session/prompt", "session/cancel"])).toEqual([
+          "session/cancel",
+          "session/prompt",
+        ]);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 });

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { PlusIcon, XIcon } from "lucide-react";
 import { useRef, useState, type PointerEvent } from "react";
 
@@ -16,6 +17,7 @@ function ProviderCustomColorPanel(props: {
   readonly onCommit: (value: string) => void;
   readonly showAddButton: boolean;
 }) {
+  const gt = useGT();
   const { onCommit, onPreview } = props;
   const [hsv, setHsv] = useState(() => hexToHsv(props.value));
   const currentColor = hsvToHex(hsv.h, hsv.s, hsv.v);
@@ -57,7 +59,7 @@ function ProviderCustomColorPanel(props: {
     <div className="w-56 bg-popover">
       <div onPointerDownCapture={startDrag}>
         <ColorSaturationValuePlane
-          label="Accent color"
+          label={gt("Accent color")}
           value={hsv}
           onChange={changeHsv}
           onInteractionEnd={endDrag}
@@ -67,7 +69,7 @@ function ProviderCustomColorPanel(props: {
       <div className="grid gap-3 p-3">
         <div onPointerDownCapture={startDrag}>
           <ColorHueSlider
-            label="Accent color hue"
+            label={gt("Accent color hue")}
             value={hsv.h}
             onChange={(h) => changeHsv({ ...hsv, h })}
             onInteractionEnd={endDrag}
@@ -86,14 +88,14 @@ function ProviderCustomColorPanel(props: {
           }}
           onBlur={() => setHexDraft(null)}
           font="mono"
-          aria-label="Custom hex accent color"
+          aria-label={gt("Custom hex accent color")}
           spellCheck={false}
         />
         {props.showAddButton ? (
           <PopoverClose
             render={
               <Button type="button" size="compact" onClick={() => onCommit(currentColor)}>
-                Add color
+                <T>Add color</T>
               </Button>
             }
           />
@@ -111,8 +113,8 @@ function ProviderCustomColorPicker(props: {
   readonly onClear: () => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const normalized = normalizeProviderAccentColor(props.value);
-
   return (
     <Popover
       onOpenChange={(open) => {
@@ -126,10 +128,16 @@ function ProviderCustomColorPicker(props: {
             size="icon-sm"
             variant="ghost-muted"
             style={normalized ? { backgroundColor: normalized } : undefined}
-            aria-label={`${normalized ? "Change" : "Add"} accent color for ${props.displayName}`}
+            aria-label={
+              normalized
+                ? gt("Change accent color for {provider}", { provider: props.displayName })
+                : gt("Add accent color for {provider}", { provider: props.displayName })
+            }
           >
             {normalized ? (
-              <span className="sr-only">Change accent color</span>
+              <span className="sr-only">
+                <T>Change accent color</T>
+              </span>
             ) : (
               <PlusIcon aria-hidden />
             )}
@@ -155,7 +163,7 @@ function ProviderCustomColorPicker(props: {
                   onClick={props.onClear}
                 >
                   <XIcon className="size-3.5" aria-hidden />
-                  Clear color
+                  <T>Clear color</T>
                 </Button>
               }
             />
@@ -219,7 +227,9 @@ export function ProviderAccentColorPicker(props: {
 
   return (
     <div className="grid gap-2">
-      <span className="text-xs font-medium text-foreground">Accent color</span>
+      <span className="text-xs font-medium text-foreground">
+        <T>Accent color</T>
+      </span>
       {picker}
       {description ? <span className="text-xs text-muted-foreground">{description}</span> : null}
     </div>
