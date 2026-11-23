@@ -11,7 +11,7 @@ import { useNavigate, useRouter } from "@tanstack/react-router";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import type { TurnItemSource } from "../components/chat/timelineRowContext";
-import { useRightPanelStore } from "../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 import { connectPairing, reachesEnvironment } from "../connection/onboarding";
 import { openLinkedThreadRead } from "../lib/sideChatPane";
 import type { LinkedThreadSurface } from "../linkedThreadSurface";
@@ -107,14 +107,17 @@ const tabViewAtom = Atom.family((key: string) => {
   const view = peerLinkEnvironment.threadView(
     targetOf({ viaEnvironmentId, environmentId, threadId }),
   );
-  return Atom.make((get) => {
-    const live = get(view);
-    const title = AsyncResult.getOrElse(live, () => null)?.thread.projection?.thread.title;
-    if (title && panelRef !== null) {
-      useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
-    }
-    return live;
-  }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`linked-thread-tab-view:${key}`));
+  return Atom.readable(
+    (get) => {
+      const live = get(view);
+      const title = AsyncResult.getOrElse(live, () => null)?.thread.projection?.thread.title;
+      if (title && panelRef !== null) {
+        useRightPanelStore.getState().setLinkedThreadTitle(panelRef, surfaceId, title);
+      }
+      return live;
+    },
+    (refresh) => refresh(view),
+  ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`linked-thread-tab-view:${key}`));
 });
 
 /**
@@ -203,8 +206,17 @@ export function useConnectLinkedEnvironment(
   const connect = async () => {
     setState({ phase: "connecting" });
     const startedOn = router.state.location.href;
+    let tabClosed = false;
+    // A tab can close and reopen with the same ID while pairing is in flight.
+    const stopWatchingTab =
+      panelRef === null
+        ? undefined
+        : useRightPanelStore.subscribe((state) => {
+            const { surfaces } = selectThreadRightPanelState(state.byThreadKey, panelRef);
+            if (!surfaces.some((tab) => tab.id === surface.id)) tabClosed = true;
+          });
     // Pairing takes a moment; a user who has gone elsewhere since is not moved again.
-    const stayed = () => router.state.location.href === startedOn;
+    const stayed = () => !tabClosed && router.state.location.href === startedOn;
     const outcome = await connectLinkedEnvironment({
       label: surface.label,
       requestPairing: async () => {
@@ -228,13 +240,14 @@ export function useConnectLinkedEnvironment(
         });
         return result._tag === "Success";
       },
-    });
+    }).finally(stopWatchingTab);
     if (outcome.type === "unreachable") {
       setState({ phase: "unreachable", label: outcome.label });
       return outcome;
     }
     if (outcome.type === "connected") {
       setState({ phase: "idle" });
+      if (tabClosed) return outcome;
       // The thread opens where every thread on a connected environment does, so its tab is done.
       if (panelRef !== null) useRightPanelStore.getState().closeSurface(panelRef, surface.id);
       if (!stayed()) return outcome;
