@@ -17,6 +17,7 @@ export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3to
 
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
+  readonly catalogLoadError: string | null;
   readonly hasConnections: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
@@ -67,6 +68,7 @@ function overallConnectionState(
 
 export function projectWorkspaceConnectionState(input: {
   readonly isReady: boolean;
+  readonly catalogLoadError?: string | undefined;
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
 }): WorkspaceConnectionState {
@@ -81,7 +83,8 @@ export function projectWorkspaceConnectionState(input: {
   );
 
   return {
-    isLoadingConnections: !input.isReady,
+    isLoadingConnections: !input.isReady && input.catalogLoadError === undefined,
+    catalogLoadError: input.catalogLoadError ?? null,
     hasConnections: input.environments.length > 0,
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
@@ -99,6 +102,7 @@ export function projectWorkspaceConnectionState(input: {
 
 export function projectWorkspaceState(input: {
   readonly isReady: boolean;
+  readonly catalogLoadError?: string | undefined;
   readonly networkStatus: NetworkStatus;
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
   readonly shellSummary: EnvironmentShellSummary;

@@ -6,6 +6,7 @@ import { workspaceConnectionStatusPresentation } from "./workspace-connection-st
 function workspaceState(overrides: Partial<WorkspaceState> = {}): WorkspaceState {
   return {
     isLoadingConnections: false,
+    catalogLoadError: null,
     hasConnections: true,
     hasLoadedShellSnapshot: true,
     hasPendingShellSnapshot: false,

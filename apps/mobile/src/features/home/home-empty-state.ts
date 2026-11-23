@@ -8,6 +8,7 @@ export interface HomeEmptyState {
   readonly detail: string;
   readonly loading: boolean;
   readonly showsAddEnvironment: boolean;
+  readonly showsRetryCatalogLoad: boolean;
 }
 
 export function deriveHomeEmptyState(
@@ -15,10 +16,20 @@ export function deriveHomeEmptyState(
   projectCount: number,
   resolve: MessageResolver = m,
 ): HomeEmptyState {
+  if (catalogState.catalogLoadError !== null) {
+    return {
+      title: resolve(msg("Could not load environments")),
+      detail: catalogState.catalogLoadError,
+      loading: false,
+      showsAddEnvironment: false,
+      showsRetryCatalogLoad: true,
+    };
+  }
   const emptyState = deriveEmptyState(catalogState, projectCount, resolve);
   return {
     ...emptyState,
     showsAddEnvironment: !emptyState.loading && !catalogState.hasReadyEnvironment,
+    showsRetryCatalogLoad: false,
   };
 }
 
@@ -26,7 +37,7 @@ function deriveEmptyState(
   catalogState: WorkspaceState,
   projectCount: number,
   resolve: MessageResolver,
-): Omit<HomeEmptyState, "showsAddEnvironment"> {
+): Omit<HomeEmptyState, "showsAddEnvironment" | "showsRetryCatalogLoad"> {
   if (catalogState.isLoadingConnections) {
     return {
       title: resolve(msg("Loading environments")),

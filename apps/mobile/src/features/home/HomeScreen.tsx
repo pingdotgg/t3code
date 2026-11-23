@@ -50,6 +50,7 @@ import {
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
+import { retryEnvironmentCatalogLoad } from "../../connection/catalog";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
@@ -661,8 +662,20 @@ export function HomeScreen(props: HomeScreenProps) {
               <EmptyState
                 title={emptyState.title}
                 detail={emptyState.detail}
-                actionLabel={emptyState.showsAddEnvironment ? gt("Add environment") : undefined}
-                onAction={emptyState.showsAddEnvironment ? props.onAddConnection : undefined}
+                actionLabel={
+                  emptyState.showsRetryCatalogLoad
+                    ? gt("Retry")
+                    : emptyState.showsAddEnvironment
+                      ? gt("Add environment")
+                      : undefined
+                }
+                onAction={
+                  emptyState.showsRetryCatalogLoad
+                    ? retryEnvironmentCatalogLoad
+                    : emptyState.showsAddEnvironment
+                      ? props.onAddConnection
+                      : undefined
+                }
                 action={
                   Platform.OS === "android" && emptyState.showsAddEnvironment ? (
                     <FloatingActionButton
