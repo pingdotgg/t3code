@@ -155,6 +155,8 @@ export interface McpInvocationScope {
   readonly linkedEnvironments?: boolean;
   /** The Agent feedback mode here; `/mcp` reads it per request. Unset is off. */
   readonly agentFeedback?: AgentFeedbackMode;
+  /** True while Labs → Workflows is on here; `/mcp` reads it per request. Unset is off. */
+  readonly workflows?: boolean;
   /**
    * The origin this `/mcp` request reached, e.g. a T3 Connect tunnel. Hosted clients cannot
    * see the URL they were configured with, so links they must fetch carry it. Unset in-process.
@@ -216,6 +218,13 @@ export const hiddenWithoutBackgroundWait = (): boolean => {
   );
 };
 
+/** `McpSchema.EnabledWhen` for tools only a client outside a thread drives, such as the CLI. */
+export const hiddenFromThreads = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope?.thread === undefined;
+};
+
 /** `McpSchema.EnabledWhen` for tools that only serve links, hidden while the beta is off. */
 export const hiddenWhileLinksOff = (): boolean => {
   const fiber = Fiber.getCurrent();
@@ -228,6 +237,13 @@ export const hiddenWhileFeedbackOff = (): boolean => {
   const fiber = Fiber.getCurrent();
   const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
   return scope?.agentFeedback !== undefined && scope.agentFeedback !== "off";
+};
+
+/** `McpSchema.EnabledWhen` for workflow event types: outside clients only, while Workflows is on. */
+export const hiddenUnlessWorkflowEvents = (): boolean => {
+  const fiber = Fiber.getCurrent();
+  const scope = fiber && Context.getOrUndefined(fiber.context, McpInvocationContext);
+  return scope !== undefined && scope.thread === undefined && scope.workflows === true;
 };
 
 /** `McpSchema.EnabledWhen` for tools that act on the thread's forge, hidden where it has none. */

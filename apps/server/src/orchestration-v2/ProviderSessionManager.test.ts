@@ -649,7 +649,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
 function layerTest(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
-  readonly idleTimeoutMs: number;
+  readonly idleTimeoutMs?: number;
   readonly maxIdlePinMs?: number;
   readonly failEventStream?: boolean;
   readonly normalizeThreadLoadModelSelection?: (selection: ModelSelection) => ModelSelection;
@@ -769,7 +769,7 @@ function layerTest(input: {
     layerConfiguredMcpRegistry,
     McpProviderSessions.layer,
     ProviderSessionManager.layerWithOptions({
-      idleTimeoutMs: input.idleTimeoutMs,
+      ...(input.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: input.idleTimeoutMs }),
       ...(input.maxIdlePinMs === undefined ? {} : { maxIdlePinMs: input.maxIdlePinMs }),
     }).pipe(
       Layer.provide(
@@ -2102,6 +2102,41 @@ it.effect(
     }),
 );
 
+it.effect.each([
+  { resume: "native resume", supportsNativeResume: true, minutes: 2 },
+  { resume: "no native resume", supportsNativeResume: false, minutes: 30 },
+])(
+  "ProviderSessionManagerV2 releases an idle session with $resume after $minutes minutes",
+  ({ supportsNativeResume, minutes }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const capabilities = {
+        ...CodexCapabilities,
+        turns: { ...CodexCapabilities.turns, supportsNativeResume },
+      };
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-default-idle-timeout");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* TestClock.adjust(minutes * 60_000 - 1_000);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        yield* TestClock.adjust("1 second");
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+      }).pipe(Effect.provide(layerTest({ state, capabilities })));
+    }),
+);
+
 it.effect.each(["session metadata", "session status changes", "provider work"] as const)(
   "ProviderSessionManagerV2 expires idle sessions according to %s",
   (activity) =>
@@ -2499,6 +2534,7 @@ it.effect("ProviderSessionManagerV2 fails a turn whose provider retry never resu
         providerTurnId,
         runOrdinal: 1,
         failureItemOrdinal: 3,
+        failureItemId: retryItem("running").id,
         status: "failed",
         failure: { ...failure, retryable: false },
         retry,
