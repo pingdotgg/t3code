@@ -48,6 +48,20 @@ export const Measured = Schema.Struct({
   scaling: Schema.optional(Scaling),
   streaming: Schema.optional(Window),
   soak: Schema.optional(Soak),
+  /** One web-like client attached over the WebSocket RPC, with N threads subscribed. */
+  clients: Schema.optional(
+    Schema.Struct({
+      /** The quiet window by subscribed thread count. */
+      attached: Schema.Record(Schema.String, Window),
+      /** Every client drops and reconnects at once. */
+      storm: Schema.Struct({
+        clients: Schema.Number,
+        resubscribedMs: Schema.Number,
+        loopDelayP99Ms: Schema.Number,
+        loopDelayMaxMs: Schema.Number,
+      }),
+    }),
+  ),
   /** A server on a copy of the developer's real database, its projects backed by clones. */
   busy: Schema.optional(
     Schema.Struct({
@@ -232,6 +246,7 @@ export function compareMetrics(before: ServerMetrics, after: ServerMetrics, thre
       metric.endsWith("loopSamples") ||
       metric === "busy.projects" ||
       metric === "busy.ballastMB" ||
+      metric === "clients.storm.clients" ||
       metric.startsWith("scaling.points")
     ) {
       continue;

@@ -18,6 +18,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
+import * as Exit from "effect/Exit";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -32,7 +33,10 @@ import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
 import {
   ORCHESTRATION_PROTOCOL_HEADER,
+  ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
+  ThreadId,
+  WsRpcGroup,
 } from "@t3tools/contracts";
 import {
   HttpClient,
@@ -42,6 +46,8 @@ import {
   HttpServerResponse,
 } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 
 import { run } from "./scenarios/shell.ts";
@@ -70,6 +76,8 @@ import {
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
+/** Clients that drop and reconnect at once in the clients scenario. */
+const STORM_CLIENTS = 20;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
 const LOOP_RESOLUTION_MS = 10;
 const LoopStats = Schema.Struct({
@@ -906,6 +914,9 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     profile: devtools.profile,
     snapshot: devtools.snapshot,
     heapAfterGc: devtools.heapAfterGc,
+    loopStart: devtools.loopStart,
+    loopRead: devtools.loopRead,
+    project,
     ballast: devtools.ballast,
     issueToken: cli(["auth", "session", "issue", "--token-only"]).pipe(
       Effect.map(({ stdout }) => stdout.trim()),
@@ -1042,7 +1053,95 @@ const gitTraffic = Effect.fn("serverMetrics.gitTraffic")(function* (server: Serv
   });
 });
 
-const SCENARIOS = ["startup", "rest", "firstWord", "quiet", "streaming", "busy"] as const;
+/**
+ * One client over the real WebSocket RPC, signed in like a paired device, holding the
+ * subscriptions a web client opens: the shell, VCS status of the project, and the given threads.
+ * Succeeds once every subscription has delivered its snapshot.
+ */
+const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
+  server: Server,
+  token: string,
+  threadIds: ReadonlyArray<string>,
+) {
+  const http = yield* HttpClient.HttpClient;
+  const ticketResponse = yield* http.execute(
+    HttpClientRequest.post(`${server.origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(token),
+    ),
+  );
+  const { ticket } = yield* decodeJson(Schema.Struct({ ticket: Schema.String }))(
+    yield* ticketResponse.text,
+  );
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${server.origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+    ),
+  );
+  const client = yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+  const ready = Effect.fn("serverMetrics.subscription")(function* <A, E, R>(
+    stream: Stream.Stream<A, E, R>,
+    isReady: (item: A) => boolean,
+  ) {
+    const synchronized = yield* Deferred.make<void, MetricsError>();
+    yield* stream.pipe(
+      Stream.runForEach((item) =>
+        isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void,
+      ),
+      Effect.catchCause(() =>
+        Deferred.fail(synchronized, new MetricsError({ message: "a subscription failed" })),
+      ),
+      Effect.forkScoped,
+    );
+    return Deferred.await(synchronized);
+  });
+  const synchronized = (item: { readonly kind: string }) => item.kind === "synchronized";
+  const waits = [
+    yield* ready(
+      client["orchestration.subscribeShell"]({
+        requestCompletionMarker: true,
+        omitIdleSubagents: true,
+        omitOlderSettled: true,
+      }),
+      synchronized,
+    ),
+    yield* ready(client.subscribeVcsStatus({ cwd: server.project }), () => true),
+    ...(yield* Effect.forEach(threadIds, (threadId) =>
+      ready(
+        client["orchestration.subscribeThread"]({
+          threadId: ThreadId.make(threadId),
+          requestCompletionMarker: true,
+          acceptBoundedSnapshot: true,
+          acceptDeferredWork: true,
+          acceptCompactTurnItems: true,
+          acceptCompactIds: true,
+          acceptDedupedBodies: true,
+        }),
+        synchronized,
+      ),
+    )),
+  ];
+  yield* Effect.all(waits, { concurrency: "unbounded", discard: true }).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(60),
+      orElse: () => new MetricsError({ message: "a subscription never synchronized" }),
+    }),
+  );
+});
+
+const SCENARIOS = [
+  "startup",
+  "rest",
+  "firstWord",
+  "quiet",
+  "streaming",
+  "clients",
+  "busy",
+] as const;
 /** Scenarios that read the developer's real database, so they run only when named. */
 const OPT_IN_SCENARIOS: ReadonlyArray<string> = ["busy"];
 
@@ -1151,6 +1250,62 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
           ]),
         };
         yield* profile(server, "quiet");
+      }),
+    );
+  }
+  if (wanted("clients")) {
+    yield* withServer("clients", (server) =>
+      Effect.gen(function* () {
+        const token = yield* server.issueToken;
+        const most = Math.max(STORM_CLIENTS, ...options.threads);
+        const threads = yield* openThreads(server, 0, most);
+        const attached: Record<string, Window> = {};
+        for (const count of options.threads) {
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              yield* attachClient(server, token, threads.slice(0, count));
+              yield* Effect.sleep(Duration.seconds(10));
+              attached[`${count}`] = yield* server.measure(30);
+            }),
+          );
+        }
+        // Every client holds the shell, VCS status and one thread, then all drop and come back.
+        const clients = yield* Effect.forEach(threads.slice(0, STORM_CLIENTS), () => Scope.make());
+        const attachAll = Effect.forEach(
+          clients,
+          (scope, index) =>
+            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
+          { concurrency: "unbounded", discard: true },
+        );
+        yield* attachAll;
+        yield* Effect.sleep(Duration.seconds(10));
+        yield* server.loopStart;
+        const dropped = yield* nowMs;
+        yield* Effect.forEach(clients, (scope) => Scope.close(scope, Exit.void), {
+          concurrency: "unbounded",
+          discard: true,
+        });
+        const reopened = yield* Effect.forEach(clients, () => Scope.make());
+        yield* Effect.forEach(
+          reopened,
+          (scope, index) =>
+            attachClient(server, token, threads.slice(index, index + 1)).pipe(Scope.provide(scope)),
+          { concurrency: "unbounded", discard: true },
+        );
+        const resubscribedMs = Math.round((yield* nowMs) - dropped);
+        const loop = yield* server.loopRead;
+        yield* Effect.forEach(reopened, (scope) => Scope.close(scope, Exit.void), {
+          discard: true,
+        });
+        measured.clients = {
+          attached,
+          storm: {
+            clients: STORM_CLIENTS,
+            resubscribedMs,
+            loopDelayP99Ms: round(loop.p99),
+            loopDelayMaxMs: round(loop.max),
+          },
+        };
       }),
     );
   }
