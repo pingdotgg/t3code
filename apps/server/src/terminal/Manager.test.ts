@@ -490,80 +490,70 @@ it("restores bounded history across append compaction, clears and split Unicode"
 });
 
 it("stops holding a control sequence that outgrows its limit", () => {
-  const stringLimit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
-  const csiLimit = 65_536;
+  const limit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
   // No final byte for a CSI and no terminator for a string.
   const digits = "0123456789 123\r\n".repeat(64);
-  // History gets one ST where a sequence is dropped.
-  const st = "\u001b\\";
-  // The next ESC cuts this title short, so it goes to history with no terminator.
-  const leftOpen = "\u001b]0;one";
+  // The next ESC cuts this query short, so it goes to history with no terminator. Nothing the
+  // drop writes may end it, or the replay would answer it.
+  const leftOpen = "\u001b]4;1;?";
   // The terminal runs the carriage returns and line feeds inside a CSI while it waits for the
   // final byte.
   const lineBreaks = (fed: string) => fed.replaceAll(/[^\r\n]/g, "");
   // The last UTF-8 byte of U+20805 is 0x85, NEL, which ends a CSI or a string other than OSC.
   // History replays it as ESC E.
   const splitCodePoint = ["\ud842", "\udc05"];
-  for (const { name, open, limit, filler = digits, end, history } of [
+  for (const { name, open, filler = digits, end, history } of [
     {
       name: "DCS, split code point",
       open: `${leftOpen}\u001bPstuck`,
-      limit: stringLimit,
       end: splitCodePoint,
-      history: () => `${leftOpen}${st}\u001bE`,
+      history: () => `${leftOpen}\u001bE`,
     },
     // Each piece's U+0090 ends the sequence before it and opens a DCS that the piece drops.
     {
       name: "DCS opened by U+0090",
       open: "\u001b[",
-      limit: stringLimit,
-      filler: `\u0090${"y".repeat(stringLimit)}`,
+      filler: `\u0090${"y".repeat(limit)}`,
       end: ["\u001b", "\\"],
-      history: () => st.repeat(3),
+      history: () => "",
     },
-    { name: "OSC, BEL", open: "\u001b]0;", limit: stringLimit, end: ["\u0007"], history: () => st },
+    { name: "OSC, BEL", open: "\u001b]0;", end: ["\u0007"], history: () => "" },
     {
       name: "OSC, ESC",
       open: "\u001b]0;",
-      limit: stringLimit,
       end: ["\u001b[31m"],
-      history: () => `${st}\u001b[31m`,
+      history: () => "\u001b[31m",
     },
     {
       name: "CSI, final byte",
       open: `${leftOpen}\u001b[`,
-      limit: csiLimit,
-      end: ["\nm"],
-      history: (fed: string) => `${leftOpen}${st}${lineBreaks(fed)}\n`,
+      end: ["\n6n"],
+      history: (fed: string) => `${leftOpen}${lineBreaks(fed)}\n`,
     },
     {
       name: "CSI, CAN",
       open: "\u001b[",
-      limit: csiLimit,
       end: ["\u0018"],
-      history: (fed: string) => `${st}${lineBreaks(fed)}`,
+      history: (fed: string) => `${lineBreaks(fed)}`,
     },
     {
       name: "CSI, U+0090",
       open: "\u001b[",
-      limit: csiLimit,
       end: ["\n\u0090kept\u001b\\"],
-      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001bPkept\u001b\\`,
+      history: (fed: string) => `${lineBreaks(fed)}\n\u001bPkept\u001b\\`,
     },
     // An ESC abandons the CSI and starts a sequence that is kept.
     {
       name: "CSI, ESC",
       open: "\u001b[",
-      limit: csiLimit,
       end: ["\n\u001b[31m"],
-      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001b[31m`,
+      history: (fed: string) => `${lineBreaks(fed)}\n\u001b[31m`,
     },
     {
       name: "CSI, split code point",
       open: "\u001b[",
-      limit: csiLimit,
       end: ["\n", ...splitCodePoint],
-      history: (fed: string) => `${st}${lineBreaks(fed)}\n\u001bE`,
+      history: (fed: string) => `${lineBreaks(fed)}\n\u001bE`,
     },
   ]) {
     let held = "";
@@ -593,8 +583,8 @@ it("stops holding a control sequence that outgrows its limit", () => {
   // introducer counts as its ESC form.
   const afterOutput = (data: string) =>
     TerminalManager.sanitizeTerminalHistoryChunk("", `before\n${data}`);
-  const string = "\u001b]".padEnd(stringLimit, "0");
-  const csi = "\u001b[".padEnd(csiLimit, "0");
+  const string = "\u001b]".padEnd(limit, "0");
+  const csi = "\u001b[".padEnd(limit, "0");
   for (const atLimit of [string, csi]) {
     expect(afterOutput(atLimit), atLimit.slice(0, 2)).toEqual({
       visibleText: "before\n",
@@ -609,15 +599,15 @@ it("stops holding a control sequence that outgrows its limit", () => {
     });
   }
   expect(afterOutput(`${string}\u001b`), "string past the limit").toEqual({
-    visibleText: `before\n${st}`,
+    visibleText: "before\n",
     pendingControlSequence: "\u0018\u001b]\u001b",
   });
   expect(afterOutput(`\u001b[\u009b${csi.slice(2)}\ud842`), "CSI past the limit").toEqual({
-    visibleText: `before\n${st}`,
+    visibleText: "before\n",
     pendingControlSequence: "\u0018\u001b[\ud842",
   });
   expect(afterOutput(`${string}\ud842`), "string past the limit, high surrogate").toEqual({
-    visibleText: `before\n${st}`,
+    visibleText: "before\n",
     pendingControlSequence: "\u0018\u001b]\ud842",
   });
   // libghostty ignores intermediates past the fourth, so an escape sequence keeps the first four.
@@ -1776,8 +1766,8 @@ it.layer(
       // colour in an OSC, and runs an OSC that CAN ends or that the next ESC cuts short.
       process.emitData("\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b]\n4;1;?;;2;?;3\u0018\u001b]4;3;?");
       process.emitData("\u001b]0;x\u001b\u001b[?2026$p");
-      // A long setter split across chunks is kept whole.
-      process.emitData(`\u001b[${"0".repeat(5000)}`);
+      // A long setter split across chunks is kept whole, up to the clients' replay budget.
+      process.emitData(`\u001b[${"0".repeat(70_000)}`);
       process.emitData("31mX");
       process.emitData("done\n");
 
@@ -1788,7 +1778,7 @@ it.layer(
         reopened.history.startsWith(
           'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
             "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
-            `\u001b[${"0".repeat(5000)}31mXdone\n`,
+            `\u001b[${"0".repeat(70_000)}31mXdone\n`,
         ),
       ).toBe(true);
     }),

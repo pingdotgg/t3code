@@ -1395,21 +1395,16 @@ const HISTORY_SEQUENCE_START = /\u001b/;
 const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g");
 
 // Clients keep this much output and drop a sequence their cut goes through, so none of them
-// could replay a longer string whole.
-const MAX_HELD_STRING_LENGTH = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
-// A CSI carries no payload, but zero-padded parameters still make a setter long. Each chunk
-// rescans the held CSI, so this bounds that work.
-const MAX_HELD_CSI_LENGTH = 65_536;
+// could replay a longer string or CSI whole.
+const MAX_HELD_SEQUENCE_LENGTH = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
 // The ESC and four intermediates. libghostty ignores every intermediate past the fourth, so a
 // held escape sequence cut to this replays the same.
 const MAX_HELD_ESCAPE_LENGTH = 5;
 // Leads the held text of a string or CSI that outgrew its limit, whose rest stays out of history.
 // Only its introducer is still held, with a final ESC or high surrogate that may begin its end.
-// Other held text starts with ESC, so this marker never collides with it.
+// Other held text starts with ESC, so this marker never collides with it. Nothing stands in for
+// the dropped ESC: closing what history left open could dispatch a query on replay.
 const DROPPED_SEQUENCE = "\u0018";
-// The first drop writes ST to history. The dropped sequence's own ESC ended whatever history left
-// open before it, and ST does the same on replay. In ground state ST does nothing.
-const DROPPED_SEQUENCE_ST = "\u001b\\";
 
 export function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,
@@ -1448,19 +1443,21 @@ export function sanitizeTerminalHistoryChunk(
       }
 
       if (nextCodePoint === 0x5b) {
-        let cursor = contentStart;
+        // A held CSI has no final byte, ESC or C1 control, so only its last code unit is rescanned.
+        let cursor = index === 0 ? Math.max(contentStart, pendingScanStart) : contentStart;
         // Inside a CSI Ghostty executes 0x00-0x0F and ignores DEL and 0x10-0x1F, which it would
         // print in ground state. None join the parameters; only executed ones survive a strip.
-        let body = "";
-        let executedControls = "";
+        const executedControls = () =>
+          input.slice(contentStart, cursor).replace(/[^\x00-\x0f]+/g, "");
         while (cursor < input.length) {
           const cursorCodePoint = input.charCodeAt(cursor);
           const cancelled = isControlSequenceCancel(cursorCodePoint);
           if (cancelled || isCsiFinalByte(cursorCodePoint)) {
+            const body = input.slice(contentStart, cursor).replace(/[^\x20-\x7e]+/g, "");
             if (!dropped && (cancelled || !shouldStripCsiSequence(body, input[cursor] ?? ""))) {
               append(prefix + input.slice(index, cursor + 1));
             } else {
-              append(executedControls);
+              append(executedControls());
             }
             index = cursor + 1;
             break;
@@ -1475,7 +1472,7 @@ export function sanitizeTerminalHistoryChunk(
               if (!dropped && c1.next.length === 0 && !c1.query) {
                 append(prefix + input.slice(index, end));
               } else {
-                append(executedControls + c1.safe);
+                append(executedControls() + c1.safe);
               }
               c1Introducer = c1.next;
               index = end;
@@ -1486,25 +1483,20 @@ export function sanitizeTerminalHistoryChunk(
           }
           // An ESC abandons the CSI and starts the next sequence, which may be stripped.
           if (cursorCodePoint === 0x1b) {
-            append(executedControls);
+            append(executedControls());
             index = cursor;
             break;
-          }
-          if (cursorCodePoint < 0x10) {
-            executedControls += input[cursor];
-          } else if (cursorCodePoint >= 0x20 && cursorCodePoint !== 0x7f) {
-            body += input[cursor];
           }
           cursor += 1;
         }
         if (cursor >= input.length) {
           const held = prefix + input.slice(index);
-          if (dropped || held.length > MAX_HELD_CSI_LENGTH) {
+          if (dropped || held.length > MAX_HELD_SEQUENCE_LENGTH) {
             // The terminal has run these already, so history takes them as they come. A final
             // high surrogate may begin a code point whose bytes end the CSI.
             const surrogate = /[\ud800-\udbff]$/.exec(held)?.[0] ?? "";
             return {
-              visibleText: visibleText + (dropped ? "" : DROPPED_SEQUENCE_ST) + executedControls,
+              visibleText: visibleText + executedControls(),
               pendingControlSequence: `${DROPPED_SEQUENCE}\u001b[${surrogate}`,
             };
           }
@@ -1526,12 +1518,12 @@ export function sanitizeTerminalHistoryChunk(
         );
         if (stringEnd === null) {
           const held = prefix + input.slice(index);
-          if (dropped || held.length > MAX_HELD_STRING_LENGTH) {
+          if (dropped || held.length > MAX_HELD_SEQUENCE_LENGTH) {
             // A final ESC may begin the terminator, and a final high surrogate a code point
             // whose bytes end the string.
             const terminatorStart = /[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "";
             return {
-              visibleText: visibleText + (dropped ? "" : DROPPED_SEQUENCE_ST),
+              visibleText,
               pendingControlSequence: DROPPED_SEQUENCE + held.slice(0, 2) + terminatorStart,
             };
           }
