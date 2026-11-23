@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -34,6 +35,7 @@ export function ExtensionInstallForm({
   platform: string;
   onInstalled: () => void;
 }) {
+  const gt = useGT();
   const id = useId();
   const permission = useAtomValue(extensionEnvironment.install.permissionAtom(environmentId));
   const install = useAtomCommand(extensionEnvironment.install);
@@ -70,9 +72,11 @@ export function ExtensionInstallForm({
       }}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm font-medium">Install an extension</h3>
+        <h3 className="text-sm font-medium">
+          <T>Install an extension</T>
+        </h3>
         <ToggleGroup
-          aria-label="Extension source type"
+          aria-label={gt("Extension source type")}
           value={[sourceType]}
           onValueChange={(values) => {
             const type = values[0];
@@ -87,23 +91,23 @@ export function ExtensionInstallForm({
         >
           <Toggle value="local">
             <FolderOpenIcon />
-            Local folder
+            <T>Local folder</T>
           </Toggle>
           <Toggle value="npm">
             <PackageIcon />
-            npm package
+            <T>npm package</T>
           </Toggle>
         </ToggleGroup>
       </div>
       <div className="space-y-2">
         <Label htmlFor={id}>
-          {sourceType === "local" ? "Folder on this server" : "Package name"}
+          {sourceType === "local" ? gt("Folder on this server") : gt("Package name")}
         </Label>
         <div className="flex flex-wrap gap-2">
           <div className="min-w-40 flex-1">
             <Input
               id={id}
-              aria-label="Extension source"
+              aria-label={gt("Extension source")}
               value={source}
               disabled={busy}
               onKeyDown={(event) => {
@@ -138,13 +142,13 @@ export function ExtensionInstallForm({
               }}
             >
               <FolderOpenIcon />
-              {browsing ? "Hide folders" : "Browse"}
+              {browsing ? gt("Hide folders") : gt("Browse")}
             </Button>
           )}
         </div>
         {sourceType === "npm" && (
           <p className="text-xs text-muted-foreground">
-            Use a package name or pin a version with @version.
+            <T>Use a package name or pin a version with @version.</T>
           </p>
         )}
       </div>
@@ -158,10 +162,10 @@ export function ExtensionInstallForm({
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-md text-xs text-muted-foreground">
-          Extensions have full access to this server. Only install code you trust.
+          <T>Extensions have full access to this server. Only install code you trust.</T>
         </p>
         <Button type="submit" disabled={busy || !source.trim() || !permission}>
-          {busy ? "Installing..." : "Install extension"}
+          {busy ? gt("Installing...") : gt("Install extension")}
         </Button>
       </div>
       {error && (

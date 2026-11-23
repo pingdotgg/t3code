@@ -110,6 +110,12 @@ jobs:
       - name: Check generated Expo GraphQL operations
         run: vp run --filter t3 generate --check
 
+      - name: Check generated Linear GraphQL operations
+        run: vp run --filter @t3tools/issue-tracker-linear generate --check
+
+      - name: Check i18n catalogs
+        run: vp run i18n:check
+
       - name: Check
         run: vp check
 
@@ -199,6 +205,13 @@ jobs:
       - name: Verify preload bundle output
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: node apps/desktop/scripts/verify-preload-bundle.mjs
+
+      # Release-only otherwise; build-exe rejects imports a single-executable cannot resolve.
+      - name: Build CLI single-executable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          node apps/server/scripts/cli.ts build-exe
+          apps/server/dist-exe/t3 --version
 
       # The release launch check, run unpackaged against the same old-state fixture, for
       # startup and sidebar changes. Packaging and signing stay release-only.
@@ -326,7 +339,7 @@ jobs:
         run: python3 -B .github/scripts/stage-preview-bundle.test.py
 
       - name: Test release checks
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/test-delta.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs .github/scripts/mobile-ios-preview-record.test.cjs .github/scripts/test-delta.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         timeout-minutes: 5
@@ -591,7 +604,7 @@ jobs:
     name: Mobile Native Static Analysis
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.mobile_native != 'false' }}
-    runs-on: blacksmith-6vcpu-macos-26
+    runs-on: blacksmith-6vcpu-macos-27
     timeout-minutes: 10
     steps:
       - name: Checkout

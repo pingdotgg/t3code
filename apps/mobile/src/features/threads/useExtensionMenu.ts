@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -11,6 +12,7 @@ export function useExtensionMenu(
   threadId: ThreadId,
   projectId?: ProjectId,
 ): AppBarMenu | null {
+  const gt = useGT();
   const environment = useEnvironments().environments.find(
     (entry) => entry.environmentId === environmentId,
   );
@@ -43,7 +45,7 @@ export function useExtensionMenu(
       invoke(environmentId, entry, command, { threadId, ...(projectId ? { projectId } : {}) }),
   }));
   return {
-    title: "Extensions",
+    title: gt("Extensions"),
     icon: "wrench.and.screwdriver",
     status: status.map((item) => item.title).join(" · "),
     items,

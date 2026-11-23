@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   filterFilesystemBrowseEntries,
@@ -28,6 +29,7 @@ export function FolderBrowser(props: {
   readonly pinnedDirectoryName?: string;
   readonly cloning?: boolean;
 }) {
+  const messages = useMessages();
   const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
   const browseInput =
     browsePath.directoryPath.length > 0 ? { partialPath: browsePath.directoryPath } : null;
@@ -35,12 +37,15 @@ export function FolderBrowser(props: {
     environmentSession.sessionStateAtom(props.environment.environmentId),
   );
   const fileEnvironment = useEnvironmentPresentation(props.environment.environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
+  const fileAccess = resolveFilesystemReadAccess(
+    {
+      isCatalogReady: fileEnvironment.isReady,
+      connection: fileEnvironment.presentation?.connection ?? null,
+      session: fileAccessSession.data,
+      sessionError: fileAccessSession.error,
+    },
+    messages,
+  );
   const { canReadFiles } = fileAccess;
   const browseState = useEnvironmentQuery(
     !canReadFiles || browseInput === null
@@ -59,19 +64,22 @@ export function FolderBrowser(props: {
     browseState.data?.entries ?? [],
     browseFilterQuery,
   );
+  const gt = useGT();
 
   return (
     <>
-      <SectionTitle>Browse folders</SectionTitle>
+      <SectionTitle>{gt("Browse folders")}</SectionTitle>
       {!canReadFiles && !fileAccess.isPending ? (
-        <ErrorBanner message={fileAccess.error ?? "This connection cannot browse host folders."} />
+        <ErrorBanner
+          message={fileAccess.error ?? gt("This connection cannot browse host folders.")}
+        />
       ) : null}
       {browseState.error === null ? null : isMissingCloneParentBrowseFailure({
           cloning: props.cloning === true,
           failure: browseState.failure,
         }) ? (
         <Text className="text-sm text-foreground-muted">
-          This folder does not exist yet. Cloning creates it.
+          {gt("This folder does not exist yet. Cloning creates it.")}
         </Text>
       ) : (
         <ErrorBanner message={browseState.error} />

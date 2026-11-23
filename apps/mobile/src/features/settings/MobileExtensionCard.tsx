@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
@@ -26,6 +27,7 @@ export function MobileExtensionCard({
   environmentId: EnvironmentId;
   entry: ExtensionInfo;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const [showSettings, setShowSettings] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -66,7 +68,7 @@ export function MobileExtensionCard({
           <Text className="text-xs text-foreground-muted">v{entry.manifest.version}</Text>
         </View>
         <ThemedSwitch
-          accessibilityLabel={`Enable ${entry.manifest.name}`}
+          accessibilityLabel={gt("Enable {name}", { name: entry.manifest.name })}
           value={entry.enabled}
           disabled={busy || !permission}
           onValueChange={(enabled) =>
@@ -83,21 +85,21 @@ export function MobileExtensionCard({
           actions={[
             {
               id: "reload",
-              title: "Reload",
+              title: gt("Reload"),
               attributes: { disabled: busy || !permission || !entry.enabled },
             },
             ...(entry.sourceType === "npm"
               ? [
                   {
                     id: "update",
-                    title: "Update package",
+                    title: gt("Update package"),
                     attributes: { disabled: busy || !permission },
                   },
                 ]
               : []),
             {
               id: "uninstall",
-              title: "Uninstall",
+              title: gt("Uninstall"),
               attributes: { destructive: true, disabled: busy || !permission },
             },
           ]}
@@ -109,7 +111,7 @@ export function MobileExtensionCard({
         >
           <Button
             label=""
-            accessibilityLabel={`Actions for ${entry.manifest.name}`}
+            accessibilityLabel={gt("Actions for {name}", { name: entry.manifest.name })}
             icon="ellipsis"
             tone="text"
             size="compact"
@@ -127,12 +129,12 @@ export function MobileExtensionCard({
           }
         >
           {entry.status === "running"
-            ? "Running on this server"
+            ? gt("Running on this server")
             : entry.status === "failed"
-              ? "Failed to start"
+              ? gt("Failed to start")
               : entry.status === "starting"
-                ? "Starting..."
-                : "Disabled"}
+                ? gt("Starting...")
+                : gt("Disabled")}
         </Text>
         <Text className="text-sm leading-5 text-foreground-muted">
           {entry.manifest.description}
@@ -148,7 +150,9 @@ export function MobileExtensionCard({
           entry.manifest.settingsPages?.map((page) => (
             <Button
               key={page.id}
-              label={(entry.manifest.settingsPages?.length ?? 0) === 1 ? "Settings" : page.title}
+              label={
+                (entry.manifest.settingsPages?.length ?? 0) === 1 ? gt("Settings") : page.title
+              }
               icon="gearshape"
               size="compact"
               onPress={() =>
@@ -164,7 +168,7 @@ export function MobileExtensionCard({
       {entry.manifest.panels?.map((item) => (
         <Button
           key={item.id}
-          label={`Open ${item.title}`}
+          label={gt("Open {title}", { title: item.title })}
           icon="arrow.up.right"
           size="compact"
           disabled={busy || !permission || entry.status !== "running"}
@@ -186,7 +190,7 @@ export function MobileExtensionCard({
       {Object.keys(entry.manifest.settings ?? {}).length > 0 && (
         <View className="gap-3">
           <Button
-            label="Extension settings"
+            label={gt("Extension settings")}
             icon={showSettings ? "chevron.up" : "chevron.down"}
             tone="text"
             size="compact"
@@ -213,7 +217,7 @@ export function MobileExtensionCard({
       {(entry.manifest.commands?.length ?? 0) > 0 && (
         <View className="gap-3">
           <Button
-            label="Advanced commands"
+            label={gt("Advanced commands")}
             icon={advanced ? "chevron.up" : "chevron.down"}
             tone="text"
             size="compact"
@@ -222,11 +226,14 @@ export function MobileExtensionCard({
           {advanced && (
             <View className="gap-3">
               <Text className="text-xs leading-4 text-foreground-muted">
-                Run commands directly with JSON arguments. Commands are also in the command palette.
+                <T>
+                  Run commands directly with JSON arguments. Commands are also in the command
+                  palette.
+                </T>
               </Text>
               {(entry.manifest.commands?.length ?? 0) > 0 && (
                 <TextInput
-                  accessibilityLabel="Command arguments (JSON)"
+                  accessibilityLabel={gt("Command arguments (JSON)")}
                   className="rounded border border-border p-3 text-foreground"
                   value={argumentsText}
                   onChangeText={setArgumentsText}
@@ -244,7 +251,7 @@ export function MobileExtensionCard({
                       try {
                         input = JSON.parse(argumentsText);
                       } catch {
-                        setError("Enter valid JSON arguments.");
+                        setError(gt("Enter valid JSON arguments."));
                         return;
                       }
                       const result = await invoke({
@@ -272,7 +279,7 @@ export function MobileExtensionCard({
         </View>
       )}
       <Button
-        label="Installation details"
+        label={gt("Installation details")}
         icon={details ? "chevron.up" : "chevron.down"}
         tone="text"
         size="compact"
@@ -284,13 +291,16 @@ export function MobileExtensionCard({
             {entry.manifest.id}
           </Text>
           <Text selectable className="text-xs text-foreground-muted">
-            {entry.sourceType === "local" ? "Local folder" : "npm package"}: {entry.source}
+            {entry.sourceType === "local" ? gt("Local folder") : gt("npm package")}: {entry.source}
           </Text>
         </View>
       )}
       {opened && entry.status === "running" && opened.runtimeId === entry.runtimeId && (
         <>
-          <Button label={`Close ${opened.title}`} onPress={() => setOpened(null)} />
+          <Button
+            label={gt("Close {title}", { title: opened.title })}
+            onPress={() => setOpened(null)}
+          />
           <MobileExtensionPanel
             key={opened.html}
             environmentId={environmentId}

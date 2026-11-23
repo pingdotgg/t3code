@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "../ui/badge";
 import { Switch } from "../ui/switch";
@@ -32,6 +33,7 @@ export function ExtensionCard({
   environmentId: EnvironmentId;
   entry: ExtensionInfo;
 }) {
+  const gt = useGT();
   const manage = useAtomCommand(extensionEnvironment.manage);
   const settings = useAtomCommand(extensionEnvironment.settings);
   const invoke = useAtomCommand(extensionEnvironment.invoke);
@@ -79,19 +81,19 @@ export function ExtensionCard({
               }
             >
               {entry.status === "running"
-                ? "Running"
+                ? gt("Running")
                 : entry.status === "failed"
-                  ? "Failed"
+                  ? gt("Failed")
                   : entry.status === "starting"
-                    ? "Starting"
-                    : "Disabled"}
+                    ? gt("Starting")
+                    : gt("Disabled")}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">{entry.manifest.description}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <Switch
-            aria-label={`Enable ${entry.manifest.name}`}
+            aria-label={gt("Enable {name}", { name: entry.manifest.name })}
             checked={entry.enabled}
             disabled={busy || !permission}
             onCheckedChange={(enabled) =>
@@ -109,7 +111,7 @@ export function ExtensionCard({
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  aria-label={`Actions for ${entry.manifest.name}`}
+                  aria-label={gt("Actions for {name}", { name: entry.manifest.name })}
                   disabled={busy || !permission}
                 />
               }
@@ -126,7 +128,7 @@ export function ExtensionCard({
                 }
               >
                 <RotateCwIcon />
-                Reload
+                <T>Reload</T>
               </MenuItem>
               {entry.sourceType === "npm" && (
                 <MenuItem
@@ -137,7 +139,7 @@ export function ExtensionCard({
                   }
                 >
                   <DownloadIcon />
-                  Update package
+                  <T>Update package</T>
                 </MenuItem>
               )}
               <MenuItem
@@ -152,7 +154,7 @@ export function ExtensionCard({
                 }
               >
                 <Trash2Icon />
-                Uninstall
+                <T>Uninstall</T>
               </MenuItem>
             </MenuPopup>
           </Menu>
@@ -182,7 +184,7 @@ export function ExtensionCard({
                 }
               >
                 <Settings2Icon />
-                {(entry.manifest.settingsPages?.length ?? 0) === 1 ? "Settings" : page.title}
+                {(entry.manifest.settingsPages?.length ?? 0) === 1 ? gt("Settings") : page.title}
               </Button>
             ))}
         </div>
@@ -207,13 +209,15 @@ export function ExtensionCard({
                 })
               }
             >
-              Open {item.title}
+              {gt("Open {title}", { title: item.title })}
             </Button>
           ))}
         </div>
         {Object.keys(entry.manifest.settings ?? {}).length > 0 && (
           <details className="rounded-lg border border-border/60 px-3 py-2">
-            <summary className="cursor-pointer text-sm font-medium">Extension settings</summary>
+            <summary className="cursor-pointer text-sm font-medium">
+              <T>Extension settings</T>
+            </summary>
             <div className="space-y-4 pt-4">
               <ExtensionSettingsFields
                 entry={entry}
@@ -232,15 +236,19 @@ export function ExtensionCard({
         )}
         {(entry.manifest.commands?.length ?? 0) > 0 && (
           <details className="rounded-lg border border-border/60 px-3 py-2">
-            <summary className="cursor-pointer text-sm font-medium">Advanced commands</summary>
+            <summary className="cursor-pointer text-sm font-medium">
+              <T>Advanced commands</T>
+            </summary>
             <div className="space-y-3 pt-3">
               <p className="text-xs text-muted-foreground">
-                Run commands directly with JSON arguments. Commands are also available in the
-                command palette.
+                <T>
+                  Run commands directly with JSON arguments. Commands are also available in the
+                  command palette.
+                </T>
               </p>
               {(entry.manifest.commands?.length ?? 0) > 0 && (
                 <Input
-                  aria-label="Command arguments (JSON)"
+                  aria-label={gt("Command arguments (JSON)")}
                   value={argumentsText}
                   onChange={(event) => setArgumentsText(event.target.value)}
                 />
@@ -259,7 +267,7 @@ export function ExtensionCard({
                         try {
                           input = JSON.parse(argumentsText);
                         } catch {
-                          setError("Enter valid JSON arguments.");
+                          setError(gt("Enter valid JSON arguments."));
                           return;
                         }
                         const result = await invoke({
@@ -289,18 +297,21 @@ export function ExtensionCard({
           </details>
         )}
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Installation details</summary>
+          <summary className="cursor-pointer">
+            <T>Installation details</T>
+          </summary>
           <div className="space-y-1 pt-2">
             <p>{entry.manifest.id}</p>
             <p className="break-all">
-              {entry.sourceType === "local" ? "Local folder" : "npm package"}: {entry.source}
+              {entry.sourceType === "local" ? gt("Local folder") : gt("npm package")}:{" "}
+              {entry.source}
             </p>
           </div>
         </details>
         {opened && entry.status === "running" && opened.runtimeId === entry.runtimeId && (
           <>
             <Button size="sm" variant="ghost" onClick={() => setOpened(null)}>
-              Close {opened.title}
+              {gt("Close {title}", { title: opened.title })}
             </Button>
             <ExtensionPanel
               key={opened.html}

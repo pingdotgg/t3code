@@ -29,5 +29,6 @@ export async function stageShowcaseAgentActivity(
 
   await Promise.all(getAgentLiveActivities().map((existing) => existing.end("immediate")));
   // ActivityKit needs foreground startup; the runner locks only after this scene is ready.
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- showcase runner failure, read by the screenshot runner
   return startAgentLiveActivity(activity) !== null || "Live Activity did not start";
 }

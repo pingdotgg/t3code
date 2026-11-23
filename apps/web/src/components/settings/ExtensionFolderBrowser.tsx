@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   filterFilesystemBrowseEntries,
   getFilesystemBrowsePath,
@@ -20,6 +21,7 @@ export function ExtensionFolderBrowser({
   path: string;
   onSelect: (path: string) => void;
 }) {
+  const gt = useGT();
   const browse = getFilesystemBrowsePath(path, platform);
   const access = useFilesystemReadAccess(environmentId);
   const query = useEnvironmentQuery(
@@ -35,13 +37,19 @@ export function ExtensionFolderBrowser({
     browse.filterQuery,
   );
   return (
-    <div className="space-y-2" aria-label="Server folders">
-      <p className="text-sm text-muted-foreground">Browse folders on this environment.</p>
+    <div className="space-y-2" aria-label={gt("Server folders")}>
+      <p className="text-sm text-muted-foreground">
+        <T>Browse folders on this environment.</T>
+      </p>
       {query.error && <p role="alert">{query.error}</p>}
       {!access.canReadFiles && !access.isPending && (
-        <p role="alert">{access.error ?? "This connection cannot browse host folders."}</p>
+        <p role="alert">{access.error ?? gt("This connection cannot browse host folders.")}</p>
       )}
-      {(access.isPending || (query.isPending && !query.data)) && <p>Loading folders...</p>}
+      {(access.isPending || (query.isPending && !query.data)) && (
+        <p>
+          <T>Loading folders...</T>
+        </p>
+      )}
       <div className="flex max-h-64 flex-col items-start gap-1 overflow-y-auto">
         {access.canReadFiles && browse.canBrowseUp && browse.parentPath && (
           <Button type="button" variant="ghost" onClick={() => onSelect(browse.parentPath!)}>
@@ -61,7 +69,9 @@ export function ExtensionFolderBrowser({
           </Button>
         ))}
         {query.data && visibleEntries.length === 0 && (
-          <p className="text-sm text-muted-foreground">No matching folders.</p>
+          <p className="text-sm text-muted-foreground">
+            <T>No matching folders.</T>
+          </p>
         )}
       </div>
     </div>

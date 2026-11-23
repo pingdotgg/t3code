@@ -122,6 +122,7 @@ export class BitbucketResponseError extends Schema.TaggedError<BitbucketResponse
     status: Schema.Int,
     responseBodyLength: NonNegativeInt,
     retryAt: Schema.optional(Schema.Number),
+    userFacingDetail: Schema.optional(Schema.String),
   },
 ) {
   get detail(): string {
@@ -609,7 +610,7 @@ function authFromCredential(credential: BitbucketCredential | null): SourceContr
     account: Option.none(),
     host: Option.some("bitbucket.org"),
     detail: Option.some(
-      "Add a Bitbucket token in Settings → Source Control, or set the T3CODE_BITBUCKET_* environment variables on the server.",
+      "Add a Bitbucket token in Settings → Source control & issues, or set the T3CODE_BITBUCKET_* environment variables on the server.",
     ),
   };
 }
@@ -918,7 +919,18 @@ export const make = Effect.gen(function* () {
       repository: input.sourceRepositoryName,
       ...(input.context ? { context: input.context } : {}),
     }).pipe(Effect.map(normalizeRepositoryCloneUrls));
-    const originRemoteUrl = yield* readConfigValueNullable(input.cwd, "remote.origin.url");
+    // Git fetches from a remote's first URL; `config --get` returns the last of several, and
+    // `git remote -v` applies `insteadOf` rewrites.
+    const originRemoteUrl = yield* git
+      .execute({
+        operation: "BitbucketApi.readOriginRemoteUrl",
+        cwd: input.cwd,
+        args: ["config", "--get-all", "remote.origin.url"],
+      })
+      .pipe(
+        Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null),
+        Effect.orElseSucceed(() => null),
+      );
     return yield* git.ensureRemote({
       cwd: input.cwd,
       preferredName: input.isCrossRepository
@@ -1092,8 +1104,20 @@ export const make = Effect.gen(function* () {
     getPullRequest: Effect.fn("BitbucketApi.getPullRequest")(function (input) {
       return getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord));
     }),
-    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function (input) {
-      return getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls));
+    getRepositoryCloneUrls: Effect.fn("BitbucketApi.getRepositoryCloneUrls")(function* (input) {
+      const locator = yield* resolveRepository(input);
+      return yield* getRepositoryFromLocator(locator).pipe(
+        Effect.mapError((error) => {
+          if (error._tag !== "BitbucketResponseError" || error.status !== 404) return error;
+          return new BitbucketResponseError({
+            ...error,
+            userFacingDetail: SourceControlProvider.repositoryNotFoundDetail(
+              `${locator.workspace}/${locator.repoSlug}`,
+            ),
+          });
+        }),
+        Effect.map(normalizeRepositoryCloneUrls),
+      );
     }),
     createRepository: Effect.fn("BitbucketApi.createRepository")(function (input) {
       return requireRepositoryLocator(input.repository).pipe(

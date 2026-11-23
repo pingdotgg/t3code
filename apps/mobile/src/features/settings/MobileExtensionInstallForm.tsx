@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
@@ -29,6 +30,7 @@ export function MobileExtensionInstallForm({
   platform: string;
   onInstalled: () => void;
 }) {
+  const gt = useGT();
   const permission = useAtomValue(extensionEnvironment.install.permissionAtom(environmentId));
   const install = useAtomCommand(extensionEnvironment.install);
   const [source, setSource] = useState("");
@@ -38,11 +40,13 @@ export function MobileExtensionInstallForm({
   const [busy, setBusy] = useState(false);
   return (
     <View className="gap-4 rounded-2xl bg-grouped-card p-4">
-      <Text className="font-t3-semibold">Install an extension</Text>
+      <Text className="font-t3-semibold">
+        <T>Install an extension</T>
+      </Text>
       <SegmentedControl
         options={[
-          { value: "local", label: "Local folder" },
-          { value: "npm", label: "npm package" },
+          { value: "local", label: gt("Local folder") },
+          { value: "npm", label: gt("npm package") },
         ]}
         selected={sourceType}
         onSelect={(type) => {
@@ -56,10 +60,10 @@ export function MobileExtensionInstallForm({
       />
       <View className="gap-2">
         <Text className="text-sm font-t3-medium">
-          {sourceType === "local" ? "Folder on this server" : "Package name"}
+          {sourceType === "local" ? gt("Folder on this server") : gt("Package name")}
         </Text>
         <TextInput
-          accessibilityLabel="Extension source"
+          accessibilityLabel={gt("Extension source")}
           className="rounded-xl border border-border bg-field px-3 py-3 text-base text-foreground"
           value={source}
           onChangeText={setSource}
@@ -70,7 +74,7 @@ export function MobileExtensionInstallForm({
         />
         {sourceType === "local" ? (
           <Button
-            label={browsing ? "Hide folders" : "Browse server folders"}
+            label={browsing ? gt("Hide folders") : gt("Browse server folders")}
             icon="folder"
             tone="text"
             size="compact"
@@ -82,7 +86,7 @@ export function MobileExtensionInstallForm({
           />
         ) : (
           <Text className="text-xs text-foreground-muted">
-            Use a package name or pin a version with @version.
+            <T>Use a package name or pin a version with @version.</T>
           </Text>
         )}
       </View>
@@ -102,7 +106,7 @@ export function MobileExtensionInstallForm({
         />
       )}
       <Text className="text-xs leading-4 text-foreground-muted">
-        Extensions have full access to this server. Only install code you trust.
+        <T>Extensions have full access to this server. Only install code you trust.</T>
       </Text>
       {error && (
         <Text accessibilityRole="alert" className="text-sm text-danger-foreground">
@@ -110,7 +114,7 @@ export function MobileExtensionInstallForm({
         </Text>
       )}
       <Button
-        label={busy ? "Installing..." : "Install extension"}
+        label={busy ? gt("Installing...") : gt("Install extension")}
         icon="plus"
         tone="primary"
         fullWidth

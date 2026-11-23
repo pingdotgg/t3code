@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { useEnvironment } from "../../state/environments";
@@ -61,7 +62,7 @@ export function ExtensionActions(props: {
       {commands.length > 0 && (
         <Menu>
           <MenuTrigger render={<Button size="xs" variant="ghost" disabled={!permission} />}>
-            Extensions
+            <T>Extensions</T>
           </MenuTrigger>
           <MenuPopup align="end">
             {commands.map((item) => (

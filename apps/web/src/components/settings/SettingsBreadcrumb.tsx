@@ -1,4 +1,4 @@
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import { useExtensionSettingsPages, extensionSettingsPath } from "./useExtensionSettingsPages";
 import {
@@ -22,6 +22,7 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
 }
 
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const { pages } = useExtensionSettingsPages();
   const sectionLabel =
@@ -29,7 +30,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
       ?.page.title ?? settingsBreadcrumbLabel(pathname);
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={gt("Settings breadcrumb")}>
       {sectionLabel ? (
         <>
           <WorkspaceBreadcrumbItem>{m(SETTINGS_LABEL)}</WorkspaceBreadcrumbItem>

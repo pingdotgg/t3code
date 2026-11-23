@@ -47,6 +47,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
@@ -380,6 +381,11 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    getChangeRequestWatchFingerprint: (input) =>
+      cli
+        .getMergeRequestWatchFingerprint(input)
+        .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
+
     getChangeRequestActivity: (input) =>
       Effect.all(
         [
@@ -593,6 +599,9 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.removeAgentCreditsOnMerge === true ? { removeAgentCreditsOnMerge: true } : {}),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
     ),

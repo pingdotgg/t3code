@@ -88,7 +88,8 @@ export const layer = Layer.effect(
             return yield* (
               command.type === "prepared-run.retry"
                 ? launches.retryPreparation(command)
-                : ThreadMessageIntake.dispatchCommand(command)
+                : // Trusted host code can dispatch from a lifecycle hook without a client session.
+                  ThreadMessageIntake.dispatchCommand(command, { managesProviders: true })
             ).pipe(Effect.provide(context), Effect.flatMap(encodeDispatch));
           }
           case "settings.get":

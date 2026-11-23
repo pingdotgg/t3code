@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react-native";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { View } from "react-native";
@@ -14,19 +15,22 @@ import { MobileExtensionCard } from "./MobileExtensionCard";
 import { MobileExtensionInstallForm } from "./MobileExtensionInstallForm";
 
 export function SettingsExtensionsRouteScreen() {
+  const gt = useGT();
   const { selectedTargets } = useSettingsEnvironmentFilter();
   const environmentMenu = useSettingsEnvironmentMenu();
   return (
-    <SettingsScreen title="Extensions" menus={[environmentMenu]}>
+    <SettingsScreen title={gt("Extensions")} menus={[environmentMenu]}>
       <ScreenScrollView keyboardShouldPersistTaps="handled">
         <View className="gap-6 p-4">
           <Text className="text-sm leading-5 text-foreground-muted">
-            Add tools, commands, and custom views to T3 Code. Extensions run on the selected server
-            and are available on your connected devices.
+            <T>
+              Add tools, commands, and custom views to T3 Code. Extensions run on the selected
+              server and are available on your connected devices.
+            </T>
           </Text>
           {selectedTargets.length === 0 && (
             <Text className="text-sm text-foreground-muted">
-              Connect to an environment to manage its extensions.
+              <T>Connect to an environment to manage its extensions.</T>
             </Text>
           )}
           {selectedTargets.map((target) => (
@@ -52,13 +56,15 @@ function MobileExtensionManager({
   label: string;
   serverConfig: Pick<ServerConfig, "environment" | "settings">;
 }) {
+  const gt = useGT();
   const supported = serverConfig.environment.capabilities.extensions === true;
   const query = useEnvironmentQuery(
     supported ? extensionEnvironment.state({ environmentId, input: {} }) : null,
   );
   const permission = useAtomValue(extensionEnvironment.install.permissionAtom(environmentId));
   const [adding, setAdding] = useState<boolean | null>(null);
-  if (!supported) return <Text>Update T3 Code on {label} to use extensions.</Text>;
+  if (!supported)
+    return <Text>{gt("Update T3 Code on {label} to use extensions.", { label })}</Text>;
   const entries = query.data ?? [];
   const showInstall = adding ?? (entries.length === 0 && query.data !== null);
   return (
@@ -69,12 +75,14 @@ function MobileExtensionManager({
             {label}
           </Text>
           <Text className="text-xs text-foreground-muted">
-            {entries.length} installed,{" "}
-            {entries.filter((entry) => entry.status === "running").length} running
+            {gt("{installed} installed, {running} running", {
+              installed: entries.length,
+              running: entries.filter((entry) => entry.status === "running").length,
+            })}
           </Text>
         </View>
         <Button
-          label={showInstall ? "Cancel" : "Add extension"}
+          label={showInstall ? gt("Cancel") : gt("Add extension")}
           icon={showInstall ? "xmark" : "plus"}
           size="compact"
           disabled={!permission}
@@ -95,13 +103,17 @@ function MobileExtensionManager({
         </Text>
       )}
       {query.isPending && !query.data && (
-        <Text className="text-sm text-foreground-muted">Loading extensions...</Text>
+        <Text className="text-sm text-foreground-muted">
+          <T>Loading extensions...</T>
+        </Text>
       )}
       {query.data?.length === 0 && (
         <View className="gap-1 py-3">
-          <Text className="font-t3-semibold">Your extensions will appear here</Text>
+          <Text className="font-t3-semibold">
+            <T>Your extensions will appear here</T>
+          </Text>
           <Text className="text-sm leading-5 text-foreground-muted">
-            Install a folder from this server or an npm package to get started.
+            <T>Install a folder from this server or an npm package to get started.</T>
           </Text>
         </View>
       )}

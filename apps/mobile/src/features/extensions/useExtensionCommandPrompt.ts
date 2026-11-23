@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import type { EnvironmentId, ExtensionInfo, ExtensionInvokeInput } from "@t3tools/contracts";
 import {
   extensionCommandValue,
@@ -8,6 +9,7 @@ import { extensionEnvironment } from "../../state/extensions";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 export function useExtensionCommandPrompt() {
+  const gt = useGT();
   const invoke = useAtomCommand(extensionEnvironment.invoke);
   return (
     environmentId: EnvironmentId,
@@ -17,15 +19,15 @@ export function useExtensionCommandPrompt() {
   ) => {
     Dialog.prompt({
       title: command.title,
-      message: command.description || "Arguments (JSON)",
+      message: command.description || gt("Arguments (JSON)"),
       initialValue: "{}",
-      confirmText: "Run command",
+      confirmText: gt("Run command"),
       onConfirm: (text) => {
         let input: unknown;
         try {
           input = JSON.parse(text);
         } catch {
-          Dialog.alert("Invalid JSON arguments");
+          Dialog.alert(gt("Invalid JSON arguments"));
           return;
         }
         void invoke({
@@ -42,7 +44,7 @@ export function useExtensionCommandPrompt() {
             Dialog.alert(command.title, JSON.stringify(extensionCommandValue(result), null, 2));
           })
           .catch((error: unknown) =>
-            Dialog.alert("Extension request failed", extensionFailureMessage(error)),
+            Dialog.alert(gt("Extension request failed"), extensionFailureMessage(error)),
           );
       },
     });

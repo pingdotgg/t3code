@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   extensionCommandValue,
   extensionFailureMessage,
@@ -54,6 +55,7 @@ export function ExtensionCommandHost() {
 }
 
 function CommandForm({ selection }: { selection: Selection }) {
+  const gt = useGT();
   const [argumentsText, setArgumentsText] = useState("{}");
   const [output, setOutput] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ function CommandForm({ selection }: { selection: Selection }) {
         try {
           input = JSON.parse(argumentsText);
         } catch {
-          setOutput("Enter valid JSON arguments.");
+          setOutput(gt("Enter valid JSON arguments."));
           return;
         }
         setBusy(true);
@@ -98,16 +100,20 @@ function CommandForm({ selection }: { selection: Selection }) {
       </DialogHeader>
       <DialogPanel>
         <label className="block space-y-1 text-sm">
-          <span>Arguments (JSON)</span>
+          <span>
+            <T>Arguments (JSON)</T>
+          </span>
           <Textarea
             value={argumentsText}
             onChange={(event) => setArgumentsText(event.target.value)}
-            aria-label="Command arguments (JSON)"
+            aria-label={gt("Command arguments (JSON)")}
           />
         </label>
         {selection.command.inputSchema && (
           <details>
-            <summary>Input schema</summary>
+            <summary>
+              <T>Input schema</T>
+            </summary>
             <pre className="max-h-48 overflow-auto text-xs">
               {JSON.stringify(selection.command.inputSchema, null, 2)}
             </pre>
@@ -121,7 +127,7 @@ function CommandForm({ selection }: { selection: Selection }) {
       </DialogPanel>
       <DialogFooter>
         <Button type="submit" disabled={busy || !permission}>
-          {busy ? "Running..." : "Run command"}
+          {busy ? gt("Running...") : gt("Run command")}
         </Button>
       </DialogFooter>
     </form>

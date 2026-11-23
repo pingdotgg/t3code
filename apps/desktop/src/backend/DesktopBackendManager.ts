@@ -1,5 +1,6 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -83,6 +84,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
   readonly wslRuntimeId?: string;
+  readonly wslT3Home?: string | null;
 }
 
 export interface PreflightFailure {
@@ -194,6 +196,8 @@ export const BackendProcessError = Schema.Union([
 ]);
 export type BackendProcessError = typeof BackendProcessError.Type;
 
+type TrackBackendProcess = (pid: number) => Effect.Effect<Effect.Effect<void>>;
+
 interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   readonly desktopTelemetryStream: Stream.Stream<Uint8Array>;
   readonly desktopBrowserStream?: Stream.Stream<Uint8Array>;
@@ -203,6 +207,7 @@ interface RunBackendProcessOptions extends DesktopBackendStartConfig {
   ) => Effect.Effect<void>;
   readonly readinessTimeout?: Duration.Duration;
   readonly outputDrainTimeout?: Duration.Duration;
+  readonly trackProcess?: TrackBackendProcess;
   readonly onStarted?: (pid: number) => Effect.Effect<void>;
   readonly onExitObserved?: () => Effect.Effect<void>;
   readonly onReady?: (pid: number) => Effect.Effect<void>;
@@ -252,6 +257,7 @@ export interface BackendInstanceSpec {
   readonly id: BackendInstanceId;
   readonly label: Effect.Effect<string>;
   readonly configResolve: Effect.Effect<DesktopBackendStartConfig, PlatformError.PlatformError>;
+  readonly trackProcess?: TrackBackendProcess;
   /** Receives the ready run's URL and pid; reading current config could race a subsequent restart. */
   readonly onReady?: (httpBaseUrl: URL, pid: number) => Effect.Effect<void>;
   readonly onShutdown?: () => Effect.Effect<void>;
@@ -343,7 +349,25 @@ const closeRun = (
   );
 };
 
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// Windows takes about a second to fail a refused connection to a non-loopback address such as a
+// WSL distro IP, so one sequential poller notices readiness up to a second late.
+const STAGGERED_READINESS_POLLERS = 4;
+const READINESS_POLLER_STAGGER = Duration.millis(250);
+
 const waitForHttpReady = (
+  options: BackendProcessContext & { readonly timeout: Duration.Duration },
+): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
+  const poll = pollHttpReady(options);
+  if (LOOPBACK_HOSTNAMES.has(options.httpBaseUrl.hostname)) return poll;
+  return Effect.raceAll(
+    Array.from({ length: STAGGERED_READINESS_POLLERS }, (_, index) =>
+      Effect.sleep(Duration.times(READINESS_POLLER_STAGGER, index)).pipe(Effect.andThen(poll)),
+    ),
+  );
+};
+
+const pollHttpReady = (
   options: BackendProcessContext & { readonly timeout: Duration.Duration },
 ): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
@@ -483,22 +507,28 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
         }),
     ),
   );
+  // The child has a deadline for reading fd 3. Keep recovery bookkeeping off its startup path.
+  const tracking = options.trackProcess
+    ? yield* options.trackProcess(handle.pid).pipe(Effect.forkScoped)
+    : undefined;
   const outputFibers: Array<Fiber.Fiber<void, never>> = [];
+  const serverReady = yield* Deferred.make<void>();
 
   yield* options.onStarted?.(handle.pid) ?? Effect.void;
-  if (
-    options.bootstrap.desktopTelemetryControlFd !== undefined &&
-    options.onDesktopTelemetryControl !== undefined
-  ) {
+  if (options.bootstrap.desktopTelemetryControlFd !== undefined) {
     const controlFd = options.bootstrap.desktopTelemetryControlFd;
-    const handleControl = options.onDesktopTelemetryControl;
+    const handleControl = options.onDesktopTelemetryControl ?? (() => Effect.void);
     yield* handle.getOutputFd(controlFd).pipe(
       Stream.decodeText(),
       Stream.splitLines,
       Stream.filter((line) => line.trim().length > 0),
       Stream.runForEach((line) =>
         decodeDesktopTelemetryControlLine(line).pipe(
-          Effect.flatMap(handleControl),
+          Effect.flatMap((message) =>
+            message.type === "serverReady"
+              ? Deferred.succeed(serverReady, undefined)
+              : handleControl(message),
+          ),
           Effect.catchCause((cause) =>
             logBackendProcessWarning("ignored invalid desktop telemetry control message", {
               fd: controlFd,
@@ -570,14 +600,18 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
   }
   // Cold WSL boots across /mnt/c can exceed one probe budget; retry while the backend is alive.
+  // HTTP polling stays as the fallback for backends without the control fd, such as WSL.
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
-    waitForHttpReady({
-      executablePath: options.executablePath,
-      entryPath: options.entryPath,
-      cwd: options.cwd,
-      httpBaseUrl: options.httpBaseUrl,
-      timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-    }).pipe(
+    Effect.raceFirst(
+      waitForHttpReady({
+        executablePath: options.executablePath,
+        entryPath: options.entryPath,
+        cwd: options.cwd,
+        httpBaseUrl: options.httpBaseUrl,
+        timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+      }),
+      Deferred.await(serverReady),
+    ).pipe(
       Effect.flatMap(() => options.onReady?.(handle.pid) ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
@@ -620,6 +654,11 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.exit,
   );
   yield* options.onExitObserved?.() ?? Effect.void;
+  // A cancelled run may leave a survivor. Only forget after observing a real exit.
+  if (tracking && Exit.isSuccess(exit)) {
+    const forgetProcess = yield* Fiber.join(tracking);
+    yield* forgetProcess;
+  }
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
@@ -918,6 +957,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
 
         const program = runBackendProcess({
           ...config.value,
+          ...(spec.trackProcess === undefined ? {} : { trackProcess: spec.trackProcess }),
           desktopTelemetryStream: desktopTelemetryPublisher.encoded,
           desktopBrowserStream: desktopBrowserHost.events,
           onDesktopBrowserCommand: desktopBrowserHost.handleCommandLine,
@@ -967,6 +1007,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* wslEnvironment.pruneRuntimes(
                 config.value.runningDistro,
                 config.value.wslRuntimeId,
+                config.value.wslT3Home ?? null,
               );
             }
           }),

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useExtensionPanelContent } from "./useExtensionPanelContent";
 import { useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -27,7 +28,9 @@ export function ExtensionSettingsPage({
   if (!selection || !environmentId)
     return (
       <SettingsPageContainer>
-        <p>This extension page is unavailable on the selected environment.</p>
+        <p>
+          <T>This extension page is unavailable on the selected environment.</T>
+        </p>
       </SettingsPageContainer>
     );
   return (
@@ -48,6 +51,7 @@ function Page({
   entry: ExtensionInfo;
   page: NonNullable<ExtensionInfo["manifest"]["settingsPages"]>[number];
 }) {
+  const gt = useGT();
   const [error, setError] = useState<string | null>(null);
   const settings = useAtomCommand(extensionEnvironment.settings);
   const permission = useAtomValue(extensionEnvironment.settings.permissionAtom(environmentId));
@@ -60,7 +64,7 @@ function Page({
       </p>
       {entry.status !== "running" && (
         <p role="alert">
-          {entry.diagnostic ?? "This extension is not running. Reload it in Extensions."}
+          {entry.diagnostic ?? gt("This extension is not running. Reload it in Extensions.")}
         </p>
       )}
       <div className="space-y-4 py-4">
@@ -81,7 +85,11 @@ function Page({
           }}
         />
         {(error || html.error) && <p role="alert">{error ?? html.error}</p>}
-        {html.isPending && !html.data && <p>Loading panel...</p>}
+        {html.isPending && !html.data && (
+          <p>
+            <T>Loading panel...</T>
+          </p>
+        )}
         {html.data && (
           <ExtensionPanel
             environmentId={environmentId}

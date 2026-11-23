@@ -190,11 +190,37 @@ export type TerminalAttachInput = typeof TerminalAttachInput.Type;
 export const TerminalObserveInput = TerminalSessionInput;
 export type TerminalObserveInput = Schema.Codec.Encoded<typeof TerminalObserveInput>;
 
+/** Longest `data` one `terminal.write` carries, in UTF-16 code units. */
+export const TERMINAL_WRITE_MAX_LENGTH = 65_536;
+
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
+  data: Schema.String.check(Schema.isNonEmpty()).check(
+    Schema.isMaxLength(TERMINAL_WRITE_MAX_LENGTH),
+  ),
+  // `data` holds one byte per UTF-16 code unit; older servers write it as UTF-8 text.
+  binary: Schema.optionalKey(Schema.Boolean),
+  // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
+  // answers, so the server passes on one viewer's replies; older servers ignore it.
+  reply: Schema.optionalKey(Schema.Boolean),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
+
+/** Splits input into writes that fit `TerminalWriteInput`, never between a surrogate pair. */
+export function chunkTerminalWrite(data: string): ReadonlyArray<string> {
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < data.length) {
+    let end = Math.min(start + TERMINAL_WRITE_MAX_LENGTH, data.length);
+    const last = data.charCodeAt(end - 1);
+    if (end < data.length && last >= 0xd800 && last <= 0xdbff) {
+      end -= 1;
+    }
+    chunks.push(data.slice(start, end));
+    start = end;
+  }
+  return chunks;
+}
 
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -232,6 +258,8 @@ export const TerminalSessionSnapshot = Schema.Struct({
   // The PTY grid every renderer of this terminal should draw; absent from older servers.
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
+  // Why the shell failed to start, kept so later attachments can show it.
+  error: Schema.optional(Schema.String.check(Schema.isNonEmpty())),
 });
 export type TerminalSessionSnapshot = typeof TerminalSessionSnapshot.Type;
 
@@ -253,6 +281,7 @@ export type TerminalSummary = typeof TerminalSummary.Type;
 const TerminalMetadataSnapshotEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   terminals: Schema.Array(TerminalSummary),
+  managerId: Schema.optional(Schema.String),
 });
 
 const TerminalMetadataUpsertEvent = Schema.Struct({

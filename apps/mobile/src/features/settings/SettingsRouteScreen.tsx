@@ -36,9 +36,7 @@ import { useSettingsEnvironmentMenu } from "./components/SettingsEnvironmentFilt
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { filterSettingsSections } from "./settings-search";
 import { usePaneRole } from "../../components/ui/Pane";
-import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
-import { nativeLanguageName } from "@t3tools/client-runtime/locales";
-import { SUPPORTED_LOCALES } from "../../i18n/locales";
+import { useGT, useMessages } from "gt-react-native";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -51,9 +49,7 @@ export function WorkspaceSettingsList() {
   return (
     <SettingsSidebarContext value={list.sidebar ? { selected: list.selected } : null}>
       <View className="flex-1 bg-screen">
-        <I18nProvider>
-          <SettingsListContent />
-        </I18nProvider>
+        <SettingsListContent />
       </View>
     </SettingsSidebarContext>
   );
@@ -78,17 +74,6 @@ function SettingsListContent() {
 }
 
 export function SettingsListScreen(props: {
-  readonly sidebar: boolean;
-  readonly selected: string | null;
-}) {
-  return (
-    <I18nProvider>
-      <TranslatedSettingsListScreen {...props} />
-    </I18nProvider>
-  );
-}
-
-function TranslatedSettingsListScreen(props: {
   readonly sidebar: boolean;
   readonly selected: string | null;
 }) {
@@ -185,6 +170,7 @@ function environmentsRow(label: string, count: number): SettingsListRow {
 
 function SettingsList(props: { readonly connections: readonly SettingsListRow[] }) {
   const gt = useGT();
+  const m = useMessages();
   // UIKit's scroll-edge material takes the scroll view's own color; like the chat list, match
   // the sidebar's surface so the bar doesn't darken over content at rest.
   // Grouped cards only lift off the screen surface; the drawer is as dark as they are.
@@ -203,6 +189,7 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
       ...indexSections,
     ],
     query,
+    m,
   );
 
   return (
@@ -244,7 +231,6 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
 
 function useSettingsIndexSections(): SettingsListSection[] {
   const gt = useGT();
-  const language = useLanguagePreference();
   const { selectedTargets, projectGroups, selectedProjectKey } = useSettingsEnvironmentFilter();
   const navigation = useNavigation();
   const activePage = useNavigationState((state) => state.routes.at(-1));
@@ -295,8 +281,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         selectedTargets.some((target) => target.environmentId === project.environmentId),
       ) ?? [];
   const projectLabel =
-    scopedProjectMembers.length > 0
+    selectedProject && scopedProjectMembers.length > 0
       ? deriveProjectGroupLabel({
+          groupKey: selectedProject.key,
           representative: scopedProjectMembers[0]!,
           members: scopedProjectMembers,
         })
@@ -315,11 +302,6 @@ function useSettingsIndexSections(): SettingsListSection[] {
       rows: [
         page("SettingsOrganization", "gearshape", gt("General")),
         page("SettingsAppearance", "paintbrush", gt("Appearance")),
-        page("SettingsLanguage", "globe", gt("Language"), {
-          value: SUPPORTED_LOCALES.includes(language)
-            ? nativeLanguageName(language)
-            : gt("System default"),
-        }),
         page("SettingsFollowUp", "bubble.left.and.bubble.right", gt("Chat")),
         ...(navigationCustomizationAvailable()
           ? [page("SettingsNavigation", "line.3.horizontal", gt("Navigation tabs"))]
@@ -337,7 +319,9 @@ function useSettingsIndexSections(): SettingsListSection[] {
         page("SettingsScheduledTasks", "clock", gt("Scheduled tasks")),
       ],
     },
-    ...(extensionRows.length > 0 ? [{ title: "Installed extensions", rows: extensionRows }] : []),
+    ...(extensionRows.length > 0
+      ? [{ title: gt("Installed extensions"), rows: extensionRows }]
+      : []),
     {
       title: gt("Code"),
       rows: [
@@ -350,7 +334,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         serverPage(
           "SettingsEnvironmentSourceControl",
           "arrow.triangle.branch",
-          gt("Source control"),
+          gt("Source control & issues"),
         ),
         serverPage("SettingsWorktrees", "square.on.square", gt("Worktrees")),
       ],
@@ -367,6 +351,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
 }
 
 function useOverflowRows(): SettingsListRow[] {
+  const m = useMessages();
   const order = useNavigationTabOrder();
   const hidden = useHiddenNavigationTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -376,7 +361,7 @@ function useOverflowRows(): SettingsListRow[] {
   return tabs.map((tab) => ({
     id: tab,
     icon: NAVIGATION_TAB_ICONS[tab],
-    label: WORKSPACE_TAB_LABELS[tab],
+    label: m(WORKSPACE_TAB_LABELS[tab]),
     onPress: () => selectTab(tab),
   }));
 }
