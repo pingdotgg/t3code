@@ -11,8 +11,8 @@ use conn_state::{
     TurnItemStatus, UserInputAnswerValue, UserInputDraft, build_turn_diff_tree,
     build_user_input_answers, collapsed_plan_preview, flatten_turn_diff_tree,
     format_chat_timestamp_tooltip, format_day_aware_timestamp, format_duration,
-    format_subagent_display_title, plan_can_collapse, strip_displayed_plan_markdown,
-    subagent_status_visual,
+    format_subagent_display_title, plan_can_collapse, request_kind_label,
+    strip_displayed_plan_markdown, subagent_status_visual,
 };
 use serde_json::{Value, json};
 
@@ -898,6 +898,77 @@ fn pending_approvals_follow_their_runtime_request() {
     let approvals = replay(&[snapshot]).pending_approvals();
     assert_eq!(approvals.len(), 1);
     assert!(approvals[0].answerable && approvals[0].supports_feedback);
+}
+
+#[test]
+fn approval_details_keep_what_the_approval_item_asks() {
+    let frames = parse_json_array(include_str!("fixtures/thread_permission_stream.json"));
+    let card_index = frames
+        .iter()
+        .position(|f| f["event"]["payload"]["type"] == "approval_request")
+        .expect("fixture has an approval card");
+    let mut frames = frames[..=card_index].to_vec();
+    let card = &mut frames[card_index]["event"]["payload"];
+    card["appName"] = json!("GitHub");
+    card["reason"] = json!("  ");
+    card["fullAccessOverride"] = json!("ask_rule");
+    card["options"] = json!([
+        { "decision": "accept", "label": "Run it" },
+        { "decision": "decline", "label": "Skip", "warning": "The run stops here." }
+    ]);
+    let entry_id = card["id"].as_str().expect("card id").to_owned();
+
+    let mut state = ThreadState::default();
+    for frame in &frames {
+        state.apply(decode_thread(frame.clone()));
+    }
+    let details = state
+        .approval_details(&entry_id)
+        .expect("the approval item's details are kept");
+    assert_eq!(
+        request_kind_label(details.request_kind),
+        "command",
+        "request kind"
+    );
+    assert_eq!(
+        details.prompt.as_deref(),
+        Some("echo conn-recording"),
+        "prompt"
+    );
+    assert_eq!(details.reason, None, "a blank reason is dropped");
+    assert_eq!(details.app_name.as_deref(), Some("GitHub"), "app name");
+    assert_eq!(
+        details.full_access_override,
+        Some(conn_contract::OrchestrationV2TurnItemApprovalRequestFullAccessOverride::AskRule),
+        "full-access override"
+    );
+    let options = details.options.as_ref().expect("provider options");
+    assert_eq!(options.len(), 2, "both options");
+    assert_eq!(
+        options[1].warning.as_deref(),
+        Some("The run stops here."),
+        "option warning"
+    );
+
+    // A snapshot keeps the same details through its visible turn items.
+    let mut snapshot = frames[0].clone();
+    snapshot["projection"]["visibleTurnItems"]
+        .as_array_mut()
+        .expect("snapshot visible turn items")
+        .push(json!({
+            "position": 1,
+            "sourceItemId": frames[card_index]["event"]["payload"]["id"].clone(),
+            "sourceThreadId": frames[card_index]["event"]["payload"]["threadId"].clone(),
+            "visibility": "local",
+            "item": frames[card_index]["event"]["payload"].clone(),
+        }));
+    let mut from_snapshot = ThreadState::default();
+    from_snapshot.apply(decode_thread(snapshot));
+    assert_eq!(
+        from_snapshot.approval_details(&entry_id),
+        Some(details),
+        "snapshot details match the streamed ones"
+    );
 }
 
 #[test]

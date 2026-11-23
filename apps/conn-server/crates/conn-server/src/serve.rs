@@ -273,6 +273,7 @@ pub async fn serve_with_instances(
         environment: environment.clone(),
         scheduled_tasks: OnceLock::new(),
         devices: OnceLock::new(),
+        settle_cleanups: Arc::default(),
     });
 
     // A state folder the T3 server used: its threads and projects, once (`t3_import.rs`).
@@ -492,6 +493,9 @@ pub async fn serve_with_instances(
     let devices = state.deps.devices.clone();
     let app = router(state).into_make_service_with_connect_info::<SocketAddr>();
     let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    let listener = axum::serve::ListenerExt::tap_io(listener, |stream| {
+        crate::session::keep_alive(stream);
+    });
     let server = axum::serve(listener, app).with_graceful_shutdown(async move {
         let _ = stop_rx.wait_for(|stop| *stop).await;
     });

@@ -146,7 +146,11 @@ pub(super) fn staged_image_chip(
                 .justify_center()
                 .bg(hsla_alpha(tokens.background, 0.55))
                 .text_size(px(11.0))
-                .text_color(if failed { hsla(tokens.destructive) } else { muted })
+                .text_color(if failed {
+                    hsla(tokens.destructive)
+                } else {
+                    muted
+                })
                 .child(if failed { "Failed" } else { "Uploading…" }),
         );
     }

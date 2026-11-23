@@ -72,10 +72,19 @@ fn clamp_terminal_drawer_height(height: f32, viewport_h: f32) -> f32 {
 /// A panel seam being dragged: which side, where the drag started, and the width then.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum SeamDrag {
-    Sidebar { from_x: f32, start: f32 },
-    RightPanel { from_x: f32, start: f32 },
+    Sidebar {
+        from_x: f32,
+        start: f32,
+    },
+    RightPanel {
+        from_x: f32,
+        start: f32,
+    },
     /// The terminal drawer's top edge: where the drag started, and the height then.
-    TerminalDrawer { from_y: f32, start: f32 },
+    TerminalDrawer {
+        from_y: f32,
+        start: f32,
+    },
 }
 
 /// A discarded draft, kept for `Undo`.
@@ -5013,7 +5022,8 @@ impl ConnApp {
         // Matches real Conn (`ChatView.tsx`): the chat card re-roots `--background` to opaque
         // `--shell-card` (`bg-background`), keeping the chat surface deeper than the glossy outer
         // shell and slightly deeper than the translucent sidebar card.
-        let chat_card = inset_card(&self.tokens, &self.geometry, join).bg(hsla(self.tokens.shell_card));
+        let chat_card =
+            inset_card(&self.tokens, &self.geometry, join).bg(hsla(self.tokens.shell_card));
         // Conn hosts the terminal as a bottom sheet in the chat card (`ThreadTerminalDrawer`).
         // The right panel's Terminal tab shows the same view, so the drawer yields to it.
         let drawer_visible = self.terminal_drawer_open
@@ -5094,7 +5104,9 @@ impl ConnApp {
                 gpui_kit::deferred(
                     div()
                         .absolute()
-                        .top(px(self.geometry.header_height_px + THREAD_DETAILS_CARD_GAP_PX))
+                        .top(px(
+                            self.geometry.header_height_px + THREAD_DETAILS_CARD_GAP_PX
+                        ))
                         .right(px(card_right_margin + THREAD_DETAILS_CARD_GAP_PX))
                         .child(card),
                 )

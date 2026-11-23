@@ -29,6 +29,16 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+**WebSocket heartbeat as T3 (2026-11-23):** the server no longer closes a socket after 60 s
+without inbound frames. As in T3, the client pings every 5 s and decides when the server is
+gone (Effect `RpcClient` `makePinger`); the server only answers `Pong` (`RpcServer` `Ping`).
+A laptop that wakes sends its queued ping into a socket that is still open. A dead peer ends
+the session through the transport: a failed write, or a read error after TCP keepalive (10 min
+idle, 5 probes 60 s apart, about Linux's 15 min write give-up). T3 sets no keepalive; we do,
+because a silent dead socket would otherwise hold its session forever. Proof: session tests
+`a_suspended_client_stays_connected` (failed with 1001 before), `disconnect_stops_every_stream`,
+`a_dead_peer_is_cleaned_up_on_a_failed_write`, `accepted_sockets_get_keepalive`.
+
 ## Unserved methods: triage (2026-11-21)
 
 Of 251 contract methods, 198 were served and 21 are skipped by decision (FORK.md, "Not
@@ -1515,9 +1525,9 @@ for three picked at the quartiles, all anon, no swap.
   session works.
 - A client WebSocket on the host survives 30 s: the three pings it sent into the frozen server
   are answered at the thaw, and the next auth change reaches it. After 10 minutes the server
-  closes it at the thaw (1001, "idle"): the 60 s idle timer has expired and wins over the
-  buffered pings, as the timer table above says. The client reconnects and gets a new snapshot;
-  the T3 client ends such a socket itself by its ping timeout.
+  closed it at the thaw (1001, "idle"): the 60 s idle timer had expired and won over the
+  buffered pings. The client reconnected and got a new snapshot. Since 2026-11-23 the idle
+  timer is gone (see "WebSocket heartbeat as T3").
 - The provider status probe does not run: it runs only while a client holds an activity lease.
 - Orbit's idle verdict (its `fromShell` rule, window 1 h): a fresh server may sleep; after a
   turn it stays awake for 1 hour from the turn; a held turn keeps it awake; a turn that waits
@@ -1640,7 +1650,7 @@ pin; Effect's clock reads `Date.now()` and sleeps on `setTimeout` (monotonic).
 | Text generator model cache (`text_generation/mod.rs:228`) | none | never expires by time; `refresh` or a config change | the same (`textGeneration/TextGenerators.ts:146-153`) | none: no clock to move |
 | Login environment refresh, 10 s (`methods/source_control.rs:288`) | monotonic | monotonic still: one refresh within 10 s of the wake may be skipped | wall (`sourceControl/SourceControlDiscovery.ts:85`, Effect `cachedWithTTL`) | none: `std::time::Instant`, no seam; the difference lasts at most 10 s, and a wall TTL would block refreshes after a wall clock stepped back |
 | SDK host stop-when-idle (`conn-provider-support/src/sdk_host.rs:305`) | no timer: stops when the last query closes | follows the engine release above | T3 keeps the SDK in process | covered by the engine test and the existing host tests |
-| WebSocket idle close, 60 s (`session.rs:163`, `:188`) | monotonic | monotonic ran on: the idle timer and buffered client pings are ready together; `select!` may close a live socket; the client reconnects | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts:1231`) | none |
+| WebSocket liveness (`session.rs`, `keep_alive`) | **fixed** (2026-11-23): no idle timer; TCP keepalive after 10 min, 5 probes 60 s apart | a socket open across a freeze or a client's sleep stays open; the buffered pings are answered | the server has none; the client's ping timeout ends a frozen connection (Effect `RpcClient.ts` `makePinger`) | `a_suspended_client_stays_connected` |
 | Short monotonic waits: flushes, debounces, request and stop timeouts, VCS and terminal polls, the run follower (24 h), title retries | monotonic, one-shot | each fires once at the thaw; none catches up | the same, on `setTimeout` | none |
 
 Fixed: the lease, `/mcp` credential and interval rows (above). Not fixed, for Nick:

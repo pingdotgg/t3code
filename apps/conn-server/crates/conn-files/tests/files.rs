@@ -8,7 +8,7 @@
 
 use std::{
     fs,
-    os::unix::fs::symlink,
+    os::unix::fs::{PermissionsExt, symlink},
     path::{Path, PathBuf},
     process::Command,
 };
@@ -162,6 +162,111 @@ fn reads_stay_inside_the_root_and_out_of_server_state() {
     assert!(result.truncated);
     assert_eq!(result.byte_length, big.len() as i64);
     assert_eq!(result.contents.len(), 1024 * 1024);
+
+    // T3 "rejects files with invalid UTF-8": U+FFFD would overwrite Latin-1 bytes on save.
+    fs::write(f.project.join("latin1.txt"), b"name=caf\xe9\n").unwrap();
+    assert_eq!(read(&f, "latin1.txt").unwrap_err(), Failure::BinaryFile);
+    // An incomplete last character is invalid when the whole file was read.
+    fs::write(f.project.join("cut.txt"), b"a\xe2\x82").unwrap();
+    assert_eq!(read(&f, "cut.txt").unwrap_err(), Failure::BinaryFile);
+    // T3 "drops a multibyte character split by the read limit".
+    let mut split = vec![b'a'; 1024 * 1024 - 1];
+    split.extend_from_slice("€\n".as_bytes());
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    let result = read(&f, "split.txt").unwrap();
+    assert!(result.truncated);
+    assert_eq!(result.byte_length, split.len() as i64);
+    assert_eq!(result.contents, "a".repeat(1024 * 1024 - 1));
+    // Invalid bytes before the limit are still refused.
+    split[10] = 0xe9;
+    fs::write(f.project.join("split.txt"), &split).unwrap();
+    assert_eq!(read(&f, "split.txt").unwrap_err(), Failure::BinaryFile);
+}
+
+// T3 `readFile`: storage cleanup removes an idle worktree but keeps its path, so an optional
+// read below it is absent. A required read and any other root failure keep their error.
+#[test]
+fn an_optional_read_in_a_removed_worktree_is_absent() {
+    let f = fixture("read-removed-worktree");
+    git(&f.project, &["init", "-q", "-b", "main"]);
+    git(
+        &f.project,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@e",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    );
+    let worktree = f._base.0.join("worktree");
+    git(
+        &f.project,
+        &["worktree", "add", "-q", worktree.to_str().unwrap()],
+    );
+    let read_at = |cwd: &Path, path: &str, allow_missing: bool| {
+        let input = ProjectReadFileInput {
+            cwd: cwd.to_string_lossy().into_owned(),
+            relative_path: path.into(),
+            allow_missing: allow_missing.then_some(true),
+        };
+        workspace::read_file(&input, None, &f.files.internal)
+    };
+    let root_failure = |result: Result<_, workspace::FileFailure>| {
+        let failure = result.unwrap_err();
+        (failure.failure, failure.operation.map(|(op, _)| op))
+    };
+    let realpath_root = (
+        Failure::OperationFailed,
+        Some(conn_contract::ProjectReadFileErrorOperation::RealpathWorkspaceRoot),
+    );
+
+    // An existing worktree: a missing optional file is absent; a present one reads.
+    let missing = read_at(&worktree, "t3.json", true).unwrap();
+    assert_eq!(missing.exists, Some(false));
+    fs::write(worktree.join("t3.json"), "{}").unwrap();
+    assert_eq!(read_at(&worktree, "t3.json", true).unwrap().contents, "{}");
+
+    git(
+        &f.project,
+        &["worktree", "remove", "--force", worktree.to_str().unwrap()],
+    );
+    assert!(!worktree.exists());
+    let removed = read_at(&worktree, "t3.json", true).unwrap();
+    assert_eq!(
+        (removed.relative_path.as_str(), removed.exists),
+        ("t3.json", Some(false))
+    );
+    assert_eq!(
+        root_failure(read_at(&worktree, "t3.json", false)),
+        realpath_root
+    );
+
+    // A root that exists but cannot be resolved is an error, optional or not.
+    // A file as a root component gives ENOTDIR for every user, root included.
+    let file = f._base.0.join("plain-file");
+    fs::write(&file, "x").unwrap();
+    let not_dir = read_at(&file.join("root"), "t3.json", true);
+    assert_eq!(root_failure(not_dir), realpath_root);
+
+    // Permission denied, where the runner can actually be denied (not root).
+    let locked = f._base.0.join("locked");
+    fs::create_dir_all(locked.join("root")).unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let denied = read_at(&locked.join("root"), "t3.json", true);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
+    match denied {
+        Err(failure) => assert_eq!(
+            (failure.failure, failure.operation.map(|(op, _)| op)),
+            realpath_root
+        ),
+        // A privileged runner traverses mode 000, and the optional file is simply absent.
+        Ok(result) => assert_eq!(result.exists, Some(false)),
+    }
 }
 
 #[test]

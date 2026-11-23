@@ -471,6 +471,22 @@ private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterUInt8: FfiConverterPrimitive {
+    typealias FfiType = UInt8
+    typealias SwiftType = UInt8
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt8 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: UInt8, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias FfiType = UInt32
     typealias SwiftType = UInt32
@@ -1665,6 +1681,224 @@ public func FfiConverterTypeCoreListener_lower(_ value: CoreListener) -> UInt64 
 
 
 /**
+ * Measures whether the agent's context fits the panel's three lines; Swift measures with the
+ * panel's font and width.
+ */
+public protocol FfiTextFits: AnyObject, Sendable {
+    
+    /**
+     * Whether `text`, followed by "… Show more" when `with_more` is set, wraps within three
+     * lines.
+     */
+    func fits(text: String, withMore: Bool)  -> Bool
+    
+}
+/**
+ * Measures whether the agent's context fits the panel's three lines; Swift measures with the
+ * panel's font and width.
+ */
+open class FfiTextFitsImpl: FfiTextFits, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_conn_ffi_fn_clone_ffitextfits(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        if handle == 0 {
+            // Mock objects have handle=0 don't try to free them
+            return
+        }
+
+        try! rustCall { uniffi_conn_ffi_fn_free_ffitextfits(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Whether `text`, followed by "… Show more" when `with_more` is set, wraps within three
+     * lines.
+     */
+open func fits(text: String, withMore: Bool) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_method_ffitextfits_fits(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(text),
+        FfiConverterBool.lower(withMore),uniffiCallStatus
+    )
+})
+}
+    
+
+    
+}
+
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceFfiTextFits {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // Store the vtable directly.
+    static let vtable: UniffiVTableCallbackInterfaceFfiTextFits = UniffiVTableCallbackInterfaceFfiTextFits(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterTypeFfiTextFits.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface FfiTextFits: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterTypeFfiTextFits.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface FfiTextFits: handle missing in uniffiClone")
+            }
+        },
+        fits: { (
+            uniffiHandle: UInt64,
+            text: RustBuffer,
+            withMore: Int8,
+            uniffiOutReturn: UnsafeMutablePointer<Int8>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> Bool in
+                guard let uniffiObj = try? FfiConverterTypeFfiTextFits.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.fits(
+                     text: try FfiConverterString.lift(text),
+                     withMore: try FfiConverterBool.lift(withMore)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterBool.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )
+
+    // Rust stores this pointer for future callback invocations, so it must live
+    // for the process lifetime (not just for the init function call).
+    //
+    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
+    // This is safe because the pointee is initialized once during static init
+    // and never mutated by either side of the FFI.  Its fields are C function pointers.
+    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceFfiTextFits> = {
+        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceFfiTextFits>.allocate(capacity: 1)
+        ptr.initialize(to: vtable)
+        return UnsafePointer(ptr)
+    }()
+}
+
+private func uniffiCallbackInitFfiTextFits() {
+    uniffi_conn_ffi_fn_init_callback_vtable_ffitextfits(UniffiCallbackInterfaceFfiTextFits.vtablePtr)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTextFits: FfiConverter {
+    fileprivate static let handleMap = UniffiHandleMap<FfiTextFits>()
+
+    typealias FfiType = UInt64
+    typealias SwiftType = FfiTextFits
+
+    public static func lift(_ handle: UInt64) throws -> FfiTextFits {
+        if ((handle & 1) == 0) {
+            // Rust-generated handle, construct a new class that uses the handle to implement the
+            // interface
+            return FfiTextFitsImpl(unsafeFromHandle: handle)
+        } else {
+            // Swift-generated handle, get the object from the handle map
+            return try handleMap.remove(handle: handle)
+        }
+    }
+
+    public static func lower(_ value: FfiTextFits) -> UInt64 {
+         if let rustImpl = value as? FfiTextFitsImpl {
+             // Rust-implemented object.  Clone the handle and return it
+            return rustImpl.uniffiCloneHandle()
+         } else {
+            // Swift object, generate a new vtable handle and return that.
+            return handleMap.insert(obj: value)
+         }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTextFits {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: FfiTextFits, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextFits_lift(_ handle: UInt64) throws -> FfiTextFits {
+    return try FfiConverterTypeFfiTextFits.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTextFits_lower(_ value: FfiTextFits) -> UInt64 {
+    return FfiConverterTypeFfiTextFits.lower(value)
+}
+
+
+
+
+
+
+/**
  * UniFFI handle to the Orbit Gateway client, Reverb realtime follower, and Tokio runtime.
  */
 public protocol OrbitCoreProtocol: AnyObject, Sendable {
@@ -1878,6 +2112,16 @@ public protocol OrbitCoreProtocol: AnyObject, Sendable {
      * Returns [`FfiError::Orbit`] with the mapped [`FfiOrbitErrorReason`].
      */
     func wakeInstance(instanceId: Int64) async throws  -> Int64?
+    
+    /**
+     * Every task this device may read, plus each running task's timer (`useOrbitTaskList`).
+     *
+     * # Errors
+     *
+     * Returns [`FfiError::Orbit`] when the list cannot be read. A running task whose detail
+     * cannot be read only loses its timer.
+     */
+    func phoneTasks() async throws  -> FfiPhoneTasks
     
 }
 /**
@@ -2444,6 +2688,30 @@ open func wakeInstance(instanceId: Int64)async throws  -> Int64?  {
         )
 }
     
+    /**
+     * Every task this device may read, plus each running task's timer (`useOrbitTaskList`).
+     *
+     * # Errors
+     *
+     * Returns [`FfiError::Orbit`] when the list cannot be read. A running task whose detail
+     * cannot be read only loses its timer.
+     */
+open func phoneTasks()async throws  -> FfiPhoneTasks  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_conn_ffi_fn_method_orbitcore_phone_tasks(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_conn_ffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_conn_ffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_conn_ffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeFfiPhoneTasks_lift,
+            errorHandler: FfiConverterTypeFfiError_lift
+        )
+}
+    
 
     
 }
@@ -2827,6 +3095,73 @@ public func FfiConverterTypeOrbitListener_lower(_ value: OrbitListener) -> UInt6
 }
 
 
+
+
+/**
+ * One answer button on the approval card.
+ */
+public struct FfiApprovalOption: Equatable, Hashable {
+    public var decision: FfiApprovalDecision
+    public var label: String
+    /**
+     * Allow once is primary, decline is danger, the rest are secondary.
+     */
+    public var tone: FfiButtonTone
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(decision: FfiApprovalDecision, label: String, 
+        /**
+         * Allow once is primary, decline is danger, the rest are secondary.
+         */tone: FfiButtonTone) {
+        self.decision = decision
+        self.label = label
+        self.tone = tone
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiApprovalOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiApprovalOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiApprovalOption {
+        return
+            try FfiApprovalOption(
+                decision: FfiConverterTypeFfiApprovalDecision.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                tone: FfiConverterTypeFfiButtonTone.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiApprovalOption, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiApprovalDecision.write(value.decision, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeFfiButtonTone.write(value.tone, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApprovalOption_lift(_ buf: RustBuffer) throws -> FfiApprovalOption {
+    return try FfiConverterTypeFfiApprovalOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApprovalOption_lower(_ value: FfiApprovalOption) -> RustBuffer {
+    return FfiConverterTypeFfiApprovalOption.lower(value)
+}
 
 
 /**
@@ -4470,6 +4805,639 @@ public func FfiConverterTypeFfiOrbitWorkspace_lower(_ value: FfiOrbitWorkspace) 
 
 
 /**
+ * A pending approval as the card above the composer shows it.
+ */
+public struct FfiPendingApproval: Equatable, Hashable {
+    /**
+     * The approval's timeline entry.
+     */
+    public var entryId: String
+    /**
+     * Server request id to pass to [`crate::ConnCore::respond_approval`].
+     */
+    public var requestId: String
+    /**
+     * The app the agent asks about, or else the request kind (`command`, `file-change`, ...).
+     */
+    public var title: String
+    /**
+     * What the agent wants to do (the approval's prompt).
+     */
+    public var detail: String?
+    public var reason: String?
+    /**
+     * Why the agent asks although the run has full access. The card hides it behind
+     * "Why am I being asked this?".
+     */
+    public var fullAccessExplanation: String?
+    /**
+     * The first option warning, shown above the buttons.
+     */
+    public var warning: String?
+    public var options: [FfiApprovalOption]
+    /**
+     * The provider still waits for this answer. When it does not, the buttons are off and the
+     * card says the provider process is gone.
+     */
+    public var answerable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The approval's timeline entry.
+         */entryId: String, 
+        /**
+         * Server request id to pass to [`crate::ConnCore::respond_approval`].
+         */requestId: String, 
+        /**
+         * The app the agent asks about, or else the request kind (`command`, `file-change`, ...).
+         */title: String, 
+        /**
+         * What the agent wants to do (the approval's prompt).
+         */detail: String?, reason: String?, 
+        /**
+         * Why the agent asks although the run has full access. The card hides it behind
+         * "Why am I being asked this?".
+         */fullAccessExplanation: String?, 
+        /**
+         * The first option warning, shown above the buttons.
+         */warning: String?, options: [FfiApprovalOption], 
+        /**
+         * The provider still waits for this answer. When it does not, the buttons are off and the
+         * card says the provider process is gone.
+         */answerable: Bool) {
+        self.entryId = entryId
+        self.requestId = requestId
+        self.title = title
+        self.detail = detail
+        self.reason = reason
+        self.fullAccessExplanation = fullAccessExplanation
+        self.warning = warning
+        self.options = options
+        self.answerable = answerable
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPendingApproval: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPendingApproval: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPendingApproval {
+        return
+            try FfiPendingApproval(
+                entryId: FfiConverterString.read(from: &buf), 
+                requestId: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterOptionString.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf), 
+                fullAccessExplanation: FfiConverterOptionString.read(from: &buf), 
+                warning: FfiConverterOptionString.read(from: &buf), 
+                options: FfiConverterSequenceTypeFfiApprovalOption.read(from: &buf), 
+                answerable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPendingApproval, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.entryId, into: &buf)
+        FfiConverterString.write(value.requestId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.fullAccessExplanation, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
+        FfiConverterSequenceTypeFfiApprovalOption.write(value.options, into: &buf)
+        FfiConverterBool.write(value.answerable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingApproval_lift(_ buf: RustBuffer) throws -> FfiPendingApproval {
+    return try FfiConverterTypeFfiPendingApproval.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingApproval_lower(_ value: FfiPendingApproval) -> RustBuffer {
+    return FfiConverterTypeFfiPendingApproval.lower(value)
+}
+
+
+/**
+ * The open question the panel above the composer asks (mobile's `activePendingUserInput`).
+ */
+public struct FfiPendingQuestion: Equatable, Hashable {
+    /**
+     * The question's timeline entry, which the feed leaves out while the panel shows it.
+     */
+    public var entryId: String
+    /**
+     * Server request id to pass to [`crate::ConnCore::respond_user_input`] or
+     * [`crate::ConnCore::dismiss_user_input`].
+     */
+    public var requestId: String
+    public var questions: [FfiUserInputQuestion]
+    /**
+     * What the agent wrote just before asking, as markdown.
+     */
+    public var contextMarkdown: String?
+    /**
+     * The same text as plain lines, for the three-line clamp (`markdownPreviewText`).
+     */
+    public var contextPreview: String?
+    /**
+     * The provider still waits for the answer. When it does not, the panel is dimmed and says
+     * the provider process is gone.
+     */
+    public var answerable: Bool
+    /**
+     * The question can be skipped unanswered (`responseMode: "message"`).
+     */
+    public var dismissible: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The question's timeline entry, which the feed leaves out while the panel shows it.
+         */entryId: String, 
+        /**
+         * Server request id to pass to [`crate::ConnCore::respond_user_input`] or
+         * [`crate::ConnCore::dismiss_user_input`].
+         */requestId: String, questions: [FfiUserInputQuestion], 
+        /**
+         * What the agent wrote just before asking, as markdown.
+         */contextMarkdown: String?, 
+        /**
+         * The same text as plain lines, for the three-line clamp (`markdownPreviewText`).
+         */contextPreview: String?, 
+        /**
+         * The provider still waits for the answer. When it does not, the panel is dimmed and says
+         * the provider process is gone.
+         */answerable: Bool, 
+        /**
+         * The question can be skipped unanswered (`responseMode: "message"`).
+         */dismissible: Bool) {
+        self.entryId = entryId
+        self.requestId = requestId
+        self.questions = questions
+        self.contextMarkdown = contextMarkdown
+        self.contextPreview = contextPreview
+        self.answerable = answerable
+        self.dismissible = dismissible
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPendingQuestion: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPendingQuestion: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPendingQuestion {
+        return
+            try FfiPendingQuestion(
+                entryId: FfiConverterString.read(from: &buf), 
+                requestId: FfiConverterString.read(from: &buf), 
+                questions: FfiConverterSequenceTypeFfiUserInputQuestion.read(from: &buf), 
+                contextMarkdown: FfiConverterOptionString.read(from: &buf), 
+                contextPreview: FfiConverterOptionString.read(from: &buf), 
+                answerable: FfiConverterBool.read(from: &buf), 
+                dismissible: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPendingQuestion, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.entryId, into: &buf)
+        FfiConverterString.write(value.requestId, into: &buf)
+        FfiConverterSequenceTypeFfiUserInputQuestion.write(value.questions, into: &buf)
+        FfiConverterOptionString.write(value.contextMarkdown, into: &buf)
+        FfiConverterOptionString.write(value.contextPreview, into: &buf)
+        FfiConverterBool.write(value.answerable, into: &buf)
+        FfiConverterBool.write(value.dismissible, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingQuestion_lift(_ buf: RustBuffer) throws -> FfiPendingQuestion {
+    return try FfiConverterTypeFfiPendingQuestion.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingQuestion_lower(_ value: FfiPendingQuestion) -> RustBuffer {
+    return FfiConverterTypeFfiPendingQuestion.lower(value)
+}
+
+
+/**
+ * A title and a line that explain why the tasks cannot be read (`tasksErrorText`).
+ */
+public struct FfiPhoneNotice: Equatable, Hashable {
+    public var title: String
+    public var detail: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(title: String, detail: String) {
+        self.title = title
+        self.detail = detail
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneNotice: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneNotice: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneNotice {
+        return
+            try FfiPhoneNotice(
+                title: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneNotice, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneNotice_lift(_ buf: RustBuffer) throws -> FfiPhoneNotice {
+    return try FfiConverterTypeFfiPhoneNotice.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneNotice_lower(_ value: FfiPhoneNotice) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneNotice.lower(value)
+}
+
+
+/**
+ * One lane in the lane menu, with how many tasks in it match the search.
+ */
+public struct FfiPhoneTaskLane: Equatable, Hashable {
+    public var id: FfiTaskLane
+    public var label: String
+    public var count: UInt32
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: FfiTaskLane, label: String, count: UInt32, selected: Bool) {
+        self.id = id
+        self.label = label
+        self.count = count
+        self.selected = selected
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTaskLane: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTaskLane: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTaskLane {
+        return
+            try FfiPhoneTaskLane(
+                id: FfiConverterTypeFfiTaskLane.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                count: FfiConverterUInt32.read(from: &buf), 
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTaskLane, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiTaskLane.write(value.id, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterUInt32.write(value.count, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskLane_lift(_ buf: RustBuffer) throws -> FfiPhoneTaskLane {
+    return try FfiConverterTypeFfiPhoneTaskLane.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskLane_lower(_ value: FfiPhoneTaskLane) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTaskLane.lower(value)
+}
+
+
+/**
+ * One row of the Tasks tab (`TaskRow`).
+ */
+public struct FfiPhoneTaskRow: Equatable, Hashable {
+    public var id: Int64
+    public var title: String
+    public var dot: FfiTaskDot
+    /**
+     * Work in progress drops the title to regular weight, like a working thread.
+     */
+    public var recede: Bool
+    /**
+     * The project tile's letter and colour (an index into mobile's eight `PROJECT_COLORS`).
+     */
+    public var tileLetter: String
+    public var tileColorIndex: UInt8
+    /**
+     * `conn · #482 · 1/4 · 12m · nick-mini`: project, number, subtasks, time and machine.
+     */
+    public var detail: String
+    public var pullRequest: FfiTaskPullRequest?
+    public var accessibilityLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(id: Int64, title: String, dot: FfiTaskDot, 
+        /**
+         * Work in progress drops the title to regular weight, like a working thread.
+         */recede: Bool, 
+        /**
+         * The project tile's letter and colour (an index into mobile's eight `PROJECT_COLORS`).
+         */tileLetter: String, tileColorIndex: UInt8, 
+        /**
+         * `conn · #482 · 1/4 · 12m · nick-mini`: project, number, subtasks, time and machine.
+         */detail: String, pullRequest: FfiTaskPullRequest?, accessibilityLabel: String) {
+        self.id = id
+        self.title = title
+        self.dot = dot
+        self.recede = recede
+        self.tileLetter = tileLetter
+        self.tileColorIndex = tileColorIndex
+        self.detail = detail
+        self.pullRequest = pullRequest
+        self.accessibilityLabel = accessibilityLabel
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTaskRow: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTaskRow: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTaskRow {
+        return
+            try FfiPhoneTaskRow(
+                id: FfiConverterInt64.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                dot: FfiConverterTypeFfiTaskDot.read(from: &buf), 
+                recede: FfiConverterBool.read(from: &buf), 
+                tileLetter: FfiConverterString.read(from: &buf), 
+                tileColorIndex: FfiConverterUInt8.read(from: &buf), 
+                detail: FfiConverterString.read(from: &buf), 
+                pullRequest: FfiConverterOptionTypeFfiTaskPullRequest.read(from: &buf), 
+                accessibilityLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTaskRow, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterTypeFfiTaskDot.write(value.dot, into: &buf)
+        FfiConverterBool.write(value.recede, into: &buf)
+        FfiConverterString.write(value.tileLetter, into: &buf)
+        FfiConverterUInt8.write(value.tileColorIndex, into: &buf)
+        FfiConverterString.write(value.detail, into: &buf)
+        FfiConverterOptionTypeFfiTaskPullRequest.write(value.pullRequest, into: &buf)
+        FfiConverterString.write(value.accessibilityLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskRow_lift(_ buf: RustBuffer) throws -> FfiPhoneTaskRow {
+    return try FfiConverterTypeFfiPhoneTaskRow.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTaskRow_lower(_ value: FfiPhoneTaskRow) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTaskRow.lower(value)
+}
+
+
+/**
+ * Every task this device may read, as [`OrbitCore::phone_tasks`] read it.
+ */
+public struct FfiPhoneTasks: Equatable, Hashable {
+    /**
+     * Every task, in Orbit's order.
+     */
+    public var tasks: [FfiTaskSummary]
+    /**
+     * How long each running task has worked. The list carries no metrics, so this comes from
+     * each running task's detail; a task whose detail did not answer has no entry.
+     */
+    public var runningDurationsMs: [Int64: Double]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Every task, in Orbit's order.
+         */tasks: [FfiTaskSummary], 
+        /**
+         * How long each running task has worked. The list carries no metrics, so this comes from
+         * each running task's detail; a task whose detail did not answer has no entry.
+         */runningDurationsMs: [Int64: Double]) {
+        self.tasks = tasks
+        self.runningDurationsMs = runningDurationsMs
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTasks: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTasks: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTasks {
+        return
+            try FfiPhoneTasks(
+                tasks: FfiConverterSequenceTypeFfiTaskSummary.read(from: &buf), 
+                runningDurationsMs: FfiConverterDictionaryInt64Double.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTasks, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiTaskSummary.write(value.tasks, into: &buf)
+        FfiConverterDictionaryInt64Double.write(value.runningDurationsMs, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasks_lift(_ buf: RustBuffer) throws -> FfiPhoneTasks {
+    return try FfiConverterTypeFfiPhoneTasks.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasks_lower(_ value: FfiPhoneTasks) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTasks.lower(value)
+}
+
+
+/**
+ * What the Tasks tab shows for one lane and search.
+ */
+public struct FfiPhoneTasksView: Equatable, Hashable {
+    /**
+     * The lane menu, in phone order.
+     */
+    public var lanes: [FfiPhoneTaskLane]
+    /**
+     * The rows of the selected lane that match the search.
+     */
+    public var rows: [FfiPhoneTaskRow]
+    /**
+     * The line under the title: `In progress · 3`.
+     */
+    public var subtitle: String
+    /**
+     * What the list says when the lane has no rows; `None` when it has some.
+     */
+    public var emptyText: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The lane menu, in phone order.
+         */lanes: [FfiPhoneTaskLane], 
+        /**
+         * The rows of the selected lane that match the search.
+         */rows: [FfiPhoneTaskRow], 
+        /**
+         * The line under the title: `In progress · 3`.
+         */subtitle: String, 
+        /**
+         * What the list says when the lane has no rows; `None` when it has some.
+         */emptyText: String?) {
+        self.lanes = lanes
+        self.rows = rows
+        self.subtitle = subtitle
+        self.emptyText = emptyText
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPhoneTasksView: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPhoneTasksView: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPhoneTasksView {
+        return
+            try FfiPhoneTasksView(
+                lanes: FfiConverterSequenceTypeFfiPhoneTaskLane.read(from: &buf), 
+                rows: FfiConverterSequenceTypeFfiPhoneTaskRow.read(from: &buf), 
+                subtitle: FfiConverterString.read(from: &buf), 
+                emptyText: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPhoneTasksView, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFfiPhoneTaskLane.write(value.lanes, into: &buf)
+        FfiConverterSequenceTypeFfiPhoneTaskRow.write(value.rows, into: &buf)
+        FfiConverterString.write(value.subtitle, into: &buf)
+        FfiConverterOptionString.write(value.emptyText, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasksView_lift(_ buf: RustBuffer) throws -> FfiPhoneTasksView {
+    return try FfiConverterTypeFfiPhoneTasksView.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPhoneTasksView_lower(_ value: FfiPhoneTasksView) -> RustBuffer {
+    return FfiConverterTypeFfiPhoneTasksView.lower(value)
+}
+
+
+/**
  * One registered project from `orchestration.subscribeShell`.
  */
 public struct FfiProject: Equatable, Hashable {
@@ -4527,6 +5495,383 @@ public func FfiConverterTypeFfiProject_lift(_ buf: RustBuffer) throws -> FfiProj
 #endif
 public func FfiConverterTypeFfiProject_lower(_ value: FfiProject) -> RustBuffer {
     return FfiConverterTypeFfiProject.lower(value)
+}
+
+
+/**
+ * The local answer to one question (`PendingUserInputDraftAnswer`).
+ */
+public struct FfiQuestionDraft: Equatable, Hashable {
+    public var selected: [String]
+    public var custom: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(selected: [String], custom: String?) {
+        self.selected = selected
+        self.custom = custom
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiQuestionDraft: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiQuestionDraft: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiQuestionDraft {
+        return
+            try FfiQuestionDraft(
+                selected: FfiConverterSequenceString.read(from: &buf), 
+                custom: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiQuestionDraft, into buf: inout [UInt8]) {
+        FfiConverterSequenceString.write(value.selected, into: &buf)
+        FfiConverterOptionString.write(value.custom, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionDraft_lift(_ buf: RustBuffer) throws -> FfiQuestionDraft {
+    return try FfiConverterTypeFfiQuestionDraft.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionDraft_lower(_ value: FfiQuestionDraft) -> RustBuffer {
+    return FfiConverterTypeFfiQuestionDraft.lower(value)
+}
+
+
+/**
+ * Everything the question panel and the composer show for the current step.
+ */
+public struct FfiQuestionPanel: Equatable, Hashable {
+    /**
+     * The step, clamped to the questions.
+     */
+    public var step: UInt32
+    public var questionId: String
+    /**
+     * The question, as markdown.
+     */
+    public var question: String
+    public var multiSelect: Bool
+    public var options: [FfiQuestionPanelOption]
+    /**
+     * The typed or stored free-text answer, shown as a selected "Your answer" row.
+     */
+    public var customAnswer: String?
+    /**
+     * "2 of 3", when there is more than one question.
+     */
+    public var progress: String?
+    /**
+     * Why the panel cannot answer, under the questions.
+     */
+    public var notice: String?
+    /**
+     * The options and the footer are dimmed: nobody waits for the answer.
+     */
+    public var dimmed: Bool
+    /**
+     * The options take no taps: dimmed or an answer is on its way.
+     */
+    public var optionsDisabled: Bool
+    public var showSkip: Bool
+    public var skipDisabled: Bool
+    public var showBack: Bool
+    public var backDisabled: Bool
+    public var showNext: Bool
+    public var nextDisabled: Bool
+    public var showSend: Bool
+    public var sendDisabled: Bool
+    /**
+     * The footer row shows at all.
+     */
+    public var showFooter: Bool
+    public var isLast: Bool
+    /**
+     * A single-choice pick moves to the next step on its own (after mobile's 200 ms).
+     */
+    public var advancesOnPick: Bool
+    /**
+     * The composer's text answers this question.
+     */
+    public var acceptsText: Bool
+    public var composerPlaceholder: String
+    /**
+     * The composer's send button answers the question even with no text: it moves to the next
+     * question, or sends the answers on the last one.
+     */
+    public var answerActionReady: Bool
+    public var answerActionLabel: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The step, clamped to the questions.
+         */step: UInt32, questionId: String, 
+        /**
+         * The question, as markdown.
+         */question: String, multiSelect: Bool, options: [FfiQuestionPanelOption], 
+        /**
+         * The typed or stored free-text answer, shown as a selected "Your answer" row.
+         */customAnswer: String?, 
+        /**
+         * "2 of 3", when there is more than one question.
+         */progress: String?, 
+        /**
+         * Why the panel cannot answer, under the questions.
+         */notice: String?, 
+        /**
+         * The options and the footer are dimmed: nobody waits for the answer.
+         */dimmed: Bool, 
+        /**
+         * The options take no taps: dimmed or an answer is on its way.
+         */optionsDisabled: Bool, showSkip: Bool, skipDisabled: Bool, showBack: Bool, backDisabled: Bool, showNext: Bool, nextDisabled: Bool, showSend: Bool, sendDisabled: Bool, 
+        /**
+         * The footer row shows at all.
+         */showFooter: Bool, isLast: Bool, 
+        /**
+         * A single-choice pick moves to the next step on its own (after mobile's 200 ms).
+         */advancesOnPick: Bool, 
+        /**
+         * The composer's text answers this question.
+         */acceptsText: Bool, composerPlaceholder: String, 
+        /**
+         * The composer's send button answers the question even with no text: it moves to the next
+         * question, or sends the answers on the last one.
+         */answerActionReady: Bool, answerActionLabel: String) {
+        self.step = step
+        self.questionId = questionId
+        self.question = question
+        self.multiSelect = multiSelect
+        self.options = options
+        self.customAnswer = customAnswer
+        self.progress = progress
+        self.notice = notice
+        self.dimmed = dimmed
+        self.optionsDisabled = optionsDisabled
+        self.showSkip = showSkip
+        self.skipDisabled = skipDisabled
+        self.showBack = showBack
+        self.backDisabled = backDisabled
+        self.showNext = showNext
+        self.nextDisabled = nextDisabled
+        self.showSend = showSend
+        self.sendDisabled = sendDisabled
+        self.showFooter = showFooter
+        self.isLast = isLast
+        self.advancesOnPick = advancesOnPick
+        self.acceptsText = acceptsText
+        self.composerPlaceholder = composerPlaceholder
+        self.answerActionReady = answerActionReady
+        self.answerActionLabel = answerActionLabel
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiQuestionPanel: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiQuestionPanel: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiQuestionPanel {
+        return
+            try FfiQuestionPanel(
+                step: FfiConverterUInt32.read(from: &buf), 
+                questionId: FfiConverterString.read(from: &buf), 
+                question: FfiConverterString.read(from: &buf), 
+                multiSelect: FfiConverterBool.read(from: &buf), 
+                options: FfiConverterSequenceTypeFfiQuestionPanelOption.read(from: &buf), 
+                customAnswer: FfiConverterOptionString.read(from: &buf), 
+                progress: FfiConverterOptionString.read(from: &buf), 
+                notice: FfiConverterOptionString.read(from: &buf), 
+                dimmed: FfiConverterBool.read(from: &buf), 
+                optionsDisabled: FfiConverterBool.read(from: &buf), 
+                showSkip: FfiConverterBool.read(from: &buf), 
+                skipDisabled: FfiConverterBool.read(from: &buf), 
+                showBack: FfiConverterBool.read(from: &buf), 
+                backDisabled: FfiConverterBool.read(from: &buf), 
+                showNext: FfiConverterBool.read(from: &buf), 
+                nextDisabled: FfiConverterBool.read(from: &buf), 
+                showSend: FfiConverterBool.read(from: &buf), 
+                sendDisabled: FfiConverterBool.read(from: &buf), 
+                showFooter: FfiConverterBool.read(from: &buf), 
+                isLast: FfiConverterBool.read(from: &buf), 
+                advancesOnPick: FfiConverterBool.read(from: &buf), 
+                acceptsText: FfiConverterBool.read(from: &buf), 
+                composerPlaceholder: FfiConverterString.read(from: &buf), 
+                answerActionReady: FfiConverterBool.read(from: &buf), 
+                answerActionLabel: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiQuestionPanel, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.step, into: &buf)
+        FfiConverterString.write(value.questionId, into: &buf)
+        FfiConverterString.write(value.question, into: &buf)
+        FfiConverterBool.write(value.multiSelect, into: &buf)
+        FfiConverterSequenceTypeFfiQuestionPanelOption.write(value.options, into: &buf)
+        FfiConverterOptionString.write(value.customAnswer, into: &buf)
+        FfiConverterOptionString.write(value.progress, into: &buf)
+        FfiConverterOptionString.write(value.notice, into: &buf)
+        FfiConverterBool.write(value.dimmed, into: &buf)
+        FfiConverterBool.write(value.optionsDisabled, into: &buf)
+        FfiConverterBool.write(value.showSkip, into: &buf)
+        FfiConverterBool.write(value.skipDisabled, into: &buf)
+        FfiConverterBool.write(value.showBack, into: &buf)
+        FfiConverterBool.write(value.backDisabled, into: &buf)
+        FfiConverterBool.write(value.showNext, into: &buf)
+        FfiConverterBool.write(value.nextDisabled, into: &buf)
+        FfiConverterBool.write(value.showSend, into: &buf)
+        FfiConverterBool.write(value.sendDisabled, into: &buf)
+        FfiConverterBool.write(value.showFooter, into: &buf)
+        FfiConverterBool.write(value.isLast, into: &buf)
+        FfiConverterBool.write(value.advancesOnPick, into: &buf)
+        FfiConverterBool.write(value.acceptsText, into: &buf)
+        FfiConverterString.write(value.composerPlaceholder, into: &buf)
+        FfiConverterBool.write(value.answerActionReady, into: &buf)
+        FfiConverterString.write(value.answerActionLabel, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionPanel_lift(_ buf: RustBuffer) throws -> FfiQuestionPanel {
+    return try FfiConverterTypeFfiQuestionPanel.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionPanel_lower(_ value: FfiQuestionPanel) -> RustBuffer {
+    return FfiConverterTypeFfiQuestionPanel.lower(value)
+}
+
+
+/**
+ * One option row of the panel.
+ */
+public struct FfiQuestionPanelOption: Equatable, Hashable {
+    /**
+     * The value to pass to [`question_toggle_option`].
+     */
+    public var value: String
+    /**
+     * The label without a trailing "(Recommended)".
+     */
+    public var label: String
+    /**
+     * The agent marked this option "(Recommended)"; the row shows a pill above the label.
+     */
+    public var recommended: Bool
+    /**
+     * Shown under the label when it says more than the label.
+     */
+    public var description: String?
+    /**
+     * Markdown shown under the row.
+     */
+    public var preview: String?
+    public var selected: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The value to pass to [`question_toggle_option`].
+         */value: String, 
+        /**
+         * The label without a trailing "(Recommended)".
+         */label: String, 
+        /**
+         * The agent marked this option "(Recommended)"; the row shows a pill above the label.
+         */recommended: Bool, 
+        /**
+         * Shown under the label when it says more than the label.
+         */description: String?, 
+        /**
+         * Markdown shown under the row.
+         */preview: String?, selected: Bool) {
+        self.value = value
+        self.label = label
+        self.recommended = recommended
+        self.description = description
+        self.preview = preview
+        self.selected = selected
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiQuestionPanelOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiQuestionPanelOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiQuestionPanelOption {
+        return
+            try FfiQuestionPanelOption(
+                value: FfiConverterString.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                recommended: FfiConverterBool.read(from: &buf), 
+                description: FfiConverterOptionString.read(from: &buf), 
+                preview: FfiConverterOptionString.read(from: &buf), 
+                selected: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiQuestionPanelOption, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterBool.write(value.recommended, into: &buf)
+        FfiConverterOptionString.write(value.description, into: &buf)
+        FfiConverterOptionString.write(value.preview, into: &buf)
+        FfiConverterBool.write(value.selected, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionPanelOption_lift(_ buf: RustBuffer) throws -> FfiQuestionPanelOption {
+    return try FfiConverterTypeFfiQuestionPanelOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiQuestionPanelOption_lower(_ value: FfiQuestionPanelOption) -> RustBuffer {
+    return FfiConverterTypeFfiQuestionPanelOption.lower(value)
 }
 
 
@@ -6232,10 +7577,28 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
     public var activeRunId: String?
     public var queuedCount: UInt32
     public var synchronized: Bool
+    /**
+     * Approvals still waiting for an answer, in timeline order; the card above the composer
+     * shows the first (Conn mobile's `activePendingApproval`).
+     */
+    public var pendingApprovals: [FfiPendingApproval]
+    /**
+     * The question the panel above the composer asks; `entries` leaves its row out, since the
+     * panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
+     */
+    public var pendingQuestion: FfiPendingQuestion?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool) {
+    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
+        /**
+         * Approvals still waiting for an answer, in timeline order; the card above the composer
+         * shows the first (Conn mobile's `activePendingApproval`).
+         */pendingApprovals: [FfiPendingApproval], 
+        /**
+         * The question the panel above the composer asks; `entries` leaves its row out, since the
+         * panel shows it (Conn mobile's `feedWithoutOpenQuestionRow`).
+         */pendingQuestion: FfiPendingQuestion?) {
         self.threadId = threadId
         self.title = title
         self.branch = branch
@@ -6246,6 +7609,8 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
         self.activeRunId = activeRunId
         self.queuedCount = queuedCount
         self.synchronized = synchronized
+        self.pendingApprovals = pendingApprovals
+        self.pendingQuestion = pendingQuestion
     }
 
     
@@ -6273,7 +7638,9 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
                 working: FfiConverterBool.read(from: &buf), 
                 activeRunId: FfiConverterOptionString.read(from: &buf), 
                 queuedCount: FfiConverterUInt32.read(from: &buf), 
-                synchronized: FfiConverterBool.read(from: &buf)
+                synchronized: FfiConverterBool.read(from: &buf), 
+                pendingApprovals: FfiConverterSequenceTypeFfiPendingApproval.read(from: &buf), 
+                pendingQuestion: FfiConverterOptionTypeFfiPendingQuestion.read(from: &buf)
         )
     }
 
@@ -6288,6 +7655,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.activeRunId, into: &buf)
         FfiConverterUInt32.write(value.queuedCount, into: &buf)
         FfiConverterBool.write(value.synchronized, into: &buf)
+        FfiConverterSequenceTypeFfiPendingApproval.write(value.pendingApprovals, into: &buf)
+        FfiConverterOptionTypeFfiPendingQuestion.write(value.pendingQuestion, into: &buf)
     }
 }
 
@@ -6553,19 +7922,27 @@ public struct FfiUserInputOption: Equatable, Hashable {
     public var label: String
     public var description: String
     /**
-     * Value submitted when chosen (`option.value ?? option.label`).
+     * Value submitted when chosen (`option.value ?? option.label.trim()`).
      */
     public var value: String
+    /**
+     * Markdown shown under the option (`option.preview`).
+     */
+    public var preview: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(label: String, description: String, 
         /**
-         * Value submitted when chosen (`option.value ?? option.label`).
-         */value: String) {
+         * Value submitted when chosen (`option.value ?? option.label.trim()`).
+         */value: String, 
+        /**
+         * Markdown shown under the option (`option.preview`).
+         */preview: String?) {
         self.label = label
         self.description = description
         self.value = value
+        self.preview = preview
     }
 
     
@@ -6586,7 +7963,8 @@ public struct FfiConverterTypeFfiUserInputOption: FfiConverterRustBuffer {
             try FfiUserInputOption(
                 label: FfiConverterString.read(from: &buf), 
                 description: FfiConverterString.read(from: &buf), 
-                value: FfiConverterString.read(from: &buf)
+                value: FfiConverterString.read(from: &buf), 
+                preview: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -6594,6 +7972,7 @@ public struct FfiConverterTypeFfiUserInputOption: FfiConverterRustBuffer {
         FfiConverterString.write(value.label, into: &buf)
         FfiConverterString.write(value.description, into: &buf)
         FfiConverterString.write(value.value, into: &buf)
+        FfiConverterOptionString.write(value.preview, into: &buf)
     }
 }
 
@@ -7243,6 +8622,82 @@ public func FfiConverterTypeFfiAttentionKind_lift(_ buf: RustBuffer) throws -> F
 #endif
 public func FfiConverterTypeFfiAttentionKind_lower(_ value: FfiAttentionKind) -> RustBuffer {
     return FfiConverterTypeFfiAttentionKind.lower(value)
+}
+
+
+
+/**
+ * A full-width button's colours (mobile `Button` tones).
+ */
+
+public enum FfiButtonTone: Equatable, Hashable {
+    
+    case primary
+    case secondary
+    case danger
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiButtonTone: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiButtonTone: FfiConverterRustBuffer {
+    typealias SwiftType = FfiButtonTone
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiButtonTone {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .primary
+        
+        case 2: return .secondary
+        
+        case 3: return .danger
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiButtonTone, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .primary:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .secondary:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .danger:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiButtonTone_lift(_ buf: RustBuffer) throws -> FfiButtonTone {
+    return try FfiConverterTypeFfiButtonTone.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiButtonTone_lower(_ value: FfiButtonTone) -> RustBuffer {
+    return FfiConverterTypeFfiButtonTone.lower(value)
 }
 
 
@@ -9252,6 +10707,101 @@ public func FfiConverterTypeFfiSubtaskStatus_lower(_ value: FfiSubtaskStatus) ->
 
 
 
+/**
+ * The status dot on a row's project tile (`taskDotState`).
+ */
+
+public enum FfiTaskDot: Equatable, Hashable {
+    
+    /**
+     * Grey: needs an answer, or has not started (backlog, to do, cancelled).
+     */
+    case waiting
+    /**
+     * Red: failed, or blocked while it runs.
+     */
+    case failed
+    /**
+     * Blue: runs.
+     */
+    case working
+    /**
+     * Green: done.
+     */
+    case done
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiTaskDot: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiTaskDot: FfiConverterRustBuffer {
+    typealias SwiftType = FfiTaskDot
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiTaskDot {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .waiting
+        
+        case 2: return .failed
+        
+        case 3: return .working
+        
+        case 4: return .done
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiTaskDot, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .waiting:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .failed:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .working:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .done:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTaskDot_lift(_ buf: RustBuffer) throws -> FfiTaskDot {
+    return try FfiConverterTypeFfiTaskDot.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiTaskDot_lower(_ value: FfiTaskDot) -> RustBuffer {
+    return FfiConverterTypeFfiTaskDot.lower(value)
+}
+
+
+
 
 public enum FfiTaskEnvironmentState: Equatable, Hashable {
     
@@ -10554,6 +12104,54 @@ fileprivate struct FfiConverterOptionTypeFfiOrbitProfile: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeFfiPendingQuestion: FfiConverterRustBuffer {
+    typealias SwiftType = FfiPendingQuestion?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiPendingQuestion.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiPendingQuestion.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeFfiQuestionPanel: FfiConverterRustBuffer {
+    typealias SwiftType = FfiQuestionPanel?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeFfiQuestionPanel.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeFfiQuestionPanel.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeFfiTaskAttention: FfiConverterRustBuffer {
     typealias SwiftType = FfiTaskAttention?
 
@@ -10866,6 +12464,30 @@ fileprivate struct FfiConverterOptionTypeFfiTaskLabelTone: FfiConverterRustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionSequenceTypeFfiUserInputSubmission: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiUserInputSubmission]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeFfiUserInputSubmission.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeFfiUserInputSubmission.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceInt64: FfiConverterRustBuffer {
     typealias SwiftType = [Int64]
 
@@ -10908,6 +12530,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterString.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiApprovalOption: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiApprovalOption]
+
+    public static func write(_ value: [FfiApprovalOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiApprovalOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiApprovalOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiApprovalOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiApprovalOption.read(from: &buf))
         }
         return seq
     }
@@ -11191,6 +12838,81 @@ fileprivate struct FfiConverterSequenceTypeFfiOrbitWorkspace: FfiConverterRustBu
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiPendingApproval: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPendingApproval]
+
+    public static func write(_ value: [FfiPendingApproval], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPendingApproval.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPendingApproval] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPendingApproval]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPendingApproval.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPhoneTaskLane: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPhoneTaskLane]
+
+    public static func write(_ value: [FfiPhoneTaskLane], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPhoneTaskLane.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPhoneTaskLane] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPhoneTaskLane]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPhoneTaskLane.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPhoneTaskRow: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPhoneTaskRow]
+
+    public static func write(_ value: [FfiPhoneTaskRow], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPhoneTaskRow.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPhoneTaskRow] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPhoneTaskRow]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPhoneTaskRow.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiProject: FfiConverterRustBuffer {
     typealias SwiftType = [FfiProject]
 
@@ -11208,6 +12930,31 @@ fileprivate struct FfiConverterSequenceTypeFfiProject: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiProject.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiQuestionPanelOption: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiQuestionPanelOption]
+
+    public static func write(_ value: [FfiQuestionPanelOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiQuestionPanelOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiQuestionPanelOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiQuestionPanelOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiQuestionPanelOption.read(from: &buf))
         }
         return seq
     }
@@ -11566,6 +13313,32 @@ fileprivate struct FfiConverterSequenceTypeFfiTimelineEntry: FfiConverterRustBuf
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterDictionaryInt64Double: FfiConverterRustBuffer {
+    public static func write(_ value: [Int64: Double], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterInt64.write(key, into: &buf)
+            FfiConverterDouble.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Int64: Double] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [Int64: Double]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterInt64.read(from: &buf)
+            let value = try FfiConverterDouble.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
     public static func write(_ value: [String: String], into buf: inout [UInt8]) {
         let len = Int32(value.count)
@@ -11583,6 +13356,32 @@ fileprivate struct FfiConverterDictionaryStringString: FfiConverterRustBuffer {
         for _ in 0..<len {
             let key = try FfiConverterString.read(from: &buf)
             let value = try FfiConverterString.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringTypeFfiQuestionDraft: FfiConverterRustBuffer {
+    public static func write(_ value: [String: FfiQuestionDraft], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterTypeFfiQuestionDraft.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: FfiQuestionDraft] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: FfiQuestionDraft]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterTypeFfiQuestionDraft.read(from: &buf)
             dict[key] = value
         }
         return dict
@@ -11665,6 +13464,98 @@ public func orbitWorkspaceMatchesProject(workspace: FfiOrbitWorkspace, projectId
 })
 }
 /**
+ * Why the tasks cannot be read, in mobile's words.
+ */
+public func phoneTasksErrorText(reason: FfiOrbitErrorReason) -> FfiPhoneNotice  {
+    return try!  FfiConverterTypeFfiPhoneNotice_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_phone_tasks_error_text(
+        FfiConverterTypeFfiOrbitErrorReason_lower(reason),uniffiCallStatus
+    )
+})
+}
+/**
+ * The Tasks tab for `lane` and `query` at `now_ms` (Unix milliseconds, for the row times).
+ */
+public func phoneTasksView(list: FfiPhoneTasks, lane: FfiTaskLane, query: String, nowMs: Int64) -> FfiPhoneTasksView  {
+    return try!  FfiConverterTypeFfiPhoneTasksView_lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_phone_tasks_view(
+        FfiConverterTypeFfiPhoneTasks_lower(list),
+        FfiConverterTypeFfiTaskLane_lower(lane),
+        FfiConverterString.lower(query),
+        FfiConverterInt64.lower(nowMs),uniffiCallStatus
+    )
+})
+}
+/**
+ * Every question's answer, or `None` while one is unanswered (`buildPendingUserInputAnswers`).
+ */
+public func questionAnswers(pending: FfiPendingQuestion, drafts: [String: FfiQuestionDraft]) -> [FfiUserInputSubmission]?  {
+    return try!  FfiConverterOptionSequenceTypeFfiUserInputSubmission.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_question_answers(
+        FfiConverterTypeFfiPendingQuestion_lower(pending),
+        FfiConverterDictionaryStringTypeFfiQuestionDraft.lower(drafts),uniffiCallStatus
+    )
+})
+}
+/**
+ * Where the agent's context stops so "… Show more" ends its third line, or `None` when it fits.
+ */
+public func questionContextClamp(preview: String, fits: FfiTextFits) -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_question_context_clamp(
+        FfiConverterString.lower(preview),
+        FfiConverterTypeFfiTextFits_lower(fits),uniffiCallStatus
+    )
+})
+}
+/**
+ * The panel for `step` of `pending`, with `typed_answer` the composer's text.
+ */
+public func questionPanel(pending: FfiPendingQuestion, step: UInt32, drafts: [String: FfiQuestionDraft], typedAnswer: String, responding: Bool) -> FfiQuestionPanel?  {
+    return try!  FfiConverterOptionTypeFfiQuestionPanel.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_question_panel(
+        FfiConverterTypeFfiPendingQuestion_lower(pending),
+        FfiConverterUInt32.lower(step),
+        FfiConverterDictionaryStringTypeFfiQuestionDraft.lower(drafts),
+        FfiConverterString.lower(typedAnswer),
+        FfiConverterBool.lower(responding),uniffiCallStatus
+    )
+})
+}
+/**
+ * The drafts after the composer's text became the free-text answer of question `question_id`.
+ */
+public func questionSetCustomAnswer(pending: FfiPendingQuestion, questionId: String, drafts: [String: FfiQuestionDraft], text: String) -> [String: FfiQuestionDraft]  {
+    return try!  FfiConverterDictionaryStringTypeFfiQuestionDraft.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_question_set_custom_answer(
+        FfiConverterTypeFfiPendingQuestion_lower(pending),
+        FfiConverterString.lower(questionId),
+        FfiConverterDictionaryStringTypeFfiQuestionDraft.lower(drafts),
+        FfiConverterString.lower(text),uniffiCallStatus
+    )
+})
+}
+/**
+ * The drafts after tapping option `value` of question `question_id`.
+ */
+public func questionToggleOption(pending: FfiPendingQuestion, questionId: String, drafts: [String: FfiQuestionDraft], value: String) -> [String: FfiQuestionDraft]  {
+    return try!  FfiConverterDictionaryStringTypeFfiQuestionDraft.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_conn_ffi_fn_func_question_toggle_option(
+        FfiConverterTypeFfiPendingQuestion_lower(pending),
+        FfiConverterString.lower(questionId),
+        FfiConverterDictionaryStringTypeFfiQuestionDraft.lower(drafts),
+        FfiConverterString.lower(value),uniffiCallStatus
+    )
+})
+}
+/**
  * Returns every built-in Conn theme in the desktop client's canonical order.
  */
 public func builtinThemes() -> [FfiThemeSummary]  {
@@ -11721,6 +13612,27 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_func_orbit_workspace_matches_project() != 23526) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_phone_tasks_error_text() != 58270) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_phone_tasks_view() != 64462) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_question_answers() != 65062) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_question_context_clamp() != 27113) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_question_panel() != 36491) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_question_set_custom_answer() != 45252) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_conn_ffi_checksum_func_question_toggle_option() != 33360) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_conn_ffi_checksum_func_builtin_themes() != 50022) {
@@ -11867,6 +13779,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_orbitcore_wake_instance() != 2957) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_method_orbitcore_phone_tasks() != 13244) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_conn_ffi_checksum_method_orbitlistener_on_tasks_changed() != 39529) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11879,6 +13794,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_conn_ffi_checksum_method_orbitlistener_on_profile_changed() != 28485) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_conn_ffi_checksum_method_ffitextfits_fits() != 56087) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_conn_ffi_checksum_constructor_conncore_connect() != 19757) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -11887,6 +13805,7 @@ private let initializationResult: InitializationResult = {
     }
 
     uniffiCallbackInitCoreListener()
+    uniffiCallbackInitFfiTextFits()
     uniffiCallbackInitOrbitListener()
     return InitializationResult.ok
 }()

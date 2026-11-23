@@ -19,10 +19,11 @@ mod drafts;
 mod layout;
 pub mod model_preferences;
 mod order_keys;
+pub mod project_settings;
 pub mod provider_auth;
 pub mod provider_settings;
-pub mod project_settings;
 pub mod providers;
+mod question;
 mod scheduled;
 mod settled_shelf;
 mod shell;
@@ -83,6 +84,9 @@ pub use crate::order_keys::{
     OrderAssignment, order_key_between, plan_reorder, sort_active, sort_pinned, spread_order_keys,
     top_of_pinned_run_key,
 };
+pub use crate::question::{
+    clamp_context, markdown_preview_text, seed_user_input_drafts, split_recommended_label,
+};
 pub use crate::settled_shelf::{
     MoreState, SETTLED_MORE_ROW, SETTLED_TAIL_INITIAL_COUNT, SETTLED_TAIL_PAGE_COUNT, SettledTail,
     ShelfInput, ShelfView, SidebarPrefs, more_label, shelf_view,
@@ -108,9 +112,10 @@ pub use crate::sidebar_nav::{
     thread_traversal_key, traversal_order, tree_key, tree_step,
 };
 pub use crate::thread::{
-    EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,
-    SecretRequestStatus, SubagentModel, ThreadContextWindowSnapshot, ThreadState, TimelineEntry,
-    TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
+    ApprovalDetails, EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus,
+    RunTiming, SecretRequestStatus, SubagentModel, ThreadContextWindowSnapshot, ThreadState,
+    TimelineEntry, TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms,
+    request_kind_label, turn_item_detail,
 };
 pub use crate::timeline::{
     LocalDateTime, PLAN_PREVIEW_MAX_LINES, SubagentTone, TurnCheckpointFile, TurnDiffRow,

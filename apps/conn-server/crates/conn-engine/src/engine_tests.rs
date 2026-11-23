@@ -3077,6 +3077,8 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     }];
     config.providers = vec![provider.clone()];
     config.host = Some(host.clone());
+    let clock = Arc::new(crate::ManualClock::at(1_800_000_000_000));
+    config.clock = clock.clone();
     let engine = SqliteEngine::open(config).unwrap();
     dispatch(&engine, create("t1", "c1")).await;
     let image = json!({"type": "image", "id": "pending-1", "name": "a.png",
@@ -3103,6 +3105,41 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         tx.append(crate::store::Draft::new("t1", "turn-item.updated", json!({"id":"page", "type":"dynamic_tool", "toolName":"html_render", "output":{"htmlRender":{"attachmentId":"t1-00000000-0000-4000-8000-000000000001-html", "title":"Page", "height":100}}})))?;
         tx.commit(None)
     }).await.unwrap();
+    // Each settle names its settlement by the committed `settledAt`: a repeat keeps it, and
+    // a settlement after an unsettle is a new one.
+    for (command, kind) in [
+        ("s1", "thread.settle"),
+        ("s2", "thread.settle"),
+        ("s3", "thread.unsettle"),
+        ("s4", "thread.settle"),
+    ] {
+        clock.advance(Duration::from_secs(1));
+        dispatch(
+            &engine,
+            json!({"type": kind, "commandId": command, "threadId": "t1", "reason": "user"}),
+        )
+        .await;
+    }
+    while host.closed.lock().unwrap().len() < 3 {
+        host.closed_event.notified().await;
+    }
+    let settled: Vec<_> = host
+        .closed
+        .lock()
+        .unwrap()
+        .drain(..)
+        .map(|(_, c)| c)
+        .collect();
+    let at =
+        |seconds: i64| conn_support::time::iso_from_millis(1_800_000_000_000 + seconds * 1_000);
+    assert_eq!(
+        settled,
+        [
+            crate::ThreadClose::Settled { settled_at: at(1) },
+            crate::ThreadClose::SettledAgain { settled_at: at(1) },
+            crate::ThreadClose::Settled { settled_at: at(4) },
+        ]
+    );
     dispatch(
         &engine,
         json!({"type": "thread.archive", "commandId": "c4", "threadId": "t1"}),
@@ -4359,7 +4396,9 @@ async fn lane_order_is_reservation_order() {
         reason,
     };
     let first = inner.reserve_effect(close(crate::ThreadClose::Archived));
-    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled));
+    let given_up = inner.reserve_effect(close(crate::ThreadClose::Settled {
+        settled_at: String::new(),
+    }));
     let last = inner.reserve_effect(close(crate::ThreadClose::Deleted));
     drop(given_up);
     last.start();
@@ -4535,7 +4574,9 @@ async fn stop_before_the_start_runs_never_starts_the_provider() {
     let inner = engine.inner();
     let blocker = inner.reserve_effect(crate::commands::Effect::ThreadClosed {
         thread_id: "t1".into(),
-        reason: crate::ThreadClose::Settled,
+        reason: crate::ThreadClose::Settled {
+            settled_at: String::new(),
+        },
     });
     dispatch(&engine, message("t1", "c3", "hello again")).await;
     dispatch(&engine, stop("t1", "c4")).await;

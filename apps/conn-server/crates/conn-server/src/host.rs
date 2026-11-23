@@ -34,6 +34,8 @@ pub struct Host {
     pub scheduled_tasks: OnceLock<conn_features::scheduled::ScheduledTasks>,
     /// Device sessions a closed thread held (`ResourceCleanupService.cleanupDevices`).
     pub devices: OnceLock<conn_devices::Devices>,
+    /// Settled-thread cleanups run one at a time, as T3's single event consumer runs them.
+    pub settle_cleanups: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl std::fmt::Debug for Host {
@@ -265,8 +267,15 @@ impl EngineHost for Host {
     }
 
     fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
-        match reason {
-            ThreadClose::Settled => self.terminals.close_on_settle(thread_id),
+        match &reason {
+            // `settleActionRunAt`: the script runs once per settlement, so only on the
+            // transition to settled.
+            ThreadClose::Settled { settled_at } => {
+                self.clean_up_settled(thread_id, settled_at.clone(), true);
+            }
+            ThreadClose::SettledAgain { settled_at } => {
+                self.clean_up_settled(thread_id, settled_at.clone(), false);
+            }
             ThreadClose::Archived | ThreadClose::Deleted => {
                 self.terminals.close(TerminalCloseInput {
                     thread_id: thread_id.to_owned(),
@@ -291,6 +300,31 @@ impl EngineHost for Host {
                 }
             });
         }
+    }
+}
+
+impl Host {
+    /// `cleanUpSettledThread` (`ThreadSettlementService.ts:700`) for the committed settlement
+    /// named by `settled_at`, one cleanup at a time. While that settlement is still the
+    /// thread's, `closeOnSettle` closes its `stopOnSettle` terminals and then every idle one;
+    /// then a new settlement (`first`) runs the project's settle script in the worktree.
+    fn clean_up_settled(&self, thread_id: &str, settled_at: String, first: bool) {
+        let (terminals, mcp) = (self.terminals.clone(), self.mcp.get().cloned());
+        let cleanups = self.settle_cleanups.clone();
+        let thread_id = thread_id.to_owned();
+        tokio::spawn(async move {
+            let _one_at_a_time = cleanups.lock().await;
+            if let Some(mcp) = &mcp
+                && !mcp.is_current_settlement(&thread_id, &settled_at).await
+            {
+                return;
+            }
+            terminals.close_on_settle(&thread_id);
+            terminals.close_idle(&thread_id, None).await;
+            if first && let Some(mcp) = mcp {
+                mcp.run_settle_script(&thread_id, &settled_at).await;
+            }
+        });
     }
 }
 
@@ -334,6 +368,254 @@ mod tests {
     use conn_engine::Engine;
     use serde_json::json;
 
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// T3's settle effect (`ThreadSettlementService.ts:725`) through the production path: the
+    /// engine's `thread.settled` effect reaches the host, which closes the thread's terminals
+    /// and runs the project's `runOnSettle` script in its worktree. The script runs once per
+    /// settlement; after exit 0 its terminal closes, and a failed one keeps its terminal.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_settled_thread_runs_its_settle_script_through_the_host() {
+        use conn_contract::{TerminalAttachStreamEvent as E, TerminalMetadataStreamEvent as M};
+        let dir =
+            std::env::temp_dir().join(format!("conn-host-settle-{}", conn_support::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let (root, worktree) = (dir.join("repo"), dir.join("wt"));
+        {
+            let (root, worktree) = (root.clone(), worktree.clone());
+            tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(&root).unwrap();
+                git(&root, &["init", "-q", "-b", "main"]);
+                git(
+                    &root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "-c",
+                        "commit.gpgsign=false",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "init",
+                    ],
+                );
+                git(
+                    &root,
+                    &[
+                        "worktree",
+                        "add",
+                        "-q",
+                        "-b",
+                        "settle",
+                        worktree.to_str().unwrap(),
+                    ],
+                );
+            })
+            .await
+            .unwrap();
+        }
+        let environment =
+            Arc::new(Environment::load(&dir, None, dir.clone(), Default::default()).unwrap());
+        let script = |command: &str| {
+            json!({"defaultProjectScripts":[{"id":"finish","name":"Finish","icon":"play",
+                "command":command,"runOnSettle":true,"runOnWorktreeCreate":false}]})
+        };
+        environment
+            .settings
+            .update(script("printf 'ran\\n' >> settle-runs.txt"), None)
+            .unwrap();
+        let terminals = conn_terminal::TerminalManager::new(conn_terminal::TerminalConfig {
+            shells: vec!["/bin/sh".into()],
+            ..Default::default()
+        });
+        let host = Arc::new(Host {
+            mcp: OnceLock::new(),
+            files: None,
+            vcs: VcsShared::default(),
+            terminals: terminals.clone(),
+            environment: environment.clone(),
+            scheduled_tasks: OnceLock::new(),
+            devices: OnceLock::new(),
+            settle_cleanups: Arc::default(),
+        });
+        let mut config = conn_engine::EngineConfig::new(dir.join("engine.sqlite"));
+        config.projects = vec![conn_engine::ProjectConfig {
+            title: "Project".into(),
+            workspace_root: root.to_string_lossy().into_owned(),
+        }];
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new(
+            "claudeAgent",
+        ))];
+        config.host = Some(host.clone());
+        let engine = Arc::new(conn_engine::SqliteEngine::open(config).unwrap());
+        let service = mcp::service(&Deps {
+            environment: Some(environment.clone()),
+            engine: Some(engine.clone()),
+            terminals: Some(terminals.clone()),
+            ..Deps::default()
+        })
+        .unwrap();
+        host.mcp.set(service.clone()).unwrap();
+        let dispatch = |command: Value| {
+            let engine = engine.clone();
+            async move {
+                engine
+                    .dispatch(conn_contract::from_json(command).unwrap())
+                    .await
+                    .unwrap();
+            }
+        };
+        let thread = "thread:settle";
+        dispatch(json!({"type":"thread.create","commandId":"create","threadId":thread,
+            "projectId":conn_engine::SqliteEngine::project_id_for(&root.to_string_lossy()),
+            "title":"Settle","modelSelection":{"instanceId":"claudeAgent","model":"claude-haiku-5-5"},
+            "runtimeMode":"auto","interactionMode":"default","branch":"settle",
+            "worktreePath":worktree.to_string_lossy(),"createdBy":"user","creationSource":"web"}))
+        .await;
+        let settle = |n: u32| json!({"type":"thread.settle","commandId":format!("settle-{n}"),"threadId":thread});
+        let mut metadata = terminals.subscribe_metadata();
+        // The settle script's terminal appears, then goes after exit 0.
+        dispatch(settle(1)).await;
+        let wait = std::time::Duration::from_secs(30);
+        let first = tokio::time::timeout(wait, async {
+            loop {
+                if let M::Upsert(upsert) = metadata.next().await
+                    && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                {
+                    return upsert.terminal.terminal_id;
+                }
+            }
+        })
+        .await
+        .expect("the settle effect starts the project's settle script");
+        tokio::time::timeout(wait, async {
+            loop {
+                if let M::Remove(removed) = metadata.next().await
+                    && removed.terminal_id == first
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("the settle script's terminal closes after exit 0");
+        // A settle of the settled thread keeps its settlement: no second run.
+        dispatch(settle(2)).await;
+
+        // A new settlement whose script fails keeps its terminal.
+        dispatch(json!({"type":"thread.unsettle","commandId":"unsettle","threadId":thread,"reason":"user"})).await;
+        environment
+            .settings
+            .update(script("printf 'FAILED-%s\\n' now; exit 3"), None)
+            .unwrap();
+        dispatch(settle(3)).await;
+        let failed = loop {
+            if let M::Upsert(upsert) = metadata.next().await
+                && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                && upsert.terminal.terminal_id != first
+            {
+                break upsert.terminal.terminal_id;
+            }
+        };
+        let mut output = terminals
+            .observe(
+                conn_contract::from_json(json!({"threadId":thread,"terminalId":failed})).unwrap(),
+            )
+            .unwrap();
+        let mut text = String::new();
+        let mut asked = false;
+        while !text.contains("STILL-42") {
+            match output.next().await {
+                E::Output(event) => text.push_str(&event.data),
+                E::Snapshot(event) => text.push_str(&event.snapshot.history),
+                E::Closed(_) | E::Exited(_) => {
+                    panic!("the failed script's terminal closed: {text}")
+                }
+                _ => {}
+            }
+            if !asked && text.contains("FAILED-now") {
+                asked = true;
+                terminals
+                    .write(
+                        conn_contract::from_json(json!({"threadId":thread,"terminalId":failed,
+                            "data":"echo STILL-$((40+2))\r"}))
+                        .unwrap(),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        // Cleanups run one at a time, and each acts only while its settlement is the thread's:
+        // held back, a settlement undone and replaced runs nothing, its replacement once.
+        environment
+            .settings
+            .update(script("printf 'again\\n' >> settle-runs.txt"), None)
+            .unwrap();
+        let unsettle = |n: u32| json!({"type":"thread.unsettle","commandId":format!("unsettle-{n}"),"threadId":thread,"reason":"user"});
+        dispatch(unsettle(2)).await;
+        let held = host.settle_cleanups.lock().await;
+        dispatch(settle(4)).await;
+        dispatch(unsettle(3)).await;
+        dispatch(settle(5)).await;
+        drop(held);
+        let last = tokio::time::timeout(wait, async {
+            loop {
+                if let M::Upsert(upsert) = metadata.next().await
+                    && upsert.terminal.terminal_id.starts_with("settle-finish-")
+                    && ![&first, &failed].contains(&&upsert.terminal.terminal_id)
+                {
+                    return upsert.terminal.terminal_id;
+                }
+            }
+        })
+        .await
+        .expect("the current settlement runs its script");
+        tokio::time::timeout(wait, async {
+            loop {
+                if let M::Remove(removed) = metadata.next().await
+                    && removed.terminal_id == last
+                {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("its terminal closes after exit 0");
+        let runs = tokio::task::spawn_blocking({
+            let file = worktree.join("settle-runs.txt");
+            move || std::fs::read_to_string(file).unwrap()
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            runs, "ran\nagain\n",
+            "one run per settlement: none for a repeat or for a settlement undone since"
+        );
+        terminals.shutdown().await;
+        engine.shutdown().await;
+        drop(host);
+        drop(service);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn browser_access_is_scoped_to_project_and_captured_at_session_start() {
         let dir =
@@ -360,6 +642,7 @@ mod tests {
             environment: environment.clone(),
             scheduled_tasks: OnceLock::new(),
             devices: OnceLock::new(),
+            settle_cleanups: Arc::default(),
         };
         host.mcp.set(service.clone()).unwrap();
         let issue = |project: Option<&str>| {

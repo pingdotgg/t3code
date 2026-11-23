@@ -1546,7 +1546,10 @@ fn render_review_thread_event(
             Some(
                 h_flex()
                     .id(SharedString::from(format!("pr-thread-fix-{}", thread.id)))
-                    .a11y_button(format!("panel.pull-request.thread-fix.{}", thread.id), "Fix review thread")
+                    .a11y_button(
+                        format!("panel.pull-request.thread-fix.{}", thread.id),
+                        "Fix review thread",
+                    )
                     .flex_shrink_0()
                     .h(px(24.0))
                     .px(px(7.0))
@@ -2002,7 +2005,10 @@ pub(super) fn render_code_tab(
             let on_select = cb.on_select_code_file.clone();
             let row = h_flex()
                 .id(SharedString::from(format!("pr-code-file-{idx}")))
-                .a11y_button(format!("panel.pull-request.code-file.{idx}"), file.path.clone())
+                .a11y_button(
+                    format!("panel.pull-request.code-file.{idx}"),
+                    file.path.clone(),
+                )
                 .w_full()
                 .h(px(28.0))
                 .px(px(8.0))

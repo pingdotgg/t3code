@@ -832,7 +832,10 @@ fn render_pull_request_row(
         .child(
             div()
                 .id(SharedString::from(format!("linked-pr-more-{index}")))
-                .a11y_button(format!("panel.linked-items.pr-more.{index}"), "More pull request actions")
+                .a11y_button(
+                    format!("panel.linked-items.pr-more.{index}"),
+                    "More pull request actions",
+                )
                 .relative()
                 .size(px(ROW_ACTION_BTN_PX))
                 .rounded(px(4.0))
@@ -867,7 +870,10 @@ fn render_pull_request_row(
     let on_open_pr = Rc::clone(&callbacks.on_open_pr);
     let mut row = h_flex()
         .id(SharedString::from(format!("linked-pr-row-{index}")))
-        .a11y_group(format!("panel.linked-items.pr.{index}"), "Linked pull request")
+        .a11y_group(
+            format!("panel.linked-items.pr.{index}"),
+            "Linked pull request",
+        )
         .group(group_name)
         .relative()
         .w_full()
@@ -960,7 +966,10 @@ fn render_row_actions_menu(
 
     let mut list = div()
         .id(SharedString::from(format!("linked-pr-menu-{index}")))
-        .a11y_group(format!("panel.linked-items.pr-menu.{index}"), "Pull request actions")
+        .a11y_group(
+            format!("panel.linked-items.pr-menu.{index}"),
+            "Pull request actions",
+        )
         .flex()
         .flex_col()
         .min_w(px(176.0))

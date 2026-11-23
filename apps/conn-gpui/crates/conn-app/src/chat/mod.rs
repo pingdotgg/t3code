@@ -2,8 +2,8 @@
 //! working indicator, empty state, and bottom composer.
 
 mod approval_card;
-mod attachment_thumb;
 mod approval_state;
+mod attachment_thumb;
 mod cache;
 mod cards;
 mod color;
@@ -1941,8 +1941,11 @@ impl ChatView {
             .text_color(bubble_fg);
 
         if !attachments.is_empty() {
-            bubble =
-                bubble.child(self.render_attachment_chips(&format!("queued-{id}"), attachments, cx));
+            bubble = bubble.child(self.render_attachment_chips(
+                &format!("queued-{id}"),
+                attachments,
+                cx,
+            ));
         }
 
         if !text.is_empty() {
@@ -3264,14 +3267,7 @@ impl Render for ChatView {
             .min_h_0()
             .min_w_0()
             .relative()
-            .child(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .flex()
-                    .flex_col()
-                    .child(timeline),
-            )
+            .child(div().absolute().inset_0().flex().flex_col().child(timeline))
             .child(composer_lane)
             .when_some(provider_banner, |root, banner| {
                 root.child(

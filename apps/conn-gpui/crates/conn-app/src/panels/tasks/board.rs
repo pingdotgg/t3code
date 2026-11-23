@@ -516,7 +516,10 @@ fn render_task_card(
         let on_pr = Rc::clone(&callbacks.on_open_pr);
         h_flex()
             .id(SharedString::from(format!("tasks-card-pr-{task_id}")))
-            .a11y_button(format!("panel.tasks.card-pr.{task_id}"), "Open pull request")
+            .a11y_button(
+                format!("panel.tasks.card-pr.{task_id}"),
+                "Open pull request",
+            )
             .flex_shrink_0()
             .items_center()
             .gap(px(4.0))

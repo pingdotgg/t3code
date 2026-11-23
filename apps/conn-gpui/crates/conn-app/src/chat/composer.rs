@@ -79,7 +79,8 @@ pub(super) const COMPOSER_MAX_LINES: usize = 8;
 const COMPOSER_RADIUS_PX: f32 = 16.0;
 /// Bottom gap below the composer card when the context strip is hidden: the card's bottom
 /// lines up with the bottom of the sidebar's last line (Conn's `sm:h-[1.25rem]` was 4px lower).
-const COMPOSER_BOTTOM_SPACER_PX: f32 = crate::sidebar::thread_list::SIDEBAR_LAST_LINE_BOTTOM_INSET_PX;
+const COMPOSER_BOTTOM_SPACER_PX: f32 =
+    crate::sidebar::thread_list::SIDEBAR_LAST_LINE_BOTTOM_INSET_PX;
 /// Symmetric vertical margin around the `22px` bottom context strip (`9px` top + `9px` bottom)
 /// so the strip sits visually balanced between the composer card and the bottom of the chat card.
 const CONTEXT_STRIP_VERTICAL_MARGIN_PX: f32 = 9.0;

@@ -333,7 +333,10 @@ pub(super) fn render_label_picker(
                     .map(ToOwned::to_owned);
                 let mut row = h_flex()
                     .id(SharedString::from(format!("pr-label-cand-{idx}")))
-                    .a11y_button(format!("panel.pull-request.label-candidate.{idx}"), "Label candidate")
+                    .a11y_button(
+                        format!("panel.pull-request.label-candidate.{idx}"),
+                        "Label candidate",
+                    )
                     .w_full()
                     .min_h(px(28.0))
                     .px(px(8.0))
