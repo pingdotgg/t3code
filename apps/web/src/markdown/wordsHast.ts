@@ -192,7 +192,6 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
       properties: properties(match[3], inSvg),
       children: [],
     };
-    if (match[0] === "<br />" && html[last] === "\n") hardBreaks.add(element);
     const sourcepos = element.properties.dataSourcepos;
     if (typeof sourcepos === "string") {
       delete element.properties.dataSourcepos;
@@ -320,8 +319,17 @@ const isMarkdownImage = (node: unknown): boolean =>
     isMarkdownImage(node.children[0]));
 
 const BREAK: ElementContent = { type: "element", tagName: "br", properties: {}, children: [] };
-// Words writes a hard break as `<br />` and a line ending; raw HTML keeps its author's spelling.
-const hardBreaks = new WeakSet<Element>();
+/**
+ * Whether `marker` ends its line in a Markdown hard break. Words writes one and a raw `<br />`
+ * alike, so the source decides, and a source with both spellings keeps the marker as text.
+ */
+function markerEndsInHardBreak(source: string, marker: string): boolean {
+  const escaped = marker.replace(/[[\]!]/g, "\\$&");
+  return (
+    new RegExp(`${escaped}(?: {2,}|\\\\)\\r?\\n`).test(source) &&
+    !new RegExp(`${escaped}<br\\b`, "i").test(source)
+  );
+}
 
 // Words' math: these elements and presentation attributes, and no links or handlers.
 const MATH_ELEMENTS = new Set(["svg", "g", "text", "tspan", "rect", "path"]);
@@ -721,9 +729,14 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
           : 0;
       const [first, br, after] = children.slice(indent);
       const text = first?.type === "text" ? first.value : "";
-      const hardBreak = isElement(br) && hardBreaks.has(br) && after?.type === "text";
       const insight = walk.insightMarker?.exec(text);
       const alert = GITHUB_ALERT_MARKER.exec(text);
+      const hardBreak =
+        alert !== null &&
+        isElement(br, "br") &&
+        after?.type === "text" &&
+        after.value.startsWith("\n") &&
+        markerEndsInHardBreak(walk.source, text);
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)

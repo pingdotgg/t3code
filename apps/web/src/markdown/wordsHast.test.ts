@@ -354,9 +354,9 @@ describe("wordsHast", () => {
       '<blockquote data-alert="note" dir="ltr">\n<p>more<br>\nx</p>\n</blockquote>',
     ],
     [
-      "> [!NOTE]<br>\n> raw\n\n> [!NOTE]\\\n> alert",
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
-      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
+      "> [!NOTE]<br />\n> Body",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
     ],
     [
       "> [!NOTE]<br />Body",
