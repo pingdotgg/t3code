@@ -7,6 +7,7 @@ import {
   type PreviewAutomationConsoleEntry,
   type PreviewAutomationDragInput,
   type PreviewAutomationEvaluateInput,
+  type PreviewAutomationFillInput,
   type PreviewAutomationHoverInput,
   type PreviewAutomationNetworkEntry,
   type PreviewAutomationPressInput,
@@ -1032,6 +1033,89 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("Delete");
   }
   await typeKeys(page, input.text, timeoutMs, deadline);
+};
+
+type FillCandidate = {
+  readonly tagName: string;
+  readonly type?: string;
+  readonly disabled?: boolean;
+  readonly readOnly?: boolean;
+};
+
+// Serialized into the page, so it must not reference module scope.
+const describeFillTarget = (element: FillCandidate) => ({
+  tagName: element.tagName,
+  type: (element.type ?? "").toLowerCase(),
+  disabled: element.disabled === true,
+  readOnly: element.readOnly === true,
+});
+
+const FILL_NON_TEXT_TYPES = new Set([
+  "button",
+  "checkbox",
+  "color",
+  "file",
+  "hidden",
+  "image",
+  "radio",
+  "range",
+  "reset",
+  "submit",
+]);
+
+const fillRefused = (message: string) =>
+  new ServerBrowserOperationError({ tag: "PreviewAutomationTargetNotEditableError", message });
+
+const originOf = (url: string) => {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "null";
+  }
+};
+
+/**
+ * Checks, and with `value` fills, one field for a value the user typed into a card. Every
+ * error is written here without the value or Playwright's message, so the value cannot reach
+ * a tool result, the action timeline or a log.
+ */
+export const fill = async (
+  page: Page,
+  input: PreviewAutomationFillInput,
+): Promise<{ readonly origin: string }> => {
+  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const locator = targetLocator(page, input);
+  if (locator === null) throw fillRefused("Name the field with a locator or selector.");
+  const handle = await locator.elementHandle({ timeout });
+  try {
+    // The field's own frame decides where the value goes, not the top page.
+    const frame = await handle.ownerFrame();
+    const origin = originOf(frame?.url() ?? page.url());
+    const field = await handle.evaluate(describeFillTarget);
+    const textControl =
+      field.tagName === "TEXTAREA" ||
+      (field.tagName === "INPUT" && !FILL_NON_TEXT_TYPES.has(field.type || "text"));
+    if (!textControl || field.disabled || field.readOnly) {
+      throw fillRefused("The target is not an enabled text field.");
+    }
+    // A password must land where the page masks it, so snapshots never show it to the agent.
+    if (input.kind === "password" && !(field.tagName === "INPUT" && field.type === "password")) {
+      throw fillRefused("The target is not a password field.");
+    }
+    if (input.expectedOrigin !== undefined && origin !== input.expectedOrigin) {
+      throw fillRefused("The field is now on a different site than the one the user was shown.");
+    }
+    if (input.value !== undefined) {
+      try {
+        await handle.fill(input.value, { timeout });
+      } catch {
+        throw fillRefused("The page did not accept the value.");
+      }
+    }
+    return { origin };
+  } finally {
+    await handle.dispose().catch(constVoid);
+  }
 };
 
 export const hover = async (

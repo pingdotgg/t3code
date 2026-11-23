@@ -474,6 +474,95 @@ describe("server browser element refs", () => {
     expect(await page.locator("#pw").inputValue()).toBe("next");
   });
 
+  describe("fill with a value the user typed", () => {
+    const LOGIN = "https://login.example.test";
+    const openLogin = async () => {
+      await page.route(`${LOGIN}/**`, (route) =>
+        route.fulfill({
+          contentType: "text/html",
+          body: `<form method="post">
+            <input id="email" type="email" aria-label="Email">
+            <input id="pw" type="password" aria-label="Password">
+            <input id="off" type="password" aria-label="Off" disabled>
+          </form>`,
+        }),
+      );
+      await page.goto(`${LOGIN}/signin`);
+    };
+
+    it("checks without typing, then fills a password the snapshot shows only as dots", async () => {
+      await openLogin();
+      const ref = locators(
+        String((await takeSnapshot()).accessibilityTree)
+          .split("\n")
+          .find((line) => line.includes('textbox "Password"')),
+      )[0]!;
+      expect(await ServerBrowserPage.fill(page, { locator: ref, kind: "password" })).toEqual({
+        origin: LOGIN,
+      });
+      expect(await page.locator("#pw").inputValue()).toBe("");
+
+      await ServerBrowserPage.fill(page, {
+        locator: ref,
+        kind: "password",
+        value: " correct horse ",
+        expectedOrigin: LOGIN,
+      });
+      expect(await page.locator("#pw").inputValue()).toBe(" correct horse ");
+      const result = await takeSnapshot();
+      expect(String(result.accessibilityTree)).not.toContain("correct horse");
+      expect(result.visibleText).not.toContain("correct horse");
+    });
+
+    it("refuses a password for a field the page would show in plain text", async () => {
+      await openLogin();
+      await expect(
+        ServerBrowserPage.fill(page, { selector: "#email", kind: "password", value: "pw-value" }),
+      ).rejects.toMatchObject({
+        tag: "PreviewAutomationTargetNotEditableError",
+        message: "The target is not a password field.",
+      });
+      expect(await page.locator("#email").inputValue()).toBe("");
+      await ServerBrowserPage.fill(page, { selector: "#email", kind: "text", value: "a@b.test" });
+      expect(await page.locator("#email").inputValue()).toBe("a@b.test");
+    });
+
+    it("refuses a disabled field and a page on another site, never echoing the value", async () => {
+      await openLogin();
+      const disabled = await ServerBrowserPage.fill(page, {
+        selector: "#off",
+        kind: "password",
+        value: "pw-value",
+      }).catch((error: unknown) => error);
+      expect(disabled).toMatchObject({ tag: "PreviewAutomationTargetNotEditableError" });
+      expect(String((disabled as Error).message)).not.toContain("pw-value");
+
+      const moved = await ServerBrowserPage.fill(page, {
+        selector: "#pw",
+        kind: "password",
+        value: "pw-value",
+        expectedOrigin: "https://elsewhere.example.test",
+      }).catch((error: unknown) => error);
+      expect(moved).toMatchObject({ tag: "PreviewAutomationTargetNotEditableError" });
+      expect(String((moved as Error).message)).not.toContain("pw-value");
+      expect(await page.locator("#pw").inputValue()).toBe("");
+    });
+
+    it("refuses a ref from before the page navigated", async () => {
+      await openLogin();
+      const ref = locators(
+        String((await takeSnapshot()).accessibilityTree)
+          .split("\n")
+          .find((line) => line.includes('textbox "Password"')),
+      )[0]!;
+      await page.goto(`${LOGIN}/again`);
+      await expect(
+        ServerBrowserPage.fill(page, { locator: ref, kind: "password", value: "pw-value" }),
+      ).rejects.toMatchObject({ tag: "PreviewAutomationInvalidSelectorError" });
+      expect(await page.locator("#pw").inputValue()).toBe("");
+    });
+  });
+
   it("masks dotted values in page text next to punctuation, with odd spaces, and at the cut", async () => {
     await page.setContent(`
       <input type="password" aria-label="PIN" value="123">

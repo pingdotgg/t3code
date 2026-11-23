@@ -36,6 +36,7 @@ import {
   type PreviewAutomationSetColorSchemeInput,
   type PreviewAutomationSnapshotInput,
   type PreviewAutomationStatus,
+  type PreviewAutomationFillInput,
   type PreviewAutomationTypeInput,
   type PreviewAutomationUploadInput,
   type PreviewAutomationWaitForInput,
@@ -3065,6 +3066,14 @@ const make = Effect.gen(function* () {
           timeoutMs: Math.max(1, Math.floor(deadlineMs - performance.now())),
         };
         return recordAction(tab, "type", () => ServerBrowserPage.type(tab.page, typeInput));
+      }
+      case "fill": {
+        const fillInput = input as PreviewAutomationFillInput;
+        // A check reads the field; only a fill with the user's value counts as an action.
+        const checked = await (fillInput.value === undefined
+          ? ServerBrowserPage.fill(tab.page, fillInput)
+          : recordAction(tab, "fill", () => ServerBrowserPage.fill(tab.page, fillInput)));
+        return { tabId: tab.tabId, origin: checked.origin };
       }
       case "press":
         return recordAction(tab, "press", () =>

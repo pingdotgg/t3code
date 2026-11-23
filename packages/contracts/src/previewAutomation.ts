@@ -51,6 +51,7 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "hover",
   "select",
   "drag",
+  "fill",
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals(PREVIEW_AUTOMATION_SERVER_OPERATIONS);
 export type PreviewAutomationOperation = typeof PreviewAutomationOperation.Type;
@@ -401,6 +402,71 @@ export const PreviewAutomationTypeInput = Schema.Struct({
   ),
 );
 export type PreviewAutomationTypeInput = typeof PreviewAutomationTypeInput.Type;
+
+/** What a user-filled field must be: `password` accepts only a password input. */
+export const PreviewFillFieldKind = Schema.Literals(["password", "text"]);
+export type PreviewFillFieldKind = typeof PreviewFillFieldKind.Type;
+
+/**
+ * The server-only `fill` operation. Without `value` it only checks that the field can take
+ * the value and reports the page it is on. With `value` it replaces the field's contents,
+ * but only while the page is still on `expectedOrigin`. Never sent by agents directly: the
+ * value comes from the user's card, not from a tool call.
+ */
+export const PreviewAutomationFillInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  selector: Schema.optional(LegacySelector),
+  locator: Schema.optional(Locator),
+  kind: PreviewFillFieldKind,
+  value: Schema.optional(Schema.String),
+  expectedOrigin: Schema.optional(Schema.String),
+  timeoutMs: OptionalTimeoutMs,
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      (input.selector === undefined) !== (input.locator === undefined) ||
+      "Provide exactly one of selector or locator.",
+  ),
+);
+export type PreviewAutomationFillInput = typeof PreviewAutomationFillInput.Type;
+
+export const PreviewAutomationFillResult = Schema.Struct({
+  tabId: PreviewTabId,
+  origin: Schema.String,
+});
+export type PreviewAutomationFillResult = typeof PreviewAutomationFillResult.Type;
+
+/** `preview_request_fill`: the user types one field's value into a card; it goes only to the page. */
+export const PreviewRequestFillInput = Schema.Struct({
+  ...PreviewAutomationTabTargetFields,
+  locator: Schema.optional(Locator),
+  selector: Schema.optional(LegacySelector),
+  kind: Schema.optional(PreviewFillFieldKind).annotate({
+    description:
+      "Default 'password', which only fills a password input. 'text' for a username, email or code.",
+  }),
+  label: Schema.String.check(Schema.isTrimmed()).check(Schema.isNonEmpty()).annotate({
+    description: "What the user types, e.g. 'Amazon password'.",
+  }),
+  reason: Schema.String.annotate({ description: "Why it is needed, shown on the card." }),
+  timeoutMs: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThan(0)).check(Schema.isLessThanOrEqualTo(3_600_000)),
+  ).annotate({ description: "How long to wait for the user. Default 10 minutes." }),
+  clientRequestId: Schema.optional(Schema.String),
+}).check(
+  Schema.makeFilter(
+    (input) =>
+      (input.selector === undefined) !== (input.locator === undefined) ||
+      "Provide exactly one of selector or locator.",
+  ),
+);
+export type PreviewRequestFillInput = typeof PreviewRequestFillInput.Type;
+
+export const PreviewRequestFillResult = Schema.Struct({
+  status: Schema.Literals(["filled", "declined", "cancelled", "timed_out", "field_changed"]),
+  note: Schema.optional(Schema.String),
+});
+export type PreviewRequestFillResult = typeof PreviewRequestFillResult.Type;
 
 export const PreviewAutomationPressInput = Schema.Struct({
   ...PreviewAutomationTabTargetFields,
