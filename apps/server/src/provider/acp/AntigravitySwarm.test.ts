@@ -207,6 +207,26 @@ it.layer(NodeServices.layer)("readAntigravitySwarm", (it) => {
     }),
   );
 
+  it.effect("a worker past the shown 64 that has not started keeps the swarm active", () =>
+    Effect.gen(function* () {
+      const finished = Object.fromEntries(
+        Array.from({ length: 64 }, (_, index) => [`w-${index}`, member(ADD_A, "worker")]),
+      );
+      const profileDirectory = yield* writeSwarm({
+        members: {
+          coordinator: member(COORDINATOR, "coordinator"),
+          ...finished,
+          "zz-late": member("cccccccc-0000-0000-0000-000000000000", "worker"),
+        },
+        board: [],
+        transcripts: { [ADD_A]: parked },
+      });
+      const swarm = yield* readAntigravitySwarm({ profileDirectory, sessionId: COORDINATOR });
+      expect(swarm?.workflow.agents).toHaveLength(64);
+      expect(swarm?.active).toBe(true);
+    }),
+  );
+
   it.effect("reads only the swarm this session coordinates", () =>
     Effect.gen(function* () {
       const profileDirectory = yield* writeSwarm({

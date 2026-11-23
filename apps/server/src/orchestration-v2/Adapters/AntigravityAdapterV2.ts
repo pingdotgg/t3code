@@ -302,6 +302,7 @@ export function makeAntigravityAcpAdapterFlavor(
     normalizeToolCall: normalizeAntigravityToolCall,
     // The Swarm toggle is T3's, not an agent option: it starts each message with `/swarm`.
     ownedModelOptionIds: [ANTIGRAVITY_SWARM_OPTION.id],
+    rewriteKeepsUserMessage: true,
     rewriteUserText: (text, turnInput) =>
       Effect.succeed(
         antigravitySwarmPrompt(

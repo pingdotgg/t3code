@@ -210,6 +210,19 @@ describe("deriveWorkflowGroups over a dynamic workflow", () => {
     expect(groups[0]?.phases[0]?.title).toBe("Review");
   });
 
+  it("shows open members idle once their workflow goes idle", () => {
+    const [, open, done] = projectedSubagentsToRuntime([
+      subagent({
+        status: "idle",
+        workflow: {
+          phases: [],
+          agents: [member(), member({ index: 2, label: "beta", state: "completed" })],
+        },
+      }),
+    ]);
+    expect([open?.status, done?.status]).toEqual(["idle", "completed"]);
+  });
+
   it("keeps unphased members with their workflow and excludes unrelated agents", () => {
     const runtime = projectedSubagentsToRuntime([
       subagent({ id: "ordinary" }),

@@ -141,9 +141,10 @@ function workflowMembersToRuntime(
   workflow: OrchestrationV2SubagentWorkflow,
 ): ReadonlyArray<RuntimeSubagent> {
   return workflow.agents.map((agent) => {
+    // A workflow that stopped (or went idle with nothing left to watch) stops its open members.
     const status =
       (agent.state === "queued" || agent.state === "running") &&
-      isTerminalSubagentStatus(coordinator.status)
+      (isTerminalSubagentStatus(coordinator.status) || coordinator.status === "idle")
         ? coordinator.status
         : agent.state === "queued"
           ? "pending"

@@ -1364,6 +1364,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
   const scheduledFinalizes = yield* Queue.unbounded<Duration.Input>();
+  const workflowReads = yield* Queue.unbounded<void>();
   const instanceId = ProviderInstanceId.make("antigravity-wake-test");
   const threadId = ThreadId.make("thread-antigravity-wake");
   const selfInvocation = yield* resolveSelfInvocation();
@@ -1463,6 +1464,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             : { continuationRequests: adapterOptions.continuationRequests }),
           testHooks: {
             onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
+            afterNativeWorkflowRead: () => Queue.offer(workflowReads, undefined),
           },
         });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -1497,7 +1499,11 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     runtimePolicy,
   });
   const now = yield* DateTime.now;
-  const startTurn = (ordinal: number, continuation: boolean) =>
+  const startTurn = (
+    ordinal: number,
+    continuation: boolean,
+    extra?: Pick<ProviderAdapter.ProviderAdapterV2TurnInput, "appContext" | "modelSelection">,
+  ) =>
     session.startTurn({
       appThread: {
         createdBy: "user",
@@ -1539,6 +1545,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
       },
       modelSelection,
       runtimePolicy,
+      ...extra,
     });
 
   return {
@@ -1548,6 +1555,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     usage,
     offers,
     scheduledFinalizes,
+    workflowReads,
     send,
     startTurn,
     until,
@@ -1653,8 +1661,15 @@ const openSwarmSession = Effect.fn("openSwarmSession")(function* () {
         ? [event.subagent]
         : [],
     );
+  // The watch reads files off the test clock: step to its next poll and wait for that read.
+  const readAfterPoll = Effect.gen(function* () {
+    yield* Queue.clear(opened.workflowReads);
+    yield* TestClock.adjust("2 seconds");
+    yield* Queue.take(opened.workflowReads);
+  });
   return {
     ...opened,
+    readAfterPoll,
     brain,
     brief,
     transcript,
@@ -2597,6 +2612,32 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("the Swarm toggle sends a plain message as /swarm with its app context", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({});
+      yield* opened.startTurn(1, false, {
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("antigravity-wake-test"),
+          model: "gemini-test-low",
+          options: [{ id: "swarm", value: true }],
+        },
+        appContext: [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }],
+      });
+      yield* opened.throughPromptSettled;
+      const sent = opened.prompts[0]!.prompt.flatMap((block) =>
+        block.type === "text" ? [block.text] : [],
+      );
+      assert.isTrue(
+        sent.some((text) => text.startsWith("/swarm chart the throughput")),
+        "the message runs as a swarm",
+      );
+      assert.isTrue(
+        sent.some((text) => text.includes("Created Jira issue PROJ-42")),
+        "the swarm gets the context the plain message would",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   it.effect("rewrites the swarm's plan when briefs arrive after its title", () =>
     Effect.gen(function* () {
       const swarm = yield* openSwarmSession();
@@ -2651,13 +2692,29 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       // One unreadable poll must not end the watch while the swarm holds the turn.
       const roster = yield* fileSystem.readFileString(swarm.roster);
       yield* fileSystem.writeFileString(swarm.roster, "{");
-      yield* TestClock.adjust("2 seconds");
-      yield* TestClock.withLive(Effect.sleep("50 millis"));
+      yield* swarm.readAfterPoll;
       yield* fileSystem.writeFileString(swarm.roster, roster);
       yield* swarm.writeLines(swarm.transcript, swarm.parked);
       yield* TestClock.adjust("2 seconds");
       yield* until((event) => workflows([event]).at(-1)?.status === "completed");
       yield* Queue.take(swarm.scheduledFinalizes);
+      yield* TestClock.adjust("5 seconds");
+      const terminal = (yield* until((event) => event.type === "turn.terminal")).at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("a swarm whose records stop changing stops holding the turn", () =>
+    Effect.gen(function* () {
+      const swarm = yield* openSwarmSession();
+      const { startTurn, until, workflows } = swarm;
+      yield* startTurn(1, false);
+      yield* until((event) => workflows([event]).at(-1)?.status === "running");
+      // A worker whose transcript cannot be read stays queued with nothing on the board changing.
+      yield* swarm.readAfterPoll;
+      yield* TestClock.adjust("15 minutes");
+      yield* swarm.readAfterPoll;
+      yield* until((event) => workflows([event]).at(-1)?.status === "idle");
       yield* TestClock.adjust("5 seconds");
       const terminal = (yield* until((event) => event.type === "turn.terminal")).at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
@@ -2672,10 +2729,10 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       yield* until((event) => workflows([event]).at(-1)?.status === "running");
       const roster = yield* fileSystem.readFileString(swarm.roster);
       yield* fileSystem.writeFileString(swarm.roster, "{");
-      // Polls step the test clock: the first unreadable one starts the minute, a later one ends it.
-      yield* TestClock.adjust("2 seconds");
-      yield* TestClock.withLive(Effect.sleep("50 millis"));
-      yield* TestClock.adjust("61 seconds");
+      // The first unreadable read starts the minute; one a minute later ends it.
+      yield* swarm.readAfterPoll;
+      yield* TestClock.adjust("59 seconds");
+      yield* swarm.readAfterPoll;
       const released = yield* until(
         (event) =>
           event.type === "subagent.updated" &&
@@ -2683,10 +2740,13 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
           event.subagent.status === "idle",
       );
       assert.equal(workflows(released).at(-1)?.status, "idle");
-      // Records readable again with the worker still at work bring the hold back.
+      // Records readable again with the worker still at work bring the hold back, keeping the
+      // brief that has since left the board's tail.
       yield* fileSystem.writeFileString(swarm.roster, roster);
+      yield* swarm.writeLines(swarm.board, []);
       yield* TestClock.adjust("2 seconds");
-      yield* until((event) => workflows([event]).at(-1)?.status === "running");
+      const resumed = yield* until((event) => workflows([event]).at(-1)?.status === "running");
+      assert.equal(workflows(resumed).at(-1)?.prompt, "@mul-a Compute 6*7.");
       yield* swarm.writeLines(swarm.transcript, swarm.parked);
       yield* TestClock.adjust("2 seconds");
       yield* until((event) => workflows([event]).at(-1)?.status === "completed");

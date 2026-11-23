@@ -355,14 +355,17 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         ...(resultText === undefined || resultText === "" ? {} : { result: capText(resultText) }),
       });
     }
-    // Workers past the cap are not shown, but one still at work keeps the swarm active.
+    // Workers past the cap are not shown, but one queued or at work keeps the swarm active.
     for (const [, member] of workers.slice(MAX_MEMBERS)) {
-      if (active || killed(member) || member.conversation_id === undefined) continue;
-      if (!NATIVE_ID.test(member.conversation_id)) continue;
-      const activity = await readActivity(profileRoot, member.conversation_id).catch(
-        () => undefined,
-      );
-      if (activity !== undefined && !activity.ended && activity.failed === undefined) active = true;
+      if (active || killed(member)) continue;
+      const conversationId = member.conversation_id;
+      const activity =
+        conversationId !== undefined && NATIVE_ID.test(conversationId)
+          ? await readActivity(profileRoot, conversationId).catch(() => undefined)
+          : undefined;
+      if (activity === undefined || (!activity.ended && activity.failed === undefined)) {
+        active = true;
+      }
     }
     const title = roster.title?.trim();
     return {

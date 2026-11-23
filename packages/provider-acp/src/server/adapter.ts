@@ -158,6 +158,8 @@ const ACP_LOADED_COMMANDS_WAIT: Duration.Input = "2 seconds";
 const ACP_PROMPT_INACTIVITY_SLICE_MILLIS = 60_000;
 const ACP_NATIVE_WORKFLOW_POLL = Duration.millis(1_500);
 const ACP_NATIVE_WORKFLOW_UNREADABLE_MILLIS = 60_000;
+// As long as an open prompt may go silent: a workflow whose records stop changing stops holding.
+const ACP_NATIVE_WORKFLOW_STALL_MILLIS = 15 * 60_000;
 const ACP_HOST_SLEEP_TOLERANCE_MILLIS = 10_000;
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
@@ -443,6 +445,8 @@ export interface AcpAdapterV2Flavor {
     text: string,
     turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
+  /** The rewrite only wraps the user's message, so it is treated as the message it wraps. */
+  readonly rewriteKeepsUserMessage?: boolean;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly supportsNativeGoals?: Effect.Effect<boolean>;
@@ -856,6 +860,8 @@ export interface AcpAdapterV2Options {
     readonly afterPromptWireSettled?: () => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
     readonly afterPromptCallback?: () => Effect.Effect<void>;
+    /** The native workflow watch finished one read of the agent's records. */
+    readonly afterNativeWorkflowRead?: () => Effect.Effect<void>;
     readonly onNativeResponseLifecycle?: (event: {
       readonly generation?: number;
       readonly requestId?: string;
@@ -1820,6 +1826,8 @@ interface ActiveAcpTurn {
   readonly nativeWorkflowMembers: Set<string>;
   /** Clock millis when reads of a workflow this turn holds open began to fail, if they fail. */
   nativeWorkflowUnreadableSince: number | undefined;
+  /** Clock millis when the workflow's records last changed during this turn. */
+  nativeWorkflowChangedAt: number | undefined;
 }
 
 const PROMPT_OUTCOME_CHECK_TIMEOUT = Duration.seconds(5);
@@ -4209,20 +4217,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         // A workflow whose records stay unreadable this long stops holding the turn open.
-        const releaseUnreadableNativeWorkflow = Effect.fnUntraced(function* (
-          context: ActiveAcpTurn,
-        ) {
-          const held = [...context.subagents.values()].find(
+        const heldNativeWorkflow = (context: ActiveAcpTurn) =>
+          [...context.subagents.values()].find(
             (subagent) =>
               subagent.task.workflow !== undefined &&
               acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
-          if (held === undefined) return;
+
+        const releaseUnreadableNativeWorkflow = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+        ) {
+          if (heldNativeWorkflow(context) === undefined) return;
           const now = yield* Clock.currentTimeMillis;
           context.nativeWorkflowUnreadableSince ??= now;
           if (now - context.nativeWorkflowUnreadableSince < ACP_NATIVE_WORKFLOW_UNREADABLE_MILLIS) {
             return;
           }
+          yield* releaseNativeWorkflowHold(context);
+        });
+
+        // The workflow goes idle with its workers, so the turn settles; a later read that shows
+        // it at work holds the turn again.
+        const releaseNativeWorkflowHold = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const held = heldNativeWorkflow(context);
+          if (held === undefined) return;
           yield* runtimeCallbackPermit.withPermit(
             Effect.gen(function* () {
               if (context.finalized) return;
@@ -4239,8 +4257,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               if (held.task.workflow !== undefined) {
                 yield* projectNativeWorkflowMembers(context, held, held.task.workflow);
               }
-              // A readable snapshot after this projects again, even one that matches the last.
-              nativeWorkflowProjected.delete(held.task.nativeTaskRef?.nativeId ?? held.task.id);
               yield* rearmDeferredFinalize(context);
             }),
           );
@@ -4254,7 +4270,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* releaseUnreadableNativeWorkflow(context);
             return false;
           }
+          const recovered = context.nativeWorkflowUnreadableSince !== undefined;
           context.nativeWorkflowUnreadableSince = undefined;
+          // Records that read again after a failure count as a change for the stall clock.
+          if (recovered) context.nativeWorkflowChangedAt = undefined;
           const { nativeTaskId } = read;
           // A brief or result can scroll out of the board's tail; keep what an earlier poll saw.
           const earlier = (
@@ -4291,9 +4310,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const owned = context.subagents.has(nativeTaskId);
           const key = [snapshot.title, snapshot.prompt, snapshot.active, snapshot.workflow];
           const previous = nativeWorkflowProjected.get(nativeTaskId);
+          const changed = previous === undefined || !Equal.equals(previous, key);
+          const now = yield* Clock.currentTimeMillis;
+          if (changed || context.nativeWorkflowChangedAt === undefined) {
+            context.nativeWorkflowChangedAt = now;
+          } else if (now - context.nativeWorkflowChangedAt >= ACP_NATIVE_WORKFLOW_STALL_MILLIS) {
+            // Records that read fine but stop changing (a worker whose transcript cannot be
+            // read stays queued) must not hold the turn forever.
+            yield* releaseNativeWorkflowHold(context);
+            return true;
+          }
           // A working swarm joins every turn; a finished one only a turn that manages it.
+          // One released as unreadable resumes once its records show it at work again.
+          const card = context.subagents.get(nativeTaskId);
+          const resumes =
+            snapshot.active &&
+            card !== undefined &&
+            !acpSubagentStatusBlocksTurnSettlement(card.task.status) &&
+            context.nativeWorkflowUnreadableSince === undefined &&
+            now - context.nativeWorkflowChangedAt < ACP_NATIVE_WORKFLOW_STALL_MILLIS;
           const joins = owned
-            ? previous === undefined || !Equal.equals(previous, key)
+            ? changed || resumes
             : snapshot.active || context.nativeWorkflowToolSeen;
           if (!joins) return true;
           const coordinatorThreadId =
@@ -4356,10 +4393,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             while (!context.finalized) {
               const calls = context.nativeWorkflowCalls;
               const exists = yield* syncNativeWorkflow(context);
-              const held = [...context.subagents.values()].some(
-                (subagent) =>
-                  subagent.task.workflow !== undefined &&
-                  acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
+              yield* options.testHooks?.afterNativeWorkflowRead?.() ?? Effect.void;
+              const owns = [...context.subagents.values()].some(
+                (subagent) => subagent.task.workflow !== undefined,
               );
               if (calls === context.nativeWorkflowCalls && !context.nativeWorkflowRead) {
                 const waited = context.nativeWorkflowToolSeen || nativeWorkflowProjected.size > 0;
@@ -4367,9 +4403,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // The read held this turn open; it may settle now.
                 if (waited) yield* runtimeCallbackPermit.withPermit(rearmDeferredFinalize(context));
               }
-              // A turn that never touched a native workflow stops looking once none exists; one a
-              // workflow holds open keeps looking until it ends or its records stay unreadable.
-              if (!exists && !context.nativeWorkflowToolSeen && !held) return;
+              // A turn that never touched a native workflow stops looking once none exists; one
+              // that shows a workflow keeps looking until it settles, so it sees a recovery.
+              if (!exists && !context.nativeWorkflowToolSeen && !owns) return;
               yield* Effect.sleep(ACP_NATIVE_WORKFLOW_POLL);
             }
           }).pipe(
@@ -9651,9 +9687,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveAttachmentPath: host.resolveAttachmentPath,
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
-          // A message the flavor turned into a command (Antigravity's Swarm toggle) still carries
-          // the context and instructions the user's own message would.
-          const isNativeSlashCommand = turnInput.message.text.trimStart().startsWith("/");
+          // A rewrite that keeps the user's message as the command's task (Antigravity's Swarm
+          // toggle) still carries the context and instructions that message would.
+          const isNativeSlashCommand = (
+            flavor.rewriteKeepsUserMessage === true ? turnInput.message.text : userText
+          )
+            .trimStart()
+            .startsWith("/");
           const attachmentBlocks = yield* promptAttachmentBlocks(
             messageText,
             turnInput.message.attachments,
@@ -9668,13 +9708,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             deliveredContext,
             isNativeSlashCommand,
           );
-          const text = t3AcpPromptWithInstructions({
-            prompt: messageText,
+          // A command a rewrite made keeps its first block; its instructions follow in another.
+          const commandFromRewrite = !isNativeSlashCommand && userText.trimStart().startsWith("/");
+          const wrapped = t3AcpPromptWithInstructions({
+            prompt: commandFromRewrite ? "" : messageText,
             state: instructionState,
             ...(previousInstructionState === undefined || compactionMarker !== undefined
               ? {}
               : { previousState: previousInstructionState }),
           });
+          const instructionsBlock = commandFromRewrite && wrapped !== "" ? wrapped : undefined;
+          const text = commandFromRewrite ? messageText : wrapped;
           const sessionSetup = yield* Ref.get(activeSessionSetup);
           const runtimeInstructions = buildRuntimeInstructions({
             agentFeedback: instructionState.hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
@@ -9701,19 +9745,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
           }
           if (appContextEntries.length > 0) {
-            prompt.unshift(
-              ...appContextEntries.map((entry) => ({
-                type: "text" as const,
-                text: formatAcpAppContextEntry(entry),
-              })),
-            );
+            const contextBlocks = appContextEntries.map((entry) => ({
+              type: "text" as const,
+              text: formatAcpAppContextEntry(entry),
+            }));
+            if (commandFromRewrite) prompt.push(...contextBlocks);
+            else prompt.unshift(...contextBlocks);
+          }
+          if (instructionsBlock !== undefined) {
+            prompt.push({ type: "text", text: instructionsBlock });
           }
           if (sendRuntimeInstructions) {
             prompt.push({ type: "text", text: runtimeInstructions });
           }
           return {
             prompt,
-            instructionState: text === messageText ? undefined : instructionState,
+            instructionState:
+              text === messageText && instructionsBlock === undefined
+                ? undefined
+                : instructionState,
             runtimeInstructions: sendRuntimeInstructions ? runtimeInstructions : undefined,
             appContextEntries,
             compactionMarker,
@@ -10262,6 +10312,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               nativeWorkflowCalls: 0,
               nativeWorkflowMembers: new Set(),
               nativeWorkflowUnreadableSince: undefined,
+              nativeWorkflowChangedAt: undefined,
             };
             const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
             let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
