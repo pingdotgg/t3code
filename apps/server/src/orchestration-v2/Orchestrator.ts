@@ -7674,6 +7674,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (candidate) => candidate.id === requestedCompletion.parentRunId,
       );
       const delivery = parentRun?.delegatedCompletion?.delivery;
+      const isDeclinedSteerFollowUp =
+        command.steerFollowUpOfRunId !== undefined &&
+        projection.runs.some(
+          (candidate) =>
+            candidate.id === command.steerFollowUpOfRunId &&
+            candidate.userMessageId !== command.messageId,
+        );
       if (
         parentRun?.delegatedCompletion?.disposition !== "open" ||
         delivery === null ||
@@ -7681,6 +7688,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         delivery.generation !== requestedCompletion.generation ||
         delivery.messageId !== command.messageId ||
         (projection.messages.some((candidate) => candidate.id === command.messageId) &&
+          !isDeclinedSteerFollowUp &&
           !isUndeliveredMailboxSteer(projection, command.messageId))
       ) {
         return yield* new OrchestratorDispatchError({
@@ -7757,6 +7765,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const commandNotice = noticeKind === "command" && command.creationSource === "server";
     if (
       !freshContext &&
+      command.steerFollowUpOfRunId === undefined &&
       // Steering refuses a command, so a notice that reads like one stays queued.
       !isSlashCommand(command) &&
       (delegatedCompletion !== undefined

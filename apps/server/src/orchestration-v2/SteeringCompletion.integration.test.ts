@@ -1723,6 +1723,154 @@ it.effect.each(declinedSteerTimings)(
     }),
 );
 
+it.effect("queues a declined delegated completion steer until the active turn finishes", () =>
+  Effect.gen(function* () {
+    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "steering-declined-delegated-completion",
+      false,
+      true,
+      Effect.void,
+      true,
+      undefined,
+      (turn) =>
+        Effect.fail(
+          new ProviderAdapter.ProviderAdapterSteerDeclinedError({
+            driver,
+            providerThreadId: turn.providerThread.id,
+            providerTurnId: turn.providerTurnId,
+          }),
+        ),
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const first = started[0]!;
+      const messageId = MessageId.make("message:declined-delegated");
+      const taskId = NodeId.make("task:declined-delegated");
+      const current = yield* orchestrator.getThreadProjection(threadId);
+      const parentRun = current.runs.find((run) => run.id === first.runId)!;
+      const now = yield* DateTime.now;
+      yield* (yield* EventSink.EventSinkV2).write({
+        events: [
+          {
+            id: EventId.make("declined-mailbox:cohort"),
+            type: "run.updated",
+            threadId,
+            runId: first.runId,
+            occurredAt: now,
+            payload: {
+              ...parentRun,
+              delegatedCompletion: {
+                disposition: "open",
+                nextGeneration: 2,
+                delivery: { generation: 1, messageId, taskIds: [taskId] },
+              },
+            },
+          },
+          {
+            id: EventId.make("declined-mailbox:task"),
+            type: "subagent.updated",
+            threadId,
+            runId: first.runId,
+            nodeId: taskId,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId,
+              runId: first.runId,
+              parentNodeId: first.rootNodeId,
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: null,
+              childThreadId: null,
+              nativeTaskRef: null,
+              prompt: "Do background work",
+              title: "Background test",
+              model: null,
+              completionWake: "always",
+              completionDelivery: { state: "claimed", observedByRunId: null },
+              status: "completed",
+              result: "done",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("steer-delegated"),
+        threadId,
+        messageId,
+        text: `Delegated task ${taskId} reached a terminal state.`,
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "server",
+        delegatedCompletion: {
+          parentRunId: first.runId,
+          generation: 1,
+          taskIds: [taskId],
+        },
+      });
+      yield* worker.drain();
+      const pending = yield* orchestrator.getThreadProjection(threadId);
+      const queued = pending.runs.find(
+        (run) => run.userMessageId === messageId && run.id !== first.runId,
+      );
+      const effects = yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+        CommandId.make("steer-delegated"),
+      );
+      assert.deepEqual(
+        effects.map((effect) => [effect.request.type, effect.status]),
+        [["provider-turn.steer", "succeeded"]],
+      );
+      assert.equal(queued?.status, "queued");
+      assert.equal(queued?.userMessageId, messageId);
+      assert.equal(started.length, 1);
+
+      const settled = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === first.runId &&
+            (event.payload.status === "completed" || event.payload.status === "waiting"),
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      const turn = pending.providerTurns[0]!;
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+      });
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.id,
+        runOrdinal: first.runOrdinal,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(settled);
+      yield* worker.drain();
+      yield* orchestrator.resumeQueuedRuns;
+      yield* worker.drain();
+      assert.equal(started.length, 2);
+      assert.equal(started[1]?.message.messageId, messageId);
+      assert.equal(started[1]?.runId, queued?.id);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // regression: #26695 cancelling a Copilot prompt to steer it kills its background agents
 it.effect("queues a steer until the turn ends when the provider cannot steer it", () =>
   Effect.gen(function* () {
