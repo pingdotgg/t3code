@@ -75,13 +75,14 @@ function PdfPage(props: {
   onError: (error: string) => void;
   onPageLink: (index: number) => void;
   onOpenLink: ((url: string, event: MouseEvent) => void) | undefined;
+  resizedAt: { readonly current: number };
 }) {
   const gt = useGT();
   const [links, setLinks] = useState<readonly PdfLink[]>([]);
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const painted = useRef<PDFDocumentProxy>(null);
-  const { document: pdf, index, width, onSize, onError } = props;
+  const { document: pdf, index, width, onSize, onError, resizedAt } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
   useEffect(() => {
     let cancelled = false;
@@ -90,8 +91,9 @@ function PdfPage(props: {
     let loadedPage: Awaited<ReturnType<PDFDocumentProxy["getPage"]>> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
-      // A drag changes the width every frame. CSS scales the painted page until the width settles.
-      if (painted.current === pdf)
+      // A drag changes the width every frame. CSS scales the painted page until the width settles,
+      // and a page that mounts during the drag waits too.
+      if (painted.current === pdf || performance.now() - resizedAt.current < 150)
         await new Promise((resolve) => (timer = setTimeout(resolve, 150)));
       const page = await pdf.getPage(index + 1);
       loadedPage = page;
@@ -169,7 +171,7 @@ function PdfPage(props: {
       // Release operator lists when virtual pages leave the viewport.
       void Promise.allSettled([paint?.promise]).then(() => loadedPage?.cleanup());
     };
-  }, [pdf, index, width, onSize, onError]);
+  }, [pdf, index, width, onSize, onError, resizedAt]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Highlight pdf.js-owned text nodes and observe asynchronous text layer mutations for the current search query.
   useEffect(() => {
     const node = text.current;
@@ -273,6 +275,7 @@ export default function PdfViewer(props: {
   const scroll = useRef<HTMLDivElement>(null);
   const find = useRef<HTMLInputElement>(null);
   const zoomAnchor = useRef<{ page: number; offset: number; width: number } | null>(null);
+  const resizedAt = useRef(-Infinity);
   const initialPage = initialView.page;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the PDF fetch, load timeout, and pdf.js document task across source changes, retries, and unmounts.
   useEffect(() => {
@@ -335,7 +338,12 @@ export default function PdfViewer(props: {
     if (!node) return;
     const update = () => setViewport({ width: node.clientWidth, height: node.clientHeight });
     update();
-    return observeResize(node, update);
+    let measured = node.clientWidth;
+    return observeResize(node, () => {
+      if (measured !== node.clientWidth) resizedAt.current = performance.now();
+      measured = node.clientWidth;
+      update();
+    });
   }, []);
   const { scale, width } = pdfPageWidth(viewport.width, pageWidth, zoom);
   const offsets = pdfPageOffsets(ratios, width);
@@ -618,6 +626,7 @@ export default function PdfViewer(props: {
                   onError={setError}
                   onPageLink={showPage}
                   onOpenLink={props.onOpenLink}
+                  resizedAt={resizedAt}
                 />
               </div>
             ))}

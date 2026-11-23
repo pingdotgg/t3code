@@ -14,7 +14,10 @@ vi.mock(import("pdfjs-dist/build/pdf.worker.min.mjs?url"), async () => {
 
 // Holds one page's Find text until the test opens it, so a scan can be observed mid-flight.
 const findGate = vi.hoisted(() => ({ page: 0, open: () => {}, opened: Promise.resolve() }));
+// Every page the viewer asks pdf.js for, in order.
+const pageLoads = vi.hoisted((): number[] => []);
 function setup(page: number) {
+  pageLoads.length = 0;
   findGate.page = page;
   findGate.opened = new Promise((resolve) => (findGate.open = resolve));
 }
@@ -27,6 +30,7 @@ vi.mock(import("./pdfDocument"), async (importOriginal) => {
       const promise = task.promise.then((document) => {
         const getPage = document.getPage.bind(document);
         document.getPage = async (number) => {
+          pageLoads.push(number);
           const page = await getPage(number);
           const getTextContent = page.getTextContent.bind(page);
           page.getTextContent = async (params) => {
@@ -203,6 +207,37 @@ it("keeps the page in view, with its painted canvas, when the pane narrows", asy
       expect(box.bottom).toBeGreaterThan(top);
     });
     await expect.element(screen.getByText("4 / 6 pages")).toBeVisible();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+});
+
+it("paints a page that mounts during a resize only after the width settles", async () => {
+  setup(0);
+  const page = { box: "0 0 612 792", rotate: 0, text: "BT /F1 24 Tf 30 700 Td (Text) Tj ET" };
+  const url = URL.createObjectURL(testPdf(Array.from({ length: 6 }, () => page)));
+  try {
+    const container = document.createElement("div");
+    container.style.cssText = "display:flex;width:500px;height:600px";
+    await using screen = await render(<PdfViewer src={url} title="Dragged PDF" />, { container });
+    await expect.element(screen.getByText("1 / 6 pages"), { timeout: 10_000 }).toBeVisible();
+    const region = screen.container.querySelector<HTMLElement>('[role="region"]')!;
+    await vi.waitFor(() => expect(region.querySelector("canvas")!.width).toBeGreaterThan(300));
+    expect(region.querySelector('canvas[aria-label="Page 4"]')).toBeNull();
+
+    // Narrower pages bring page 4 into the mounted range in the same commit as the resize.
+    const resized = new Promise((resolve) => new ResizeObserver(resolve).observe(container));
+    container.style.width = "400px";
+    await resized;
+    const canvas = region.querySelector<HTMLCanvasElement>('canvas[aria-label="Page 4"]')!;
+    expect(canvas).not.toBeNull();
+    expect(pageLoads).not.toContain(4);
+
+    await vi.waitFor(() =>
+      expect(canvas.width).toBe(
+        Math.ceil((region.clientWidth - 32) * Math.min(2, window.devicePixelRatio)),
+      ),
+    );
   } finally {
     URL.revokeObjectURL(url);
   }
