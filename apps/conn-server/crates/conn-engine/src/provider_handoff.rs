@@ -49,6 +49,9 @@ pub(crate) struct Place<'a> {
 pub(crate) struct Switch {
     pub(crate) handoff: Value,
     pub(crate) transfer: Value,
+    /// `context-transfer.created` for a switch; a portable fork consumes its pending fork
+    /// transfer (`context-transfer.updated`).
+    transfer_event: &'static str,
     pub(crate) turn_item: Value,
     /// The run's provider thread: the target instance's own, or none until the run starts.
     pub(crate) provider_thread_id: Value,
@@ -69,21 +72,7 @@ impl Switch {
         instance: &str,
         command_id: &str,
     ) -> Result<(), CommandError> {
-        let context = &capabilities["context"];
-        let detail = if context["canConsumeHandoffSummaries"] != true {
-            "providerInstanceId cannot consume handoff summaries"
-        } else if context["acceptsSyntheticUserContext"] != true {
-            "providerInstanceId cannot receive synthetic user context"
-        } else if !self.needs_full() && context["supportsDeltaHandoff"] != true {
-            "providerInstanceId does not support delta handoff"
-        } else if self.needs_full() && context["supportsFullThreadHandoff"] != true {
-            "providerInstanceId does not support full-thread handoff"
-        } else {
-            return Ok(());
-        };
-        reject(format!(
-            "{instance} cannot satisfy context_handoff for command {command_id}: {detail}"
-        ))
+        ensure_context_handoff(capabilities, instance, command_id, self.needs_full())
     }
 
     /// The handoff item's sources, from the covered runs. A merge-back's item shows them too
@@ -122,7 +111,7 @@ impl Switch {
         command_id: Option<&str>,
     ) -> StoreResult<()> {
         tx.append(
-            Draft::new(thread_id, "context-transfer.created", self.transfer.clone())
+            Draft::new(thread_id, self.transfer_event, self.transfer.clone())
                 .run(Some(run_id))
                 .command(command_id),
         )?;
@@ -133,6 +122,30 @@ impl Switch {
         )?;
         Ok(())
     }
+}
+
+/// `CommandPolicy.ensureContextHandoff` for a full (`full_thread_summary`) or a delta handoff.
+pub(crate) fn ensure_context_handoff(
+    capabilities: &Value,
+    instance: &str,
+    command_id: &str,
+    full: bool,
+) -> Result<(), CommandError> {
+    let context = &capabilities["context"];
+    let detail = if context["canConsumeHandoffSummaries"] != true {
+        "providerInstanceId cannot consume handoff summaries"
+    } else if context["acceptsSyntheticUserContext"] != true {
+        "providerInstanceId cannot receive synthetic user context"
+    } else if !full && context["supportsDeltaHandoff"] != true {
+        "providerInstanceId does not support delta handoff"
+    } else if full && context["supportsFullThreadHandoff"] != true {
+        "providerInstanceId does not support full-thread handoff"
+    } else {
+        return Ok(());
+    };
+    reject(format!(
+        "{instance} cannot satisfy context_handoff for command {command_id}: {detail}"
+    ))
 }
 
 fn ordinal(run: &Value) -> u64 {
@@ -448,17 +461,123 @@ pub(crate) fn prepare(
         "updatedAt": place.now,
         "consumedAt": place.now,
     });
-    let mut switch = Switch {
-        turn_item: Value::Null,
-        handoff,
-        transfer,
-        provider_thread_id,
-        covered,
-    };
+    Ok(Some(assemble(
+        place,
+        Switch {
+            turn_item: Value::Null,
+            handoff,
+            transfer,
+            transfer_event: "context-transfer.created",
+            provider_thread_id,
+            covered,
+        },
+    )))
+}
+
+/// A run's first message on a fork that cannot fork natively (`decideForkExecution`
+/// `portable_context`): the fork's pending transfer is consumed, and the run gets the history
+/// the fork inherits through its fork point (`readForkHistoryItems`), in full.
+pub(crate) fn prepare_fork(
+    tx: &Tx<'_>,
+    thread: &Value,
+    place: &Place<'_>,
+    pending: &Value,
+) -> StoreResult<Switch> {
+    let instance = place.model_selection["instanceId"]
+        .as_str()
+        .unwrap_or_default();
+    let source_id = pending["sourceThreadId"].as_str().unwrap_or_default();
+    let mut runs = tx.entities(source_id, "runs")?;
+    runs.sort_by_key(ordinal);
+    let fork_ordinal = runs
+        .iter()
+        .find(|r| r["id"] == pending["sourcePoint"]["runId"])
+        .map_or(u64::MAX, ordinal);
+    let covered: Vec<Value> = runs
+        .iter()
+        .filter(|r| is_handoff_source(r) && ordinal(r) <= fork_ordinal)
+        .cloned()
+        .collect();
+    let items = inherited_items(tx, thread)?;
+    let from_provider_threads: Vec<Value> = runs
+        .iter()
+        .filter(|r| r["id"] == pending["sourcePoint"]["runId"])
+        .filter_map(|r| r["providerThreadId"].as_str().map(Value::from))
+        .collect();
+    let from_instance = pending["sourceProviderInstanceId"]
+        .as_str()
+        .unwrap_or_default();
+    let handoff_id = join_id(
+        "context-handoff",
+        &[
+            "thread",
+            place.thread_id,
+            "from-provider-instance",
+            from_instance,
+            "to-provider-instance",
+            instance,
+            &conn_support::uuid_v4(),
+        ],
+    );
+    let range = json!({
+        "from": covered.first().map_or(0, ordinal),
+        "to": covered.last().map_or(0, ordinal),
+    });
+    let handoff = crate::handoff::prepare_provider_handoff(&crate::handoff::ProviderHandoff {
+        id: handoff_id.clone(),
+        thread_id: place.thread_id,
+        source_thread_id: Some(source_id),
+        target_run_id: place.run_id,
+        transfer_id: &pending["id"],
+        from_provider_thread_ids: from_provider_threads,
+        to_provider_thread_id: json!(crate::merge_back::provisional_provider_thread(place.run_id)),
+        covered: range,
+        strategy: "full_thread_summary",
+        items: &items,
+        runs: &runs,
+        token_cap: crate::handoff::token_cap(
+            std::env::var("T3CODE_CONTEXT_HANDOFF_TOKEN_CAP")
+                .ok()
+                .as_deref(),
+        ),
+        now: place.now,
+    });
+    let mut transfer = pending.clone();
+    for (field, value) in [
+        ("targetProviderInstanceId", json!(instance)),
+        ("targetRunId", json!(place.run_id)),
+        ("status", json!("consumed")),
+        (
+            "resolution",
+            json!({"strategy": "portable_context", "contextHandoffId": handoff_id}),
+        ),
+        ("updatedAt", json!(place.now)),
+        ("consumedAt", json!(place.now)),
+    ] {
+        transfer[field] = value;
+    }
+    Ok(assemble(
+        place,
+        Switch {
+            turn_item: Value::Null,
+            handoff,
+            transfer,
+            transfer_event: "context-transfer.updated",
+            provider_thread_id: Value::Null,
+            covered,
+        },
+    ))
+}
+
+/// Adds the "Provider handoff" item, just ahead of the run's user message.
+fn assemble(place: &Place<'_>, mut switch: Switch) -> Switch {
+    let instance = place.model_selection["instanceId"].clone();
+    let handoff_id = switch.handoff["id"].as_str().unwrap_or_default().to_owned();
+    let strategy = switch.handoff["strategy"].clone();
     let (from_instances, from_selections) = switch.sources();
     switch.turn_item = json!({
         "id": join_id("turn-item", &["run", place.run_id, "signal", &format!("context-handoff:{handoff_id}")]),
-        "threadId": thread_id,
+        "threadId": place.thread_id,
         "runId": place.run_id,
         "nodeId": place.root_node_id,
         "providerThreadId": switch.provider_thread_id,
@@ -483,7 +602,7 @@ pub(crate) fn prepare(
         "strategy": strategy,
         "summary": switch.handoff["summaryText"],
     });
-    Ok(Some(switch))
+    switch
 }
 
 #[cfg(test)]
@@ -512,6 +631,7 @@ mod tests {
         let switch = Switch {
             handoff: Value::Null,
             transfer: Value::Null,
+            transfer_event: "context-transfer.created",
             turn_item: Value::Null,
             provider_thread_id: Value::Null,
             covered: vec![

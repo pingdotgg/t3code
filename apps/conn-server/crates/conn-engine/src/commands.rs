@@ -437,12 +437,16 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
             };
         }
     }
-    crate::fork::ensure_native_fork(
+    let fork = crate::fork::decide_fork_execution(
         tx,
-        &c.thread_id,
-        thread["modelSelection"]["instanceId"]
+        &thread,
+        c.model_selection
+            .as_ref()
+            .unwrap_or(&thread["modelSelection"])["instanceId"]
             .as_str()
             .unwrap_or_default(),
+        c.target_capabilities.as_ref(),
+        &c.command_id,
     )?;
     if !matches!(
         c.dispatch_mode.kind.as_str(),
@@ -489,22 +493,25 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     } else {
         crate::provider_handoff::conversation_instance(tx, &thread, c.notification.is_some())?
     };
-    let switch = match from {
-        Some(from) if from != model["instanceId"] => crate::provider_handoff::prepare(
-            tx,
-            &thread,
-            &crate::provider_handoff::Place {
-                thread_id: &c.thread_id,
-                run_id: &run_id,
-                root_node_id: &root,
-                ordinal,
-                model_selection: &model,
-                created_by: &json!(c.created_by),
-                requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
-                queued: false,
-                now: &now,
-            },
-        )?,
+    let created_by = json!(c.created_by);
+    let place = crate::provider_handoff::Place {
+        thread_id: &c.thread_id,
+        run_id: &run_id,
+        root_node_id: &root,
+        ordinal,
+        model_selection: &model,
+        created_by: &created_by,
+        requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
+        queued: false,
+        now: &now,
+    };
+    let switch = match (&fork, from) {
+        (crate::fork::ForkExecution::Portable(pending), _) => Some(
+            crate::provider_handoff::prepare_fork(tx, &thread, &place, pending)?,
+        ),
+        (_, Some(from)) if from != model["instanceId"] => {
+            crate::provider_handoff::prepare(tx, &thread, &place)?
+        }
         _ => None,
     };
     if let Some(switch) = &switch {

@@ -3626,6 +3626,14 @@ async fn a_provider_switch_hands_the_history_to_the_new_provider() {
         "Claude's thread holds run 1 already: {prompt}"
     );
     assert!(prompt.ends_with("\n\nUser message:\nand now?"), "{prompt}");
+    // The Codex exchange reaches Claude once: its user line and its reply, one of each.
+    for line in ["what is the marker?", "echo: what is the marker?"] {
+        assert_eq!(
+            prompt.lines().filter(|l| l.trim() == line).count(),
+            1,
+            "{line}: {prompt}"
+        );
+    }
     let transfer = p["contextTransfers"]
         .as_array()
         .unwrap()
@@ -3640,6 +3648,16 @@ async fn a_provider_switch_hands_the_history_to_the_new_provider() {
     let p = run_to_end(&engine, "t1", "run:t1:4").await;
     assert_eq!(p["runs"][3]["contextHandoffId"], Value::Null);
     assert_eq!(crate::lock(&claude.prompts).last().unwrap(), "plain");
+
+    // A fresh-context request on another provider carries nothing over.
+    dispatch(&engine, model_selection_set("c8", "codex")).await;
+    let mut fresh = message("t1", "c9", "start over");
+    fresh["freshContext"] = json!(true);
+    dispatch(&engine, fresh).await;
+    let p = run_to_end(&engine, "t1", "run:t1:5").await;
+    assert_eq!(p["runs"][4]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&codex.injected).len(), 1);
+    assert_eq!(crate::lock(&codex.prompts).last().unwrap(), "start over");
 }
 
 /// A switch to a provider that cannot take the history is refused with T3's text

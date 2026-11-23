@@ -1216,3 +1216,113 @@ async fn a_rollback_session_gets_the_runtime_policy_override() {
     assert_eq!(policies.len(), 1, "{policies:?}");
     assert_eq!(policies[0]["approvalPolicy"], "never", "{policies:?}");
 }
+
+/// Audit 1.5, T3's `decideForkExecution`: a fork whose first message goes to another
+/// provider cannot fork natively, so the history it inherits through its fork point travels
+/// as a full handoff (`portable_context`). Later source turns stay out. On the source's own
+/// provider the fork is native, and a target that cannot take a handoff is refused.
+#[tokio::test(flavor = "current_thread")]
+async fn a_fork_on_another_provider_carries_its_history() {
+    let engine_with = |db: &TempDb, repo: &Repo, codex: FakeProvider| {
+        let claude = Arc::new(FakeProvider::new("claudeAgent"));
+        let codex = Arc::new(codex);
+        let mut config = EngineConfig::new(db.path());
+        config.projects = vec![ProjectConfig {
+            title: "Project".into(),
+            workspace_root: repo.root(),
+        }];
+        config.providers = vec![claude.clone(), codex.clone()];
+        config.checkpoints = true;
+        (SqliteEngine::open(config).unwrap(), claude, codex)
+    };
+    async fn history(engine: &SqliteEngine) {
+        for (id, text, run) in [
+            ("c2", "remember the marker blue-17", "run:t1:1"),
+            ("c3", "a later turn green-9", "run:t1:2"),
+        ] {
+            dispatch(engine, message("t1", id, text)).await;
+            run_to_end(engine, "t1", run).await;
+        }
+        dispatch(
+            engine,
+            fork("f", json!({"type": "run", "runId": "run:t1:1"})),
+        )
+        .await;
+        dispatch(
+            engine,
+            json!({"type": "thread.model-selection.set", "threadId": "t2",
+                "commandId": "to-codex", "modelSelection": {"instanceId": "codex", "model": "m"}}),
+        )
+        .await;
+    }
+
+    let db = TempDb::new("fork-portable");
+    let repo = Repo::new("fork-portable");
+    let (engine, claude, codex) = engine_with(
+        &db,
+        &repo,
+        FakeProvider::new("codex").with_history_injection(),
+    );
+    dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+    history(&engine).await;
+    dispatch(&engine, message("t2", "send", "continue")).await;
+    let p = run_to_end(&engine, "t2", "run:t2:1").await;
+    assert_eq!(p["runs"][0]["status"], "completed");
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    let received = injected[0].1.to_string();
+    assert!(received.contains("blue-17"), "{received}");
+    assert!(
+        !received.contains("green-9"),
+        "a later source turn: {received}"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["continue"]);
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "fork")
+        .unwrap();
+    assert_eq!(transfer["status"], "consumed");
+    assert_eq!(transfer["resolution"]["strategy"], "portable_context");
+    assert_eq!(transfer["targetProviderInstanceId"], "codex");
+    assert!(crate::lock(&claude.forks).is_empty());
+
+    // On the source's own provider, a fork of a finished turn is native.
+    dispatch(
+        &engine,
+        json!({"type": "thread.fork", "commandId": "f-native", "sourceThreadId": "t1",
+            "targetThreadId": "t3", "sourcePoint": {"type": "run", "runId": "run:t1:2"},
+            "createdBy": "user", "creationSource": "web"}),
+    )
+    .await;
+    dispatch(&engine, message("t3", "go", "native")).await;
+    let p = run_to_end(&engine, "t3", "run:t3:1").await;
+    assert_eq!(p["runs"][0]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&claude.forks).len(), 1);
+
+    // A target that cannot take a handoff refuses the send, and the fork keeps no run.
+    let db = TempDb::new("fork-unsupported");
+    let repo = Repo::new("fork-unsupported");
+    let (engine, _, _) = engine_with(
+        &db,
+        &repo,
+        FakeProvider::new("codex").without_context_handoff(),
+    );
+    dispatch(&engine, create_in(&repo, "t1", "c1")).await;
+    history(&engine).await;
+    let refused = engine
+        .dispatch(from_json(message("t2", "send", "continue")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string()
+            .contains("codex cannot satisfy context_handoff for command send")),
+        "{refused:?}"
+    );
+    assert!(
+        projection(&engine, "t2").await["runs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}

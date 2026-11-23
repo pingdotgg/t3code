@@ -41,6 +41,13 @@ because a silent dead socket would otherwise hold its session forever. Proof: se
 
 ## Provider switch handoff (2026-11-22)
 
+**Forks on another provider (2026-11-23):** as T3's `decideForkExecution`, a fork's first
+message forks natively when it can, and otherwise carries the history the fork inherits through
+its fork point as a full handoff (`portable_context`); later source turns stay out. The target
+must take a handoff (`ensureContextHandoff`). A side chat still forks natively or is refused: T3
+gives it a side-chat handoff, which this server does not build. Proof:
+`a_fork_on_another_provider_carries_its_history` (audit 1.5).
+
 A thread can move between Claude, Codex, Grok and Antigravity mid-thread, and the new provider
 gets the conversation. Before, every provider said
 `supportsProviderSwitchingViaHandoff: false`, so clients locked the model picker to the
