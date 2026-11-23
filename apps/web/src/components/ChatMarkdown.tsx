@@ -880,9 +880,10 @@ function useChatMarkdownState(
     }
     const query = workspaceLinkLookupQuery(workspaceRelativePath, cwd);
     if (query === null) return null;
+    const basenameLookup = needsWorkspaceBasenameLookup(workspaceRelativePath);
     // Search can be truncated or still scanning, so it cannot rule out the literal
     // path. A path with a folder opens as written whenever it exists.
-    if (!needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (!basenameLookup) {
       const metadata = await getFilesystemMetadata({
         environmentId,
         input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
@@ -917,34 +918,48 @@ function useChatMarkdownState(
     const agentRoots = (agentDirectories?.() ?? []).filter((root) => root !== cwd);
     if (otherRoots.length === 0 && agentRoots.length === 0) return null;
     // Another project's file never replaces a thread-local file the search missed.
-    if (needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (basenameLookup) {
       const metadata = await getFilesystemMetadata({
         environmentId,
         input: { paths: [resolveWorkspaceFilePath(workspaceRelativePath, cwd)] },
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const projectMatch = pickProjectLinkMatch(
-      workspaceRelativePath,
-      await Promise.all(otherRoots.map(searchRoot)),
-    );
+    const projectSearches = await Promise.all(otherRoots.map(searchRoot));
+    const projectMatch = pickProjectLinkMatch(workspaceRelativePath, [own, ...projectSearches]);
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
-    // No project has the file, so it opens where the agent last worked, as written.
+    // An unresolved project lookup falls back to the agent's working directories.
     const agentPaths = agentRoots.map((root) =>
       resolveWorkspaceFilePath(workspaceRelativePath, root),
     );
     const metadata = await getFilesystemMetadata({ environmentId, input: { paths: agentPaths } });
     if (metadata._tag !== "Success") return null;
     const literal = agentPaths.find((_, index) => metadata.value.entries[index]?.kind === "file");
-    if (literal !== undefined || !needsWorkspaceBasenameLookup(workspaceRelativePath)) {
+    if (literal !== undefined || !basenameLookup) {
       return literal ?? null;
     }
     return findAgentDirectoryMatch(workspaceRelativePath, agentRoots, searchRoot);
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
+    // The panel reads relative paths from the thread's folder. A pull request body's `cwd` is the
+    // checkout of its repository, which can be another folder.
+    const shell = readThreadShell(threadRef);
+    const panelRoot =
+      shell?.worktreePath ??
+      projects.find(
+        (project) => project.environmentId === environmentId && project.id === shell?.projectId,
+      )?.workspaceRoot;
     const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+      useRightPanelStore
+        .getState()
+        .openFile(
+          threadRef,
+          cwd && panelRoot !== undefined && cwd !== panelRoot
+            ? resolveWorkspaceFilePath(path, cwd)
+            : path,
+          fileLinkMeta.line,
+        );
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
