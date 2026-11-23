@@ -8,7 +8,9 @@ import { m, type MessageResolver } from "~/i18n/messages";
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
   if (path === null || path === ".") return null;
   const workspacePath = workspaceRelativeFilePath(path, cwd);
-  return workspacePath === "." ? null : (workspacePath ?? path);
+  if (workspacePath === ".") return null;
+  // `/root//src` and `/root/~/x` relativize to `/src` and `~/x`, which would read another host file.
+  return workspacePath !== null && !isHostPath(workspacePath) ? workspacePath : path;
 }
 
 export const isMarkdownPreviewFile = (path: string): boolean =>
