@@ -52,6 +52,32 @@ const truncate = Effect.gen(function*() {
   yield* sql`DELETE FROM cluster_messages`
 })
 
+// Waits until another connection is paused in a test trigger's pg_sleep.
+const waitForPgSleep = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  while (true) {
+    const waiting = yield* sql`
+      SELECT 1 FROM pg_stat_activity
+      WHERE pid <> pg_backend_pid() AND wait_event = 'PgSleep'
+    `
+    if (waiting.length > 0) return
+    yield* Effect.sleep("10 millis")
+  }
+}).pipe(Effect.timeout("5 seconds"))
+
+// Waits until another connection is paused in a test trigger's SLEEP.
+const waitForMysqlSleep = Effect.gen(function*() {
+  const sql = yield* SqlClient.SqlClient
+  while (true) {
+    const waiting = yield* sql`
+      SELECT 1 FROM information_schema.PROCESSLIST
+      WHERE ID <> CONNECTION_ID() AND STATE = 'User sleep'
+    `
+    if (waiting.length > 0) return
+    yield* Effect.sleep("10 millis")
+  }
+}).pipe(Effect.timeout("5 seconds"))
+
 describe("SqlMessageStorage", () => {
   it.effect("preserves ids above 2^53 with a number-returning SQLite driver", () => {
     let id = 9007199254740993n
@@ -104,12 +130,13 @@ describe("SqlMessageStorage", () => {
       })
     )
   })
-  ;([
+  const backends: ReadonlyArray<readonly ["pg" | "mysql" | "mssql" | "sqlite", Layer.Layer<SqlClient.SqlClient>]> = [
     ["pg", Layer.orDie(PgContainer.layerClient)],
     ["mysql", Layer.orDie(MysqlContainer.layerClient)],
     ["mssql", Layer.orDie(MssqlContainer.layerClient)],
     ["sqlite", Layer.orDie(SqliteLayer)]
-  ] as const).forEach(([label, layer]) => {
+  ]
+  backends.forEach(([label, layer]) => {
     // Tests truncate this backend's shared tables.
     it.layer(StorageLayer.pipe(Layer.provideMerge(layer)), {
       concurrent: false,
@@ -195,9 +222,338 @@ describe("SqlMessageStorage", () => {
             `
             expect(indexes).toHaveLength(1)
           }))
+
+        it.effect("saveRequest keeps a duplicate whose original is deleted mid-save", () =>
+          Effect.gen(function*() {
+            yield* truncate
+            const sql = yield* SqlClient.SqlClient
+            const storage = yield* MessageStorage.MessageStorage
+            const cutoff = Date.UTC(2026, 0, 1)
+            const request = makeRequest({ rpc: PrimaryKeyTest, payload: PrimaryKeyTest.payloadSchema.make({ id: 1 }) })
+            const expired = yield* request
+            yield* storage.saveRequest(expired)
+            yield* storage.saveReply(yield* makeReply(expired, cutoff - 1))
+            // Pause after the duplicate's insert hits the conflict, before it reads the existing row.
+            yield* sql`
+              CREATE FUNCTION cluster_test_slow_insert() RETURNS trigger AS $$
+              BEGIN
+                PERFORM pg_sleep(2);
+                RETURN NULL;
+              END $$ LANGUAGE plpgsql
+            `
+            yield* sql`
+              CREATE TRIGGER cluster_test_slow_insert AFTER INSERT ON cluster_messages
+              FOR EACH STATEMENT EXECUTE FUNCTION cluster_test_slow_insert()
+            `
+            yield* Effect.gen(function*() {
+              const resend = yield* request
+              const save = yield* storage.saveRequest(resend).pipe(Effect.forkChild)
+              yield* waitForPgSleep
+              expect(
+                yield* storage.deleteProcessed({
+                  entityType: "test",
+                  completedBefore: cutoff,
+                  limit: 100
+                })
+              )
+                .toEqual(1)
+              const result = yield* Fiber.join(save)
+              if (result._tag === "Duplicate") {
+                assert(Option.isSome(result.lastReceivedReply))
+              } else {
+                // a reported Success must have stored the request
+                const messages = yield* storage.unprocessedMessages([resend.envelope.address.shardId])
+                expect(messages.map((message) => message.envelope.requestId)).toEqual([resend.envelope.requestId])
+              }
+            }).pipe(Effect.ensuring(
+              Effect.gen(function*() {
+                yield* sql`DROP TRIGGER cluster_test_slow_insert ON cluster_messages`
+                yield* sql`DROP FUNCTION cluster_test_slow_insert()`
+                yield* truncate
+              }).pipe(Effect.orDie)
+            ))
+          }).pipe(TestClock.withLive), { timeout: 30_000 })
+
+        it.effect(
+          "guarded clearReplies preserves a concurrently saved reply in either lock order",
+          () =>
+            Effect.gen(function*() {
+              const sql = yield* SqlClient.SqlClient
+              const storage = yield* MessageStorage.MessageStorage
+              for (const saveFirst of [false, true]) {
+                yield* truncate
+                const request = yield* makeRequest()
+                const oldReply = yield* makeReply(request)
+                const newReply = yield* makeReply(request)
+                yield* storage.saveRequest(request)
+                yield* storage.saveReply(oldReply)
+                const reset = storage.clearReplies(request.envelope.requestId, { expectedReplyId: oldReply.reply.id })
+                const save = storage.saveReply(newReply)
+                // A competing runner resets the old completion before saving its new reply.
+                const [first, second] = saveFirst ? [Effect.andThen(reset, save), reset] : [reset, save]
+                // Hold the first operation's lock while the second connection starts.
+                const fiber = yield* Effect.andThen(first, sql`SELECT pg_sleep(2)`).pipe(
+                  sql.withTransaction,
+                  Effect.forkChild
+                )
+                yield* waitForPgSleep
+                yield* second
+                yield* Fiber.join(fiber)
+                const replies = yield* storage.repliesFor([request])
+                assert.strictEqual(replies.at(-1)?.id, newReply.reply.id)
+                assert.deepStrictEqual(yield* storage.unprocessedMessages([request.envelope.address.shardId]), [])
+              }
+            }).pipe(TestClock.withLive),
+          { timeout: 30_000 }
+        )
+
+        it.effect("clearReplies does not deadlock with a concurrent deleteProcessed", () =>
+          Effect.gen(function*() {
+            yield* truncate
+            const sql = yield* SqlClient.SqlClient
+            const storage = yield* MessageStorage.MessageStorage
+            const cutoff = Date.UTC(2026, 0, 1)
+            const request = yield* makeRequest()
+            yield* storage.saveRequest(request)
+            yield* storage.saveReply(yield* makeReply(request, cutoff - 1))
+            // Pause clearReplies after it deletes the final reply, only in the transaction that opts in.
+            yield* sql`
+              CREATE FUNCTION cluster_test_slow_clear() RETURNS trigger AS $$
+              BEGIN
+                IF current_setting('cluster_test.slow_clear', true) = 'on' THEN
+                  PERFORM pg_sleep(2);
+                END IF;
+                RETURN OLD;
+              END $$ LANGUAGE plpgsql
+            `
+            yield* sql`
+              CREATE TRIGGER cluster_test_slow_clear AFTER DELETE ON cluster_replies
+              FOR EACH ROW EXECUTE FUNCTION cluster_test_slow_clear()
+            `
+            yield* Effect.gen(function*() {
+              const clearFiber = yield* Effect.gen(function*() {
+                yield* sql`SET LOCAL cluster_test.slow_clear = 'on'`
+                yield* storage.clearReplies(request.envelope.requestId)
+              }).pipe(sql.withTransaction, Effect.exit, Effect.forkChild)
+              yield* waitForPgSleep
+              const cleanup = yield* Effect.exit(
+                storage.deleteProcessed({
+                  entityType: "test",
+                  completedBefore: cutoff,
+                  limit: 100
+                })
+              )
+              const cleared = yield* Fiber.join(clearFiber)
+              assert(Exit.isSuccess(cleared), String(cleared))
+              assert(Exit.isSuccess(cleanup), String(cleanup))
+              // the reset started first, so the request is kept and delivered again
+              expect(cleanup.value).toEqual(0)
+              const messages = yield* storage.unprocessedMessages([request.envelope.address.shardId])
+              expect(messages.map((message) => message.envelope.requestId)).toEqual([request.envelope.requestId])
+            }).pipe(Effect.ensuring(
+              Effect.gen(function*() {
+                yield* sql`DROP TRIGGER cluster_test_slow_clear ON cluster_replies`
+                yield* sql`DROP FUNCTION cluster_test_slow_clear()`
+                yield* truncate
+              }).pipe(Effect.orDie)
+            ))
+          }).pipe(TestClock.withLive))
+      }
+
+      if (label === "mysql") {
+        it.effect("a late AckChunk does not deadlock with a concurrent deleteProcessed", () =>
+          Effect.gen(function*() {
+            yield* truncate
+            const sql = yield* SqlClient.SqlClient
+            const storage = yield* MessageStorage.MessageStorage
+            const cutoff = Date.UTC(2026, 0, 1)
+            const request = yield* makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id: 1 }) })
+            const chunk = yield* makeChunkReply(request)
+            yield* storage.saveRequest(request)
+            yield* storage.saveReply(chunk)
+            yield* storage.saveReply(yield* makeReply(request, cutoff - 1))
+            // Pause the acknowledgement after it updates the chunk reply, only on the connection that opts in.
+            yield* sql`
+              CREATE TRIGGER cluster_test_slow_ack AFTER UPDATE ON cluster_replies
+              FOR EACH ROW BEGIN
+                IF @cluster_test_slow_ack = 1 THEN
+                  DO SLEEP(2);
+                END IF;
+              END
+            `.unprepared
+            yield* Effect.gen(function*() {
+              const ackFiber = yield* Effect.gen(function*() {
+                yield* sql`SET @cluster_test_slow_ack = 1`
+                yield* storage.saveEnvelope(yield* makeAckChunk(request, chunk)).pipe(
+                  Effect.ensuring(Effect.orDie(sql`SET @cluster_test_slow_ack = NULL`))
+                )
+              }).pipe(sql.withTransaction, Effect.exit, Effect.forkChild)
+              yield* waitForMysqlSleep
+              const cleanup = yield* Effect.exit(
+                storage.deleteProcessed({
+                  entityType: "test",
+                  completedBefore: cutoff,
+                  limit: 100
+                })
+              )
+              const acked = yield* Fiber.join(ackFiber)
+              assert(Exit.isSuccess(acked), String(acked))
+              assert(Exit.isSuccess(cleanup), String(cleanup))
+              // cleanup either deletes the whole family, including the new AckChunk, or leaves it for a later tick
+              const remaining = yield* sql<{ kind: number }>`
+                SELECT kind FROM cluster_messages WHERE request_id = ${String(request.envelope.requestId)}
+              `
+              expect(remaining.map((row) => Number(row.kind)).sort()).toEqual(cleanup.value === 1 ? [] : [0, 1])
+            }).pipe(Effect.ensuring(
+              Effect.gen(function*() {
+                yield* sql`DROP TRIGGER cluster_test_slow_ack`.unprepared
+                yield* truncate
+              }).pipe(Effect.orDie)
+            ))
+          }).pipe(TestClock.withLive), { timeout: 30_000 })
+
+        it.effect(
+          "a stream reply does not deadlock with deleteProcessed of another request",
+          () =>
+            Effect.gen(function*() {
+              yield* truncate
+              const sql = yield* SqlClient.SqlClient
+              const storage = yield* MessageStorage.MessageStorage
+              const cutoff = Date.UTC(2026, 0, 1)
+              for (let id = 1; id <= 20; id++) {
+                const expired = yield* makeRequest({ payload: { id } })
+                yield* storage.saveRequest(expired)
+                yield* storage.saveReply(yield* makeReply(expired, cutoff - id))
+              }
+              // an incomplete stream, which deleteProcessed must not select
+              const streaming = yield* makeRequest({
+                rpc: StreamRpc,
+                payload: StreamRpc.payloadSchema.make({ id: 21 }),
+                entityId: "2"
+              })
+              yield* storage.saveRequest(streaming)
+              yield* storage.saveReply(yield* makeChunkReply(streaming, 0))
+              // Pause saveReply after it updates the request row, before it inserts the reply, only on the
+              // connection that opts in.
+              yield* sql`
+            CREATE TRIGGER cluster_test_slow_reply AFTER UPDATE ON cluster_messages
+            FOR EACH ROW BEGIN
+              IF @cluster_test_slow_reply = 1 THEN
+                DO SLEEP(2);
+              END IF;
+            END
+          `.unprepared
+              yield* Effect.gen(function*() {
+                const replyFiber = yield* Effect.gen(function*() {
+                  yield* sql`SET @cluster_test_slow_reply = 1`
+                  yield* storage.saveReply(yield* makeChunkReply(streaming, 1)).pipe(
+                    Effect.ensuring(Effect.orDie(sql`SET @cluster_test_slow_reply = NULL`))
+                  )
+                }).pipe(sql.withTransaction, Effect.exit, Effect.forkChild)
+                yield* waitForMysqlSleep
+                const cleanup = yield* Effect.exit(
+                  storage.deleteProcessed({
+                    entityType: "test",
+                    completedBefore: cutoff,
+                    limit: 100
+                  })
+                )
+                const replied = yield* Fiber.join(replyFiber)
+                assert(Exit.isSuccess(replied), String(replied))
+                assert(Exit.isSuccess(cleanup), String(cleanup))
+                expect(cleanup.value).toEqual(20)
+              }).pipe(Effect.ensuring(
+                Effect.gen(function*() {
+                  yield* sql`DROP TRIGGER cluster_test_slow_reply`.unprepared
+                  yield* truncate
+                }).pipe(Effect.orDie)
+              ))
+            }).pipe(TestClock.withLive),
+          { timeout: 30_000 }
+        )
+
+        it.effect("fails the migrations when the retention index cannot be created", () =>
+          Effect.gen(function*() {
+            const sql = yield* SqlClient.SqlClient
+            // A messages table that predates the migrations and lacks the
+            // last_reply_id column. 0001 keeps it, so 0005's CREATE INDEX
+            // fails on a missing column, not a duplicate index name.
+            yield* sql`
+              CREATE TABLE brokenidx_messages (
+                id BIGINT NOT NULL,
+                entity_type VARCHAR(150) NOT NULL,
+                processed BOOLEAN NOT NULL DEFAULT FALSE
+              )
+            `
+            const exit = yield* Effect.exit(
+              SqlMessageStorage.makeEncoded({ prefix: "brokenidx" }).pipe(Effect.provide(NodeCrypto.layer))
+            )
+            expect(Exit.isFailure(exit)).toBe(true)
+          }))
       }
 
       if (label === "mssql") {
+        it.effect("a stream acknowledgement does not deadlock with deleteProcessed of another request", () =>
+          Effect.gen(function*() {
+            yield* truncate
+            const sql = yield* SqlClient.SqlClient
+            const storage = yield* MessageStorage.MessageStorage
+            const cutoff = Date.UTC(2026, 0, 1)
+            const expired = yield* makeRequest({ payload: { id: 1 } })
+            yield* storage.saveRequest(expired)
+            yield* storage.saveReply(yield* makeReply(expired, cutoff - 1))
+            // an incomplete stream, which deleteProcessed must not select
+            const streaming = yield* makeRequest({
+              rpc: StreamRpc,
+              payload: StreamRpc.payloadSchema.make({ id: 2 }),
+              entityId: "2"
+            })
+            const chunk = yield* makeChunkReply(streaming)
+            yield* storage.saveRequest(streaming)
+            yield* storage.saveReply(chunk)
+            // Pause the acknowledgement after it updates the chunk reply, only on the session that opts in.
+            yield* sql`
+              CREATE TRIGGER cluster_test_slow_ack ON cluster_replies AFTER UPDATE AS
+              IF SESSION_CONTEXT(N'cluster_test_slow_ack') = 1 WAITFOR DELAY '00:00:02'
+            `.unprepared
+            yield* Effect.gen(function*() {
+              const ackFiber = yield* Effect.gen(function*() {
+                yield* sql`EXEC sp_set_session_context @key = N'cluster_test_slow_ack', @value = 1`
+                yield* storage.saveEnvelope(yield* makeAckChunk(streaming, chunk)).pipe(
+                  Effect.ensuring(
+                    Effect.orDie(sql`EXEC sp_set_session_context @key = N'cluster_test_slow_ack', @value = NULL`)
+                  )
+                )
+              }).pipe(sql.withTransaction, Effect.exit, Effect.forkChild)
+              yield* Effect.gen(function*() {
+                while (true) {
+                  const waiting = yield* sql`
+                    SELECT 1 FROM sys.dm_exec_requests
+                    WHERE session_id <> @@SPID AND wait_type = 'WAITFOR'
+                  `
+                  if (waiting.length > 0) return
+                  yield* Effect.sleep("10 millis")
+                }
+              }).pipe(Effect.timeout("5 seconds"))
+              const cleanup = yield* Effect.exit(
+                storage.deleteProcessed({
+                  entityType: "test",
+                  completedBefore: cutoff,
+                  limit: 100
+                })
+              )
+              const acked = yield* Fiber.join(ackFiber)
+              assert(Exit.isSuccess(acked), String(acked))
+              assert(Exit.isSuccess(cleanup), String(cleanup))
+              expect(cleanup.value).toEqual(1)
+            }).pipe(Effect.ensuring(
+              Effect.gen(function*() {
+                yield* sql`DROP TRIGGER cluster_test_slow_ack`.unprepared
+                yield* truncate
+              }).pipe(Effect.orDie)
+            ))
+          }).pipe(TestClock.withLive))
+
         it.effect("rejects duplicate exit replies when another table has the same index name", () =>
           Effect.gen(function*() {
             const sql = yield* SqlClient.SqlClient
@@ -210,6 +566,48 @@ describe("SqlMessageStorage", () => {
             yield* storage.saveReply({ ...exit, id: "1" })
             const error = yield* Effect.flip(storage.saveReply({ ...exit, id: "2" }))
             expect(error._tag).toEqual("PersistenceError")
+          }))
+
+        it.effect("acknowledges and cleans up when another table has the lookup index names", () =>
+          Effect.gen(function*() {
+            const sql = yield* SqlClient.SqlClient
+            yield* sql`CREATE TABLE collision_idx_other (id INT)`
+            yield* sql`CREATE INDEX collision_idx_messages_request_id_idx ON collision_idx_other (id)`
+            yield* sql`CREATE INDEX collision_idx_replies_request_lookup_idx ON collision_idx_other (id)`
+            const migrate = SqlMessageStorage.makeEncoded({ prefix: "collision_idx" }).pipe(
+              Effect.provide(NodeCrypto.layer)
+            )
+            yield* migrate
+            // Recreate a schema migrated before this change: the lookup indexes
+            // are missing from the storage tables and only migrations 1-3 ran.
+            for (
+              const [index, table] of [
+                ["collision_idx_messages_request_id_idx", "collision_idx_messages"],
+                ["collision_idx_replies_request_lookup_idx", "collision_idx_replies"]
+              ]
+            ) {
+              yield* sql`
+                IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = ${index} AND object_id = OBJECT_ID(${table}))
+                DROP INDEX ${sql(index)} ON ${sql(table)}
+              `
+            }
+            yield* sql`DELETE FROM collision_idx_migrations WHERE migration_id > 3`
+            const storage = yield* MessageStorage.makeEncoded(yield* migrate)
+
+            const cutoff = Date.UTC(2026, 0, 1)
+            const request = yield* makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id: 1 }) })
+            const chunk = yield* makeChunkReply(request)
+            yield* storage.saveRequest(request)
+            yield* storage.saveReply(chunk)
+            yield* storage.saveEnvelope(yield* makeAckChunk(request, chunk))
+            yield* storage.saveReply(yield* makeReply(request, cutoff - 1))
+            expect(
+              yield* storage.deleteProcessed({
+                entityType: "test",
+                completedBefore: cutoff,
+                limit: 100
+              })
+            ).toEqual(1)
           }))
       }
 
@@ -266,17 +664,34 @@ describe("SqlMessageStorage", () => {
           yield* truncate
         }))
 
-      it.effect("clearReplies requeues when the expected reply is current", () =>
+      it.effect("clearReplies requeues the request without replaying consumed interrupts", () =>
         Effect.gen(function*() {
           yield* truncate
           const storage = yield* MessageStorage.MessageStorage
+          const snowflake = yield* Snowflake.Generator
           const request = yield* makeRequest()
           const reply = yield* makeReply(request)
+          const interrupt = () =>
+            Message.OutgoingEnvelope.interrupt({
+              id: snowflake.nextUnsafe(),
+              requestId: request.envelope.requestId,
+              address: request.envelope.address
+            })
           yield* storage.saveRequest(request)
+          yield* storage.saveEnvelope(interrupt())
           yield* storage.saveReply(reply)
+          // An interrupt received after completion belongs to the next execution.
+          const pending = interrupt()
+          yield* storage.saveEnvelope(pending)
           yield* storage.clearReplies(request.envelope.requestId, { expectedReplyId: reply.reply.id })
-          expect(yield* storage.repliesFor([request])).toHaveLength(0)
-          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(1)
+          // A duplicate reset must not remove that pending interrupt either.
+          yield* storage.clearReplies(request.envelope.requestId, { expectedReplyId: reply.reply.id })
+          assert.deepStrictEqual(yield* storage.repliesFor([request]), [])
+          const messages = yield* storage.unprocessedMessages([request.envelope.address.shardId])
+          assert.deepStrictEqual(
+            messages.map(({ envelope }) => envelope._tag === "Request" ? envelope.requestId : envelope.id),
+            [request.envelope.requestId, pending.envelope.id]
+          )
         }))
 
       it.effect("clearReplies with a stale expected reply preserves a newer completion and processed state", () =>
@@ -306,6 +721,113 @@ describe("SqlMessageStorage", () => {
           expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toHaveLength(0)
           yield* truncate
         }))
+
+      it.effect("deleteProcessed forgets request families completed before the cutoff", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const sql = yield* SqlClient.SqlClient
+          const storage = yield* MessageStorage.MessageStorage
+          const snowflake = yield* Snowflake.Generator
+          const cutoff = Date.UTC(2026, 0, 1)
+          const request = (id: number, entityType?: string) =>
+            makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id }), entityType })
+          const expired = yield* request(1)
+          const recent = yield* request(2)
+          const reset = yield* request(3)
+          const otherType = yield* request(4, "other")
+          for (const r of [expired, recent, reset, otherType]) {
+            yield* storage.saveRequest(r)
+          }
+          const chunk = yield* makeChunkReply(expired)
+          yield* storage.saveReply(chunk)
+          yield* storage.saveEnvelope(yield* makeAckChunk(expired, chunk))
+          yield* storage.saveEnvelope(Message.OutgoingEnvelope.interrupt({
+            id: snowflake.nextUnsafe(),
+            requestId: expired.envelope.requestId,
+            address: expired.envelope.address
+          }))
+          yield* storage.saveReply(yield* makeReply(expired, cutoff - 1))
+          yield* storage.saveReply(yield* makeReply(recent, cutoff + 1))
+          yield* storage.saveReply(yield* makeReply(reset, cutoff - 2))
+          yield* storage.clearReplies(reset.envelope.requestId)
+          yield* storage.saveReply(yield* makeReply(otherType, cutoff - 3))
+
+          const deleted = yield* storage.deleteProcessed({ entityType: "test", completedBefore: cutoff, limit: 100 })
+          expect(deleted).toEqual(1)
+
+          const expiredId = String(expired.envelope.requestId)
+          expect(yield* sql`SELECT id FROM cluster_messages WHERE request_id = ${expiredId}`).toEqual([])
+          expect(yield* sql`SELECT id FROM cluster_replies WHERE request_id = ${expiredId}`).toEqual([])
+          expect((yield* storage.saveRequest(yield* request(1)))._tag).toEqual("Success")
+          for (const [id, kept] of [[2, recent], [3, reset], [4, otherType]] as const) {
+            const result = yield* storage.saveRequest(yield* request(id, kept.envelope.address.entityType))
+            expect(result._tag).toEqual("Duplicate")
+          }
+          expect(yield* storage.repliesForUnfiltered([recent.envelope.requestId, otherType.envelope.requestId]))
+            .toHaveLength(2)
+        }).pipe(Effect.ensuring(Effect.orDie(truncate))))
+
+      it.effect("does not store an AckChunk or Interrupt for a request deleteProcessed removed", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const sql = yield* SqlClient.SqlClient
+          const storage = yield* MessageStorage.MessageStorage
+          const snowflake = yield* Snowflake.Generator
+          const cutoff = Date.UTC(2026, 0, 1)
+          const request = yield* makeRequest({ rpc: StreamRpc, payload: StreamRpc.payloadSchema.make({ id: 1 }) })
+          const chunk = yield* makeChunkReply(request)
+          yield* storage.saveRequest(request)
+          yield* storage.saveReply(chunk)
+          yield* storage.saveReply(yield* makeReply(request, cutoff - 1))
+          expect(yield* storage.deleteProcessed({ entityType: "test", completedBefore: cutoff, limit: 100 }))
+            .toEqual(1)
+
+          // a late acknowledgement and cancellation, such as ones that waited behind the delete
+          yield* storage.saveEnvelope(yield* makeAckChunk(request, chunk))
+          yield* storage.saveEnvelope(Message.OutgoingEnvelope.interrupt({
+            id: snowflake.nextUnsafe(),
+            requestId: request.envelope.requestId,
+            address: request.envelope.address
+          }))
+          expect(yield* storage.unprocessedMessages([request.envelope.address.shardId])).toEqual([])
+          const requestId = String(request.envelope.requestId)
+          expect(yield* sql`SELECT id FROM cluster_messages WHERE request_id = ${requestId}`).toEqual([])
+        }).pipe(Effect.ensuring(Effect.orDie(truncate))))
+
+      it.effect("deleteProcessed takes an unbounded, extreme or fractional cutoff", () =>
+        Effect.gen(function*() {
+          yield* truncate
+          const storage = yield* MessageStorage.MessageStorage
+          const completedAt = Date.UTC(2026, 0, 1)
+          for (let id = 1; id <= 6; id++) {
+            const request = yield* makeRequest({ payload: { id } })
+            yield* storage.saveRequest(request)
+            yield* storage.saveReply(yield* makeReply(request, completedAt + id - 1))
+          }
+          // completed before the Snowflake epoch, so its reply id is negative
+          const preEpoch = yield* makeRequest({ payload: { id: 0 } })
+          yield* storage.saveRequest(preEpoch)
+          yield* storage.saveReply(yield* makeReply(preEpoch, Snowflake.constEpochMillis - 1))
+          const makeRunning = makeRequest({
+            rpc: PrimaryKeyTest,
+            payload: PrimaryKeyTest.payloadSchema.make({ id: 7 })
+          })
+          // still running, so never eligible
+          yield* storage.saveRequest(yield* makeRunning)
+          const deleteProcessed = (completedBefore: number) =>
+            storage.deleteProcessed({ entityType: "test", completedBefore, limit: 2 })
+          // MessageRetention's cutoffs for an infinite, huge, sub-millisecond,
+          // negative huge and negative infinite retention
+          expect(yield* deleteProcessed(-Infinity)).toEqual(0)
+          expect(yield* deleteProcessed(-Number.MAX_VALUE)).toEqual(0)
+          expect(yield* deleteProcessed(Snowflake.constEpochMillis)).toEqual(1)
+          expect(yield* deleteProcessed(completedAt + 0.5)).toEqual(1)
+          expect(yield* deleteProcessed(Number.MAX_VALUE)).toEqual(2)
+          expect(yield* deleteProcessed(Infinity)).toEqual(2)
+          expect(yield* deleteProcessed(Infinity)).toEqual(1)
+          const running = yield* storage.saveRequest(yield* makeRunning)
+          expect(running._tag).toEqual("Duplicate")
+        }).pipe(Effect.ensuring(Effect.orDie(truncate))))
 
       it.effect("saveRequest", () =>
         Effect.gen(function*() {

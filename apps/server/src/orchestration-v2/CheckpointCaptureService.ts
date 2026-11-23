@@ -2,6 +2,7 @@ import {
   CheckpointScopeId,
   CommandId,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -13,12 +14,17 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+
+// Git processes are already capped server-wide; this keeps one thread from taking every slot.
+const REPOSITORY_CAPTURE_CONCURRENCY = 6;
 
 export class CheckpointCaptureExecutionError extends Schema.TaggedError<CheckpointCaptureExecutionError>()(
   "CheckpointCaptureExecutionError",
@@ -52,6 +58,7 @@ export const layer: Layer.Layer<
   | EventSink.EventSinkV2
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   CheckpointCaptureServiceV2,
   Effect.gen(function* () {
@@ -59,14 +66,16 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const ids = yield* IdAllocator.IdAllocatorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     const execute = Effect.fn("orchestrationV2.checkpointCapture.execute")(function* (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
-      const { run, rootNode, scope, providerThread, readyCheckpointOrdinals, sideChat } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
+      const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
+        context;
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
@@ -101,8 +110,8 @@ export const layer: Layer.Layer<
 
       const capturedAt = yield* DateTime.now;
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
-      const hasReadyCheckpoint = (ordinalWithinScope: number) =>
-        readyCheckpointOrdinals.includes(ordinalWithinScope);
+      const isPreserved = (ordinalWithinScope: number) =>
+        preservedCheckpointOrdinals.includes(ordinalWithinScope);
       // The baselines this capture materializes are attributed to the run materializing them. The
       // thread's scope may already be a later run's: one queued meanwhile, or sent after Stop.
       const materializeBaseline = (ordinalWithinScope: number) =>
@@ -113,127 +122,252 @@ export const layer: Layer.Layer<
           capturedAt: run.requestedAt,
           forceMissing: sideChat,
         });
-      const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || hasReadyCheckpoint(0)
+      // The tracked Git folders the thread reaches now. One added since the turn began has no
+      // baseline, so its first checkpoint lists no files; one removed is simply not captured.
+      const repositoryScopes =
+        sideChat || context.thread === undefined
+          ? []
+          : yield* checkpoints.repositoryScopes({ rootScope: scope, ...context.thread });
+      const nested =
+        repositoryScopes.length === 0
+          ? undefined
+          : yield* checkpoints.nestedScopePaths([scope, ...repositoryScopes]);
+      const excluded = (target: OrchestrationV2CheckpointScope) => {
+        const excludePaths = nested?.get(target.id);
+        return excludePaths === undefined ? {} : { excludePaths };
+      };
+      // Each scope is checked on its own, so a retried capture fills only what is missing.
+      const captureRoot = Effect.gen(function* () {
+        // Materializing a baseline waits on the folder's lock before the capture does.
+        const capturesBeforeLock = yield* checkpoints.capturesSoFar(scope.cwd);
+        const threadStartCheckpoint =
+          baselineOrdinalWithinScope === 0 || isPreserved(0) ? null : yield* materializeBaseline(0);
+        const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
           ? null
-          : yield* materializeBaseline(0);
-      const baselineCheckpoint = hasReadyCheckpoint(baselineOrdinalWithinScope)
-        ? null
-        : yield* materializeBaseline(baselineOrdinalWithinScope);
-      const checkpoint = yield* checkpoints.capture({
-        scope,
-        runId: run.id,
-        nodeId: rootNode.id,
-        ordinalWithinScope: run.ordinal,
-        appRunOrdinal: run.ordinal,
-        capturedAt,
-        forceMissing: sideChat,
+          : yield* materializeBaseline(baselineOrdinalWithinScope);
+        const checkpoint = yield* checkpoints.capture({
+          scope,
+          runId: run.id,
+          nodeId: rootNode.id,
+          ordinalWithinScope: run.ordinal,
+          appRunOrdinal: run.ordinal,
+          capturedAt,
+          forceMissing: sideChat,
+          capturesBeforeLock,
+          ...excluded(scope),
+        });
+        return { threadStartCheckpoint, baselineCheckpoint, checkpoint };
       });
-      // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
-      const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
-      const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
-      yield* eventSink.commitCommand({
-        commandId,
-        threadId: input.threadId,
-        commandType: "checkpoint.capture",
-        acceptedAt: capturedAt,
-        effects: [],
-        events: [
-          ...(threadStartCheckpoint === null
-            ? []
-            : [
-                {
-                  id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-                  type: "checkpoint.captured" as const,
-                  threadId: input.threadId,
-                  nodeId: threadStartCheckpoint.nodeId,
-                  driver: providerThread.driver,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: capturedAt,
-                  payload: threadStartCheckpoint,
-                },
-              ]),
-          ...(baselineCheckpoint === null
-            ? []
-            : [
-                {
-                  id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-                  type: "checkpoint.captured" as const,
-                  threadId: input.threadId,
-                  nodeId: baselineCheckpoint.nodeId,
-                  driver: providerThread.driver,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: capturedAt,
-                  payload: baselineCheckpoint,
-                },
-              ]),
-          {
-            id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-            type: "checkpoint.captured",
-            threadId: input.threadId,
-            runId: run.id,
-            nodeId: rootNode.id,
-            driver: providerThread.driver,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: capturedAt,
-            payload: checkpoint,
-          },
-          {
-            id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-            type: "turn-item.updated",
-            threadId: input.threadId,
-            runId: run.id,
-            nodeId: rootNode.id,
-            driver: providerThread.driver,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: capturedAt,
-            payload: makeCheckpointTurnItem({
-              idAllocator: ids,
-              run,
-              rootNode,
-              providerThread,
-              checkpoint,
-              completedAt: capturedAt,
+      const recordedScopes = new Map(
+        context.repositoryScopes.map((recorded) => [recorded.id, recorded]),
+      );
+      const captureRepository = Effect.fnUntraced(function* (
+        prepared: OrchestrationV2CheckpointScope,
+      ) {
+        const recorded = recordedScopes.get(prepared.id);
+        // A recorded scope keeps the run that first used it; only a renamed folder rewrites it.
+        const changed =
+          recorded === undefined ||
+          recorded.cwd !== prepared.cwd ||
+          recorded.label !== prepared.label;
+        const target =
+          recorded === undefined
+            ? prepared
+            : changed
+              ? {
+                  ...prepared,
+                  runId: recorded.runId,
+                  nodeId: recorded.nodeId,
+                  createdAt: recorded.createdAt,
+                }
+              : recorded;
+        const captured = yield* checkpoints.captureRepository({
+          scope: target,
+          runId: run.id,
+          nodeId: rootNode.id,
+          ordinalWithinScope: run.ordinal,
+          capturedAt,
+          baselineCapturedAt: run.requestedAt,
+          baselineRecorded: context.repositoryScopesWithBaseline.includes(target.id),
+          ...excluded(target),
+        });
+        // Only a repository with something to show is recorded, so the rest cost no events,
+        // rows or bytes on the wire.
+        return Option.match(captured, {
+          onNone: () => [],
+          onSome: (capture) => [{ scope: changed ? target : null, ...capture }],
+        });
+      });
+      const [{ threadStartCheckpoint, baselineCheckpoint, checkpoint }, repositoryCaptures] =
+        yield* Effect.all(
+          [
+            captureRoot,
+            Effect.forEach(repositoryScopes, captureRepository, {
+              concurrency: REPOSITORY_CAPTURE_CONCURRENCY,
             }),
-          },
-          {
-            id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-            type: "run.updated",
-            threadId: input.threadId,
-            runId: run.id,
-            nodeId: rootNode.id,
-            providerInstanceId: run.providerInstanceId,
-            occurredAt: capturedAt,
-            payload: stopped
-              ? { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id }
-              : {
-                  ...runWithoutDelegatedCompletion,
-                  status: "completed",
-                  completedAt: capturedAt,
-                  checkpointId: checkpoint.id,
-                },
-          },
-          ...(stopped
-            ? []
-            : [
-                {
-                  id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
-                  type: "node.updated" as const,
-                  threadId: input.threadId,
-                  runId: run.id,
-                  nodeId: rootNode.id,
-                  providerInstanceId: run.providerInstanceId,
-                  occurredAt: capturedAt,
-                  payload: {
-                    ...rootNode,
-                    status: "completed" as const,
-                    completedAt: capturedAt,
-                    checkpointScopeId: scope.id,
+          ],
+          { concurrency: 2 },
+        );
+      const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
+      const checkpointEvent = (payload: OrchestrationV2Checkpoint) =>
+        Effect.map(ids.allocate.event({ threadId: input.threadId, commandId }), (id) => ({
+          id,
+          type: "checkpoint.captured" as const,
+          threadId: input.threadId,
+          ...(payload.runId === null ? {} : { runId: payload.runId }),
+          nodeId: payload.nodeId,
+          driver: providerThread.driver,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: capturedAt,
+          payload,
+        }));
+      const repositoryEvents = yield* Effect.forEach(repositoryCaptures.flat(), (capture) =>
+        Effect.gen(function* () {
+          return [
+            ...(capture.scope === null
+              ? []
+              : [
+                  {
+                    id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                    type: "checkpoint-scope.created" as const,
+                    threadId: input.threadId,
+                    runId: run.id,
+                    nodeId: rootNode.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: capturedAt,
+                    payload: capture.scope,
                   },
-                },
-              ]),
-        ],
-      });
+                ]),
+            ...(capture.baseline === null ? [] : [yield* checkpointEvent(capture.baseline)]),
+            yield* checkpointEvent(capture.checkpoint),
+          ];
+        }),
+      );
+      // Stop and deletion may commit while Git captures; reread under their lock before finalizing.
+      yield* threadCommands.withLock(
+        input.threadId,
+        Effect.gen(function* () {
+          const { runs } = yield* projections.getThreadRecords(input.threadId, ["runs"], {
+            runIds: [run.id],
+          });
+          const currentRun = runs[0];
+          if (currentRun === undefined || currentRun.activeAttemptId !== run.activeAttemptId) {
+            return;
+          }
+          const stoppedNow =
+            currentRun.status === "interrupted" || currentRun.status === "cancelled";
+          if (currentRun.status !== "waiting" && !stoppedNow) {
+            return;
+          }
+          // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
+          const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
+            currentRun;
+          yield* eventSink.commitCommand({
+            commandId,
+            threadId: input.threadId,
+            commandType: "checkpoint.capture",
+            acceptedAt: capturedAt,
+            effects: [],
+            events: [
+              // Root records come last: a client that takes the latest ordinal-0 baseline gets the thread's.
+              ...repositoryEvents.flat(),
+              ...(threadStartCheckpoint === null
+                ? []
+                : [
+                    {
+                      id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                      type: "checkpoint.captured" as const,
+                      threadId: input.threadId,
+                      nodeId: threadStartCheckpoint.nodeId,
+                      driver: providerThread.driver,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: capturedAt,
+                      payload: threadStartCheckpoint,
+                    },
+                  ]),
+              ...(baselineCheckpoint === null
+                ? []
+                : [
+                    {
+                      id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                      type: "checkpoint.captured" as const,
+                      threadId: input.threadId,
+                      nodeId: baselineCheckpoint.nodeId,
+                      driver: providerThread.driver,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: capturedAt,
+                      payload: baselineCheckpoint,
+                    },
+                  ]),
+              {
+                id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                type: "checkpoint.captured",
+                threadId: input.threadId,
+                runId: run.id,
+                nodeId: rootNode.id,
+                driver: providerThread.driver,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: capturedAt,
+                payload: checkpoint,
+              },
+              {
+                id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                type: "turn-item.updated",
+                threadId: input.threadId,
+                runId: run.id,
+                nodeId: rootNode.id,
+                driver: providerThread.driver,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: capturedAt,
+                payload: makeCheckpointTurnItem({
+                  idAllocator: ids,
+                  run,
+                  rootNode,
+                  providerThread,
+                  checkpoint,
+                  completedAt: capturedAt,
+                }),
+              },
+              {
+                id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                type: "run.updated",
+                threadId: input.threadId,
+                runId: run.id,
+                nodeId: rootNode.id,
+                providerInstanceId: run.providerInstanceId,
+                occurredAt: capturedAt,
+                payload: stoppedNow
+                  ? { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id }
+                  : {
+                      ...runWithoutDelegatedCompletion,
+                      status: "completed",
+                      completedAt: capturedAt,
+                      checkpointId: checkpoint.id,
+                    },
+              },
+              ...(stoppedNow
+                ? []
+                : [
+                    {
+                      id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                      type: "node.updated" as const,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      nodeId: rootNode.id,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: capturedAt,
+                      payload: {
+                        ...rootNode,
+                        status: "completed" as const,
+                        completedAt: capturedAt,
+                        checkpointScopeId: scope.id,
+                      },
+                    },
+                  ]),
+            ],
+          });
+        }),
+      );
     });
 
     return CheckpointCaptureServiceV2.of({
