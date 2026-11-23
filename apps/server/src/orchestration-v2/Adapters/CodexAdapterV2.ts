@@ -1442,6 +1442,7 @@ interface ActiveCodexTurnContext {
   // Modern approval requests omit paths; keep the kinds without retaining patch bodies.
   readonly fileChangeKindsByItem: Map<string, CodexFileChangeKinds>;
   readonly messagePhases: Map<string, "commentary" | "partial_answer" | "final_answer">;
+  readonly asyncMessageIds: Set<string>;
   readonly itemPositions: Map<
     string,
     { readonly ordinal: number; readonly startedAt: DateTime.Utc }
@@ -2701,6 +2702,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
             messagePhases: new Map(),
+            asyncMessageIds: new Set(),
             runningCompactionItemIds: new Set(),
             runningWebSearchItems: new Map(),
           };
@@ -3337,6 +3339,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               itemPositions: new Map(),
               fileChangeKindsByItem: new Map(),
               messagePhases: new Map(),
+              asyncMessageIds: new Set(),
               runningCompactionItemIds: new Set(),
               runningWebSearchItems: new Map(),
             };
@@ -4018,6 +4021,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...(context.messagePhases.has(item.id)
               ? { phase: context.messagePhases.get(item.id) }
               : {}),
+            ...(context.asyncMessageIds.has(item.id) ? { delivery: "async" as const } : {}),
             messageId,
             text: item.text,
             streaming: !completed,
@@ -5650,6 +5654,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "agentMessage") {
               if (payload.item.phase != null)
                 context.messagePhases.set(payload.item.id, payload.item.phase);
+              if (payload.item.delivery === "async") context.asyncMessageIds.add(payload.item.id);
               if (payload.item.phase == null || payload.item.phase === "final_answer") {
                 yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
                   const updated = new Map(current);
@@ -6054,6 +6059,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
 
             if (payload.item.phase != null)
               context.messagePhases.set(payload.item.id, payload.item.phase);
+            if (payload.item.delivery === "async") context.asyncMessageIds.add(payload.item.id);
             const finalAnswer = payload.item.phase == null || payload.item.phase === "final_answer";
             if (finalAnswer) {
               yield* Ref.update(finalAnswerItemIdsByTurn, (current) => {
@@ -7630,6 +7636,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             itemPositions: new Map(),
             fileChangeKindsByItem: new Map(),
             messagePhases: new Map(),
+            asyncMessageIds: new Set(),
             runningCompactionItemIds: new Set(),
             runningWebSearchItems: new Map(),
           };

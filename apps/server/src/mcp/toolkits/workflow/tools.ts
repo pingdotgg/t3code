@@ -10,7 +10,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "store"] as const;
 
-// Wait names and store keys match exactly, so they keep their spaces.
+// Wait names, store keys and channels match exactly, so they keep their spaces.
 const ExactName = Schema.String.check(
   Schema.makeFilter((name: string) => name.trim().length > 0, { expected: "a non-blank string" }),
 );
@@ -36,7 +36,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
     status: Schema.optional(WorkflowRunStatus),
     wait: Schema.optional(ExactName),
     key: Schema.optional(ExactName),
-    channel: Schema.optional(TrimmedNonEmptyString),
+    channel: Schema.optional(ExactName),
     value: Schema.optional(Schema.Json),
     signalId: Schema.optional(
       TrimmedNonEmptyString.annotate({

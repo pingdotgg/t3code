@@ -838,6 +838,56 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
 );
 
 effectIt.effect.each(["linux", "darwin"] as const)(
+  "skips the DevTools port of a browser an agent's tool launched on %s",
+  (platform) => {
+    const appPort = 43_126;
+    const devToolsPort = 43_127;
+    const agentEnvironment = `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`;
+    const procFiles: Record<string, string> = {
+      "/proc/4242/environ": agentEnvironment,
+      "/proc/4242/cmdline": "node\0server.js\0",
+      "/proc/6000/environ": agentEnvironment,
+      "/proc/6000/cmdline": "/opt/google/chrome/chrome\0--remote-debugging-port=0\0about:blank\0",
+    };
+    const missing = FileSystem.makeNoop({});
+    const layer = layerScanner.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          FileSystem.layerNoop({
+            readFileString: (path) => {
+              const content = procFiles[path];
+              return content === undefined ? missing.readFileString(path) : Effect.succeed(content);
+            },
+          }),
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.succeed(
+                processOutput(
+                  input.command === "lsof"
+                    ? `p4242\ncnode\nn127.0.0.1:${appPort}\np6000\ncchrome\nn127.0.0.1:${devToolsPort}\n`
+                    : `  4242 1 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                        `  6000 1 /opt/google/chrome/chrome --remote-debugging-port=0 about:blank PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`,
+                ),
+              ),
+          }),
+          Layer.succeed(HostProcess.Platform, platform),
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.Fetch, () => Promise.reject(new Error()))),
+          ),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toMatchObject([
+        { port: appPort, pid: 4242, agent: { threadId: "thread-agent" } },
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect.each(["linux", "darwin"] as const)(
   "attributes listeners to the agent thread in their environment on %s, after the agent exits",
   (platform) => {
     const agentPort = 43_124;
