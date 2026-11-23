@@ -164,8 +164,8 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   const pending = new Set<Job>();
   let closed = false;
   let servings = 0;
-  // Writes in `barrier` that have not finished; they wait on the batch or the writer it holds.
-  let waitingWriters = 0;
+  // The snapshots each unfinished `barrier` write waits on.
+  const waitingWrites = new Set<ReadonlySet<Job>>();
   const shutdown = Effect.gen(function* () {
     closed = true;
     yield* Queue.shutdown(wake);
@@ -319,10 +319,18 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
           taken = 0;
           const startedAt = yield* Clock.monotonicTimeNanos;
           for (const { job, superseded } of units) {
+            // Cutting only helps a write that needs none of the units still to run.
             if (
               taken > 0 &&
-              waitingWriters > 0 &&
-              (yield* Clock.monotonicTimeNanos) - startedAt >= MAX_HOLD_NANOS
+              waitingWrites.size > 0 &&
+              (yield* Clock.monotonicTimeNanos) - startedAt >= MAX_HOLD_NANOS &&
+              Array.from(waitingWrites).some((jobs) =>
+                units
+                  .slice(taken)
+                  .every(
+                    (unit) => !jobs.has(unit.job) && !unit.superseded.some((j) => jobs.has(j)),
+                  ),
+              )
             )
               return;
             taken++;
@@ -393,20 +401,23 @@ export const make = Effect.fn("ProviderCommitBatch.make")(function* (
   ) {
     if (closed) return yield* Effect.interrupt;
     if (!enabled || (yield* CurrentWorker) === (yield* Effect.fiberId)) return yield* effect;
+    const jobs: ReadonlySet<Job> = new Set(
+      Array.from(pending).filter(
+        (job) => threadIds === undefined || threadIds.includes(job.threadId),
+      ),
+    );
     return yield* Effect.uninterruptibleMask((restore) => {
-      waitingWriters++;
+      waitingWrites.add(jobs);
       return restore(
         Effect.gen(function* () {
-          for (const job of Array.from(pending)) {
-            if (threadIds === undefined || threadIds.includes(job.threadId)) yield* job.settled;
-          }
+          for (const job of jobs) yield* job.settled;
           if (closed) return yield* Effect.interrupt;
           return yield* effect;
         }),
       ).pipe(
         Effect.ensuring(
           Effect.sync(() => {
-            waitingWriters--;
+            waitingWrites.delete(jobs);
           }),
         ),
       );

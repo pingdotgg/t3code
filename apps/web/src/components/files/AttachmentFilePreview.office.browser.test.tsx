@@ -286,6 +286,8 @@ it("preserves merged text across tile clears", async () => {
     context,
     {
       viewport: { x: 0, y: 0, width: 400, height: 80 },
+      behind: { x: 0, y: 0 },
+      panes: { width: 0, height: 0 },
       list: { width: 400, height: 80, commands: [] },
       tiles: [
         {

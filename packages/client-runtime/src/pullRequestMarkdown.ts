@@ -1,10 +1,5 @@
-import type { Root, RootContent } from "mdast";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
-
 import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
-import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
@@ -171,27 +166,6 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
-const definitionParser = unified().use(remarkParse).use(remarkGfm);
-
-/**
- * The first definition of each label in the body, as authored, each joined onto one line so it
- * stands outside the quote or list it was written in.
- */
-function referenceDefinitions(body: string): string[] {
-  const definitions = new Map<string, string>();
-  const visit = (node: Root | RootContent, quotes: number) => {
-    if (node.type === "definition" && !definitions.has(node.identifier)) {
-      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
-      const source = body.slice(node.position?.start.offset, node.position?.end.offset);
-      definitions.set(node.identifier, source.replace(wrap, " "));
-    }
-    if (!("children" in node)) return;
-    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
-  };
-  visit(definitionParser.parse(body), 0);
-  return [...definitions.values()];
-}
-
 /**
  * Each markdown segment renders as its own document, so it leads with the body's definitions.
  * Leading, they win over a later redefinition in the segment, as the first one does in the body.
@@ -220,12 +194,21 @@ function withDefinitions(
   };
 }
 
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
+/**
+ * The first definition of each label in a body, each on one line so it stands outside the quote or
+ * list it was written in, as the client's Markdown parser reads them.
+ */
+export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
+
+export function splitPullRequestBody(
+  body: string,
+  findDefinitions: FindReferenceDefinitions,
+): ReadonlyArray<PullRequestBodySegment> {
   const segments = splitBodyAt(body, 0);
   // One markdown segment is the whole body, which resolves its own references.
   const whole = segments.length === 1 && segments[0]!.kind === "markdown";
   if (whole || !body.includes("]:")) return segments;
-  const definitions = referenceDefinitions(body);
+  const definitions = findDefinitions(body);
   if (definitions.length === 0) return segments;
   const leading = `${definitions.join("\n")}\n\n`;
   return segments.map((segment) => withDefinitions(segment, leading));
@@ -341,36 +324,6 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   flushMarkdown();
   return segments;
 }
-
-/**
- * Finds the references the change request's host links in plain text, resolved against the change
- * request's repository. Null when the host links none.
- */
-export function changeRequestReferenceAutolinker(
-  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
-): ((text: string) => ReadonlyArray<ReferenceAutolink>) | null {
-  if (!changeRequest) return null;
-  const find = sourceControlClients.get(changeRequest.provider).referenceAutolinks;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
-  return find === undefined || repositoryUrl === undefined
-    ? null
-    : (text) => find(text, repositoryUrl);
-}
-
-/**
- * Forges link uploads root-relative, as GitCafe's `/api/attachments/<id>`. In a change request
- * body that always means the forge's origin, never a path on the machine rendering it.
- */
-export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: string): string {
-  if (!/^\/(?![/\\])/u.test(url)) return url;
-  try {
-    return new URL(url, changeRequestUrl).href;
-  } catch {
-    return url;
-  }
-}
-
 let githubEmojiByAlias: ReadonlyMap<string, string> | undefined;
 const githubEmojiAlias = /:([a-z\d_+-]+)(?=:)/gu;
 
