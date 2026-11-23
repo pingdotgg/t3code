@@ -7,6 +7,7 @@ import {
   WorkflowRunStatus,
   WorkflowStep,
 } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -130,6 +131,10 @@ const WAKE_REDONE_AFTER = Duration.seconds(30);
 // Long enough for a sender's retries, short enough that the table stays small.
 // Enough to read what a step said; the page that shows it is not a place for a whole report.
 const STEP_RESULT_KEPT = 8_000;
+const stepResultCut = (text: string) => {
+  const end = splitsSurrogatePair(text, STEP_RESULT_KEPT) ? STEP_RESULT_KEPT - 1 : STEP_RESULT_KEPT;
+  return `${text.slice(0, end)}…`;
+};
 const SIGNAL_IDS_KEPT = Duration.days(7);
 const REFERENCE_TITLE_KEPT = 300;
 const idsKeptUntil = Effect.map(DateTime.now, (at) =>
@@ -909,15 +914,10 @@ export const make = Effect.gen(function* () {
     ),
     stepResult: Effect.fn("WorkflowStore.stepResult")(function* (runId, name, value, said) {
       const full = jsonText(value);
-      const kept =
-        full.length <= STEP_RESULT_KEPT ? full : jsonText(`${full.slice(0, STEP_RESULT_KEPT)}…`);
+      const kept = full.length <= STEP_RESULT_KEPT ? full : jsonText(stepResultCut(full));
       const words = said?.trim() ?? "";
       const keptSaid =
-        words === ""
-          ? null
-          : words.length <= STEP_RESULT_KEPT
-            ? words
-            : `${words.slice(0, STEP_RESULT_KEPT)}…`;
+        words === "" ? null : words.length <= STEP_RESULT_KEPT ? words : stepResultCut(words);
       yield* sql`
         UPDATE workflow_steps SET result_json = ${kept}, said = ${keptSaid}
         WHERE run_id = ${runId} AND name = ${name}
