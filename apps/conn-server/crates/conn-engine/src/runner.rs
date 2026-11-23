@@ -340,6 +340,9 @@ impl Inner {
         let held_on_failure = failure
             .as_ref()
             .is_some_and(|f| f["class"] != "validation_error");
+        let usage_limited = failure
+            .as_ref()
+            .is_some_and(|f| f["class"] == "usage_limit");
         let checkpointing = self.checkpoints.is_some();
         let inner = self.clone();
         let next = self
@@ -373,7 +376,13 @@ impl Inner {
                 // late end of a run that already ended (a start failing after Force stop)
                 // holds nothing.
                 if held_on_failure && ended {
-                    hold_queued(tx, &thread_id, Held::ExceptBufferedWakes)?;
+                    // A usage limit holds everything (`usageLimitHoldsQueue` comes first).
+                    let held = if usage_limited {
+                        Held::All
+                    } else {
+                        Held::ExceptBufferedWakes
+                    };
+                    hold_queued(tx, &thread_id, held)?;
                 }
                 // `checkpoint.capture` waits in the thread's lane, as T3's effect: a rollback
                 // admitted meanwhile runs after it and sees the run completed. The capture ends

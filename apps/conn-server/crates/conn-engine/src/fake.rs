@@ -810,6 +810,11 @@ impl Session for FakeSession {
                     TurnStatus::Failed,
                     Some(json!({"class": "provider_error", "message": "The fake provider failed.", "code": null, "retryable": false})),
                 )),
+                "fail-usage-limit" => started.push(terminal(
+                    &turn,
+                    TurnStatus::Failed,
+                    Some(json!({"class": "usage_limit", "message": "The fake provider hit its usage limit.", "code": null, "retryable": false})),
+                )),
                 _ => {
                     let reply = format!("echo: {text}");
                     let cut = |n: usize| reply.chars().take(n).collect::<String>();

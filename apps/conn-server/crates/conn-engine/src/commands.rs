@@ -458,8 +458,13 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Delivery::Steer(target) = delivery {
         return steer_into(tx, &c, &target);
     }
-    // A user send releases a queue that Stop or a failure held.
-    if c.created_by == "user" {
+    // A client send releases a queue that Stop or a failure held; server messages, such as
+    // an async answer, scheduled tasks and steer follow-ups do not (`sentByUserFromClient`).
+    if c.created_by == "user"
+        && matches!(c.creation_source.as_str(), "web" | "mobile")
+        && c.steer_follow_up_of_run_id.is_none()
+        && c.scheduled_task_id.is_none()
+    {
         release_held(tx, &c.thread_id)?;
     }
     let queued = matches!(delivery, Delivery::Queue { .. });
@@ -524,7 +529,19 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         _ => Value::Null,
     };
+    // A provider result arriving while a held queue waits still drains, unless Stop reached
+    // the active run (`wakeSkipsHold`): it replays output the CLI already produced.
+    let wake_skips_hold = c.created_by == "agent"
+        && c.creation_source == "provider"
+        && match active_run(tx, &c.thread_id)? {
+            Some(active) => {
+                interrupt_request(tx, &c.thread_id, active["id"].as_str().unwrap_or_default())?
+                    .is_none()
+            }
+            None => false,
+        };
     let held = queued
+        && !wake_skips_hold
         && queued_runs(tx, &c.thread_id)?
             .iter()
             .any(|r| r["queueHeld"] == true);
@@ -1722,7 +1739,18 @@ fn async_reply(
 /// Sends the async answer as the user's message: it steers the active run, or queues or
 /// starts a turn, with a stable id so a second answer cannot add another.
 fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Outcome {
-    let dispatch_mode = match active_run(tx, &c.thread_id)? {
+    // It steers only into a provider turn that runs; a run still starting gets the answer
+    // as its own later run (T3's `getRunningTurnContext` admission). A session that cannot
+    // steer declines it at delivery, and the answer then queues.
+    let running = match active_run(tx, &c.thread_id)? {
+        Some(run) if run["status"] == "running" => tx
+            .entities_where(&c.thread_id, "providerTurns", "status", "running")?
+            .iter()
+            .any(|turn| turn["nodeId"] == run["rootNodeId"])
+            .then_some(run),
+        _ => None,
+    };
+    let dispatch_mode = match running {
         Some(run) => json!({"type": "steer_active", "targetRunId": run["id"]}),
         None => json!({"type": "queue_after_active"}),
     };
