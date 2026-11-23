@@ -122,6 +122,9 @@ impl EngineHost for Host {
         if let Some(mcp) = self.mcp.get() {
             mcp.revoke_provider_session(key);
         }
+    }
+
+    fn session_released(&self) {
         if let Some(cleanup) = self.worktree_cleanup.get() {
             cleanup.session_closed();
         }

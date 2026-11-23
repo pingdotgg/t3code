@@ -670,6 +670,12 @@ impl Inner {
         if context.run["status"] != "starting" {
             return Err(StartError::Abandoned);
         }
+        // T3 starts a turn under the checkout's lease, which worktree cleanup removes it under:
+        // a start waits out a removal, and cleanup's last read sees a started run.
+        let lease = match (&self.checkpoints, &context.cwd) {
+            (Some(locks), Some(cwd)) => Some(locks.workspace(cwd).await),
+            _ => None,
+        };
 
         let model_selection: conn_contract::ModelSelection =
             from_json(context.run["modelSelection"].clone()).map_err(|e| e.to_string())?;
@@ -941,6 +947,7 @@ impl Inner {
             )
             .await;
         }
+        drop(lease);
         if let Some(observer) = &self.observer {
             observer
                 .turn_started(crate::TurnPoint {
@@ -1446,12 +1453,22 @@ impl Inner {
             )
             .await;
         }
-        let mut map = lock(&self.live);
-        if map
-            .get(&thread_id)
-            .is_some_and(|current| Arc::ptr_eq(current, &live))
-        {
-            map.remove(&thread_id);
+        let removed = {
+            let mut map = lock(&self.live);
+            map.get(&thread_id)
+                .is_some_and(|current| Arc::ptr_eq(current, &live))
+                && map.remove(&thread_id).is_some()
+        };
+        if removed && !self.shutting_down() {
+            self.session_released();
+        }
+    }
+
+    /// A live session left `live`: its folder no longer holds a worktree (T3's cleanup wakes on
+    /// `provider-session.updated` stopped).
+    fn session_released(&self) {
+        if let Some(host) = &self.host {
+            host.session_released();
         }
     }
 
@@ -2188,6 +2205,7 @@ impl Inner {
             if !self.shutting_down() {
                 self.record_release(thread_id, &live.provider_session_id)
                     .await;
+                self.session_released();
             }
             if live.background_tasks_end_with_process && !self.shutting_down() {
                 self.clear_released_rosters(thread_id, &live.provider_session_id)

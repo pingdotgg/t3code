@@ -34,6 +34,18 @@ pub fn manager(environment: Option<&crate::environment::Environment>) -> Termina
     })
 }
 
+/// T3 opens a terminal under the folder's workspace lease (`Manager.openLocked`), the one
+/// worktree cleanup removes a checkout under.
+async fn lease<'a>(
+    leases: Option<&'a conn_vcs::locks::WorkspaceLocks>,
+    folder: Option<&str>,
+) -> Option<conn_vcs::locks::WorkspaceLock<'a>> {
+    match (leases, folder) {
+        (Some(leases), Some(folder)) => Some(leases.workspace(folder).await),
+        _ => None,
+    }
+}
+
 pub fn register(table: &mut MethodTable, deps: &Deps) {
     let manager = deps
         .terminals
@@ -41,20 +53,32 @@ pub fn register(table: &mut MethodTable, deps: &Deps) {
         .unwrap_or_else(|| manager(deps.environment.as_deref()));
 
     let m = manager.clone();
+    let leases = deps.workspace_locks.clone();
     table.unary("terminal.open", move |_, input: TerminalOpenInput| {
-        let m = m.clone();
+        let (m, leases) = (m.clone(), leases.clone());
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(input.cols, input.rows)?;
+            let folder = input.worktree_path.clone().flatten();
+            let folder = folder.as_deref().unwrap_or(&input.cwd);
+            let _lease = lease(leases.as_deref(), Some(folder)).await;
             m.open(input).map_err(|e| Failure::fail(&e))
         }
     });
     let m = manager.clone();
+    let leases = deps.workspace_locks.clone();
     table.stream("terminal.attach", move |ctx, input: TerminalAttachInput| {
-        let m = m.clone();
+        let (m, leases) = (m.clone(), leases.clone());
         async move {
             check_session(&input.thread_id, &input.terminal_id)?;
             check_grid(input.cols, input.rows)?;
+            // Only an attach with a cwd can start a shell.
+            let folder = input.worktree_path.clone().flatten();
+            let folder = input
+                .cwd
+                .as_deref()
+                .map(|cwd| folder.as_deref().unwrap_or(cwd));
+            let _lease = lease(leases.as_deref(), folder).await;
             let sub = m
                 .attach(input, ctx.connection_id)
                 .map_err(|e| Failure::fail(&e))?;

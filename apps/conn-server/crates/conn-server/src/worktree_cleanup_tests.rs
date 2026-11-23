@@ -365,6 +365,7 @@ struct Fixture {
     engine: Arc<SqliteEngine>,
     environment: Arc<Environment>,
     terminals: TerminalManager,
+    host: Arc<crate::host::Host>,
 }
 
 impl Drop for Fixture {
@@ -399,6 +400,29 @@ fn git(cwd: &Path, args: &[&str]) -> String {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_state(|dir, _| dir.join("state"))
+    }
+
+    /// The state folder is a dev home: `<linked worktree>/.conn/userdata`.
+    fn in_dev_home() -> Self {
+        Self::with_state(|dir, project| {
+            let checkout = dir.join("dev");
+            git(
+                project,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    "dev",
+                    checkout.to_str().unwrap(),
+                ],
+            );
+            checkout.join(".conn").join("userdata")
+        })
+    }
+
+    fn with_state(state: impl FnOnce(&Path, &Path) -> PathBuf) -> Self {
         let dir = std::env::temp_dir().join(format!("conn-wt-cleanup-{}", conn_support::uuid_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let dir = std::fs::canonicalize(&dir).unwrap();
@@ -432,7 +456,7 @@ impl Fixture {
         git(&project, &["commit", "-qm", "init"]);
         git(&project, &["push", "-q", "-u", "origin", "main"]);
         git(&project, &["remote", "set-head", "origin", "main"]);
-        let state = dir.join("state");
+        let state = state(&dir, &project);
         let worktree = state.join("worktrees").join("feature");
         git(
             &project,
@@ -446,16 +470,30 @@ impl Fixture {
             ],
         );
         let clock = Arc::new(ManualClock::at(T0));
+        let environment =
+            Arc::new(Environment::load(&state, None, state.clone(), Default::default()).unwrap());
+        let terminals = crate::methods::terminal::manager(Some(&environment));
+        let host = Arc::new(crate::host::Host {
+            mcp: std::sync::OnceLock::new(),
+            files: None,
+            vcs: crate::methods::vcs::VcsShared::default(),
+            terminals: terminals.clone(),
+            environment: environment.clone(),
+            scheduled_tasks: std::sync::OnceLock::new(),
+            devices: std::sync::OnceLock::new(),
+            worktree_cleanup: std::sync::OnceLock::new(),
+        });
         let mut config = EngineConfig::new(state.join("engine.sqlite"));
         config.projects = vec![ProjectConfig {
             title: "Project".into(),
             workspace_root: project.to_string_lossy().into_owned(),
         }];
         config.clock = clock.clone();
+        // The server takes checkpoints, and with them the per-checkout lease.
+        config.checkpoints = true;
+        config.providers = vec![Arc::new(conn_engine::fake::FakeProvider::new("codex"))];
+        config.host = Some(host.clone());
         let engine = Arc::new(SqliteEngine::open(config).unwrap());
-        let environment =
-            Arc::new(Environment::load(&state, None, state.clone(), Default::default()).unwrap());
-        let terminals = crate::methods::terminal::manager(Some(&environment));
         Self {
             dir,
             project,
@@ -464,6 +502,7 @@ impl Fixture {
             engine,
             environment,
             terminals,
+            host,
         }
     }
 
@@ -496,15 +535,47 @@ impl Fixture {
     }
 
     async fn thread(&self, id: &str, worktree: &Path) {
+        self.thread_on(id, worktree, "feature").await;
+    }
+
+    async fn thread_on(&self, id: &str, worktree: &Path, branch: &str) {
         self.dispatch(json!({
             "type": "thread.create", "commandId": format!("{id}:create"), "threadId": id,
             "projectId": self.project_id(), "title": "Feature",
             "modelSelection": {"instanceId": "codex", "model": "gpt-5.4"},
             "runtimeMode": "full-access", "interactionMode": "default",
-            "branch": "feature", "worktreePath": worktree.to_string_lossy(),
+            "branch": branch, "worktreePath": worktree.to_string_lossy(),
             "createdBy": "user", "creationSource": "web",
         }))
         .await;
+    }
+
+    /// Sends a prompt; the fake provider echoes it and completes the turn.
+    async fn send(&self, id: &str, text: &str) {
+        self.dispatch(json!({
+            "type": "message.dispatch", "commandId": format!("{id}:{text}"), "threadId": id,
+            "messageId": format!("message:{id}:{text}"), "text": text, "attachments": [],
+            "dispatchMode": {"type": "start_immediately"}, "createdBy": "user",
+            "creationSource": "web",
+        }))
+        .await;
+    }
+
+    /// The thread's shell, as cleanup reads it.
+    async fn shell(&self, id: &str) -> Value {
+        let found = self.engine.cleanup_threads().await.unwrap();
+        found
+            .threads
+            .into_iter()
+            .find(|t| t["id"] == id)
+            .unwrap_or(Value::Null)
+    }
+
+    /// Waits until the thread's latest run has started.
+    async fn run_started(&self, id: &str) {
+        while self.shell(id).await["latestRunStartedAt"].is_null() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     fn advance_days(&self, days: u64) {
@@ -767,5 +838,213 @@ async fn a_worktree_two_threads_store_is_kept() {
     fx.rules(json!({"worktreeAfterDays": 1}));
     fx.advance_days(5);
     assert_eq!(fx.sweep().await, kept("Shared by 2 threads"));
+    assert!(fx.worktree.exists());
+}
+
+/// Git refuses to remove a locked worktree. Cleanup must find the lock before it changes a
+/// file: in tracked-changes mode it used to run `git clean -ffdx` first.
+#[tokio::test(flavor = "current_thread")]
+async fn a_locked_worktree_keeps_its_untracked_files() {
+    let fx = Fixture::new();
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.rules(json!({"worktreeAfterDays": 1, "worktreeKeepWhen": "tracked-changes"}));
+    fx.advance_days(5);
+    std::fs::write(fx.worktree.join(".env"), "TOKEN=keep-me\n").unwrap();
+    git(
+        &fx.project,
+        &["worktree", "lock", fx.worktree.to_str().unwrap()],
+    );
+    assert_eq!(fx.sweep().await, kept("Worktree is locked"));
+    assert_eq!(
+        std::fs::read_to_string(fx.worktree.join(".env")).unwrap(),
+        "TOKEN=keep-me\n"
+    );
+}
+
+/// T3 starts a turn under the checkout's lease, the one cleanup removes it under. A turn sent
+/// after cleanup's last read waits until the removal is done; it never runs in a checkout
+/// that is being removed.
+#[tokio::test(flavor = "current_thread")]
+async fn a_turn_sent_after_the_final_read_waits_for_the_removal() {
+    let fx = Fixture::new();
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.rules(json!({"worktreeAfterDays": 1}));
+    fx.advance_days(5);
+    let cleanup = fx.cleanup();
+    let pause = cleanup.pause_after_final_check();
+    let (entries, ()) = tokio::join!(cleanup.sweep(), async {
+        pause.reached.notified().await;
+        fx.send("thread-1", "hello").await;
+        let started =
+            tokio::time::timeout(Duration::from_millis(300), fx.run_started("thread-1")).await;
+        assert!(started.is_err(), "the turn starts only after the removal");
+        pause.resume.notify_one();
+    });
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].outcome, Outcome::Removed);
+}
+
+/// A nested repository made while cleanup waits for the lease: the walk runs again under it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_nested_repository_made_during_the_wait_keeps_the_worktree() {
+    let fx = Fixture::new();
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.rules(json!({"worktreeAfterDays": 1, "worktreeKeepWhen": "tracked-changes"}));
+    fx.advance_days(5);
+    let cleanup = fx.cleanup();
+    let pause = cleanup.pause_after_final_check();
+    let nested = fx.worktree.join("vendor").join("lib");
+    let (entries, ()) = tokio::join!(cleanup.sweep(), async {
+        pause.reached.notified().await;
+        std::fs::create_dir_all(&nested).unwrap();
+        git(&nested, &["init", "-q"]);
+        std::fs::write(nested.join("own.txt"), "own work\n").unwrap();
+        git(&nested, &["add", "-A"]);
+        git(&nested, &["commit", "-qm", "own work"]);
+        pause.resume.notify_one();
+    });
+    let entries: Vec<_> = entries.into_iter().map(|e| (e.outcome, e.reason)).collect();
+    assert_eq!(entries, kept("Contains a nested Git repository"));
+    assert!(nested.join("own.txt").exists());
+}
+
+/// T3: a dev home in a git worktree is seeded from real data, so its settings can name the
+/// developer's real worktree folders. Only its own `worktrees` folder is managed.
+#[tokio::test(flavor = "current_thread")]
+async fn a_dev_home_manages_only_its_own_worktrees_folder() {
+    let fx = Fixture::in_dev_home();
+    let real = fx.dir.join("real");
+    let other = real.join("other");
+    git(
+        &fx.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "other",
+            other.to_str().unwrap(),
+        ],
+    );
+    fx.thread_on("real", &other, "other").await;
+    fx.rules(json!({"worktreeAfterDays": 1}));
+    fx.advance_days(5);
+    let folder = real.to_string_lossy().into_owned();
+    for setting in [
+        json!({"worktreesDirectory": folder}),
+        json!({"worktreesDirectory": null, "previousWorktreesDirectories": [folder]}),
+    ] {
+        fx.environment.settings.update_server(setting).unwrap();
+        assert_eq!(
+            fx.sweep().await,
+            kept("Outside the managed worktree folder")
+        );
+        assert!(other.exists());
+    }
+}
+
+/// Commits made on a detached HEAD live on only in the worktree's own HEAD log, which
+/// `git worktree remove` deletes.
+#[tokio::test(flavor = "current_thread")]
+async fn commits_only_the_head_log_holds_keep_the_worktree() {
+    let fx = Fixture::new();
+    git(&fx.worktree, &["checkout", "-q", "--detach"]);
+    std::fs::write(fx.worktree.join("detached.txt"), "work\n").unwrap();
+    git(&fx.worktree, &["add", "-A"]);
+    git(&fx.worktree, &["commit", "-qm", "detached work"]);
+    git(&fx.worktree, &["checkout", "-q", "feature"]);
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.rules(json!({"worktreeAfterDays": 1}));
+    fx.advance_days(5);
+    assert_eq!(
+        fx.sweep().await,
+        kept("Has commits that only its HEAD log holds")
+    );
+    assert!(fx.worktree.exists());
+}
+
+/// T3 marks the default branch fetched only once the fetch worked: a later worktree in the same
+/// sweep fetches again instead of trusting a stale remote-tracking ref.
+#[tokio::test(flavor = "current_thread")]
+async fn a_failed_fetch_is_not_cached_for_the_sweep() {
+    let fx = Fixture::new();
+    let second = fx.worktree.with_file_name("second");
+    git(
+        &fx.project,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "second",
+            second.to_str().unwrap(),
+        ],
+    );
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.thread_on("thread-2", &second, "second").await;
+    fx.rules(json!({"worktreeUnchanged": true}));
+    for id in ["thread-1", "thread-2"] {
+        fx.dispatch(json!({
+            "type": "thread.settle", "commandId": format!("{id}:settle"), "threadId": id,
+            "settledAt": conn_support::time::iso_from_ms(fx.engine.now_millis()),
+        }))
+        .await;
+    }
+    fx.advance_days(1);
+    let gone = fx.dir.join("gone.git");
+    git(
+        &fx.project,
+        &["remote", "set-url", "origin", gone.to_str().unwrap()],
+    );
+    let outcomes: Vec<Outcome> = fx.sweep().await.into_iter().map(|(o, _)| o).collect();
+    assert_eq!(outcomes, [Outcome::Failed, Outcome::Failed]);
+    assert!(fx.worktree.exists() && second.exists());
+}
+
+/// T3 wakes on the provider session's own stop: a session that ends without revoking agent
+/// tools (no `/mcp`, or a shared runtime) still frees a deleted thread's worktree.
+#[tokio::test(flavor = "current_thread")]
+async fn a_released_session_wakes_a_waiting_deletion() {
+    let fx = Fixture::new();
+    let cleanup = fx.cleanup();
+    let _ = fx.host.worktree_cleanup.set(cleanup.clone());
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.send("thread-1", "hello").await;
+    while fx.shell("thread-1").await["latestRunCompletedAt"].is_null() {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    fx.rules(json!({"worktreeOnDelete": true}));
+    fx.clock.advance(Duration::from_secs(24 * 3600));
+    fx.engine.release_idle_sessions().await;
+    assert!(cleanup.wake_pending().await, "the stop asks for a sweep");
+}
+
+/// A session that stops during a sweep: the sweep may already have passed its worktree.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stop_during_a_sweep_asks_for_another() {
+    let fx = Fixture::new();
+    fx.thread("thread-1", &fx.worktree).await;
+    let cleanup = fx.cleanup();
+    assert_eq!(cleanup.sweep().await, vec![], "no rules: nothing waits");
+    fx.rules(json!({"worktreeAfterDays": 1, "worktreeOnDelete": true}));
+    fx.advance_days(5);
+    let pause = cleanup.pause_after_final_check();
+    let (_, ()) = tokio::join!(cleanup.sweep(), async {
+        pause.reached.notified().await;
+        cleanup.session_closed();
+        pause.resume.notify_one();
+    });
+    assert!(cleanup.wake_pending().await);
+}
+/// The server stops cleanup before it drains terminals and sessions: no removal starts after.
+#[tokio::test(flavor = "current_thread")]
+async fn a_stopped_cleanup_removes_nothing() {
+    let fx = Fixture::new();
+    fx.thread("thread-1", &fx.worktree).await;
+    fx.rules(json!({"worktreeAfterDays": 1}));
+    fx.advance_days(5);
+    let cleanup = fx.cleanup();
+    cleanup.start().stop().await;
+    assert_eq!(cleanup.sweep().await, vec![]);
     assert!(fx.worktree.exists());
 }

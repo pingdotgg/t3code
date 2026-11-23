@@ -119,6 +119,32 @@ async fn changes_hidden_from_git_status_keep_the_worktree() {
     }
 }
 
+/// The executable bit is a tracked change too, while `core.fileMode` holds.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_mode_change_hidden_from_git_status_keeps_the_worktree() {
+    use std::os::unix::fs::PermissionsExt;
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let fx = Fixture::new("cleanup-hidden-mode");
+        let wt = worktree(&fx);
+        git(&wt, &["update-index", flag, "README.md"]);
+        let readme = wt.join("README.md");
+        std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(git(&wt, &["status", "--porcelain"]).is_empty(), "{flag}");
+        assert_eq!(
+            changes(&wt, KeepWhen::TrackedChanges).await.as_deref(),
+            Some("has uncommitted changes hidden from git status (README.md)"),
+            "{flag}"
+        );
+        git(&wt, &["config", "core.fileMode", "false"]);
+        assert_eq!(
+            changes(&wt, KeepWhen::TrackedChanges).await,
+            None,
+            "{flag} without core.fileMode"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_switched_or_detached_branch_counts_as_changed() {
     let fx = Fixture::new("cleanup-branch");
@@ -309,4 +335,27 @@ async fn the_remote_names_its_default_branch_and_integration_follows_ancestry() 
             .await
             .unwrap()
     );
+}
+
+/// A detached HEAD's commits live on only in the worktree's HEAD log. An amended commit does
+/// not count: its branch's own log, which removal keeps, still holds it.
+#[tokio::test]
+async fn only_commits_the_head_log_alone_holds_are_lost() {
+    let fx = Fixture::new("cleanup-head-log");
+    let wt = worktree(&fx);
+    let lost = |wt: PathBuf, repo: PathBuf| async move {
+        cleanup::head_log_holds_lost_commits(&wt, &repo)
+            .await
+            .unwrap()
+    };
+    assert!(!lost(wt.clone(), fx.work.clone()).await, "a fresh worktree");
+    write(&wt, "a.txt", "a\n");
+    commit_all(&wt, "first");
+    git(&wt, &["commit", "-q", "--amend", "-m", "amended"]);
+    assert!(!lost(wt.clone(), fx.work.clone()).await, "an amend");
+    git(&wt, &["checkout", "-q", "--detach"]);
+    write(&wt, "b.txt", "b\n");
+    commit_all(&wt, "detached");
+    git(&wt, &["checkout", "-q", "feature"]);
+    assert!(lost(wt.clone(), fx.work.clone()).await, "a detached commit");
 }

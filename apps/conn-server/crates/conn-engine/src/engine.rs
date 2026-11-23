@@ -184,7 +184,7 @@ pub(crate) struct Inner {
     /// Set when shutdown begins; no provider session opens after it.
     pub(crate) shutting_down: std::sync::atomic::AtomicBool,
     /// Git checkpoints per turn (`checkpoint.rs`); `None` when off.
-    pub(crate) checkpoints: Option<crate::checkpoint::Checkpoints>,
+    pub(crate) checkpoints: Option<Arc<crate::checkpoint::Checkpoints>>,
     /// [`EngineConfig::runtime_policy_override`].
     pub(crate) policy_override: Option<RuntimePolicyOverride>,
     /// [`EngineConfig::command_output_tap`].
@@ -338,7 +338,7 @@ impl SqliteEngine {
                 idle_max_hold: config.idle_max_hold,
                 checkpoints: config
                     .checkpoints
-                    .then(crate::checkpoint::Checkpoints::default),
+                    .then(Arc::<crate::checkpoint::Checkpoints>::default),
                 policy_override: config.runtime_policy_override.clone(),
                 output_tap: config.command_output_tap.clone(),
                 clock: config.clock.clone(),
@@ -427,6 +427,19 @@ impl SqliteEngine {
         self.inner.attention.clone()
     }
 
+    /// Every live thread's stored worktree path, `(thread id, path)`, with the live projects:
+    /// what worktree cleanup reads again before a removal, without parsing every shell.
+    pub async fn worktree_bindings(&self) -> Result<(Vec<(String, String)>, Vec<Value>), String> {
+        self.inner
+            .db(|store| Ok((store.worktree_bindings()?, store.projects_snapshot()?)))
+            .await
+    }
+
+    /// The shells of `ids`, as [`CleanupThreads::threads`] holds them.
+    pub async fn cleanup_shells(&self, ids: Vec<String>) -> Result<Vec<Value>, String> {
+        self.inner.db(move |store| store.cleanup_shells(&ids)).await
+    }
+
     /// The threads worktree cleanup weighs, with the live projects (see [`CleanupThreads`]).
     pub async fn cleanup_threads(&self) -> Result<CleanupThreads, String> {
         self.inner
@@ -467,10 +480,11 @@ impl SqliteEngine {
             .await
     }
 
-    /// The per-folder locks turn checkpoints take; `None` when checkpoints are off. Work that
-    /// removes a checkout holds its folder's lock, so no capture runs in a folder going away.
-    pub fn workspace_locks(&self) -> Option<&conn_vcs::locks::WorkspaceLocks> {
-        self.inner.checkpoints.as_ref()
+    /// The per-checkout lease (T3's `withWorkspaceLease`): turn starts, checkpoint captures and
+    /// rollbacks take it, and so do terminal starts and worktree removal. `None` when
+    /// checkpoints are off.
+    pub fn workspace_locks(&self) -> Option<Arc<conn_vcs::locks::WorkspaceLocks>> {
+        self.inner.checkpoints.clone()
     }
 
     /// Now, by the engine's clock, in milliseconds since the epoch.

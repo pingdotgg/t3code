@@ -11,13 +11,14 @@
 //! - it is not a linked worktree in a managed worktree folder, or it holds a project checkout
 //!   or a nested repository;
 //! - its branch changed, or it has local changes ([`KeepWhen`]), changes git status hides, or
-//!   submodule commits on no remote-tracking ref.
+//!   submodule commits on no remote-tracking ref;
+//! - Git locked it, or its HEAD log holds commits nothing else keeps.
 //!
 //! Commits on the thread's branch are never lost: `git worktree remove` keeps the branch, and a
-//! detached or switched checkout is kept. The checks run again under the folder's workspace
-//! lock right before removal. A sweep runs at start, every hour, when the rules change, and
-//! when a thread is deleted; a session that stops sweeps again when a deleted thread's
-//! worktree waited for it.
+//! detached or switched checkout is kept. The checks run again under the checkout's lease right
+//! before removal; turn starts and terminal starts take the same lease. A sweep runs at start,
+//! every hour, when the rules change, and when a thread is deleted; a session that stops sweeps
+//! again when a deleted thread's worktree waited for it, or when a sweep was running.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -422,6 +423,20 @@ struct Inner {
     waiting: AtomicBool,
     /// One sweep at a time; a request during a sweep runs one more.
     sweeping: tokio::sync::Mutex<()>,
+    /// The server is stopping: no removal starts.
+    stopping: AtomicBool,
+    /// A test holds the next removal here, after its final read under the lease.
+    #[cfg(test)]
+    pause: std::sync::Mutex<Option<Pause>>,
+}
+
+/// Where a test holds a removal: `reached` fires after the final read, and the removal goes on
+/// at `resume`.
+#[cfg(test)]
+#[derive(Clone, Default)]
+pub(crate) struct Pause {
+    pub reached: Arc<tokio::sync::Notify>,
+    pub resume: Arc<tokio::sync::Notify>,
 }
 
 /// The threads of one pass, and lookups built from them.
@@ -447,15 +462,34 @@ impl WorktreeCleanup {
                 wake: tokio::sync::Notify::new(),
                 waiting: AtomicBool::new(true),
                 sweeping: tokio::sync::Mutex::new(()),
+                stopping: AtomicBool::new(false),
+                #[cfg(test)]
+                pause: std::sync::Mutex::new(None),
             }),
         }
     }
 
-    /// Sweeps at start, every hour, and on each [`Self::request`], until the server stops.
-    pub fn start(&self) {
+    /// Holds the next removal after its final read, until the test resumes it.
+    #[cfg(test)]
+    pub(crate) fn pause_after_final_check(&self) -> Pause {
+        let pause = Pause::default();
+        *self.inner.pause.lock().unwrap_or_else(|e| e.into_inner()) = Some(pause.clone());
+        pause
+    }
+
+    /// A sweep was asked for and has not started.
+    #[cfg(test)]
+    pub(crate) async fn wake_pending(&self) -> bool {
+        tokio::time::timeout(Duration::ZERO, self.inner.wake.notified())
+            .await
+            .is_ok()
+    }
+
+    /// Sweeps at start, every hour, and on each [`Self::request`], until [`Running::stop`].
+    pub fn start(&self) -> Running {
         let this = self.clone();
-        tokio::spawn(async move {
-            loop {
+        let worker = tokio::spawn(async move {
+            while !this.stopping() {
                 this.sweep().await;
                 tokio::select! {
                     () = this.inner.wake.notified() => {}
@@ -465,7 +499,7 @@ impl WorktreeCleanup {
         });
         let this = self.clone();
         let mut changes = self.inner.environment.settings.subscribe();
-        tokio::spawn(async move {
+        let watcher = tokio::spawn(async move {
             let mut last = policy_fingerprint(&this.inner.environment.settings.raw());
             while changes.changed().await.is_ok() {
                 let next = policy_fingerprint(&this.inner.environment.settings.raw());
@@ -475,6 +509,15 @@ impl WorktreeCleanup {
                 }
             }
         });
+        Running {
+            cleanup: self.clone(),
+            worker,
+            watcher,
+        }
+    }
+
+    fn stopping(&self) -> bool {
+        self.inner.stopping.load(Ordering::SeqCst)
     }
 
     /// Asks for a sweep; requests during a sweep make one more.
@@ -487,9 +530,11 @@ impl WorktreeCleanup {
         self.request();
     }
 
-    /// A provider session stopped: a deleted thread's worktree that waited for it may go.
+    /// A provider session stopped: a deleted thread's worktree that waited for it may go. A
+    /// sweep under way may have passed that worktree already, so it runs again too.
     pub fn session_closed(&self) {
-        if self.inner.waiting.load(Ordering::Relaxed)
+        let sweeping = self.inner.sweeping.try_lock().is_err();
+        if (sweeping || self.inner.waiting.load(Ordering::Relaxed))
             && any_policy(&self.inner.environment.settings.raw(), |r| r.on_delete)
         {
             self.request();
@@ -500,6 +545,9 @@ impl WorktreeCleanup {
     pub async fn sweep(&self) -> Vec<Entry> {
         let _one = self.inner.sweeping.lock().await;
         let settings = self.inner.environment.settings.raw();
+        if self.stopping() {
+            return Vec::new();
+        }
         if !any_policy(&settings, Rules::enabled) {
             self.inner.waiting.store(false, Ordering::Relaxed);
             return Vec::new();
@@ -542,15 +590,35 @@ impl WorktreeCleanup {
     }
 }
 
+/// The tracking side of [`Running::stop`]: the sweep worker and the settings watcher.
+#[derive(Debug)]
+#[must_use = "the server stops cleanup before it drains terminals and sessions"]
+pub struct Running {
+    cleanup: WorktreeCleanup,
+    worker: tokio::task::JoinHandle<()>,
+    watcher: tokio::task::JoinHandle<()>,
+}
+
+impl Running {
+    /// Starts no new removal, lets one under way finish, and joins both tasks.
+    pub async fn stop(self) {
+        self.cleanup.inner.stopping.store(true, Ordering::SeqCst);
+        self.cleanup.request();
+        self.watcher.abort();
+        let _ = self.watcher.await;
+        let _ = self.worker.await;
+    }
+}
+
 /// `managedWorktreesDirectories`: `<state>/worktrees`, the `worktreesDirectory` setting and
-/// the folders it named before, as real paths; never a filesystem root.
+/// the folders it named before, as real paths; never a filesystem root. A dev home is seeded
+/// from real data, so its settings can name the developer's real folders: it manages only its
+/// own `worktrees` folder.
 async fn managed_roots(environment: &Environment) -> Vec<PathBuf> {
     let settings = environment.settings.raw();
-    let mut folders = vec![
-        environment.state_dir.join("worktrees"),
-        crate::host::worktrees_dir(environment),
-    ];
-    folders.extend(
+    let own = environment.state_dir.join("worktrees");
+    let mut configured = vec![crate::host::worktrees_dir(environment)];
+    configured.extend(
         settings
             .get("previousWorktreesDirectories")
             .and_then(Value::as_array)
@@ -561,7 +629,12 @@ async fn managed_roots(environment: &Environment) -> Vec<PathBuf> {
             .filter(|f| !f.is_empty())
             .map(PathBuf::from),
     );
+    let state_dir = environment.state_dir.clone();
     blocking(move || {
+        let mut folders = vec![own];
+        if !in_dev_home(&state_dir) {
+            folders.extend(configured);
+        }
         let mut roots: Vec<PathBuf> = Vec::new();
         for folder in folders {
             if let Ok(real) = std::fs::canonicalize(&folder)
@@ -575,6 +648,22 @@ async fn managed_roots(environment: &Environment) -> Vec<PathBuf> {
     })
     .await
     .unwrap_or_default()
+}
+
+/// `resolveWorktreeT3Home`: the state folder lies in `<linked git worktree>/.conn`. Blocking.
+fn in_dev_home(state_dir: &Path) -> bool {
+    let start = canonical(state_dir);
+    let Some(checkout) = start.ancestors().find(|dir| dir.join(".git").exists()) else {
+        return false;
+    };
+    let linked = std::fs::read_to_string(checkout.join(".git")).is_ok_and(|text| {
+        text.lines()
+            .find_map(|line| line.trim().strip_prefix("gitdir:"))
+            .map(|dir| Path::new(dir.trim()))
+            .and_then(|dir| dir.parent()?.file_name())
+            .is_some_and(|name| name == "worktrees")
+    });
+    linked && start.starts_with(checkout.join(".conn"))
 }
 
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
@@ -670,15 +759,28 @@ impl Sweep<'_> {
             .await
             .unwrap_or_default();
         let (live_keys, deleted_keys) = keys.split_at(pass.threads.len().min(keys.len()));
+        // Groups keep the order threads were read in, as T3's `Map.groupBy`.
         let mut groups: Vec<(PathBuf, Vec<&Value>)> = Vec::new();
+        let mut group_of: HashMap<&PathBuf, usize> = HashMap::new();
         for (thread, key) in pass.threads.iter().zip(live_keys) {
             if thread["worktreePath"].as_str().is_none() {
                 continue;
             }
-            match groups.iter_mut().find(|(k, _)| k == key) {
-                Some((_, group)) => group.push(thread),
-                None => groups.push((key.clone(), vec![thread])),
+            match group_of.get(key) {
+                Some(&index) => {
+                    if let Some((_, group)) = groups.get_mut(index) {
+                        group.push(thread);
+                    }
+                }
+                None => {
+                    group_of.insert(key, groups.len());
+                    groups.push((key.clone(), vec![thread]));
+                }
             }
+        }
+        let mut deleted_by_key: HashMap<&PathBuf, Vec<&Value>> = HashMap::new();
+        for (thread, key) in pass.deleted.iter().zip(deleted_keys) {
+            deleted_by_key.entry(key).or_default().push(thread);
         }
         let settings = self.settings.clone();
         let rules_for = |thread: &Value| rules(&settings, thread["projectId"].as_str());
@@ -686,16 +788,14 @@ impl Sweep<'_> {
         for (key, group) in &groups {
             // A deleted thread still owns the worktree its remaining subagents share, but only
             // deletion cleanup acts on it; otherwise the live rules apply.
-            let deleted_owner = pass.deleted.iter().zip(deleted_keys).find_map(|(d, k)| {
-                let mut members = vec![d];
+            let deleted_owner = deleted_by_key.get(key).into_iter().flatten().find(|d| {
+                let mut members = vec![**d];
                 members.extend(group.iter().copied());
-                (k == key
-                    && rules_for(d).on_delete
-                    && worktree_owner(&members).is_some_and(|o| o["id"] == d["id"]))
-                .then_some(d)
+                rules_for(d).on_delete
+                    && worktree_owner(&members).is_some_and(|o| o["id"] == d["id"])
             });
             let (thread, deleted) = match deleted_owner {
-                Some(d) => (d, true),
+                Some(d) => (*d, true),
                 None => match worktree_owner(group).or_else(|| group.first().copied()) {
                     Some(owner) => (owner, false),
                     None => continue,
@@ -710,7 +810,7 @@ impl Sweep<'_> {
             });
         }
         for (thread, key) in pass.deleted.iter().zip(deleted_keys) {
-            if !groups.iter().any(|(k, _)| k == key) {
+            if !group_of.contains_key(key) {
                 candidates.push(Candidate {
                     thread,
                     deleted: true,
@@ -726,6 +826,9 @@ impl Sweep<'_> {
             .filter_map(|t| Some((t["id"].as_str()?, t)))
             .collect();
         for candidate in &candidates {
+            if self.inner.stopping.load(Ordering::SeqCst) {
+                break;
+            }
             let rules = rules_for(candidate.thread);
             if !rules.enabled() {
                 continue;
@@ -898,7 +1001,7 @@ impl Sweep<'_> {
         {
             return Ok(Err(Keep::because(changes)));
         }
-        let head = conn_vcs::repo::resolve_commit(&c.path, "HEAD")
+        let head = cleanup::commit_of(&c.path, "HEAD")
             .await
             .map_err(failed)?
             .ok_or("HEAD does not name a commit")?;
@@ -922,30 +1025,26 @@ impl Sweep<'_> {
         if let Some(keep) = self.blocked_since_check(c, &project_root, &chain).await? {
             return Ok(Err(keep));
         }
-        let submodules = cleanup::submodule_paths(&c.path).await.map_err(failed)?;
-        let nested = match submodules {
-            None => Some("worktree could not be fully inspected"),
-            Some(paths) => {
-                let path = c.path.clone();
-                blocking(move || cleanup::nested_repository(&path, &paths))
-                    .await
-                    .unwrap_or(Some("worktree could not be fully inspected"))
-            }
-        };
-        if let Some(reason) = nested {
+        // A first walk before the lease keeps most refusals off the lease turn starts wait on.
+        if let Some(reason) = nested_reason(&c.path).await.map_err(failed)? {
             return Ok(Err(Keep::because(reason)));
         }
         let path_text = c.path.to_string_lossy().into_owned();
-        let _lock = match self.inner.engine.workspace_locks() {
-            Some(locks) => Some(locks.workspace(&path_text).await),
-            None => None,
+        let Some(locks) = self.inner.engine.workspace_locks() else {
+            return Ok(Err(Keep::because("checkout lease is unavailable")));
         };
+        let _lease = locks.workspace(&path_text).await;
+        if self.inner.stopping.load(Ordering::SeqCst) {
+            return Ok(Err(Keep::because("server is stopping")));
+        }
         if let Some(reason) = self.path_reason(&c.path).await {
             return Ok(Err(Keep::because(reason)));
         }
         if let Some(keep) = self.blocked_since_check(c, &project_root, &chain).await? {
             return Ok(Err(keep));
         }
+        #[cfg(test)]
+        self.inner.paused().await;
         if cleanup::branch_changed(&c.path, Some(branch))
             .await
             .map_err(failed)?
@@ -954,9 +1053,7 @@ impl Sweep<'_> {
                 "repository or branch changed since check",
             )));
         }
-        let now_head = conn_vcs::repo::resolve_commit(&c.path, "HEAD")
-            .await
-            .map_err(failed)?;
+        let now_head = cleanup::commit_of(&c.path, "HEAD").await.map_err(failed)?;
         if now_head.as_deref() != Some(head.as_str()) {
             return Ok(Err(Keep::because("commit changed since check")));
         }
@@ -972,6 +1069,23 @@ impl Sweep<'_> {
         {
             return Ok(Err(Keep::because("settings changed since check")));
         }
+        // Git refuses a locked worktree; find it before anything changes a file.
+        if cleanup::is_locked(&c.path).await.map_err(failed)? {
+            return Ok(Err(Keep::because("worktree is locked")));
+        }
+        let repository = cleanup::owning_repository(&c.path).await.map_err(failed)?;
+        if cleanup::head_log_holds_lost_commits(&c.path, &repository)
+            .await
+            .map_err(failed)?
+        {
+            return Ok(Err(Keep::because(
+                "has commits that only its HEAD log holds",
+            )));
+        }
+        // A repository made while cleanup waited for the lease would go with the folder.
+        if let Some(reason) = nested_reason(&c.path).await.map_err(failed)? {
+            return Ok(Err(Keep::because(reason)));
+        }
         let submodules = cleanup::submodule_removal(&c.path, rules.keep_when).await;
         if let Some(reason) = submodules.reason {
             return Ok(Err(Keep::because(reason)));
@@ -983,13 +1097,9 @@ impl Sweep<'_> {
         {
             return Ok(Err(Keep::because(changes)));
         }
-        let repository = cleanup::owning_repository(&c.path).await.map_err(failed)?;
-        // A forced removal already discards local files.
-        if rules.keep_when == KeepWhen::TrackedChanges && !submodules.force {
-            cleanup::clean_all(&c.path).await.map_err(failed)?;
-        }
-        // Git requires force for submodules; the checks above cannot make removal atomic.
-        let removal_mode = if submodules.force {
+        // Git requires force for submodules, and for the untracked and ignored files that
+        // tracked-changes mode lets go. One `--force` never removes a locked worktree.
+        let removal_mode = if submodules.force || rules.keep_when == KeepWhen::TrackedChanges {
             Removal::Force
         } else {
             Removal::Safe
@@ -1091,13 +1201,15 @@ impl Sweep<'_> {
                     return Ok(GitRule::Keep("default branch is unavailable"));
                 };
                 let tracking = format!("refs/remotes/{remote}/{default}");
-                if self.fetched.insert((root.to_owned(), tracking.clone())) {
+                let key = (root.to_owned(), tracking.clone());
+                if !self.fetched.contains(&key) {
                     cleanup::fetch_tracking_branch(root, remote, &default).await?;
+                    self.fetched.insert(key);
                 }
                 (default, tracking)
             }
         };
-        let Some(base) = conn_vcs::repo::resolve_commit(&c.path, &default_ref).await? else {
+        let Some(base) = cleanup::commit_of(&c.path, &default_ref).await? else {
             return Ok(GitRule::Keep("default branch is unavailable"));
         };
         let integrated = cleanup::is_ancestor(&c.path, head, &base).await?;
@@ -1147,29 +1259,37 @@ impl Sweep<'_> {
         project_root: &Path,
         chain: &[&Value],
     ) -> Result<Option<Keep>, String> {
-        let fresh = self.inner.engine.cleanup_threads().await?;
-        if contains_project_root(c, &fresh.projects, project_root).await {
+        // T3 reads every binding, then only this worktree's shells.
+        let (bindings, projects) = self.inner.engine.worktree_bindings().await?;
+        if contains_project_root(c, &projects, project_root).await {
             return Ok(Some(Keep::because("contains a project checkout")));
         }
-        let stored: Vec<(usize, PathBuf)> = fresh
-            .threads
-            .iter()
-            .enumerate()
-            .filter_map(|(i, t)| Some((i, PathBuf::from(t["worktreePath"].as_str()?))))
-            .collect();
         let key = c.key.clone();
-        let indexes = blocking(move || {
-            stored
+        let ids = blocking(move || {
+            bindings
                 .into_iter()
-                .filter(|(_, p)| canonical(p) == key)
-                .map(|(i, _)| i)
+                .filter(|(_, path)| canonical(Path::new(path)) == key)
+                .map(|(id, _)| id)
                 .collect::<Vec<_>>()
         })
         .await
         .unwrap_or_default();
-        let latest: Vec<&Value> = indexes
+        let mut wanted = ids.clone();
+        // The settlement chain's parents are read again too.
+        wanted.extend(
+            chain
+                .iter()
+                .skip(1)
+                .filter_map(|t| t["id"].as_str().map(str::to_owned)),
+        );
+        let fresh = self.inner.engine.cleanup_shells(wanted).await?;
+        let latest: Vec<&Value> = fresh
             .iter()
-            .filter_map(|i| fresh.threads.get(*i))
+            .filter(|t| {
+                t["id"]
+                    .as_str()
+                    .is_some_and(|id| ids.iter().any(|i| i == id))
+            })
             .collect();
         if self.has_terminal(c).await {
             return Ok(Some(Keep::until_stop("open terminal")));
@@ -1207,7 +1327,6 @@ impl Sweep<'_> {
         }
         if chain.len() > 1 {
             let by_id: HashMap<&str, &Value> = fresh
-                .threads
                 .iter()
                 .filter_map(|t| Some((t["id"].as_str()?, t)))
                 .collect();
@@ -1239,6 +1358,17 @@ impl Sweep<'_> {
     }
 }
 
+#[cfg(test)]
+impl Inner {
+    async fn paused(&self) {
+        let pause = self.pause.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(pause) = pause {
+            pause.reached.notify_one();
+            pause.resume.notified().await;
+        }
+    }
+}
+
 fn rules_for_now(environment: &Environment, thread: &Value) -> Rules {
     rules(&environment.settings.raw(), thread["projectId"].as_str())
 }
@@ -1247,6 +1377,21 @@ enum GitRule {
     Removed(String),
     Keep(&'static str),
     NotDue,
+}
+
+/// The part of `measureWorktree` that guards removal: a repository below the worktree that is
+/// not a registered submodule ([`cleanup::nested_repository`]).
+async fn nested_reason(path: &Path) -> conn_vcs::VcsResult<Option<&'static str>> {
+    const INCOMPLETE: &str = "worktree could not be fully inspected";
+    let Some(submodules) = cleanup::submodule_paths(path).await? else {
+        return Ok(Some(INCOMPLETE));
+    };
+    let path = path.to_owned();
+    Ok(
+        blocking(move || cleanup::nested_repository(&path, &submodules))
+            .await
+            .unwrap_or(Some(INCOMPLETE)),
+    )
 }
 
 /// `containsProjectRoot`: a project checkout at or below the worktree.

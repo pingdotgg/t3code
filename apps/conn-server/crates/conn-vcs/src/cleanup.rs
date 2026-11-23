@@ -43,7 +43,8 @@ const FLAGGED_LIMIT: usize = 10_000;
 const SUBMODULE_LIMIT: usize = 10_000;
 const WALK_ENTRY_LIMIT: usize = 2_000_000;
 const WALK_TIMEOUT: Duration = Duration::from_secs(30);
-const REMOVE_TIMEOUT: Duration = Duration::from_secs(300);
+/// About 25,000 entries of a HEAD log; a longer one keeps the worktree.
+const HEAD_LOG_LIMIT: usize = 1024 * 1024;
 const LS_REMOTE_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn plural(count: usize) -> &'static str {
@@ -184,6 +185,15 @@ async fn hidden_tracked_change(cwd: &Path) -> VcsResult<Option<String>> {
     .await?;
     // Sparse checkouts flag every file outside the cone; Git 2.37+ unflags those it finds.
     let sparse = sparse.trim() == "true";
+    let file_mode = git(
+        "StorageCleanup.hiddenTrackedChanges",
+        cwd,
+        ["config", "--type=bool", "--default=true", "core.fileMode"],
+    )
+    .text()
+    .await?
+    .trim()
+        == "true";
     let hidden = move |tag: char| tag.is_ascii_lowercase() || (!sparse && tag == 'S');
     let mut flagged: Vec<Flagged> = Vec::new();
     let mut overflow = false;
@@ -237,7 +247,7 @@ async fn hidden_tracked_change(cwd: &Path) -> VcsResult<Option<String>> {
                         let target = std::fs::read_link(&path).ok();
                         Some((entry, OnDisk::Link(target)))
                     }
-                    Ok(meta) if meta.is_file() => Some((entry, OnDisk::File)),
+                    Ok(meta) if meta.is_file() => Some((entry, OnDisk::File(executable(&meta)))),
                     Ok(_) => Some((entry, OnDisk::Other)),
                 }
             })
@@ -256,8 +266,12 @@ async fn hidden_tracked_change(cwd: &Path) -> VcsResult<Option<String>> {
     let mut link_files: Vec<Flagged> = Vec::new();
     for (entry, disk) in on_disk {
         match disk {
-            OnDisk::File if entry.mode == "120000" => link_files.push(entry),
-            OnDisk::File => files.push(entry),
+            OnDisk::File(_) if entry.mode == "120000" => link_files.push(entry),
+            // Git status would show a changed executable bit, and removal drops it.
+            OnDisk::File(executable) if file_mode && executable != (entry.mode == "100755") => {
+                return Ok(Some(reason(&entry.file)));
+            }
+            OnDisk::File(_) => files.push(entry),
             OnDisk::Link(Some(target)) if entry.mode == "120000" => {
                 // Hashing a link's path would hash the file it points to.
                 let id = git(
@@ -298,9 +312,21 @@ async fn hidden_tracked_change(cwd: &Path) -> VcsResult<Option<String>> {
 }
 
 enum OnDisk {
-    File,
+    /// A regular file, and whether its owner may execute it.
+    File(bool),
     Link(Option<PathBuf>),
     Other,
+}
+
+#[cfg(unix)]
+fn executable(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    meta.permissions().mode() & 0o100 != 0
+}
+
+#[cfg(not(unix))]
+fn executable(_meta: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// `branchChanged`: whether the checkout no longer has `branch` checked out. A folder that is
@@ -837,14 +863,80 @@ pub async fn is_ancestor(cwd: &Path, commit: &str, of: &str) -> VcsResult<bool> 
     .await
 }
 
-/// `git clean -ffdx`: in tracked-changes mode untracked and ignored files go with the worktree,
-/// and a non-forced removal would refuse them.
-pub async fn clean_all(cwd: &Path) -> VcsResult<()> {
-    git("StorageCleanup.cleanupGit", cwd, ["clean", "-ffdx"])
-        .timeout(REMOVE_TIMEOUT)
-        .run()
-        .await?;
-    Ok(())
+/// `git worktree lock` holds the worktree: Git refuses to remove it without `-f -f`.
+pub async fn is_locked(cwd: &Path) -> VcsResult<bool> {
+    let admin = git(
+        "StorageCleanup.worktreeLock",
+        cwd,
+        ["rev-parse", "--absolute-git-dir"],
+    )
+    .text()
+    .await?;
+    Ok(is_present(&Path::new(admin.trim_end_matches('\n')).join("locked")).await)
+}
+
+/// The checkout's own HEAD log names a commit that no ref and no other reflog keeps, such as
+/// one made on a detached HEAD. `git worktree remove` deletes that log. `repository` is the
+/// main checkout (see [`owning_repository`]). Checkpoint refs do not count: T3 prunes them.
+pub async fn head_log_holds_lost_commits(cwd: &Path, repository: &Path) -> VcsResult<bool> {
+    let log = git(
+        "StorageCleanup.headLog",
+        cwd,
+        ["log", "--walk-reflogs", "--format=%H", "HEAD"],
+    )
+    .max_stdout(HEAD_LOG_LIMIT, OnLimit::Truncate)
+    .run()
+    .await?;
+    if log.stdout_truncated {
+        return Ok(true);
+    }
+    let commits: HashSet<String> = log
+        .stdout_text()
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if commits.is_empty() {
+        return Ok(false);
+    }
+    let stdin: String = commits.iter().map(|c| format!("{c}\n")).collect();
+    // From the main checkout, `--single-worktree` leaves out every linked HEAD and its log;
+    // branch reflogs stay, so an amended or rebased commit is still kept by its branch's log.
+    let lost = git(
+        "StorageCleanup.headLog",
+        repository,
+        [
+            "rev-list",
+            "--max-count=1",
+            "--stdin",
+            "--not",
+            "--single-worktree",
+            "--exclude=refs/t3/*",
+            "--all",
+            "--reflog",
+        ],
+    )
+    .stdin(stdin.into_bytes())
+    .text()
+    .await?;
+    Ok(!lost.trim().is_empty())
+}
+
+/// The commit `revision` names in `cwd`. Unlike `repo::resolve_commit`, a missing folder is
+/// Git's error, so no blocking check runs on the runtime thread.
+pub async fn commit_of(cwd: &Path, revision: &str) -> VcsResult<Option<String>> {
+    Ok(optional_text(git(
+        "GitVcsDriver.resolveCommit",
+        cwd,
+        [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{revision}^{{commit}}"),
+        ],
+    ))
+    .await?
+    .filter(|sha| !sha.is_empty()))
 }
 
 #[cfg(test)]

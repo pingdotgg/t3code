@@ -160,6 +160,10 @@ pub trait EngineHost: Send + Sync {
     /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
     fn session_closed(&self, _key: &str) {}
 
+    /// A live provider session ended, whether or not it revoked agent tools: a folder it held
+    /// may be free now.
+    fn session_released(&self) {}
+
     /// The host handle a new provider session gets for its agent's file and terminal
     /// callbacks (`ProviderHost`). `None`: the server offers none (today's server).
     fn provider_host(&self, _session: AgentSession) -> Option<conn_provider::HostHandle> {

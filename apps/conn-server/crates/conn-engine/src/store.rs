@@ -518,6 +518,43 @@ impl Store {
         Ok((live, deleted))
     }
 
+    /// `getThreadWorktreePaths`: each live thread with a stored worktree path.
+    pub(crate) fn worktree_bindings(&self) -> StoreResult<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, json_extract(shell, '$.worktreePath') FROM threads
+                 WHERE deleted = 0 AND shell IS NOT NULL
+                   AND json_extract(shell, '$.worktreePath') IS NOT NULL ORDER BY rowid",
+            )
+            .map_err(err)?;
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(err)?
+            .map(|row| row.map_err(err))
+            .collect()
+    }
+
+    /// The cleanup fields of the live shells of `ids` (`getThreadShell`).
+    pub(crate) fn cleanup_shells(&self, ids: &[String]) -> StoreResult<Vec<Value>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT shell FROM threads WHERE id = ?1 AND deleted = 0 AND shell IS NOT NULL",
+            )
+            .map_err(err)?;
+        let mut shells = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(text) = stmt
+                .query_row([id], |row| row.get::<_, String>(0))
+                .optional()
+                .map_err(err)?
+            {
+                shells.push(cleanup_fields(parse(text)?));
+            }
+        }
+        Ok(shells)
+    }
+
     pub(crate) fn projects_snapshot(&self) -> StoreResult<Vec<Value>> {
         let mut stmt = self
             .conn
