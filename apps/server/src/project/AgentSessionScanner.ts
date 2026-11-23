@@ -71,8 +71,7 @@ class CodexStateReadError extends Schema.TaggedError<CodexStateReadError>()("Cod
   }
 }
 const METADATA_READ_BYTES = 8 * 1024;
-// The first record with a cwd can be a prompt carrying pasted images.
-const MAX_TRANSCRIPT_SCAN_BYTES = 8 * 1024 * 1024;
+const MAX_TRANSCRIPT_SCAN_BYTES = 1024 * 1024;
 const MAX_CODEX_SESSION_INDEX_BYTES = 1024 * 1024;
 const MAX_CODEX_PROJECT_ROOT_ROWS = 100_000;
 
@@ -867,6 +866,45 @@ function extractCwd(line: string, source: AgentSessionSource): string | null | f
   return null;
 }
 
+// Claude writes cwd before message, so a prompt record too large to read whole
+// (pasted images) still names its cwd within the bytes already read.
+function topLevelCwdFromRecordPrefix(prefix: string): string | null {
+  let depth = 0;
+  for (let index = 0; index < prefix.length; index += 1) {
+    const char = prefix[index];
+    if (char === "{" || char === "[") depth += 1;
+    else if (char === "}" || char === "]") depth -= 1;
+    else if (char === '"') {
+      const end = jsonStringEnd(prefix, index);
+      if (end === -1) return null;
+      const isKey = depth === 1 && end === index + 4 && prefix.startsWith('"cwd"', index);
+      index = end;
+      if (!isKey) continue;
+      const stringValue = /\s*:\s*(?=")/y;
+      stringValue.lastIndex = end + 1;
+      if (!stringValue.test(prefix)) continue;
+      const valueEnd = jsonStringEnd(prefix, stringValue.lastIndex);
+      if (valueEnd === -1) return null;
+      let cwd: unknown;
+      try {
+        cwd = JSON.parse(prefix.slice(stringValue.lastIndex, valueEnd + 1));
+      } catch {
+        return null;
+      }
+      return typeof cwd === "string" && cwd.trim().length > 0 ? cwd : null;
+    }
+  }
+  return null;
+}
+
+function jsonStringEnd(text: string, openQuote: number): number {
+  for (let index = openQuote + 1; index < text.length; index += 1) {
+    if (text[index] === "\\") index += 1;
+    else if (text[index] === '"') return index;
+  }
+  return -1;
+}
+
 function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
   return {
     filePath,
@@ -1263,7 +1301,9 @@ export const make = Effect.gen(function* () {
               }
 
               bytesRead += next.value.byteLength;
-              remaining += decoder.decode(next.value, { stream: true });
+              const text = decoder.decode(next.value, { stream: true });
+              remaining += text;
+              if (!text.includes("\n")) continue;
               const lines = remaining.split("\n");
               remaining = lines.pop() ?? "";
 
@@ -1275,6 +1315,8 @@ export const make = Effect.gen(function* () {
             }
 
             if (bytesRead < size) {
+              const cwd = topLevelCwdFromRecordPrefix(remaining);
+              if (cwd !== null) return cwd;
               budget.truncated = true;
               return null;
             }
