@@ -41,8 +41,9 @@ import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { MOBILE_APP_URL } from "../../branding";
+import { APP_BASE_NAME, MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
+import { useChatMode } from "../../kompas/state";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
 import { useCloudLinkState } from "../../cloud/cloudLinkState";
@@ -254,8 +255,9 @@ export function WelcomePage({
     holdPageRef,
     onDone: finish,
   });
-  // Without import permission, starting simply skips the projects.
-  const selected = projectImport.canWrite ? projectImport.selected : [];
+  const chatMode = useChatMode(environmentId);
+  // Without import permission, or in chat mode, starting simply skips the projects.
+  const selected = projectImport.canWrite && !chatMode ? projectImport.selected : [];
   const newCount = selected.filter(projectImport.isNew).length;
   const start = () => {
     keepChoicesRef.current = scans.some((scan) => scan.data === null);
@@ -280,7 +282,9 @@ export function WelcomePage({
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
           <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pt-12 pb-8 sm:pt-20">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              <T>Welcome to T3 Code</T>
+              <T>
+                Welcome to <Var>{APP_BASE_NAME}</Var>
+              </T>
             </h1>
             <p className="mt-1.5 text-sm text-muted-foreground">
               <T>
@@ -298,11 +302,13 @@ export function WelcomePage({
                 isPrimary={isPrimary}
                 onImportSourceEnabled={() => scans[0]?.refresh()}
               />
-              <ProjectsSection
-                scan={scans[0]}
-                projectImport={projectImport}
-                isImporting={isImporting}
-              />
+              {chatMode ? null : (
+                <ProjectsSection
+                  scan={scans[0]}
+                  projectImport={projectImport}
+                  isImporting={isImporting}
+                />
+              )}
               {showPhone ? <PhoneSection environmentId={environmentId} /> : null}
             </div>
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">

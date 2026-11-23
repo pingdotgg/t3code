@@ -6184,7 +6184,14 @@
   "a0fd24f965eb070b": "スレッドの履歴をインポートできませんでした。",
   "a506c135c2183ac3": "{count, plural, other {{count} 個のフォルダー}}",
   "efc48b9736a534bc": "たった今",
-  "edf393ff951b533a": "T3 Code へようこそ",
+  "ee8d164144fc4b9d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " へようこそ"
+  ],
   "3cc77f9daa7eeafd": [
     {
       "t": "span",

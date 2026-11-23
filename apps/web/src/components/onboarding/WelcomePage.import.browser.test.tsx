@@ -42,6 +42,7 @@ const state = vi.hoisted(() => ({
   refreshScan: vi.fn(),
   waitForProject: vi.fn(),
   cloud: false,
+  chatMode: false,
   auth: { isLoaded: true, isSignedIn: false, userId: null as string | null },
   linkState: null as unknown,
   linkError: null as string | null,
@@ -64,6 +65,10 @@ vi.mock(import("@t3tools/client-runtime/state/session"), async (original) => {
     })) as never,
   };
 });
+vi.mock(import("../../kompas/state"), async (original) => ({
+  ...(await original()),
+  useChatMode: () => state.chatMode,
+}));
 vi.mock(import("../../cloud/publicConfig"), async (original) => ({
   ...(await original()),
   hasCloudPublicConfig: () => state.cloud,
@@ -357,6 +362,7 @@ function setup() {
   state.refreshScan.mockReset();
   state.waitForProject.mockReset().mockImplementation(waitForRecordedProject);
   state.cloud = false;
+  state.chatMode = false;
   state.auth = { isLoaded: true, isSignedIn: false, userId: null };
   state.linkState = Atom.make<EnvironmentCloudLinkStateResult | null>(null).pipe(Atom.keepAlive);
   state.linkError = null;
@@ -751,6 +757,19 @@ it("starts without importing when this connection cannot import projects", async
   await click("Start");
   await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
   expect(state.createProject).not.toHaveBeenCalled();
+});
+
+it("leaves coding projects out of setup in chat mode", async () => {
+  using _now = setup();
+  state.chatMode = true;
+  await using _screen = await mountWelcome();
+  expect(pageText()).toContain("Welcome to Kompas");
+  expect(pageText()).not.toContain("Import projects");
+
+  await click("Start");
+  await vi.waitFor(() => expect(state.onDone).toHaveBeenCalledOnce());
+  expect(state.createProject).not.toHaveBeenCalled();
+  expect(state.importThreads).not.toHaveBeenCalled();
 });
 
 it("says the phone is set up only once this computer is shared with the signed-in account", async () => {

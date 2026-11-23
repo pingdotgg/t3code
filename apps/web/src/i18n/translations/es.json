@@ -6202,7 +6202,14 @@
   "a0fd24f965eb070b": "No se pudo importar el historial de hilos.",
   "a506c135c2183ac3": "{count, plural, one {{count} carpeta} other {{count} carpetas}}",
   "efc48b9736a534bc": "ahora",
-  "edf393ff951b533a": "Te damos la bienvenida a T3 Code",
+  "ee8d164144fc4b9d": [
+    "Te damos la bienvenida a ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "3cc77f9daa7eeafd": [
     "Configurando",
     " ",

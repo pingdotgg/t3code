@@ -6182,7 +6182,14 @@
   "a0fd24f965eb070b": "스레드 기록을 가져올 수 없습니다.",
   "a506c135c2183ac3": "{count, plural, other {폴더 {count}개}}",
   "efc48b9736a534bc": "지금",
-  "edf393ff951b533a": "T3 Code에 오신 것을 환영합니다",
+  "ee8d164144fc4b9d": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    "에 오신 것을 환영합니다"
+  ],
   "3cc77f9daa7eeafd": [
     {
       "t": "span",

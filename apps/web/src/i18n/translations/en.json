@@ -6204,7 +6204,14 @@
   "a0fd24f965eb070b": "Could not import thread history.",
   "a506c135c2183ac3": "{count, plural, one {{count} folder} other {{count} folders}}",
   "efc48b9736a534bc": "now",
-  "edf393ff951b533a": "Welcome to T3 Code",
+  "ee8d164144fc4b9d": [
+    "Welcome to ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "3cc77f9daa7eeafd": [
     "Setting up",
     " ",

@@ -6203,7 +6203,14 @@
   "a0fd24f965eb070b": "Kunde inte importera trådhistorik.",
   "a506c135c2183ac3": "{count, plural, one {{count} mapp} other {{count} mappar}}",
   "efc48b9736a534bc": "nu",
-  "edf393ff951b533a": "Välkommen till T3 Code",
+  "ee8d164144fc4b9d": [
+    "Välkommen till ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "3cc77f9daa7eeafd": [
     "Konfigurerar",
     " ",
