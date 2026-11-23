@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { computeDaylight, NIMBUS_FRAGMENT_SHADER } from "./themeBackdrop";
+import {
+  applyThemeBackdrop,
+  computeDaylight,
+  getActiveThemeBackdrop,
+  subscribeThemeBackdrop,
+} from "./themeBackdrop";
 
 describe("themeBackdrop", () => {
   it("computes smooth 0..1 daylight across the 24-hour cycle", () => {
@@ -15,10 +20,25 @@ describe("themeBackdrop", () => {
     expect(computeDaylight(dusk)).toBeCloseTo(0.5, 5);
   });
 
-  it("includes the Nimbus GLSL ES 3.00 fragment shader uniforms", () => {
-    expect(NIMBUS_FRAGMENT_SHADER).toContain("#version 300 es");
-    expect(NIMBUS_FRAGMENT_SHADER).toContain("uniform float u_time;");
-    expect(NIMBUS_FRAGMENT_SHADER).toContain("uniform vec2 u_resolution;");
-    expect(NIMBUS_FRAGMENT_SHADER).toContain("uniform float u_daylight;");
+  it("tracks active GLSL backdrop state and notifies subscribers on change", () => {
+    let calls = 0;
+    const unsubscribe = subscribeThemeBackdrop(() => {
+      calls += 1;
+    });
+    try {
+      applyThemeBackdrop({
+        glsl: "#version 300 es\nout vec4 c; void main(){c=vec4(0.0);}",
+        fps: 24,
+      });
+      expect(getActiveThemeBackdrop()?.fps).toBe(24);
+      expect(calls).toBe(1);
+
+      applyThemeBackdrop(undefined);
+      expect(getActiveThemeBackdrop()).toBeNull();
+      expect(calls).toBe(2);
+    } finally {
+      unsubscribe();
+      applyThemeBackdrop(undefined);
+    }
   });
 });

@@ -94,10 +94,8 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
-export type ThemeBackdropShader = "nimbus";
 export type ThemeBackdrop = Readonly<{
-  shader?: ThemeBackdropShader | undefined;
-  glsl?: string | undefined;
+  glsl: string;
   fps?: number | undefined;
   opacity?: number | undefined;
 }>;
