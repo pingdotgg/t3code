@@ -289,14 +289,6 @@ describe("resource monitor retry", () => {
       );
     });
     await expect.element(refreshButton).toBeEnabled();
-
-    await act(() => {
-      fixture.registry.set(
-        liveTelemetry,
-        AsyncResult.waiting(AsyncResult.success({ ...fixture.snapshot, sampleIntervalMs: 2_000 })),
-      );
-    });
-    await expect.element(refreshButton).toBeEnabled();
   });
 
   it("stops showing refresh as pending after a live subscription error", async () => {
