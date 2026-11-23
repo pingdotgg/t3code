@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - ONNX inference needs a thread count from the host's cores.
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -18,6 +19,8 @@ const REPOSITORY = "csukuangfj/kokoro-multi-lang-v1_0";
 const REVISION = "f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b";
 const DIRECTORY = "kokoro-multi-lang-v1_0";
 const AF_HEART = 3;
+// sherpa-onnx-node is external to the CLI bundle; Node single-executables can load it from disk only with require.
+const requireSherpa = NodeModule.createRequire(import.meta.url);
 
 // English needs only these espeak-ng files; the repository carries every language.
 const FILES = [
@@ -105,7 +108,9 @@ export const layerSherpaEngine = Layer.succeed(
   KokoroEngine,
   KokoroEngine.of({
     load: async (files) => {
-      const { OfflineTts } = (await import("sherpa-onnx-node")).default;
+      const { OfflineTts } = requireSherpa(
+        "sherpa-onnx-node",
+      ) as typeof import("sherpa-onnx-node").default;
       const tts = await OfflineTts.createAsync({
         model: {
           kokoro: { ...files, lengthScale: 1 },
