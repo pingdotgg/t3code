@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { isChatMode } from "@t3tools/client-runtime/state/conversation-mode";
 import { createKompasEnvironmentAtoms } from "@t3tools/client-runtime/state/kompas";
 import {
   type AtomCommandResult,
@@ -13,7 +14,9 @@ import * as Dialog from "../../components/ui/Dialog";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import { m } from "../../i18n/messages";
 import { uuidv4 } from "../../lib/uuid";
+import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
+import { serverEnvironment } from "../../state/server";
 import {
   createNewTaskDraft,
   setComposerDraftText,
@@ -28,20 +31,53 @@ export interface Kompas {
   readonly snapshot: KompasSnapshot;
 }
 
+/** Null until the machine answered once, and for a server without Kompas. */
+const snapshotAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): KompasSnapshot | null => {
+    const config = get(serverEnvironment.configValueAtom(environmentId));
+    if (config?.environment.capabilities.kompas !== true) return null;
+    return AsyncResult.getOrElse(get(kompasEnvironment.snapshotAtom(environmentId)), () => null);
+  }),
+);
+
 /** The first machine that answers as Kompas; others are T3 Code servers or offline. */
 export const kompasAtom = Atom.make((get): Kompas | null => {
   for (const environmentId of get(environmentPresentations.presentationsAtom).keys()) {
-    const result = get(kompasEnvironment.snapshotAtom(environmentId));
-    const snapshot = AsyncResult.getOrElse(result, () => null);
+    const snapshot = get(snapshotAtom(environmentId));
     if (snapshot !== null) return { environmentId, snapshot };
   }
   return null;
 }).pipe(Atom.withLabel("mobile:kompas"));
 
+const environmentChatModeAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) =>
+    environmentId === null
+      ? true
+      : isChatMode(
+          get(serverEnvironment.configValueAtom(environmentId))?.environment.capabilities,
+          get(snapshotAtom(environmentId)),
+        ),
+  ),
+);
+
+/** The whole app's mode: a machine with its coding tools on shows them. */
+const chatModeAtom = Atom.make((get) =>
+  [...get(environmentPresentations.presentationsAtom).keys()].every((environmentId) =>
+    get(environmentChatModeAtom(environmentId)),
+  ),
+).pipe(Atom.withLabel("mobile:chat-mode"));
+
 export const useKompas = () => useAtomValue(kompasAtom);
 
-/** Chat mode hides the coding tabs; a phone with no Kompas machine yet shows it too. */
-export const useChatMode = () => useKompas()?.snapshot.settings.developerMode !== true;
+/** Whether the app hides its coding tabs. */
+export const useChatMode = () => useAtomValue(chatModeAtom);
+
+/** Whether one machine's threads hide their coding tools. */
+export const useEnvironmentChatMode = (environmentId: EnvironmentId | null) =>
+  useAtomValue(environmentChatModeAtom(environmentId));
+
+export const readEnvironmentChatMode = (environmentId: EnvironmentId) =>
+  appAtomRegistry.get(environmentChatModeAtom(environmentId));
 
 /** A new conversation's route params, or null where the machine offers no place for one. */
 export const conversationDraft = ({ environmentId, snapshot }: Kompas) =>

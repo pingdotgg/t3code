@@ -320,6 +320,7 @@ const layerWorkflowsProvided = WorkflowRuntime.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerThreadLaunchProvided,
+      layerManagedProjectFoldersProvided,
       layerThreadManagementProvided,
       ThreadIssueService.layer.pipe(Layer.provide(layerOrchestratorProvided)),
     ).pipe(Layer.provideMerge(layerProjectService)),

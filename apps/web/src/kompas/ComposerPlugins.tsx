@@ -1,5 +1,5 @@
 import { pluginEnabledInThread } from "@t3tools/client-runtime/state/kompas";
-import type { ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useGT } from "gt-react";
 import { SearchIcon } from "lucide-react";
 
@@ -8,13 +8,17 @@ import { useAtomCommand } from "../state/use-atom-command";
 import { kompasEnvironment, useKompas } from "./state";
 
 /** One chip per plugin: on or off in this conversation. */
-export function ComposerPlugins(props: { readonly threadId: ThreadId | null }) {
+export function ComposerPlugins(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId | null;
+}) {
   const gt = useGT();
   const kompas = useKompas();
   const setForThread = useAtomCommand(kompasEnvironment.setPluginForThread);
   const { threadId } = props;
   const plugins = kompas?.snapshot.plugins.filter((plugin) => plugin.enabled) ?? [];
-  if (kompas === null || threadId === null || plugins.length === 0) return null;
+  if (kompas?.environmentId !== props.environmentId) return null;
+  if (threadId === null || plugins.length === 0) return null;
   return (
     <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
       {plugins.map((plugin) => {

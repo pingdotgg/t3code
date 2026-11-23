@@ -1,3 +1,4 @@
+import { defaultRuntimeModeFor } from "@t3tools/client-runtime/state/conversation-mode";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { useAtomValue } from "@effect/atom-react";
@@ -1673,6 +1674,10 @@ function ScheduledTaskEditorForm({
       draft.baseModelSelection.model === selection.model
         ? draft.baseModelSelection
         : selection;
+    const newTaskRuntimeMode =
+      draft.editingId === null
+        ? defaultRuntimeModeFor(selectedProject, draft.runtimeMode)
+        : draft.runtimeMode;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1697,8 +1702,8 @@ function ScheduledTaskEditorForm({
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
-        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, draft.runtimeMode) ??
-        draft.runtimeMode,
+        clampManagedRuntimeMode(environment?.serverConfig?.managedPolicy, newTaskRuntimeMode) ??
+        newTaskRuntimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
     };

@@ -171,9 +171,9 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
         startNewLocal(event);
       },
       "preview.toggle": (event) => {
-        if (readChatMode()) return false;
-        claim(event);
         const threadRef = readRouteThreadRef();
+        if (readChatMode(threadRef?.environmentId)) return false;
+        claim(event);
         if (!threadRef || (!canOperatePreview(threadRef.environmentId) && !readPreviewOpen())) {
           return;
         }

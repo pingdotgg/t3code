@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Navigate, Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
@@ -8,15 +8,18 @@ import { resolveThreadRouteTarget } from "../threadRoutes";
 import { retainThreadFindForRoute } from "../components/chat/threadFindStore";
 import { ThreadLinkPrompt } from "../components/promptLinks/ThreadLinkPrompt";
 import { useShownThreadRouteTarget } from "../hooks/useShownThreadRouteTarget";
-import { useChatMode, useWorkstreamOf } from "../kompas/state";
+import { useChatMode, useChatModeRedirect, useWorkstreamOf } from "../kompas/state";
 import { WorkstreamPanel } from "../kompas/Workstreams";
 
 function ChatRouteLayout() {
   // Render both routes here so draft promotion keeps the same ChatView mounted.
   const { shownTarget, modalOpen } = useShownThreadRouteTarget();
-  const chatMode = useChatMode();
-  const threadId = shownTarget?.kind === "server" ? shownTarget.threadRef.threadId : null;
+  const threadRef = shownTarget?.kind === "server" ? shownTarget.threadRef : null;
+  const threadId = threadRef?.threadId ?? null;
+  const chatMode = useChatMode(threadRef?.environmentId);
+  const redirectTo = useChatModeRedirect();
   const project = useWorkstreamOf(chatMode ? threadId : null);
+  if (redirectTo !== null) return <Navigate to={redirectTo} replace />;
   return (
     <>
       {shownTarget?.kind === "server" && !modalOpen ? (

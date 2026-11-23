@@ -23,10 +23,11 @@ export interface ListedTool {
 export class McpToolExposure extends Context.Service<
   McpToolExposure,
   {
-    /** Finds tools for the query and lists them to the session from now on. */
+    /** Finds allowed tools for the query and lists them to the session from now on. */
     readonly search: (
       providerSessionId: string,
       query: string,
+      allows: (tool: string) => boolean,
     ) => Effect.Effect<ReadonlyArray<ListedTool>>;
     readonly isListed: (providerSessionId: string, tool: string) => boolean;
   }
@@ -60,13 +61,13 @@ export const make = (
     }
   };
   return McpToolExposure.of({
-    search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query) {
+    search: Effect.fn("McpToolExposure.search")(function* (providerSessionId, query, allows) {
       const terms = query
         .toLowerCase()
         .split(/[^a-z0-9_]+/u)
         .filter(Boolean);
       const found = tools()
-        .filter((tool) => tool.name !== TOOL_SEARCH)
+        .filter((tool) => tool.name !== TOOL_SEARCH && allows(tool.name))
         .map((tool) => ({ tool, score: score(tool, terms) }))
         .filter((match) => match.score > 0)
         .sort((a, b) => b.score - a.score)

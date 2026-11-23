@@ -1889,7 +1889,7 @@ export default function ChatView(props: ChatViewProps) {
           providerSubagentModels,
           reportedModelSelection,
         );
-  const chatMode = useChatMode();
+  const chatMode = useChatMode(environmentId);
   const showComposerContextStrip =
     !embedded &&
     !chatMode &&

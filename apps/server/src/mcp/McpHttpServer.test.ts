@@ -2134,9 +2134,11 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         capabilities: new Set(["orchestration"]),
         issuedAt: 1,
       });
+      const chatScope = scopeFor("chatToken");
       const scopes = new Map([
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
+        ["chatToken", { ...chatScope, thread: { ...chatScope.thread, profile: "chat" as const } }],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
@@ -2241,6 +2243,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
       expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+
+      // A conversation's search offers none of the coding tools it may not call.
+      const chat = yield* session("chatToken", true);
+      expect((yield* chat.call("tool_search", { query: "browser" })).structuredContent).toEqual({
+        tools: [],
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

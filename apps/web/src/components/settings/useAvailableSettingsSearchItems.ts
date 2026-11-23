@@ -1,3 +1,5 @@
+import { isCodingSettingsPage } from "~/kompas/settingsGroups";
+import { useChatMode } from "~/kompas/state";
 import { useMessages } from "gt-react";
 import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
@@ -78,7 +80,7 @@ export function useAvailableSettingsSearchItems() {
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;
 
-  return filterAvailableSettingsSearchItems({
+  const items = filterAvailableSettingsSearchItems({
     localEnvironmentDisabled,
     hasCloudPublicConfig: cloudPublicConfig,
     hasEnvironment,
@@ -94,4 +96,5 @@ export function useAvailableSettingsSearchItems() {
     hasPrimaryEnvironment: primaryEnvironmentId !== null,
     hasSecretProvidersEnvironment,
   });
+  return useChatMode() ? items.filter((item) => !isCodingSettingsPage(item.to)) : items;
 }

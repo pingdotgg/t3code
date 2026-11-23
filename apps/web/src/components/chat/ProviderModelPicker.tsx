@@ -173,7 +173,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     (activeEntry?.driverKind === "opencode" || activeEntry?.driverKind === "antigravity"
       ? undefined
       : selectedInstanceOptions[0]);
-  const chatMode = useChatMode();
+  const chatMode = useChatMode(props.environmentId);
   const triggerTitle = selectedModel
     ? chatMode
       ? getDisplayModelName(selectedModel)

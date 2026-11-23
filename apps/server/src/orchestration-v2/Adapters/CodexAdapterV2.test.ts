@@ -2721,97 +2721,134 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  it.effect("adds the session MCP server and gives stdio servers the thread id", () =>
-    Effect.gen(function* () {
-      const scenario = "launch-mcp-servers";
-      yield* (yield* McpProviderSessions.McpProviderSessions).set({
-        environmentId: EnvironmentId.make("environment-codex-mcp"),
-        threadId: ThreadId.make(`thread-${scenario}`),
-        providerSessionId: `provider-session-${scenario}`,
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-codex-token",
-        browserToolsAvailable: true,
-      });
-      const requests: Array<unknown> = [];
-      const preamble = codexReplayPreamble({
-        nativeThreadId: "launch-mcp-thread",
-        nativeTurnId: "unused",
-        prompt: "unused",
-      });
-      yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({
-          scenario,
-          entries: [
-            ...preamble.slice(0, 3),
-            {
-              type: "expect_outbound",
-              label: "config/read",
-              frame: { id: 2, method: "config/read", params: { includeLayers: false } },
-            },
-            {
-              type: "emit_inbound",
-              label: "config/read",
-              frame: {
-                id: 2,
-                result: {
-                  config: {
-                    mcp_servers: {
-                      envprobe: { command: "python3", env: { FOO: "bar" } },
-                      remote: { url: "https://example.com/mcp" },
-                      "dotted.name": { command: "node" },
+  // The policy has no profile here, as on resumes that carry none: the session names it.
+  it.effect.each([
+    { profile: undefined, muted: {} },
+    {
+      profile: "chat" as const,
+      muted: {
+        "memories.use_memories": false,
+        "memories.generate_memories": false,
+        "features.apps": false,
+        "features.plugins": false,
+        "mcp_servers.envprobe.enabled": false,
+        "mcp_servers.remote.enabled": false,
+      },
+    },
+  ])(
+    "adds the session MCP server and gives stdio servers the thread id: %s",
+    ({ profile, muted }) =>
+      Effect.gen(function* () {
+        const scenario = "launch-mcp-servers";
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-codex-mcp"),
+          threadId: ThreadId.make(`thread-${scenario}`),
+          providerSessionId: `provider-session-${scenario}`,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-codex-token",
+          browserToolsAvailable: true,
+          ...(profile === undefined ? {} : { profile }),
+        });
+        const requests: Array<unknown> = [];
+        const preamble = codexReplayPreamble({
+          nativeThreadId: "launch-mcp-thread",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        });
+        yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...preamble.slice(0, 3),
+              {
+                type: "expect_outbound",
+                label: "config/read",
+                frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+              },
+              {
+                type: "emit_inbound",
+                label: "config/read",
+                frame: {
+                  id: 2,
+                  result: {
+                    config: {
+                      mcp_servers: {
+                        envprobe: { command: "python3", env: { FOO: "bar" } },
+                        remote: { url: "https://example.com/mcp" },
+                        "dotted.name": { command: "node" },
+                      },
                     },
+                    origins: {},
                   },
-                  origins: {},
                 },
               },
-            },
-            ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
-          ],
-        }),
-        () => Effect.void,
-        (method, params) =>
-          Effect.sync(() => {
-            if (method === "thread/start") requests.push(params);
+              ...preamble
+                .slice(3, 5)
+                .map((entry) => withReplayRequestId(entry, 3))
+                .map((entry) =>
+                  entry.type === "expect_outbound" &&
+                  Predicate.isObject(entry.frame) &&
+                  Predicate.isObject(entry.frame["params"]) &&
+                  Predicate.isObject(entry.frame["params"]["config"])
+                    ? {
+                        ...entry,
+                        frame: {
+                          ...entry.frame,
+                          params: {
+                            ...entry.frame["params"],
+                            config: { ...entry.frame["params"]["config"], ...muted },
+                          },
+                        },
+                      }
+                    : entry,
+                ),
+            ],
           }),
-      );
-      assert.deepEqual(requests, [
-        {
-          cwd: "/workspace",
-          model: "gpt-5.4",
-          config: {
-            "tools.update_plan.enabled": true,
-            mcp_optional_startup_grace_ms: 10_000,
-            "features.concurrent_reasoning_summaries": true,
-            "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
-            "mcp_servers.envprobe.env.T3CODE_THREAD_ID": `thread-${scenario}`,
-            "mcp_servers.t3-code": {
-              url: "http://127.0.0.1:43123/mcp",
-              tool_timeout_sec: 3_900,
-              http_headers: { Authorization: "Bearer secret-codex-token" },
-              disabled_tools: ["t3_thread_wait", "delegate_task"],
-            },
-            "mcp_servers.t3-code-direct": {
-              url: "http://127.0.0.1:43123/mcp",
-              tool_timeout_sec: 3_900,
-              http_headers: { Authorization: "Bearer secret-codex-token" },
-              enabled_tools: ["t3_thread_wait", "delegate_task"],
-              omit_tools_from: ["code_mode", "deferred"],
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (method === "thread/start") requests.push(params);
+            }),
+        );
+        assert.deepEqual(requests, [
+          {
+            cwd: "/workspace",
+            model: "gpt-5.4",
+            config: {
+              "tools.update_plan.enabled": true,
+              mcp_optional_startup_grace_ms: 10_000,
+              "features.concurrent_reasoning_summaries": true,
+              "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+              "mcp_servers.envprobe.env.T3CODE_THREAD_ID": `thread-${scenario}`,
+              "mcp_servers.t3-code": {
+                url: "http://127.0.0.1:43123/mcp",
+                tool_timeout_sec: 3_900,
+                http_headers: { Authorization: "Bearer secret-codex-token" },
+                disabled_tools: ["t3_thread_wait", "delegate_task"],
+              },
+              "mcp_servers.t3-code-direct": {
+                url: "http://127.0.0.1:43123/mcp",
+                tool_timeout_sec: 3_900,
+                http_headers: { Authorization: "Bearer secret-codex-token" },
+                enabled_tools: ["t3_thread_wait", "delegate_task"],
+                omit_tools_from: ["code_mode", "deferred"],
+              },
+              ...muted,
             },
           },
-        },
-      ]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+        ]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   // regression: #36520 MCP servers can tell a delegate_task child from a user thread

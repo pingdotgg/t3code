@@ -523,7 +523,6 @@ const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const gt = useGT();
-  const chatMode = useChatMode();
   const m = useMessages();
   const {
     composerDraftTarget,
@@ -613,6 +612,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onRemoveEditingQueuedAttachment,
     onRestoreEditingQueuedAttachment,
   } = props;
+  const chatMode = useChatMode(environmentId);
   const {
     activePendingProgress: incomingPendingProgress,
     activePendingResolvedAnswers,
@@ -4056,7 +4056,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   <div className="me-2">{composerAttachButton}</div>
                 ) : null}
                 {chatMode && !dictationTakesFooter ? (
-                  <ComposerPlugins threadId={activeThreadId} />
+                  <ComposerPlugins environmentId={environmentId} threadId={activeThreadId} />
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

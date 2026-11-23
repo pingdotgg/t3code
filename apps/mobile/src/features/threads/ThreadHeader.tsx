@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
@@ -7,7 +8,7 @@ import {
   useWorkspacePaneState,
 } from "../layout/AdaptiveWorkspaceLayout";
 import type { ThreadInspectorMode } from "./thread-inspector-navigation";
-import { useChatMode } from "../kompas/state";
+import { useEnvironmentChatMode } from "../kompas/state";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
@@ -27,7 +28,7 @@ export function ThreadHeader(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
-  const chatMode = useChatMode();
+  const chatMode = useEnvironmentChatMode(EnvironmentId.make(props.gitControls.environmentId));
   const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();

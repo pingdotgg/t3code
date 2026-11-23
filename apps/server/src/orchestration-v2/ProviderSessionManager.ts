@@ -692,6 +692,7 @@ export const layerWithOptions = (
                   ) {
                     yield* mcpSessions.set({
                       ...existing,
+                      profile,
                       sharedServers: McpProviderSession.sharedMcpSessionServers(plugins, existing),
                     });
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
@@ -710,6 +711,7 @@ export const layerWithOptions = (
                 });
                 yield* mcpSessions.set({
                   ...credential.config,
+                  profile,
                   sharedServers: McpProviderSession.sharedMcpSessionServers(
                     plugins,
                     credential.config,

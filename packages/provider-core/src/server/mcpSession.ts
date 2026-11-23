@@ -44,6 +44,7 @@ export interface McpProviderSessionConfig {
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
   /** True while a delegated task this thread started will wake it with its result. */
   readonly hasPendingWake?: Effect.Effect<boolean>;
+  readonly profile?: ThreadProfile;
   /** The thread's plugins, captured when the session is prepared. */
   readonly sharedServers?: ReadonlyArray<SharedMcpSessionServer>;
 }

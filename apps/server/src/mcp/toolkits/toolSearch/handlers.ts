@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 
+import { profileAllowsTool } from "../../../kompas/profileTools.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolExposure from "../../McpToolExposure.ts";
@@ -12,7 +13,11 @@ export const layer = McpToolAccess.toLayer(ToolSearchToolkit, {
         Effect.flatMap((scope) => McpInvocationContext.requireThreadScope(scope, "tool_search")),
       );
       const exposure = yield* McpToolExposure.McpToolExposure;
-      return { tools: yield* exposure.search(thread.providerSessionId, query) };
+      return {
+        tools: yield* exposure.search(thread.providerSessionId, query, (tool) =>
+          profileAllowsTool(thread.profile ?? "developer", tool, thread.pluginsAttached !== false),
+        ),
+      };
     }),
   ),
 });

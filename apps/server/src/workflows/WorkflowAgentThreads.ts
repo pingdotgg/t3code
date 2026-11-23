@@ -23,6 +23,7 @@ import * as Option from "effect/Option";
 import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -48,6 +49,7 @@ const failed = (reason: string) => (cause: unknown) =>
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const projects = yield* ProjectService.ProjectService;
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
@@ -123,7 +125,12 @@ const make = Effect.gen(function* () {
     const current = yield* settings.getSettings.pipe(
       Effect.mapError(failed("Could not read settings")),
     );
-    return resolveProjectSettings(current, projectId, project.value).settings;
+    const resolved = resolveProjectSettings(current, projectId, project.value).settings;
+    // A conversation has no checkout, so full access would only reach the user's own files.
+    return resolved.defaultRuntimeMode === "full-access" &&
+      (yield* folders.isScratchProject(projectId))
+      ? { ...resolved, defaultRuntimeMode: "auto-accept-edits" as const }
+      : resolved;
   });
 
   const projectIdOf = Effect.fn("WorkflowAgentThreads.projectIdOf")(function* (project: string) {

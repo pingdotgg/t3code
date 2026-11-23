@@ -1,4 +1,5 @@
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
+import { defaultRuntimeModeFor } from "@t3tools/client-runtime/state/conversation-mode";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -871,10 +872,13 @@ function TaskForm({
       );
       return;
     }
-    if (!projects.some((project) => project.id === draft.projectId)) {
+    const project = projects.find((candidate) => candidate.id === draft.projectId);
+    if (project === undefined) {
       Dialog.alert(gt("Project unavailable"), gt("Choose a project in this environment."));
       return;
     }
+    const runtimeMode =
+      draft.task === null ? defaultRuntimeModeFor(project, draft.runtimeMode) : draft.runtimeMode;
     const input: ScheduledTaskUpsertInput = {
       ...(draft.task ? { id: draft.task.id, requireExisting: true } : {}),
       title: draft.title.trim(),
@@ -897,8 +901,7 @@ function TaskForm({
                 startFromOrigin: draft.startFromOrigin,
               },
       // Tasks have no mode picker; a mode above the administrator's ceiling is refused.
-      runtimeMode:
-        clampManagedRuntimeMode(config?.managedPolicy, draft.runtimeMode) ?? draft.runtimeMode,
+      runtimeMode: clampManagedRuntimeMode(config?.managedPolicy, runtimeMode) ?? runtimeMode,
       interactionMode: draft.task?.interactionMode ?? "default",
       creationSource: draft.task?.creationSource ?? "mobile",
     };

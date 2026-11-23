@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { msg, useMessages } from "gt-react-native";
 import { Platform } from "react-native";
@@ -17,6 +18,7 @@ import {
 
 import { copyThreadReference } from "../../lib/copyThreadReference";
 import { m } from "../../i18n/messages";
+import { readEnvironmentChatMode } from "../kompas/state";
 import {
   firstWorkspaceDetailOpen,
   workspaceHasColumns,
@@ -177,7 +179,7 @@ export function HardwareKeyboardCommandProvider({
       }
 
       const thread = parseActiveThreadPath(pathname);
-      if (!thread) return;
+      if (!thread || readEnvironmentChatMode(EnvironmentId.make(thread.environmentId))) return;
       if (command === "files" && !/\/files(?:\/|$)/.test(pathname)) {
         navigation.navigate("ThreadFiles", thread);
       }

@@ -1,3 +1,4 @@
+import { useEnvironmentChatMode } from "../kompas/state";
 import { CollapsibleUserMessageBody } from "./CollapsibleUserMessageBody";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
@@ -2081,6 +2082,7 @@ function renderFeedEntry(
         ) : null}
         {entry.checkpointSummary ? (
           <TurnDiffStat
+            environmentId={props.environmentId}
             checkpoint={entry.checkpointSummary}
             onOpenTurnDiff={props.onOpenTurnDiff}
           />
@@ -2179,6 +2181,7 @@ function renderFeedEntry(
         trailing={
           entry.checkpointSummary ? (
             <TurnDiffStat
+              environmentId={props.environmentId}
               checkpoint={entry.checkpointSummary}
               onOpenTurnDiff={props.onOpenTurnDiff}
             />
@@ -2697,6 +2700,7 @@ function renderFeedEntry(
         />
         {showAssistantMeta && message.checkpointSummary ? (
           <TurnDiffStat
+            environmentId={props.environmentId}
             checkpoint={message.checkpointSummary}
             onOpenTurnDiff={props.onOpenTurnDiff}
           />
@@ -2753,10 +2757,13 @@ function renderFeedEntry(
 }
 
 function TurnDiffStat(props: {
+  readonly environmentId: EnvironmentId;
   readonly checkpoint: ThreadCheckpointSummary;
   readonly onOpenTurnDiff: (checkpoint: ThreadCheckpointSummary) => void;
 }) {
   const gt = useGT();
+  const chatMode = useEnvironmentChatMode(props.environmentId);
+  if (chatMode) return null;
   const { repositories, rootFiles, totals } = turnChanges(props.checkpoint);
   const { additions, deletions } = totals;
   const folderCount = repositories.length + (rootFiles.length > 0 ? 1 : 0);
