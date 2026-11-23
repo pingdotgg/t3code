@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Runs Linux .deb package installs asynchronously via child_process.spawn.
+// @effect-diagnostics nodeBuiltinImport:off -- Spawns the .deb install outside electron-updater.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
@@ -14,31 +14,28 @@ import { AppImageUpdater, DebUpdater, autoUpdater } from "electron-updater";
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
 
-const SAFE_PACKAGE_MANAGER_REGEX = /^[a-zA-Z0-9_-]+$/;
 const PRIVILEGE_COMMANDS = ["gksudo", "kdesudo", "pkexec", "beesu"] as const;
+type PrivilegeCommand = (typeof PRIVILEGE_COMMANDS)[number] | "sudo";
+// pkexec exits 126 when the user dismisses the prompt and 127 when not authorized; dpkg never ran.
+const AUTHORIZATION_EXIT_CODES: ReadonlySet<number | null> = new Set([126, 127]);
 
 interface DebUpdaterInternal {
   quitAndInstallCalled: boolean;
   readonly autoRunAppAfterInstall: boolean;
   readonly downloadedUpdateHelper: {
     readonly file: string | null;
-    readonly downloadedFileInfo: { readonly isAdminRightsRequired: boolean } | null;
+    readonly downloadedFileInfo: unknown;
   } | null;
-  readonly app: {
-    readonly name: string;
-    readonly relaunch: () => void;
-    readonly quit: () => void;
+  readonly app: { readonly name: string; readonly relaunch: () => void; readonly quit: () => void };
+  readonly _logger: {
+    readonly info: (message: string) => void;
+    readonly warn: (message: string) => void;
   };
-  readonly _logger?: {
-    readonly info?: (message: unknown) => void;
-    readonly warn?: (message: unknown) => void;
-    readonly error?: (message: unknown) => void;
-  } | null;
 }
 
 class DebInstallError extends Schema.TaggedError<DebInstallError>()("DebInstallError", {
   reason: Schema.String,
-  exitCode: Schema.optional(Schema.NullOr(Schema.Number)),
+  exitCode: Schema.NullOr(Schema.Number),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
@@ -46,226 +43,138 @@ class DebInstallError extends Schema.TaggedError<DebInstallError>()("DebInstallE
   }
 }
 
-const sanitizeEnvPath = (envPath: string): string =>
-  envPath
+// electron-updater strips relative PATH entries so a writable directory cannot shadow dpkg.
+const sanitizedEnv = (): NodeJS.ProcessEnv => ({
+  ...process.env,
+  PATH: (process.env.PATH ?? "")
     .split(NodePath.delimiter)
     .filter((dir) => NodePath.isAbsolute(dir))
-    .join(NodePath.delimiter);
-
-const sanitizedProcessEnv = (): NodeJS.ProcessEnv => ({
-  ...process.env,
-  PATH: sanitizeEnvPath(process.env.PATH ?? ""),
+    .join(NodePath.delimiter),
 });
 
-const readPackageManagerOverride = (): string | undefined =>
-  process.env.ELECTRON_BUILDER_LINUX_PACKAGE_MANAGER?.trim();
-
-const shellQuoteArg = (arg: string): string => `'${arg.replace(/'/g, "'\\''")}'`;
-
-const spawnAsync = (
-  cmd: string,
-  args: ReadonlyArray<string>,
-  options: { readonly detached?: boolean },
-): Effect.Effect<void, DebInstallError> =>
+const spawnAsync = (cmd: string, args: ReadonlyArray<string>, detached = false) =>
   Effect.callback<void, DebInstallError>((resume) => {
     let settled = false;
     const child = NodeChildProcess.spawn(cmd, args, {
-      env: sanitizedProcessEnv(),
-      detached: options.detached ?? false,
+      env: sanitizedEnv(),
+      detached,
       stdio: "ignore",
     });
-
     child.once("error", (cause) => {
       if (settled) return;
       settled = true;
       resume(
         Effect.fail(
-          new DebInstallError({
-            reason: `Failed to spawn ${cmd}.`,
-            cause,
-          }),
+          new DebInstallError({ reason: `Failed to spawn ${cmd}.`, exitCode: null, cause }),
         ),
       );
     });
-
     child.once("close", (code, signal) => {
       if (settled) return;
       settled = true;
-      if (code === 0) {
-        resume(Effect.void);
-      } else {
-        resume(
-          Effect.fail(
-            new DebInstallError({
-              reason:
-                signal !== null
-                  ? `Command ${cmd} terminated by signal ${signal}`
-                  : `Command ${cmd} exited with code ${code ?? "unknown"}`,
-              exitCode: code,
-            }),
-          ),
-        );
-      }
+      if (code === 0) return resume(Effect.void);
+      const reason =
+        signal === null
+          ? `Command ${cmd} exited with code ${code ?? "unknown"}`
+          : `Command ${cmd} terminated by signal ${signal}`;
+      resume(Effect.fail(new DebInstallError({ reason, exitCode: code })));
     });
-
-    // Never kill an in-flight detached dpkg/apt transaction on fiber interruption.
+    // Never kill an in-flight dpkg transaction when the fiber is interrupted.
     return Effect.sync(() => {
-      if (!settled && options.detached) {
-        child.unref();
-      }
+      if (!settled && detached) child.unref();
     });
   });
 
-const hasCommandAsync = (cmd: string): Effect.Effect<boolean> =>
-  spawnAsync("/bin/sh", ["-c", 'command -v -- "$1" >/dev/null 2>&1', "_", cmd], {}).pipe(
+const hasCommand = (cmd: string) =>
+  spawnAsync("/bin/sh", ["-c", 'command -v -- "$1" >/dev/null 2>&1', "_", cmd]).pipe(
     Effect.as(true),
     Effect.orElseSucceed(() => false),
   );
 
-const detectDebPackageManagerAsync = Effect.fn("ElectronUpdater.detectDebPackageManager")(
-  function* (logger: DebUpdaterInternal["_logger"]) {
-    const hasDpkg = yield* hasCommandAsync("dpkg");
-    const hasApt = yield* hasCommandAsync("apt");
-    if (!hasDpkg && !hasApt) {
-      return yield* new DebInstallError({
-        reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
-      });
-    }
-
-    const override = readPackageManagerOverride();
-    const candidates: ReadonlyArray<string> =
-      override && SAFE_PACKAGE_MANAGER_REGEX.test(override)
-        ? [override]
-        : (["dpkg", "apt"] as const);
-    if (override && !SAFE_PACKAGE_MANAGER_REGEX.test(override)) {
-      logger?.warn?.(
-        `ELECTRON_BUILDER_LINUX_PACKAGE_MANAGER "${override}" contains unsafe characters. Ignoring override.`,
-      );
-    }
-
-    for (const pm of candidates) {
-      if (pm === "dpkg" && hasDpkg) return "dpkg" as const;
-      if (pm === "apt" && hasApt) return "apt" as const;
-      if (pm !== "dpkg" && pm !== "apt" && (yield* hasCommandAsync(pm))) {
-        return yield* new DebInstallError({ reason: `Package manager ${pm} not supported` });
-      }
-    }
-
-    return hasDpkg ? ("dpkg" as const) : ("apt" as const);
-  },
-);
-
-const determineSudoCommandAsync = Effect.gen(function* () {
-  for (const sudo of PRIVILEGE_COMMANDS) {
-    if (yield* hasCommandAsync(sudo)) return sudo;
+const findPrivilegeCommand = Effect.gen(function* () {
+  for (const command of PRIVILEGE_COMMANDS) {
+    if (yield* hasCommand(command)) return command;
   }
   return "sudo" as const;
 });
 
-const buildPrivilegedDebCommand = (
-  sudo: (typeof PRIVILEGE_COMMANDS)[number] | "sudo",
+const shellQuote = (arg: string): string => `'${arg.replace(/'/g, "'\\''")}'`;
+
+const privilegedCommand = (
+  sudo: PrivilegeCommand,
   appName: string,
-  commandWithArgs: ReadonlyArray<string>,
+  command: ReadonlyArray<string>,
 ): readonly [string, ReadonlyArray<string>] => {
-  const safeName = appName.replace(/["`$\\!\n\r;|&<>(){}*?[\]#~]/g, "");
-  const installComment = `${safeName} would like to update`;
-  if (sudo === "pkexec") {
-    return ["pkexec", ["--disable-internal-agent", ...commandWithArgs]];
+  const comment = `${appName.replace(/["`$\\!\n\r;|&<>(){}*?[\]#~]/g, "")} would like to update`;
+  switch (sudo) {
+    case "pkexec":
+      return ["pkexec", ["--disable-internal-agent", ...command]];
+    case "kdesudo":
+      return ["kdesudo", ["--comment", comment, "-c", command.map(shellQuote).join(" ")]];
+    case "gksudo":
+      return ["gksudo", ["--message", comment, command.map(shellQuote).join(" ")]];
+    default:
+      return [sudo, command];
   }
-  if (sudo === "kdesudo") {
-    return [
-      "kdesudo",
-      ["--comment", installComment, "-c", commandWithArgs.map(shellQuoteArg).join(" ")],
-    ];
-  }
-  if (sudo === "gksudo") {
-    return ["gksudo", ["--message", installComment, commandWithArgs.map(shellQuoteArg).join(" ")]];
-  }
-  return [sudo, commandWithArgs];
 };
 
-const runDebCommandWithSudoAsync = Effect.fn("ElectronUpdater.runDebCommandWithSudo")(function* (
-  appName: string,
-  logger: DebUpdaterInternal["_logger"],
-  commandWithArgs: ReadonlyArray<string>,
+const runAsRoot = Effect.fn("ElectronUpdater.runDebCommandAsRoot")(function* (
+  deb: DebUpdaterInternal,
+  command: readonly [string, ...Array<string>],
 ) {
-  const isRoot = process.getuid?.() === 0;
-  if (isRoot) {
-    logger?.info?.("Running as root, no need to use sudo");
-    const [cmd, ...args] = commandWithArgs;
-    if (!cmd) {
-      return yield* new DebInstallError({ reason: "Missing command for .deb install." });
-    }
-    return yield* spawnAsync(cmd, args, { detached: true });
+  if (process.getuid?.() === 0) {
+    return yield* spawnAsync(command[0], command.slice(1), true);
   }
-  const sudo = yield* determineSudoCommandAsync;
-  const [cmd, args] = buildPrivilegedDebCommand(sudo, appName, commandWithArgs);
-  logger?.info?.(`Running as non-root user, using ${sudo} to install`);
-  return yield* spawnAsync(cmd, args, { detached: true });
+  const sudo = yield* findPrivilegeCommand;
+  deb._logger.info(`Running as non-root user, using ${sudo} to install`);
+  const [cmd, args] = privilegedCommand(sudo, deb.app.name, command);
+  return yield* spawnAsync(cmd, args, true);
 });
 
-const emitElectronBeforeQuitForUpdate = (): void => {
+// electron-updater's own Electron, so the event reaches the same autoUpdater it would emit on.
+const emitBeforeQuitForUpdate = (): void => {
   const requireFromUpdater = NodeModule.createRequire(
     NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
   );
   const electron = requireFromUpdater("electron") as {
-    readonly autoUpdater?: { readonly emit?: (event: string) => boolean };
+    readonly autoUpdater?: { readonly emit: (event: string) => boolean };
   };
-  electron.autoUpdater?.emit?.("before-quit-for-update");
+  electron.autoUpdater?.emit("before-quit-for-update");
 };
 
-// DebUpdater.doInstall runs `pkexec ... dpkg -i` via spawnSync, blocking Electron's main thread
-// and piping stdout back to Electron. Run asynchronously with detached/ignored stdio so the UI
-// stays responsive and an app exit cannot SIGPIPE dpkg mid-transaction.
-const quitAndInstallDebAsync = Effect.fn("ElectronUpdater.quitAndInstallDeb")(function* (
+// DebUpdater.doInstall runs the privileged `dpkg -i` through spawnSync, freezing Electron's main
+// thread for as long as the polkit prompt and dpkg take. This mirrors it without blocking, detached
+// with ignored stdio so the app quitting cannot SIGPIPE dpkg mid-transaction.
+const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(function* (
   updater: DebUpdater,
   isSilent: boolean,
   isForceRunAfter: boolean,
 ) {
   const deb = updater as unknown as DebUpdaterInternal;
   if (deb.quitAndInstallCalled) {
-    deb._logger?.warn?.("install call ignored: quitAndInstallCalled is set to true");
+    deb._logger.warn("install call ignored: quitAndInstallCalled is set to true");
     return;
   }
-
   const installerPath = deb.downloadedUpdateHelper?.file ?? null;
-  const downloadedFileInfo = deb.downloadedUpdateHelper?.downloadedFileInfo ?? null;
-  if (installerPath === null || downloadedFileInfo === null) {
+  if (installerPath === null || deb.downloadedUpdateHelper?.downloadedFileInfo == null) {
     return yield* new DebInstallError({
       reason: "No update filepath provided, can't quit and install",
+      exitCode: null,
     });
   }
 
   deb.quitAndInstallCalled = true;
-  const runInstall = Effect.gen(function* () {
-    const packageManager = yield* detectDebPackageManagerAsync(deb._logger);
-    if (packageManager === "dpkg") {
-      yield* runDebCommandWithSudoAsync(deb.app.name, deb._logger, [
-        "dpkg",
-        "-i",
-        installerPath,
-      ]).pipe(
+  yield* Effect.gen(function* () {
+    if (yield* hasCommand("dpkg")) {
+      yield* runAsRoot(deb, ["dpkg", "-i", installerPath]).pipe(
         Effect.catch((error) => {
-          if (error.exitCode === 126 || error.exitCode === 127) {
-            return Effect.fail(error);
-          }
-          deb._logger?.warn?.(error.message);
-          deb._logger?.warn?.(
-            "dpkg installation failed, trying to fix broken dependencies with apt-get",
-          );
-          return runDebCommandWithSudoAsync(deb.app.name, deb._logger, [
-            "apt-get",
-            "install",
-            "-f",
-            "-y",
-          ]);
+          if (AUTHORIZATION_EXIT_CODES.has(error.exitCode)) return Effect.fail(error);
+          deb._logger.warn(`${error.message}; fixing broken dependencies with apt-get`);
+          return runAsRoot(deb, ["apt-get", "install", "-f", "-y"]);
         }),
       );
-    } else {
-      deb._logger?.warn?.(
-        "Using apt to install a local .deb. This may fail for unsigned packages unless properly configured.",
-      );
-      yield* runDebCommandWithSudoAsync(deb.app.name, deb._logger, [
+    } else if (yield* hasCommand("apt")) {
+      yield* runAsRoot(deb, [
         "apt",
         "install",
         "-y",
@@ -274,17 +183,18 @@ const quitAndInstallDebAsync = Effect.fn("ElectronUpdater.quitAndInstallDeb")(fu
         "--allow-change-held-packages",
         installerPath,
       ]);
+    } else {
+      return yield* new DebInstallError({
+        reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
+        exitCode: null,
+      });
     }
 
-    const shouldRelaunch = isSilent ? isForceRunAfter : deb.autoRunAppAfterInstall;
-    if (shouldRelaunch) {
-      deb.app.relaunch();
-    }
-    emitElectronBeforeQuitForUpdate();
+    if (isSilent ? isForceRunAfter : deb.autoRunAppAfterInstall) deb.app.relaunch();
+    emitBeforeQuitForUpdate();
     deb.app.quit();
-  });
-
-  yield* runInstall.pipe(
+  }).pipe(
+    // A cancelled or failed install leaves the download in place for a retry.
     Effect.onError(() =>
       Effect.sync(() => {
         deb.quitAndInstallCalled = false;
@@ -458,7 +368,7 @@ export const make = ElectronUpdater.of({
     return Effect.suspend(() => {
       const channel = autoUpdater.channel;
       if (autoUpdater instanceof DebUpdater) {
-        return quitAndInstallDebAsync(autoUpdater, isSilent, isForceRunAfter).pipe(
+        return quitAndInstallDeb(autoUpdater, isSilent, isForceRunAfter).pipe(
           Effect.mapError(
             (cause) =>
               new ElectronUpdaterQuitAndInstallError({
