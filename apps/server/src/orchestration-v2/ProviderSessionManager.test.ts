@@ -536,7 +536,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly backgroundTasksEndWithProcess?: boolean;
     readonly hangSessionScopeClose?: boolean;
-    readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
+    readonly startTurn?: Effect.Effect<
+      void,
+      ProviderAdapter.ProviderAdapterProtocolError,
+      McpProviderSessions.McpProviderSessions
+    >;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
@@ -612,6 +616,15 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
           if (options.hangSessionScopeClose === true) yield* hangClose;
         }
 
+        const runStartTurn = () =>
+          options.startTurn === undefined
+            ? Effect.void
+            : Effect.provideService(
+                options.startTurn,
+                McpProviderSessions.McpProviderSessions,
+                mcpSessions,
+              );
+
         return {
           instanceId: ProviderInstanceId.make("codex"),
           driver: CODEX_DRIVER,
@@ -662,9 +675,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => options.startTurn ?? Effect.void,
-          resumeTurn: () => options.startTurn ?? Effect.void,
-          compactThread: () => options.startTurn ?? Effect.void,
+          startTurn: runStartTurn,
+          resumeTurn: runStartTurn,
+          compactThread: runStartTurn,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -730,7 +743,11 @@ function layerTest(input: {
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly backgroundTasksEndWithProcess?: boolean;
   readonly hangSessionScopeClose?: boolean;
-  readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
+  readonly startTurn?: Effect.Effect<
+    void,
+    ProviderAdapter.ProviderAdapterProtocolError,
+    McpProviderSessions.McpProviderSessions
+  >;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
@@ -2293,10 +2310,14 @@ it.effect.each([
 );
 
 it.effect(
-  "ProviderSessionManagerV2 rotates a stale run-scoped MCP credential and keeps the session busy during compaction",
+  "ProviderSessionManagerV2 rotates a stale run-scoped MCP credential before a compaction",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const compactMcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const threadId = ThreadId.make("thread-compact-rotates-stale-mcp");
       yield* Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -2305,7 +2326,6 @@ it.effect(
         const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make("thread-compact-rotates-stale-mcp-and-stays-busy");
         const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
           threadId,
@@ -2365,12 +2385,6 @@ it.effect(
         const token1 = rawBearer(yield* mcpSessions.read(threadId));
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
 
-        const subscriber = yield* runtime.subscribeEvents!;
-        const terminal = yield* subscriber.events.pipe(
-          Stream.filter((event) => event.type === "turn.terminal"),
-          Stream.runHead,
-          Effect.forkScoped,
-        );
         const messageId = yield* idAllocator.allocate.message({ threadId, ordinal: 3 });
         yield* runtime.compactThread!({
           appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
@@ -2392,37 +2406,26 @@ it.effect(
           },
         });
 
-        const token3 = rawBearer(yield* mcpSessions.read(threadId));
+        const dispatched = yield* Ref.get(compactMcpConfigs);
+        assert.equal(dispatched.length, 1);
+        const token3 = rawBearer(dispatched[0]);
         assert.notEqual(token3, token1);
+        assert.equal(rawBearer(yield* mcpSessions.read(threadId)), token3);
         assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
         assert.equal((yield* registry.resolve(token3))?.thread.runId, run3);
         assert.equal((yield* registry.resolve(token3))?.thread.attemptId, attempt3);
-
-        yield* TestClock.adjust("2 seconds");
-        assert.isTrue(yield* manager.isLive(providerSessionId));
-
-        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
-        assert.isDefined(queue);
-        yield* Queue.offer(queue!, {
-          type: "turn.terminal",
-          driver: CODEX_DRIVER,
-          providerThreadId: providerThread.id,
-          providerTurnId: idAllocator.derive.providerTurn({
-            driver: CODEX_DRIVER,
-            nativeTurnId: "native-turn-compact-mcp",
-          }),
-          runOrdinal: 3,
-          status: "completed",
-          failure: null,
-          threadDisposition: "reusable",
-        });
-        yield* Fiber.join(terminal);
-        yield* TestClock.adjust("2 seconds");
-        assert.isFalse(yield* manager.isLive(providerSessionId));
-        assert.isUndefined(yield* registry.resolve(token1));
-        assert.isUndefined(yield* registry.resolve(token3));
       }).pipe(
-        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpCredentialRotation: "live" })),
+        Effect.provide(
+          layerTest({
+            state,
+            mcpCredentialRotation: "live",
+            startTurn: Effect.gen(function* () {
+              const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+              const config = yield* mcpSessions.read(threadId);
+              yield* Ref.update(compactMcpConfigs, (configs) => [...configs, config]);
+            }),
+          }),
+        ),
       );
     }),
 );

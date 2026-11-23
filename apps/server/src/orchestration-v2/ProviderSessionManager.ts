@@ -3235,12 +3235,11 @@ export const layerWithOptions = (
             },
           });
         // A start, continuation or compaction keeps the session busy until its turn.terminal.
-        const runTrackedTurn = <E>(
+        const busyTurn = <E>(
           input: Pick<
             ProviderAdapter.ProviderAdapterV2TurnInput,
-            "threadId" | "providerThread" | "runId" | "attemptId" | "runOrdinal"
+            "threadId" | "providerThread" | "runOrdinal" | "runId" | "attemptId"
           >,
-          releasedCause: string,
           run: () => Effect.Effect<void, E>,
         ) =>
           observeActivity(
@@ -3251,27 +3250,6 @@ export const layerWithOptions = (
               providerInstanceId: runtime.instanceId,
             }),
           ).pipe(
-            Effect.andThen(
-              ensureTurnMcpSession({
-                providerSessionId,
-                threadId: input.threadId,
-                providerInstanceId: runtime.instanceId,
-                runtime,
-                runId: input.runId,
-                attemptId: input.attemptId,
-              }).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterTurnStartError({
-                      driver: runtime.driver,
-                      threadId: input.threadId,
-                      providerThreadId: input.providerThread.id,
-                      runId: input.runId,
-                      cause,
-                    }),
-                ),
-              ),
-            ),
             // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
             Effect.andThen(
               holdThreadLoaded({
@@ -3304,12 +3282,32 @@ export const layerWithOptions = (
                             threadId: input.threadId,
                             providerThreadId: input.providerThread.id,
                             runId: input.runId,
-                            cause: releasedCause,
+                            cause: "The provider session was released while the turn started.",
                           }),
                         ),
                   ),
                 ),
-                run,
+                () =>
+                  ensureTurnMcpSession({
+                    providerSessionId,
+                    threadId: input.threadId,
+                    providerInstanceId: runtime.instanceId,
+                    runtime,
+                    runId: input.runId,
+                    attemptId: input.attemptId,
+                  }).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new ProviderAdapter.ProviderAdapterTurnStartError({
+                          driver: runtime.driver,
+                          threadId: input.threadId,
+                          providerThreadId: input.providerThread.id,
+                          runId: input.runId,
+                          cause,
+                        }),
+                    ),
+                    Effect.andThen(run),
+                  ),
                 (_, exit) =>
                   Exit.isFailure(exit)
                     ? observeActivity(
@@ -3475,7 +3473,7 @@ export const layerWithOptions = (
               Effect.map(({ loaded }) => loaded),
             ),
           startTurn: (input) =>
-            runTrackedTurn(input, "The provider session was released while the turn started.", () =>
+            busyTurn(input, () =>
               agentFeedbackMode.pipe(
                 Effect.flatMap((agentFeedback) => runtime.startTurn({ ...input, agentFeedback })),
                 turnMetrics("send", input.modelSelection.model),
@@ -3485,26 +3483,20 @@ export const layerWithOptions = (
             ? {}
             : {
                 resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
-                  runTrackedTurn(
-                    input,
-                    "The provider session was released while the turn resumed.",
-                    () =>
-                      runtime.resumeTurn!(input).pipe(
-                        turnMetrics("resume", input.modelSelection.model),
-                      ),
+                  busyTurn(input, () =>
+                    runtime.resumeTurn!(input).pipe(
+                      turnMetrics("resume", input.modelSelection.model),
+                    ),
                   ),
               }),
           ...(runtime.compactThread === undefined
             ? {}
             : {
                 compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-                  runTrackedTurn(
-                    input,
-                    "The provider session was released while the thread compacted.",
-                    () =>
-                      runtime.compactThread!(input).pipe(
-                        turnMetrics("compact", input.modelSelection.model),
-                      ),
+                  busyTurn(input, () =>
+                    runtime.compactThread!(input).pipe(
+                      turnMetrics("compact", input.modelSelection.model),
+                    ),
                   ),
               }),
           steerTurn: (input) =>
