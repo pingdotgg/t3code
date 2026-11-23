@@ -11,7 +11,9 @@ import {
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 
@@ -20,6 +22,10 @@ import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 
 const COPILOT_SKILLS_PROBE_TIMEOUT_MS = 4_000;
 const COPILOT_SKILL_LIST_ARGS = ["skill", "list", "--json"] as const;
+const COPILOT_SKILL_COMMAND_HINT = "instructions for the skill";
+const FRONTMATTER_PATTERN = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---(?:[ \t]*(?:\r?\n|$))/u;
+const USER_INVOCABLE_FALSE_PATTERN =
+  /^[ \t]*user-invocable[ \t]*:[ \t]*(?:false|no|off)[ \t]*(?:#.*)?$/imu;
 // The composer's chip rule, anchored to the message start, so `$25` never names a skill.
 const LEADING_SKILL_MENTION = new RegExp(`^\\s*${SKILL_MENTION_PATTERN.source}`, "u");
 
@@ -115,6 +121,22 @@ export function decodeCopilotSkillList(
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function isCopilotSkillSlashCommand(command: ServerProviderSlashCommand): boolean {
+  return command.input?.hint?.trim().toLowerCase() === COPILOT_SKILL_COMMAND_HINT;
+}
+
+/** True when ACP advertises a built-in slash command with the same name as a skill (e.g. `/plan`). */
+export function isCopilotBuiltinCommandCollision(
+  skillName: string,
+  slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
+): boolean {
+  const normalized = skillName.trim().toLowerCase();
+  return slashCommands.some(
+    (command) =>
+      command.name.trim().toLowerCase() === normalized && !isCopilotSkillSlashCommand(command),
+  );
+}
+
 export function filterCopilotSlashCommands(
   slashCommands: ReadonlyArray<ServerProviderSlashCommand>,
   skills: ReadonlyArray<ServerProviderSkill>,
@@ -123,7 +145,10 @@ export function filterCopilotSlashCommands(
     return slashCommands;
   }
   const skillNames = new Set(skills.map((skill) => skill.name.trim().toLowerCase()));
-  return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
+  return slashCommands.filter(
+    (command) =>
+      !(isCopilotSkillSlashCommand(command) && skillNames.has(command.name.trim().toLowerCase())),
+  );
 }
 
 export function applyCopilotDiscoveredSkills(
@@ -136,6 +161,38 @@ export function applyCopilotDiscoveredSkills(
     slashCommands: filterCopilotSlashCommands(provider.slashCommands, skills),
   };
 }
+
+function isSkillFrontmatterNonUserInvocable(contents: string): boolean {
+  const match = FRONTMATTER_PATTERN.exec(contents);
+  return match?.[1] !== undefined && USER_INVOCABLE_FALSE_PATTERN.test(match[1]);
+}
+
+const annotateCopilotSkillInvocability = Effect.fnUntraced(function* (
+  skills: ReadonlyArray<ServerProviderSkill>,
+) {
+  const fileSystem = yield* Effect.serviceOption(FileSystem.FileSystem);
+  const path = yield* Effect.serviceOption(Path.Path);
+  if (Option.isNone(fileSystem) || Option.isNone(path) || skills.length === 0) {
+    return skills;
+  }
+  const fs = fileSystem.value;
+  const pathService = path.value;
+  return yield* Effect.forEach(
+    skills,
+    (skill) => {
+      const skillFile = skill.path.toLowerCase().endsWith(".md")
+        ? skill.path
+        : pathService.join(skill.path, "SKILL.md");
+      return fs.readFileString(skillFile).pipe(
+        Effect.map((contents) =>
+          isSkillFrontmatterNonUserInvocable(contents) ? { ...skill, userInvocable: false } : skill,
+        ),
+        Effect.orElseSucceed(() => skill),
+      );
+    },
+    { concurrency: 8 },
+  );
+});
 
 export const discoverCopilotSkills = Effect.fn("discoverCopilotSkills")(function* (input: {
   readonly settings: AcpRegistrySettings;
@@ -213,5 +270,5 @@ export const discoverCopilotSkills = Effect.fn("discoverCopilotSkills")(function
       ...cwdOption,
     });
   }
-  return skills;
+  return yield* annotateCopilotSkillInvocability(skills);
 });

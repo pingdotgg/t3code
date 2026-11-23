@@ -1,3 +1,4 @@
+import { NodeServices } from "@effect/platform-node";
 import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
@@ -8,6 +9,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
@@ -25,6 +28,7 @@ import {
   decodeCopilotSkillList,
   discoverCopilotSkills,
   filterCopilotSlashCommands,
+  isCopilotBuiltinCommandCollision,
   leadingCopilotSkillMention,
 } from "./copilotSkills.ts";
 
@@ -364,30 +368,61 @@ describe("decodeCopilotSkillList", () => {
 describe("filterCopilotSlashCommands and applyCopilotDiscoveredSkills", () => {
   const slashCommands: ReadonlyArray<ServerProviderSlashCommand> = [
     { name: "compact", description: "Compact context" },
-    { name: "Deploy", description: "Deploy skill echoed as slash command" },
-    { name: "  review ", description: "Review skill echoed as slash command" },
+    {
+      name: "Deploy",
+      description: "Deploy skill echoed as slash command",
+      input: { hint: "instructions for the skill" },
+    },
+    {
+      name: "  review ",
+      description: "Review skill echoed as slash command",
+      input: { hint: "instructions for the skill" },
+    },
+    { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+    { name: "env", description: "Show environment" },
     { name: "help", description: "Show help" },
   ];
   const skills: ReadonlyArray<ServerProviderSkill> = [
     {
       name: "deploy",
-      path: "/workspaces/greendale/.github/skills/deploy/SKILL.md",
+      path: "/workspaces/greendale/.github/skills/deploy",
       scope: "project",
       enabled: true,
     },
     {
       name: "REVIEW",
-      path: "/home/troy/.copilot/skills/review/SKILL.md",
+      path: "/home/troy/.copilot/skills/review",
       scope: "personal",
       enabled: false,
     },
+    {
+      name: "plan",
+      path: "/workspaces/greendale/.github/skills/plan",
+      scope: "project",
+      enabled: true,
+    },
+    {
+      name: "env",
+      path: "/workspaces/greendale/.github/skills/env",
+      scope: "project",
+      enabled: true,
+    },
   ];
 
-  it("removes skill-backed slash commands case-insensitively and preserves others", () => {
+  it("removes skill-backed slash commands while preserving built-ins with colliding names", () => {
     expect(filterCopilotSlashCommands(slashCommands, skills)).toEqual([
       { name: "compact", description: "Compact context" },
+      { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+      { name: "env", description: "Show environment" },
       { name: "help", description: "Show help" },
     ]);
+  });
+
+  it("detects built-in slash command collisions without matching skill-backed commands", () => {
+    expect(isCopilotBuiltinCommandCollision("plan", slashCommands)).toBe(true);
+    expect(isCopilotBuiltinCommandCollision("env", slashCommands)).toBe(true);
+    expect(isCopilotBuiltinCommandCollision("deploy", slashCommands)).toBe(false);
+    expect(isCopilotBuiltinCommandCollision("unknown", slashCommands)).toBe(false);
   });
 
   it("applies discovered skills and filtered slash commands to a provider snapshot", () => {
@@ -397,6 +432,8 @@ describe("filterCopilotSlashCommands and applyCopilotDiscoveredSkills", () => {
     expect(updated.skills).toEqual(skills);
     expect(updated.slashCommands).toEqual([
       { name: "compact", description: "Compact context" },
+      { name: "plan", description: "Create a plan", input: { hint: "prompt" } },
+      { name: "env", description: "Show environment" },
       { name: "help", description: "Show help" },
     ]);
   });
@@ -635,5 +672,68 @@ describe("discoverCopilotSkills", () => {
         cwd: "/workspaces/greendale",
       });
     }),
+  );
+
+  it.effect("marks skills whose SKILL.md frontmatter sets user-invocable: false", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-copilot-skills-" });
+      const hiddenDir = path.join(tempDir, "hidden-skill");
+      const visibleDir = path.join(tempDir, "visible-skill");
+      yield* fs.makeDirectory(hiddenDir, { recursive: true });
+      yield* fs.makeDirectory(visibleDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(hiddenDir, "SKILL.md"),
+        "---\nname: hidden-skill\nuser-invocable: false\n---\nHidden instructions.\n",
+      );
+      yield* fs.writeFileString(
+        path.join(visibleDir, "SKILL.md"),
+        "---\nname: visible-skill\nuser-invocable: true\n---\nVisible instructions.\n",
+      );
+
+      const stdout = JSON.stringify([
+        {
+          name: "hidden-skill",
+          description: "Not user invocable.",
+          source: "builtin",
+          path: hiddenDir,
+          enabled: true,
+        },
+        {
+          name: "visible-skill",
+          description: "User invocable.",
+          source: "project",
+          path: visibleDir,
+          enabled: true,
+        },
+      ]);
+
+      const skills = yield* discoverCopilotSkills({
+        settings: copilotSettings,
+        cwd: tempDir,
+      }).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, makeResolvedCatalog({})),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, makeSpawner({ stdout })),
+      );
+
+      expect(skills).toEqual([
+        {
+          name: "hidden-skill",
+          description: "Not user invocable.",
+          path: hiddenDir,
+          scope: "system",
+          enabled: true,
+          userInvocable: false,
+        },
+        {
+          name: "visible-skill",
+          description: "User invocable.",
+          path: visibleDir,
+          scope: "project",
+          enabled: true,
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
