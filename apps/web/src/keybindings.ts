@@ -232,7 +232,8 @@ export function resolveShortcutCommand(
   }
 
   // Every scope resolves every keydown, so rule out other keys before the full match.
-  const eventKeys = resolveEventKeys(event);
+  const keyboardLayoutMap = options?.keyboardLayoutMap ?? getKeyboardLayoutMap();
+  const eventKeys = resolveEventKeys(event, keyboardLayoutMap);
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
@@ -243,7 +244,7 @@ export function resolveShortcutCommand(
         event,
         shortcutForContext(binding, context),
         platform,
-        options?.keyboardLayoutMap ?? getKeyboardLayoutMap(),
+        keyboardLayoutMap,
       )
     )
       continue;

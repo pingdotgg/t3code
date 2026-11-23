@@ -225,9 +225,10 @@ it("offers no git controls in a No project thread, but shows its linked pull req
 it("shows Current checkout where no worktree can come from, even when New worktree is the default", async () => {
   using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
   await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
-  await page.getByRole("button", { name: "Run context: Current checkout" }).click();
+  await page.getByRole("button", { name: "Run on: Run on" }).click();
   await expect.element(page.getByText(SCRATCH_ROOT)).toBeVisible();
   await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: /Workspace:/ })).not.toBeInTheDocument();
 });
 
 it("offers only machines where no worktree can come from and several machines exist", async () => {
@@ -235,9 +236,10 @@ it("offers only machines where no worktree can come from and several machines ex
   await using _screen = await render(
     <Panel fixture={fixture} draftEnvMode="worktree" onMachines />,
   );
-  await page.getByRole("button", { name: "Run context: This Mac, Current checkout" }).click();
+  await page.getByRole("button", { name: "Run on: This Mac" }).click();
   await expect.element(page.getByText("Run on")).toBeVisible();
   await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
+  await expect.element(page.getByRole("button", { name: /Workspace:/ })).not.toBeInTheDocument();
 });
 
 it("shows a linked pull request in a folder that is not a git repository", async () => {

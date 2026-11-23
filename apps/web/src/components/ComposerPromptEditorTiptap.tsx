@@ -1785,7 +1785,32 @@ function ComposerPromptEditorTiptapInner(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the mounted editor's visible text anchored while its DOM width changes
   useLayoutEffect(() => {
-    if (editor) return preserveReadingPosition(editor.view.dom);
+    if (!editor || editor.isDestroyed) return;
+    let stop: (() => void) | undefined;
+    const detach = () => {
+      stop?.();
+      stop = undefined;
+    };
+    const attach = () => {
+      detach();
+      if (editor.isDestroyed) return;
+      // An <Activity> reappear can fire layout effects before EditorContent mounts the ProseMirror view.
+      let dom: HTMLElement;
+      try {
+        dom = editor.view.dom;
+      } catch {
+        return;
+      }
+      stop = preserveReadingPosition(dom);
+    };
+    attach();
+    editor.on("mount", attach);
+    editor.on("unmount", detach);
+    return () => {
+      editor.off("mount", attach);
+      editor.off("unmount", detach);
+      detach();
+    };
   }, [editor]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown

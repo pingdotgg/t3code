@@ -470,7 +470,7 @@ describe("WorkflowRunsView", () => {
 
     // A workflow that has not run is still there to be picked, with what starts it.
     await screen.getByRole("combobox", { name: "Workflow" }).click();
-    await screen.getByRole("option", { name: "report" }).click();
+    await browserPage.getByRole("option", { name: "report" }).click();
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
