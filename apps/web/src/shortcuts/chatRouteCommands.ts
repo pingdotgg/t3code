@@ -190,7 +190,8 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       "preview.find": (event) => {
         const environmentId = readRouteEnvironmentId();
         if (!environmentId || !canOperatePreview(environmentId)) return false;
-        previewCommand("find")(event);
+        claim(event);
+        dispatchPreviewAction("find");
       },
     },
     {
