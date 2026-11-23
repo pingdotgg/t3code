@@ -1207,9 +1207,27 @@ describe("AcpRuntimeModel", () => {
     expect(second.pendingOutputBytes).toBeUndefined();
   });
 
-  it("trims full ACP terminal output by a further 1 MiB at a UTF-8 boundary", () => {
-    const cap = 16 * 1024 * 1024;
-    const step = 1024 * 1024;
+  it("retains only the terminal output tail the projection reads", () => {
+    const projectedChars = 320 * 1024;
+    let state: ReturnType<typeof applyAcpAgentTerminalUpdate> | undefined;
+    let full = "";
+    for (let index = 0; index < 64; index += 1) {
+      const text = `${index % 10}`.repeat(64 * 1024 - 1) + "é";
+      full += text;
+      state = applyAcpAgentTerminalUpdate(state, {
+        sessionUpdate: "terminal_output_chunk",
+        terminalId: "terminal-tail",
+        data: Buffer.from(text).toString("base64"),
+      });
+    }
+    expect(state!.outputBytes).toBeLessThanOrEqual(4 * projectedChars);
+    expect(state!.outputBytes).toBe(Buffer.byteLength(state!.output));
+    expect(state!.output.slice(-projectedChars)).toBe(full.slice(-projectedChars));
+  });
+
+  it("trims full ACP terminal output by a further 256 KiB at a UTF-8 boundary", () => {
+    const cap = 1280 * 1024;
+    const step = 256 * 1024;
     const chunk = (text: string | Uint8Array) => ({
       sessionUpdate: "terminal_output_chunk" as const,
       terminalId: "terminal-cap",
@@ -1228,7 +1246,7 @@ describe("AcpRuntimeModel", () => {
     expect(full.outputBytes).toBe(cap);
     expect(full.output.length).toBe(cap - 1);
 
-    // The cut at one byte past the cap plus 1 MiB falls inside "é", so the whole character goes.
+    // The cut at one byte past the cap plus 256 KiB falls inside "é", so the whole character goes.
     const trimmed = applyAcpAgentTerminalUpdate(full, chunk("c"));
     expect(trimmed.outputBytes).toBe(cap - step - 1);
     expect(trimmed.output.length).toBe(cap - step - 1);
