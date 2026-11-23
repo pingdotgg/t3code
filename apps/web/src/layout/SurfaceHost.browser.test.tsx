@@ -278,7 +278,10 @@ it("keeps the panes in place when the sidebar reopens before it has closed", asy
 const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
 const joinOffset = (strip: HTMLElement) =>
   Number.parseFloat(
-    strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx"),
+    strip
+      .closest("[data-layout-tab-strip-slot]")!
+      .querySelector<HTMLElement>("[data-pane-join]")!
+      .style.getPropertyValue("--jx"),
   );
 const tabOffset = (strip: HTMLElement, tabId: string) => {
   const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
@@ -298,6 +301,31 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   const header = strip.closest<HTMLElement>("[data-pane-header]")!;
   const workspace = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
   await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth + 200));
+  const startChevron = header.querySelector<HTMLButtonElement>(
+    '[data-strip-scroll-button="start"]',
+  );
+  const endChevron = header.querySelector<HTMLButtonElement>('[data-strip-scroll-button="end"]');
+  expect(startChevron).not.toBeNull();
+  expect(endChevron).not.toBeNull();
+  // Scroll to 0: start chevron is disabled, end chevron is enabled and clicking it advances the strip.
+  strip.scrollLeft = 0;
+  await vi.waitFor(() => {
+    expect(startChevron!.getAttribute("aria-disabled")).toBe("true");
+    expect(endChevron!.hasAttribute("data-can-scroll")).toBe(true);
+  });
+  endChevron!.click();
+  await vi.waitFor(() => expect(strip.scrollLeft).toBeGreaterThan(0));
+  await vi.waitFor(() => expect(startChevron!.hasAttribute("data-can-scroll")).toBe(true));
+  // Scroll all the way to the end: end chevron disables, extra click leaves scroll at max.
+  const maxScroll = strip.scrollWidth - strip.clientWidth;
+  strip.scrollLeft = maxScroll;
+  await vi.waitFor(() => expect(endChevron!.getAttribute("aria-disabled")).toBe("true"));
+  endChevron!.click();
+  expect(Math.round(strip.scrollLeft)).toBe(maxScroll);
+  // Start chevron scrolls back toward 0.
+  startChevron!.click();
+  await vi.waitFor(() => expect(strip.scrollLeft).toBeLessThan(maxScroll));
+  strip.scrollLeft = 100;
   const stripBox = strip.getBoundingClientRect();
   const revealed = strip.scrollLeft;
   header.dispatchEvent(
@@ -310,6 +338,22 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     }),
   );
   expect(strip.scrollLeft).toBe(revealed - 30);
+  // At the left edge nothing moves, so a vertical wheel is not swallowed; buttons skip measuring.
+  strip.scrollLeft = 0;
+  const atEdge = new WheelEvent("wheel", {
+    deltaY: -30,
+    clientX: stripBox.left + stripBox.width / 2,
+    clientY: stripBox.top + stripBox.height / 2,
+    bubbles: true,
+    cancelable: true,
+  });
+  header.dispatchEvent(atEdge);
+  expect(atEdge.defaultPrevented).toBe(false);
+  using stripMeasure = vi.spyOn(strip, "getBoundingClientRect");
+  header
+    .querySelector('button[aria-label="New tab"]')!
+    .dispatchEvent(new WheelEvent("wheel", { deltaY: -30, bubbles: true, cancelable: true }));
+  expect(stripMeasure).not.toHaveBeenCalled();
   strip.scrollLeft = 100;
   const before = workspace.scrollLeft;
 
@@ -371,6 +415,11 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() => expect(strip.scrollWidth).toBe(strip.clientWidth));
   await vi.waitFor(() =>
     expect(strip.closest("[data-pane-header]")?.hasAttribute("data-tab-row-overflow")).toBe(false),
+  );
+  await vi.waitFor(() =>
+    expect(
+      strip.closest("[data-pane-header]")?.querySelectorAll("[data-strip-scroll-button]").length,
+    ).toBe(0),
   );
 });
 

@@ -35,7 +35,6 @@ import { useEnvironmentScope } from "../../state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
 import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
 import { ComposerSurface } from "./ComposerSurface";
-import { NoProjectChip } from "./NoProjectChip";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_ENTRIES = [] as const;
@@ -147,7 +146,7 @@ export function NoProjectsComposer({
   };
 
   return (
-    <ComposerSurface.Shell contextRow={onStartWithoutProject !== null}>
+    <ComposerSurface.Shell>
       <ComposerSurface.Host>
         <ChatComposer
           composerRef={composerRef}
@@ -246,11 +245,6 @@ export function NoProjectsComposer({
           onFileOpen={noop}
         />
       </ComposerSurface.Host>
-      {onStartWithoutProject === null ? null : (
-        <ComposerSurface.ContextStrip data-composer-context-control>
-          <NoProjectChip />
-        </ComposerSurface.ContextStrip>
-      )}
     </ComposerSurface.Shell>
   );
 }

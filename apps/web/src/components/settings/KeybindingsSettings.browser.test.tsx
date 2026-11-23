@@ -272,11 +272,25 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
   const assigned = page.getByRole("option", { name: /Toggle sidebar/ });
   await expect.element(assigned).not.toHaveAttribute("aria-disabled", "true");
   await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
+  expect(assigned.element().querySelectorAll('[data-slot="kbd"]')).toHaveLength(2);
   await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
   await assigned.click();
   const command = screen.getByRole("combobox", { name: "Command", exact: true });
   await expect.element(command).toHaveTextContent("Toggle sidebar");
   await command.click();
+  await search.fill("tab.close");
+  const multiShortcut = page.getByRole("option", { name: /Close tab/ });
+  await expect.element(multiShortcut).toBeVisible();
+  expect(multiShortcut.element().querySelectorAll('[data-slot="kbd-group"]')).toHaveLength(1);
+  const extraBadge = multiShortcut.getByText("+1");
+  await expect.element(extraBadge).toBeVisible();
+  await userEvent.hover(extraBadge);
+  await vi.waitFor(() => {
+    const tooltip = document.querySelector('[data-slot="tooltip-popup"]');
+    expect(tooltip).not.toBeNull();
+    expect(tooltip?.querySelectorAll('[data-slot="kbd"]')).toHaveLength(2);
+    expect(tooltip?.textContent).toContain("!terminalFocus");
+  });
   await search.fill("opposite queue");
   await expect
     .element(page.getByRole("option", { name: /Send with the opposite queue or steer action/ }))

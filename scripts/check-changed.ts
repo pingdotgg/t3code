@@ -515,6 +515,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(code.length > 0
       ? [command("lint", ["lint", "--no-error-on-unmatched-pattern", ...code])]
       : []),
+    // Lint compares each file with its ceiling; only the last pushed table shows a raise.
+    ...(files.includes("lint-ceilings.json")
+      ? [command("lint ceilings", ["exec", "node", "scripts/lint-ceilings.ts", "--check"])]
+      : []),
     ...(runKnip
       ? knipPasses.map((args, index) => command(`knip ${index + 1}/${knipPasses.length}`, args))
       : []),

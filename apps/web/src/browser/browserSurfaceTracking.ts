@@ -4,8 +4,12 @@
 /** Where a frame belongs in a burst of movement. */
 export type BrowserSurfaceSlotPhase = "start" | "frame" | "settle";
 
-/** Re-measures one slot; returns whether its placement changed. */
-type SlotUpdate = (phase: BrowserSurfaceSlotPhase) => boolean;
+/** Re-measures one slot; returns whether its placement changed. Queue DOM writes
+ * via `scheduleWrite` so every slot reads layout before any slot writes styles. */
+type SlotUpdate = (
+  phase: BrowserSurfaceSlotPhase,
+  scheduleWrite?: (write: () => void) => void,
+) => boolean;
 
 /** Frames without movement or a running animation before a burst settles. */
 const REST_FRAMES = 6;
@@ -30,20 +34,30 @@ function underAnimation(): boolean {
   return false;
 }
 
+function runPhase(phase: BrowserSurfaceSlotPhase): boolean {
+  let moved = false;
+  const writes: (() => void)[] = [];
+  const scheduleWrite = (write: () => void) => {
+    writes.push(write);
+  };
+  for (const update of slots.values()) {
+    if (update(phase, scheduleWrite)) moved = true;
+  }
+  for (const write of writes) write();
+  return moved;
+}
+
 function tick() {
   frame = null;
   const phase = starting ? "start" : "frame";
   starting = false;
-  let moved = false;
-  for (const update of slots.values()) {
-    if (update(phase)) moved = true;
-  }
+  const moved = runPhase(phase);
   quietFrames = moved || underAnimation() ? 0 : quietFrames + 1;
   if (quietFrames < REST_FRAMES) {
     frame = window.requestAnimationFrame(tick);
     return;
   }
-  for (const update of slots.values()) update("settle");
+  runPhase("settle");
 }
 
 /**
@@ -54,9 +68,7 @@ function tick() {
 export function kickBrowserSurfaceTracking(options?: { readonly now?: boolean }): void {
   if (slots.size === 0) return;
   quietFrames = 0;
-  if (options?.now) {
-    for (const update of slots.values()) update("start");
-  }
+  if (options?.now) runPhase("start");
   if (frame === null) {
     starting = true;
     frame = window.requestAnimationFrame(tick);

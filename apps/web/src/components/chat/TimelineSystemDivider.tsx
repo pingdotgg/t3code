@@ -92,7 +92,7 @@ export function TimelineSystemDivider(props: {
       ) : null}
     </>
   );
-  const rule = cn("h-px flex-1", danger ? "bg-destructive/30" : "bg-border");
+  const rule = cn("h-px flex-1", danger ? "surface-divider-rule-danger" : "surface-divider-rule");
 
   return (
     <div className="flex min-w-0 items-center gap-3 py-2 text-meta text-muted-foreground">
@@ -126,7 +126,7 @@ function SystemRowAction(props: {
             type="button"
             aria-label={props.actionLabel}
             onClick={props.onAction}
-            className="min-w-0 cursor-pointer rounded-md px-1.5 py-0.5 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+            className="min-w-0 cursor-pointer rounded-control px-1.5 py-0.5 transition-colors hover:surface-ghost-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           />
         }
       >

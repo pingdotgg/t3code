@@ -6102,7 +6102,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { fetch: "statusDetailsRemote" },
       // Storage cleanup's merge check fetches the default branch on every sweep.
       { fetch: "fetchRemoteTrackingBranch" },
-    ] as const)("does not start Git auto-maintenance from background $fetch fetches", ({ fetch }) =>
+      // Startup pulls each project's default branch.
+      { fetch: "pullCurrentBranch" },
+    ] as const)("does not start Git auto-maintenance from $fetch", ({ fetch }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -6128,6 +6130,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
         if (fetch === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
+        else if (fetch === "pullCurrentBranch") yield* driver.pullCurrentBranch(cwd);
         else
           yield* driver.fetchRemoteTrackingBranch({
             cwd,
@@ -6531,24 +6534,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("marks the origin default ref as default when no local copy exists", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(remote, ["init", "--bare"]);
-        yield* git(cwd, ["remote", "add", "origin", remote]);
-        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
-        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
-        yield* git(cwd, ["checkout", "-b", "feature/only-local"]);
-        yield* git(cwd, ["branch", "-D", initialBranch]);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
+    it.effect.each(["trunk", "feature/memo\u3000", "\u00a0release"])(
+      "marks the origin default ref %s as default when no local copy exists",
+      (defaultBranch) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["branch", "-M", defaultBranch]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", defaultBranch]);
+          yield* git(cwd, ["remote", "set-head", "origin", defaultBranch]);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
 
-        const refs = yield* driver.listRefs({ cwd });
-        const remoteDefault = refs.refs.find((ref) => ref.name === `origin/${initialBranch}`);
-        assert.equal(remoteDefault?.isRemote, true);
-        assert.equal(remoteDefault?.isDefault, true);
-      }),
+          const localStatus = yield* driver.statusDetails(cwd);
+          const remoteStatus = yield* driver.statusDetailsRemote(cwd);
+          for (const status of [localStatus, remoteStatus]) {
+            assert.equal(status.branch, defaultBranch);
+            assert.equal(status.upstreamRef, `origin/${defaultBranch}`);
+            assert.isTrue(status.isDefaultBranch);
+          }
+
+          yield* git(cwd, ["checkout", "-b", "feature/only-local"]);
+          yield* git(cwd, ["branch", "-D", defaultBranch]);
+
+          const refs = yield* driver.listRefs({ cwd });
+          const remoteDefault = refs.refs.find((ref) => ref.name === `origin/${defaultBranch}`);
+          assert.equal(remoteDefault?.isRemote, true);
+          assert.equal(remoteDefault?.isDefault, true);
+        }),
     );
 
     it.effect("preserves exact custom names and refuses collisions without a suffix", () =>
@@ -7490,37 +7505,42 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    it.effect.each(["release/v2", "origin/release/v2", "refs/remotes/origin/release/v2"])(
-      "records a remote-only PR base when creating a worktree from %s",
-      (baseRef) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const remote = yield* makeTmpDir("git-remote-");
-          yield* git(remote, ["init", "--bare"]);
-          yield* git(cwd, ["remote", "add", "origin", remote]);
-          yield* git(cwd, ["push", "origin", "HEAD:refs/heads/release/v2"]);
-          const commit = yield* git(cwd, ["rev-parse", "origin/release/v2"]);
-          const path = yield* Path.Path;
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "remote");
-          yield* driver.createWorktree({
-            cwd,
-            path: worktreePath,
-            refName: commit,
-            newRefName: "feature/remote",
-            baseRefName: baseRef,
-          });
+    it.effect.each([
+      "release/v2",
+      "origin/release/v2",
+      "refs/remotes/origin/release/v2",
+      "origin/release/v2\u3000",
+    ])("records a remote-only PR base when creating a worktree from %s", (baseRef) =>
+      Effect.gen(function* () {
+        const branch = baseRef.replace(/^(refs\/remotes\/)?origin\//, "");
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const remote = yield* makeTmpDir("git-remote-");
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", `HEAD:refs/heads/${branch}`]);
+        const commit = yield* git(cwd, ["rev-parse", `origin/${branch}`]);
+        const path = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const worktreePath = path.join(yield* makeTmpDir("git-worktrees-"), "remote");
+        yield* driver.createWorktree({
+          cwd,
+          path: worktreePath,
+          refName: commit,
+          newRefName: "feature/remote",
+          baseRefName: baseRef,
+        });
 
-          const preview = yield* driver.getReviewDiffPreview({ cwd: worktreePath });
-          const comparisonBase = preview.sources.find(
-            (source) => source.kind === "branch-range",
-          )!.baseRef;
-          assert.equal(
-            yield* git(worktreePath, ["rev-parse", `${comparisonBase}^{commit}`]),
-            commit,
-          );
-        }),
+        assert.equal(
+          yield* driver.readConfigValue(cwd, "branch.feature/remote.t3-merge-base"),
+          branch,
+        );
+        const preview = yield* driver.getReviewDiffPreview({ cwd: worktreePath });
+        const comparisonBase = preview.sources.find(
+          (source) => source.kind === "branch-range",
+        )!.baseRef;
+        assert.equal(yield* git(worktreePath, ["rev-parse", `${comparisonBase}^{commit}`]), commit);
+      }),
     );
 
     it("parses checkout progress lines from git's stderr", () => {

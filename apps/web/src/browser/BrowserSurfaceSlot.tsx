@@ -9,6 +9,13 @@ import {
   trackBrowserSurfaceSlot,
 } from "./browserSurfaceTracking";
 
+const focusReplayOrigins = new WeakMap<Event, EventTarget | null>();
+
+/** Original target of a synthetic `pointerdown` replayed from `aboveWebview` onto its slot. */
+export function browserSurfaceFocusReplayTarget(event: Event): EventTarget | null {
+  return focusReplayOrigins.get(event) ?? null;
+}
+
 /** An ancestor that clips the slot: its pane, the strip, the overview's frame. */
 interface ClipAncestor {
   readonly element: Element;
@@ -41,32 +48,13 @@ function clipAncestorsOf(element: HTMLElement): ClipAncestor[] {
 const near = (value: number, edges: readonly number[]) =>
   edges.some((edge) => Math.abs(edge - value) < 1);
 
-/**
- * The part of the slot its ancestors leave visible, as a `clip-path` in the
- * slot's own pixels. A corner that meets a rounded pane's corner, or where
- * the strip's edge cuts that pane (index.css, [data-pane-cut]), rounds as
- * the pane does.
- */
-function resolveClipPath(rect: DOMRect, scale: number, ancestors: readonly ClipAncestor[]) {
-  const boxes = ancestors.map((ancestor) => ancestor.element.getBoundingClientRect());
-  let left = rect.left;
-  let top = rect.top;
-  let right = rect.right;
-  let bottom = rect.bottom;
-  for (const box of boxes) {
-    left = Math.max(left, box.left);
-    top = Math.max(top, box.top);
-    right = Math.min(right, box.right);
-    bottom = Math.min(bottom, box.bottom);
-  }
-  if (right - left < 1 || bottom - top < 1) return "inset(50%)";
-  const corners = [
-    [left, top],
-    [right, top],
-    [right, bottom],
-    [left, bottom],
-  ] as const;
-  const radii = corners.map(([x, y], corner) => {
+function resolveCornerRadii(
+  corners: readonly (readonly [number, number])[],
+  scale: number,
+  ancestors: readonly ClipAncestor[],
+  boxes: readonly DOMRect[],
+) {
+  return corners.map(([x, y], corner) => {
     let radius = 0;
     ancestors.forEach((ancestor, index) => {
       const own = ancestor.radii[corner]!;
@@ -81,27 +69,109 @@ function resolveClipPath(rect: DOMRect, scale: number, ancestors: readonly ClipA
     });
     return radius / scale;
   });
-  const insets = [top - rect.top, rect.right - right, rect.bottom - bottom, left - rect.left].map(
-    (inset) => Math.max(0, inset / scale),
-  );
-  if (insets.every((inset) => inset < 0.5) && radii.every((radius) => radius === 0)) return "";
+}
+
+function formatInset(insets: readonly number[], radii: readonly number[]) {
   const round = radii.some((radius) => radius > 0)
     ? ` round ${radii.map((radius) => `${radius}px`).join(" ")}`
     : "";
   return `inset(${insets.map((inset) => `${inset}px`).join(" ")}${round})`;
 }
 
+/** Max overhang (px) of portaled controls such as resize handles and coarse touch targets. */
+const ABOVE_WEBVIEW_OVERHANG_PX = 16;
+
+/** Visible `clip-path`s: `webview` clamps to the slot; `above` keeps negative
+ * ancestor insets so overhanging resize handles stay unclipped on open sides. */
+function resolveClipPaths(rect: DOMRect, scale: number, ancestors: readonly ClipAncestor[]) {
+  if (ancestors.length === 0) return { webview: "", above: "" };
+  const boxes = ancestors.map((ancestor) => ancestor.element.getBoundingClientRect());
+  let clipLeft = Number.NEGATIVE_INFINITY;
+  let clipTop = Number.NEGATIVE_INFINITY;
+  let clipRight = Number.POSITIVE_INFINITY;
+  let clipBottom = Number.POSITIVE_INFINITY;
+  for (const box of boxes) {
+    clipLeft = Math.max(clipLeft, box.left);
+    clipTop = Math.max(clipTop, box.top);
+    clipRight = Math.min(clipRight, box.right);
+    clipBottom = Math.min(clipBottom, box.bottom);
+  }
+  const left = Math.max(rect.left, clipLeft);
+  const top = Math.max(rect.top, clipTop);
+  const right = Math.min(rect.right, clipRight);
+  const bottom = Math.min(rect.bottom, clipBottom);
+  if (right - left < 1 || bottom - top < 1) return { webview: "inset(50%)", above: "inset(50%)" };
+  const radii = resolveCornerRadii(
+    [
+      [left, top],
+      [right, top],
+      [right, bottom],
+      [left, bottom],
+    ],
+    scale,
+    ancestors,
+    boxes,
+  );
+  const insets = [top - rect.top, rect.right - right, rect.bottom - bottom, left - rect.left].map(
+    (inset) => Math.max(0, inset / scale),
+  );
+  const webview =
+    insets.every((inset) => inset < 0.5) && radii.every((radius) => radius === 0)
+      ? ""
+      : formatInset(insets, radii);
+  const aboveInsets = [
+    (clipTop - rect.top) / scale,
+    (rect.right - clipRight) / scale,
+    (rect.bottom - clipBottom) / scale,
+    (clipLeft - rect.left) / scale,
+  ];
+  const above =
+    webview === "" && aboveInsets.every((inset) => inset <= -ABOVE_WEBVIEW_OVERHANG_PX)
+      ? ""
+      : formatInset(
+          aboveInsets,
+          resolveCornerRadii(
+            [
+              [clipLeft, clipTop],
+              [clipRight, clipTop],
+              [clipRight, clipBottom],
+              [clipLeft, clipBottom],
+            ],
+            scale,
+            ancestors,
+            boxes,
+          ),
+        );
+  return { webview, above };
+}
+
+interface AboveWebviewWritten {
+  readonly width: number;
+  readonly height: number;
+  readonly transform: string;
+  readonly clipPath: string;
+  readonly inert: boolean;
+}
+
+const aboveWebviewWritten = new WeakMap<HTMLElement, AboveWebviewWritten>();
+
 function placeAboveWebview(
   layer: HTMLElement,
   placement: BrowserSurfacePlacement,
+  clipPath: string,
   width: number,
   height: number,
+  hidden: boolean,
 ) {
-  layer.style.width = `${width}px`;
-  layer.style.height = `${height}px`;
-  layer.style.transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
-  layer.style.clipPath = placement.clipPath;
-  layer.inert = !placement.interactive;
+  const last = aboveWebviewWritten.get(layer);
+  const transform = `translate(${placement.x}px, ${placement.y}px) scale(${placement.scale})`;
+  const inert = !placement.interactive || hidden;
+  if (last?.width !== width) layer.style.width = `${width}px`;
+  if (last?.height !== height) layer.style.height = `${height}px`;
+  if (last?.transform !== transform) layer.style.transform = transform;
+  if (last?.clipPath !== clipPath) layer.style.clipPath = clipPath;
+  if (last?.inert !== inert) layer.inert = inert;
+  aboveWebviewWritten.set(layer, { width, height, transform, clipPath, inert });
 }
 
 export function BrowserSurfaceSlot(props: {
@@ -113,6 +183,7 @@ export function BrowserSurfaceSlot(props: {
   readonly className?: string;
   readonly fitSourceContent?: boolean;
   readonly aboveWebview?: ReactNode;
+  readonly aboveWebviewLabel?: string;
 }) {
   const {
     tabId,
@@ -123,6 +194,7 @@ export function BrowserSurfaceSlot(props: {
     className,
     fitSourceContent = false,
     aboveWebview,
+    aboveWebviewLabel,
   } = props;
   const presentationRef = useRef({ visible, cornerRadius, zIndex });
   const updateRef = useRef<((phase: BrowserSurfaceSlotPhase) => boolean) | null>(null);
@@ -136,18 +208,25 @@ export function BrowserSurfaceSlot(props: {
     let ancestors = clipAncestorsOf(element);
     let presented = "";
     let placed: BrowserSurfacePlacement | null = null;
+    let placedAboveClip = "";
+    let placedHidden = false;
     // The webview keeps the slot's own size and follows it on screen with a
     // transform, so a pane sliding or zooming never resizes the page.
-    const update = (phase: BrowserSurfaceSlotPhase) => {
+    const update = (
+      phase: BrowserSurfaceSlotPhase,
+      scheduleWrite?: (write: () => void) => void,
+    ) => {
       const rect = element.getBoundingClientRect();
+      const hidden = element.offsetWidth === 0 || element.offsetHeight === 0;
       const width = Math.max(1, element.offsetWidth);
       const height = Math.max(1, element.offsetHeight);
       const presentation = presentationRef.current;
-      const shown = presentation.visible && element.offsetWidth > 0 && element.offsetHeight > 0;
+      const shown = presentation.visible && !hidden;
       if (phase !== "frame") ancestors = clipAncestorsOf(element);
       const key = `${width}:${height}:${shown}:${presentation.cornerRadius}:${presentation.zIndex}`;
       const presentationChanged = key !== presented;
       // Position alone reaches the store once it settles; size and visibility at once.
+      let ownsSurface = true;
       if (presentationChanged || phase !== "frame") {
         const box = {
           x: Math.round(rect.x),
@@ -158,19 +237,24 @@ export function BrowserSurfaceSlot(props: {
         if (!lease.present(box, shown, presentation.cornerRadius, presentation.zIndex)) {
           // Another slot took the tab (the mini player); a visible one takes it back,
           // but not every frame, so two never trade it back and forth.
-          if (!shown || phase === "frame") return false;
-          lease.release();
-          lease = acquireBrowserSurface(tabId, fitSourceContent);
-          lease.present(box, shown, presentation.cornerRadius, presentation.zIndex);
+          if (!shown || phase === "frame") {
+            ownsSurface = false;
+          } else {
+            lease.release();
+            lease = acquireBrowserSurface(tabId, fitSourceContent);
+            lease.present(box, shown, presentation.cornerRadius, presentation.zIndex);
+          }
         }
-        presented = key;
+        if (ownsSurface) presented = key;
       }
+      if (!ownsSurface && !aboveWebviewRef.current) return false;
       const scale = rect.width / width;
+      const clips = resolveClipPaths(rect, scale, ancestors);
       const next: BrowserSurfacePlacement = {
         x: rect.x,
         y: rect.y,
         scale,
-        clipPath: resolveClipPath(rect, scale, ancestors),
+        clipPath: clips.webview,
         // Under the overview (aria-hidden) or off the focused workspace mid-switch (inert).
         interactive: element.closest('[inert], [aria-hidden="true"]') === null,
       };
@@ -181,12 +265,25 @@ export function BrowserSurfaceSlot(props: {
         Math.abs(placed.scale - next.scale) > 0.0001 ||
         placed.clipPath !== next.clipPath ||
         placed.interactive !== next.interactive;
-      if (moved || phase !== "frame") lease.place(next);
-      if (aboveWebviewRef.current && (moved || presentationChanged || phase !== "frame")) {
-        placeAboveWebview(aboveWebviewRef.current, next, width, height);
+      const aboveChanged = placedAboveClip !== clips.above || placedHidden !== hidden;
+      const shouldPlaceWebview = ownsSurface && (moved || phase !== "frame");
+      const shouldPlaceAbove =
+        aboveWebviewRef.current !== null &&
+        (moved || aboveChanged || presentationChanged || phase !== "frame");
+      if (shouldPlaceWebview || shouldPlaceAbove) {
+        const apply = () => {
+          if (shouldPlaceWebview) lease.place(next);
+          if (shouldPlaceAbove && aboveWebviewRef.current) {
+            placeAboveWebview(aboveWebviewRef.current, next, clips.above, width, height, hidden);
+          }
+        };
+        if (scheduleWrite) scheduleWrite(apply);
+        else apply();
       }
       placed = next;
-      return moved;
+      placedAboveClip = clips.above;
+      placedHidden = hidden;
+      return moved || aboveChanged;
     };
     updateRef.current = update;
     update("start");
@@ -222,6 +319,11 @@ export function BrowserSurfaceSlot(props: {
     zIndex,
   ]);
 
+  const attachAboveWebview = (node: HTMLDivElement | null) => {
+    aboveWebviewRef.current = node;
+    if (node) updateRef.current?.("start");
+  };
+
   return (
     <>
       <div ref={attachSurface} className={className} data-browser-surface-slot={tabId} />
@@ -229,15 +331,17 @@ export function BrowserSurfaceSlot(props: {
         ? null
         : createPortal(
             <div
-              ref={aboveWebviewRef}
+              ref={attachAboveWebview}
+              role={aboveWebviewLabel ? "region" : undefined}
+              aria-label={aboveWebviewLabel}
               onPointerDownCapture={(event) => {
                 // Portaled controls claim pane focus through their slot, as guest presses do.
-                slotRef.current?.dispatchEvent(
-                  new PointerEvent("pointerdown", {
-                    bubbles: true,
-                    pointerType: event.pointerType,
-                  }),
-                );
+                const replay = new PointerEvent("pointerdown", {
+                  bubbles: true,
+                  pointerType: event.pointerType,
+                });
+                focusReplayOrigins.set(replay, event.target);
+                slotRef.current?.dispatchEvent(replay);
               }}
               className="pointer-events-none fixed top-0 left-0 origin-top-left"
               style={{ zIndex: zIndex + 1, borderRadius: cornerRadius }}

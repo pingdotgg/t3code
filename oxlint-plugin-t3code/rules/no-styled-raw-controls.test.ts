@@ -142,6 +142,26 @@ const el = <button className={first} />;`,
   );
 });
 
+describe("t3code/no-styled-raw-controls only child", () => {
+  rule.invalid(
+    "reports a control styled through its only child",
+    `const el = (
+  <summary className="flex cursor-pointer list-none">
+    <span className="rounded-md px-2 text-meta hover:surface-ghost-hover">Details</span>
+  </summary>
+);`,
+    (output) => {
+      assert.match(output, /<summary> is styled through its only child <span> \(rounded-md px-2/);
+    },
+  );
+
+  rule.valid(
+    "allows a styled icon or a child next to siblings",
+    `const a = <button type="button" className="flex"><svg className="size-4 text-muted-foreground" /></button>;
+const b = <button type="button" className="flex"><span className="text-meta">A</span><Icon /></button>;`,
+  );
+});
+
 const ceiling = createOxlintRuleHarness("t3code/no-styled-raw-controls", {
   filename: "fixture.tsx",
   ruleOptions: [{ maxOccurrences: 1 }],
@@ -159,6 +179,14 @@ describe("t3code/no-styled-raw-controls maxOccurrences", () => {
 const b = <button type="button" className="rounded-md px-2">Two</button>;`,
     (output) => {
       assert.match(output, /<button> is styled by hand/);
+      assert.match(output, /Debt ceiling 1, file has 2: fix the 1 new occurrences/);
     },
+  );
+
+  ceiling.invalid(
+    "reports a ceiling above the file's count",
+    `const el = <button type="button" className="flex">One</button>;`,
+    (output) =>
+      assert.match(output, /Debt ceiling 1, file has 0: lower it to 0 with `vp run lint:ceilings`/),
   );
 });

@@ -1,6 +1,5 @@
 import { copySnapshot } from "./copySnapshot";
 import { VoiceInputSetup } from "./VoiceInputSetup";
-import { ComposerApprovalPanel } from "./ComposerApprovalPanel";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
@@ -25,6 +24,7 @@ import {
 import type {
   KeybindingCommand,
   AssistantCitation,
+  ComposerContextId,
   ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
@@ -36,7 +36,6 @@ import type {
   EnvironmentContextRecord,
   ResolvedKeybindingsConfig,
   RuntimeMode,
-  ProviderApprovalDecision,
   RuntimeRequestId,
   ScopedThreadRef,
   ServerProvider,
@@ -72,6 +71,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { createPortal, flushSync } from "react-dom";
@@ -127,6 +127,7 @@ import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
+  type QueuedAttachmentContextBinding,
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
@@ -226,6 +227,7 @@ import {
 } from "./ComposerCommandMenu";
 import {
   ComposerAttachButton,
+  ComposerAttachInput,
   ComposerAttachmentFileList,
   ComposerAttachmentMediaRow,
   ComposerFilePreviewDialog,
@@ -299,6 +301,7 @@ import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
+import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 import {
   cancelHeldComposerSend,
   countPreparingComposerImages,
@@ -311,6 +314,44 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
+
+/**
+ * A div moved into `host`, which ChatView renders outside the composer's DOM. Moved, not
+ * portaled: a portal target keeps React's whole delegated listener set for good. The hidden
+ * span is the div's only React parent and leaves with it. The children mount once the div
+ * sits in the host, so their first layout effects measure it there.
+ */
+function InComposerHost({
+  host,
+  children,
+  ...layer
+}: ComponentProps<"div"> & { host: HTMLElement }) {
+  const homeRef = useRef<HTMLSpanElement>(null);
+  const nodeRef = useRef<Element | null>(null);
+  const [placedIn, setPlacedIn] = useState<HTMLElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move the div into the host's DOM, then mount the children there.
+  useLayoutEffect(() => {
+    const home = homeRef.current;
+    let node = nodeRef.current;
+    if (!node) {
+      node = home?.firstElementChild ?? null;
+      nodeRef.current = node;
+    }
+    if (!home || !node) return;
+    host.append(node);
+    setPlacedIn(host);
+    // A hidden <Activity> leaves the div in the host, as it left a portal's children.
+    return () =>
+      queueMicrotask(() => {
+        if (!home.isConnected) node.remove();
+      });
+  }, [host]);
+  return (
+    <span ref={homeRef} hidden>
+      <div {...layer}>{placedIn === host ? children : null}</div>
+    </span>
+  );
+}
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -423,10 +464,6 @@ export interface ChatComposerProps {
     readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
-  onRespondToApproval?: (
-    requestId: RuntimeRequestId,
-    decision: ProviderApprovalDecision,
-  ) => Promise<unknown>;
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
   onHeldRequestIdsChange: (requestIds: ReadonlySet<string>) => void;
@@ -480,8 +517,11 @@ export interface ChatComposerProps {
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
+    readonly contextIds?: ReadonlyArray<ComposerContextId> | undefined;
   }> | null;
+  removedEditingQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
+  onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
 
   onCompactContext: () => void;
   onSend: (
@@ -623,7 +663,9 @@ export function ChatComposer(props: ChatComposerProps) {
     onExpandImage,
     onFileOpen,
     editingQueuedAttachments,
+    removedEditingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
+    onRestoreEditingQueuedAttachment,
   } = props;
   const {
     activePendingProgress: incomingPendingProgress,
@@ -686,6 +728,12 @@ export function ChatComposer(props: ChatComposerProps) {
           activePendingProgress.activeQuestion.id,
         )
       : null;
+  const queuedEditOwnsComposer =
+    questionAttachmentTarget === null && pendingUserInputs.length === 0;
+  const activeEditingQueuedAttachments = queuedEditOwnsComposer ? editingQueuedAttachments : null;
+  const activeRemovedEditingQueuedAttachments = queuedEditOwnsComposer
+    ? removedEditingQueuedAttachments
+    : undefined;
   const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
   const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
   const questionTakesSnapShots =
@@ -786,33 +834,55 @@ export function ChatComposer(props: ChatComposerProps) {
     cwd: gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
-      const preview = buildExpandedImagePreview(
-        composerImages,
-        imageId,
-        copyComposerSnapshotStable,
-      );
+      const preview =
+        buildExpandedImagePreview(composerImages, imageId, copyComposerSnapshotStable) ??
+        buildExpandedImagePreview(
+          (activeEditingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
+            isQueuedImageAttachment(attachment) && url ? [{ ...attachment, previewUrl: url }] : [],
+          ),
+          imageId,
+        );
       if (preview) onExpandImage(preview);
     },
-    openFile: setPreviewFileId,
+    openFile: (fileId: string) => {
+      if (composerFiles.some((file) => file.id === fileId)) {
+        setPreviewFileId(fileId);
+        return;
+      }
+      const queuedFile = activeEditingQueuedAttachments?.find(
+        ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
+      )?.attachment;
+      if (queuedFile && isQueuedFileAttachment(queuedFile)) onFileOpen(queuedFile);
+    },
     openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
     expandVideo: (fileId: string) => {
       const file = composerFiles.find((candidate) => candidate.id === fileId);
-      if (!file || !isVideoAttachment(file)) return;
-      const localPreview = buildExpandedImagePreview([file], file.id);
-      if (localPreview) {
-        onExpandImage(localPreview);
+      if (file && isVideoAttachment(file)) {
+        const localPreview = buildExpandedImagePreview([file], file.id);
+        if (localPreview) {
+          onExpandImage(localPreview);
+          return;
+        }
+        if (file.uploadedAttachmentId === undefined || file.uploadEnvironmentId !== environmentId) {
+          return;
+        }
+        const persistedPreview = buildAttachmentVideoPreview(environmentId, {
+          type: "file",
+          id: file.uploadedAttachmentId,
+          name: file.name,
+          mimeType: file.mimeType,
+          sizeBytes: file.sizeBytes,
+        });
+        if (persistedPreview) onExpandImage(persistedPreview);
         return;
       }
-      if (file.uploadedAttachmentId === undefined || file.uploadEnvironmentId !== environmentId) {
+      const queuedFile = activeEditingQueuedAttachments?.find(
+        ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
+      )?.attachment;
+      if (!queuedFile || !isQueuedFileAttachment(queuedFile) || !isVideoAttachment(queuedFile)) {
         return;
       }
-      const persistedPreview = buildAttachmentVideoPreview(environmentId, {
-        type: "file",
-        id: file.uploadedAttachmentId,
-        name: file.name,
-        mimeType: file.mimeType,
-        sizeBytes: file.sizeBytes,
-      });
+      const persistedPreview = buildAttachmentVideoPreview(environmentId, queuedFile);
       if (persistedPreview) onExpandImage(persistedPreview);
     },
     openPullRequest: (event: React.MouseEvent<HTMLElement>, url: string) => {
@@ -827,6 +897,8 @@ export function ChatComposer(props: ChatComposerProps) {
     environmentContexts: composerEnvironmentContexts,
     images: composerImages,
     files: composerFiles,
+    existingAttachments: activeEditingQueuedAttachments ?? undefined,
+    environmentId,
     uploadsByImageId,
   });
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
@@ -1154,6 +1226,7 @@ export function ChatComposer(props: ChatComposerProps) {
       document.removeEventListener("focusout", onFocusOut);
     };
   }, []);
+  const composerAttachInputRef = useRef<HTMLInputElement>(null);
   const composerSurfaceRef = useRef<HTMLDivElement>(null);
   const providerInputRejectedRef = useRef(false);
   const composerSelectLockRef = useRef(false);
@@ -1458,12 +1531,20 @@ export function ChatComposer(props: ChatComposerProps) {
               : null);
           if (!record) return [];
           if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
-          return [
-            record.kind === "image" && attachment.type === "image" && attachment.source
-              ? { ...record, source: attachment.source }
-              : record,
-          ];
+          return [record];
         }),
+      ...(activeEditingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) => {
+        if (!isQueuedImageAttachment(attachment) && !isQueuedFileAttachment(attachment)) return [];
+        return (contextIds ?? [])
+          .filter((contextId) => wanted.has(contextId))
+          .map((contextId) =>
+            attachmentContextRecord({
+              attachment,
+              attachmentId: attachment.id,
+              contextId,
+            }),
+          );
+      }),
     ];
     if (records.length === 0) return null;
     const fragment = encodeComposerContextFragment({
@@ -1512,6 +1593,8 @@ export function ChatComposer(props: ChatComposerProps) {
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    removedQueuedAttachments: activeRemovedEditingQueuedAttachments,
+    onRestoreQueuedAttachment: onRestoreEditingQueuedAttachment,
   });
 
   // Guard keystroke state writes: no-op setters still schedule renders and can loop.
@@ -1723,6 +1806,7 @@ export function ChatComposer(props: ChatComposerProps) {
     cursorAdjacentToMention: boolean,
     contextIds: string[],
     textChanged: boolean,
+    fromHistory = false,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
     const trigger = cursorAdjacentToMention
@@ -1833,6 +1917,14 @@ export function ChatComposer(props: ChatComposerProps) {
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
       files: composerFiles,
+      queuedAttachments: (activeEditingQueuedAttachments ?? []).map(
+        ({ attachment, contextIds }) => ({
+          attachment,
+          contextIds: contextIds ?? [],
+        }),
+      ),
+      removedQueuedAttachments: activeRemovedEditingQueuedAttachments ?? [],
+      fromHistory,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
@@ -1851,6 +1943,12 @@ export function ChatComposer(props: ChatComposerProps) {
     }
     if (attachmentChanges.filesToRestore.length > 0) {
       addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
+    }
+    for (const attachmentId of attachmentChanges.queuedAttachmentIdsToRemove) {
+      onRemoveEditingQueuedAttachment(attachmentId);
+    }
+    for (const attachment of attachmentChanges.queuedAttachmentsToRestore) {
+      onRestoreEditingQueuedAttachment?.(attachment);
     }
     setComposerCursor(nextCursor);
     updateTrigger(trigger);
@@ -3646,10 +3744,7 @@ export function ChatComposer(props: ChatComposerProps) {
       />
     ) : null;
   const composerAttachButton = showComposerAttachAction ? (
-    <ComposerAttachButton
-      addComposerAttachments={addComposerAttachments}
-      focusComposer={focusComposer}
-    />
+    <ComposerAttachButton onOpenPicker={() => composerAttachInputRef.current?.click()} />
   ) : null;
 
   const requestCard =
@@ -3674,16 +3769,6 @@ export function ChatComposer(props: ChatComposerProps) {
         onSubmit={submitComposerStable}
         onPrevious={onPreviousActivePendingUserInputQuestion}
         onWriteAnswer={focusComposer}
-      />
-    ) : activePendingApproval && props.onRespondToApproval ? (
-      <ComposerApprovalPanel
-        key={activePendingApproval.requestId}
-        approval={activePendingApproval}
-        workspaceRoot={gitCwd ?? undefined}
-        count={pendingApprovals.length}
-        disabled={!canOperateThread}
-        isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
-        onRespond={props.onRespondToApproval}
       />
     ) : null;
 
@@ -3771,7 +3856,11 @@ export function ChatComposer(props: ChatComposerProps) {
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
-      {requestCardHost && requestCard ? createPortal(requestCard, requestCardHost) : null}
+      {requestCardHost && requestCard ? (
+        <InComposerHost host={requestCardHost} className="contents">
+          {requestCard}
+        </InComposerHost>
+      ) : null}
       {/* Each portal host takes React's whole delegated listener set, so an empty badge mounts none. */}
       {props.stashHost && stashQueue.length > 0
         ? createPortal(
@@ -3784,21 +3873,26 @@ export function ChatComposer(props: ChatComposerProps) {
             props.stashHost,
           )
         : null}
-      {props.trayControlsHost
-        ? createPortal(
-            <div
-              ref={attachExpandedComposerControls}
-              data-chat-composer-resting-controls="true"
-              className="flex min-w-0 items-center gap-0.5 @max-[620px]/composer-surface:[--composer-compact-labels:1]"
-            >
-              {composerControls}
-            </div>,
-            props.trayControlsHost,
-          )
-        : null}
+      {props.trayControlsHost ? (
+        <InComposerHost
+          host={props.trayControlsHost}
+          ref={attachExpandedComposerControls}
+          data-chat-composer-resting-controls="true"
+          className="flex min-w-0 items-center gap-0.5"
+        >
+          {composerControls}
+        </InComposerHost>
+      ) : null}
       <ComposerBanner.Dock>
         <ComposerBannerStack items={shelfItems} />
       </ComposerBanner.Dock>
+      {showComposerAttachAction ? (
+        <ComposerAttachInput
+          ref={composerAttachInputRef}
+          addComposerAttachments={addComposerAttachments}
+          focusComposer={focusComposer}
+        />
+      ) : null}
       <div className="relative rounded-[inherit]">
         <ComposerSurface.Main
           ref={composerMainSurfaceRef}
@@ -3979,11 +4073,10 @@ export function ChatComposer(props: ChatComposerProps) {
 
               <div className="mb-1.5 w-full [grid-area:attachments] empty:hidden">
                 {!isComposerCollapsedMobile &&
-                  pendingUserInputs.length === 0 &&
-                  editingQueuedAttachments !== null &&
-                  editingQueuedAttachments.length > 0 && (
+                  activeEditingQueuedAttachments !== null &&
+                  activeEditingQueuedAttachments.length > 0 && (
                     <ComposerQueuedAttachmentRow
-                      attachments={editingQueuedAttachments}
+                      attachments={activeEditingQueuedAttachments}
                       onRemove={onRemoveEditingQueuedAttachment}
                     />
                   )}

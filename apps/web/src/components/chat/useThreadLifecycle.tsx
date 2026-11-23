@@ -544,9 +544,14 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   };
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   const childThreadInputs = useChildThreadInputs(activeThreadRef);
+  // Child approvals live in the parent timeline on their subagent row; only child questions
+  // still need a composer notice.
+  const childQuestionInputs = childThreadInputs
+    .filter((child) => !child.hasPendingApprovals || child.hasPendingUserInput)
+    .map((child) => (child.hasPendingApprovals ? { ...child, hasPendingApprovals: false } : child));
   const childInputNow = childInputNowItem(
     {
-      childThreadInputs,
+      childThreadInputs: childQuestionInputs,
       parentAwaitingUser: Boolean(
         activePendingApproval || activePendingUserInput || activeThreadShell?.hasPendingUserInput,
       ),

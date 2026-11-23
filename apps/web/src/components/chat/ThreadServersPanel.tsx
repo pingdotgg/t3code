@@ -40,6 +40,7 @@ import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { openDiscoveredPort } from "../preview/openDiscoveredPort";
 import { Spinner } from "../ui/spinner";
+import { StatusDot } from "../ui/status-dot";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
@@ -207,7 +208,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                 >
                   <span className="relative shrink-0">
                     <GlobeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-                    <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-success" />
+                    <span className="absolute -right-0.5 -top-0.5 flex">
+                      <StatusDot tone="success" />
+                    </span>
                   </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span

@@ -62,6 +62,7 @@ export interface KeybindingRow {
   readonly binding: ResolvedKeybindingRule;
   readonly conflicts: ReadonlyArray<string>;
   readonly previewLabels: ReadonlyArray<string>;
+  readonly previewShortcuts: ReadonlyArray<KeybindingShortcut>;
 }
 
 export type WhenVariableOption = string;
@@ -267,6 +268,7 @@ export function buildKeybindingRows(
   const modifierModes =
     sendShortcut === "mod-enter-multiline" ? [false, true] : [sendShortcut === "mod-enter"];
   const previewLabels = keybindings.map(() => new Set<string>());
+  const previewShortcuts = keybindings.map(() => new Map<string, KeybindingShortcut>());
   for (const composerRequiresModifier of modifierModes) {
     const laterBindings = new Set<string>();
     for (let index = keybindings.length - 1; index >= 0; index--) {
@@ -278,7 +280,11 @@ export function buildKeybindingRows(
       const conditionKey = `${key}:${when === "true" ? "" : when}`;
       // Distinct conditions may still apply in other focus contexts.
       if (!laterBindings.has(`${key}:`) && !laterBindings.has(conditionKey)) {
-        previewLabels[index]!.add(formatShortcutLabel(shortcut, platform));
+        const label = formatShortcutLabel(shortcut, platform);
+        previewLabels[index]!.add(label);
+        if (!previewShortcuts[index]!.has(label)) {
+          previewShortcuts[index]!.set(label, shortcut);
+        }
       }
       laterBindings.add(conditionKey);
     }
@@ -306,6 +312,7 @@ export function buildKeybindingRows(
       binding,
       conflicts: [],
       previewLabels: [...previewLabels[index]!],
+      previewShortcuts: [...previewShortcuts[index]!.values()],
     });
   }
   const rows = [...rowsById.values()];
@@ -549,8 +556,9 @@ function titleCaseCommandSegment(segment: string): string {
 
 function recordedLayoutShortcutKey(
   event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
 ): string {
-  const physicalKey = shortcutKeyFromEvent(event);
+  const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
@@ -597,7 +605,9 @@ export function keybindingFromKeyboardEvent(
   },
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(
-    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+    options?.layoutCharacter
+      ? recordedLayoutShortcutKey(event, platform)
+      : shortcutKeyFromEvent(event, platform),
   );
   if (!keyToken) return null;
 

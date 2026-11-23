@@ -19,7 +19,9 @@ import { peerLinkEnvironment } from "~/state/peerLinks";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Button, ContentButton, InlineButton } from "../ui/button";
+import { CardSection } from "../ui/card-section";
 import { Input } from "../ui/input";
+import { StatusDot } from "../ui/status-dot";
 import { formatAccessTimestamp } from "./ConnectionsSettings.logic";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import {
@@ -104,7 +106,7 @@ export function HealthGlyph({ health }: { health: PeerLinkHealth }) {
     return <span aria-hidden className="size-2 rounded-full border border-muted-foreground" />;
   }
   return health.expiresInDays === null ? (
-    <span aria-hidden className="size-2 rounded-full bg-success forced-colors:border-4" />
+    <StatusDot size="md" tone="success" />
   ) : (
     <ClockAlertIcon aria-hidden className={cn("size-3", tone)} />
   );
@@ -130,8 +132,6 @@ export interface FleetDetailsProps {
   readonly renderConnectMachine: (environmentId: EnvironmentId) => ReactNode;
   readonly onAddEnvironment: (host?: string) => void;
 }
-
-const SECTION = "px-3 py-3 sm:px-4";
 
 /** What is selected on the map, with the controls the list keeps on each row. */
 export function FleetDetails(props: FleetDetailsProps) {
@@ -179,7 +179,7 @@ export function FleetDetails(props: FleetDetailsProps) {
         </div>
       ) : null}
       {pair ? (
-        <div className={SECTION}>
+        <CardSection>
           <p className="mb-3 text-muted-foreground">{gt("Two links, one each way.")}</p>
           <div className="space-y-4">
             {[pair.forward, pair.back].map((link) => (
@@ -195,9 +195,9 @@ export function FleetDetails(props: FleetDetailsProps) {
               />
             ))}
           </div>
-        </div>
+        </CardSection>
       ) : edge ? (
-        <div className={SECTION}>
+        <CardSection>
           <LinkDetails
             key={edge.id}
             edge={edge}
@@ -208,7 +208,7 @@ export function FleetDetails(props: FleetDetailsProps) {
               ? { onLinkBack: () => props.onLinkBack(edge) }
               : {})}
           />
-        </div>
+        </CardSection>
       ) : stack ? (
         <StackDetails
           key={`${stack.id}:${props.found ?? ""}`}
@@ -378,7 +378,7 @@ function StackDetails({
   const sources = stack.sources.map((source) => nodeById.get(source.sourceId)?.label ?? "");
   const [only] = stack.sources;
   return (
-    <div className={SECTION}>
+    <CardSection>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <Heading
           detail={(stack.kind === "environments"
@@ -445,7 +445,7 @@ function StackDetails({
           renderItem={({ item }) => <MemberButton member={item} onSelect={onSelect} />}
         />
       </div>
-    </div>
+    </CardSection>
   );
 }
 
@@ -602,7 +602,7 @@ function NodeDetails({
   if (node.kind === "client") {
     const hosts = graph.nodes.filter((entry) => entry.kind === "environment");
     return (
-      <div className={SECTION}>
+      <CardSection>
         <Heading
           detail={gt("{connected} of {total} connected", {
             connected: hosts.filter((entry) => entry.phase === "connected").length,
@@ -614,7 +614,7 @@ function NodeDetails({
         <p className="text-muted-foreground">
           {gt("Each line from here is a saved route to an environment.")}
         </p>
-      </div>
+      </CardSection>
     );
   }
   const out = links.filter((edge) => edge.from === node.id);
@@ -634,18 +634,20 @@ function NodeDetails({
     return (
       <>
         {renderConnectMachine(node.environmentId)}
-        <div className={cn(SECTION, "space-y-3 border-t border-border/60")}>
-          <p className="max-w-2xl text-muted-foreground">
-            {gt("Add {label} to this app to connect to it.", { label: node.label })}
-          </p>
-          {incoming.length > 0 ? linkedFrom : null}
-        </div>
+        <CardSection divided="top">
+          <div className="space-y-3">
+            <p className="max-w-2xl text-muted-foreground">
+              {gt("Add {label} to this app to connect to it.", { label: node.label })}
+            </p>
+            {incoming.length > 0 ? linkedFrom : null}
+          </div>
+        </CardSection>
       </>
     );
   }
   if (node.kind === "target") {
     return (
-      <div className={SECTION}>
+      <CardSection>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <Heading detail={gt("Known only through a link")}>{node.label}</Heading>
           <Button
@@ -672,7 +674,7 @@ function NodeDetails({
         <p className="mt-3 max-w-2xl text-muted-foreground">
           {gt("Not connected, so its links are not shown.")}
         </p>
-      </div>
+      </CardSection>
     );
   }
   const environment = environments.find((entry) => entry.environmentId === node.environmentId);
@@ -697,25 +699,27 @@ function NodeDetails({
             }
           />
         ) : null)}
-      <div className={cn(SECTION, "space-y-3 border-t border-border/60")}>
-        {environment && saved !== null ? <Reconnect environment={environment} /> : null}
-        {note ? <p className="max-w-2xl text-muted-foreground">{note}</p> : null}
-        <LinkList
-          title={
-            loaded
-              ? gt(
-                  "{count, plural, =0 {Links to no one} one {Links to # machine} other {Links to # machines}}",
-                  { count: out.length },
-                )
-              : null
-          }
-          action={<LinkAnother node={node} onLinkFrom={onLinkFrom} />}
-          edges={out}
-          labelOf={(edge) => labelOf(edge.to)}
-          onSelect={onSelect}
-        />
-        {linkedFrom}
-      </div>
+      <CardSection divided="top">
+        <div className="space-y-3">
+          {environment && saved !== null ? <Reconnect environment={environment} /> : null}
+          {note ? <p className="max-w-2xl text-muted-foreground">{note}</p> : null}
+          <LinkList
+            title={
+              loaded
+                ? gt(
+                    "{count, plural, =0 {Links to no one} one {Links to # machine} other {Links to # machines}}",
+                    { count: out.length },
+                  )
+                : null
+            }
+            action={<LinkAnother node={node} onLinkFrom={onLinkFrom} />}
+            edges={out}
+            labelOf={(edge) => labelOf(edge.to)}
+            onSelect={onSelect}
+          />
+          {linkedFrom}
+        </div>
+      </CardSection>
     </>
   );
 }

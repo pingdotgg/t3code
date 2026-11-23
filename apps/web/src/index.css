@@ -840,6 +840,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --animate-stash-pulse-row: stash-pulse-row 1400ms;
   --animate-stash-pulse-row-alt: stash-pulse-row-alt 1400ms;
   --animate-stash-pulse-count: stash-pulse-count 1400ms step-start;
+  /* One-off arrivals in a workflow run's timeline; nothing here loops. */
+  --animate-step-in: step-in 180ms ease-out;
+  --animate-step-ping: step-ping 520ms ease-out;
+  --animate-check-draw: check-draw 200ms ease-out;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
@@ -1003,6 +1007,27 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     }
     100% {
       opacity: 1;
+    }
+  }
+  @keyframes step-in {
+    from {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+  @keyframes step-ping {
+    from {
+      opacity: 0.55;
+      scale: 0.7;
+    }
+    to {
+      opacity: 0;
+      scale: 1.45;
+    }
+  }
+  @keyframes check-draw {
+    from {
+      stroke-dashoffset: 12;
     }
   }
   @keyframes status-ping {
@@ -1388,7 +1413,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 /* The fill alone, for an opaque part inside a panel that paints the rim. */
 @utility surface-card-fill {
-  background: var(--card-fill);
+  background: var(--card-top, var(--card-fill));
 }
 @utility surface-card-settings {
   background: var(--card-settings-background, var(--card-settings-fill));
@@ -1534,6 +1559,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     --search-separator-stroke,
     color-mix(in oklab, var(--contrast-border) 70%, transparent)
   );
+}
+/* Inline divider hairlines, in neutral or danger tone. */
+@utility surface-divider-rule {
+  background-color: var(--divider-rule, var(--contrast-border));
+}
+@utility surface-divider-rule-danger {
+  background-color: var(--divider-rule-danger, color-mix(in srgb, var(--error) 30%, transparent));
 }
 @utility surface-floating-hover {
   background: var(--floating-hover-background, var(--floating-fill, var(--background)));
@@ -2757,8 +2789,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --tooltip-shadow: 0 3px 9px #00000012;
   --palette-shadow: 0 14px 36px #00000019;
   --dialog-shadow: 0 16px 40px #0000001f;
+  --card-top: #fafafa;
   --card-bottom: #f7f7f7;
-  --card-fill: linear-gradient(180deg, #fafafa, var(--card-bottom));
+  --card-fill: linear-gradient(180deg, var(--card-top), var(--card-bottom));
   --card-settings-fill: linear-gradient(180deg, #fafafa, #f8f8f8);
   --tray-fill: linear-gradient(180deg, #fefefe, #fafafa);
   --tray-stroke: #00000008;
@@ -2893,8 +2926,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --tooltip-shadow: 0 3px 9px #0000005a;
   --palette-shadow: 0 14px 36px #0000007d;
   --dialog-shadow: 0 16px 40px #000000a0;
+  --card-top: #191919;
   --card-bottom: #171717;
-  --card-fill: linear-gradient(180deg, #191919, var(--card-bottom));
+  --card-fill: linear-gradient(180deg, var(--card-top), var(--card-bottom));
   --card-settings-fill: linear-gradient(#191919, #191919);
   --tray-fill: linear-gradient(#191919, #191919);
   --tray-stroke: #ffffff0d;
@@ -3114,6 +3148,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   );
   --popover-top: var(--popover);
   --popover-bottom: var(--popover);
+  --card-top: var(--card);
   --card-bottom: var(--card);
   --card-fill: linear-gradient(var(--card), var(--card));
   --card-settings-fill: linear-gradient(var(--card), var(--card));
@@ -3492,6 +3527,15 @@ html[data-theme-id] [data-chat-header] [data-slot="menu-trigger"][data-pressed],
 html[data-theme-id] [data-chat-header] [data-toolbar-control]:hover,
 html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
   background-color: var(--toolbar-control-hover);
+}
+
+/* The strip's floating chevrons sit over tab labels: lay a translucent hover
+   tint over the opaque control fill so the labels never show through. */
+html[data-theme-id]
+  [data-chat-header]
+  .surface-floating[data-slot="button"]:is(:hover, [data-pressed]) {
+  background-color: var(--toolbar-control);
+  background-image: linear-gradient(var(--toolbar-control-hover), var(--toolbar-control-hover));
 }
 
 html[data-theme-id] [data-chat-header] [data-slot="separator"] {
@@ -4816,6 +4860,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --popover-fill: var(--style-container-fill, var(--raised-fill));
   --card-background: initial;
   --card-settings-background: initial;
+  --card-top: initial;
   --card-fill: var(--style-container-fill, var(--raised-fill)) !important;
   --card-settings-fill: var(--card-fill) !important;
   --card-shadow: var(--raised-shadow);
@@ -4897,6 +4942,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --app-panel-stroke: transparent;
   --app-panel-shadow: none;
   --card-rim: var(--ss-none) !important;
+  --card-top: var(--flat-middle) !important;
   /* The hairline rides the fill's border-box layer, under the card's transparent border. */
   --card-fill: var(--tray-fill) padding-box, var(--flat-edge) border-box !important;
   /* Settings cards sit a step off their panel, as main's cards do, so rows are not bare on it. */
@@ -4991,6 +5037,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.black-chrome[data-surface-style="soft-gradient"] [data-chrome-scope] {
   --popover-rim: var(--ss-none) !important;
   --card-rim: var(--ss-none) !important;
+  --card-top: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.03) c h),
+    oklch(from var(--ss-background) calc(l + 0.105) c h)
+  ) !important;
   --card-fill: var(--raised-fill) !important;
   --card-settings-fill: var(--raised-fill) !important;
   --tint-rim-top: 0%;
@@ -5126,12 +5176,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 [data-surface-preview="aqua-blue"],
 :root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-chrome-scope] {
+  --card-top: light-dark(
+    oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
+    oklch(from var(--ss-background) calc(l + 0.065) c h)
+  ) !important;
   --style-container-fill: linear-gradient(
     180deg in srgb,
-    light-dark(
-      oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
-      oklch(from var(--ss-background) calc(l + 0.065) c h)
-    ),
+    var(--card-top),
     light-dark(
       oklch(from var(--ss-background) l c h),
       oklch(from var(--ss-background) calc(l + 0.04) c h)
@@ -6792,6 +6843,35 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --pane-join-layer-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-layer-w {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-scroll {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-max-scroll {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-lead-x {
+  syntax: "*";
+  inherits: false;
+}
+@keyframes pane-join-scroll {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: calc(var(--pane-join-max-scroll, 0px) * -1) 0;
+  }
+}
+
 /* The strip's edge fade reads these on the strip alone (PaneTabs.tsx,
    markStripOverflow). Inherited, each scroll step restyled every tab. */
 @property --strip-overflow-start {
@@ -6831,6 +6911,102 @@ body {
   inherits: false;
   initial-value: 1;
 }
+@property --strip-chevron-space {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* Pane tab strip scroll chevrons (PaneTabs.tsx): mouse/fine pointer only, and
+   only on a side with hidden tabs. Touch keeps the edge fade alone. */
+[data-layout-tab-strip] {
+  scroll-padding-inline-start: calc(
+    var(--pane-join-ear, 0px) + (1.5rem + var(--strip-chevron-space)) *
+      var(--strip-overflowing-start, 0)
+  );
+  scroll-padding-inline-end: calc(
+    var(--pane-join-ear, 0px) + var(--pane-join-tail, 0px) + (1.5rem + var(--strip-chevron-space)) *
+      var(--strip-overflowing-end, 0)
+  );
+}
+
+[data-strip-scroll-button] {
+  display: none;
+}
+
+@media (any-pointer: fine) {
+  [data-layout-tab-strip] {
+    --strip-chevron-space: 1.5rem;
+  }
+
+  [data-strip-scroll-button] {
+    display: inline-flex;
+    visibility: hidden;
+    opacity: 0;
+    scale: 0.75;
+    pointer-events: none;
+    transition:
+      visibility 0s var(--panel-animation-duration, 150ms),
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][data-can-scroll] {
+    visibility: visible;
+    opacity: 1;
+    scale: 1;
+    pointer-events: auto;
+    transition:
+      visibility 0s 0s,
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][data-can-scroll]:active {
+    scale: 0.97;
+  }
+
+  /* At an end, keep the hovered button disabled at half opacity so a fast
+     extra click does not hit the tab underneath, then hide it 500ms after the
+     last press. Changing min-width with visibility forces Chromium to refresh
+     the cursor and hover hit-test without pointer movement. */
+  [data-strip-scroll-button][aria-disabled="true"]:is(:hover, :focus-visible) {
+    visibility: visible;
+    opacity: 0.5;
+    scale: 1;
+    pointer-events: auto;
+    transition:
+      visibility 0s 0s,
+      box-shadow var(--panel-animation-duration, 150ms) ease-out,
+      opacity var(--panel-animation-duration, 150ms) ease-out,
+      scale var(--panel-animation-duration, 150ms) ease-out;
+  }
+
+  [data-strip-scroll-button][aria-disabled="true"]:hover:not(:active, :focus-visible) {
+    visibility: hidden;
+    min-width: 1px;
+    transition:
+      visibility 0s 500ms,
+      min-width 0s 500ms allow-discrete,
+      opacity var(--panel-animation-duration, 150ms) ease-out;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-strip-scroll-button],
+  [data-strip-scroll-button][data-can-scroll],
+  [data-strip-scroll-button][aria-disabled="true"]:is(:hover, :focus-visible) {
+    transition: none;
+  }
+
+  [data-strip-scroll-button][aria-disabled="true"]:hover:not(:active, :focus-visible) {
+    transition:
+      visibility 0s 500ms,
+      min-width 0s 500ms allow-discrete;
+  }
+}
 
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
@@ -6840,6 +7016,7 @@ body {
   --pane-join-rim: var(--raised-rim);
 }
 
+[data-pane-join-layer],
 [data-pane-join],
 [data-pane-join-foot],
 [data-pane-bar-corner] {
@@ -6930,7 +7107,7 @@ body {
     & [data-layout-pane-id][data-pane-joined-start] > [data-pane-cut="start-notch"] {
       opacity: 0;
     }
-    & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {
+    & [data-pane-join-start=""] [data-pane-notch=""] [data-layout-tab-strip] {
       --strip-fade-start-shown: 0;
     }
     & [data-pane-bar-corner="end"] {
@@ -6949,7 +7126,6 @@ body {
         calc(var(--pane-join-drop) * -1 - 1px) calc(var(--pane-join-ear) * -1);
       /* Its padding passes presses on to the controls it runs under. */
       pointer-events: none;
-      scroll-padding-inline: var(--pane-join-ear);
       /* Every title gets the active one's room, so activating a tab moves no
          other tab under the sliding shape. */
       --pane-inactive-tab-title-max: 17rem;
@@ -7067,14 +7243,39 @@ body {
       right: max(0px, calc(100% - var(--pane-lit-from)));
     }
 
-    & [data-pane-notch=""] [data-pane-join] {
+    /* The joined tab shape sits behind the strip's alpha mask, clipped to its
+       visible ends, so its fill and rim never dissolve into the chrome while
+       the tab labels above it still fade into what is behind them. */
+    & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-layer] {
       display: block;
       position: absolute;
       z-index: -1;
+      inset-block-start: calc(2px - var(--pane-join-shift));
+      inset-inline-start: var(--pane-join-layer-x, 0px);
+      width: var(--pane-join-layer-w, 0px);
+      height: calc(var(--pane-join-h) + 1px);
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    @supports (timeline-scope: --pane-strip-scroll) {
+      & [data-pane-notch=""] {
+        timeline-scope: --pane-strip-scroll;
+      }
+
+      & [data-pane-notch=""] [data-layout-tab-strip] {
+        scroll-timeline: --pane-strip-scroll inline;
+      }
+    }
+
+    & [data-pane-notch=""] [data-pane-join] {
+      display: block;
+      position: absolute;
       inset-block-start: 0;
       inset-inline-start: 0;
       width: 0;
       height: var(--pane-join-h);
+      translate: calc(var(--pane-join-scroll, 0px) * -1) 0;
       pointer-events: none;
       color: var(--pane-bar-fg);
       --jx: 0px;
@@ -7082,6 +7283,17 @@ body {
       --jm: 0;
       --e: var(--pane-join-ear);
       --r: var(--pane-join-radius);
+
+      /* Lock the sibling join shape to the strip's scroll position on the
+         compositor so smooth chevron/wheel scrolling never lags a frame behind.
+         Keep the base translate at -scrollLeft so the first frame after moving
+         into a new header (before its timeline attaches) never jumps to 0. */
+      @supports (timeline-scope: --pane-strip-scroll) {
+        inset-inline-start: calc(var(--pane-join-lead-x, 0px) * -1);
+        translate: calc(var(--pane-join-lead-x, 0px) - var(--pane-join-scroll, 0px)) 0;
+        animation: pane-join-scroll linear both;
+        animation-timeline: --pane-strip-scroll;
+      }
 
       &[hidden] {
         display: none;

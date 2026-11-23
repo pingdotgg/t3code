@@ -9,7 +9,12 @@ import { SideThreadsOpenContext, useSideThreadTrigger } from "../../hooks/useSid
 import { useLinkedThreadOpener } from "../../state/linkedThreadView";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { useAtomValue } from "@effect/atom-react";
-import { scopeThreadRef, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeThreadRef,
+  scopeProjectRef,
+} from "@t3tools/client-runtime/environment";
+import { SubagentPendingApprovals } from "./ChildThreadApprovals";
 import { environmentThreadDetails } from "../../state/threads";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -641,7 +646,15 @@ function SubagentTimelineLink(props: {
   // The tool rows' metrics: 24px tall, flush left, the same end inset.
   const className =
     "group/subagent flex min-h-6 w-full min-w-0 items-center gap-2 rounded-md pe-1.5 text-left";
-  return (
+  const childThreadKey =
+    props.event !== undefined
+      ? null
+      : remote !== undefined
+        ? scopedThreadKey(scopeThreadRef(remote.environmentId, remote.threadId))
+        : threadId !== null
+          ? scopedThreadKey(scopeThreadRef(props.parentRef.environmentId, threadId))
+          : null;
+  const row = (
     <Tooltip>
       <TooltipTrigger
         delay={200}
@@ -679,6 +692,16 @@ function SubagentTimelineLink(props: {
         />
       </ThreadHoverCardPopup>
     </Tooltip>
+  );
+  if (childThreadKey === null) return row;
+  return (
+    <>
+      {row}
+      <SubagentPendingApprovals
+        childThreadKey={childThreadKey}
+        onOpenThread={open ? () => open("primary") : undefined}
+      />
+    </>
   );
 }
 

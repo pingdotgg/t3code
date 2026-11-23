@@ -404,6 +404,40 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("reports the SDK's startup phases only to the send that is starting", () =>
+    Effect.gen(function* () {
+      const publish = (phase: string) =>
+        (Reflect.get(globalThis, Symbol.for("@cursor/sdk.startupPhase")) as Function)(phase);
+      const startSend = cursorSdkMock.send.getMockImplementation()!;
+      cursorSdkMock.send.mockImplementationOnce(async (message, options) => {
+        await Promise.resolve();
+        publish("plugins");
+        return startSend(message, options);
+      });
+      const phases: Array<string> = [];
+      const reported = yield* Deferred.make<void>();
+      const runner = yield* CursorAgentSdk.CursorAgentSdkRunner;
+      const session = yield* runner.open({
+        operation: "create",
+        options: {},
+        threadId: ThreadId.make("thread-cursor-agent-sdk-phase"),
+        providerSessionId: ProviderSessionId.make("provider-session-cursor-agent-sdk-phase"),
+      });
+      const run = yield* session.send({
+        message: "start",
+        onStartupPhase: (phase) =>
+          Effect.sync(() => phases.push(phase)).pipe(
+            Effect.andThen(Deferred.succeed(reported, undefined)),
+          ),
+      });
+      yield* Deferred.await(reported);
+      publish("mcp");
+      yield* run.wait;
+
+      assert.deepStrictEqual(phases, ["plugins"]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("keeps an agent's background shells and reports each start and end in order", () =>
     Effect.gen(function* () {
       const start = (conversationId: string, id: number) => {

@@ -1050,7 +1050,7 @@ function FleetCanvas({
           )}
         </div>
         {/* In the surface's corners, below the canvas: nothing on the map can end up under them. */}
-        <div className="flex items-end justify-between gap-3 px-2 pb-2">
+        <div className="flex items-center justify-between gap-3 px-2 pt-1 pb-2">
           <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
           <div className="flex shrink-0 items-center gap-2">
             <FleetAttention graph={graph} />
@@ -1144,7 +1144,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pb-1 text-caption whitespace-nowrap text-muted-foreground"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-caption whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}

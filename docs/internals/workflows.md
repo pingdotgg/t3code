@@ -1,0 +1,178 @@
+# Workflows
+
+A workflow run is a journaled function: a step's result is stored once it succeeds, a restart
+replays the run to where it was, and a run sleeps on a wait until something outside signals it. A
+step's body can run more than once, after a failure it retries or a crash mid-step, so what it does
+outside the run must be safe to repeat. The code is in
+[`apps/server/src/workflows`](../../apps/server/src/workflows). This page holds what is not
+obvious from it.
+
+## Why it is shaped this way
+
+**The engine is Effect's, in the server's database.** `effect/workflow` on one runner journals
+runs in tables it creates itself. Runs, steps, waits and kept signals are rows of ours beside them,
+not orchestration events: the event store knows projects and threads, a run is neither, and its
+journal is the engine's to read. Clients follow runs the way they follow scheduled tasks, by a
+list that is sent again when something changes.
+
+**Off until turned on, then until something is defined.** Workflows are a Labs setting,
+`workflowsEnabled`, and the runtime's lifetime follows it: while it is off no file is loaded, no
+engine runs, and every request is refused with how to turn it on; turning it off closes the
+runtime the way a restart does, so runs wait in the database for it to come back. Once on, the
+server registers what the files in the home's `workflows` folder define. While they define
+nothing and no runs are kept, the `Workflows` service is the disabled one and the engine's modules
+are never imported ([`WorkflowRuntime.ts`](../../apps/server/src/workflows/WorkflowRuntime.ts)).
+Keep it that way: anything a light module imports from `effect/workflow` or `effect/cluster` is
+paid for by every server and CLI start.
+
+**A step failure pauses the run.** The alternative, ending the run, loses everything done so far to
+a dependency that is back in a minute. Resuming runs the failed step again and nothing before it.
+Effect's engine suspends the body when a step fails, so no handler in the body ever sees the
+error: the primitives type their error as `never`, and `step.try` and `agent.try` return a failure
+as data instead. A step runs once unless it asks for retries, since a lost reply to a post or a
+merge would otherwise do it again. A run paused by an agent that gave up waits for a person rather
+than `resumeAfter`: resuming starts the agent's whole job again. `stop` is the workflow's own
+decision to end, and is not a failure.
+
+**An agent step is a thread.** It completes when the agent submits a result the server checked
+against the step's schema, not when a turn ends, and a person can open the thread and talk to it.
+See [typed results](../orchestration-v2/orchestrator-mcp-server.md#t3_submit_output).
+
+**A run stays where it started; its agents need not.** An agent step that names a linked
+environment runs its thread there through that environment's own thread tools, with the step's key
+as the request id, so a replay finds the thread it already started. The run is no agent and has no
+modes to pass on, so the link's access is the only ceiling on what it starts there. Making and
+linking machines is the workflow author's own code in a `step`; nothing here knows how.
+
+**An agent step's thread says which run it belongs to.** The thread is created with the run, the
+workflow and the step it is, and its lineage marks it as a workflow step, so the default lists
+of threads leave it out the way they leave out subagents (a list that asks for subagents gets
+them too): a run can have dozens, and they are read
+through the run. Only the server may set this, as with a link's origin; over a link the launch
+tool carries it and it is kept only for a link session.
+
+**An invoked run is a run of its own.** `invoke` starts it from a step with this run as its
+parent and then waits like any `wait`; the engine signals that wait when the child ends, however
+it ends, so a child that finished before the parent got to its wait is not missed. A key names
+one run with one parent, so invoking under a key something else started is refused instead of
+waiting for a signal that would never come.
+
+**The store is for inside a step.** Its values change between replays, so the body must not read
+it; `step` and `onEnd` hand their code the store, a way to signal, and a way to start, find and
+cancel runs, and nothing else may use them. A step's signals are numbered from the step's name
+and where each goes, so a retried step that sends the same signal again sends no new one, and
+one that sends somewhere new is not taken for what an earlier try sent.
+
+**A run keeps what it touched.** A reference is a `kind`, a `key` naming the thing within its
+kind, and an `address` that only that kind's client reads, so a new kind is a new caller of
+[`noteReference`](../../apps/server/src/workflows/runReferences.ts) and nothing more. It is called
+from inside a step: by the forge helpers, by an agent step's thread for its `issue` and the pull
+requests linked to it while the step ran, and by the engine's look at a pull request a wait is
+on. An issue or pull request trigger notes its item with no step. There is one row per run, kind
+and key, so a retry or replay that touches the same thing adds nothing. It is only for a person
+to read: a failure to keep it is logged and never fails a step. Only a run's detail carries
+references, not the list that is sent again on every change.
+
+**A thread owes its result across turns.** An agent that waits for something ends its turn and is
+woken later, in a turn nobody asked a result of. A submission from such a turn goes to the newest
+turn that was asked and has not answered, so the result lands on the turn the step started, and a
+wait with `untilOutput` holds past that turn's end for it. The `quiet` option of an agent step is
+that wait with a limit: quiet is counted from the thread's last turn, and when it passes the
+step asks for the result as it would have at once without the option.
+
+**A failed agent is an answer only when the workflow asks for that.** `agent.try` journals the same
+turns as `agent` and differs at the end: it marks the step failed and returns, where `agent`
+fails the step and pauses the run. A start that failed is journaled as a turn without ids, so a
+replay does not try the start again.
+
+**`onEnd` gets the payload and the run's id, not the body's values.** A cancelled run's body is
+gone, so its cleanup runs outside the engine and has only what the run was started with. Inside
+the engine `onEnd` is an ordinary last step.
+
+**Definitions reload by replacing the engine.** The engine is built from a fixed set of
+definitions, so a changed folder closes it and builds a new one on the same database, which is
+what a restart does; runs come through it as they come through a restart. The service the rest
+of the server holds forwards to whichever engine is current, and callers during the swap wait
+for the new one. With nothing defined but runs kept, an engine with nothing registered and no
+cluster runner serves their history.
+
+**Each file keeps its last good version.** A file that stops loading does not take its workflows
+down, and does not hold back the other files. A change that fails a check across files, a
+workflow defined twice or a version dropped under unfinished runs, is held back the same way:
+the changed file keeps its last good version (a new one stays out, and of two new files the
+first by name wins), and the rest of the change is taken. A held change is tried again on every
+reload, since the runs that held it may have ended.
+
+**The API is globals, so files load one at a time.** `T3.workflow` registers with the load in
+progress, and the globals are the process's. A file is loaded under a new address each time,
+because Node keeps a module by its address; modules a file imports keep theirs, so they are not
+reloaded, and a workflow one of them defines registers only the first time. That is why shared
+code belongs in a subfolder and definitions in the files themselves. Saving from a client
+verifies a copy beside the real file first, so its imports resolve the same way.
+
+## Traps
+
+**A workflow body is replayed.** After a restart or a wait, the body runs again from the top and
+each journaled action returns what it stored. Anything that touches the world goes through
+a durable activity: `journaled` for `step` and `agent`, and a pair of open and close activities
+around a `DurableDeferred` for `wait`, so a fix to one is not a fix to the other. Code between steps must give the same
+answer on every pass: no clock, no randomness, no reads.
+
+**Names are the journal's keys.** A step's result and its row in the step list are both kept by
+name, so two steps with one name would share a result. `claim` rejects that, across kinds. A change
+to the order of steps, or to the shape a step returns, is a new `version` of the workflow; keep the
+old one registered until its runs have ended. A run whose version is gone shows as `retired`.
+
+**The engine reads integers as BigInt, and nothing else may.** It stores 64-bit ids, which
+`node:sqlite` only reads when asked for BigInts, so the engine's fibers and every call into it run
+with `SqlClient.SafeIntegers` on. That setting is inherited by whatever those fibers call.
+`journaled` turns it off again around a step's own code, and the sweep turns it off around the
+turn stops and the `onEnd` it runs for a cancelled run; without that, a step that reads a project
+gets rows it cannot decode.
+
+**The pause is recorded in two places, a moment apart.** A failing step marks its run paused from
+inside the engine, just before the engine records the failure. `resume` waits for the engine's
+record, or it would resume a run the engine does not yet consider stopped and do nothing. The sweep
+puts back a run that still says it goes on while the engine holds it as failed, held for a person if
+it was, and leaves alone one a resume is under way for.
+
+**A paused run is not woken.** The engine replays a run for any wake, and the replay runs the failed
+step again as a resume would, though nobody resumed it. A signal, timeout or child's end for a
+paused run's other wait is only claimed; the resume sends the wakes its run has claimed.
+
+**A step in flight cannot be interrupted.** The engine runs a step's body to its end. `cancel`
+therefore ends the run's row first, so nothing the step still does is recorded as the outcome, and
+stops the step's own turn, which is what makes a long agent step return. Only that turn: someone
+else's turn on the same thread is left alone. The cancelled run's `onEnd` waits for the steps still
+running in this process, or a cleanup would take away what a step is still making. A version stays
+required while a cancelled run's cleanup still has tries left, since only that version can run it;
+one that has used them up stays failed on the run for a person to see.
+
+**A key is one run whatever the version.** The engine's own run id hashes `name@version` with the
+key, so after a version bump the same key would be a new run: a trigger that sees its newest issue
+again, or a webhook retry, would start the work twice. The key is unique per workflow, so the row
+that takes it is the run; a start that finds a row the engine never got executes it.
+
+**An ended run's journal is deleted.** The engine keeps every request and reply of a run, which
+grew one large deployment's database by gigabytes in two weeks, so the sweep clears a run's engine
+messages (its sleeps included) an hour after it ends with no step still going. Our rows stay, and
+they are all that shows a run. Nothing may hand an ended run to the engine again: with no journal
+it would run the body from the start, so a start for an ended run's key returns that run as it is.
+
+**One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
+same channel is for the next run that waits on that channel, and is kept until one does or its `ttl` runs
+out (seven days by default), after which it is gone. A signal's id is remembered for seven days
+once delivered, or until its `ttl` if that is later, so a sender's retry within that time is not a
+second signal.
+
+**A wait checks a signal twice.** The engine checks a value against the wait's JSON Schema before
+it wakes the wait, but only the run has the wait's codec, and a codec can refuse what its JSON
+Schema allows (a number read from text). A value the codec refuses was not for the wait: the wait
+opens again under a fresh wake and says why, rather than failing on every replay. Kept mail on a
+channel that a wait cannot read is left for another wait there; mail addressed to that wait is
+dropped.
+
+**`signalAll` keeps nothing.** It wakes the waits open on a channel now and is not kept for one that
+opens later: a kept broadcast would wake whichever single run waited next, days on. A run that
+holds for a condition therefore reads the condition in a step and waits with a timeout, so one
+that began to wait just after the broadcast looks again.

@@ -1425,16 +1425,14 @@ export function appendComposerDraftText(draftKey: string, value: string): void {
   });
 }
 
-// Pasted images all share one name, so an image's inline bytes decide whether it is a repeat.
+// Pasted images all share one name, so an image's bytes decide whether it is a repeat.
 function isSameAttachment(a: DraftComposerAttachment, b: DraftComposerAttachment): boolean {
-  return (
-    a.mimeType === b.mimeType &&
-    a.sizeBytes === b.sizeBytes &&
-    a.name === b.name &&
-    (a.type !== "image" ||
-      b.type !== "image" ||
-      (a.dataUrl === b.dataUrl && a.fileUri === b.fileUri))
-  );
+  if (a.mimeType !== b.mimeType || a.sizeBytes !== b.sizeBytes || a.name !== b.name) return false;
+  if (a.type !== "image" || b.type !== "image") return true;
+  if (a.contentDigest !== undefined && b.contentDigest !== undefined) {
+    return a.contentDigest === b.contentDigest;
+  }
+  return a.dataUrl === b.dataUrl && a.fileUri === b.fileUri;
 }
 
 /**

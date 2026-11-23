@@ -19,7 +19,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import { useChatCanvas } from "../chat/ChatCanvasContext";
 import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
-import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { BrowserSurfaceSlot, browserSurfaceFocusReplayTarget } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
   useActiveBrowserRecordingTabIds,
@@ -41,6 +41,7 @@ import {
   useServerPictureInPictureKey,
 } from "~/browser/serverPictureInPicture";
 import { Button } from "~/components/ui/button";
+import { StatusDot } from "~/components/ui/status-dot";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -322,6 +323,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
               layoutVersion={`${frame.x}:${frame.y}`}
               className="absolute inset-0"
               aboveWebview={chrome}
+              aboveWebviewLabel={gt("Floating browser preview")}
             />
             {loadFailed ? (
               <div className="pointer-events-auto absolute inset-0 z-[48] overflow-hidden rounded-[inherit]">
@@ -445,7 +447,8 @@ function MiniPlayerShell({
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && handleRef.current?.contains(event.target)) return;
+      const origin = browserSurfaceFocusReplayTarget(event) ?? event.target;
+      if (origin instanceof Node && handleRef.current?.contains(origin)) return;
       setPillOpen(false);
     };
     document.addEventListener("pointerdown", dismiss, true);
@@ -602,7 +605,7 @@ function MiniPlayerShell({
         <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-control surface-popover p-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
           {recording ? (
             <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
-              <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
+              <StatusDot size="md" tone="danger" pulse />
             </span>
           ) : null}
           <Tooltip>

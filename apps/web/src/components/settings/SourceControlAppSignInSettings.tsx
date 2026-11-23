@@ -21,6 +21,7 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { StatusDot } from "../ui/status-dot";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 
 type SignInState =
@@ -257,7 +258,7 @@ export function SourceControlAppSignInSettings({
               <ExternalLinkIcon aria-hidden className="size-3.5" />
             </Button>
             <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
-              <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+              <StatusDot tone="warning" />
               <span className="grid gap-1">
                 <span>
                   <T>Waiting for approval</T>

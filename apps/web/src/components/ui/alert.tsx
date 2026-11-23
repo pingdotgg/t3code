@@ -6,24 +6,46 @@ import { cn } from "~/lib/utils";
 
 // Status alerts are the tint recipe: the tone's hue as a faint gradient fill
 // and rim, with the icon in the tone and the text in the normal tiers.
-const alertVariants = cva("relative rounded-lg px-3.5 py-3 text-body text-foreground", {
+const alertVariants = cva("relative text-foreground", {
+  compoundVariants: [
+    {
+      className: "surface-tint",
+      density: "default",
+      variant: ["default", "error", "info", "warning"],
+    },
+    {
+      className: "surface-tint-fill",
+      density: "strip",
+      variant: ["default", "error", "info", "warning"],
+    },
+  ],
   defaultVariants: {
+    density: "default",
+    edge: "none",
     variant: "default",
   },
   variants: {
+    density: {
+      default: "rounded-lg px-3.5 py-3 text-body",
+      strip: "rounded-none px-3 py-2 text-meta",
+    },
+    edge: {
+      none: "",
+      top: "border-t border-divider",
+      bottom: "border-b border-divider",
+    },
     variant: {
-      default:
-        "surface-tint [--surface-tint:var(--muted-foreground)] [&_svg]:text-muted-foreground",
+      default: "[--surface-tint:var(--muted-foreground)] [&_svg]:text-muted-foreground",
       sidebar:
         "rounded-lg border border-sidebar-border bg-sidebar-control-surface px-2 py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
       // Bare sidebar text, for transient confirmations that should not read as a card.
       "sidebar-plain":
         "px-(--sidebar-row-content-inset) py-1.5 text-[11px] leading-4 [&_[data-slot=alert-description]]:block [&_[data-slot=alert-description]]:text-sidebar-muted-foreground",
       error:
-        "surface-tint [--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] [&_svg]:text-error-foreground",
-      info: "surface-tint [--surface-tint:var(--info)] [--surface-tint-fill:var(--info-alert-fill)] [--surface-tint-rim:var(--info-alert-rim)] [&_svg]:text-info-foreground",
+        "[--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] [&_svg]:text-error-foreground",
+      info: "[--surface-tint:var(--info)] [--surface-tint-fill:var(--info-alert-fill)] [--surface-tint-rim:var(--info-alert-rim)] [&_svg]:text-info-foreground",
       warning:
-        "surface-tint [--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] [&_svg]:text-warning-foreground",
+        "[--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] [&_svg]:text-warning-foreground",
     },
   },
 });
@@ -50,6 +72,8 @@ function alertChildSlot(child: React.ReactElement): string | undefined {
 function Alert({
   className,
   variant,
+  density,
+  edge,
   controlAlignment = "center",
   children,
   ...props
@@ -78,7 +102,8 @@ function Alert({
 
   return (
     <div
-      className={cn(alertVariants({ variant }), className)}
+      className={cn(alertVariants({ variant, density, edge }), className)}
+      data-density={density ?? "default"}
       data-slot="alert"
       data-variant={variant ?? "default"}
       role="alert"

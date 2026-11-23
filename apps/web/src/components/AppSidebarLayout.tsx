@@ -237,14 +237,19 @@ function registerPullRequestsEscapeCommand(router: AnyRouter): () => void {
         if (consumed || event.repeat || event.isComposing || event.key !== "Escape") return;
         const page = router.state.location.pathname;
         if (
-          (page !== "/pull-requests" && page !== "/issues") ||
+          (page !== "/pull-requests" && page !== "/issues" && page !== "/workflows") ||
           isCommandPaletteOpen() ||
           isModalDialogOpen() ||
           isLayoutDragActive()
         )
           return;
         const focusedKind = selectFocusedTab(useLayoutStore.getState().layout)?.content.kind;
-        if (focusedKind !== "pull-requests" && focusedKind !== "issues") return;
+        if (
+          focusedKind !== "pull-requests" &&
+          focusedKind !== "issues" &&
+          focusedKind !== "workflows"
+        )
+          return;
         event.preventDefault();
         const activeElement = document.activeElement;
         if (activeElement instanceof HTMLElement) activeElement.blur();

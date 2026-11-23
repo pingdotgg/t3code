@@ -23,6 +23,12 @@ const IssuesPage = lazy(() =>
   })),
 );
 
+const WorkflowsPage = lazy(() =>
+  import("../components/workflows/WorkflowsPage").then((module) => ({
+    default: module.WorkflowsPage,
+  })),
+);
+
 export function LayoutPageBody({ content }: { content: LayoutPageContent }) {
   const location = parseLayoutPageLocation(content);
   const navigate = useNavigate();
@@ -40,6 +46,8 @@ export function LayoutPageBody({ content }: { content: LayoutPageContent }) {
           <PullRequestsPage />
         ) : content.kind === "issues" ? (
           <IssuesPage />
+        ) : content.kind === "workflows" ? (
+          <WorkflowsPage />
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center">
             <Button

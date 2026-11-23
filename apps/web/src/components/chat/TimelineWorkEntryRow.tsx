@@ -2,9 +2,13 @@ import {
   thoughtPreviewMarkdown,
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
-import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import {
+  TimelineAnsweredApprovalRow,
+  TimelinePendingApprovalRow,
+} from "./TimelinePendingApprovalRow";
 import { MESSAGE_HEADING_LEVEL } from "./TimelineRowParts";
 import {
+  TimelineApprovalCtx,
   TimelineRowActivityCtx,
   TimelineRowCtx,
   type TimelineWorkEntry,
@@ -248,6 +252,20 @@ export const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEn
   );
 });
 
+export function ApprovalWorkEntryRow({
+  item,
+}: {
+  item: Extract<
+    NonNullable<TimelineWorkEntry["projectedItem"]>["item"],
+    { type: "approval_request" }
+  >;
+}) {
+  const { pendingApprovals } = use(TimelineApprovalCtx);
+  const pendingApproval = pendingApprovals.get(item.requestId);
+  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  return <TimelineAnsweredApprovalRow item={item} />;
+}
+
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const {
     workEntry,
@@ -304,11 +322,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     setExpanded(next);
   };
   const failureItem = workEntry.projectedItem?.item;
-  const pendingApproval =
-    failureItem?.type === "approval_request"
-      ? ctx.pendingApprovals.get(failureItem.requestId)
-      : undefined;
-  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  if (failureItem?.type === "approval_request") {
+    return <ApprovalWorkEntryRow item={failureItem} />;
+  }
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
     const resetAt = failureItem.failure.resetAt;
