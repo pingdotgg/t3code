@@ -313,6 +313,22 @@ const layerTest = ProviderHostLive.layer.pipe(
 
 it.layer(layerTest)("AntigravityDriver", (it) => {
   it.effect.skipIf(windowsHost)(
+    "preserves the current model thinking level while refreshing the catalog",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness({
+          environment: [{ name: "T3_ACP_ANTIGRAVITY_RESET_THINKING", value: "1" }],
+        });
+        yield* h.refresh();
+        const snapshot = yield* h.instance.snapshot.getSnapshot;
+        expect(
+          snapshot.models.find((model) => model.slug === "gemini-test-low")?.capabilities
+            ?.optionDescriptors?.[0],
+        ).toMatchObject({ currentValue: "high" });
+        yield* h.assertClosed;
+      }),
+  );
+  it.effect.skipIf(windowsHost)(
     "refreshes the selected executable and limits form capabilities to chat",
     () =>
       Effect.gen(function* () {
