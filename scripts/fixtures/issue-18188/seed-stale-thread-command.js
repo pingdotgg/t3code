@@ -5,7 +5,7 @@
  */
 globalThis.seedStaleThreadCommand = async function ({ environmentId, threadId, itemId }) {
   const response = await fetch(`/api/orchestration/threads/${threadId}`, {
-    headers: { "x-t3-orchestration-protocol": "2" },
+    headers: { "x-t3-orchestration-protocol": "3" },
   });
   if (!response.ok) throw new Error(`Thread fetch failed: ${response.status}`);
   const full = await response.json();

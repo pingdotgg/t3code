@@ -4,6 +4,7 @@ import {
   authScopeResponse,
   AuthAdministrativeClientScopes,
   connectDeviceVerificationCode,
+  ORCHESTRATION_PROTOCOL_VERSION,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -1032,7 +1033,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           serverAuth.authenticateWebSocketUpgrade(
             {
               method: "GET",
-              url: `/ws?orchestrationProtocol=2&wsTicket=${ticket}${proof ? `&dpop=${proof}` : ""}`,
+              url: `/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${ticket}${proof ? `&dpop=${proof}` : ""}`,
               cookies: {},
               headers: { host },
             } as never,

@@ -2,6 +2,7 @@ import { msg } from "gt-i18n";
 import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
+  ORCHESTRATION_PROTOCOL_QUERY_PARAM,
   type EnvironmentId,
   type ExecutionEnvironmentDescriptor,
   type ServerSelfUpdateInput,
@@ -32,6 +33,7 @@ import {
 import * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import * as ConnectionResolver from "./resolver.ts";
 import * as EnvironmentRegistry from "./registry.ts";
+import { orchestrationProtocolCompatibilityError } from "./compatibility.ts";
 import {
   connectionRoutes,
   hasRelayRoute,
@@ -75,9 +77,8 @@ export const describeOutdatedHost = (environmentId: EnvironmentId) =>
   reachOutdatedHost(environmentId).pipe(Effect.map(({ descriptor }) => descriptor));
 
 /**
- * The normal session refuses to open against such a host, so this opens a bare
- * socket and calls only the self-update RPCs, whose wire shape has not changed
- * across protocol versions.
+ * The normal session refuses to open against such a host, so this uses the
+ * host's advertised protocol for self-update RPCs, whose wire shape is stable.
  */
 export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutdatedHost")(
   function* (
@@ -107,6 +108,14 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
       return { targetVersion: descriptor.serverVersion };
     }
 
+    const compatibilityError = orchestrationProtocolCompatibilityError(descriptor);
+    if (
+      compatibilityError !== null &&
+      (descriptor.orchestrationProtocolVersion ?? 1) > ORCHESTRATION_PROTOCOL_VERSION
+    ) {
+      return yield* compatibilityError;
+    }
+
     const capabilities = descriptor.capabilities;
     if (
       capabilities.serverSelfUpdate === undefined ||
@@ -125,6 +134,13 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
 
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
+        const socketUrl = new URL(prepared.socketUrl);
+        if (descriptor.orchestrationProtocolVersion !== undefined) {
+          socketUrl.searchParams.set(
+            ORCHESTRATION_PROTOCOL_QUERY_PARAM,
+            String(descriptor.orchestrationProtocolVersion),
+          );
+        }
         const protocolContext = yield* Layer.build(
           Layer.effect(
             RpcClient.Protocol,
@@ -136,7 +152,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           ).pipe(
             Layer.provide(
               Layer.mergeAll(
-                Socket.layerWebSocket(prepared.socketUrl, {
+                Socket.layerWebSocket(socketUrl.toString(), {
                   openTimeout: SOCKET_OPEN_TIMEOUT,
                 }).pipe(
                   Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)),
