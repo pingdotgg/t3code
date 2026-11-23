@@ -567,6 +567,24 @@ Third}`;
     expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
   });
 
+  it("preserves ODT table colspan and rowspan on merged cells", async () => {
+    const archive = new JSZip().file(
+      "content.xml",
+      '<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"><office:body><office:text><table:table><table:table-column table:number-columns-repeated="3"/>' +
+        '<table:table-row><table:table-cell table:number-columns-spanned="2"><text:p>Quarter</text:p></table:table-cell><table:covered-table-cell/><table:table-cell><text:p>Lead</text:p></table:table-cell></table:table-row>' +
+        '<table:table-row><table:table-cell table:number-rows-spanned="2"><text:p>North</text:p></table:table-cell><table:table-cell><text:p>Q1</text:p></table:table-cell><table:table-cell><text:p>Lead A</text:p></table:table-cell></table:table-row>' +
+        "<table:table-row><table:covered-table-cell><text:p>Hidden</text:p></table:covered-table-cell><table:table-cell><text:p>Q2</text:p></table:table-cell><table:table-cell><text:p>Lead B</text:p></table:table-cell></table:table-row>" +
+        '<table:table-row><table:table-cell table:number-columns-spanned="9999" table:number-rows-spanned="0"><text:p>Total</text:p></table:table-cell><table:table-cell table:number-columns-spanned="Infinity" table:number-rows-spanned="50.5"/></table:table-row>' +
+        '<table:table-row table:number-rows-repeated="2"><table:table-cell table:number-columns-spanned="2" table:number-rows-spanned="2"><table:table><table:table-row><table:table-cell table:number-rows-spanned="2"/></table:table-row></table:table></table:table-cell><table:table-cell table:number-columns-repeated="2" table:number-columns-spanned="2"/></table:table-row>' +
+        "</table:table></office:text></office:body></office:document-content>",
+    );
+    const result = await openDocument(archive, "odt");
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages[0]!.html).toBe(
+      `<table><tr><td colspan="2"><p>Quarter</p></td><td><p>Lead</p></td></tr><tr><td rowspan="2"><p>North</p></td><td><p>Q1</p></td><td><p>Lead A</p></td></tr><tr><td><p>Q2</p></td><td><p>Lead B</p></td></tr><tr><td colspan="50"><p>Total</p></td><td></td></tr>${'<tr><td colspan="2"><table><tr><td rowspan="2"></td></tr></table></td><td></td><td></td></tr>'.repeat(2)}</table>`,
+    );
+  });
+
   // LibreOffice writes every index as the templates it was built from, then the built index.
   const indexes = [
     "table-of-content",
