@@ -941,8 +941,8 @@ const focusTextTarget = (target: FocusCandidate | null) => {
   return active != null && (active === element || element.contains(active));
 };
 
-// A `*:focus` locator needs Playwright's utility world, which some desktop tabs never get.
-const focusedTextField = async (page: Page, timeout: number) => {
+// Playwright's own timeout covers finding the element, not a page that stops answering the evaluation.
+const pageAnswer = async <A>(answer: Promise<A>, timeout: number) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -950,16 +950,14 @@ const focusedTextField = async (page: Page, timeout: number) => {
         reject(
           new ServerBrowserOperationError({
             tag: "PreviewAutomationTimeoutError",
-            message: `The page did not report its focused element within ${timeout}ms, so no text was typed.`,
+            message: `The page did not answer within ${timeout}ms, so no text was typed.`,
             detail: { timeoutMs: timeout },
           }),
         ),
       timeout,
     );
   });
-  return await Promise.race([page.evaluate(focusTextTarget, null), expired]).finally(() =>
-    clearTimeout(timer),
-  );
+  return await Promise.race([answer, expired]).finally(() => clearTimeout(timer));
 };
 
 // Serialized into the page's main world, so it must not reference module scope.
@@ -1008,7 +1006,8 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
     // Pickers and sliders take a value such as 2026-01-31 only from fill, and some reject an empty one.
-    if (await locator.evaluate(valueOnlyInput, undefined, { timeout: remaining() })) {
+    const timeout = remaining();
+    if (await pageAnswer(locator.evaluate(valueOnlyInput, undefined, { timeout }), timeout)) {
       await locator.fill(input.text, { timeout: remaining() });
       return;
     }
@@ -1019,7 +1018,8 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   }
   const focused =
     locator === null
-      ? await focusedTextField(page, remaining())
+      ? // A `*:focus` locator needs Playwright's utility world, which some desktop tabs never get.
+        await pageAnswer(page.evaluate(focusTextTarget, null), remaining())
       : await locator.evaluate(focusTextTarget, undefined, { timeout: remaining() });
   if (focused !== true) {
     throw new ServerBrowserOperationError({

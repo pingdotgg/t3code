@@ -1040,6 +1040,30 @@ describe("server browser type", () => {
         detail: { timeoutMs: 300 },
       });
       expect(typed).toEqual([]);
+
+      // A target whose element is found but whose page then stops answering.
+      const fill = vi.fn(async () => {});
+      const hung = {
+        locator: () => ({ evaluate: () => new Promise(() => {}), fill }),
+        keyboard: { type: async (text: string) => void typed.push(text) },
+      } as unknown as Page;
+      void ServerBrowserPage.type(hung, {
+        locator: "#field",
+        text: "hello",
+        clear: true,
+        timeoutMs: 300,
+      }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      outcome = "pending";
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(fill).not.toHaveBeenCalled();
+      expect(typed).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
