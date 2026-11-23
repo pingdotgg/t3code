@@ -23,6 +23,24 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
 
 // A tag name, not an autolink such as <https://example.com>.
 const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)/;
+const closesAtBlankLine = (next: string) => next.trim() === "";
+
+// A <details> or <table> wraps the Markdown between its tags, across the blank lines that end
+// each HTML block, so a cut waits until the ones an HTML block opened are closed.
+const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
+const HTML_COMMENT = /<!--.*?-->/g;
+// A wrapper whose end tag never comes must not hold the rest of a large file in one piece.
+const WRAPPED_MAX_CHARS = 32 * 1024;
+// After a blank line, an HTML block can start a piece as a paragraph can.
+const HTML_OPEN = /^<[A-Za-z]/;
+
+function openedWrappers(line: string): number {
+  let opened = 0;
+  for (const [, closing] of line.replaceAll(HTML_COMMENT, "").matchAll(WRAPPER_TAG)) {
+    opened += closing ? -1 : 1;
+  }
+  return opened;
+}
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
@@ -44,7 +62,7 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
   // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
-  return HTML_BLOCK_START.test(line) ? (next) => next.trim() === "" : null;
+  return HTML_BLOCK_START.test(line) ? closesAtBlankLine : null;
 }
 
 export interface MarkdownChunk {
@@ -86,6 +104,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterDefinition = false;
   let afterHeading = false;
   let definitionChars = 0;
+  let openWrappers = 0;
+  let wrapperStart = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
@@ -98,10 +118,14 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       let seen = 0;
       closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
     } else {
+      if (chars - wrapperStart >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cut =
         chars >= targetChars &&
+        openWrappers === 0 &&
         (ATX_HEADING.test(line) ||
-          (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
+          (afterBlankLine &&
+            (BLOCK_START.test(line) || HTML_OPEN.test(line)) &&
+            !ORDERED_ITEM.test(line)));
       if (cut) flush();
       closes = blockCloser(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
@@ -113,6 +137,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         definitions.push(line.trim());
         definitionChars += line.length + 1;
       }
+    }
+    if (closes === closesAtBlankLine) {
+      if (openWrappers === 0) wrapperStart = chars;
+      openWrappers = Math.max(0, openWrappers + openedWrappers(line));
     }
     first = false;
     lines.push(line);
