@@ -834,7 +834,7 @@ it.effect(
       for (const name of ["link_pull_request", "pull_request_read"]) {
         const tool = server.tools.find(({ tool }) => tool.name === name)?.tool;
         expect(tool?.inputSchema.properties?.repository, name).toMatchObject({
-          description: expect.stringContaining("Without the host"),
+          description: expect.stringContaining("without the host"),
         });
       }
 

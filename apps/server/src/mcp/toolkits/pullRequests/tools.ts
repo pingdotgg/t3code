@@ -70,7 +70,7 @@ export const PullRequestTargetInput = Schema.Struct({
   repository: Schema.optional(
     TrimmedNonEmptyString.pipe(
       Schema.annotateEncoded({
-        description: "With `number`, when no `url`. Without the host, e.g. `owner/repo`.",
+        description: "With `number`, when no `url`. `owner/repo`, without the host.",
       }),
     ),
   ),
@@ -505,7 +505,7 @@ export const ThreadPullRequestInput = Schema.Struct({
   repository: Schema.optional(
     TrimmedNonEmptyString.pipe(
       Schema.annotateEncoded({
-        description: "Default: this thread's repository. Without the host, e.g. `owner/repo`.",
+        description: "`owner/repo`, without the host.",
       }),
     ),
   ),
