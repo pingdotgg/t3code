@@ -55,6 +55,7 @@ import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
+import * as McpWebhookTransport from "./McpWebhookTransport.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
@@ -1499,8 +1500,44 @@ export const layerToolSearch = Layer.mergeAll(
 ).pipe(Layer.provide(layerToolExposure));
 
 /**
- * Milestones as MCP events (SEP-3415) for outside clients to poll or stream. Protocol-level, so no
- * thread lists them.
+ * A webhook subscription belongs to the outside client's session. Its id is the same for the
+ * session's whole life, and a client signs in again rather than refreshing a token, so a new
+ * sign-in is a new principal whose subscriptions the old session's end does not touch.
+ */
+const webhookPrincipal = Effect.serviceOption(McpInvocationContext.McpInvocationContext).pipe(
+  Effect.flatMap((scope) => {
+    const client = Option.getOrUndefined(scope)?.client;
+    return client === undefined
+      ? Effect.fail(
+          new McpSchema.Forbidden({
+            message: "Webhook delivery needs an outside client's sign-in",
+          }),
+        )
+      : Effect.succeed(client.sessionId);
+  }),
+);
+
+/** Webhooks reach public addresses only, through a client pinned to the address it checked. */
+const layerWebhookTransport = Layer.unwrap(
+  Effect.gen(function* () {
+    const transport = McpWebhookTransport.make(yield* McpWebhookTransport.allowedHosts);
+    return Layer.merge(
+      Layer.succeed(McpServer.CallbackGuard, {
+        allowsPlaintext: transport.allowsPlaintext,
+        check: Effect.fn("McpHttpServer.webhookCallbackCheck")(function* (url: URL) {
+          return yield* transport
+            .check(url)
+            .pipe(Effect.mapError((error) => new McpServer.CallbackRejected(error)));
+        }),
+      }),
+      transport.layerClient,
+    );
+  }).pipe(Effect.orDie),
+);
+
+/**
+ * Milestones as MCP events (SEP-3415) for outside clients to poll, stream or receive by webhook.
+ * Protocol-level, so no thread lists them.
  */
 export const layerMilestoneEvents = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -1513,6 +1550,9 @@ export const layerMilestoneEvents = Layer.effectDiscard(
       yield* McpServer.registerEvent({ ...options, annotations });
     }
   }),
+).pipe(
+  Layer.provide(McpServer.layerEventWebhooks({ principal: webhookPrincipal })),
+  Layer.provide(layerWebhookTransport),
 );
 
 export const layer = layerMcpTransport(
