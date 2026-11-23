@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   EventId,
   GuestMessageId,
   GuestShareId,
@@ -106,6 +107,40 @@ it.effect("tells each thread transition once, with its lineage", () =>
     const childThreadId = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!
       .childThreadId!;
     const childRun = (yield* projections.getThreadRecords(childThreadId, ["runs"])).runs[0]!;
+    // A workflow run's agent step, which a filter on its run picks out.
+    const stepThreadId = ThreadId.make("thread:milestone-workflow-step");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-milestone-step"),
+      threadId: stepThreadId,
+      projectId: ProjectId.make("project:milestones"),
+      title: "Triage",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "system",
+      creationSource: "server",
+      workflowRun: {
+        environmentId: EnvironmentId.make("environment:milestones"),
+        runId: "workflow-run:milestones",
+        workflow: "review",
+        step: "triage",
+      },
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-milestone-step"),
+      threadId: stepThreadId,
+      messageId: MessageId.make("message:milestone-step"),
+      text: "Triage the issue",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "system",
+      creationSource: "server",
+    });
+    const stepRun = (yield* projections.getThreadRecords(stepThreadId, ["runs"])).runs[0]!;
     const parent = yield* projections.getThread(parentThreadId);
     const now = yield* DateTime.now;
     const base = (id: string, threadId: ThreadId) => ({
@@ -213,6 +248,7 @@ it.effect("tells each thread transition once, with its lineage", () =>
       shared("event:guest-closed", null),
       wake,
       wake,
+      ended("event:step-done", stepRun, "completed"),
     ]) {
       yield* feeder.handle(event);
     }
@@ -235,7 +271,14 @@ it.effect("tells each thread transition once, with its lineage", () =>
         ["thread.guest_request:guest:two", parentThreadId, null, false],
         ["thread.guest_request_resolved:guest:two", parentThreadId, null, false],
         ["pr.watch_wake:message:pr-wake", parentThreadId, null, false],
+        [`thread.run_settled:${stepRun.id}`, stepThreadId, null, false],
       ],
+    );
+    assert.deepStrictEqual(
+      (yield* hub.recent({ filter: { workflowRunIds: ["workflow-run:milestones"] } })).events.map(
+        (event) => event.threadId,
+      ),
+      [stepThreadId],
     );
     const [, child, asked, answered, , sent, , closed, woke] = events;
     assert.deepInclude(child, { outcome: "failed", projectId: parent.projectId });
