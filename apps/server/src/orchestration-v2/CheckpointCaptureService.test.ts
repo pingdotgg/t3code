@@ -16,6 +16,7 @@ import {
   ProviderThreadId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1169,6 +1170,222 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       assert.equal(runs[0]?.status, "completed");
       const checkpoint = checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId);
       assert.equal(checkpoint?.status, "missing");
+    }),
+  );
+
+  it.effect("does not complete a waiting run whose Stop request has no result yet", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const sideChatThreadId = ThreadId.make("thread:checkpoint-capture-stop-request");
+      const sideChatRunId = RunId.make("run:checkpoint-capture-stop-request");
+      const sideChatScopeId = CheckpointScopeId.make("scope:checkpoint-capture-stop-request");
+      const sideChatRootNodeId = NodeId.make("node:checkpoint-capture-stop-request-root");
+      const sideChatProviderThreadId = ProviderThreadId.make(
+        "provider-thread:checkpoint-capture-stop-request",
+      );
+      const event = { threadId: sideChatThreadId, occurredAt: now };
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:thread"),
+          type: "thread.created",
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: sideChatThreadId,
+            projectId,
+            title: "Side chat",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: "/repo",
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: threadId,
+              relationshipToParent: "fork",
+              rootThreadId: threadId,
+              sideChat: true,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:provider-thread"),
+          type: "provider-thread.updated",
+          driver,
+          providerInstanceId,
+          payload: {
+            id: sideChatProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: sideChatThreadId,
+            ownerNodeId: null,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:run"),
+          type: "run.updated",
+          runId: sideChatRunId,
+          payload: {
+            id: sideChatRunId,
+            threadId: sideChatThreadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: sideChatProviderThreadId,
+            userMessageId: MessageId.make("message:checkpoint-capture-stop-request"),
+            rootNodeId: sideChatRootNodeId,
+            activeAttemptId: null,
+            status: "waiting",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:node"),
+          type: "node.updated",
+          runId: sideChatRunId,
+          nodeId: sideChatRootNodeId,
+          payload: {
+            id: sideChatRootNodeId,
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            parentNodeId: null,
+            rootNodeId: sideChatRootNodeId,
+            kind: "root_turn",
+            status: "waiting",
+            countsForRun: true,
+            providerThreadId: sideChatProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: sideChatScopeId,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:scope"),
+          type: "checkpoint-scope.created",
+          runId: sideChatRunId,
+          nodeId: sideChatRootNodeId,
+          payload: {
+            id: sideChatScopeId,
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            nodeId: sideChatRootNodeId,
+            parentScopeId: null,
+            providerThreadId: sideChatProviderThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo",
+            createdAt: now,
+          },
+        },
+        // Stop committed its request while the provider's completed terminal was finalizing.
+        {
+          ...event,
+          id: EventId.make("event:checkpoint-capture-stop-request:interrupt-request"),
+          type: "turn-item.updated",
+          runId: sideChatRunId,
+          nodeId: sideChatRootNodeId,
+          providerInstanceId,
+          payload: {
+            id: TurnItemId.make("turn-item:checkpoint-capture-stop-request:interrupt-request"),
+            type: "run_interrupt_request",
+            threadId: sideChatThreadId,
+            runId: sideChatRunId,
+            nodeId: sideChatRootNodeId,
+            providerThreadId: sideChatProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: "Interrupt requested",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            message: "Stopped by user",
+          },
+        },
+      ];
+      yield* Effect.forEach(events, (candidate) => projectionStore.apply(candidate));
+      const gitUnavailable = () => Effect.die("side chats must not snapshot the shared worktree");
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            CheckpointService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  IdAllocator.layer,
+                  NodeCrypto.layer,
+                  layerNoTrackedFolders,
+                  Layer.mock(CheckpointStore.CheckpointStore)({
+                    isGitRepository: gitUnavailable,
+                    captureCheckpoint: gitUnavailable,
+                    hasCheckpointRef: gitUnavailable,
+                  }),
+                ),
+              ),
+            ),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (committed) => projectionStore.apply(committed)).pipe(
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.use((service) =>
+        service.execute({
+          threadId: sideChatThreadId,
+          runId: sideChatRunId,
+          scopeId: sideChatScopeId,
+        }),
+      ).pipe(Effect.provide(layerCapture));
+
+      const { checkpoints, runs } = yield* projectionStore.getThreadRecords(sideChatThreadId, [
+        "runs",
+        "checkpoints",
+      ]);
+      assert.equal(runs[0]?.status, "interrupted");
+      assert.notEqual(
+        checkpoints.find((candidate) => candidate.id === runs[0]?.checkpointId),
+        undefined,
+      );
     }),
   );
 
