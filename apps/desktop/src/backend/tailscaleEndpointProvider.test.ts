@@ -71,6 +71,18 @@ describe("tailscale endpoint provider", () => {
         endpoints.map((endpoint) => endpoint.httpBaseUrl),
         ["http://100.81.22.33:3773/"],
       );
+
+      const reused = yield* resolveTailscaleAdvertisedEndpoints({
+        port: 3773,
+        networkInterfaces: {
+          utun100: [{ address: "100.81.22.33", family: "IPv4", internal: false }],
+        },
+        statusJson: `{"BackendState":"Stopped","Self":{"TailscaleIPs":["100.81.22.33"]}}`,
+      });
+      assert.deepEqual(
+        reused.map((endpoint) => endpoint.provider.id),
+        ["vpn"],
+      );
     }).pipe(Effect.provide(layerUnusedTailscaleExternalServices)),
   );
 

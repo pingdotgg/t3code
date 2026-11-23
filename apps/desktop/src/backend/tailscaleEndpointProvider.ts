@@ -62,8 +62,8 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
   // A stopped Tailscale still reports the netmap it had, so its addresses prove nothing.
   const tailnetIpv4Addresses =
     input.status?.running === false ? [] : (input.status?.tailnetIpv4Addresses ?? []);
-  // An unclaimed CGNAT address is offered as a VPN route only where Tailscale is not running,
-  // since the address alone does not show which network it came from.
+  // An unclaimed CGNAT address is offered as a VPN route only when the host shows no Tailscale
+  // identity; the address alone does not show which network it came from.
   const hostRunsTailscale =
     tailnetIpv4Addresses.length > 0 ||
     interfaces.some(
