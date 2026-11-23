@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off globalFetch:off globalDate:off - a standalone benchmark driver around one server process.
+// @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalTimers:off globalFetch:off globalDate:off globalRandom:off - a standalone benchmark driver around one server process.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
@@ -7,43 +7,53 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 const HELP = `Usage:
-  node scripts/server-metrics.ts run [--out <file>] [--mac-path] [--runs <n>] [--only <scenario,...>]
+  node scripts/server-metrics.ts run [--out <file>] [--checkout <dir>] [--repeat <k>] [run options]
+  node scripts/server-metrics.ts ab <checkoutA> <checkoutB> [--rounds <k>] [--out-dir <dir>] [run options]
   node scripts/server-metrics.ts compare <before.json> <after.json> [--threshold <percent>]
 
-run      Starts this checkout's server (apps/server/src/bin.ts) against a temp base dir, a temp
-         HOME, a temp git project and a fake Anthropic Messages API, drives the real \`claude\`
-         CLI through it, and writes one JSON object of measurements. Each scenario gets a fresh
-         server. Takes about 6 minutes.
+run      Starts a checkout's server (default: this one) against a temp base dir, a temp HOME, a
+         temp git project and a fake Anthropic Messages API, drives the real \`claude\` CLI
+         through it, and writes one JSON object of measurements. Each scenario gets a fresh
+         server. A full run takes about 8 minutes. --repeat runs it k times into one file.
+ab       Runs two checkouts alternately (A B, then B A, ... for --rounds, default 3) on this
+         machine, writes a.json and b.json, prints the comparison and exits 1 on a regression.
+         Each checkout needs its dependencies installed; the server code comes from it, the
+         harness from this script, so an old release works too.
 
+Scenarios (--only startup,rest,firstWord,quiet,streaming; soak runs only with --soak):
   startup    spawn to the first HTTP answer, in ms.
-  rest       30 s idle: server CPU %, wakeups/s, RSS peak, heap after a forced GC.
+  rest       30 s idle: server CPU %, wakeups/s, RSS peak and after GC, heap after a forced GC.
   firstWord  --runs (default 5) sequential \`thread start\` runs in the project folder and in a
              new worktree: ms until the fake API receives the agent's request, and until the
              reply finished. Median and p90.
-  quiet      20 Claude threads that answered and stay open, idle 20 s, then a 60 s window.
+  quiet      Claude threads that answered and stay open, measured at --threads (default
+             0,5,10,20) for 30 s each. \`quiet\` is the last point; \`scaling\` is the
+             least-squares cost per open thread (fitted from 1 thread up, since the first loads
+             the provider once): MB of heap and RSS, CPU points, wakeups/s.
   streaming  5 threads streaming a 2,000-word reply at 50 ms a word, 60 s window.
+  soak       --soak <minutes> (alone unless --only names more): 10 threads, a short turn to one of them every 30 s, heap after GC
+             and RSS every 2 minutes; reports MB/hour slopes and writes the constructors whose
+             heap grew most between a snapshot after warmup and one at the end.
+After the quiet and streaming windows a separate 20 s window records a CPU profile and a
+sampling allocation profile; the top functions go in the JSON, the full profiles next to --out.
 
---mac-path  Linux only: starts the server without XDG_RUNTIME_DIR, so it has no agent scope and
-            takes the per-process path macOS always takes (apps/server/src/process/agentScope.ts).
-Wakeups are voluntary plus involuntary context switches of the server's threads (Linux /proc);
-they are null on macOS. Only the server process is measured, not the agent CLIs.
+--no-agent-scope (alias --mac-path), Linux only: starts the server without XDG_RUNTIME_DIR, so
+it has no agent scope and takes the per-process path macOS and Windows always take.
+Wakeups: Linux sums the server's voluntary and involuntary context switches (/proc); macOS
+uses \`top\`'s context-switch count; Windows sums its threads' context switches (CIM).
+Only the server process is measured, not the agent CLIs.
 
-compare  Prints a markdown table of every metric (lower is better) and exits 1 when one got
-         worse by more than --threshold percent (default 10) and by more than its noise floor:
-         1 point of CPU, 20 wakeups/s, 15 MB, 300 ms. With 5 runs a p90 is the
-         slowest run, so read a lone p90 change as noise unless the median moved too.
+compare  Prints a markdown table of every metric (lower is better). With two or more runs on each
+         side a metric is worse only when the 95% bootstrap interval of the median difference
+         lies above both --threshold percent (default 10) and its noise floor: 1 point of CPU,
+         20 wakeups/s, 15 MB, 300 ms, 2 MB per thread, 0.2 CPU points per thread. With one run
+         on a side it compares the two values against the same limits. Exits 1 on a regression.`;
 
-Comparing two refs needs both checkouts, since the server runs each tree's code:
-  node scripts/server-metrics.ts run --out ../main-server.json        # on main
-  node scripts/server-metrics.ts run --out ../branch-server.json      # on the branch
-  node scripts/server-metrics.ts compare ../main-server.json ../branch-server.json`;
-
-const root = NodePath.resolve(import.meta.dirname, "..");
+const harnessRoot = NodePath.resolve(import.meta.dirname, "..");
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node tooling has no Effect runtime.
 const platform = NodeOS.platform();
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone Node tooling has no Effect runtime.
 const architecture = NodeOS.arch();
-const serverDir = NodePath.join(root, "apps/server");
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
 
@@ -51,6 +61,7 @@ interface Window {
   readonly cpuPct: number;
   readonly wakeupsPerSec: number | null;
   readonly rssPeakMB: number;
+  readonly rssMB: number;
   readonly heapAfterGcMB: number;
 }
 interface Spread {
@@ -61,22 +72,63 @@ interface FirstWord {
   readonly toRequestMs: Spread;
   readonly toDoneMs: Spread;
 }
-export interface ServerMetrics {
-  readonly meta: Readonly<Record<string, string | boolean | null>>;
+interface Scaling {
+  readonly heapMBPerThread: number;
+  readonly rssMBPerThread: number;
+  readonly cpuPctPerThread: number;
+  readonly wakeupsPerThread: number | null;
+  /** Each measured point as [threads, cpuPct, wakeupsPerSec, rssMB, heapAfterGcMB]; not compared. */
+  readonly points: ReadonlyArray<ReadonlyArray<number | null>>;
+}
+interface Soak {
+  readonly minutes: number;
+  readonly heapMBPerHour: number;
+  readonly rssMBPerHour: number;
+}
+/** One pass over the scenarios. */
+export interface Measured {
   readonly startup?: { readonly readyMs: number };
   readonly rest?: Window;
   readonly firstWord?: { readonly inPlace: FirstWord; readonly worktree: FirstWord };
   readonly quiet?: Window;
+  readonly scaling?: Scaling;
   readonly streaming?: Window;
+  readonly soak?: Soak;
+}
+interface Hotspot {
+  readonly frame: string;
+  readonly value: number;
+}
+export interface ServerMetrics {
+  readonly meta: Readonly<Record<string, string | number | boolean | null>>;
+  readonly runs: ReadonlyArray<Measured>;
+  /** Top CPU self time (ms) and allocated bytes (MB) by function, from the last run. */
+  readonly profiles?: Readonly<Record<string, { cpuMs: Hotspot[]; allocatedMB: Hotspot[] }>>;
+  readonly soakHeapGrowth?: ReadonlyArray<{ constructor: string; count: number; MB: number }>;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const round = (value: number) => Math.round(value * 10) / 10;
+const round = (value: number, digits = 1) => Math.round(value * 10 ** digits) / 10 ** digits;
 
 function spread(values: ReadonlyArray<number>): Spread {
   const sorted = values.toSorted((a, b) => a - b);
   const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
   return { median: Math.round(at(0.5) ?? 0), p90: Math.round(at(0.9) ?? 0) };
+}
+
+/** Least-squares slope of y over x. */
+export function slope(points: ReadonlyArray<readonly [number, number]>) {
+  const n = points.length;
+  if (n < 2) return 0;
+  const mx = points.reduce((sum, [x]) => sum + x, 0) / n;
+  const my = points.reduce((sum, [, y]) => sum + y, 0) / n;
+  let numerator = 0;
+  let denominator = 0;
+  for (const [x, y] of points) {
+    numerator += (x - mx) * (y - my);
+    denominator += (x - mx) ** 2;
+  }
+  return denominator === 0 ? 0 : numerator / denominator;
 }
 
 interface ApiRequest {
@@ -190,30 +242,30 @@ function freePort() {
   });
 }
 
-const commandOutput = (command: string, args: ReadonlyArray<string>, cwd = root) => {
+const commandOutput = (command: string, args: ReadonlyArray<string>, cwd = harnessRoot) => {
   const result = NodeChildProcess.spawnSync(command, args, { cwd, encoding: "utf8" });
   return result.status === 0 ? result.stdout.trim() : null;
 };
+const powershell = (script: string) =>
+  commandOutput("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
 
-/** CPU seconds, context switches and RSS bytes of one process. */
-function sample(pid: number): { cpuSeconds: number; switches: number | null; rss: number } {
+/** CPU seconds and RSS bytes of one process. */
+function sample(pid: number): { cpuSeconds: number; rss: number } {
   if (platform === "linux") {
     const stat = NodeFS.readFileSync(`/proc/${pid}/stat`, "utf8").split(") ")[1]!.split(" ");
-    const ticks = Number(stat[11]) + Number(stat[12]);
-    let switches = 0;
-    for (const task of NodeFS.readdirSync(`/proc/${pid}/task`)) {
-      try {
-        const status = NodeFS.readFileSync(`/proc/${pid}/task/${task}/status`, "utf8");
-        for (const match of status.matchAll(/ctxt_switches:\s+(\d+)/g))
-          switches += Number(match[1]);
-      } catch {}
-    }
     const status = NodeFS.readFileSync(`/proc/${pid}/status`, "utf8");
     return {
-      cpuSeconds: ticks / 100,
-      switches,
+      cpuSeconds: (Number(stat[11]) + Number(stat[12])) / 100,
       rss: Number(/VmRSS:\s+(\d+)/.exec(status)?.[1] ?? 0) * 1024,
     };
+  }
+  if (platform === "win32") {
+    const [cpu = "0", rss = "0"] = (
+      powershell(
+        `$p = Get-Process -Id ${pid}; "$($p.TotalProcessorTime.TotalSeconds) $($p.WorkingSet64)"`,
+      ) ?? ""
+    ).split(/\s+/);
+    return { cpuSeconds: Number(cpu), rss: Number(rss) };
   }
   const [rss = "0", time = "0:0"] = (
     commandOutput("ps", ["-o", "rss=,time=", "-p", `${pid}`]) ?? ""
@@ -224,7 +276,68 @@ function sample(pid: number): { cpuSeconds: number; switches: number | null; rss
     .split(":")
     .map(Number)
     .reduce((total, part) => total * 60 + part, 0);
-  return { cpuSeconds, switches: null, rss: Number(rss) * 1024 };
+  return { cpuSeconds, rss: Number(rss) * 1024 };
+}
+
+/** Context switches of one process since it started, or null when this platform cannot tell. */
+function contextSwitches(pid: number): number | null {
+  if (platform === "linux") {
+    let switches = 0;
+    for (const task of NodeFS.readdirSync(`/proc/${pid}/task`)) {
+      try {
+        const status = NodeFS.readFileSync(`/proc/${pid}/task/${task}/status`, "utf8");
+        for (const match of status.matchAll(/ctxt_switches:\s+(\d+)/g))
+          switches += Number(match[1]);
+      } catch {}
+    }
+    return switches;
+  }
+  if (platform === "win32") {
+    const total = powershell(
+      `(Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=${pid}" | Measure-Object ContextSwitchesPersec -Sum).Sum`,
+    );
+    return total === null || total === "" ? null : Number(total);
+  }
+  if (platform === "darwin") {
+    const table = commandOutput("top", ["-l", "1", "-pid", `${pid}`, "-stats", "pid,csw"]);
+    const row = table
+      ?.split("\n")
+      .map((line) => line.trim().split(/\s+/))
+      .find(([first]) => first === `${pid}`);
+    const value = Number(row?.[1]?.replace(/\+$/, ""));
+    return Number.isFinite(value) ? value : null;
+  }
+  return null;
+}
+
+/** Every process below `pid`, read once. */
+function descendantsOf(pid: number): number[] {
+  const children = new Map<number, number[]>();
+  const add = (child: number, parent: number) =>
+    children.set(parent, [...(children.get(parent) ?? []), child]);
+  if (platform === "linux") {
+    for (const entry of NodeFS.readdirSync("/proc")) {
+      if (!/^\d+$/.test(entry)) continue;
+      try {
+        const stat = NodeFS.readFileSync(`/proc/${entry}/stat`, "utf8").split(") ")[1]!.split(" ");
+        add(Number(entry), Number(stat[1]));
+      } catch {}
+    }
+  } else if (platform === "darwin") {
+    for (const line of (commandOutput("ps", ["-A", "-o", "pid=,ppid="]) ?? "").split("\n")) {
+      const [child, parent] = line.trim().split(/\s+/).map(Number);
+      if (child && parent) add(child, parent);
+    }
+  } else return [];
+  const found: number[] = [];
+  const pending = [pid];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    for (const child of children.get(next) ?? []) {
+      found.push(child);
+      pending.push(child);
+    }
+  }
+  return found;
 }
 
 /** One Chrome DevTools Protocol session on the server's inspector. */
@@ -236,15 +349,23 @@ async function inspect(webSocketUrl: string) {
   });
   let nextId = 0;
   const pending = new Map<number, (result: unknown) => void>();
+  let chunks: string[] = [];
   socket.addEventListener("message", (event) => {
-    const message = JSON.parse(String(event.data)) as { id?: number; result?: unknown };
+    const message = JSON.parse(String(event.data)) as {
+      id?: number;
+      result?: unknown;
+      method?: string;
+      params?: { chunk?: string };
+    };
     if (message.id !== undefined) pending.get(message.id)?.(message.result);
+    else if (message.method === "HeapProfiler.addHeapSnapshotChunk")
+      chunks.push(message.params?.chunk ?? "");
   });
-  const send = (method: string) =>
+  const send = (method: string, params: object = {}) =>
     new Promise<unknown>((resolve) => {
       const id = ++nextId;
       pending.set(id, resolve);
-      socket.send(JSON.stringify({ id, method }));
+      socket.send(JSON.stringify({ id, method, params }));
     });
   return {
     heapAfterGc: async () => {
@@ -253,14 +374,117 @@ async function inspect(webSocketUrl: string) {
       const { usedSize } = (await send("Runtime.getHeapUsage")) as { usedSize: number };
       return usedSize;
     },
+    profile: async (seconds: number) => {
+      await send("Profiler.enable");
+      await send("Profiler.setSamplingInterval", { interval: 1_000 });
+      await send("Profiler.start");
+      await send("HeapProfiler.startSampling", {
+        samplingInterval: 32_768,
+        includeObjectsCollectedByMajorGC: true,
+        includeObjectsCollectedByMinorGC: true,
+      });
+      await sleep(seconds * 1_000);
+      const { profile: heap } = (await send("HeapProfiler.stopSampling")) as { profile: object };
+      const { profile: cpu } = (await send("Profiler.stop")) as { profile: object };
+      await send("Profiler.disable");
+      return { cpu, heap };
+    },
+    snapshot: async () => {
+      chunks = [];
+      await send("HeapProfiler.takeHeapSnapshot", { reportProgress: false });
+      const json = chunks.join("");
+      chunks = [];
+      return json;
+    },
     close: () => socket.close(),
   };
+}
+
+const shortUrl = (url: string) =>
+  url
+    .replace(/^file:\/\//, "")
+    .split(/[\\/]/)
+    .slice(-3)
+    .join("/");
+
+interface CpuProfile {
+  readonly nodes: ReadonlyArray<{
+    id: number;
+    hitCount?: number;
+    callFrame: { functionName: string; url: string; lineNumber: number };
+  }>;
+  readonly samples?: ReadonlyArray<number>;
+  readonly startTime: number;
+  readonly endTime: number;
+}
+interface HeapProfileNode {
+  readonly callFrame: { functionName: string; url: string; lineNumber: number };
+  readonly selfSize: number;
+  readonly children: ReadonlyArray<HeapProfileNode>;
+}
+
+const frameName = (frame: { functionName: string; url: string; lineNumber: number }) =>
+  `${frame.functionName || "(anonymous)"} ${frame.url ? `${shortUrl(frame.url)}:${frame.lineNumber + 1}` : ""}`.trim();
+
+const top = (totals: Map<string, number>, digits: number): Hotspot[] =>
+  [...totals]
+    .toSorted((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([frame, value]) => ({ frame, value: round(value, digits) }));
+
+/** Top CPU self time in ms and allocated MB, by function. */
+export function summarizeProfiles(cpu: CpuProfile, heap: { head: HeapProfileNode }) {
+  const perSampleMs = (cpu.endTime - cpu.startTime) / 1_000 / Math.max(1, cpu.samples?.length ?? 1);
+  const cpuTotals = new Map<string, number>();
+  for (const node of cpu.nodes) {
+    if (!node.hitCount || node.callFrame.functionName === "(idle)") continue;
+    const name = frameName(node.callFrame);
+    cpuTotals.set(name, (cpuTotals.get(name) ?? 0) + node.hitCount * perSampleMs);
+  }
+  const allocations = new Map<string, number>();
+  const visit = (node: HeapProfileNode) => {
+    const name = frameName(node.callFrame);
+    allocations.set(name, (allocations.get(name) ?? 0) + node.selfSize / 1e6);
+    for (const child of node.children) visit(child);
+  };
+  visit(heap.head);
+  return { cpuMs: top(cpuTotals, 0), allocatedMB: top(allocations, 1) };
+}
+
+/** Self size by constructor from a V8 heap snapshot. */
+export function heapByConstructor(json: string) {
+  const snapshot = JSON.parse(json) as {
+    snapshot: { meta: { node_fields: string[]; node_types: [string[]] } };
+    nodes: number[];
+    strings: string[];
+  };
+  const fields = snapshot.snapshot.meta.node_fields;
+  const types = snapshot.snapshot.meta.node_types[0];
+  const typeAt = fields.indexOf("type");
+  const nameAt = fields.indexOf("name");
+  const sizeAt = fields.indexOf("self_size");
+  const totals = new Map<string, { count: number; bytes: number }>();
+  for (let index = 0; index < snapshot.nodes.length; index += fields.length) {
+    const type = types[snapshot.nodes[index + typeAt]!]!;
+    const name =
+      type === "object"
+        ? snapshot.strings[snapshot.nodes[index + nameAt]!]!.slice(0, 80)
+        : type === "closure"
+          ? `(closure) ${snapshot.strings[snapshot.nodes[index + nameAt]!]!.slice(0, 60)}`
+          : `(${type.replace(/^(concatenated|sliced) /, "")})`;
+    const entry = totals.get(name) ?? { count: 0, bytes: 0 };
+    entry.count++;
+    entry.bytes += snapshot.nodes[index + sizeAt]!;
+    totals.set(name, entry);
+  }
+  return totals;
 }
 
 interface Environment {
   readonly home: string;
   readonly api: Awaited<ReturnType<typeof startFakeAnthropic>>;
-  readonly macPath: boolean;
+  readonly noAgentScope: boolean;
+  readonly serverDir: string;
 }
 
 async function startServer(environment: Environment, name: string) {
@@ -285,6 +509,7 @@ async function startServer(environment: Environment, name: string) {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: environment.home,
+    USERPROFILE: environment.home,
     ANTHROPIC_BASE_URL: `http://127.0.0.1:${environment.api.port}`,
     ANTHROPIC_API_KEY: "sk-bench",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
@@ -293,7 +518,7 @@ async function startServer(environment: Environment, name: string) {
   };
   delete env.ANTHROPIC_AUTH_TOKEN;
   delete env.T3CODE_HOME;
-  if (environment.macPath) delete env.XDG_RUNTIME_DIR;
+  if (environment.noAgentScope) delete env.XDG_RUNTIME_DIR;
   const port = await freePort();
   const started = performance.now();
   const child = NodeChildProcess.spawn(
@@ -310,7 +535,7 @@ async function startServer(environment: Environment, name: string) {
       "127.0.0.1",
       project,
     ],
-    { cwd: serverDir, env, stdio: ["ignore", "ignore", "pipe"] },
+    { cwd: environment.serverDir, env, stdio: ["ignore", "ignore", "pipe"] },
   );
   const pid = child.pid!;
   let inspector = "";
@@ -336,7 +561,7 @@ async function startServer(environment: Environment, name: string) {
       const command = NodeChildProcess.spawn(
         process.execPath,
         ["src/bin.ts", ...args, "--base-dir", baseDir],
-        { cwd: serverDir, env, stdio: ["ignore", "pipe", "pipe"] },
+        { cwd: environment.serverDir, env, stdio: ["ignore", "pipe", "pipe"] },
       );
       let stdout = "";
       command.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
@@ -345,24 +570,30 @@ async function startServer(environment: Environment, name: string) {
   const added = await cli(["project", "add", project]);
   if (added.code !== 0) throw new Error(`project add failed: ${added.stdout}`);
 
+  // Spawning PowerShell for each sample costs a few hundred ms of the machine's CPU.
+  const sampleEveryMs = platform === "win32" ? 5_000 : 1_000;
   const measure = async (seconds: number): Promise<Window> => {
+    const firstSwitches = contextSwitches(pid);
     const first = sample(pid);
     let rssPeak = first.rss;
     const start = performance.now();
     while (performance.now() - start < seconds * 1_000) {
-      await sleep(1_000);
+      await sleep(sampleEveryMs);
       rssPeak = Math.max(rssPeak, sample(pid).rss);
     }
     const last = sample(pid);
+    const lastSwitches = contextSwitches(pid);
     const elapsed = (performance.now() - start) / 1_000;
+    const heap = await devtools.heapAfterGc();
     return {
       cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / elapsed) * 100),
       wakeupsPerSec:
-        first.switches === null || last.switches === null
+        firstSwitches === null || lastSwitches === null
           ? null
-          : round((last.switches - first.switches) / elapsed),
+          : round((lastSwitches - firstSwitches) / elapsed),
       rssPeakMB: Math.round(rssPeak / 1e6),
-      heapAfterGcMB: round((await devtools.heapAfterGc()) / 1e6),
+      rssMB: Math.round(sample(pid).rss / 1e6),
+      heapAfterGcMB: round(heap / 1e6),
     };
   };
 
@@ -378,34 +609,14 @@ async function startServer(environment: Environment, name: string) {
       project,
       message,
     ]);
-
-  const descendants = () => {
-    if (platform !== "linux") return [];
-    const children = new Map<number, number[]>();
-    for (const entry of NodeFS.readdirSync("/proc")) {
-      if (!/^\d+$/.test(entry)) continue;
-      try {
-        const ppid = Number(
-          NodeFS.readFileSync(`/proc/${entry}/stat`, "utf8").split(") ")[1]!.split(" ")[1],
-        );
-        children.set(ppid, [...(children.get(ppid) ?? []), Number(entry)]);
-      } catch {}
-    }
-    const found: number[] = [];
-    const pending = [pid];
-    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-      for (const child of children.get(next) ?? []) {
-        found.push(child);
-        pending.push(child);
-      }
-    }
-    return found;
-  };
+  const threadSend = (threadId: string, message: string) =>
+    cli(["thread", "send", "--wait", threadId, message]);
 
   const stop = async () => {
     devtools.close();
-    const spawned = descendants();
-    child.kill("SIGTERM");
+    const spawned = descendantsOf(pid);
+    if (platform === "win32") commandOutput("taskkill", ["/PID", `${pid}`, "/T", "/F"]);
+    else child.kill("SIGTERM");
     for (let attempt = 0; attempt < 100 && child.exitCode === null; attempt++) await sleep(100);
     if (child.exitCode === null) child.kill("SIGKILL");
     for (const leftover of spawned) {
@@ -413,15 +624,33 @@ async function startServer(environment: Environment, name: string) {
         process.kill(leftover, "SIGKILL");
       } catch {}
     }
-    NodeFS.rmSync(directory, { recursive: true, force: true });
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        NodeFS.rmSync(directory, { recursive: true, force: true });
+        break;
+      } catch {
+        // Windows keeps a file locked for a moment after its process exits.
+        await sleep(500);
+      }
+    }
   };
 
-  return { readyMs, measure, threadStart, stop };
+  return {
+    readyMs,
+    measure,
+    threadStart,
+    threadSend,
+    profile: devtools.profile,
+    snapshot: devtools.snapshot,
+    stop,
+  };
 }
+
+type Server = Awaited<ReturnType<typeof startServer>>;
 
 async function firstWord(
   environment: Environment,
-  server: Awaited<ReturnType<typeof startServer>>,
+  server: Server,
   runs: number,
   worktree: boolean,
 ): Promise<FirstWord> {
@@ -446,76 +675,119 @@ async function firstWord(
   return { toRequestMs: spread(toRequest), toDoneMs: spread(toDone) };
 }
 
+/** Starts threads that each answer once, and returns their ids. */
+async function openThreads(server: Server, from: number, count: number) {
+  const answers = await Promise.all(
+    Array.from({ length: count }, (_, index) =>
+      server.threadStart(`Say hello ${from + index}.`, ["--wait"]),
+    ),
+  );
+  const failed = answers.filter((answer) => answer.code !== 0).length;
+  if (failed) throw new Error(`${failed} of ${count} threads failed`);
+  return answers.map((answer) => /Thread (\S+)/.exec(answer.stdout)?.[1] ?? "");
+}
+
 const SCENARIOS = ["startup", "rest", "firstWord", "quiet", "streaming"] as const;
 
-export async function runOnce(options: {
-  macPath: boolean;
-  runs: number;
-  only: ReadonlyArray<string>;
-}): Promise<ServerMetrics> {
-  const claude = commandOutput("claude", ["--version"]);
-  if (claude === null) throw new Error("The real `claude` CLI must be on PATH.");
-  if (options.macPath && platform !== "linux") throw new Error("--mac-path is Linux only.");
+interface RunOptions {
+  readonly checkout: string;
+  readonly noAgentScope: boolean;
+  readonly runs: number;
+  readonly threads: ReadonlyArray<number>;
+  readonly only: ReadonlyArray<string>;
+  readonly soakMinutes: number;
+  /** Where full CPU and allocation profiles go; none are written without it. */
+  readonly profileDir: string | undefined;
+}
+
+export async function runOnce(options: RunOptions) {
   const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-server-metrics-"));
   const api = await startFakeAnthropic();
-  const environment: Environment = { home, api, macPath: options.macPath };
+  const environment: Environment = {
+    home,
+    api,
+    noAgentScope: options.noAgentScope,
+    serverDir: NodePath.join(options.checkout, "apps/server"),
+  };
   const wanted = (scenario: string) => options.only.length === 0 || options.only.includes(scenario);
-  const agentScope =
-    platform === "linux" &&
-    !options.macPath &&
-    !!process.env.XDG_RUNTIME_DIR &&
-    commandOutput("sh", ["-c", "command -v systemd-run"]) !== null;
-  const result: {
-    -readonly [K in keyof ServerMetrics]: ServerMetrics[K];
-  } = {
-    meta: {
-      platform: `${platform}-${architecture}`,
-      node: process.version,
-      claude,
-      commit: commandOutput("git", ["rev-parse", "--short=12", "HEAD"]),
-      macPath: options.macPath,
-      agentScope,
-      measuredAt: new Date().toISOString(),
-    },
+  const measured: { -readonly [K in keyof Measured]: Measured[K] } = {};
+  const profiles: Record<string, ReturnType<typeof summarizeProfiles>> = {};
+  let soakHeapGrowth: ServerMetrics["soakHeapGrowth"];
+  const profile = async (server: Server, name: string) => {
+    const { cpu, heap } = await server.profile(20);
+    profiles[name] = summarizeProfiles(cpu as CpuProfile, heap as { head: HeapProfileNode });
+    if (options.profileDir) {
+      NodeFS.mkdirSync(options.profileDir, { recursive: true });
+      NodeFS.writeFileSync(
+        NodePath.join(options.profileDir, `${name}.cpuprofile`),
+        JSON.stringify(cpu),
+      );
+      NodeFS.writeFileSync(
+        NodePath.join(options.profileDir, `${name}.heapprofile`),
+        JSON.stringify(heap),
+      );
+    }
+  };
+  const withServer = async (name: string, body: (server: Server) => Promise<void>) => {
+    const server = await startServer(environment, name);
+    try {
+      await body(server);
+    } finally {
+      await server.stop();
+    }
   };
   try {
     if (wanted("startup") || wanted("rest") || wanted("firstWord")) {
-      const server = await startServer(environment, "rest");
-      try {
-        result.startup = { readyMs: server.readyMs };
+      await withServer("rest", async (server) => {
+        measured.startup = { readyMs: server.readyMs };
         if (wanted("rest")) {
           await sleep(15_000);
-          result.rest = await server.measure(30);
+          measured.rest = await server.measure(30);
         }
         if (wanted("firstWord")) {
-          result.firstWord = {
+          measured.firstWord = {
             inPlace: await firstWord(environment, server, options.runs, false),
             worktree: await firstWord(environment, server, options.runs, true),
           };
         }
-      } finally {
-        await server.stop();
-      }
+      });
     }
     if (wanted("quiet")) {
-      const server = await startServer(environment, "quiet");
-      try {
-        const answers = await Promise.all(
-          Array.from({ length: 20 }, (_, index) =>
-            server.threadStart(`Say hello ${index}.`, ["--wait"]),
-          ),
-        );
-        const failed = answers.filter((answer) => answer.code !== 0).length;
-        if (failed) throw new Error(`${failed} of 20 quiet threads failed`);
-        await sleep(20_000);
-        result.quiet = await server.measure(60);
-      } finally {
-        await server.stop();
-      }
+      await withServer("quiet", async (server) => {
+        const points: Array<{ threads: number; window: Window }> = [];
+        let open = 0;
+        for (const threads of options.threads) {
+          if (threads > open) await openThreads(server, open, threads - open);
+          open = Math.max(open, threads);
+          await sleep(15_000);
+          points.push({ threads, window: await server.measure(30) });
+        }
+        measured.quiet = points.at(-1)!.window;
+        // The first thread also loads the provider's modules once, so the fit leaves out 0 threads.
+        const withThreads = points.filter(({ threads }) => threads > 0);
+        const fitted = withThreads.length >= 2 ? withThreads : points;
+        const fit = (pick: (window: Window) => number) =>
+          round(slope(fitted.map(({ threads, window }) => [threads, pick(window)])), 3);
+        measured.scaling = {
+          heapMBPerThread: fit((window) => window.heapAfterGcMB),
+          rssMBPerThread: fit((window) => window.rssMB),
+          cpuPctPerThread: fit((window) => window.cpuPct),
+          wakeupsPerThread: points.every(({ window }) => window.wakeupsPerSec !== null)
+            ? fit((window) => window.wakeupsPerSec!)
+            : null,
+          points: points.map(({ threads, window }) => [
+            threads,
+            window.cpuPct,
+            window.wakeupsPerSec,
+            window.rssMB,
+            window.heapAfterGcMB,
+          ]),
+        };
+        await profile(server, "quiet");
+      });
     }
     if (wanted("streaming")) {
-      const server = await startServer(environment, "streaming");
-      try {
+      await withServer("streaming", async (server) => {
         const started = await Promise.all(
           Array.from({ length: 5 }, (_, index) =>
             server.threadStart(`Write a long answer ${index}. ${SLOW_MARKER}`),
@@ -527,20 +799,108 @@ export async function runOnce(options: {
           await sleep(100);
         }
         await sleep(5_000);
-        result.streaming = await server.measure(60);
-      } finally {
-        await server.stop();
-      }
+        measured.streaming = await server.measure(60);
+        await profile(server, "streaming");
+      });
+    }
+    if (options.soakMinutes > 0) {
+      await withServer("soak", async (server) => {
+        const threads = await openThreads(server, 0, 10);
+        await sleep(60_000);
+        // The snapshot inflates RSS once, so the slopes start after it.
+        const before = heapByConstructor(await server.snapshot());
+        const samples: Array<{ hours: number; window: Window }> = [];
+        const start = performance.now();
+        let nextSample = 0;
+        for (let turn = 0; performance.now() - start < options.soakMinutes * 60_000; turn++) {
+          const elapsed = performance.now() - start;
+          if (elapsed >= nextSample) {
+            samples.push({ hours: elapsed / 3_600_000, window: await server.measure(5) });
+            nextSample += 120_000;
+          }
+          const threadId = threads[Math.floor(Math.random() * threads.length)]!;
+          await server.threadSend(threadId, `Short reply ${turn}.`);
+          await sleep(Math.max(0, start + (turn + 1) * 30_000 - performance.now()));
+        }
+        samples.push({
+          hours: (performance.now() - start) / 3_600_000,
+          window: await server.measure(5),
+        });
+        measured.soak = {
+          minutes: options.soakMinutes,
+          heapMBPerHour: round(
+            slope(samples.map(({ hours, window }) => [hours, window.heapAfterGcMB])),
+          ),
+          rssMBPerHour: round(slope(samples.map(({ hours, window }) => [hours, window.rssMB]))),
+        };
+        const after = heapByConstructor(await server.snapshot());
+        soakHeapGrowth = [...after]
+          .map(([name, { count, bytes }]) => ({
+            constructor: name,
+            count: count - (before.get(name)?.count ?? 0),
+            MB: round((bytes - (before.get(name)?.bytes ?? 0)) / 1e6, 2),
+          }))
+          .toSorted((a, b) => b.MB - a.MB)
+          .slice(0, 25);
+      });
     }
   } finally {
     api.close();
     NodeFS.rmSync(home, { recursive: true, force: true });
   }
-  return result;
+  return { measured: measured as Measured, profiles, soakHeapGrowth };
+}
+
+function machineLoad() {
+  if (platform === "win32")
+    return powershell(
+      "(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average",
+    );
+  return NodeOS.loadavg()
+    .map((value) => value.toFixed(2))
+    .join(" ");
+}
+
+function metaFor(options: RunOptions) {
+  const claude = commandOutput("claude", ["--version"]);
+  if (claude === null) throw new Error("The real `claude` CLI must be on PATH.");
+  if (options.noAgentScope && platform !== "linux")
+    throw new Error("--no-agent-scope is Linux only; other platforms never have an agent scope.");
+  return {
+    platform: `${platform}-${architecture}`,
+    cpus: NodeOS.cpus().length,
+    node: process.version,
+    claude,
+    commit: commandOutput("git", ["rev-parse", "--short=12", "HEAD"], options.checkout),
+    noAgentScope: options.noAgentScope,
+    agentScope:
+      platform === "linux" &&
+      !options.noAgentScope &&
+      !!process.env.XDG_RUNTIME_DIR &&
+      commandOutput("sh", ["-c", "command -v systemd-run"]) !== null,
+    loadBefore: machineLoad(),
+    measuredAt: new Date().toISOString(),
+  };
+}
+
+async function runMany(options: RunOptions, repeat: number): Promise<ServerMetrics> {
+  const meta = metaFor(options);
+  const runs: Measured[] = [];
+  let last: Awaited<ReturnType<typeof runOnce>> | undefined;
+  for (let index = 0; index < repeat; index++) {
+    last = await runOnce(options);
+    runs.push(last.measured);
+  }
+  return {
+    meta: { ...meta, loadAfter: machineLoad() },
+    runs,
+    ...(last ? { profiles: last.profiles } : {}),
+    ...(last?.soakHeapGrowth ? { soakHeapGrowth: last.soakHeapGrowth } : {}),
+  };
 }
 
 /** Numeric leaves by dotted path, such as `quiet.cpuPct` or `firstWord.worktree.toRequestMs.p90`. */
-export function flatten(metrics: ServerMetrics): Map<string, number> {
+export function flatten(measured: Measured): Map<string, number> {
   const values = new Map<string, number>();
   const visit = (value: unknown, path: string) => {
     if (typeof value === "number") values.set(path, value);
@@ -548,53 +908,96 @@ export function flatten(metrics: ServerMetrics): Map<string, number> {
       for (const [key, child] of Object.entries(value)) visit(child, path ? `${path}.${key}` : key);
     }
   };
-  const { meta: _meta, ...measured } = metrics;
   visit(measured, "");
   return values;
 }
 
 function noiseFloor(metric: string) {
+  if (metric.startsWith("scaling.")) return metric.endsWith("cpuPctPerThread") ? 0.2 : 2;
+  if (metric.startsWith("soak.")) return 20;
   if (metric.endsWith("cpuPct")) return 1;
   if (metric.endsWith("wakeupsPerSec")) return 20;
   if (metric.endsWith("MB")) return 15;
   return 300;
 }
 
+const median = (values: ReadonlyArray<number>) => {
+  const sorted = values.toSorted((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
+};
+
+/** 95% bootstrap interval of median(b) - median(a), with a fixed seed so reruns agree. */
+export function bootstrapMedianDifference(a: ReadonlyArray<number>, b: ReadonlyArray<number>) {
+  let seed = 0x5eed;
+  const random = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+  };
+  const resample = (values: ReadonlyArray<number>) =>
+    median(Array.from(values, () => values[Math.floor(random() * values.length)]!));
+  const differences = Array.from({ length: 2_000 }, () => resample(b) - resample(a)).toSorted(
+    (x, y) => x - y,
+  );
+  return [differences[49]!, differences[1_949]!] as const;
+}
+
+/** Old single-run files hold the scenarios at the top level. */
+const runsOf = (metrics: ServerMetrics | (Measured & { meta: ServerMetrics["meta"] })) =>
+  "runs" in metrics && Array.isArray(metrics.runs)
+    ? metrics.runs
+    : [Object.fromEntries(Object.entries(metrics).filter(([key]) => key !== "meta")) as Measured];
+
 export function compareMetrics(before: ServerMetrics, after: ServerMetrics, threshold = 10) {
-  const a = flatten(before);
-  const b = flatten(after);
+  const collect = (metrics: ServerMetrics) => {
+    const values = new Map<string, number[]>();
+    for (const run of runsOf(metrics)) {
+      for (const [metric, value] of flatten(run))
+        values.set(metric, [...(values.get(metric) ?? []), value]);
+    }
+    return values;
+  };
+  const a = collect(before);
+  const b = collect(after);
   const lines = [
     "### Server metrics (lower is better)",
     "",
-    `before \`${before.meta.commit}\`, after \`${after.meta.commit}\`, ${after.meta.platform}${after.meta.macPath ? ", mac path" : ""}`,
+    `before \`${before.meta.commit}\` (${runsOf(before).length} runs), after \`${after.meta.commit}\` (${runsOf(after).length} runs), ${after.meta.platform}${after.meta.noAgentScope || after.meta.macPath ? ", no agent scope" : ""}`,
     "",
-    "| metric | before | after | change | |",
-    "| :-- | --: | --: | --: | :-- |",
+    "| metric | before | after | change | 95% interval | |",
+    "| :-- | --: | --: | --: | --: | :-- |",
   ];
   const regressed: string[] = [];
+  const improved: string[] = [];
   for (const metric of new Set([...a.keys(), ...b.keys()])) {
+    if (metric === "soak.minutes" || metric.startsWith("scaling.points")) continue;
     const x = a.get(metric);
     const y = b.get(metric);
-    if (x === undefined || y === undefined) {
-      lines.push(`| ${metric} | ${x ?? "–"} | ${y ?? "–"} | n/a | |`);
+    if (!x || !y) {
+      lines.push(`| ${metric} | ${x ? median(x) : "–"} | ${y ? median(y) : "–"} | n/a | | |`);
       continue;
     }
-    const delta = y - x;
-    const percent = x === 0 ? (y === 0 ? 0 : Infinity) : (delta / x) * 100;
-    const beyondFloor = Math.abs(delta) > noiseFloor(metric);
-    const verdict =
-      beyondFloor && percent > threshold
-        ? "worse"
-        : beyondFloor && percent < -threshold
-          ? "better"
-          : "";
+    const mx = median(x);
+    const my = median(y);
+    // A change counts only past both the relative threshold and the absolute noise floor.
+    const limit = Math.max(noiseFloor(metric), (Math.abs(mx) * threshold) / 100);
+    const [low, high] =
+      x.length > 1 && y.length > 1 ? bootstrapMedianDifference(x, y) : [my - mx, my - mx];
+    const verdict = low > limit ? "worse" : high < -limit ? "better" : "";
     if (verdict === "worse") regressed.push(metric);
+    if (verdict === "better") improved.push(metric);
+    const percent = mx === 0 ? (my === 0 ? 0 : Infinity) : ((my - mx) / Math.abs(mx)) * 100;
     const shown = Number.isFinite(percent)
       ? `${percent > 0 ? "+" : ""}${Math.round(percent)}%`
       : "new";
-    lines.push(`| ${metric} | ${x} | ${y} | ${shown} | ${verdict} |`);
+    const interval = x.length > 1 && y.length > 1 ? `${round(low, 2)} to ${round(high, 2)}` : "";
+    lines.push(
+      `| ${metric} | ${round(mx, 2)} | ${round(my, 2)} | ${shown} | ${interval} | ${verdict} |`,
+    );
   }
-  return { table: lines.join("\n"), regressed };
+  return { table: lines.join("\n"), regressed, improved };
 }
 
 function option(args: ReadonlyArray<string>, name: string): string | undefined {
@@ -602,33 +1005,74 @@ function option(args: ReadonlyArray<string>, name: string): string | undefined {
   return index === -1 ? undefined : args[index + 1];
 }
 
+function runOptions(args: ReadonlyArray<string>, checkout: string): RunOptions {
+  const only = (option(args, "--only") ?? "").split(",").filter(Boolean);
+  const unknown = only.filter((name) => !(SCENARIOS as ReadonlyArray<string>).includes(name));
+  if (unknown.length) throw new Error(`unknown scenario: ${unknown.join(", ")}`);
+  const threads = (option(args, "--threads") ?? "0,5,10,20").split(",").map(Number);
+  if (threads.some((count) => !Number.isInteger(count) || count < 0))
+    throw new Error("--threads takes counts such as 0,5,10,20");
+  return {
+    checkout: NodePath.resolve(checkout),
+    noAgentScope: args.includes("--no-agent-scope") || args.includes("--mac-path"),
+    runs: Number(option(args, "--runs") ?? 5),
+    threads,
+    only: option(args, "--soak") && !option(args, "--only") ? ["none"] : only,
+    soakMinutes: Number(option(args, "--soak") ?? 0),
+    profileDir: undefined,
+  };
+}
+
+const write = (path: string | undefined, metrics: ServerMetrics) => {
+  const json = JSON.stringify(metrics, null, 2);
+  if (path) NodeFS.writeFileSync(path, json + "\n");
+  else console.log(json);
+};
+
+const printComparison = (before: ServerMetrics, after: ServerMetrics, threshold: number) => {
+  const { table, regressed, improved } = compareMetrics(before, after, threshold);
+  console.log(table);
+  if (improved.length) console.error(`Better: ${improved.join(", ")}`);
+  if (regressed.length) {
+    console.error(`Worse: ${regressed.join(", ")}`);
+    process.exitCode = 1;
+  }
+};
+
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
+  const threshold = Number(option(args, "--threshold") ?? 10);
   if (command === "run") {
-    const only = (option(args, "--only") ?? "").split(",").filter(Boolean);
-    const unknown = only.filter((name) => !(SCENARIOS as ReadonlyArray<string>).includes(name));
-    if (unknown.length) throw new Error(`unknown scenario: ${unknown.join(", ")}`);
-    const metrics = await runOnce({
-      macPath: args.includes("--mac-path"),
-      runs: Number(option(args, "--runs") ?? 5),
-      only,
-    });
-    const json = JSON.stringify(metrics, null, 2);
     const out = option(args, "--out");
-    if (out) NodeFS.writeFileSync(out, json + "\n");
-    else console.log(json);
+    const options = {
+      ...runOptions(args, option(args, "--checkout") ?? harnessRoot),
+      profileDir: out ? out.replace(/\.json$/, "") + "-profiles" : undefined,
+    };
+    write(out, await runMany(options, Number(option(args, "--repeat") ?? 1)));
+  } else if (command === "ab" && args[0] && args[1] && !args[0].startsWith("--")) {
+    const outDir = NodePath.resolve(option(args, "--out-dir") ?? "server-metrics-ab");
+    NodeFS.mkdirSync(outDir, { recursive: true });
+    const sides = [args[0], args[1]].map((checkout) => runOptions(args, checkout));
+    const metas = sides.map((side) => metaFor(side));
+    const runs: [Measured[], Measured[]] = [[], []];
+    const rounds = Number(option(args, "--rounds") ?? 3);
+    for (let round = 0; round < rounds; round++) {
+      // A B, then B A, so a drift in machine load lands on both sides.
+      for (const side of round % 2 === 0 ? [0, 1] : [1, 0]) {
+        console.error(`round ${round + 1}/${rounds}: ${side === 0 ? "A" : "B"}`);
+        runs[side]!.push((await runOnce(sides[side]!)).measured);
+      }
+    }
+    const [before, after] = [0, 1].map((side) => ({
+      meta: { ...metas[side]!, loadAfter: machineLoad() },
+      runs: runs[side]!,
+    }));
+    write(NodePath.join(outDir, "a.json"), before!);
+    write(NodePath.join(outDir, "b.json"), after!);
+    printComparison(before!, after!, threshold);
   } else if (command === "compare" && args[0] && args[1]) {
     const read = (path: string) => JSON.parse(NodeFS.readFileSync(path, "utf8")) as ServerMetrics;
-    const { table, regressed } = compareMetrics(
-      read(args[0]),
-      read(args[1]),
-      Number(option(args, "--threshold") ?? 10),
-    );
-    console.log(table);
-    if (regressed.length) {
-      console.error(`Worse: ${regressed.join(", ")}`);
-      process.exitCode = 1;
-    }
+    printComparison(read(args[0]), read(args[1]), threshold);
   } else {
     console.log(HELP);
     if (command !== "--help" && command !== "-h" && command !== undefined) process.exitCode = 1;

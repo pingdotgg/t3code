@@ -99,15 +99,26 @@ machine refresh sends back an empty provider list.
 
 ## Server process metrics
 
-`node scripts/server-metrics.ts run --out <file>` starts this checkout's server against throwaway state, a
-fake Anthropic API and the real `claude` CLI, and records server CPU, wakeups, RSS and heap at
-rest, with 20 quiet Claude threads and with 5 streaming, plus how long a new thread takes to reach
-the API. `compare` exits 1 on a regression, so it can gate a release or a scheduled
-run. Only the server process is measured.
+`node scripts/server-metrics.ts run --out <file>` starts a checkout's server against throwaway
+state, a fake Anthropic API and the real `claude` CLI, and records server CPU, wakeups, RSS and
+heap at rest, with quiet Claude threads and with 5 streaming, plus how long a new thread takes to
+reach the API. Only the server process is measured.
 
-Run it with `--mac-path` on Linux too. macOS has no agent scope, so its servers take per-process
-paths Linux servers with a systemd user manager never run. A one-second `ps -A` poll per Claude
-session cost 0.1.11 about 18% of a core with 20 open threads on macOS and went unnoticed on Linux.
+- Compare refs with `ab <checkoutA> <checkoutB>`, not with two files from different times. It
+  alternates the two on one machine, and `compare` flags a metric only when the bootstrap interval
+  of the median difference clears both the threshold and the noise floor. Single runs on a busy
+  machine differ by more than most regressions.
+- Read per-thread cost from `scaling`, a fit over 5 to 20 open threads. It separates what each
+  open thread costs from the fixed cost of the server, which the absolute numbers mix.
+- `--soak <minutes>` reports heap and RSS slopes in MB per hour and the constructors that grew.
+  A rising heap floor is a leak; a high but flat one is not.
+- The quiet and streaming windows save a CPU and an allocation profile, so a regression comes with
+  the functions that cost it.
+
+Run it on macOS and Windows too, and on Linux with `--no-agent-scope`. Only Linux has agent
+scopes, so other platforms take per-process paths a Linux server with a systemd user manager never
+runs. A one-second `ps -A` poll per Claude session cost 0.1.11 about 18% of a core with 20 open
+threads on macOS and went unnoticed on Linux.
 
 ## Event store and startup
 
