@@ -79,6 +79,7 @@ import React, {
   Suspense,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
+  type MouseEvent as ReactMouseEvent,
   use,
   memo,
   useEffect,
@@ -1145,6 +1146,14 @@ const CITATION_ENDS_BLOCK = new RegExp(
   String.raw`^[ \t]*(?:$|\n[ \t]*(?:\n|$)|\n[ \t>]*${LIST_MARKER})`,
 );
 
+// Native word selection stops at dots, slashes and hyphens, so a double-click on a
+// single-token inline code span (URL, host, flag) takes all of it; multi-word spans keep words.
+function selectSingleTokenInlineCode(event: ReactMouseEvent<HTMLElement>) {
+  const code = event.target instanceof Element && event.target.closest("code[data-inline-code]");
+  if (!code || /\s/.test(code.textContent?.trim() || " ")) return;
+  window.getSelection()?.selectAllChildren(code);
+}
+
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
@@ -2112,6 +2121,7 @@ function ChatMarkdown({
       )}
       data-streaming={componentState.isStreaming ? "" : undefined}
       onCopy={handleCopy}
+      onDoubleClick={selectSingleTokenInlineCode}
     >
       <ChatMarkdownRendererContext value={componentState}>
         <SharedTooltipProvider>

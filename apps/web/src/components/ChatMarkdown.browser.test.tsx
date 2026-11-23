@@ -783,11 +783,17 @@ describe("ChatMarkdown headings", () => {
 });
 
 describe("ChatMarkdown inline code selection", () => {
-  it("selects only a word on double-click in inline and fenced code", async () => {
+  it("selects a whole single-token inline code span on double-click, otherwise only a word", async () => {
     setup();
     await using screen = await renderText(
-      "Run `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
+      "Open `https://emby.example.com`.\n\nRun `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
     );
+    await userEvent.dblClick(screen.getByText("https://emby.example.com"), {
+      position: { x: 12, y: 8 },
+    });
+    expect(window.getSelection()?.toString()).toBe("https://emby.example.com");
+
+    window.getSelection()?.removeAllRanges();
     await userEvent.dblClick(screen.getByText("migration-gate --dry-run"), {
       position: { x: 12, y: 8 },
     });
