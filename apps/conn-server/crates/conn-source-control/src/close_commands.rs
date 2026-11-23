@@ -154,8 +154,21 @@ pub fn output_indicates_failure(text: &str) -> bool {
             || is_match(&p.exit_code, text))
 }
 
-/// T3 reads at most this much of a command's output for failure text.
-const FAILURE_SCAN_BYTES: usize = 32_768;
+/// T3 reads the first 32,768 UTF-16 units of a command's output (`output.slice(0, 32_768)`).
+const FAILURE_SCAN_UTF16_UNITS: usize = 32_768;
+
+/// The longest prefix of `text` within `units` UTF-16 units. JS's slice can split a surrogate
+/// pair there; the half it keeps matches nothing the failure phrases look for.
+fn utf16_prefix(text: &str, units: usize) -> &str {
+    let mut used = 0;
+    for (at, c) in text.char_indices() {
+        used += c.len_utf16();
+        if used > units {
+            return text.get(..at).unwrap_or_default();
+        }
+    }
+    text
+}
 
 /// `commandIndicatesFailure` for a `command_execution` turn item: a reported exit code
 /// outranks text in its output.
@@ -169,11 +182,7 @@ pub fn command_failed(item: &serde_json::Value) -> bool {
     let Some(output) = item.get("output").and_then(serde_json::Value::as_str) else {
         return false;
     };
-    let mut end = output.len().min(FAILURE_SCAN_BYTES);
-    while !output.is_char_boundary(end) {
-        end -= 1;
-    }
-    output_indicates_failure(output.get(..end).unwrap_or_default())
+    output_indicates_failure(utf16_prefix(output, FAILURE_SCAN_UTF16_UNITS))
 }
 
 #[cfg(test)]
@@ -213,6 +222,15 @@ mod tests {
     fn reads_failure_output_as_t3() {
         for (text, expected) in generated::FAILURE_CASES {
             assert_eq!(output_indicates_failure(text), *expected, "{text}");
+        }
+    }
+
+    /// T3's `commandIndicatesFailure` on long outputs: it reads 32,768 UTF-16 units.
+    #[test]
+    fn reads_as_much_output_as_t3() {
+        for (unit, count, suffix, expected) in generated::COMMAND_FAILURE_CASES {
+            let item = serde_json::json!({ "output": format!("{}{suffix}", unit.repeat(*count)) });
+            assert_eq!(command_failed(&item), *expected, "{unit} x {count}");
         }
     }
 

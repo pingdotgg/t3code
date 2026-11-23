@@ -110,3 +110,12 @@ pub(super) const FAILURE_CASES: &[(&str, bool)] = &[
     ("exit code 10", true),
     ("exit code:   0 then exit code 5", true),
 ];
+/// T3's `commandIndicatesFailure` answers for long outputs: (unit, count, suffix, failed).
+#[cfg(test)]
+pub(super) const COMMAND_FAILURE_CASES: &[(&str, usize, &str, bool)] = &[
+    ("中", 12000, "exit code: 1", true),
+    ("a", 32768, "exit code: 1", false),
+    ("a", 32000, "exit code: 1", true),
+    ("😀", 16000, "exit code: 1", true),
+    ("😀", 16390, "exit code: 1", false),
+];

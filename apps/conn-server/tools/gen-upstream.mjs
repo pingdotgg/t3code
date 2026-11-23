@@ -671,6 +671,15 @@ const failureCases = [
   "GraphQL: Pull request is not mergeable\n<exited with exit code 1>",
   "✓ Squashed and merged pull request #19", "exit code 10", "exit code:   0 then exit code 5",
 ];
+// `commandIndicatesFailure` reads the first 32,768 UTF-16 units of an output.
+// Each case is a unit repeated `count` times, then a suffix.
+const commandFailureCases = [
+  ["中", 12_000, "exit code: 1"],
+  ["a", 32_768, "exit code: 1"],
+  ["a", 32_000, "exit code: 1"],
+  ["😀", 16_000, "exit code: 1"],
+  ["😀", 16_390, "exit code: 1"],
+];
 const closedByRs = (command) => {
   if (!closeModule.isChangeRequestCloseCommand(command)) return "None";
   const closed = closeModule.changeRequestsClosedBy(command);
@@ -695,6 +704,9 @@ const closeCommandsRs = rustfmt(
     "/// T3's `toolOutputIndicatesFailure` answers.",
     "#[cfg(test)]",
     `pub(super) const FAILURE_CASES: &[(&str, bool)] = &[${failureCases.map((c) => `(${str(c)}, ${toolOutput.toolOutputIndicatesFailure(c)})`).join(", ")}];`,
+    "/// T3's `commandIndicatesFailure` answers for long outputs: (unit, count, suffix, failed).",
+    "#[cfg(test)]",
+    `pub(super) const COMMAND_FAILURE_CASES: &[(&str, usize, &str, bool)] = &[${commandFailureCases.map(([unit, count, suffix]) => `(${str(unit)}, ${count}, ${str(suffix)}, ${toolOutput.commandIndicatesFailure({ output: unit.repeat(count) + suffix })})`).join(", ")}];`,
     "",
   ].join("\n"),
 );
