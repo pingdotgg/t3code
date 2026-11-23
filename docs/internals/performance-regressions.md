@@ -97,6 +97,18 @@ catalog digests and status deltas gets the provider list of its first config in 
 provider with 250 slash commands and 200 skills. The lists load with the first cwd snapshot, and a
 machine refresh sends back an empty provider list.
 
+## Server process metrics
+
+`node scripts/server-metrics.ts run --out <file>` starts this checkout's server against throwaway state, a
+fake Anthropic API and the real `claude` CLI, and records server CPU, wakeups, RSS and heap at
+rest, with 20 quiet Claude threads and with 5 streaming, plus how long a new thread takes to reach
+the API. `compare` exits 1 on a regression, so it can gate a release or a scheduled
+run. Only the server process is measured.
+
+Run it with `--mac-path` on Linux too. macOS has no agent scope, so its servers take per-process
+paths Linux servers with a systemd user manager never run. A one-second `ps -A` poll per Claude
+session cost 0.1.11 about 18% of a core with 20 open threads on macOS and went unnoticed on Linux.
+
 ## Event store and startup
 
 Sequence cursors must seek an index rather than scan retained history. The application sequence
