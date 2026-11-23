@@ -93,11 +93,7 @@ export function BackgroundWorkDetails(props: {
         <T>Details</T>
       </PopoverTrigger>
       <PopoverPopup side="top" align="end" width="lg" padding="none" aria-labelledby={headingId}>
-        <ThreadDetailsSection
-          headingId={headingId}
-          title={gt("Background work · {count} running", { count: rows.length })}
-          separated={false}
-        >
+        <ThreadDetailsSection headingId={headingId} title={gt("Background work")} separated={false}>
           <ul className="m-0 list-none p-0">
             {rows.map((row) => {
               const { task } = row;
