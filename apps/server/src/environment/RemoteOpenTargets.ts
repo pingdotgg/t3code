@@ -1,62 +1,17 @@
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import {
-  isTailscaleIpv4Address,
-  readTailscaleSshEnabled,
-  readTailscaleStatus,
-} from "@t3tools/tailscale";
+import { readTailscaleSshEnabled } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as NodeDns from "node:dns";
-import * as NodeOS from "node:os";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
+import * as TailnetDiscovery from "./TailnetDiscovery.ts";
 
 const SSH_PORT = 22;
 const TARGETS_CACHE_TTL = "60 seconds";
-const TAILNET_NAME_LOOKUP_TIMEOUT = "1500 millis";
-// Only the open-source tailscaled creates this; its CLI is not in an app bundle.
-const OPEN_SOURCE_TAILSCALED_SOCKET = "/var/run/tailscaled.socket";
-
-interface Tailnet {
-  readonly magicDnsName: string;
-  readonly ipv4Addresses: ReadonlyArray<string>;
-}
-
-// Other VPNs also use the CGNAT range, so only an address whose reverse lookup returns a
-// MagicDNS name (always under ts.net) is treated as this host's tailnet address.
-const lookupMagicDnsName = (address: string) =>
-  Effect.promise(() =>
-    NodeDns.promises.lookupService(address, 0).then(
-      ({ hostname }) => {
-        const name = hostname.trim().replace(/\.$/u, "").toLowerCase();
-        return name.endsWith(".ts.net") ? name : null;
-      },
-      () => null,
-    ),
-  ).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
-
-const lookupTailnetFromInterfaces = Effect.gen(function* () {
-  const candidates = Object.values(NodeOS.networkInterfaces())
-    .flatMap((addresses) => addresses ?? [])
-    .filter(
-      (entry) =>
-        !entry.internal && entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
-    )
-    .map((entry) => entry.address);
-  const names = yield* Effect.forEach(candidates, lookupMagicDnsName, { concurrency: "unbounded" });
-  const index = names.findIndex((name) => name !== null);
-  const magicDnsName = names[index];
-  const address = candidates[index];
-  return magicDnsName == null || address === undefined
-    ? null
-    : { magicDnsName, ipv4Addresses: [address] };
-});
 
 export class RemoteOpenTargets extends Context.Service<
   RemoteOpenTargets,
@@ -69,18 +24,7 @@ export class RemoteOpenTargets extends Context.Service<
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const net = yield* NetService.NetService;
-  const fileSystem = yield* FileSystem.FileSystem;
-  const isMacOS = (yield* HostProcess.Platform) === "darwin";
-
-  const readTailnetFromCli = readTailscaleStatus.pipe(
-    Effect.map((status): Tailnet | null =>
-      status.running === false || status.magicDnsName === null
-        ? null
-        : { magicDnsName: status.magicDnsName, ipv4Addresses: status.tailnetIpv4Addresses },
-    ),
-    Effect.orElseSucceed(() => null),
-    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-  );
+  const readTailnet = yield* TailnetDiscovery.makeReadTailnet;
 
   const discoverTargets = Effect.gen(function* () {
     // Check both loopback families: sshd can be bound IPv6-only.
@@ -91,16 +35,7 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    // The macOS Tailscale apps run the CLI from their app bundle, and macOS can ask the user
-    // to let T3 Code access another app's data on every spawn, so connect-time discovery avoids it.
-    const avoidTailscaleCli =
-      isMacOS &&
-      !(yield* fileSystem
-        .exists(OPEN_SOURCE_TAILSCALED_SOCKET)
-        .pipe(Effect.orElseSucceed(() => false)));
-    const tailnet = avoidTailscaleCli
-      ? yield* lookupTailnetFromInterfaces
-      : yield* readTailnetFromCli;
+    const tailnet = yield* readTailnet;
 
     const targets: Array<RemoteOpenTarget> = [];
 
@@ -111,10 +46,9 @@ export const make = Effect.gen(function* () {
       const tailnetSshdListening = yield* Effect.forEach(tailnet.ipv4Addresses, (address) =>
         net.hasListenerOnHost(SSH_PORT, address),
       ).pipe(Effect.map((listening) => listening.includes(true)));
-      // Only `tailscale debug prefs` proves Tailscale SSH; the macOS apps cannot run an SSH server.
       const sshRoute =
         tailnetSshdListening ||
-        (!avoidTailscaleCli &&
+        (tailnet.fromCli &&
           (yield* readTailscaleSshEnabled.pipe(
             Effect.orElseSucceed(() => false),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
