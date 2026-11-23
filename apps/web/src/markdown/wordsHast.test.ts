@@ -184,6 +184,14 @@ describe("wordsHast", () => {
     ).toBe(
       '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
     );
+    for (const markdown of [">    [!NOTE]  \n> Body", ">    [!NOTE] \n> Body"]) {
+      expect(
+        wordsHtml(markdown, {
+          breaks: true,
+          extensions: { userMessage: true, leadingWhitespace: true },
+        }),
+      ).toBe('<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>');
+    }
   });
 
   it("gives elements the source positions components read", () => {
@@ -331,6 +339,41 @@ describe("wordsHast", () => {
       "Hard  \nbreak and a\\\nbackslash",
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
+    ],
+    [
+      "> [!NOTE]\\\n> Body",
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>Body</p>\n</blockquote>',
+    ],
+    [
+      "> [!WARNING]  \n> **bold**",
+      '<blockquote data-alert="warning" dir="ltr">\n<p><strong>bold</strong></p>\n</blockquote>',
+      '<blockquote data-alert="warning" dir="ltr">\n<p><strong>bold</strong></p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]  \n> more  \n> x",
+      '<blockquote data-alert="note" dir="ltr">\n<p>more<br>\nx</p>\n</blockquote>',
+      '<blockquote data-alert="note" dir="ltr">\n<p>more<br>\nx</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]<br>\n> raw\n\n> [!NOTE]\\\n> alert",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nraw</p>\n</blockquote>\n<blockquote data-alert="note" dir="ltr">\n<p>alert</p>\n</blockquote>',
+    ],
+    [
+      "> &#91;!NOTE&#93;<br>\n> Body",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>\nBody</p>\n</blockquote>',
+    ],
+    [
+      "> &#91;!NOTE]<br>Body",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
+    ],
+    [
+      "> [!NOTE]<br />Body",
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
+      '<blockquote dir="ltr">\n<p>[!NOTE]<br>Body</p>\n</blockquote>',
     ],
   ])(
     "breaks lines next to images and hard breaks as remark did: %j",

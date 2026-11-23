@@ -192,6 +192,7 @@ function tokenize(html: string, offsetOf: (byte: number) => number): Tokenized {
       properties: properties(match[3], inSvg),
       children: [],
     };
+    if (match[0] === "<br />" && html[last] === "\n") hardBreaks.add(element);
     const sourcepos = element.properties.dataSourcepos;
     if (typeof sourcepos === "string") {
       delete element.properties.dataSourcepos;
@@ -319,6 +320,8 @@ const isMarkdownImage = (node: unknown): boolean =>
     isMarkdownImage(node.children[0]));
 
 const BREAK: ElementContent = { type: "element", tagName: "br", properties: {}, children: [] };
+// Words writes a hard break as `<br />` and a line ending; raw HTML keeps its author's spelling.
+const hardBreaks = new WeakSet<Element>();
 
 // Words' math: these elements and presentation attributes, and no links or handlers.
 const MATH_ELEMENTS = new Set(["svg", "g", "text", "tspan", "rect", "path"]);
@@ -708,18 +711,33 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
     } else if (tagName === "blockquote") {
       // remarkGithubAlerts
       const paragraph = child.children.find((item) => item.type === "element");
-      const first = isElement(paragraph, "p") ? paragraph.children[0] : undefined;
+      const children = isElement(paragraph, "p") ? paragraph.children : [];
+      // leadingWhitespace indents a marker line Words does not read as one; the indent goes with it.
+      const indent =
+        walk.options.extensions.leadingWhitespace &&
+        isElement(children[0], "span") &&
+        "dataLeadingWhitespace" in children[0].properties
+          ? 1
+          : 0;
+      const [first, br, after] = children.slice(indent);
       const text = first?.type === "text" ? first.value : "";
+      const hardBreak = isElement(br) && hardBreaks.has(br) && after?.type === "text";
       const insight = walk.insightMarker?.exec(text);
       const alert = GITHUB_ALERT_MARKER.exec(text);
       // An alert marker followed by more inline content on its line is text, as remarkGithubAlerts reads it.
       const match = insight
         ? ([insight[0], "insight"] as const)
-        : alert && (alert[0].endsWith("\n") || (paragraph as Element).children.length === 1)
+        : alert && (alert[0].endsWith("\n") || hardBreak || !br)
           ? alert
           : null;
       if (match && first?.type === "text" && isElement(paragraph, "p")) {
-        first.value = first.value.slice(match[0].length);
+        if (hardBreak && !match[0].endsWith("\n")) {
+          first.value = after.value.replace(/^\n/, "");
+          paragraph.children.splice(0, indent + 3, first);
+        } else {
+          first.value = first.value.slice(match[0].length);
+          paragraph.children.splice(0, indent);
+        }
         if (first.value === "") paragraph.children.shift();
         if (paragraph.children.length === 0) {
           const at = child.children.indexOf(paragraph);

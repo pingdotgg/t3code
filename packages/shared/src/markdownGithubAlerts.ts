@@ -21,11 +21,11 @@ function readGithubAlert(node: MarkdownAstNode): void {
 
   const remainder = text.value.slice(match[0].length);
   // An empty remainder may have next-line sibling content; preserve whether the marker ended its line.
-  const markerEndsItsLine = match[0].endsWith("\n");
+  const markerEndsItsLine = match[0].endsWith("\n") || paragraph.children?.[1]?.type === "break";
   if (remainder.length > 0) {
     text.value = remainder;
   } else if (markerEndsItsLine || paragraph.children?.length === 1) {
-    paragraph.children?.shift();
+    paragraph.children?.splice(0, match[0].endsWith("\n") ? 1 : 2);
     if (paragraph.children?.length === 0) {
       node.children?.shift();
     }

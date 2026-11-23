@@ -37,10 +37,30 @@ describe("remarkGithubAlerts", () => {
     expect(html).toContain("Changes live transcript routing.");
   });
 
+  it("renders a marker line ending with a hard line break as an alert", () => {
+    const soft = renderMarkdown("> [!NOTE]\n> Body");
+    for (const markdown of ["> [!NOTE]\\\n> Body", "> [!NOTE]  \n> Body"]) {
+      const html = renderMarkdown(markdown);
+      expect(html).toBe(soft);
+      expect(html).toContain('data-alert="note"');
+      expect(html).not.toContain("[!NOTE]");
+    }
+
+    const bold = renderMarkdown("> [!NOTE]  \n> **bold**");
+    expect(bold).toBe(renderMarkdown("> [!NOTE]\n> **bold**"));
+    expect(bold).not.toContain("<br>");
+    expect(renderMarkdown("> [!NOTE]\n> more  \n> x")).toContain("<br>");
+  });
+
   it("leaves a quote alone when the marker shares its line with anything else", () => {
     const html = renderMarkdown("> [!NOTE] an ordinary quote");
 
     expect(html).not.toContain("data-alert");
     expect(html).toContain("[!NOTE] an ordinary quote");
+
+    const inline = renderMarkdown("> [!NOTE]**bold**");
+    expect(inline).not.toContain("data-alert");
+    expect(inline).toContain("[!NOTE]<strong>bold</strong>");
+    expect(renderMarkdown("> [!NOTE]<br>\n> Body")).not.toContain("data-alert");
   });
 });
