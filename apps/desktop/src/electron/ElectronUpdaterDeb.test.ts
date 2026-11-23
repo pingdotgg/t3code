@@ -54,6 +54,9 @@ const { electronStub, resourcesDir } = vi.hoisted(() => {
   return { electronStub: stub, resourcesDir: tempResourcesDir };
 });
 
+// ElectronUpdater emits on the app's own Electron import; electron-updater gets the same stub natively.
+vi.mock("electron", () => electronStub);
+
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 
 afterAll(() => {

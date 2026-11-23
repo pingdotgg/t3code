@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Spawns the .deb install outside electron-updater.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
@@ -9,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import * as Electron from "electron";
 import { AppImageUpdater, DebUpdater, autoUpdater } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
@@ -131,17 +131,6 @@ const runAsRoot = Effect.fn("ElectronUpdater.runDebCommandAsRoot")(function* (
   return yield* spawnAsync(cmd, args, true);
 });
 
-// electron-updater's own Electron, so the event reaches the same autoUpdater it would emit on.
-const emitBeforeQuitForUpdate = (): void => {
-  const requireFromUpdater = NodeModule.createRequire(
-    NodeModule.createRequire(import.meta.url).resolve("electron-updater"),
-  );
-  const electron = requireFromUpdater("electron") as {
-    readonly autoUpdater?: { readonly emit: (event: string) => boolean };
-  };
-  electron.autoUpdater?.emit("before-quit-for-update");
-};
-
 // DebUpdater.doInstall runs the privileged `dpkg -i` through spawnSync, freezing Electron's main
 // thread for as long as the polkit prompt and dpkg take. This mirrors it without blocking, detached
 // with ignored stdio so the app quitting cannot SIGPIPE dpkg mid-transaction.
@@ -191,7 +180,7 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
     }
 
     if (isSilent ? isForceRunAfter : deb.autoRunAppAfterInstall) deb.app.relaunch();
-    emitBeforeQuitForUpdate();
+    Electron.autoUpdater.emit("before-quit-for-update");
     deb.app.quit();
   }).pipe(
     // A cancelled or failed install leaves the download in place for a retry.
