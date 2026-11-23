@@ -2928,8 +2928,12 @@ describe("AcpRegistryAdapterV2", () => {
     assert.equal((yield* session.terminal).status, "completed");
   });
 
-  it.effect("approves Devin's plan without choosing a bypass option it lists first", () =>
-    devinPlanApproval("devin").pipe(Effect.provide(layerTest), Effect.scoped),
+  it.effect.each([
+    { label: "registry", agentId: "devin" },
+    { label: "local", agentId: { source: "local", commandPath: "/opt/devin/bin/devin" } },
+  ])(
+    "approves Devin's plan without choosing a bypass option it lists first ($label)",
+    ({ agentId }) => devinPlanApproval(agentId).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect("counts per-turn usage for a local glm command", () =>
@@ -3052,13 +3056,6 @@ describe("AcpRegistryAdapterV2", () => {
       const terminal = yield* session.terminal;
       assert.equal(terminal.status, "completed");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
-  );
-
-  it.effect("filters Devin's bypass option for a local devin command", () =>
-    devinPlanApproval({ source: "local", commandPath: "/opt/devin/bin/devin" }).pipe(
-      Effect.provide(layerTest),
-      Effect.scoped,
-    ),
   );
 
   it.effect("keeps stopped child tools interrupted when a late output chunk arrives", () =>
