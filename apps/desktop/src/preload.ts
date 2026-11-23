@@ -70,14 +70,15 @@ const syncHtmlFullscreen = () => {
     framedFullscreenObserver ??= new MutationObserver(syncHtmlFullscreen);
     framedFullscreenObserver.observe(element, { attributeFilter: [ELEMENT_FULLSCREEN_ATTRIBUTE] });
   }
-  // A preview guest's fullscreen surfaces here as its <webview>, and a framed page's as its <iframe>.
-  // Both stay inside the window, except a frame whose page reports an element of its own, such as
-  // a video, as the fullscreen one.
+  // A preview guest's fullscreen surfaces here as its <webview>, which stays inside the window. So
+  // does a framed page that made itself fullscreen: its frame is marked "false", and "true" while an
+  // element of the page, such as a video, is the fullscreen one. A page saved before it reported
+  // this leaves its frame unmarked and takes the screen either way.
   void ipcRenderer.invoke(
     IpcChannels.SYNC_HTML_FULLSCREEN_CHANNEL,
     element !== null &&
       element.tagName !== "WEBVIEW" &&
-      (!framed || element.hasAttribute(ELEMENT_FULLSCREEN_ATTRIBUTE)),
+      (!framed || element.getAttribute(ELEMENT_FULLSCREEN_ATTRIBUTE) !== "false"),
   );
 };
 // A reload or renderer crash never reports the old document's exit, so each document reports its start.

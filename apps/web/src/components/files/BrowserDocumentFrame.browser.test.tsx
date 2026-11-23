@@ -77,13 +77,15 @@ describe("HtmlRenderDocument", () => {
     const frame = screen.getByTitle("Fullscreen");
     const pageButtons = page.frameLocator(frame);
 
+    // The page reports at load, which is what tells the desktop app it can keep the page in the window.
+    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "false");
     await pageButtons.getByText("Viewer").click();
-    await expect.element(frame).toHaveAttribute("data-element-fullscreen");
+    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "true");
     expect(document.fullscreenElement).toBe(frame.element());
 
     // The page replaces the viewer as the frame's fullscreen element; the host document sees no change.
     await pageButtons.getByText("Page").click();
-    await expect.element(frame).not.toHaveAttribute("data-element-fullscreen");
+    await expect.element(frame).toHaveAttribute("data-element-fullscreen", "false");
     expect(document.fullscreenElement).toBe(frame.element());
   });
 });

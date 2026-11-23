@@ -416,7 +416,7 @@ export function HtmlRenderDocument(props: {
     }
     const elementFullscreen = readHtmlRenderElementFullscreen(event.data);
     if (elementFullscreen !== undefined) {
-      frame.toggleAttribute(HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE, elementFullscreen);
+      frame.setAttribute(HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE, String(elementFullscreen));
       return;
     }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;

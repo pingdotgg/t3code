@@ -246,7 +246,10 @@ const KEY_DOWN_METHOD = "t3/notifications/keydown";
 const OPEN_IMAGE_METHOD = "t3/notifications/open-image";
 const ELEMENT_FULLSCREEN_METHOD = "t3/notifications/element-fullscreen";
 
-/** Marks a frame while an element inside its page, such as a video, is fullscreen, not the page itself. */
+/**
+ * Set by the host to "true" while an element inside the frame's page, such as a video, is fullscreen
+ * and to "false" otherwise. A page saved before it reported this leaves the frame unmarked.
+ */
 export const HTML_RENDER_ELEMENT_FULLSCREEN_ATTRIBUTE = "data-element-fullscreen";
 
 /** Whether the page's fullscreen element is one inside it and not its root. */
@@ -428,8 +431,9 @@ function rootRule(theme: HtmlRenderTheme): string {
 // scroll-padding, clamped offsets), and stops there. A fixed target or ancestor leaves the viewport alone.
 const CONTAINED_SCROLL_INTO_VIEW = `Element.prototype.scrollIntoView=function(v){var o=v!==null&&(typeof v==="object"||typeof v==="function")?v:{block:v===undefined||v===null||v?"start":"end"},B=o.block||"start",I=o.inline||"nearest",H=o.behavior||"auto",m=function(z){return parseFloat(z)||0;},g=getComputedStyle(this),r=this.getBoundingClientRect(),t=r.top-m(g.scrollMarginTop),b=r.bottom+m(g.scrollMarginBottom),l=r.left-m(g.scrollMarginLeft),R=r.right+m(g.scrollMarginRight),x=0,y=0,e=this,f=g.position==="fixed",d=function(a,z,lo,hi,k){var L=z-a>hi-lo;return k==="start"?a-lo:k==="end"?z-hi:k==="center"?(a+z-lo-hi)/2:a<lo&&z>hi?0:a<lo?L?z-hi:a-lo:z>hi?L?a-lo:z-hi:0;},w=function(top,left,c,s,go){var p=function(n){return m(s["scrollPadding"+n]);},n=s.direction==="rtl"?c.clientWidth-c.scrollWidth:0,dy=d(t-y,b-y,top+p("Top"),top+c.clientHeight-p("Bottom"),B),dx=d(l-x,R-x,left+p("Left"),left+c.clientWidth-p("Right"),I);dy=Math.max(-c.scrollTop,Math.min(c.scrollHeight-c.clientHeight-c.scrollTop,dy));dx=Math.max(n-c.scrollLeft,Math.min(n+c.scrollWidth-c.clientWidth-c.scrollLeft,dx));if(dx||dy)go({left:dx,top:dy,behavior:H});x+=dx;y+=dy;},u=document.scrollingElement||document.documentElement;while(!f){e=e.parentElement||(e.getRootNode&&e.getRootNode().host);if(!e)break;if(e===u||e===document.documentElement)continue;var h=getComputedStyle(document.documentElement),s=getComputedStyle(e),c=e.getBoundingClientRect();if(e===document.body&&h.overflowX+h.overflowY==="visiblevisible")continue;if(/auto|scroll|hidden/.test(s.overflowX+s.overflowY))w(c.top+e.clientTop,c.left+e.clientLeft,e,s,e.scrollBy.bind(e));f=s.position==="fixed";}if(!f)w(0,0,u,getComputedStyle(u),window.scrollBy.bind(window));};`;
 
-// The host sees only the frame as fullscreen, whichever element the page chose.
-const ELEMENT_FULLSCREEN_SIGNAL = `document.addEventListener("fullscreenchange",function(){var t=document.fullscreenElement;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(ELEMENT_FULLSCREEN_METHOD)},params:{active:!!t&&t!==document.documentElement&&t!==document.body}},"*");});`;
+// The host sees only the frame as fullscreen, whichever element the page chose. The first report, at
+// load, tells the host this page reports at all; published pages keep the bootstrap they were saved with.
+const ELEMENT_FULLSCREEN_SIGNAL = `var F=function(){var t=document.fullscreenElement;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(ELEMENT_FULLSCREEN_METHOD)},params:{active:!!t&&t!==document.documentElement&&t!==document.body}},"*");};F();document.addEventListener("fullscreenchange",F);`;
 
 // Apply overridable theme CSS before paint and strip the fragment before routing; framed navigation uses the client.
 // Forward shortcuts after page handlers; text fields retain their keys.
