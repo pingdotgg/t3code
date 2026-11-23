@@ -843,6 +843,7 @@ export default function ChatView(props: ChatViewProps) {
           ),
         fallbackSelection: settings.fallbackModelSelection,
         providers: providersByEnvironment.get(draftThread.environmentId) ?? [],
+        cwd: draftThread.worktreePath ?? fallbackDraftProject?.workspaceRoot,
         settings,
         projectId: draftThread.projectId,
         now: Date.parse(`${nowMinute}:00Z`),
@@ -1333,12 +1334,11 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const providerStatuses = resolveProvidersForCwd(
+  const environmentProviders =
     (providerEnvironmentId === undefined
       ? undefined
-      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS,
-    gitCwd,
-  );
+      : providersByEnvironment.get(providerEnvironmentId)) ?? EMPTY_PROVIDERS;
+  const providerStatuses = resolveProvidersForCwd(environmentProviders, gitCwd);
   const composerModelSelectionApplies = draftModelSelectionApplies(
     { modelSelectionExplicit: composerModelSelectionExplicit },
     threadHasStarted(activeThread),
@@ -1510,7 +1510,8 @@ export default function ChatView(props: ChatViewProps) {
     providerInstanceId: activeProviderInstanceId,
     model: activeUsageModel,
     providerDriver: activeProviderStatus?.driver ?? null,
-    providers: providerStatuses,
+    providers: environmentProviders,
+    cwd: gitCwd,
     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
   });
   const {
@@ -4154,7 +4155,8 @@ export default function ChatView(props: ChatViewProps) {
                   usage={{
                     providerInstanceId: activeProviderInstanceId,
                     model: activeUsageModel,
-                    providers: providerStatuses,
+                    providers: environmentProviders,
+                    cwd: gitCwd,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
                   }}

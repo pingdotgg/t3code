@@ -76,7 +76,49 @@ describe("new thread model fallback", () => {
     providers: [limited, available],
     now,
   };
+  const workspaceQuota = (workspaceScope: string) => ({
+    ...limited,
+    usageLimits: {
+      checkedAt: limited.checkedAt,
+      windows: [
+        { ...window, usedPercent: 100, usageScope: "openai", workspaceScope, providerIds: [] },
+      ],
+    },
+    workspaceSnapshots: [
+      {
+        cwd: "/work",
+        checkedAt: limited.checkedAt,
+        skills: [],
+        slashCommands: [],
+        models: [
+          {
+            slug: selection.model,
+            name: "GPT",
+            capabilities: null,
+            isCustom: false,
+            usageScope: "openai:work",
+          },
+        ],
+      },
+    ],
+  });
   it.each([
+    [
+      "matching workspace login",
+      { providers: [workspaceQuota("openai:work"), available], cwd: "/work" },
+      fallback,
+    ],
+    [
+      "different workspace login",
+      { providers: [workspaceQuota("openai:other"), available], cwd: "/work" },
+      selection,
+    ],
+    [
+      "different project catalog",
+      { providers: [workspaceQuota("openai:work"), available], cwd: "/other" },
+      selection,
+    ],
+    ["machine catalog", { providers: [workspaceQuota("openai:work"), available] }, selection],
     ["exhausted default", {}, fallback],
     ["explicit selection", { explicitSelection: selection }, selection],
     ["missing default", { defaultSelection: null }, null],
@@ -1177,6 +1219,29 @@ describe("pooled account columns", () => {
       row.columns.map((member) => (member.window ? member.account.key : null)),
     );
 
+  it("pools ChatGPT weekly slots together and suppresses sessions blocked by the weekly cap", () => {
+    const chat = (key: string, windows: LimitAccount["limits"]["windows"]) => ({
+      ...account(key, windows),
+      driver: ProviderDriverKind.make("opencode"),
+    });
+    const [pool] = collectLimitPools(
+      [
+        chat("weekly-only", [{ ...weekly, id: "chatgpt_10080m", usedPercent: 40 }]),
+        chat("two-windows", [
+          { ...window, id: "chatgpt_300m", blockedByWindowId: "chatgpt_10080m", usedPercent: 10 },
+          { ...weekly, id: "chatgpt_10080m", usedPercent: 100 },
+        ]),
+      ],
+      now,
+    );
+    expect(
+      pool?.windows.map((row) => [row.kind, row.members.length, row.remainingPercent]),
+    ).toEqual([
+      ["session", 1, 0],
+      ["weekly", 2, 30],
+    ]);
+  });
+
   it.each([
     {
       reports: [
@@ -1514,6 +1579,75 @@ describe("/usage-limits", () => {
     expect(
       report?.accounts.filter((account) => account.sourceLabel).map((account) => account.label),
     ).toEqual(["CLIProxyAPI · claude-b@example.com", "CLIProxyAPI · team-seat"]);
+  });
+
+  it("shows ChatGPT windows only for OpenAI threads or an unfiltered report", () => {
+    const instance = provider({
+      driver: ProviderDriverKind.make("opencode"),
+      usageLimits: {
+        ...limits,
+        credentialFingerprint: "login",
+        windows: [{ ...window, usageScope: "openai", providerIds: [] }],
+      },
+      models: [
+        {
+          slug: "personal/gpt",
+          name: "GPT",
+          isCustom: false,
+          usageScope: "openai",
+          capabilities: null,
+        },
+      ],
+    });
+    const other = {
+      ...instance,
+      instanceId: ProviderInstanceId.make("other"),
+      models: [],
+      usageLimits: { ...instance.usageLimits!, checkedAt: "2026-09-03T12:00:01.000Z" },
+    };
+    for (const model of ["personal/gpt", "openai/console", null]) {
+      const unrelated = {
+        ...other,
+        instanceId: ProviderInstanceId.make("unrelated"),
+        usageLimits: { ...other.usageLimits, credentialFingerprint: "other-login" },
+      };
+      const report = collectProviderUsageLimits(
+        instance.instanceId,
+        [instance, other, unrelated],
+        [],
+        now,
+        model,
+      );
+      expect(report?.accounts[0]?.limits.windows.length).toBe(model === "openai/console" ? 0 : 1);
+      expect(
+        report?.accounts.find((account) => account.instanceId === unrelated.instanceId)?.limits
+          .windows.length,
+      ).toBe(model === null ? 1 : 0);
+    }
+    const projectOnly = {
+      ...instance,
+      models: [],
+      workspaceSnapshots: [
+        {
+          cwd: "/project",
+          checkedAt: limits.checkedAt,
+          skills: [],
+          slashCommands: [],
+          models: instance.models,
+        },
+      ],
+    };
+    for (const cwd of ["/project", "/other"]) {
+      const report = collectProviderUsageLimits(
+        instance.instanceId,
+        [projectOnly, other],
+        [],
+        now,
+        "personal/gpt",
+        cwd,
+      );
+      expect(report?.accounts[0]?.limits.windows.length).toBe(cwd === "/project" ? 1 : 0);
+    }
   });
 
   it("keeps unidentified custom instances separate, filtering by driver", () => {

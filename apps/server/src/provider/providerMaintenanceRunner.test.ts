@@ -1048,8 +1048,10 @@ describe("providerMaintenanceRunner", () => {
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-              listInstances: Effect.succeed([instance]),
               getInstance: (id) => Effect.succeed(id === CODEX_INSTANCE_ID ? instance : undefined),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.map(instance.snapshot.getSnapshot, (snapshot) => [snapshot]),
             }),
             ServerSettings.layerTest(),
             Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),

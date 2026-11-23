@@ -9,10 +9,11 @@ import {
   antigravityWindowLimitsModel,
   collectLimitAccounts,
   collectLimitPools,
-  collectProviderUsageLimits,
+  resolveThreadUsageLimits,
   displayLimitWindows,
   hubRoutes,
   instanceHubs,
+  usageLimitsForModel,
   type LimitPoolWindow,
 } from "@t3tools/shared/usageLimits";
 import { limitsNotice } from "@t3tools/shared/usageLimitsCopy";
@@ -30,15 +31,14 @@ export function resolveThreadDetailsLimits(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  cwd?: string | null,
 ): ThreadDetailsLimits | null {
   const provider = providers.find((entry) => entry.instanceId === providerInstanceId);
   if (!provider) return null;
-  const report = collectProviderUsageLimits(provider.instanceId, providers, sources, now, model);
-  // Only this instance's data: the report keeps one instance per login, and any other entry may be
-  // a different login or workspace, so fall back to the instance's own snapshot.
+  const usage = resolveThreadUsageLimits(provider.instanceId, providers, sources, now, model, cwd);
   const own =
-    report?.accounts.find((entry) => entry.instanceId === provider.instanceId)?.limits ??
-    provider.usageLimits;
+    usage?.selectedLimits ??
+    (provider.usageLimits && usageLimitsForModel(provider.usageLimits, model, provider, cwd));
   if (!own) return null;
   const hubs = instanceHubs(provider, sources);
   if (limitsNotice(own) === null || hubs.length === 0) return { kind: "instance", limits: own };

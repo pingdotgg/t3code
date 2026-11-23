@@ -123,7 +123,10 @@ const make = Effect.gen(function* () {
     const current = yield* settings.getSettings.pipe(
       Effect.mapError(failed("Could not read settings")),
     );
-    return resolveProjectSettings(current, projectId, project.value).settings;
+    return {
+      settings: resolveProjectSettings(current, projectId, project.value).settings,
+      workspaceRoot: project.value.workspaceRoot,
+    };
   });
 
   const projectIdOf = Effect.fn("WorkflowAgentThreads.projectIdOf")(function* (project: string) {
@@ -184,13 +187,14 @@ const make = Effect.gen(function* () {
         });
       }
       const projectId = yield* projectIdOf(input.project);
-      const defaults = yield* projectDefaults(projectId);
+      const { settings: defaults, workspaceRoot } = yield* projectDefaults(projectId);
       const modelSelection: ModelSelection | undefined =
         input.model === undefined
           ? (resolveNewThreadModelSelection({
               defaultSelection: defaults.defaultModelSelection,
               fallbackSelection: defaults.fallbackModelSelection,
               providers: yield* providers.getProviders,
+              cwd: ThreadLaunch.launchCatalogCwd(input.launch?.workspace, workspaceRoot),
               settings: defaults,
               projectId,
               now: DateTime.toEpochMillis(yield* DateTime.now),

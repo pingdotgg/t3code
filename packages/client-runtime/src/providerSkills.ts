@@ -3,6 +3,8 @@ import {
   isProviderWorkspaceSnapshotCurrent,
   isProviderWorkspaceSnapshotPending,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
+  resolveProviderModelsForCwd,
+  resolveProviderWorkspaceSnapshot,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderSkill,
@@ -90,14 +92,6 @@ export function resolveProviderSkillSourceKind(
   }
 }
 
-function resolveProviderWorkspaceSnapshot(
-  provider: ServerProvider,
-  cwd: string | null | undefined,
-) {
-  if (!cwd) return undefined;
-  return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
-}
-
 export function hasCompleteProviderWorkspaceSnapshot(
   provider: ServerProvider | null | undefined,
   cwd: string | null | undefined,
@@ -131,14 +125,6 @@ export function resolveProviderSlashCommandsForCwd(
   cwd: string | null | undefined,
 ): ServerProvider["slashCommands"] {
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
-}
-
-/** A project's own provider config can add models that only its workspace snapshot lists. */
-function resolveProviderModelsForCwd(
-  provider: ServerProvider,
-  cwd: string | null | undefined,
-): ServerProvider["models"] {
-  return resolveProviderWorkspaceSnapshot(provider, cwd)?.models ?? provider.models;
 }
 
 /** Providers keep their identity unless the cwd has its own catalog. */

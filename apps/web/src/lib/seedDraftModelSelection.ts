@@ -28,6 +28,7 @@ export function seedDraftModelSelection(draftId: DraftId, projectRef: ScopedProj
         : resolveProjectDefaultProviderModelSelection(providers, settings, projectRef.projectId)),
     fallbackSelection: settings?.fallbackModelSelection ?? null,
     providers,
+    cwd: store.getDraftSession(draftId)?.worktreePath ?? project?.workspaceRoot,
     ...(settings ? { settings } : {}),
     projectId: projectRef.projectId,
     now: Date.now(),

@@ -8,6 +8,7 @@ import {
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import * as ProviderInstallationGate from "../provider/ProviderInstallationGate.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -659,6 +660,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "ready",
   "pending",
   "exhausted",
+  "workspace quota exhausted",
   "not installed",
   "not installed, fallback disabled for project",
   "not installed, fallback model cannot generate text",
@@ -747,6 +749,40 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ...(primaryState.startsWith("disabled") && instanceId === primary
           ? { enabled: false, status: "disabled" }
           : {}),
+        ...(primaryState === "workspace quota exhausted" && instanceId === primary
+          ? {
+              workspaceSnapshots: [
+                {
+                  cwd: "/tmp",
+                  checkedAt: "1970-01-01T00:00:00Z",
+                  skills: [],
+                  slashCommands: [],
+                  models: [
+                    {
+                      slug: selection.model,
+                      name: "GPT",
+                      usageScope: "openai",
+                      isCustom: false,
+                      capabilities: null,
+                    },
+                  ],
+                },
+              ],
+              usageLimits: {
+                checkedAt: "1970-01-01T00:00:00Z",
+                windows: [
+                  {
+                    id: "session",
+                    kind: "session",
+                    label: "Session",
+                    usedPercent: 100,
+                    usageScope: "openai",
+                    providerIds: [],
+                  },
+                ],
+              },
+            }
+          : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
@@ -782,9 +818,11 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       Effect.provide(
         Layer.mergeAll(
           Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-            listInstances: Effect.succeed(instances),
             getInstance: (id) =>
               Effect.succeed(instances.find((instance) => instance.instanceId === id)),
+          }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.forEach(instances, (i) => i.snapshot.getSnapshot),
           }),
           ServerSettings.layerTest({
             providerInstances: {
@@ -893,9 +931,11 @@ it.effect(
           Effect.provide(
             Layer.mergeAll(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-                listInstances: Effect.succeed(instances),
                 getInstance: (id) =>
                   Effect.succeed(instances.find((candidate) => candidate.instanceId === id)),
+              }),
+              Layer.mock(ProviderRegistry.ProviderRegistry)({
+                getProviders: Effect.forEach(instances, (i) => i.snapshot.getSnapshot),
               }),
               ServerSettings.layerTest({}),
               Layer.mock(TextGenerators.TextGenerators)({

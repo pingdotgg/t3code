@@ -95,6 +95,9 @@ function usageWindowEquals(a: ServerProviderUsageWindow, b: ServerProviderUsageW
     a.kind === b.kind &&
     a.label === b.label &&
     a.usedPercent === b.usedPercent &&
+    a.usageScope === b.usageScope &&
+    a.workspaceScope === b.workspaceScope &&
+    a.blockedByWindowId === b.blockedByWindowId &&
     (a.modelIds === b.modelIds ||
       (a.modelIds !== undefined &&
         b.modelIds !== undefined &&
@@ -115,6 +118,10 @@ export function resolveUsageLimitsAfterProbe(input: {
   readonly probed: ServerProviderUsageLimits | undefined;
 }): ServerProviderUsageLimits | undefined {
   const { published, probed } = input;
+  // A failed read from a newly selected account must not retain the previous account's quota.
+  if (probed?.credentialFingerprint !== published?.credentialFingerprint) {
+    return probed;
+  }
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
   }

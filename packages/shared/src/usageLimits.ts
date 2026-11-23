@@ -4,6 +4,7 @@ import {
   type ServerSettings,
   type ProjectId,
   resolveProjectProviderInstanceEnabled,
+  resolveProviderModelsForCwd,
   type UsageLimitsReport,
   type ProviderInstanceId,
   type ProviderConsumeResetCreditInput,
@@ -24,19 +25,48 @@ import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
 
+function windowsForModel(
+  windows: readonly ServerProviderUsageWindow[],
+  model: string,
+  provider: ServerProvider | undefined,
+  cwd?: string | null,
+) {
+  const scope =
+    provider && windows.some((window) => window.usageScope !== undefined)
+      ? resolveProviderModelsForCwd(provider, cwd).find((entry) => entry.slug === model)?.usageScope
+      : undefined;
+  const prefix = model.split("/", 1)[0] ?? "";
+  const matches = windows.filter((window) =>
+    window.usageScope !== undefined
+      ? scope !== undefined && (scope === window.usageScope || scope === window.workspaceScope)
+      : (window.modelIds === undefined || window.modelIds.includes(model)) &&
+        (window.providerIds === undefined || window.providerIds.includes(prefix)),
+  );
+  return matches.length === windows.length ? windows : matches;
+}
+
+export function usageLimitsForModel(
+  limits: ServerProviderUsageLimits,
+  model: string | null,
+  provider: ServerProvider,
+  cwd?: string | null,
+) {
+  if (!model) return limits;
+  const windows = windowsForModel(limits.windows, model, provider, cwd);
+  return windows === limits.windows ? limits : { ...limits, windows };
+}
+
 export function exhaustedUsageWindow(
   provider: ServerProvider | undefined,
   now: number,
   model?: string,
+  cwd?: string | null,
 ) {
   const windows = provider?.usageLimits?.windows ?? [];
-  const exhausted = windows.filter(
+  const applicable = model === undefined ? windows : windowsForModel(windows, model, provider, cwd);
+  const exhausted = applicable.filter(
     (window) =>
       (window.usedPercent ?? 0) >= 100 &&
-      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
-      (model === undefined ||
-        window.providerIds === undefined ||
-        window.providerIds.includes(model.split("/")[0] ?? "")) &&
       (!window.resetsAt ||
         !Number.isFinite(Date.parse(window.resetsAt)) ||
         Date.parse(window.resetsAt) > now),
@@ -84,12 +114,13 @@ export function resolveNewThreadModelSelection(input: {
   readonly now: number;
   readonly settings?: ServerSettings;
   readonly projectId?: ProjectId | null;
+  readonly cwd?: string | null | undefined;
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
   if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  const window = exhaustedUsageWindow(provider, input.now, selection.model);
+  const window = exhaustedUsageWindow(provider, input.now, selection.model, input.cwd);
   const fallback = input.providers.find(
     (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
   );
@@ -100,7 +131,7 @@ export function resolveNewThreadModelSelection(input: {
     !fallback.installed ||
     fallback.auth.status === "unauthenticated" ||
     !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
+    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model, input.cwd) ||
     (input.settings &&
       !resolveProjectProviderInstanceEnabled(
         input.settings,
@@ -628,9 +659,11 @@ function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, 
       ? account.limits.windows.find(
           (window) =>
             window.usedPercent >= 100 &&
-            (account.driver === "claudeAgent"
-              ? window.id === "seven_day"
-              : account.driver === "codex" && window.kind === "weekly"),
+            (reported.blockedByWindowId !== undefined
+              ? reported.blockedByWindowId === window.id
+              : account.driver === "claudeAgent"
+                ? window.id === "seven_day"
+                : account.driver === "codex" && window.kind === "weekly"),
         )
       : undefined;
   if (!spentWeekly) return { account, window: reported, refillPercent: reported.usedPercent };
@@ -944,13 +977,14 @@ export function hubRoutes(
     account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
 }
 
-export function collectProviderUsageLimits(
+export function resolveThreadUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
   model: string | null = null,
-): UsageLimitsReport | null {
+  cwd?: string | null,
+) {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected) return null;
   // Only an instance sent to a hub is known to reach the accounts that hub routes its model to.
@@ -972,6 +1006,7 @@ export function collectProviderUsageLimits(
     ...sources.flatMap((source) => source.accounts),
   ]);
   // Behind a hub, a local login counts only when it is one of the accounts the hub routes to.
+  const selectedAccountKey = resolveKey(nativeReport(selected));
   const routedKeys =
     hubs.length > 0
       ? new Set(hubs.flatMap((source) => source.accounts.filter(routes).map(resolveKey)))
@@ -1016,6 +1051,7 @@ export function collectProviderUsageLimits(
   );
   const accounts: Array<UsageLimitsReport["accounts"][number]> = [];
   const notices: string[] = [];
+  let selectedLimits: ServerProviderUsageLimits | undefined;
   for (const {
     usage: { provider, limits },
     credits,
@@ -1044,6 +1080,15 @@ export function collectProviderUsageLimits(
     const shownCredits = showHubCredits
       ? hubCredits.account.usageLimits.resetCredits
       : credits?.limits.resetCredits;
+    const isSelected =
+      provider.instanceId === instanceId || (key !== null && key === selectedAccountKey);
+    const modelLimits = usageLimitsForModel(
+      shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      model,
+      isSelected ? selected : provider,
+      cwd,
+    );
+    if (isSelected) selectedLimits = modelLimits;
     accounts.push({
       id: provider.instanceId,
       driver: provider.driver,
@@ -1061,7 +1106,7 @@ export function collectProviderUsageLimits(
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
-      limits: shownCredits ? { ...limits, resetCredits: shownCredits } : limits,
+      limits: modelLimits,
     });
   }
   for (const source of shownHubs) {
@@ -1092,5 +1137,16 @@ export function collectProviderUsageLimits(
       notices.push(`${source.label}: ${source.error}`);
     }
   }
-  return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
+  const report: UsageLimitsReport = {
+    createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    accounts,
+    notices,
+  };
+  return { report, selectedLimits };
+}
+
+export function collectProviderUsageLimits(
+  ...input: Parameters<typeof resolveThreadUsageLimits>
+): UsageLimitsReport | null {
+  return resolveThreadUsageLimits(...input)?.report ?? null;
 }

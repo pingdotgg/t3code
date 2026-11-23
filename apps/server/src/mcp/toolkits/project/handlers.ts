@@ -313,10 +313,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           const { instanceId, model } = input.modelSelection;
           const registry = yield* ProviderRegistry.ProviderRegistry;
           // The thread runs in this folder, whose own provider config can add models.
-          const cwd =
-            input.workspaceStrategy?.type === "existing_worktree"
-              ? input.workspaceStrategy.worktreePath
-              : project?.workspaceRoot;
+          const cwd = ThreadLaunch.launchCatalogCwd(
+            input.workspaceStrategy,
+            project?.workspaceRoot,
+          );
           const requireModel = (
             providers: ReadonlyArray<ServerProvider>,
           ): Effect.Effect<void, OrchestratorMcpFailure> => {
@@ -406,6 +406,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                   Effect.flatMap((registry) => registry.getProviders),
                 ),
                 settings: projectDefaults,
+                cwd: ThreadLaunch.launchCatalogCwd(strategy, project?.workspaceRoot),
                 projectId,
                 now: DateTime.toEpochMillis(yield* DateTime.now),
               }).selection

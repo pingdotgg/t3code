@@ -218,6 +218,7 @@ export function createNewThreadHandler(router: AnyRouter) {
             )),
       fallbackSelection: targetServerSettings.fallbackModelSelection ?? null,
       providers: environmentServerConfigs.get(projectRef.environmentId)?.providers ?? [],
+      cwd: options?.worktreePath ?? project?.workspaceRoot,
       settings: targetServerSettings,
       projectId: projectRef.projectId,
       now: Date.now(),

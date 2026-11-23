@@ -80,6 +80,7 @@ export const ServerProviderModel = Schema.Struct({
   name: TrimmedNonEmptyString,
   shortName: Schema.optional(TrimmedNonEmptyString),
   subProvider: Schema.optional(TrimmedNonEmptyString),
+  usageScope: Schema.optional(TrimmedNonEmptyString),
   aliases: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   badge: Schema.optional(Schema.Literal("new")),
   isCustom: Schema.Boolean,
@@ -306,6 +307,21 @@ export const ServerProvider = Schema.Struct({
   loadedCatalogDigest: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProvider = typeof ServerProvider.Type;
+
+export function resolveProviderWorkspaceSnapshot(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+) {
+  if (!cwd) return undefined;
+  return provider.workspaceSnapshots?.find((snapshot) => snapshot.cwd === cwd);
+}
+
+export function resolveProviderModelsForCwd(
+  provider: ServerProvider,
+  cwd: string | null | undefined,
+) {
+  return resolveProviderWorkspaceSnapshot(provider, cwd)?.models ?? provider.models;
+}
 
 /** A provider without the lists that equal the ones its reader already holds. */
 export const ServerProviderDelta = ServerProvider.mapFields((fields) => ({

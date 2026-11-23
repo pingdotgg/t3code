@@ -112,6 +112,31 @@ function shown(
 }
 
 describe("resolveThreadDetailsLimits", () => {
+  it("shows the freshest reset for the selected login using the selected model route", () => {
+    const model = "personal/gpt";
+    const reading = (checkedAt: string, resetsAt: string) => ({
+      credentialFingerprint: "same-login",
+      checkedAt,
+      windows: [{ ...limitsAt(20).windows[0]!, usageScope: "openai", resetsAt }],
+    });
+    const selected = {
+      ...claudeInstance(reading(checkedAt, "2026-10-30T13:17:00Z")),
+      driver: ProviderDriverKind.make("opencode"),
+      models: [
+        { slug: model, name: "GPT", capabilities: null, isCustom: false, usageScope: "openai" },
+      ],
+    };
+    const latest = reading("2026-10-30T12:00:00Z", "2026-10-31T09:00:00Z");
+    const reader = {
+      ...selected,
+      instanceId: ProviderInstanceId.make("other"),
+      models: [],
+      usageLimits: latest,
+    };
+    expect(
+      resolveThreadDetailsLimits(selected.instanceId, model, [selected, reader], [], now),
+    ).toEqual({ kind: "instance", limits: latest });
+  });
   it("keeps an instance's failed reading instead of a hub it is not sent to", () => {
     const failed: ServerProviderUsageLimits = {
       checkedAt,

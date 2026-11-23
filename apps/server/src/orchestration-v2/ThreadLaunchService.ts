@@ -86,6 +86,13 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly repositories?: ReadonlyArray<{ readonly path: string }> | undefined;
     };
 
+export function launchCatalogCwd(
+  strategy: ThreadLaunchWorkspaceStrategy | undefined,
+  projectRoot: string | undefined,
+) {
+  return strategy?.type === "existing_worktree" ? strategy.worktreePath : projectRoot;
+}
+
 export interface ThreadLaunchInitialMessage {
   readonly messageId?: MessageId;
   readonly scheduledTaskId?: ScheduledTaskId;

@@ -403,6 +403,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.usageLimitSources ?? [],
       Date.now(),
       currentModelSelection.model,
+      props.projectCwd,
     );
     onShowUsageLimits(report);
     if (!report) {
