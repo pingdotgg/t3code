@@ -277,7 +277,10 @@ it("keeps the panes in place when the sidebar reopens before it has closed", asy
 
 const secondPaneStrip = () => inSecondPane("[data-layout-tab-strip]");
 const joinOffset = (strip: HTMLElement) =>
-  strip.querySelector<HTMLElement>("[data-pane-join]")!.style.getPropertyValue("--jx");
+  strip
+    .closest("[data-layout-tab-strip-slot]")!
+    .querySelector<HTMLElement>("[data-pane-join]")!
+    .style.getPropertyValue("--jx");
 const tabOffset = (strip: HTMLElement, tabId: string) => {
   const tab = strip.querySelector<HTMLElement>(`[data-layout-pane-tab="${tabId}"]`)!;
   const left = tab.getBoundingClientRect().left - strip.getBoundingClientRect().left;

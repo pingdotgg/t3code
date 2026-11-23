@@ -6794,6 +6794,18 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --pane-join-layer-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-layer-w {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-scroll {
+  syntax: "*";
+  inherits: false;
+}
 /* The strip's edge fade reads these on the strip alone (PaneTabs.tsx,
    markStripOverflow). Inherited, each scroll step restyled every tab. */
 @property --strip-overflow-start {
@@ -6938,6 +6950,7 @@ body {
   --pane-join-rim: var(--raised-rim);
 }
 
+[data-pane-join-layer],
 [data-pane-join],
 [data-pane-join-foot],
 [data-pane-bar-corner] {
@@ -7025,7 +7038,7 @@ body {
     & [data-layout-pane-id][data-pane-joined-start] > [data-pane-cut="start-notch"] {
       opacity: 0;
     }
-    & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {
+    & [data-pane-join-start=""] [data-pane-notch=""] [data-layout-tab-strip] {
       --strip-fade-start-shown: 0;
     }
     & [data-pane-bar-corner="end"] {
@@ -7160,14 +7173,29 @@ body {
       right: max(0px, calc(100% - var(--pane-lit-from)));
     }
 
-    & [data-pane-notch=""] [data-pane-join] {
+    /* The joined tab shape sits behind the strip's alpha mask, clipped to its
+       visible ends, so its fill and rim never dissolve into the chrome while
+       the tab labels above it still fade into what is behind them. */
+    & [data-pane-notch=""] > [data-layout-tab-strip-slot] > [data-pane-join-layer] {
       display: block;
       position: absolute;
       z-index: -1;
+      inset-block-start: calc(2px - var(--pane-join-shift));
+      inset-inline-start: var(--pane-join-layer-x, 0px);
+      width: var(--pane-join-layer-w, 0px);
+      height: calc(var(--pane-join-h) + 1px);
+      overflow: hidden;
+      pointer-events: none;
+    }
+
+    & [data-pane-notch=""] [data-pane-join] {
+      display: block;
+      position: absolute;
       inset-block-start: 0;
       inset-inline-start: 0;
       width: 0;
       height: var(--pane-join-h);
+      translate: calc(var(--pane-join-scroll, 0px) * -1) 0;
       pointer-events: none;
       color: var(--pane-bar-fg);
       --jx: 0px;
