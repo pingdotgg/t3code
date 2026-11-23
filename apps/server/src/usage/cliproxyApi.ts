@@ -463,7 +463,8 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
               kind: slot.kind,
               label: slot.label,
               usedPercent: 100 - remaining,
-              ...(resetsAt ? { resetsAt } : {}),
+              // Only a parseable reset reaches the client; corrupt values are dropped.
+              ...(Number.isFinite(resetMs) ? { resetsAt } : {}),
               windowDurationMins: slot.windowDurationMins,
             },
           ];

@@ -759,6 +759,38 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("keeps a Devin window but drops a corrupt reset value", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [
+          {
+            id: "devin-badreset.json",
+            auth_index: "d",
+            provider: "devin",
+            email: "badreset@example.com",
+            quota: {
+              observed_at: "2099-01-01T00:00:00Z",
+              signals: {
+                daily_quota_remaining_percent: "25%",
+                daily_quota_reset_at: "not-a-timestamp",
+              },
+            },
+          },
+        ],
+      });
+      const [account] = yield* (yield* test.api).readAccounts(config);
+      expect(account?.usageLimits.windows).toMatchObject([
+        {
+          id: "daily",
+          kind: "session",
+          usedPercent: 75,
+        },
+      ]);
+      expect(account?.usageLimits.windows[0]?.resetsAt).toBeUndefined();
+    }),
+  );
+
   it.effect("skips accounts of providers the hub table does not know", () =>
     Effect.gen(function* () {
       const test = fixture({
