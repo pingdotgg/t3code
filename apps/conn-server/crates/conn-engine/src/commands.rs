@@ -622,6 +622,20 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
         tx.append(draft("turn-item.updated", merge_back.turn_item.clone()))?;
     }
     tx.append(draft("message.updated", message))?;
+    crate::families::record_follow_up(
+        tx,
+        &crate::families::FollowUpSource {
+            command_id: &c.command_id,
+            thread_id: &c.thread_id,
+            run_id: &run_id,
+            text: &c.text,
+            created_by: &c.created_by,
+            creation_source: &c.creation_source,
+            sender_thread_id: c.sender_thread_id.as_deref(),
+            notification: c.notification.as_ref(),
+            excluded: c.scheduled_task_id.is_some() || c.restart_continuation_of_run_id.is_some(),
+        },
+    )?;
     let item_id = format!("turn-item:{}", c.message_id);
     let existing_item = tx.entity(&c.thread_id, "turnItems", &item_id)?;
     if queued {
