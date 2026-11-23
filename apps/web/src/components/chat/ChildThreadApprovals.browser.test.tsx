@@ -9,6 +9,9 @@ import { render } from "../../../test/render";
 const state = vi.hoisted(() => ({ respond: vi.fn() }));
 
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
+vi.mock("../../state/queries", () => ({
+  useTurnItemDetail: () => ({ data: undefined, isPending: false, error: null }),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.respond }));
 vi.mock("../../state/threads", () => ({
   threadEnvironment: { respondToApproval: {} },
