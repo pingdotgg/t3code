@@ -20,8 +20,11 @@ import {
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   probeTailscaleHttpsEndpoint,
+  readPassiveTailscaleSshEnabled,
+  readPassiveTailscaleStatus,
   readTailscaleSshEnabled,
   readTailscaleStatus,
+  TailnetReverseLookup,
   TailscaleCommandExitError,
   TailscaleCommandSpawnError,
   TailscaleStatusParseError,
@@ -344,6 +347,60 @@ describe("tailscale", () => {
       assert.isFalse(yield* parseTailscaleSshEnabled("{}"));
       const error = yield* parseTailscaleSshEnabled("{not-json").pipe(Effect.flip);
       assert.instanceOf(error, TailscaleStatusParseError);
+    });
+  });
+
+  it.effect("reads passive status on macOS from interfaces and Tailscale's resolver", () => {
+    const address = (value: string, family = "IPv4", internal = false) => ({
+      address: value,
+      family,
+      internal,
+    });
+    const interfaces = {
+      lo0: [address("127.0.0.1", "IPv4", true)],
+      en0: [address("192.168.1.20")],
+      utun4: [address("100.64.1.2"), address("fd7a:115c:a1e0::1", "IPv6")],
+      // Another VPN in the same range: Tailscale's resolver has no name for it.
+      utun6: [address("100.96.0.1")],
+    };
+    const asked: Array<string> = [];
+    let cliStarts = 0;
+    const layer = layerMockSpawner(() => {
+      cliStarts += 1;
+      return { stdout: tailscaleStatusJson };
+    });
+    const onMac = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      effect.pipe(
+        Effect.provideService(TailnetReverseLookup, (queried) =>
+          Effect.sync(() => {
+            asked.push(queried);
+            return queried === "100.64.1.2" ? ["desktop.tail.ts.net."] : [];
+          }),
+        ),
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provide(layer),
+      );
+
+    return Effect.gen(function* () {
+      assert.deepEqual(yield* onMac(readPassiveTailscaleStatus(interfaces)), {
+        running: true,
+        magicDnsName: "desktop.tail.ts.net",
+        tailnetIpv4Addresses: ["100.64.1.2"],
+        httpsServeEnabled: null,
+      });
+      assert.deepEqual(asked, ["100.64.1.2", "100.96.0.1"]);
+      assert.deepEqual(yield* onMac(readPassiveTailscaleStatus({ en0: interfaces.en0 })), {
+        running: null,
+        magicDnsName: null,
+        tailnetIpv4Addresses: [],
+        httpsServeEnabled: null,
+      });
+      assert.isFalse(yield* onMac(readPassiveTailscaleSshEnabled));
+      assert.equal(cliStarts, 0);
+
+      const elsewhere = yield* readPassiveTailscaleStatus(interfaces).pipe(Effect.provide(layer));
+      assert.equal(elsewhere.magicDnsName, "desktop.tail.ts.net");
+      assert.equal(cliStarts, 1);
     });
   });
 

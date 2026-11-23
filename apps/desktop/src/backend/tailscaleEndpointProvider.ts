@@ -9,7 +9,7 @@ import {
   isTailscaleIpv4Address,
   parseTailscaleStatus,
   probeTailscaleHttpsEndpoint,
-  readTailscaleStatus,
+  readPassiveTailscaleStatus,
   type TailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
@@ -141,7 +141,8 @@ export const resolveTailscaleAdvertisedEndpoints = Effect.fn("resolveTailscaleAd
     ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient
   > {
     const readStatus =
-      input.readStatus ?? readTailscaleStatus.pipe(Effect.orElseSucceed(() => null));
+      input.readStatus ??
+      readPassiveTailscaleStatus(input.networkInterfaces).pipe(Effect.orElseSucceed(() => null));
     const status =
       input.statusJson === undefined
         ? yield* readStatus

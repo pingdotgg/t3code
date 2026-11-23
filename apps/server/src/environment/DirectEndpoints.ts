@@ -2,7 +2,7 @@ import type { ServerDirectEndpoint } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
   probeTailscaleHttpsEndpoint,
-  readTailscaleStatus,
+  readPassiveTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -157,7 +157,7 @@ export const make = Effect.gen(function* () {
   const resolve = Effect.gen(function* () {
     // Serve setup can fail without stopping startup; advertise only after it answers as this server.
     if (config.tailscaleServeEnabled) {
-      const servedUrl = yield* readTailscaleStatus.pipe(
+      const servedUrl = yield* readPassiveTailscaleStatus(NodeOS.networkInterfaces()).pipe(
         Effect.map((status) => status.magicDnsName),
         Effect.flatMap((magicDnsName) => {
           if (magicDnsName === null) return Effect.succeed(null);

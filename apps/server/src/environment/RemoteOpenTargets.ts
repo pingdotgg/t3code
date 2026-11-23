@@ -1,11 +1,12 @@
 import { type RemoteOpenTarget } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
-import { readTailscaleSshEnabled, readTailscaleStatus } from "@t3tools/tailscale";
+import { readPassiveTailscaleSshEnabled, readPassiveTailscaleStatus } from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeOS from "node:os";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
 
@@ -33,7 +34,7 @@ export const make = Effect.gen(function* () {
     );
     const username = yield* HostProcess.Username;
 
-    const tailscaleStatus = yield* readTailscaleStatus.pipe(
+    const tailscaleStatus = yield* readPassiveTailscaleStatus(NodeOS.networkInterfaces()).pipe(
       Effect.orElseSucceed(() => null),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
@@ -52,7 +53,7 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((listening) => listening.includes(true)));
       const sshRoute =
         tailnetSshdListening ||
-        (yield* readTailscaleSshEnabled.pipe(
+        (yield* readPassiveTailscaleSshEnabled.pipe(
           Effect.orElseSucceed(() => false),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ));

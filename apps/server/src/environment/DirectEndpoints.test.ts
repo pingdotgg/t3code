@@ -13,6 +13,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as ServerConfig from "../config.ts";
@@ -273,23 +274,27 @@ const TAILSCALE_STATUS_JSON = JSON.stringify({
   Self: { DNSName: "bb-1.tail1234.ts.net.", TailscaleIPs: ["100.64.1.2"] },
 });
 
-const layerTailscaleUp = Layer.succeed(
-  ChildProcessSpawner.ChildProcessSpawner,
-  ChildProcessSpawner.make(() =>
-    Effect.succeed(
-      ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-        isRunning: Effect.succeed(false),
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        stdin: Sink.drain,
-        stdout: Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)),
-        stderr: Stream.empty,
-        all: Stream.empty,
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
-      }),
+const layerTailscaleUp = Layer.merge(
+  // macOS reads the status without the CLI this fake answers for.
+  Layer.succeed(HostProcess.Platform, "linux"),
+  Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(TAILSCALE_STATUS_JSON)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        }),
+      ),
     ),
   ),
 );
