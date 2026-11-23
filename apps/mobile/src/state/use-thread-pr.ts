@@ -78,25 +78,31 @@ export function withKnownPullRequestSummary<
   return initialSummary === undefined ? params : { ...params, initialSummary };
 }
 
-export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+export function useThreadPr(
+  thread: EnvironmentThreadShell,
+  badgeEnabled = true,
+): ThreadPrPresentation | null {
   const demand = use(ThreadPrDemandContext);
   const resolve = useMessages();
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
     (config) => config !== null,
   );
-  const { linkedPresentation, pullRequestRef } = useMemo(
+  const source = useMemo(
     () =>
-      resolveThreadPrSource(
-        {
-          pullRequests: thread.pullRequests,
-          linkedPullRequest: thread.linkedPullRequest,
-          branchPullRequest: thread.branchPullRequest,
-        },
-        supportsLinks,
-        resolve,
-      ),
+      badgeEnabled
+        ? resolveThreadPrSource(
+            {
+              pullRequests: thread.pullRequests,
+              linkedPullRequest: thread.linkedPullRequest,
+              branchPullRequest: thread.branchPullRequest,
+            },
+            supportsLinks,
+            resolve,
+          )
+        : null,
     [
+      badgeEnabled,
       thread.pullRequests,
       thread.linkedPullRequest,
       thread.branchPullRequest,
@@ -104,6 +110,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
       resolve,
     ],
   );
+  const pullRequestRef = source?.pullRequestRef ?? null;
   const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.
   const snapshot = useAtomValue(pullRequestSnapshotsAtom, (current) =>
@@ -135,5 +142,5 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           },
           resolve,
         );
-  return linkedPresentation ?? summaryPresentation;
+  return source?.linkedPresentation ?? summaryPresentation;
 }

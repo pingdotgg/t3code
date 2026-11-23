@@ -164,9 +164,17 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
   const container = document.createElement("div");
   const root = createRoot(container);
   let mounts = 0;
-  function Row({ value, name }: { value: EnvironmentThreadShell; name: string }) {
+  function Row({
+    value,
+    name,
+    badgeEnabled = true,
+  }: {
+    value: EnvironmentThreadShell;
+    name: string;
+    badgeEnabled?: boolean;
+  }) {
     const [passive] = useState(() => ++mounts);
-    const pr = useThreadPr(value);
+    const pr = useThreadPr(value, badgeEnabled);
     return (
       <output data-name={name} data-passive={passive}>
         {pr?.accessibilityLabel ?? "none"}
@@ -201,11 +209,13 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
       value = thread(),
       shared = false,
       activity = "visible",
+      badgeEnabled = true,
     }: {
       visible?: boolean;
       value?: EnvironmentThreadShell;
       shared?: boolean;
       activity?: "visible" | "hidden";
+      badgeEnabled?: boolean;
     } = {}) {
       await act(async () =>
         root.render(
@@ -213,7 +223,7 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
             <Activity mode={activity}>
               <div hidden={!visible} style={{ width: 320 }}>
                 <ThreadPrDemandProvider visible={visible}>
-                  <Row value={value} name="sidebar" />
+                  <Row value={value} name="sidebar" badgeEnabled={badgeEnabled} />
                 </ThreadPrDemandProvider>
               </div>
             </Activity>
@@ -280,6 +290,24 @@ it.effect("does not start a fallback query for a sidebar first mounted hidden", 
       expect(h.requests).toHaveLength(1);
       expect(h.badge()).toBe("#12 pull request open");
       expect(h.mounts).toBe(1);
+    });
+  }),
+);
+
+it.effect("hides cached badges and stops refreshing them until badges are enabled again", () =>
+  Effect.gen(function* () {
+    using h = yield* setup();
+    yield* Effect.promise(async () => {
+      await h.render();
+      expect(h.badge()).toBe("#12 pull request open");
+      await h.render({ badgeEnabled: false });
+      expect(h.badge()).toBe("none");
+      await h.advance(10_000);
+      const afterGrace = h.requests.length;
+      await h.advance(180_000);
+      expect(h.requests).toHaveLength(afterGrace);
+      await h.render();
+      expect(h.badge()).toBe("#12 pull request open");
     });
   }),
 );

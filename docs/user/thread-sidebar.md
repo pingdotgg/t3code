@@ -167,6 +167,9 @@ On mobile, turn on **Settings → General → Sidebar → Group threads by proje
 project layout. Your Working section preference is preserved and returns when you turn project
 layout off. Searching shows matching threads across folders, including collapsed ones.
 
+Turn off **Show pull request badges** in the same Sidebar settings to hide pull request badges
+from the mobile thread list.
+
 ## Settle finished work
 
 Choose **Settle thread** from its menu to move finished work out of the active list

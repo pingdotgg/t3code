@@ -439,6 +439,7 @@ export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
   readonly key: string;
   readonly item: ThreadListV2Item;
+  readonly inProjectFolder?: boolean;
   readonly snoozeWakeLabelText: string | undefined;
   readonly timeLabel: string;
   readonly snoozePresetMinute: string | undefined;
@@ -528,6 +529,7 @@ export function threadListV2ListItemsAreEqual(
         previous.item.snoozed === item.item.snoozed &&
         previous.item.pinned === item.item.pinned &&
         previous.item.wokeAt === item.item.wokeAt &&
+        previous.inProjectFolder === item.inProjectFolder &&
         previous.snoozeWakeLabelText === item.snoozeWakeLabelText &&
         previous.timeLabel === item.timeLabel &&
         previous.snoozePresetMinute === item.snoozePresetMinute &&
@@ -718,7 +720,7 @@ export function buildThreadListV2ListItems(input: {
         continue;
       }
       const folderItems = itemsByFolder.get(scope.key) ?? [];
-      folderItems.push(item);
+      folderItems.push({ ...item, inProjectFolder: true });
       itemsByFolder.set(scope.key, folderItems);
     }
     const collapsedKeys = new Set(input.collapsedProjectKeys);

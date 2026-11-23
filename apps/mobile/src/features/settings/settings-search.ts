@@ -103,6 +103,8 @@ const SETTINGS_SEARCH_TERMS = {
     msg("working section", { $context: "settings search keyword" }),
     msg("group threads by project", { $context: "settings search keyword" }),
     msg("project folders", { $context: "settings search keyword" }),
+    msg("Show pull request badges"),
+    msg("git status", { $context: "settings search keyword" }),
     msg("new threads", { $context: "settings search keyword" }),
     msg("last project", { $context: "settings search keyword" }),
   ],
