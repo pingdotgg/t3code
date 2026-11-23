@@ -1,6 +1,6 @@
-// Answers stay in the secret store behind one-use refs; orchestration records only request status.
-// A `file` request (or a value pasted in chat) moves to an owner-only file for the agent's shell.
-// A `browser` request never touches disk: it waits in memory, at most a minute, for its one fill.
+// Answers live only in server memory, behind one-use refs; nothing a user typed is written to disk.
+// A `file` request (or a value pasted in chat) streams once through an owner-only named pipe.
+// A `browser` value waits at most a minute for its one fill. A restart forgets unused values.
 import {
   CommandId,
   SECRET_REF_PATTERN,
@@ -13,6 +13,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -25,26 +26,34 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
-import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as SecretPipe from "./secretPipe.ts";
 
 const SECRET_REF_PREFIX = "secret-ref:";
-const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
+const keyOf = (ref: SecretRef) => ref.slice(SECRET_REF_PREFIX.length);
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
 /** The waiting fill polls every half second, so a value left this long has no taker. */
 export const BROWSER_VALUE_TTL_MS = 60 * 1000;
-const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
-const FILE_NAME_PATTERN = /^[0-9a-f]{32}(\.partial)?$/;
+/** How long a pipe waits for the one command that reads it. */
+const PIPE_READ_WINDOW_MS = 30 * 60 * 1000;
+/** Plaintext values that versions before memory-only answers left on disk. */
+const LEGACY_STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 
-const StoredSecret = Schema.fromJsonString(
-  Schema.Struct({ projectId: Schema.String, value: Schema.String, savedAt: Schema.Number }),
-);
-const encodeStored = Schema.encodeEffect(StoredSecret);
-const decodeStored = Schema.decodeUnknownOption(StoredSecret);
+/** How the card said its value would be used; only that path may take it. */
+type HeldKind = "ref" | "file" | "browser";
+
+type HeldValue = {
+  readonly kind: HeldKind;
+  readonly projectId: string;
+  readonly value: Redacted.Redacted<string>;
+  readonly savedAt: number;
+  readonly ttlMs: number;
+};
 
 type SecretRequestItem = Extract<OrchestrationV2TurnItem, { readonly type: "secret_request" }>;
 /** `undefined` names the value of a request without fields. */
@@ -94,7 +103,7 @@ export class SecretRequests extends Context.Service<
     /** Writes a secret the user pasted in chat to an owner-only file and returns its path. */
     readonly savePasted: (input: {
       readonly threadId: ThreadId;
-      /** The provider session's namespace, so two sessions' keys never share a file. */
+      /** The provider session's namespace, so two sessions' keys never share a pipe. */
       readonly requestNamespace: string;
       readonly requestKey: string;
       readonly value: string;
@@ -116,11 +125,13 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const resolver = yield* SecretResolver.SecretResolver;
-  // Beside the store's own files so the same owner-only directory and cleanup rules apply.
-  const filesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
+  const layerScope = yield* Scope.Scope;
+  const pipesSupported = SecretPipe.pipesSupportedOn(yield* HostProcess.Platform);
+  // Beside the store's own files so the same owner-only directory applies.
+  const pipesDir = store.directory === undefined ? undefined : path.join(store.directory, "files");
 
   const mac = yield* Mac.Mac;
-  // Keyed by the salt's hex text, as refs saved by earlier versions were.
+  // Keyed by the salt's hex text, as refs made by earlier versions were.
   const refKey = yield* Mac.key(
     Mac.hmacSha256,
     new TextEncoder().encode(
@@ -143,22 +154,18 @@ const make = Effect.gen(function* () {
       );
   const removeAnswered = (threadId: ThreadId, item: SecretRequestItem) =>
     Effect.forEach(fieldNames(item), (field) =>
-      refFor(threadId, item.id, field).pipe(Effect.flatMap((ref) => {
-        browserValues.delete(storeName(ref));
-        return removeLogged(storeName(ref));
-      })),
+      refFor(threadId, item.id, field).pipe(Effect.map((ref) => held.delete(keyOf(ref)))),
     );
 
-  // Keyed like the store, so the same card can never hold both a stored and a memory value.
-  const browserValues = new Map<
-    string,
-    { readonly value: Redacted.Redacted<string>; readonly savedAt: number }
-  >();
-  const dropExpiredBrowserValues = Effect.gen(function* () {
+  /** Every saved answer, by ref key. Taking one deletes it, so a value is handed out once. */
+  const held = new Map<string, HeldValue>();
+  /** Pipes still waiting for their reader, by path. */
+  const servingPipes = new Set<string>();
+
+  const isExpired = (entry: HeldValue, now: number) => now - entry.savedAt > entry.ttlMs;
+  const dropExpired = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
-    for (const [name, entry] of browserValues) {
-      if (now - entry.savedAt > BROWSER_VALUE_TTL_MS) browserValues.delete(name);
-    }
+    for (const [key, entry] of held) if (isExpired(entry, now)) held.delete(key);
   });
   const readReference = Effect.fn("SecretRequests.readReference")(function* (
     reference: SecretReference,
@@ -204,6 +211,9 @@ const make = Effect.gen(function* () {
     }
     // Create before recording so racing answers cannot overwrite values or show saved before storage.
     // Existing values on pending cards finish earlier saves whose recording failed.
+    if (item.delivery === "file" && !pipesSupported) {
+      return yield* new SecretRequestError({ reason: "file_unsupported" });
+    }
     const values =
       input.answer.type === "decline"
         ? undefined
@@ -213,29 +223,16 @@ const make = Effect.gen(function* () {
             (yield* new SecretRequestError({ reason: "fields_mismatch" })));
     if (values !== undefined) {
       const savedAt = yield* Clock.currentTimeMillis;
-      // Cleared when interrupted too, or a retry would keep these values beside its own.
       yield* Effect.forEach(values, ([field, value]) =>
         Effect.gen(function* () {
-          if (item.delivery === "browser") {
-            browserValues.set(storeName(yield* refFor(input.threadId, item.id, field)), { value: Redacted.make(value), savedAt });
-            return;
-          }
-          const encoded = yield* encodeStored({
+          const key = keyOf(yield* refFor(input.threadId, item.id, field));
+          held.set(key, {
+            kind: item.delivery ?? "ref",
             projectId: records.thread.projectId,
-            value,
+            value: Redacted.make(value),
             savedAt,
-          }).pipe(Effect.orDie);
-          yield* store
-            .create(
-              storeName(yield* refFor(input.threadId, item.id, field)),
-              new TextEncoder().encode(encoded),
-            )
-            .pipe(
-              Effect.catchIf(ServerSecretStore.isSecretAlreadyExistsError, () => Effect.void),
-              Effect.mapError(
-                (error) => new SecretRequestError({ reason: "store_failed", cause: error }),
-              ),
-            );
+            ttlMs: item.delivery === "browser" ? BROWSER_VALUE_TTL_MS : SECRET_REF_TTL_MS,
+          });
         }),
       ).pipe(Effect.onError(() => removeAnswered(input.threadId, item)));
     }
@@ -281,85 +278,81 @@ const make = Effect.gen(function* () {
   const savedRef: SecretRequests["Service"]["savedRef"] = Effect.fn("SecretRequests.savedRef")(
     function* (input) {
       const ref = yield* refFor(input.threadId, input.turnItemId);
-      const stored = yield* store.get(storeName(ref)).pipe(Effect.orElseSucceed(Option.none));
-      return Option.map(stored, () => ref);
+      return held.get(keyOf(ref))?.kind === "ref" ? Option.some(ref) : Option.none();
     },
   );
 
-  const removeLogged = (name: string) =>
-    store.remove(name).pipe(
-      Effect.as(true),
-      Effect.catch((error) =>
-        Effect.logWarning("Could not delete a secret request value", {
-          errorTag: error._tag,
-        }).pipe(Effect.as(false)),
-      ),
-    );
-
-  // Serialize get/remove so concurrent consumers cannot read the same one-use ref.
-  const consumeLock = yield* Semaphore.make(1);
-  const consume: SecretRequests["Service"]["consume"] = (input) =>
-    consumeRef(input).pipe(
-      consumeLock.withPermits(1),
-      Effect.tap(() => Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "used" })),
-      Effect.tapError(() =>
-        Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "rejected" }),
-      ),
-      Effect.withSpan("SecretRequests.consume"),
-    );
-
-  /** A live ref's value, left in the store. */
-  const readRef = Effect.fn("SecretRequests.readRef")(function* (input: {
-    readonly ref: SecretRef;
-    readonly projectId: ProjectId;
+  /** A live value, removed from memory: whoever takes it is its only holder. */
+  const take = Effect.fn("SecretRequests.take")(function* (input: {
+    readonly key: string;
+    readonly kind: HeldKind;
+    readonly projectId?: ProjectId;
   }) {
-    if (!SECRET_REF_PATTERN.test(input.ref))
-      return yield* new SecretRequestError({ reason: "invalid_ref" });
-    const stored = yield* store
-      .get(storeName(input.ref))
-      .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "read_failed", cause })));
-    const decoded = Option.flatMap(stored, (bytes) =>
-      decodeStored(new TextDecoder().decode(bytes)),
-    );
-    if (Option.isNone(decoded) || decoded.value.projectId !== input.projectId) {
+    const entry = held.get(input.key);
+    if (
+      entry === undefined ||
+      entry.kind !== input.kind ||
+      (input.projectId !== undefined && entry.projectId !== input.projectId)
+    ) {
       return yield* new SecretRequestError({ reason: "ref_unavailable" });
     }
-    if ((yield* Clock.currentTimeMillis) - decoded.value.savedAt > SECRET_REF_TTL_MS) {
-      yield* removeLogged(storeName(input.ref));
+    held.delete(input.key);
+    if (isExpired(entry, yield* Clock.currentTimeMillis)) {
       return yield* new SecretRequestError({ reason: "ref_expired" });
     }
-    return decoded.value.value;
+    return entry.value;
   });
 
-  const consumeRef = Effect.fn("SecretRequests.consumeRef")(function* (input: {
-    readonly ref: SecretRef;
-    readonly projectId: ProjectId;
-  }) {
-    const value = yield* readRef(input);
-    // One use: the value moves into whatever consumed it. If it cannot be
-    // deleted, it is not handed out, so a ref is never used twice.
-    if (!(yield* removeLogged(storeName(input.ref)))) {
-      return yield* new SecretRequestError({ reason: "consume_failed" });
+  const consume: SecretRequests["Service"]["consume"] = Effect.fn("SecretRequests.consume")(
+    function* (input) {
+      if (!SECRET_REF_PATTERN.test(input.ref)) {
+        return yield* new SecretRequestError({ reason: "invalid_ref" });
+      }
+      return Redacted.value(
+        yield* take({ key: keyOf(input.ref), kind: "ref", projectId: input.projectId }),
+      );
+    },
+    Effect.tap(() => Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "used" })),
+    Effect.tapError(() =>
+      Metrics.increment(Metrics.secretRefsConsumedTotal, { result: "rejected" }),
+    ),
+  );
+
+  /**
+   * Makes the pipe for `key` and serves `value` through it in the background. A retry while
+   * the pipe still waits gets the same path, and the first value keeps being served.
+   */
+  const servePipe = Effect.fn("SecretRequests.servePipe")(function* (
+    key: string,
+    value: Redacted.Redacted<string>,
+  ) {
+    if (!pipesSupported) {
+      return yield* new SecretRequestError({ reason: "file_unsupported" });
     }
-    return value;
-  });
-
-  const writeSecretFile = (dir: string, file: string, value: string) => {
-    const partial = `${file}.partial`;
-    return fileSystem.makeDirectory(dir, { recursive: true, mode: 0o700 }).pipe(
-      Effect.andThen(fileSystem.chmod(dir, 0o700)),
-      Effect.andThen(fileSystem.remove(partial, { force: true })),
-      // `wx` never follows or replaces an existing path.
+    if (pipesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
+    const pipe = path.join(pipesDir, key);
+    if (servingPipes.has(pipe)) return pipe;
+    yield* fileSystem.makeDirectory(pipesDir, { recursive: true, mode: 0o700 }).pipe(
+      Effect.andThen(fileSystem.chmod(pipesDir, 0o700)),
+      Effect.andThen(fileSystem.remove(pipe, { force: true })),
       Effect.andThen(
-        fileSystem.writeFile(partial, new TextEncoder().encode(value), {
-          flag: "wx",
-          mode: 0o600,
+        Effect.tryPromise({
+          try: () => SecretPipe.createPipe(pipe),
+          catch: (cause) => new SecretRequestError({ reason: "store_failed", cause }),
         }),
       ),
-      Effect.andThen(fileSystem.rename(partial, file)),
       Effect.mapError((cause) => new SecretRequestError({ reason: "store_failed", cause })),
     );
-  };
+    servingPipes.add(pipe);
+    yield* Effect.promise((signal) =>
+      // Cleared in the same tick the pipe is removed, before the reader's read can finish.
+      SecretPipe.servePipeOnce(pipe, new TextEncoder().encode(Redacted.value(value)), {
+        windowMs: PIPE_READ_WINDOW_MS,
+        signal,
+      }).finally(() => servingPipes.delete(pipe)),
+    ).pipe(Effect.forkIn(layerScope));
+    return pipe;
+  });
 
   const saveToFile: SecretRequests["Service"]["saveToFile"] = Effect.fn(
     "SecretRequests.saveToFile",
@@ -371,7 +364,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError((cause) => new SecretRequestError({ reason: "load_failed", cause })));
     const item = records.turnItems.find((candidate) => candidate.id === input.turnItemId);
-    // Only a card that told the user the agent's commands can read the value may write it out.
+    // Only a card that told the user the agent's commands can read the value may hand it out.
     if (
       item?.type !== "secret_request" ||
       item.secretStatus !== "saved" ||
@@ -379,115 +372,73 @@ const make = Effect.gen(function* () {
     ) {
       return yield* new SecretRequestError({ reason: "not_a_file_request" });
     }
-    if (filesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
-    const projectId = records.thread.projectId;
-    const deliver = Effect.fn("SecretRequests.deliverFile")(function* (field: FieldName) {
-      const ref = yield* refFor(input.threadId, item.id, field);
-      const file = path.join(filesDir, ref.slice(SECRET_REF_PREFIX.length));
-      // One use: the file counts as delivered only once the stored copy is gone. A retry with the
-      // same clientRequestId gets the file the first call wrote and finishes that removal.
-      const removeStored = removeLogged(storeName(ref)).pipe(
-        Effect.flatMap((removed) =>
-          removed ? Effect.succeed(file) : new SecretRequestError({ reason: "consume_failed" }),
-        ),
-      );
-      if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) {
-        return yield* removeStored;
-      }
-      // The stored value goes only after the file is complete, so a failed write can retry.
-      const value = yield* readRef({ ref, projectId });
-      yield* writeSecretFile(filesDir, file, value);
-      return yield* removeStored;
-    });
-    const { fields } = item;
-    return yield* Effect.gen(function* () {
-      if (fields === undefined) return { file: yield* deliver(undefined) };
-      const files: Record<string, string> = {};
-      for (const field of fields) files[field.name] = yield* deliver(field.name);
-      return { files };
-    }).pipe(consumeLock.withPermits(1));
-  });
+    const files = yield* Effect.forEach(fieldNames(item), (field) =>
+      Effect.gen(function* () {
+        const key = keyOf(yield* refFor(input.threadId, item.id, field));
+        const existing = pipesDir === undefined ? undefined : path.join(pipesDir, key);
+        if (existing !== undefined && servingPipes.has(existing)) return [field, existing] as const;
+        const value = held.get(key);
+        if (value?.kind !== "file" || isExpired(value, yield* Clock.currentTimeMillis)) {
+          return yield* new SecretRequestError({ reason: "ref_unavailable" });
+        }
+        const pipe = yield* servePipe(key, value.value);
+        held.delete(key);
+        return [field, pipe] as const;
+      }),
+    );
+    const single = files[0];
+    return single?.[0] === undefined && single !== undefined
+      ? { file: single[1] }
+      : { files: Object.fromEntries(files) };
+  }, answerLock.withPermits(1));
 
   const savePasted: SecretRequests["Service"]["savePasted"] = Effect.fn(
     "SecretRequests.savePasted",
   )(function* (input) {
-    if (filesDir === undefined) return yield* new SecretRequestError({ reason: "store_failed" });
     const ref = yield* refFor(
       input.threadId,
       `pasted\u0000${input.requestNamespace}\u0000${input.requestKey}`,
     );
-    const file = path.join(filesDir, ref.slice(SECRET_REF_PREFIX.length));
-    // A retry with the same clientRequestId gets the file the first call wrote, unchanged, so a
-    // command already holding that path never reads another value.
-    return yield* Effect.gen(function* () {
-      if (yield* fileSystem.exists(file).pipe(Effect.orElseSucceed(() => false))) return file;
-      yield* writeSecretFile(filesDir, file, input.value);
-      return file;
-    }).pipe(consumeLock.withPermits(1));
+    return yield* servePipe(keyOf(ref), Redacted.make(input.value));
   });
-
-  const sweepExpired = Effect.gen(function* () {
-    if (store.directory === undefined) return;
-    const now = yield* Clock.currentTimeMillis;
-    const names = (yield* fileSystem.readDirectory(store.directory)).flatMap((file) => {
-      const match = STORE_NAME_PATTERN.exec(file);
-      return match?.[1] === undefined ? [] : [match[1]];
-    });
-    let removed = 0;
-    for (const name of names) {
-      const stored = yield* store.get(name).pipe(Effect.orElseSucceed(Option.none));
-      const decoded = Option.flatMap(stored, (bytes) =>
-        decodeStored(new TextDecoder().decode(bytes)),
-      );
-      if (Option.isSome(decoded) && now - decoded.value.savedAt <= SECRET_REF_TTL_MS) continue;
-      if (yield* removeLogged(name)) removed += 1;
-    }
-    yield* Effect.annotateCurrentSpan({ "secret_request.expired_removed": removed });
-  }).pipe(
-    Effect.catchCause((cause) => Effect.logWarning("Could not sweep expired secret refs", cause)),
-    Effect.withSpan("SecretRequests.sweepExpired"),
-  );
-  const sweepExpiredFiles = Effect.gen(function* () {
-    if (filesDir === undefined || !(yield* fileSystem.exists(filesDir))) return;
-    const now = yield* Clock.currentTimeMillis;
-    let removed = 0;
-    for (const name of yield* fileSystem.readDirectory(filesDir)) {
-      if (!FILE_NAME_PATTERN.test(name)) continue;
-      const file = path.join(filesDir, name);
-      const { mtime } = yield* fileSystem.stat(file);
-      if (Option.exists(mtime, (time) => now - time.getTime() <= SECRET_REF_TTL_MS)) continue;
-      yield* fileSystem.remove(file);
-      removed += 1;
-    }
-    yield* Effect.annotateCurrentSpan({ "secret_request.expired_files_removed": removed });
-  }).pipe(
-    Effect.catchCause((cause) => Effect.logWarning("Could not sweep expired secret files", cause)),
-    Effect.withSpan("SecretRequests.sweepExpiredFiles"),
-  );
-  const sweep = Effect.andThen(sweepExpired, sweepExpiredFiles);
-  yield* sweep;
-  yield* sweep.pipe(
-    Effect.delay("1 hour"),
-    Effect.repeat(Schedule.spaced("1 hour")),
-    Effect.forkScoped,
-  );
-  // A browser value whose fill never came (the call ended first) must not wait for the hourly sweep.
-  yield* dropExpiredBrowserValues.pipe(
-    Effect.delay("15 seconds"),
-    Effect.repeat(Schedule.spaced("15 seconds")),
-    Effect.forkScoped,
-  );
 
   const takeBrowserValue: SecretRequests["Service"]["takeBrowserValue"] = Effect.fn(
     "SecretRequests.takeBrowserValue",
   )(function* (input) {
-    const name = storeName(yield* refFor(input.threadId, input.turnItemId));
-    const entry = browserValues.get(name);
-    browserValues.delete(name);
-    if (entry === undefined) return Option.none();
-    const expired = (yield* Clock.currentTimeMillis) - entry.savedAt > BROWSER_VALUE_TTL_MS;
-    return expired ? Option.none() : Option.some(entry.value);
+    const key = keyOf(yield* refFor(input.threadId, input.turnItemId));
+    return yield* take({ key, kind: "browser" }).pipe(Effect.option);
   });
+
+  // Earlier versions kept answers and file deliveries as plaintext on disk; remove them.
+  const removeLegacyPlaintext = Effect.gen(function* () {
+    if (store.directory === undefined) return;
+    let removed = 0;
+    for (const file of yield* fileSystem.readDirectory(store.directory)) {
+      const name = LEGACY_STORE_NAME_PATTERN.exec(file)?.[1];
+      if (name !== undefined) {
+        yield* store.remove(name);
+        removed += 1;
+      }
+    }
+    if (pipesDir !== undefined && (yield* fileSystem.exists(pipesDir))) {
+      for (const file of yield* fileSystem.readDirectory(pipesDir)) {
+        yield* fileSystem.remove(path.join(pipesDir, file), { force: true });
+        removed += 1;
+      }
+    }
+    yield* Effect.annotateCurrentSpan({ "secret_request.legacy_removed": removed });
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Could not remove secret values older versions stored", cause),
+    ),
+    Effect.withSpan("SecretRequests.removeLegacyPlaintext"),
+  );
+  yield* removeLegacyPlaintext;
+  yield* dropExpired.pipe(
+    Effect.delay("15 seconds"),
+    Effect.repeat(Schedule.spaced("15 seconds")),
+    Effect.forkScoped,
+  );
 
   return SecretRequests.of({
     answer,

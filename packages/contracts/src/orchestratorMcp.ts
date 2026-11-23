@@ -874,7 +874,7 @@ export const OrchestratorMcpRequestSecretResult = Schema.Union([
     status: Schema.Literal("saved").annotate({ description: "file holds the value." }),
     file: Schema.String.annotate({
       description:
-        "Owner-only file with the value. Read it inside commands and never print it. Deleted after 24 hours.",
+        "Owner-only pipe that gives the value to the first command that reads it, then is gone. Read it once, inside the command that needs it, and never print it. Expires unread after 30 minutes.",
     }),
   }),
   Schema.Struct({

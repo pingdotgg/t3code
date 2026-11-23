@@ -13042,5 +13042,6 @@
   "c9bee4f93481b77a": "Ta bort hubb",
   "5c8ebc36f84dee7a": "behöver en nyare skrivbordsapp",
   "46b14ee7b6dc0de3": "Skrivs direkt i fältet på den här sidan och sparas aldrig. Agenten ser bara det sidan visar, och lösenord visas som punkter",
-  "8d9e208aef08827f": "Fyll i fältet"
+  "8d9e208aef08827f": "Fyll i fältet",
+  "f571cb7d488302a6": "Hålls utanför chatten och sparas aldrig. Nästa kommando som den här agenten kör och som läser det får det en gång"
 }

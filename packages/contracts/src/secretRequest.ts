@@ -59,6 +59,8 @@ const SECRET_REQUEST_FAILURE_MESSAGES = {
   consume_failed: "Could not use that secretRef. Try again.",
   not_a_file_request:
     'The user did not save this secret for shell use. Ask again with request_secret and delivery: "file".',
+  file_unsupported:
+    'Shell delivery needs a named pipe, which this server\'s OS does not have. Ask without delivery: "file".',
 } as const;
 
 export const SecretRequestFailureReason = Schema.Literals(

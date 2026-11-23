@@ -5695,5 +5695,6 @@
   "4314e052a3524c51": "Favoritos",
   "0752b8ccc7dfba04": "Roda em {label}",
   "46b14ee7b6dc0de3": "Digitado direto no campo desta página e nunca armazenado. O agente vê apenas o que a página mostra, e senhas aparecem como pontos",
-  "506705376c24c857": "Preencher campo"
+  "506705376c24c857": "Preencher campo",
+  "f571cb7d488302a6": "Fica fora do chat e nunca é armazenado. O próximo comando deste agente que o ler o recebe uma única vez"
 }

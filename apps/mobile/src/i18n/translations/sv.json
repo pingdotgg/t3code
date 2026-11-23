@@ -5701,5 +5701,6 @@
   "4314e052a3524c51": "Favoriter",
   "0752b8ccc7dfba04": "Körs på {label}",
   "46b14ee7b6dc0de3": "Skrivs direkt i fältet på den här sidan och sparas aldrig. Agenten ser bara det sidan visar, och lösenord visas som punkter",
-  "506705376c24c857": "Fyll i fältet"
+  "506705376c24c857": "Fyll i fältet",
+  "f571cb7d488302a6": "Hålls utanför chatten och sparas aldrig. Nästa kommando som den här agenten kör och som läser det får det en gång"
 }
