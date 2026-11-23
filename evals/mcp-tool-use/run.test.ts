@@ -801,6 +801,7 @@ it("replays earlier capability results with the model under test as the caller",
   assert.equal(resumed.at(-1)?.role, "user");
   assert.equal(resumed.at(-1)?.content.at(-1)?.type, "tool_result");
   for (const setup of [
+    testCase.setup,
     {
       ...testCase.setup,
       sideChat: { parentThreadId: "thread-parent", digest: ["The permissions fix is committed."] },
@@ -808,15 +809,40 @@ it("replays earlier capability results with the model under test as the caller",
     { ...testCase.setup, role: "native-subagent" as const },
     { ...testCase.setup, role: "delegated-child" as const },
   ]) {
-    assert.throws(
-      () =>
-        buildMessages(
-          makeSample(
-            { ...testCase, prompt: "", setup },
-            { ...base, subagentContext: "Hook context" },
-          ),
-        ),
-      /Empty-prompt replay/,
+    const sampleBase = { ...base, subagentContext: "Hook context" };
+    if (setup.role !== "top" || setup.sideChat !== undefined) {
+      assert.throws(
+        () => buildMessages(makeSample({ ...testCase, prompt: "", setup }, sampleBase)),
+        /Empty-prompt replay/,
+      );
+    }
+    const answered = buildMessages(
+      makeSample(
+        {
+          ...testCase,
+          prompt: "",
+          setup: {
+            ...setup,
+            asyncAnswer: {
+              question: {
+                id: "destination",
+                header: "Destination",
+                question: "Use the saved configuration?",
+                options: [{ label: "Use saved settings", description: "Use suite 100" }],
+              },
+              answer: "Use suite 200",
+            },
+          },
+        },
+        sampleBase,
+      ),
+    );
+    assert.include(
+      answered
+        .flatMap((message) => message.content)
+        .find((block) => typeof block.text === "string" && block.text.includes("Use suite 200"))
+        ?.text,
+      "Question (from assistant):\nUse the saved configuration?\n\nCustom answer (instead of the listed options):\nUse suite 200",
     );
   }
 });
