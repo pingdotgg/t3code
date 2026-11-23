@@ -455,15 +455,8 @@ export const OpenCodeDriver: ProviderDriver<
       openCode2Server
         .withConnection(({ client, events }) =>
           Effect.gen(function* () {
+            // OpenCode names a location by the folder it was asked for, not its project root.
             const directory = pathService.resolve(cwd);
-            // OpenCode loads a folder as the project that contains it, so events can name that root.
-            const covers = (root: string | undefined) => {
-              if (root === undefined) return false;
-              const relative = pathService.relative(root, directory);
-              return (
-                relative === "" || (!relative.startsWith("..") && !pathService.isAbsolute(relative))
-              );
-            };
             const updated = yield* Deferred.make<void>();
             const stream = yield* events.pipe(Effect.option);
             if (stream._tag === "Some") {
@@ -471,7 +464,7 @@ export const OpenCodeDriver: ProviderDriver<
                 Stream.runForEach((event) =>
                   event.type === "model.updated" &&
                   "location" in event &&
-                  covers(event.location?.directory)
+                  event.location?.directory === directory
                     ? Deferred.succeed(updated, undefined)
                     : Effect.void,
                 ),
@@ -486,7 +479,7 @@ export const OpenCodeDriver: ProviderDriver<
               stream._tag === "None"
                 ? Effect.succeed(true)
                 : client.debug.location.list().pipe(
-                    Effect.map((loaded) => loaded.some((entry) => covers(entry.directory))),
+                    Effect.map((loaded) => loaded.some((entry) => entry.directory === directory)),
                     Effect.timeout("2 seconds"),
                     Effect.orElseSucceed(() => true),
                   ),
