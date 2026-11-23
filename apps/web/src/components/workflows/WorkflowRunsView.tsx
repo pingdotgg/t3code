@@ -1,11 +1,12 @@
 import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { WorkflowIcon } from "lucide-react";
+import { CircleAlertIcon, WorkflowIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { Button, ContentButton, InlineButton } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
@@ -113,22 +114,22 @@ export function WorkflowRunsView({
   // A broken file is said even where nothing has run, or its workflows would just seem missing.
   const problemAlert =
     snapshot.definition?.problem == null ? null : (
-      <div
-        role="alert"
-        className="surface-tint [--surface-tint:var(--error)] flex shrink-0 items-center gap-3 border-b border-divider px-4 py-2 text-meta"
-      >
-        <span className="min-w-0 flex-1 text-muted-foreground">
-          <T>
-            <span className="text-label text-destructive-foreground">
-              A workflow file has a problem.
-            </span>{" "}
-            The last version that did keeps running.
-          </T>
-        </span>
-        <Button size="xs" variant="secondary" onClick={onOpenDefinitions}>
-          <T>Open the file</T>
-        </Button>
-      </div>
+      <Alert variant="error" density="strip" edge="bottom" className="shrink-0">
+        <CircleAlertIcon aria-hidden />
+        <AlertDescription>
+          <p>
+            <T>
+              <span className="text-label text-foreground">A workflow file has a problem.</span> The
+              last version that did keeps running.
+            </T>
+          </p>
+        </AlertDescription>
+        <AlertAction>
+          <Button size="xs" variant="secondary" onClick={onOpenDefinitions}>
+            <T>Open the file</T>
+          </Button>
+        </AlertAction>
+      </Alert>
     );
   const withProblem = (empty: ReactNode) =>
     problemAlert === null ? (
@@ -214,13 +215,13 @@ export function WorkflowRunsView({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {problemAlert}
-      <div className="flex min-h-0 min-w-0 flex-1">
-        {/* Below md there is room for one of the two: the list, or the run picked from it. */}
+      <div className="@container/runs flex min-h-0 min-w-0 flex-1">
+        {/* Below @2xl there is room for one of the two: the list, or the run picked from it. */}
         <div
           className={cn(
-            "min-h-0 w-full shrink-0 flex-col md:w-72 md:border-e md:border-divider",
+            "min-h-0 w-full shrink-0 flex-col @2xl/runs:w-72 @2xl/runs:border-e @2xl/runs:border-divider",
             selectedRunId === null ? "flex" : "hidden",
-            paneOpen ? "xl:flex" : "md:flex",
+            paneOpen ? "@4xl/runs:flex" : "@2xl/runs:flex",
           )}
         >
           <div className="space-y-2 p-2 pb-1">
@@ -308,7 +309,7 @@ export function WorkflowRunsView({
         <ScrollArea
           className={cn(
             "@container/feed min-h-0 min-w-0 flex-1",
-            selectedRunId === null ? "hidden md:block" : "block",
+            selectedRunId === null ? "hidden @2xl/runs:block" : "block",
           )}
         >
           {shown === null ? (
@@ -354,7 +355,7 @@ function WorkflowRunListItem({
       >
         <span
           className={cn(
-            "flex w-full flex-col gap-0.5 rounded-row px-2 py-1.5 group-focus-visible/run:ring-2 group-focus-visible/run:ring-ring/70 group-focus-visible/run:ring-inset",
+            "flex w-full flex-col gap-0.5 rounded-row px-2.5 py-2 group-focus-visible/run:ring-2 group-focus-visible/run:ring-ring/70 group-focus-visible/run:ring-inset",
             current ? "surface-selected" : "group-hover/run:surface-ghost-hover",
           )}
         >

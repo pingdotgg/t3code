@@ -446,7 +446,7 @@ export function WorkflowRunFeed({
           <Button
             size="sm"
             variant="ghost"
-            className="-ms-2.5 md:hidden"
+            className={cn("-ms-2.5", shownTab !== null ? "@4xl/runs:hidden" : "@2xl/runs:hidden")}
             onClick={() => onSelect(null)}
             aria-label={gt("Back to the list of runs")}
           >
@@ -1170,7 +1170,7 @@ function WorkflowTimeline({
   }
   const live = end === null;
   return (
-    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-96">
+    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-80 @4xl/feed:w-96">
       <ol>
         {items.map((item, index) => (
           <li key={item.key} className="relative">
@@ -1345,13 +1345,14 @@ function WorkflowBeatRow({
   );
 }
 
-// What happened reads as part of the page. A question, answered in the timeline, is the one box;
-// a pause says so in its heading and its button.
+// What happened reads as part of the page. Questions and pauses are the framed alert cards,
+// using the redesign's warning and error tint tokens so they adapt across flat and Aqua styles.
 const CARD_TONE = {
   plain: "",
   quiet: "",
-  ask: "surface-tint [--surface-tint:var(--warning)] rounded-card px-3 py-2.5",
-  failed: "",
+  ask: "surface-tint [--surface-tint:var(--warning)] [--surface-tint-fill:var(--warning-alert-fill)] [--surface-tint-rim:var(--warning-alert-rim)] rounded-card px-3.5 py-3",
+  failed:
+    "surface-tint [--surface-tint:var(--error)] [--surface-tint-fill:var(--error-alert-fill)] [--surface-tint-rim:var(--error-alert-rim)] rounded-card px-3.5 py-3",
   done: "",
 } as const;
 
