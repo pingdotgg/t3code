@@ -26,7 +26,7 @@ import {
 } from "@t3tools/shared/model";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
-import { catalogModelLabel } from "./ProviderDimensions.ts";
+import { modelLabel } from "./ProviderDimensions.ts";
 
 // Bump when a field changes meaning, so reports can split old and new rows.
 const REPORT_VERSION = 2;
@@ -74,8 +74,8 @@ export interface RunSettledReport {
 }
 
 type Properties = Readonly<Record<string, unknown>>;
-/** Maps a native model id to a vendor catalog label, or undefined to keep it out. */
-export type ModelLabeler = (model: string) => string | undefined;
+/** Maps a native model id to the name analytics reports. */
+export type ModelLabeler = (model: string) => string;
 
 const TERMINAL_STATUSES: ReadonlySet<OrchestrationV2ProviderTurn["status"]> = new Set([
   "completed",
@@ -403,7 +403,7 @@ export const layer = Layer.effect(
       registry.getProviders,
       (providers): ModelLabeler =>
         (model) =>
-          catalogModelLabel(providers, model),
+          modelLabel(providers, model),
     );
     return {
       runStarted: Effect.fn("ProviderTurnAnalytics.runStarted")((input) =>
