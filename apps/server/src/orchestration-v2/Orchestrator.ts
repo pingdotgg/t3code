@@ -6018,6 +6018,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
   });
 
+  // A turn keeps the modes it started with, so a thread lowered since can hold a broader one.
+  // A turn that recorded none is taken as unrestricted.
+  const turnStartedModes = (
+    attempts: ReadonlyArray<OrchestrationV2RunAttempt>,
+    run: OrchestrationV2Run | undefined,
+  ) =>
+    attempts.find((attempt) => attempt.id === run?.activeAttemptId)?.startedModes ?? {
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+    };
+
+  // A parked steer is delivered later by the server, without the caller's limit, into a turn
+  // whose modes are not recorded yet. Only a caller allowed any turn may park or rewrite one.
+  const limitForbidsParkedSteer = Effect.gen(function* () {
+    const limit = narrowToCeiling(yield* DispatchModeLimit, runtimeModeCeiling);
+    return (
+      limit !== undefined &&
+      exceededDispatchModeLimit(limit, {
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      }) !== undefined
+    );
+  });
+
   const refuseAboveDispatchModeLimit = Effect.fn("orchestrationV2.dispatch.refuseAboveModeLimit")(
     function* (
       command: OrchestrationV2ServerCommand,
@@ -6694,6 +6718,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
 
     if (steeringPolicy === "active_steering") {
+      yield* refuseAboveDispatchModeLimit(
+        input.command,
+        input.command.threadId,
+        turnStartedModes(input.projection.attempts, targetRun),
+      );
       const instanceChanged =
         input.projection.thread.providerInstanceId !== input.modelSelection.instanceId;
       // Only a user's steer carries the picker's selection; the adapter applies it to the live turn.
@@ -7960,21 +7989,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ))) &&
         !(yield* stopReachedRun(command, command.threadId, target.id))
       ) {
-        const adapter = yield* providerAdapters
-          .get(target.providerInstanceId)
-          .pipe(mapDispatchError(command));
-        const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
-        yield* commandPolicy
-          .decideSteeringExecution({
-            commandId: command.commandId,
-            threadId: command.threadId,
-            providerInstanceId: target.providerInstanceId,
-            capabilities,
-          })
-          .pipe(mapDispatchError(command));
-        yield* ensureSteeringMessage(command, command);
-        steerWhenReadyRunId = target.id;
-        dispatchMode = { type: "queue_after_active" };
+        // Such a caller's message waits for its own turn instead.
+        if (yield* limitForbidsParkedSteer) {
+          dispatchMode = { type: "queue_after_active" };
+        } else {
+          const adapter = yield* providerAdapters
+            .get(target.providerInstanceId)
+            .pipe(mapDispatchError(command));
+          const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+          yield* commandPolicy
+            .decideSteeringExecution({
+              commandId: command.commandId,
+              threadId: command.threadId,
+              providerInstanceId: target.providerInstanceId,
+              capabilities,
+            })
+            .pipe(mapDispatchError(command));
+          yield* ensureSteeringMessage(command, command);
+          steerWhenReadyRunId = target.id;
+          dispatchMode = { type: "queue_after_active" };
+        }
       }
     }
     if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
@@ -11577,6 +11611,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         runtimeRequest.responseCapability.type === "live"
           ? runtimeRequest.responseCapability.providerSessionId
           : null;
+      if (providerSessionId !== null && (yield* DispatchModeLimit) !== undefined) {
+        // The answer goes into the turn that asked, which keeps the modes it started with.
+        const live = yield* projectionStore
+          .getThreadRecords(command.threadId, ["runs", "attempts"])
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+        yield* refuseAboveDispatchModeLimit(
+          command,
+          command.threadId,
+          turnStartedModes(
+            live.attempts,
+            live.runs.find((run) => run.id === context.node?.runId),
+          ),
+        );
+      }
       const providerSession = context.session;
       if (providerSessionId !== null && providerSession === undefined) {
         return yield* new OrchestratorDispatchError({
@@ -12171,6 +12223,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ))) &&
       !(yield* stopReachedRun(command, command.threadId, target.id))
     ) {
+      if (yield* limitForbidsParkedSteer) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The current turn is not running yet. Try again once it is.",
+        });
+      }
       yield* ensureSteeringMessage(command, queuedMessage);
       const adapter = yield* providerAdapters
         .get(target.providerInstanceId)
@@ -12576,10 +12635,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     // A command cannot steer, so an edit into one keeps it queued where it is.
     if (
       queuedRun.steerWhenReadyRunId !== undefined &&
-      isSlashCommand({
+      (isSlashCommand({
         text: command.text,
         attachments: command.attachments ?? queuedMessage.attachments,
-      })
+      }) ||
+        (yield* limitForbidsParkedSteer))
     ) {
       const { steerWhenReadyRunId: _, ...queued } = queuedRun;
       yield* emitEvent({
