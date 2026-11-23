@@ -42,7 +42,15 @@ const asJson = (value: unknown) => JSON.stringify(value);
 
 describe("decodePullRequestListJson", () => {
   it("reads a pull request as a change request", () => {
-    const batch = expectSuccess(decodePullRequestListJson(asJson([pullRequest()])));
+    const batch = expectSuccess(
+      decodePullRequestListJson(
+        asJson([
+          pullRequest({
+            labels: [{ id: "4f1c", name: "release-1.0", active: true, url: null }],
+          }),
+        ]),
+      ),
+    );
 
     expect(batch.items).toHaveLength(1);
     expect(batch.items[0]).toMatchObject({
@@ -54,6 +62,7 @@ describe("decodePullRequestListJson", () => {
       state: "open",
       isDraft: false,
       mergeability: "mergeable",
+      labels: [{ name: "release-1.0" }],
     });
   });
 

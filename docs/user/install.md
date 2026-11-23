@@ -58,7 +58,7 @@ the nightly train, run your installed `t3` (for example `t3 connect`), not
 
 There is no `t3` executable for Intel Macs (the desktop app is available). To
 run a server there, build it from source with `vp`, which provides the Node version it needs
-([Install vp](../operations/development.md#first-checkout)):
+([Install vp](../operations/00_development.md#first-checkout)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -103,7 +103,7 @@ The `.deb` updates itself like the other desktop builds. It asks for your
 password to install each update. If your desktop has no password prompt, the
 update fails. Download the new `.deb` and install it the same way.
 
-The AUR packages currently support x86_64 only; on ARM64, use the AppImage.
+The AUR packages support x86_64 and ARM64.
 Update AUR installs with your AUR helper, such as `yay -Syu`, instead of the
 in-app updater.
 

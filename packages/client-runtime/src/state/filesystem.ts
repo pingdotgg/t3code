@@ -8,9 +8,13 @@ import {
 import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
 
-import type {
-  EnvironmentConnectionPhase,
-  EnvironmentConnectionPresentation,
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+
+import {
+  connectionErrorText,
+  type EnvironmentConnectionPhase,
+  type EnvironmentConnectionPresentation,
 } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -21,16 +25,22 @@ import {
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
 } from "./projects.ts";
-import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
+import { createEnvironmentRpcCommand, createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
 const BROWSE_IDLE_TTL_MS = 5_000;
 
-export function resolveFilesystemReadAccess(input: {
-  readonly isCatalogReady: boolean;
-  readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
-  readonly session: SessionGrantInput | null;
-  readonly sessionError: string | null;
-}) {
+export function resolveFilesystemReadAccess(
+  input: {
+    readonly isCatalogReady: boolean;
+    readonly connection: Pick<
+      EnvironmentConnectionPresentation,
+      "phase" | "error" | "i18nError"
+    > | null;
+    readonly session: SessionGrantInput | null;
+    readonly sessionError: string | null;
+  },
+  resolve: MFunctionType = mFallback,
+) {
   if (input.sessionError !== null) {
     return { canReadFiles: false, isPending: false, error: input.sessionError };
   }
@@ -45,7 +55,10 @@ export function resolveFilesystemReadAccess(input: {
     return {
       canReadFiles: false,
       isPending,
-      error: isPending ? null : (input.connection?.error ?? "This environment is not connected."),
+      error: isPending
+        ? null
+        : ((input.connection === null ? null : connectionErrorText(input.connection, resolve)) ??
+          resolve(msg("This environment is not connected."))),
     };
   }
   return {
@@ -57,9 +70,13 @@ export function resolveFilesystemReadAccess(input: {
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
+  // A bare drive has no separator, so it would otherwise filter its own listing by "D:".
+  const browseQuery = /^[a-zA-Z]:$/.test(query) ? `${query}\\` : query;
+  const directoryPath = isBrowsing ? getBrowseDirectoryPath(browseQuery) : "";
   const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+    isBrowsing && !hasTrailingPathSeparator(browseQuery)
+      ? getBrowseLeafPathSegment(browseQuery)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {
@@ -204,6 +221,28 @@ export function createFilesystemEnvironmentAtoms<R, E>(
       // lists it again. The short TTL only keeps the old listing on screen while it refreshes.
       idleTtlMs: BROWSE_IDLE_TTL_MS,
       staleTimeMs: 0,
+    }),
+    /** Repositories under a folder and in its `.code-workspace` file, read from disk each time. */
+    scanFolders: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:scan-folders",
+      tag: WS_METHODS.workspaceScanFolders,
+      staleTimeMs: 0,
+    }),
+    /** A project's tracked folders with what is on disk now: a repository, plain files, or gone. */
+    listFolders: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:list-folders",
+      tag: WS_METHODS.workspaceListFolders,
+      staleTimeMs: 0,
+    }),
+    /** The task folder a thread's `worktreePath` belongs to, with each repository's worktree. */
+    taskFolder: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:workspace:task-folder",
+      tag: WS_METHODS.workspaceTaskFolder,
+      staleTimeMs: 0,
+    }),
+    addTaskFolderRepository: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:workspace:add-task-folder-repository",
+      tag: WS_METHODS.workspaceAddTaskFolderRepository,
     }),
   };
 }

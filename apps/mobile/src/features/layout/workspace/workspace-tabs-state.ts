@@ -16,9 +16,9 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Settings, Chats, pull requests and issues pair a list with a detail column; Usage is one page. */
+/** Settings, Chats, pull requests and issues pair a list with a detail column; the others are one page. */
 export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
-  return settingsOpen || tab !== "usage";
+  return settingsOpen || (tab !== "usage" && tab !== "workflows");
 }
 
 export interface WorkspaceTabState {
@@ -54,6 +54,7 @@ export function initialWorkspaceTabsState(
       threads: emptyTab(),
       pullRequests: emptyTab(),
       issues: emptyTab(),
+      workflows: emptyTab(),
       usage: emptyTab(),
       settings: emptyTab(),
     },
@@ -65,7 +66,7 @@ export type WorkspaceTabsAction =
   | { readonly type: "search"; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "query"; readonly query: string; readonly tab?: WorkspaceSearchTab }
   | { readonly type: "expand"; readonly tab?: WorkspaceSearchTab }
-  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab }
+  | { readonly type: "cancel"; readonly tab?: WorkspaceSearchTab; readonly scrollToTop?: boolean }
   | { readonly type: "scroll"; readonly tab: WorkspaceSearchTab; readonly offset: number };
 
 export function workspaceTabsReducer(
@@ -81,7 +82,7 @@ export function workspaceTabsReducer(
           selectionRevision: state.selectionRevision + 1,
         };
   const tab = action.tab ?? state.selectedTab;
-  if (tab === "usage") return state;
+  if (tab === "usage" || tab === "workflows") return state;
   const current = state.tabs[tab];
   let next: WorkspaceTabState;
   switch (action.type) {
@@ -105,7 +106,8 @@ export function workspaceTabsReducer(
         ...current,
         query: "",
         searchMode: "resting",
-        scrollOffset: current.searchEntryOffset,
+        scrollOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
+        searchEntryOffset: action.scrollToTop ? 0 : current.searchEntryOffset,
       };
       break;
     case "scroll":

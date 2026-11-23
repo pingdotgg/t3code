@@ -8,6 +8,8 @@ import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
 } from "@t3tools/contracts/relay";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { useMessages } from "gt-react-native";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
@@ -30,6 +32,7 @@ export interface RelayEnvironmentView {
 }
 
 export function useConnectionController() {
+  const messages = useMessages();
   const connectedEnvironments = useWorkspaceEnvironments();
   const discovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
   const connectPairingUrlMutation = useAtomCommand(connectPairingUrlAtom, {
@@ -57,10 +60,10 @@ export function useConnectionController() {
         environment: entry.environment,
         availability: entry.availability,
         status: Option.getOrNull(entry.status),
-        error: Option.getOrNull(entry.error)?.message ?? null,
+        error: errorDisplayMessage(Option.getOrNull(entry.error), messages),
         traceId: Option.getOrNull(entry.error)?.traceId ?? null,
       })),
-    [discovery.environments],
+    [discovery.environments, messages],
   );
   const availableRelayEnvironments = useMemo(
     () => relayEnvironments.filter((entry) => !registeredIds.has(entry.environment.environmentId)),
@@ -102,7 +105,7 @@ export function useConnectionController() {
     relayDiscovery: {
       isRefreshing: discovery.refreshing,
       isOffline: discovery.offline,
-      error: Option.getOrNull(discovery.error)?.message ?? null,
+      error: errorDisplayMessage(Option.getOrNull(discovery.error), messages),
       errorTraceId: Option.getOrNull(discovery.error)?.traceId ?? null,
     },
     connectPairingUrl,

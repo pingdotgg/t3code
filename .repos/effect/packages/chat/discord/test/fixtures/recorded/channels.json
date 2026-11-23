@@ -1,0 +1,181 @@
+{
+  "case": "Channel reads: a text channel, a forum, a direct opened with Tim, and a thread",
+  "provenance": {
+    "kind": "recorded",
+    "source": "Discord REST v10 with the Janitor bot token, from a local script",
+    "where": "guild 840178841540362250 (Tim's test guild); #effect-chat-scratch 1570607253965246584, #effect-chat-forum 1570607255684915302 and #test 1570605581192929301",
+    "recordedAt": "2026-11-13T01:17Z, during EFF-3695",
+    "body": "Each response verbatim, apart from signed CDN URLs, whose query is replaced; see scrubbed"
+  },
+  "calls": [
+    {
+      "step": "get-channel-text",
+      "method": "GET",
+      "path": "/channels/1570607253965246584",
+      "request": null,
+      "status": 200,
+      "response": {
+        "id": "1570607253965246584",
+        "type": 0,
+        "last_message_id": "1570608483965870101",
+        "flags": 0,
+        "guild_id": "840178841540362250",
+        "name": "effect-chat-scratch",
+        "parent_id": null,
+        "rate_limit_per_user": 0,
+        "topic": "Scratch channel for @effect/chat-discord fixtures (EFF-3695). Safe to delete.",
+        "position": 7,
+        "permission_overwrites": [
+          {
+            "id": "840178841540362250",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ],
+        "nsfw": false
+      }
+    },
+    {
+      "step": "get-channel-forum",
+      "method": "GET",
+      "path": "/channels/1570607255684915302",
+      "request": null,
+      "status": 200,
+      "response": {
+        "id": "1570607255684915302",
+        "type": 15,
+        "last_message_id": "1570608449778098218",
+        "flags": 0,
+        "guild_id": "840178841540362250",
+        "name": "effect-chat-forum",
+        "parent_id": null,
+        "rate_limit_per_user": 0,
+        "topic": "Scratch channel for @effect/chat-discord fixtures (EFF-3695). Safe to delete.",
+        "position": 0,
+        "permission_overwrites": [
+          {
+            "id": "840178841540362250",
+            "type": 0,
+            "allow": "0",
+            "deny": "1024"
+          }
+        ],
+        "nsfw": false,
+        "available_tags": [],
+        "default_reaction_emoji": null,
+        "default_sort_order": null,
+        "default_forum_layout": 0,
+        "default_tag_setting": "match_some",
+        "icon_emoji": null,
+        "theme_color": null,
+        "template": ""
+      }
+    },
+    {
+      "step": "dm-open",
+      "method": "POST",
+      "path": "/users/@me/channels",
+      "request": {
+        "recipient_id": "449108784879763458"
+      },
+      "status": 200,
+      "response": {
+        "id": "1570608637783572490",
+        "type": 1,
+        "last_message_id": null,
+        "flags": 0,
+        "recipients": [
+          {
+            "id": "449108784879763458",
+            "username": "timsmart",
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc",
+            "discriminator": "0",
+            "public_flags": 0,
+            "flags": 0,
+            "banner": null,
+            "accent_color": null,
+            "global_name": "Tim Smart",
+            "avatar_decoration_data": null,
+            "collectibles": null,
+            "display_name_styles": null,
+            "banner_color": null,
+            "clan": null,
+            "primary_guild": null
+          }
+        ]
+      }
+    },
+    {
+      "step": "get-channel-dm",
+      "method": "GET",
+      "path": "/channels/1570608637783572490",
+      "request": null,
+      "status": 200,
+      "response": {
+        "id": "1570608637783572490",
+        "type": 1,
+        "last_message_id": null,
+        "flags": 0,
+        "recipients": [
+          {
+            "id": "449108784879763458",
+            "username": "timsmart",
+            "avatar": "2eded1558c297f57913f8b7e4c6b7efc",
+            "discriminator": "0",
+            "public_flags": 0,
+            "flags": 0,
+            "banner": null,
+            "accent_color": null,
+            "global_name": "Tim Smart",
+            "avatar_decoration_data": null,
+            "collectibles": null,
+            "display_name_styles": null,
+            "banner_color": null,
+            "clan": null,
+            "primary_guild": null
+          }
+        ]
+      }
+    },
+    {
+      "step": "thread-get-channel",
+      "method": "GET",
+      "path": "/channels/1570608327602471024",
+      "request": null,
+      "status": 200,
+      "response": {
+        "id": "1570608327602471024",
+        "type": 11,
+        "last_message_id": "1570608353267159146",
+        "flags": 0,
+        "guild_id": "840178841540362250",
+        "name": "Fixture thread from a message",
+        "parent_id": "1570607253965246584",
+        "rate_limit_per_user": 0,
+        "bitrate": 64000,
+        "user_limit": 0,
+        "rtc_region": null,
+        "owner_id": "1564742987727118426",
+        "thread_metadata": {
+          "archived": false,
+          "archive_timestamp": "2026-11-13T01:16:47.280000+00:00",
+          "auto_archive_duration": 60,
+          "locked": false,
+          "create_timestamp": "2026-11-13T01:16:47.280000+00:00"
+        },
+        "message_count": 2,
+        "member_count": 1,
+        "total_message_sent": 2,
+        "member": {
+          "id": "1570608327602471024",
+          "user_id": "1564742987727118426",
+          "join_timestamp": "2026-11-13T01:16:47.281000+00:00",
+          "flags": 1,
+          "muted": false,
+          "mute_config": null
+        }
+      }
+    }
+  ]
+}
