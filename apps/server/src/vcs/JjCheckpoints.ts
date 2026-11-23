@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type * as Path from "effect/Path";
 
-import { type VcsError, VcsProcessExitError } from "@t3tools/contracts";
+import {
+  type VcsError,
+  VcsProcessExitError,
+  VcsUnsupportedOperationError,
+} from "@t3tools/contracts";
 import { PATCH_RENDER_PREFIX_ARGS } from "./GitVcsDriverCore.ts";
 import { colocatedGitCommand, jjCommand } from "./JjProcess.ts";
 import type { JjChange } from "./JjVcsDriver.ts";
@@ -117,6 +121,16 @@ export const makeJjCheckpointOps = (deps: JjCheckpointDeps): VcsDriver.VcsCheckp
   );
 
   return {
+    // Git HEAD does not describe jj's working-copy change; always take the native snapshot.
+    resolveCleanHead: () => Effect.succeed(null),
+    captureHeadCheckpoint: () =>
+      Effect.fail(
+        new VcsUnsupportedOperationError({
+          operation: "JjVcsDriver.checkpoints.captureHeadCheckpoint",
+          kind: "jj",
+          detail: "Jujutsu checkpoints must capture the working-copy change.",
+        }),
+      ),
     // jj refs name native snapshots, not Git's extra checkpoint commits with capture-time HEAD.
     listAuthoredPaths: () => Effect.succeed(null),
     captureCheckpoint: Effect.fn("JjVcsDriver.checkpoints.captureCheckpoint")(function* (input) {

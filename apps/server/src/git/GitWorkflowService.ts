@@ -33,6 +33,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as JjWorkflow from "../jj/JjWorkflow.ts";
+import { trimAsciiWhitespace } from "@t3tools/contracts";
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -161,10 +162,12 @@ export class GitWorkflowService extends Context.Service<
         readonly refName: string;
         readonly aheadCount: number;
         readonly behindCount: number;
+        readonly details?: GitVcsDriver.GitRemoteStatusDetails;
       } | null,
       GitManagerServiceError
     >;
-    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    readonly readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"];
+    readonly readLocalStatusRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readLocalStatusRefSnapshot"];
     readonly resolveDefaultBranchName: (
       cwd: string,
       remoteName: string,
@@ -442,7 +445,8 @@ export const make = Effect.gen(function* () {
       allowNonZeroExit: true,
       timeoutMs: 5_000,
     });
-    if (result.exitCode === 0) return result.stdout.trim().replace(/^refs\/heads\//, "") || null;
+    if (result.exitCode === 0)
+      return trimAsciiWhitespace(result.stdout).replace(/^refs\/heads\//, "") || null;
     if (result.exitCode === 1) return null;
     return yield* new GitCommandError({
       operation: "GitWorkflowService.currentBranch",
@@ -573,10 +577,18 @@ export const make = Effect.gen(function* () {
         },
       )(input),
     ),
-    readRefSnapshot: Effect.fn("GitWorkflowService.readRefSnapshot")((cwd) =>
+    readLocalStatusRefSnapshot: Effect.fn("GitWorkflowService.readLocalStatusRefSnapshot")((cwd) =>
       resolveWorkflowKind(cwd).pipe(
         Effect.flatMap((kind) =>
-          kind === "git" ? git.readRefSnapshot(cwd) : Effect.succeed(null),
+          kind === "git" ? git.readLocalStatusRefSnapshot(cwd) : Effect.succeed(null),
+        ),
+        Effect.orElseSucceed(() => null),
+      ),
+    ),
+    readRefSnapshot: Effect.fn("GitWorkflowService.readRefSnapshot")((cwd, refs) =>
+      resolveWorkflowKind(cwd).pipe(
+        Effect.flatMap((kind) =>
+          kind === "git" ? git.readRefSnapshot(cwd, refs) : Effect.succeed(null),
         ),
         Effect.orElseSucceed(() => null),
       ),
@@ -760,6 +772,7 @@ export const make = Effect.gen(function* () {
                       refName: details.branch,
                       aheadCount: details.aheadCount,
                       behindCount: details.behindCount,
+                      details,
                     }
                   : null,
               ),

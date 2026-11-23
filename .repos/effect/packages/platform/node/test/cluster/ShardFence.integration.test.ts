@@ -1,7 +1,8 @@
 import { NodeCrypto } from "@effect/platform-node"
 import { assert, describe, it } from "@effect/vitest"
-import { Clock, Context, Deferred, Effect, Latch, Layer, Option, Schema } from "effect"
+import { Clock, Context, Deferred, Effect, Fiber, Latch, Layer, Option, Schema } from "effect"
 import {
+  ClusterError,
   ClusterSchema,
   Entity,
   EntityId,
@@ -9,6 +10,7 @@ import {
   RunnerAddress,
   RunnerHealth,
   Runners,
+  RunnerStorage,
   Sharding,
   ShardingConfig,
   type Snowflake,
@@ -75,11 +77,16 @@ const makeFreezableClock = () => {
   }
 }
 
-const RunnerLayer = (probe: RunnerProbe, config: Partial<ShardingConfig.ShardingConfig["Service"]>) =>
+const RunnerLayer = (
+  probe: RunnerProbe,
+  config: Partial<ShardingConfig.ShardingConfig["Service"]>,
+  runnerStorage = SqlRunnerStorage.layer,
+  messageStorage = SqlMessageStorage.layer
+) =>
   HoldLayer(probe).pipe(
     Layer.provideMerge(Sharding.layer),
-    Layer.provide([SqlRunnerStorage.layer, RunnerHealth.layerNoop, Runners.layerNoop]),
-    Layer.provideMerge(SqlMessageStorage.layer),
+    Layer.provide([runnerStorage, RunnerHealth.layerNoop, Runners.layerNoop]),
+    Layer.provideMerge(messageStorage),
     Layer.provide(NodeCrypto.layer),
     Layer.provide(ShardingConfig.layer({
       ...config,
@@ -169,9 +176,69 @@ const staleOwnerTest = Effect.fnUntraced(
   TestClock.withLive
 )
 
+const resetOverlap = Effect.fnUntraced(
+  function*() {
+    const probe = makeProbe(1234)
+    let denyOnce = true
+    const ownership = Layer.effect(
+      RunnerStorage.RunnerStorage,
+      RunnerStorage.RunnerStorage.useSync((storage) => ({
+        ...storage,
+        refresh: (address, shards) => {
+          if (denyOnce && Deferred.isDoneUnsafe(probe.returned) && Array.from(shards).length === 1) {
+            denyOnce = false
+            return Effect.fail(new ClusterError.PersistenceError({ cause: "inconclusive lock refresh" }))
+          }
+          return storage.refresh(address, shards)
+        }
+      }))
+    ).pipe(Layer.provide(SqlRunnerStorage.layer))
+
+    const readerAdvanced = yield* Latch.make()
+    let resetId: Snowflake.Snowflake | undefined
+    let reclaimed = false
+    const journal = Layer.effect(
+      MessageStorage.MessageStorage,
+      MessageStorage.MessageStorage.useSync((storage) => ({
+        ...storage,
+        resetRequests: (ids) =>
+          storage.resetRequests(ids).pipe(Effect.andThen(() => {
+            if (denyOnce || resetId !== undefined || ids.length !== 1) return Effect.void
+            resetId = ids[0]
+            return readerAdvanced.await
+          })),
+        unprocessedMessages: (shards, options) =>
+          storage.unprocessedMessages(shards, options).pipe(Effect.tap((messages) => {
+            // A later read begins after the reader tried to deliver the previously claimed message.
+            if (reclaimed) return readerAdvanced.open
+            reclaimed = resetId !== undefined && messages.some((message) => message.envelope.requestId === resetId)
+            return Effect.void
+          }))
+      }))
+    ).pipe(Layer.provide(SqlMessageStorage.layer))
+
+    const context = yield* Layer.build(RunnerLayer(probe, {}, ownership, journal))
+    const caller = yield* Hold.client.pipe(
+      Effect.flatMap((makeClient) => makeClient("1").Hold(void 0)),
+      Effect.provide(context),
+      Effect.forkScoped
+    )
+    yield* Deferred.await(probe.entered)
+    yield* probe.gate.open
+    yield* readerAdvanced.await
+    const reply = yield* Fiber.join(caller).pipe(Effect.timeoutOption(3000))
+    assert.deepStrictEqual(reply, Option.some("1234"))
+  },
+  Effect.scoped,
+  Effect.provide(PgContainer.layerClientDatabase),
+  TestClock.withLive
+)
+
 describe("Sharding shard fencing", { concurrent: false }, () => {
   // Each test runs two runners against live lock deadlines, so keep them apart.
   it.layer(PgContainer.layer, { concurrent: false, timeout: 120_000 })((it) => {
+    it.effect("a request claimed before its fenced reset returns remains deliverable", resetOverlap, 30_000)
+
     it.effect(
       "a runner that lost its advisory lock cannot store a reply",
       () => staleOwnerTest({ advisory: true }),

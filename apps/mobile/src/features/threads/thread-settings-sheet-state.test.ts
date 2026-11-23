@@ -16,6 +16,7 @@ import {
   favoritesFirst,
   scoreModelCatalogQuery,
   pendingModelAfterPress,
+  visibleCatalogModels,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
@@ -95,6 +96,19 @@ describe("thread settings sheet state", () => {
       "third",
       "fourth",
     ]);
+    const visible = (query: string, favoritesOnly = false) =>
+      visibleCatalogModels({
+        models,
+        providerLabel: "Codex",
+        query,
+        favoriteKeys: favorites,
+        favoritesOnly,
+        showLegacy: false,
+        isDisplayed: () => false,
+      }).map((model) => model.selection.model);
+    expect(visible("codex")).toEqual(["first", "third", "second", "fourth"]);
+    expect(visible("frt")).toEqual(["first", "fourth"]);
+    expect(visible("codex", true)).toEqual(["first", "third"]);
   });
 
   it("matches visible model and provider terms", () => {
@@ -229,5 +243,24 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("finds legacy models by search without enabling Show legacy models", () => {
+    const current = modelOption("gpt-next");
+    const legacy = { ...modelOption("claude-opus-4-8"), label: "Claude Opus 4.8", isLegacy: true };
+    const visible = (query: string) =>
+      visibleCatalogModels({
+        models: [current, legacy],
+        providerLabel: "Codex",
+        query,
+        favoriteKeys: new Set(),
+        favoritesOnly: false,
+        showLegacy: false,
+        isDisplayed: () => false,
+      }).map((model) => model.label);
+
+    expect(visible("")).toEqual(["gpt-next"]);
+    expect(visible("   ")).toEqual(["gpt-next"]);
+    expect(visible("Claude Opus 4.8")).toEqual(["Claude Opus 4.8"]);
   });
 });

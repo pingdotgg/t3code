@@ -6,22 +6,25 @@ tags: [upstream, fork, integration]
 status: stable
 generated:
   by: opencode/gpt-6.2-astra
-  at: 2026-11-20T17:04:44+00:00
+  at: 2026-11-23T17:12:38+00:00
 verified:
   - by: opencode/gpt-6.2-astra
-    at: 2026-11-20T17:04:44+00:00
+    at: 2026-11-23T17:12:38+00:00
 snapshot:
-  at: 2026-11-20T17:04:44+00:00
-  fork_main: 98d34be73e5072e6e6842590c529a18a4f70f66a
-  upstream_main: ccc1feb15572c422fbdce26ba6077b91459cfd47
-  shared_baseline: f03ce68691014011a68e2339a414a550a51b604f
-  last_main_integration: 235fe05403e03136f71025a497899ce8368fe5fd
-  last_main_upstream: f03ce68691014011a68e2339a414a550a51b604f
-  missing_upstream_on_main: 214
-  branch_integration: 31470394d9bf8b86a1bab2efef9846f661f76c66
-  branch_code_tip: 55e5e9230fb43242ca715c932dd2dc7757b5887e
+  at: 2026-11-23T17:12:38+00:00
+  fork_main: 19d173f5cb31d27a9cf34838edbddf75b438f95b
+  upstream_main: 990412468340b8362f82610de0eae70a5171abb7
+  shared_baseline: 667d8a120aa72e8c37795c9e391596acb141170b
+  last_main_integration: 19d173f5cb31d27a9cf34838edbddf75b438f95b
+  last_main_upstream: 667d8a120aa72e8c37795c9e391596acb141170b
+  missing_upstream_on_main: 574
+  branch_integration: fc1b0831fc053b7a8a5fc23a0072f7e68a1d9b4c
+  branch_code_tip: 2a2cc2bb26419f91da8b5ba46503ae07b4182464
   missing_upstream_on_branch: 0
 sources:
+  - id: november-23-upstream
+    resource: https://github.com/pingdotgg/t3code/commit/990412468340b8362f82610de0eae70a5171abb7
+    title: November 23 upstream tip
   - id: november-19-integration
     resource: https://github.com/NicholasZolton/t3code/pull/86
     title: November 19 upstream integration and verification
@@ -433,6 +436,10 @@ sources:
 ---
 
 # Upstream integration
+
+The November 23 candidate integrates all 574 commits from fork `main`’s shared baseline through [upstream `9904124683`](https://github.com/pingdotgg/t3code/commit/990412468340b8362f82610de0eae70a5171abb7). Git and Jujutsu share the upstream multi-repository flows; the Git clean-HEAD checkpoint shortcut remains Git-only. Upstream’s notification text truncation fix lives in the fork’s shared direct/relay sanitizer.[^november-23-upstream]
+
+## November 20 sync
 
 The November 20 candidate merges 214 commits through [upstream `ccc1feb155`](https://github.com/pingdotgg/t3code/commit/ccc1feb15572c422fbdce26ba6077b91459cfd47). Draft creation flows through the shared change-request step; checkpoint timeouts retain fork exclusion data. Paired Android notifications now persist through the same preference command as other mobile settings. The snapshot distinguishes the candidate from fork `main` before merge.
 
@@ -1512,3 +1519,5 @@ git log --reverse --oneline origin/main..upstream/main
 [^november-17-pr]: PR #84 and its uploaded client verification evidence.
 
 [^november-17-main-git]: Completed main integration, exact parents, and zero ancestry gap against the pinned upstream tip.
+
+[^november-23-upstream]: Pinned upstream tip in the November 23 candidate.
