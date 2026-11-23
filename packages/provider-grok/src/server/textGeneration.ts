@@ -48,6 +48,12 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   const runGrokJson: TextGenerationOperations.Runner = Effect.fn("GrokTextGeneration.runGrokJson")(
     function* (request) {
       const { operation, prompt, modelSelection } = request;
+      const { binaryPath } = grokSettings;
+      // A relative path like ./bin/grok meant the request cwd; bare names still use PATH.
+      const launchSettings =
+        binaryPath && /[\\/]/.test(binaryPath) && !binaryPath.startsWith("~")
+          ? { ...grokSettings, binaryPath: path.resolve(request.cwd, binaryPath) }
+          : grokSettings;
       // Grok cannot disable its tools over ACP, so keep it out of the checkout.
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-grok-text-" });
       // Grok keeps one session folder per cwd; a fresh cwd per call would leave one behind each time.
@@ -59,7 +65,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
 
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeGrokAcpRuntime({
-        grokSettings,
+        grokSettings: launchSettings,
         environment: grokEnvironment,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
