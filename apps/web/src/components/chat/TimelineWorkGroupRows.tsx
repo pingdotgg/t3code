@@ -540,7 +540,6 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
 export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
   const gt = useGT();
-  const m = useMessages();
   const {
     isCompacting,
     isPreparingWorktree,
@@ -555,12 +554,7 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const { groupId } = row;
   const activity = (
     <LiveActivityRow
-      label={
-        (providerStartingLabel === null ? null : m(providerStartingLabel)) ??
-        row.label ??
-        liveAnswerPreview ??
-        gt("Thinking")
-      }
+      label={providerStartingLabel ?? row.label ?? liveAnswerPreview ?? gt("Thinking")}
       iconName="brain"
       iconNode={
         providerStarting === null ? undefined : (

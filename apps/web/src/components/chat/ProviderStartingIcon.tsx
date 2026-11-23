@@ -61,7 +61,7 @@ export function ProviderStartingIcon(props: {
       acpRegistryAgentId={presentation?.acpRegistryAgentId}
       acpRegistryIconUrl={presentation?.acpRegistryIconUrl}
       className="z-auto"
-      iconClassName="size-4"
+      iconClassName="size-3.5"
     />
   );
 }
