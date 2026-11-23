@@ -1114,7 +1114,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       props.titleRegenerationSupported,
-      thread.latestRun,
       thread.runtime,
       isRegeneratingTitle,
     ],
