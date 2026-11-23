@@ -140,6 +140,35 @@ describe("native device stream transport", () => {
     },
   );
 
+  it.each([
+    ["ios", { button: "home" }, { button: "app_switcher" }],
+    ["android", { type: "home" }, { type: "recents" }],
+  ] as const)(
+    "opens the %s app switcher on a double-tapped home button",
+    async (platform, home, switcher) => {
+      const { client, opened } = setup(platform);
+      client.start();
+      const socket = await opened;
+      socket.onopen?.();
+      if (platform === "ios") socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+      socket.send.mockClear();
+
+      client.pressButton("home");
+      client.pressButton("home");
+      client.pressButton("home");
+      vi.advanceTimersByTime(1000);
+      client.pressButton("home");
+
+      const sent = socket.send.mock.calls.map(([payload]) =>
+        JSON.parse(
+          typeof payload === "string" ? payload : new TextDecoder().decode(payload.subarray(1)),
+        ),
+      );
+      expect(sent).toEqual([home, switcher, home, home]);
+      client.stop();
+    },
+  );
+
   it.each(["ios", "android"] as const)(
     "does not renew credentials or reconnect a stopped %s stream",
     async (platform) => {
@@ -468,6 +497,21 @@ describe("shared device stream readiness and recovery", () => {
       [0x03, { type: "begin", x: 0.25, y: 0.5 }],
       [0x04, { button: "back" }],
     ]);
+    client.stop();
+  });
+
+  it("stops retrying a Simlock lease that ended and keeps its reason", async () => {
+    const { client, events, fetch, sockets, videoBodies } = recoveryFixture("ios", false, true);
+    client.start();
+    await vi.advanceTimersByTimeAsync(0);
+    const reason = [...new TextEncoder().encode('{"reason":"expired"}')];
+    videoBodies[0]!.enqueue(new Uint8Array([...envelope(4, [1]), ...envelope(7, reason)]));
+    videoBodies[0]!.close();
+    sockets[0]!.onclose?.({ code: 4001, reason: "expired" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(fetch.mock.calls.filter(([url]) => url.includes("stream.avcc"))).toHaveLength(1);
+    expect(sockets).toHaveLength(1);
+    expect(events.onStatus).toHaveBeenLastCalledWith("error", expect.stringContaining("expired"));
     client.stop();
   });
 

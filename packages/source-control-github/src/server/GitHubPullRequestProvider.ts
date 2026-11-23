@@ -59,13 +59,14 @@ const CAPABILITIES: PullRequestCapabilities = {
   // Statuses and check runs land on the head commit itself and are read whole, so an empty list
   // after a push is CI that never started rather than a read that saw nothing.
   checksAlwaysReport: true,
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
     "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
   unauthenticated:
-    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
 };
 
 /**
@@ -143,9 +144,9 @@ function gitHubProviderFailure(
 
 const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
   settings:
-    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source Control.",
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues.",
   env: "The server's environment token can't see it. Give it access, or unset it.",
-  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source Control.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues.",
 };
 
 function withAvatar(
@@ -399,6 +400,7 @@ export const make = Effect.gen(function* () {
     capabilities: CAPABILITIES,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
+    batchesReads: true,
     mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
       cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
@@ -538,12 +540,14 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
       ),
 
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
+    getChangeRequestActivity: (input) => {
+      const threadRead = cli.listReviewThreadComments(input).pipe(
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "GitHubApiRateLimitError" &&
+            error._tag !== "SourceControlRateLimitPausedError",
+          () =>
+            Effect.succeed({
               comments: [],
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
@@ -558,11 +562,12 @@ export const make = Effect.gen(function* () {
               botLogins: new Set<string>(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
-            })),
-          ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
+            }),
+        ),
+      );
+      return Effect.all([cli.getPullRequestActivity(input), threadRead], {
+        concurrency: 2,
+      }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
           const commitStats = new Map(
@@ -617,7 +622,7 @@ export const make = Effect.gen(function* () {
               }))
               .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
             commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
+            commentsTruncated: pullRequest.truncated || reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
               ...thread,
@@ -633,7 +638,8 @@ export const make = Effect.gen(function* () {
             })),
           };
         }),
-      ),
+      );
+    },
 
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
@@ -731,10 +737,16 @@ export const make = Effect.gen(function* () {
           ...(input.expectedStackHeads === undefined
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
+          ...(input.expectedHeadSha === undefined
+            ? {}
+            : { expectedHeadSha: input.expectedHeadSha }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),
+
+    getCheckLogs: (input) => cli.readCheckLogs(input).pipe(Effect.mapError(fail("getCheckLogs"))),
+    rerunChecks: (input) => cli.rerunChecks(input).pipe(Effect.mapError(fail("rerunChecks"))),
 
     updateChangeRequest: (input) =>
       cli

@@ -2,8 +2,8 @@ export type TextDirection = "ltr" | "rtl";
 
 // Hebrew through Arabic Extended-A, their presentation forms, and the
 // supplementary right-to-left blocks.
-const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
-const LETTER = /\p{L}/u;
+export const RTL_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-\u{1EFFF}]/u;
+export const LETTER = /\p{L}/u;
 const SENTENCE_END = /(?<=[.!?؟])(?<!\b(?:e\.g|i\.e)\.)\s+|\n+/i;
 
 function majority(
@@ -21,6 +21,10 @@ function majority(
   }
   if (rtl === ltr) return tieDirection ? tieDirection() : first;
   return rtl > ltr ? "rtl" : "ltr";
+}
+
+export function hasRightToLeftLetter(text: string): boolean {
+  return RTL_LETTER.test(text);
 }
 
 function wordDirection(word: string): TextDirection | undefined {

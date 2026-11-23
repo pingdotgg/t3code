@@ -19,6 +19,6 @@ export * as ChildProcessSpawner from "./ChildProcessSpawner.ts"
 
 /**
  * @stability unstable
- * @since 4.0.7
+ * @since 4.1.0
  */
 export * as CommandLine from "./CommandLine.ts"
