@@ -68,6 +68,8 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  placeholder = "",
+  placeholderSuffix,
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -77,6 +79,8 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  placeholder?: string;
+  placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -88,7 +92,8 @@ function Composer({
       contextRecords={new Map()}
       skills={skills}
       disabled={disabled}
-      placeholder=""
+      placeholder={placeholder}
+      placeholderSuffix={placeholderSuffix}
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
@@ -1214,3 +1219,25 @@ it.each(["other field", "document body"])(
     );
   },
 );
+
+it("lets a one-line placeholder's button take clicks and passes the rest to the editor", async () => {
+  const onClick = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      placeholder="Run the tests"
+      placeholderSuffix={
+        <button type="button" className="pointer-events-auto" onClick={onClick}>
+          Tab
+        </button>
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await userEvent.click(editor.view.dom, { position: { x: 12, y: 12 } });
+  await vi.waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: "Tab" }));
+  expect(onClick).toHaveBeenCalledOnce();
+});
