@@ -1218,21 +1218,19 @@ function UsageEnvironmentFilter({
   return (
     <Menu>
       <MenuTrigger render={<InlineButton />} className="group/usage-environment min-w-0 max-w-full">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
-          <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
-            {showUsageStatus && hasIssue ? (
-              <CircleAlertIcon
-                className="size-3.5 text-warning-foreground"
-                aria-label={gt("Some environments could not report usage")}
-              />
-            ) : (
-              <ChevronDownIcon
-                className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
-                aria-hidden
-              />
-            )}
-          </span>
+        <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
+        <span className="flex size-3.5 shrink-0 items-center justify-center text-muted-foreground">
+          {showUsageStatus && hasIssue ? (
+            <CircleAlertIcon
+              className="size-3.5 text-warning-foreground"
+              aria-label={gt("Some environments could not report usage")}
+            />
+          ) : (
+            <ChevronDownIcon
+              className="size-3.5 opacity-60 transition-opacity group-hover/usage-environment:opacity-100 group-focus-visible/usage-environment:opacity-100 group-data-popup-open/usage-environment:opacity-100"
+              aria-hidden
+            />
+          )}
         </span>
       </MenuTrigger>
       <MenuPopup align="start">
@@ -1345,13 +1343,11 @@ function UsageProviderFilter({
   return (
     <Menu>
       <MenuTrigger render={<InlineButton />} className="group/usage-provider min-w-0 max-w-full">
-        <span className="flex min-w-0 items-center gap-1.5">
-          <WorkspaceBreadcrumbText>{label}</WorkspaceBreadcrumbText>
-          <ChevronDownIcon
-            className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
-            aria-hidden
-          />
-        </span>
+        <span className="min-w-0 truncate">{label}</span>
+        <ChevronDownIcon
+          className="size-3.5 shrink-0 text-muted-foreground opacity-60 transition-opacity group-hover/usage-provider:opacity-100 group-focus-visible/usage-provider:opacity-100 group-data-popup-open/usage-provider:opacity-100"
+          aria-hidden
+        />
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuCheckboxItem
