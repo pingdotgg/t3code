@@ -329,6 +329,7 @@ interface PiStreamItemState {
   completed: boolean;
   flushScheduled: boolean;
   published: boolean;
+  finalAnswer: boolean;
   readonly startedAt: DateTime.Utc;
 }
 
@@ -1253,6 +1254,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 messageId,
                 text: item.text,
                 streaming,
+                ...(item.finalAnswer ? { phase: "final_answer" as const } : {}),
               },
             });
             yield* emit({
@@ -1328,6 +1330,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           completed: false,
           flushScheduled: false,
           published: false,
+          finalAnswer: false,
           startedAt,
         };
         turn.streamItems.set(nativeItemId, item);
@@ -2386,7 +2389,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (turn === null) return;
             const message = event["message"];
             if (recordString(message, "role") !== "assistant") return;
+            // A reply that stops without tool calls ends Pi's loop; a later reply answers a steer.
+            const messagePrefix = streamItemId(turn, 0).slice(0, -"c0".length);
+            const answer =
+              recordString(message, "stopReason") === "stop"
+                ? Array.from(turn.streamItems.values()).findLast(
+                    (item) =>
+                      item.kind === "assistant_message" &&
+                      item.nativeItemId.startsWith(messagePrefix),
+                  )
+                : undefined;
+            const republish = answer?.completed === true && answer.published;
+            if (answer !== undefined) answer.finalAnswer = true;
             yield* completeOpenStreamItems(turn);
+            if (republish) yield* emitStreamItem(turn, answer, false);
             const reportedProvider = recordString(message, "provider");
             const reportedModelId = recordString(message, "model");
             if (reportedProvider && reportedModelId) {

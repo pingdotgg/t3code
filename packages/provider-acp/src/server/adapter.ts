@@ -1673,6 +1673,7 @@ interface ActiveTextSegment {
   emitted: boolean;
   // Text changed since the last emission; a delayed flush is scheduled.
   dirty: boolean;
+  finalAnswer?: boolean;
 }
 
 interface ActiveTextStream {
@@ -1765,6 +1766,8 @@ interface ActiveAcpTurn {
   promptSequence: number;
   /** The turn already resent a prompt after a resumable outcome failure. */
   outcomeResumed: boolean;
+  /** The assistant segment no tool call or thought has followed yet. */
+  latestReply: ActiveTextSegment | null;
   /** Clock millis just before `session/prompt` was handed to the runtime. */
   promptSentAt: number | null;
   /** Completed when an update after dispatch matches `cancelAfterPromptStarts.isStart`. */
@@ -3217,9 +3220,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
           flushOf?: ActiveTextSegment,
+          target?: ActiveTextSegment,
         ) {
-          const stream = textStreamFor(context, kind);
-          const segment = stream.current;
+          const segment = target ?? textStreamFor(context, kind).current;
           if (segment === null) return;
           if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
           // The node carries no text, so it changes only when the segment
@@ -3332,6 +3335,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       messageId,
                       text,
                       streaming: !completed,
+                      ...(segment.finalAnswer === true ? { phase: "final_answer" as const } : {}),
                     },
                   },
             );
@@ -3398,6 +3402,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           stream.current = null;
         });
 
+        const markFinalAnswer = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          segment: ActiveTextSegment,
+        ) {
+          segment.finalAnswer = true;
+          if (context.assistant.current === segment) {
+            return yield* closeTextStream(context, "assistant");
+          }
+          yield* emitTextSegment(context, "assistant", true, undefined, segment);
+        });
+
         const closeTextStreams = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
           yield* closeTextStream(context, "user");
           yield* closeTextStream(context, "reasoning");
@@ -3460,6 +3475,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             segment.sourceMessageId = sourceMessageId;
           }
           segment.text += text;
+          if (kind !== "user") context.latestReply = kind === "assistant" ? segment : null;
           yield* publishTextSegment(context, kind);
         });
 
@@ -3478,6 +3494,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             segment = yield* openTextSegment(context, kind, messageId);
           }
           segment.text = text;
+          if (kind !== "user") context.latestReply = kind === "assistant" ? segment : null;
           yield* publishTextSegment(context, kind);
         });
 
@@ -4486,6 +4503,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           projectedStatus?: ProjectedToolStatus,
           rawPayload?: unknown,
         ) {
+          context.latestReply = null;
           if (context.assistant.current?.sourceMessageId == null)
             yield* closeTextStream(context, "assistant");
           if (context.reasoning.current?.sourceMessageId == null)
@@ -9281,6 +9299,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ): Effect.Effect<void> => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
+          // A prompt a steer superseded that ends its turn ends on its answer to that prompt.
+          let answer: ActiveTextSegment | null = null;
           const rollbackOfferedAppContext = () => {
             if (
               settle.appContext?.offered !== undefined &&
@@ -9295,6 +9315,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // response must not flip a settled turn.
             Effect.tap((result) =>
               Effect.suspend(() => {
+                if (superseded() && result.stopReason === "end_turn") answer = context.latestReply;
                 if (flavor.reportsPerTurnPromptUsage === true && !context.finalized) {
                   context.promptUsage = addAcpUsage(context.promptUsage, result.usage);
                 }
@@ -9360,6 +9381,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     });
                   } else {
                     rollbackOfferedAppContext();
+                  }
+                  if (answer !== null && !context.finalized && !context.interrupted) {
+                    yield* markFinalAnswer(context, answer);
                   }
                   if (context.finalized || followsAgentWorkState || superseded()) return;
                   // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
@@ -9727,6 +9751,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               foregroundIdle: yield* Deferred.make<void>(),
               promptSequence: 0,
               outcomeResumed: false,
+              latestReply: null,
               promptSentAt: null,
               promptStarted,
               promptUsage: undefined,
