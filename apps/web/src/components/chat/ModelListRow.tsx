@@ -43,7 +43,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   });
   const lastSlash = displayName.lastIndexOf("/");
-  const pathTail = lastSlash > 0 ? Array.from(displayName.slice(lastSlash)).length : undefined;
+  // The slash stays in the head: MiddleTruncate needs 5+ head characters to split, so "meta/" must count.
+  const pathTail = lastSlash > 0 ? Array.from(displayName.slice(lastSlash + 1)).length : undefined;
 
   const row = (
     <ComboboxItem
