@@ -34,7 +34,8 @@ function validateTiffMetadata(bytes: ArrayBuffer) {
       if (start + length > bytes.byteLength || allocation > 8 * 1024 * 1024)
         throw new PreviewError({ code: "tiff-metadata-truncated" });
       if (tag === 0x8769 || tag === 0x8825) {
-        if (type !== 4 || values !== 1) throw new PreviewError({ code: "tiff-metadata-pointer" });
+        if ((type !== 4 && type !== 13) || values !== 1)
+          throw new PreviewError({ code: "tiff-metadata-pointer" });
         inspect(view.getUint32(entry + 8, littleEndian), depth + 1);
       }
     }
