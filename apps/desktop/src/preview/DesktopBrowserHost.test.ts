@@ -349,7 +349,11 @@ describe("DesktopBrowserHost", () => {
         expect(debuggee.sent).toEqual([]);
         host.setCaptureDrawn(key, true);
         yield* settle;
-        expect(debuggee.sent).toEqual([1]);
+        // The guest's deferred animations finish before the capture copies its frame.
+        expect(debuggee.methods).toEqual(["Runtime.evaluate"]);
+        debuggee.releaseFirst();
+        yield* settle;
+        expect(debuggee.sent).toEqual([undefined, 1]);
         debuggee.releaseFirst();
         expect(yield* Queue.take(replies)).toBe(1);
 
@@ -357,10 +361,14 @@ describe("DesktopBrowserHost", () => {
         host.setCaptureDrawn(key, false);
         yield* command(host, 2, "Page.captureScreenshot");
         yield* settle;
-        expect(debuggee.sent).toEqual([1]);
+        expect(debuggee.sent).toEqual([undefined, 1]);
         yield* TestClock.adjust("1 second");
         yield* settle;
-        expect(debuggee.sent).toEqual([1, 2]);
+        expect(debuggee.sent).toEqual([undefined, 1, undefined]);
+        // Nor does a page that never answers the settle.
+        yield* TestClock.adjust("1 second");
+        yield* settle;
+        expect(debuggee.sent).toEqual([undefined, 1, undefined, 2]);
       }).pipe(Effect.scoped),
   );
 
