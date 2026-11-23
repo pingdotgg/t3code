@@ -966,7 +966,13 @@ async fn working_text_as_git_diffs_it(root: &Path, path: &str, text: String) -> 
     )
     .allow_exit(&[1])
     .run()
-    .await?;
+    .await;
+    // As T3, a lookup that exits other than 1 (a malformed `GIT_CONFIG`) keeps the text read.
+    let filters = match filters {
+        Ok(out) => out,
+        Err(ProcessError::Exit { .. }) => return Ok(text),
+        Err(error) => return Err(error.into()),
+    };
     if filters.code != 1 || !filters.stdout.is_empty() {
         return Ok(text);
     }

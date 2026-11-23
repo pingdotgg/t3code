@@ -510,6 +510,61 @@ async fn working_contents_collapse_a_git_ident_keyword_like_the_diff() {
     assert_eq!(plain.new_contents, "$Id: literal $\n");
 }
 
+/// T3 reads a literal `ident=set` file as stored when the `filter.unspecified.*` lookup exits
+/// with anything but 1. Only `git config` reads `GIT_CONFIG`, so `check-attr` still succeeds
+/// while the lookup fails on the malformed file. The env is process-wide, so the case runs in
+/// a copy of this test binary.
+#[test]
+fn working_contents_keep_literal_ident_text_when_the_filter_lookup_fails() {
+    let dir = TempDir::new("ident-bad-config");
+    let config = dir.path().join("malformed-config");
+    std::fs::write(&config, "[filter\n").unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "literal_ident_text_under_a_failing_filter_lookup",
+            "--ignored",
+        ])
+        .env("GIT_CONFIG", &config)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+#[ignore = "run by working_contents_keep_literal_ident_text_when_the_filter_lookup_fails"]
+async fn literal_ident_text_under_a_failing_filter_lookup() {
+    assert!(std::env::var_os("GIT_CONFIG").is_some());
+    let dir = TempDir::new("ident-literal");
+    let repo = dir.path();
+    git(repo, &["init", "-qb", "main"]);
+    write(repo, ".gitattributes", "record.txt ident=set\n");
+    write(repo, "record.txt", "first\n");
+    commit_all(repo, "seed");
+    let text = "$Id: literal $\nedited\n";
+    write(repo, "record.txt", text);
+    let contents = review::diff_file_contents(
+        ReviewDiffFileContentsInput {
+            cwd: repo.to_string_lossy().into_owned(),
+            source_kind: Kind::WorkingTree,
+            change_type: ChangeType::Change,
+            base_ref: Some("HEAD".into()),
+            head_ref: None,
+            old_path: "record.txt".into(),
+            new_path: "record.txt".into(),
+        },
+        |_| false,
+    )
+    .await
+    .unwrap();
+    assert_eq!(contents.new_contents, text);
+}
+
 #[tokio::test]
 async fn file_contents_and_branch_commits() {
     let fx = Fixture::new("contents");
