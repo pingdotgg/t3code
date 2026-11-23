@@ -2250,6 +2250,22 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
     });
 
+    const clearMcpToolResultsIfIdle = Effect.fnUntraced(function* (state: ThreadState) {
+      const root = rootOf(state);
+      const rootThreadId = root.providerThread.appThreadId;
+      if (rootThreadId === null) return;
+      const hasLiveWork =
+        runningCalls(root).some((call) => call.background) ||
+        sessionsOf(root).some(
+          (candidate) =>
+            candidate.active !== undefined ||
+            (candidate.subagent !== undefined && busy.has(candidate.sessionId)),
+        );
+      if (!hasLiveWork) {
+        yield* mcpSessions.clearToolResults(rootThreadId);
+      }
+    });
+
     const settleCall: (
       call: SubagentCall,
       status: OrchestrationV2Subagent["status"],
@@ -2278,6 +2294,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* emitProviderThread(child);
       }
       yield* emitSubagent(call);
+      yield* clearMcpToolResultsIfIdle(call.state);
     });
 
     const startChildTurn = Effect.fnUntraced(function* (child: ThreadState) {
@@ -2489,12 +2506,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
         }
+        yield* clearMcpToolResultsIfIdle(state);
         return;
       }
-      // Background children recover their nested results under the root thread after it settles.
-      if (!runningCalls(state).some((call) => call.background)) {
-        yield* mcpSessions.clearToolResults(turn.input.threadId);
-      }
+      // Background children and active child follow-ups recover nested results under the root thread.
+      yield* clearMcpToolResultsIfIdle(state);
       state.providerThread = {
         ...state.providerThread,
         status: threadDisposition === "broken" ? "error" : "idle",

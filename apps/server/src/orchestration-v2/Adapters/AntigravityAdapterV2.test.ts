@@ -1264,7 +1264,18 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         };
         const tool = (nativeId: string) => toolIn(turn1Events, nativeId);
 
-        assert.strictEqual(sentMessageFromToolItem(tool("send-empty")!), statusUpdate);
+        const sendEmptyUpdates = turn1Events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.nativeItemRef?.nativeId === "send-empty" &&
+          event.turnItem.status === "completed"
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          sendEmptyUpdates.map((update) => sentMessageFromToolItem(update)),
+          [statusUpdate, statusUpdate],
+        );
         assert.strictEqual(sentMessageFromToolItem(tool("send-streaming")!), inProgressText);
         assert.strictEqual(sentMessageFromToolItem(tool("send-streaming-unpublished")!), undefined);
         const erroredUpdates = turn1Events.flatMap((event) =>

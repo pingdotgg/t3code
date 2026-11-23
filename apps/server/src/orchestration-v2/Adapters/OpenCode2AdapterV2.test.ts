@@ -5484,12 +5484,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.forkScoped,
       );
       yield* runtime.startTurn(withLineage(thread));
-      const shown = Array.from(yield* Fiber.join(events)).flatMap((event) =>
-        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
-          ? [sentMessageFromToolItem(event.turnItem)].filter((msg) => msg !== undefined)
+      const collected = Array.from(yield* Fiber.join(events));
+      const subagentEvent = collected.find(
+        (event) => event.type === "subagent.updated" && event.subagent.childThreadId !== null,
+      );
+      const childThreadId =
+        subagentEvent?.type === "subagent.updated" ? subagentEvent.subagent.childThreadId : null;
+      assert.isNotNull(childThreadId);
+      const shown = collected.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "dynamic_tool" &&
+        sentMessageFromToolItem(event.turnItem) !== undefined
+          ? [
+              {
+                threadId: event.turnItem.threadId,
+                message: sentMessageFromToolItem(event.turnItem),
+              },
+            ]
           : [],
       );
-      assert.deepEqual(shown, [message]);
+      assert.deepEqual(shown, [{ threadId: childThreadId!, message }]);
     }).pipe(Effect.scoped),
   );
 
