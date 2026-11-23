@@ -373,7 +373,7 @@ export function acpPerTurnPromptUsage(
     return { usageScope: "main_agent", usageStatus: "unavailable", hasSubagents };
   }
   const inputTokens = geminiUsage
-    ? usage.inputTokens + (usage.cachedReadTokens ?? 0)
+    ? usage.inputTokens + (usage.cachedReadTokens ?? 0) + (usage.cachedWriteTokens ?? 0)
     : usage.inputTokens;
   const outputTokens = usage.outputTokens;
   // TurnTokenUsage contract: input includes cache read + write and reasoning
@@ -710,7 +710,7 @@ export interface AcpAdapterV2Flavor {
    * leaves usage semantics open, so this stays unset until proven live.
    */
   readonly reportsPerTurnPromptUsage?: boolean;
-  /** Antigravity 1.5+ usage: inputTokens leaves out cachedReadTokens, while outputTokens already includes thoughtTokens. */
+  /** Antigravity 1.5+ usage: inputTokens leaves out cachedReadTokens and cachedWriteTokens, while outputTokens already includes thoughtTokens. */
   readonly geminiPromptUsage?: boolean;
   /**
    * Fails a dispatched prompt after this long with no update for its session while no

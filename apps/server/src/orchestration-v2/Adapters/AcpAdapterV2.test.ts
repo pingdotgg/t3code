@@ -212,7 +212,7 @@ describe("acpPerTurnPromptUsage", () => {
         reasoningTokens: 3,
       },
     );
-    // Antigravity 1.5+: inputTokens excludes cached reads, while outputTokens already includes thinking.
+    // Antigravity 1.5+: inputTokens excludes cached reads and writes, while outputTokens already includes thinking.
     assert.deepEqual(
       acpPerTurnPromptUsage(
         {
@@ -236,6 +236,29 @@ describe("acpPerTurnPromptUsage", () => {
         cachedInputTokens: 12119,
         cacheCreationTokens: 0,
         reasoningTokens: 19,
+      },
+    );
+    assert.deepEqual(
+      acpPerTurnPromptUsage(
+        {
+          inputTokens: 100,
+          outputTokens: 50,
+          totalTokens: 2650,
+          cachedReadTokens: 500,
+          cachedWriteTokens: 2000,
+        },
+        false,
+        "completed",
+        true,
+      ),
+      {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 2600,
+        outputTokens: 50,
+        cachedInputTokens: 500,
+        cacheCreationTokens: 2000,
       },
     );
   });
