@@ -75,9 +75,10 @@ pub use crate::drafts::{
     retarget_draft,
 };
 pub use crate::layout::{
-    LayoutState, PanelSurface, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
-    RIGHT_PANEL_MIN_WIDTH, RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
-    SIDEBAR_MIN_WIDTH,
+    CHAT_BESIDE_PANEL_MIN_WIDTH, LayoutState, MAIN_CONTENT_MIN_WIDTH, PanelSurface,
+    RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH, RIGHT_PANEL_MIN_WIDTH, RightPanelTab,
+    SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, right_panel_max_width,
+    sidebar_max_width,
 };
 pub use crate::order_keys::{
     OrderAssignment, order_key_between, plan_reorder, sort_active, sort_pinned, spread_order_keys,
