@@ -2115,7 +2115,17 @@ pub(crate) fn finish_run_as(
             tx.append(draft("turn-item.updated", item))?;
         }
     }
+    // Only this run's requests end with it: a queued run removed while another run waits on
+    // an approval must leave that approval answerable. A request names its node; the node
+    // names its run.
     for mut request in tx.entities_where(thread_id, "runtimeRequests", "status", "pending")? {
+        let owner = match request["nodeId"].as_str() {
+            Some(node) => tx.entity(thread_id, "nodes", node)?,
+            None => None,
+        };
+        if owner.is_none_or(|node| node["runId"] != run_id) {
+            continue;
+        }
         request["status"] = json!("cancelled");
         request["resolvedAt"] = json!(now);
         tx.append(draft("runtime-request.updated", request))?;

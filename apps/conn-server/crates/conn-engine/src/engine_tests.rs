@@ -5859,3 +5859,68 @@ async fn attention_is_off_by_default() {
             .is_empty()
     );
 }
+
+/// Removing a queued run leaves the active run's approval answerable (T3's
+/// `queuedRunCancellationEvents` touches only the queued run, its attempt and its node).
+#[tokio::test(flavor = "current_thread")]
+async fn removing_a_queued_run_keeps_the_active_runs_approval() {
+    let db = TempDb::new("queued-cancel-approval");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId":"t1"})).unwrap())
+        .await
+        .unwrap();
+    dispatch(&engine, message("t1", "active", "ask")).await;
+    let request = loop {
+        let update = next(&mut stream).await;
+        if update["event"]["type"] == "runtime-request.updated" {
+            break update["event"]["payload"].clone();
+        }
+    };
+    let queued = message_with(
+        "t1",
+        "queued",
+        "Later",
+        json!({"type":"queue_after_active"}),
+        None,
+    );
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type":"queued-run.cancel","threadId":"t1","runId":"run:t1:2","commandId":"cancel"}),
+    )
+    .await;
+    let after = projection(&engine, "t1").await;
+    assert_eq!(after["runs"][1]["status"], "cancelled");
+    assert_eq!(after["runtimeRequests"][0]["status"], "pending");
+    assert_eq!(
+        engine.shell_snapshot().await.unwrap()["threads"][0]["pendingRuntimeRequest"]["id"],
+        request["id"]
+    );
+    dispatch(
+        &engine,
+        json!({"type":"runtime-request.respond","commandId":"answer","threadId":"t1","requestId":request["id"],"decision":"accept"}),
+    )
+    .await;
+    // The stream still holds the queued run's cancellation; read on to the active run's end.
+    let mut events = vec![];
+    loop {
+        let batch = until_run_ends(&mut stream).await;
+        let done = batch.last().is_some_and(|(_, run)| run["id"] == "run:t1:1");
+        events.extend(batch);
+        if done {
+            break;
+        }
+    }
+    let answers = events
+        .iter()
+        .filter(|(ty, p)| ty == "message.updated" && p["text"] == "approval: accept")
+        .count();
+    assert_eq!(answers, 1);
+    assert_eq!(events.last().unwrap().1["status"], "completed");
+    let done = projection(&engine, "t1").await;
+    assert_eq!(done["runs"][0]["status"], "completed");
+    assert_eq!(done["runs"].as_array().unwrap().len(), 2);
+    assert_eq!(done["runtimeRequests"][0]["status"], "resolved");
+}
