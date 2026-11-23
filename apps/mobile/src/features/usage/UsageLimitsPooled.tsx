@@ -11,6 +11,7 @@ import {
   remainingPercent,
   type LimitAccount,
   type LimitPoolWindow,
+  poolAgentBrand,
 } from "@t3tools/shared/usageLimits";
 import {
   collectExternalUsageLinks,
@@ -507,7 +508,9 @@ export function UsageLimitsSection({
               <View className="flex-row items-center gap-2 px-1">
                 <ProviderIcon provider={pool.driver} size={18} />
                 <Text className="text-base font-t3-medium text-foreground">
-                  {providerClients.get(pool.driver)?.label ?? pool.driver}
+                  {poolAgentBrand(pool)?.label ??
+                    providerClients.get(pool.driver)?.label ??
+                    pool.driver}
                 </Text>
               </View>
               {windows.map((window) => {

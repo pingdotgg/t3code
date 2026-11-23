@@ -19,6 +19,8 @@ import {
   collectLimitAccounts,
   collectExternalUsageLinks,
   collectLimitPools,
+  poolAgentBrand,
+  type LimitPool,
   elapsedShare,
   exhaustedUsageWindow,
   paceOf,
@@ -2009,5 +2011,36 @@ describe("ChatGPT sharing presentation", () => {
         auth: { status: "unauthenticated", subscriptionSharing: true },
       }),
     ).toBe(false);
+  });
+});
+
+describe("poolAgentBrand", () => {
+  const account = (displayName: string | null, iconUrl?: string): LimitAccount => ({
+    key: `acpRegistry_${displayName}`,
+    driver: ProviderDriverKind.make("acpRegistry"),
+    displayName,
+    iconUrl,
+    email: undefined,
+    plan: undefined,
+    accentColor: undefined,
+    environments: [],
+    sourceLabel: null,
+    redeem: null,
+    limits: { checkedAt: "2026-11-19T10:00:00.000Z", windows: [] },
+  });
+  const pool = (accounts: LimitAccount[], driver = "acpRegistry"): LimitPool => ({
+    driver: ProviderDriverKind.make(driver),
+    accounts,
+    windows: [],
+  });
+
+  it("names the agent only when one registry agent owns the pool", () => {
+    expect(poolAgentBrand(pool([account("Mistral Vibe", "icon.svg")]))).toEqual({
+      label: "Mistral Vibe",
+      iconUrl: "icon.svg",
+    });
+    expect(poolAgentBrand(pool([account("Mistral Vibe"), account("Other")]))).toBeNull();
+    expect(poolAgentBrand(pool([account(null)]))).toBeNull();
+    expect(poolAgentBrand(pool([account("Mistral Vibe")], "codex"))).toBeNull();
   });
 });

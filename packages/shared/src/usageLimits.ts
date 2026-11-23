@@ -305,6 +305,7 @@ export interface LimitAccount {
   readonly key: string;
   readonly driver: ServerProvider["driver"];
   readonly displayName: string | null;
+  readonly iconUrl?: string | undefined;
   readonly email: string | undefined;
   readonly plan: string | undefined;
   readonly accentColor: string | undefined;
@@ -402,6 +403,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         key: `${environmentId}:${provider.instanceId}`,
         driver: provider.driver,
         displayName: provider.displayName?.trim() || null,
+        iconUrl: provider.iconUrl,
         email: provider.auth.email,
         plan: provider.auth.label,
         accentColor: provider.accentColor,
@@ -512,6 +514,19 @@ export interface LimitPool {
   readonly driver: ServerProvider["driver"];
   readonly accounts: readonly LimitAccount[];
   readonly windows: readonly LimitPoolWindow[];
+}
+
+/** A registry agent's own name and icon, when every account in its pool is that one agent. */
+export function poolAgentBrand(
+  pool: LimitPool,
+): { readonly label: string; readonly iconUrl: string | undefined } | null {
+  if (pool.driver !== "acpRegistry") return null;
+  const [first] = pool.accounts;
+  if (!first?.displayName) return null;
+  const same = pool.accounts.every(
+    (account) => account.displayName === first.displayName && account.iconUrl === first.iconUrl,
+  );
+  return same ? { label: first.displayName, iconUrl: first.iconUrl } : null;
 }
 
 function hasDuplicateCursorTotal(pool: LimitPool): boolean {

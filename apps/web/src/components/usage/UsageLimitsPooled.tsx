@@ -10,6 +10,7 @@ import {
   paceRemainingPercent,
   remainingPercent,
   type ResetCreditChoice,
+  poolAgentBrand,
 } from "@t3tools/shared/usageLimits";
 import { T, useGT, useMessages } from "gt-react";
 import type { Popover as PopoverPrimitive } from "@base-ui/react/popover";
@@ -638,7 +639,8 @@ function PoolWindowCard({
 
 function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
   const color = barColor(pool.driver);
-  const label = providerClients.get(pool.driver)?.label ?? String(pool.driver);
+  const brand = poolAgentBrand(pool);
+  const label = brand?.label ?? providerClients.get(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
   const m = useMessages();
   return (
@@ -647,6 +649,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
         <ProviderInstanceIcon
           driverKind={pool.driver}
           displayName={label}
+          acpRegistryIconUrl={brand?.iconUrl}
           indicatorBackground="var(--background)"
           className="size-5"
           iconClassName="size-4 text-foreground/80"
