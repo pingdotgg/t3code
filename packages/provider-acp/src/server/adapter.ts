@@ -3454,6 +3454,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
+        // Chained background wakes after `promptSettled` may open a new reasoning or
+        // assistant segment without an intervening `usage_update`. Promote any prior
+        // un-invalidated wake reply so the new wake does not fold it away.
+        const promoteSettledWakeReplyBeforeNewSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          sourceMessageId: string | null,
+        ) {
+          if (
+            context.closingAssistant === null ||
+            context.finalized ||
+            context.interrupted ||
+            !context.promptSettled ||
+            context.promptSettledStatus !== "completed"
+          ) {
+            return;
+          }
+          if (kind === "assistant") {
+            const current = context.assistant.current;
+            const continuingSameSegment =
+              current !== null &&
+              (sourceMessageId === null ||
+                current.sourceMessageId === null ||
+                current.sourceMessageId === sourceMessageId);
+            if (continuingSameSegment) return;
+          }
+          yield* closeTextStreamsAsFinalAnswer(context);
+        });
+
         const openTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
@@ -3496,11 +3525,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageId?: string | null,
         ) {
           if (text.length === 0) return;
+          const sourceMessageId = messageId || null;
+          yield* promoteSettledWakeReplyBeforeNewSegment(context, kind, sourceMessageId);
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
           const stream = textStreamFor(context, kind);
-          const sourceMessageId = messageId || null;
           if (
             stream.current !== null &&
             sourceMessageId !== null &&
@@ -3536,6 +3566,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           text: string,
           messageId: string,
         ) {
+          yield* promoteSettledWakeReplyBeforeNewSegment(context, kind, messageId);
           for (const other of ["user", "reasoning", "assistant"] as const) {
             if (other !== kind) yield* closeTextStream(context, other);
           }
