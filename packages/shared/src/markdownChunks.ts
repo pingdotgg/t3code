@@ -29,11 +29,8 @@ const closesAtBlankLine = (next: string) => next.trim() === "";
 // each HTML block, so a cut waits until the ones an HTML block opened are closed.
 const WRAPPER_TAG = /<(\/?)(?:details|table)(?=[\s/>]|$)/gi;
 const HTML_COMMENT = /<!--.*?-->/g;
-// A wrapper whose end tag never comes must not hold the rest of a large file in one piece.
+// An end tag that never comes, or back-to-back wrappers, must not make one huge piece.
 const WRAPPED_MAX_CHARS = 32 * 1024;
-// After a blank line, a <details> or <table> can start a piece as a paragraph can. Other tags
-// may be children of a raw HTML container, such as <li> in <ol>, so they never start one.
-const WRAPPER_OPEN = /^<(?:details|table)(?=[\s/>]|$)/i;
 
 function openedWrappers(line: string): number {
   let opened = 0;
@@ -106,7 +103,6 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let afterHeading = false;
   let definitionChars = 0;
   let openWrappers = 0;
-  let wrapperStart = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
@@ -119,14 +115,12 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
       let seen = 0;
       closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
     } else {
-      if (chars - wrapperStart >= WRAPPED_MAX_CHARS) openWrappers = 0;
+      if (chars >= WRAPPED_MAX_CHARS) openWrappers = 0;
       const cut =
         chars >= targetChars &&
         openWrappers === 0 &&
         (ATX_HEADING.test(line) ||
-          (afterBlankLine &&
-            (BLOCK_START.test(line) || WRAPPER_OPEN.test(line)) &&
-            !ORDERED_ITEM.test(line)));
+          (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cut) flush();
       closes = blockCloser(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
@@ -139,10 +133,8 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
         definitionChars += line.length + 1;
       }
     }
-    if (closes === closesAtBlankLine) {
-      if (openWrappers === 0) wrapperStart = chars;
+    if (closes === closesAtBlankLine)
       openWrappers = Math.max(0, openWrappers + openedWrappers(line));
-    }
     first = false;
     lines.push(line);
     chars += line.length + 1;

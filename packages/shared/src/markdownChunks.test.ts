@@ -105,7 +105,7 @@ describe("splitMarkdown", () => {
       "",
       "after",
     ].join("\n");
-    expect(starts(text)).toEqual(["<!--", "<details>", "<table><tr><td>", "```html", "after"]);
+    expect(starts(text)).toEqual(["<!--", "```html", "after"]);
     const multiline = [
       "<details",
       '  class="faq"><!-- </details> -->',
