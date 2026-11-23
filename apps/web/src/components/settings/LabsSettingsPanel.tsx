@@ -98,6 +98,7 @@ function BoringSidebarMultilineRow() {
 }
 
 function KeepRunningInTrayRow() {
+  const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
