@@ -2592,6 +2592,120 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       assert.equal((yield* runtime!.getModeState)?.currentModeId, "default");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
+
+  it.effect(
+    "reconfigures a reused session when an explicit approval or sandbox policy changes",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        let runtime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
+        const instanceId = ProviderInstanceId.make("antigravity-policy-reuse-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.tap((made) =>
+                Effect.sync(() => {
+                  runtime = made;
+                }),
+              ),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const threadId = ThreadId.make("thread-antigravity-policy-reuse");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const unrestrictedPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-policy-reuse"),
+          modelSelection,
+          runtimePolicy: unrestrictedPolicy,
+        });
+        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        yield* session.events.pipe(
+          Stream.runForEach((event) => Queue.offer(events, event)),
+          Effect.forkScoped,
+        );
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: unrestrictedPolicy,
+        });
+        const now = yield* DateTime.now;
+        const runTurn = (
+          ordinal: number,
+          runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        ) =>
+          Effect.gen(function* () {
+            yield* session.startTurn(
+              makeTurnInput({
+                threadId,
+                providerThread,
+                instanceId,
+                runtimePolicy,
+                modelSelection,
+                now,
+                ordinal,
+              }),
+            );
+            yield* Stream.fromQueue(events).pipe(
+              Stream.filter((event) => event.type === "turn.terminal"),
+              Stream.runHead,
+            );
+            return (yield* runtime!.getModeState)?.currentModeId;
+          });
+
+        assert.equal((yield* runtime!.getModeState)?.currentModeId, "yolo");
+        // Adding an explicit approval policy on a reused Full access session must reconfigure to `default`.
+        assert.equal(
+          yield* runTurn(
+            1,
+            ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              approvalPolicy: "on-request",
+            }),
+          ),
+          "default",
+        );
+        // Removing it restores Full access, and adding a sandbox policy confines the session again.
+        assert.equal(yield* runTurn(2, unrestrictedPolicy), "yolo");
+        assert.equal(
+          yield* runTurn(
+            3,
+            ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              sandboxPolicy: { type: "readOnly" },
+            }),
+          ),
+          "default",
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
