@@ -243,6 +243,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(yield* resolver.resolvePath(unquotedCwd)).toBe(
           (yield* Path.Path).join(unquotedCwd, "brand.svg"),
         );
+
+        const quotedValueCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          quotedValueCwd,
+          "index.html",
+          `<link rel="icon" title="preview href=app.css here" href="brand.svg">`,
+        );
+        yield* writeTextFile(quotedValueCwd, "app.css", "body {}");
+        yield* writeTextFile(quotedValueCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(quotedValueCwd)).toBe(
+          (yield* Path.Path).join(quotedValueCwd, "brand.svg"),
+        );
       }),
     );
 
