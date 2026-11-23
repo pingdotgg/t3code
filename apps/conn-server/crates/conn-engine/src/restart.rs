@@ -101,7 +101,7 @@ fn may_continue(
     let Some(thread) = tx.thread(thread_id)? else {
         return Ok(false);
     };
-    if !policy.continues(thread["projectId"].as_str()) {
+    if !policy.continues(thread["projectId"].as_str()) || stop_requested(tx, thread_id, run)? {
         return Ok(false);
     }
     let resting = !thread["archivedAt"].is_null()
@@ -151,7 +151,8 @@ fn accepted(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
     {
         return Ok(true);
     }
-    Ok(tx.start_settled(run_id)?.unwrap_or(!turns.is_empty()))
+    // A store from before the outbox has no start rows: only a confirmed turn counts there.
+    Ok(tx.start_settled(run_id)?.unwrap_or(false))
 }
 
 /// `restartStopRequested`: Stop was asked for the run, or for the task that delegated its
@@ -236,8 +237,10 @@ fn unaccepted(
     let project = tx
         .thread(thread_id)?
         .and_then(|t| t["projectId"].as_str().map(str::to_owned));
+    // A continuation sent again keeps its run id, so its claimed resends count as links of
+    // the chain (T3 counts the process losses of the continuation).
     let capped = if continuation {
-        chain_length(tx, thread_id, run)? >= MAX_CHAIN
+        chain_length(tx, thread_id, run)? + tx.resends(&resend_command(run_id))? >= MAX_CHAIN
     } else {
         tx.resends(&resend_command(run_id))? >= MAX_RESENDS
     };
@@ -349,6 +352,10 @@ pub(crate) fn recover(
     policy: &RestartPolicy,
 ) -> StoreResult<Vec<Effect>> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+    // The previous process's sessions are gone, and T3 holds the prompts queued behind a cut
+    // run: the user decides when they go, whatever happens to the run below.
+    stop_sessions(tx, thread_id)?;
+    commands::hold_queue(tx, thread_id)?;
     // The provider finished; only the checkpoint capture was cut off. A capture row the
     // previous process left is replay-safe and runs again by itself.
     if run["status"] == "waiting" {
@@ -357,7 +364,6 @@ pub(crate) fn recover(
         }
         return Ok(vec![crate::checkpoint::resume_capture(thread_id, run)]);
     }
-    stop_sessions(tx, thread_id)?;
     let continues = if accepted(tx, thread_id, run)? {
         may_continue(tx, thread_id, run, policy)? && chain_length(tx, thread_id, run)? < MAX_CHAIN
     } else {
@@ -400,11 +406,9 @@ pub(crate) fn recover(
         )
         .run(Some(&run_id)),
     )?;
-    // T3 holds the prompts queued behind a cut run: the user decides when they go, whether
-    // or not a continuation runs first.
-    commands::hold_queue(tx, thread_id)?;
+    // Without a continuation the run ends here: a delegated child's parent hears of it now.
     if !continues {
-        return Ok(vec![]);
+        return crate::families::on_run_end(tx, thread_id, &run_id);
     }
     let dispatch = commands::handler("message.dispatch").expect("message.dispatch");
     let outcome = dispatch(

@@ -264,40 +264,60 @@ impl EngineHost for Host {
         }
     }
 
-    fn thread_closed(&self, thread_id: &str, reason: ThreadClose) -> BoxFuture<'_, ()> {
-        let devices = match reason {
-            ThreadClose::Settled => {
-                self.terminals.close_on_settle(thread_id);
-                None
-            }
-            ThreadClose::Archived | ThreadClose::Deleted => {
-                self.terminals.close(TerminalCloseInput {
-                    thread_id: thread_id.to_owned(),
-                    terminal_id: None,
-                    delete_history: Some(reason == ThreadClose::Deleted),
-                });
-                // The thread's device sessions end; the devices stay on for other threads.
-                self.devices.get().cloned()
-            }
-        };
-        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it. The effect
-        // settles after this, so a close replayed at start finishes it too.
+    fn thread_closed(
+        &self,
+        thread_id: &str,
+        reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        let terminals = self.terminals.clone();
+        // The thread's device sessions end; the devices stay on for other threads.
+        let devices = (reason != ThreadClose::Settled)
+            .then(|| self.devices.get().cloned())
+            .flatten();
+        // `ResourceCleanupService`: a deleted thread takes the tasks bound to it.
         let tasks = (reason == ThreadClose::Deleted)
             .then(|| self.scheduled_tasks.get().cloned())
             .flatten();
         let thread_id = thread_id.to_owned();
         Box::pin(async move {
+            // Closing a terminal writes and deletes its history: file work, off the runtime.
+            let closing = thread_id.clone();
+            tokio::task::spawn_blocking(move || match reason {
+                ThreadClose::Settled => terminals.close_on_settle(&closing),
+                ThreadClose::Archived | ThreadClose::Deleted => {
+                    terminals.close(TerminalCloseInput {
+                        thread_id: closing,
+                        terminal_id: None,
+                        delete_history: Some(reason == ThreadClose::Deleted),
+                    });
+                }
+            })
+            .await
+            .map_err(|e| format!("closing the thread's terminals stopped: {e}"))?;
             if let Some(devices) = devices {
-                devices.cleanup_thread(&thread_id).await;
+                tokio::time::timeout(DEVICE_RELEASE_DEADLINE, devices.cleanup_thread(&thread_id))
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "releasing the thread's devices took over {} s",
+                            DEVICE_RELEASE_DEADLINE.as_secs()
+                        )
+                    })?;
             }
-            if let Some(tasks) = tasks
-                && let Err(error) = tasks.delete_for_thread(&thread_id).await
-            {
-                eprintln!("scheduled tasks: {error}");
+            if let Some(tasks) = tasks {
+                tasks
+                    .delete_for_thread(&thread_id)
+                    .await
+                    .map_err(|e| format!("deleting the thread's scheduled tasks: {e}"))?;
             }
+            Ok(())
         })
     }
 }
+
+/// How long a closed thread's device release may take, all devices together. T3 lets a worker
+/// reclaim its slot from an effect after 30 s.
+const DEVICE_RELEASE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl TurnObserver for Host {
     fn turn_started(&self, point: TurnPoint) -> BoxFuture<'_, ()> {

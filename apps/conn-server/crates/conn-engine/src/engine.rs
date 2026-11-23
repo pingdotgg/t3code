@@ -167,6 +167,9 @@ pub struct SqliteEngine {
     _lock: Arc<std::fs::File>,
 }
 
+/// T3's `maxAttempts` for an effect, here for the host's cleanup of a closed thread.
+const CLOSE_ATTEMPTS: u32 = 5;
+
 /// What a second open of a store that a live engine holds gets.
 pub const STORE_IN_USE: &str = "store in use: another engine has this database open";
 
@@ -1185,7 +1188,9 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) {
+    /// Runs one effect. An error is the effect's own failure, which its row records; most
+    /// effects record their failures on the thread and return `Ok`.
+    pub(crate) async fn run_effect(self: Arc<Self>, effect: Effect) -> Result<(), String> {
         match effect {
             Effect::StartTurn { thread_id, run_id } => self.start_turn(thread_id, run_id).await,
             Effect::Rollback(request) => self.rollback(request).await,
@@ -1229,15 +1234,39 @@ impl Inner {
                 ) {
                     self.drop_kept_tools(|thread, _| thread == thread_id);
                 }
-                if let Some(host) = &self.host {
-                    host.thread_closed(&thread_id, reason).await;
-                }
+                return self.close_on_host(&thread_id, reason).await;
             }
             Effect::GenerateTitle {
                 thread_id,
                 request_id,
                 regenerate,
             } => self.generate_title(thread_id, request_id, regenerate).await,
+        }
+        Ok(())
+    }
+
+    /// The host's cleanup of a closed thread, tried again with T3's effect backoff (100 ms,
+    /// doubling) up to [`CLOSE_ATTEMPTS`] times (`maxAttempts`); the last error is the
+    /// effect's.
+    async fn close_on_host(
+        &self,
+        thread_id: &str,
+        reason: crate::ThreadClose,
+    ) -> Result<(), String> {
+        let Some(host) = &self.host else {
+            return Ok(());
+        };
+        let mut attempt = 1;
+        loop {
+            match host.thread_closed(thread_id, reason).await {
+                Ok(()) => return Ok(()),
+                Err(e) if attempt < CLOSE_ATTEMPTS => {
+                    eprintln!("conn-engine: closing {thread_id} on the host failed: {e}");
+                    tokio::time::sleep(Duration::from_millis(100 << (attempt - 1))).await;
+                    attempt += 1;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 

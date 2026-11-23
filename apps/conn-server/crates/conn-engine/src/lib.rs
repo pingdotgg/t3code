@@ -243,9 +243,14 @@ pub trait EngineHost: Send + Sync {
 
     /// A thread was archived, deleted or settled; end what it holds open (terminals).
     /// The effect settles once the returned future ends, so a replayed close finishes its
-    /// cleanup (a deleted thread's scheduled tasks) before its row settles.
-    fn thread_closed(&self, _thread_id: &str, _reason: ThreadClose) -> BoxFuture<'_, ()> {
-        Box::pin(std::future::ready(()))
+    /// cleanup (a deleted thread's scheduled tasks) before its row settles. An error is tried
+    /// again, then recorded on the row (`failed`).
+    fn thread_closed(
+        &self,
+        _thread_id: &str,
+        _reason: ThreadClose,
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Ok(())))
     }
 
     /// A remote task of `thread_id` now owes its thread in a linked environment a stop.

@@ -332,7 +332,12 @@ impl Inner {
                 // The run's end (the parent's wake) is written once, by the first capture to
                 // commit, whatever the run ended as. A capture that runs again after a restart
                 // finds its row marked.
-                let first = !tx.run_end_recorded(&rid)?;
+                // A capture row of an older build has no mark: a terminal run whose checkpoint
+                // committed had its end written by that capture.
+                let ended = tx.entity(&tid, "runs", &rid)?.is_some_and(|run| {
+                    run["status"] != "waiting" && !run["checkpointId"].is_null()
+                });
+                let first = !ended && !tx.run_end_recorded(&rid)?;
                 if let Some((ctx, events)) = captured {
                     commit_capture(tx, &tid, &rid, &ctx, events)?;
                 }

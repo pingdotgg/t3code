@@ -435,6 +435,112 @@ async fn a_restart_finishes_a_run_left_waiting_for_its_checkpoint() {
     let p = projection(&engine, "t1").await;
     assert_eq!(p["runs"][0]["status"], "completed", "{}", p["runs"]);
     assert!(p["runs"][0]["checkpointId"].is_string(), "{}", p["runs"]);
+    // The #268 gate's probe: the waiting path also ends the previous process's sessions.
+    let sessions = p["providerSessions"].as_array().unwrap();
+    assert!(
+        sessions.iter().all(|s| s["status"] == "stopped"),
+        "{sessions:?}"
+    );
+}
+
+/// A parent thread in `repo` whose run hangs, with delegated child `d1` running `task`.
+async fn parent_with_child(db: &TempDb, repo: &Repo, task: &str) -> (SqliteEngine, String, String) {
+    let (engine, _) = open_repo(db, repo);
+    dispatch(&engine, create_in(repo, "t1", "c1")).await;
+    let mut parent = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut parent).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut parent).await;
+    dispatch(&engine, super::delegate("d1", task, Some("always"))).await;
+    let child = "thread:delegated-task:d1".to_owned();
+    let child_run = format!("run:{child}:1");
+    (engine, child, child_run)
+}
+
+fn parent_wakes(p: &Value) -> usize {
+    p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| {
+            m["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("Delegated task"))
+        })
+        .count()
+}
+
+/// The #268 gate's probe: a capture row an older build (#261) committed but did not settle has
+/// no mark. Run again after a reopen, it must not wake the parent a second time.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unmarked_capture_row_replayed_wakes_the_parent_once() {
+    let db = TempDb::new("capture-unmarked");
+    let repo = Repo::new("capture-unmarked");
+    {
+        let (engine, child, child_run) = parent_with_child(&db, &repo, "look").await;
+        super::run_to_end(&engine, &child, &child_run).await;
+        let p = until(&engine, |p| parent_wakes(p) > 0).await;
+        assert_eq!(parent_wakes(&p), 1);
+        let run = child_run.clone();
+        engine
+            .inner()
+            .db(move |store| {
+                store
+                    .raw()
+                    .execute(
+                        "UPDATE effect_outbox SET status = 'running', progress = NULL
+                         WHERE effect_type = 'checkpoint.capture'
+                           AND json_extract(payload, '$.runId') = ?1",
+                        [run],
+                    )
+                    .unwrap()
+            })
+            .await;
+    }
+    let (engine, _) = open_repo(&db, &repo);
+    super::settled_statuses(&db, "checkpoint.capture").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(parent_wakes(&projection(&engine, "t1").await), 1);
+}
+
+/// The #268 gate's probe: a delegated child whose project opted out of continuing ends at the
+/// restart, and its parent hears of it (T3 commits the family completion).
+#[tokio::test(flavor = "current_thread")]
+async fn an_opted_out_child_ends_for_its_parent_at_a_restart() {
+    let db = TempDb::new("child-opt-out");
+    let repo = Repo::new("child-opt-out");
+    {
+        let (engine, child, _) = parent_with_child(&db, &repo, "hang").await;
+        let mut stream = engine
+            .subscribe_thread(from_json(json!({"threadId": child})).unwrap())
+            .await
+            .unwrap();
+        next(&mut stream).await;
+        until_provider_turn(&mut stream).await;
+        super::settled_statuses(&db, "provider-turn.start").await;
+    }
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: repo.root(),
+    }];
+    config.providers = vec![provider];
+    config.checkpoints = true;
+    config.restart_policy = crate::RestartPolicy {
+        continue_by_default: false,
+        projects: Default::default(),
+    };
+    let engine = SqliteEngine::open(config).unwrap();
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["subagents"][0]["status"], "cancelled",
+        "{}",
+        p["subagents"]
+    );
 }
 
 // ---------------------------------------------------------------------------------------
