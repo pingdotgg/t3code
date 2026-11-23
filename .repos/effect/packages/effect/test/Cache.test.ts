@@ -459,6 +459,34 @@ describe("Cache", () => {
           assert.deepStrictEqual(yield* Fiber.await(third), Exit.succeed(42))
         }))
 
+      it.effect.each(["get", "refresh"] as const)(
+        "%s expires from lookup completion after the first caller is interrupted",
+        (operation) =>
+          Effect.gen(function*() {
+            const complete = yield* Latch.make()
+            let lookups = 0
+            const cache = yield* Cache.make({
+              capacity: 10,
+              timeToLive: "1 minute",
+              lookup: (_key: string) => Effect.as(complete.await, ++lookups)
+            })
+
+            const first = yield* (operation === "get" ? Cache.get(cache, "key") : Cache.refresh(cache, "key")).pipe(
+              Effect.forkChild({ startImmediately: true })
+            )
+            const second = yield* Cache.get(cache, "key").pipe(Effect.forkChild({ startImmediately: true }))
+            yield* Fiber.interrupt(first)
+            yield* TestClock.adjust("2 minutes")
+            yield* complete.open
+            assert.strictEqual(yield* Fiber.join(second), 1)
+
+            yield* TestClock.adjust("30 seconds")
+            assert.strictEqual(yield* Cache.get(cache, "key"), 1)
+            yield* TestClock.adjust("31 seconds")
+            assert.strictEqual(yield* Cache.get(cache, "key"), 2)
+          })
+      )
+
       it.effect("interrupting a getOption waiter keeps the shared lookup available", () =>
         Effect.gen(function*() {
           const started = yield* Latch.make()

@@ -72,7 +72,7 @@ export async function fitComposerImage(image: {
   readonly uri: string;
   readonly mimeType: string;
   readonly base64: string;
-}): Promise<{ base64: string } | null> {
+}): Promise<{ base64: string; uri: string } | null> {
   const mimeType = downscalableImageMimeType(image.mimeType);
   if (mimeType === null) return null;
   try {
@@ -81,15 +81,7 @@ export async function fitComposerImage(image: {
     for (let index = 0; index < header.length; index += 1) bytes[index] = header.charCodeAt(index);
     const dimensions = readImageDimensions(bytes);
     if (dimensions === null || fitImageAttachmentSize(dimensions) === null) return null;
-    const rendered = await renderPhoto(image.uri, mimeType === "image/png" ? "png" : "jpeg");
-    try {
-      const { File } = await import("expo-file-system");
-      const file = new File(rendered.uri);
-      if (file.exists) file.delete();
-    } catch (error) {
-      console.warn("[composer-images] could not remove fitted image", error);
-    }
-    return { base64: rendered.base64 };
+    return await renderPhoto(image.uri, mimeType === "image/png" ? "png" : "jpeg");
   } catch (error) {
     console.warn("[composer-images] could not scale an oversized image", error);
     return null;
