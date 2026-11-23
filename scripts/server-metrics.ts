@@ -45,7 +45,6 @@ import {
   slope,
   spread,
   summarizeProfiles,
-  switchesBetween,
   type FirstWord,
   type Measured,
   type ProfileSummary,
@@ -264,9 +263,21 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
     return yield* Deferred.await(answer);
   });
   const decodeHeapUsage = Schema.decodeUnknownEffect(Schema.Struct({ usedSize: Schema.Number }));
+  const decodeEvaluated = Schema.decodeUnknownEffect(
+    Schema.Struct({ result: Schema.Struct({ value: Schema.Number }) }),
+  );
   const decodeHeapProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: HeapProfile }));
   const decodeCpuProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: CpuProfile }));
   return {
+    // getrusage keeps the switches of threads that already exited, unlike per-thread counters.
+    contextSwitches: send("Runtime.evaluate", {
+      expression:
+        "(() => { const u = process.resourceUsage(); return u.voluntaryContextSwitches + u.involuntaryContextSwitches; })()",
+      returnByValue: true,
+    }).pipe(
+      Effect.flatMap(decodeEvaluated),
+      Effect.map(({ result }) => result.value),
+    ),
     heapAfterGc: Effect.gen(function* () {
       yield* send("HeapProfiler.collectGarbage");
       yield* send("HeapProfiler.collectGarbage");
@@ -343,55 +354,6 @@ const sample = Effect.fn("serverMetrics.sample")(function* (pid: number) {
         .reduce((total, part) => total * 60 + part, 0)
     : Number.NaN;
   return yield* checked(cpuSeconds, rss ? Number(rss) * 1024 : Number.NaN, "ps");
-});
-
-const numberOrNull = (text: Option.Option<string>) => {
-  const value = Number(Option.getOrElse(text, () => "").replace(/\+$/, ""));
-  return Option.isSome(text) && text.value !== "" && Number.isFinite(value) ? value : null;
-};
-
-/**
- * Context switches so far, by Linux task (one total elsewhere), or null when this platform
- * cannot tell. Per task, so a thread that exits between two samples drops out of both.
- */
-const contextSwitches = Effect.fn("serverMetrics.contextSwitches")(function* (pid: number) {
-  const platform = yield* HostProcess.Platform;
-  if (platform === "linux") {
-    const fs = yield* FileSystem.FileSystem;
-    const switches = new Map<string, number>();
-    for (const task of yield* fs.readDirectory(`/proc/${pid}/task`)) {
-      const status = yield* fs
-        .readFileString(`/proc/${pid}/task/${task}/status`)
-        .pipe(Effect.option);
-      // A task listed but unreadable has no known count; NaN keeps it out of the delta.
-      if (Option.isNone(status)) {
-        switches.set(task, Number.NaN);
-        continue;
-      }
-      let total = 0;
-      for (const match of status.value.matchAll(/ctxt_switches:\s+(\d+)/g))
-        total += Number(match[1]);
-      switches.set(task, total);
-    }
-    return switches;
-  }
-  const total = (value: number | null) => (value === null ? null : new Map([["process", value]]));
-  if (platform === "win32") {
-    return total(
-      numberOrNull(
-        yield* powershell(
-          `(Get-CimInstance Win32_PerfRawData_PerfProc_Thread -Filter "IDProcess=${pid}" | Measure-Object ContextSwitchesPersec -Sum).Sum`,
-        ),
-      ),
-    );
-  }
-  if (platform !== "darwin") return null;
-  const table = yield* output("top", ["-l", "1", "-pid", `${pid}`, "-stats", "pid,csw"]);
-  const row = Option.getOrElse(table, () => "")
-    .split("\n")
-    .map((line) => line.trim().split(/\s+/))
-    .find(([first]) => first === `${pid}`);
-  return total(numberOrNull(Option.fromNullishOr(row?.[1])));
 });
 
 /** Every process below `pid`. Windows needs none: taskkill /T stops the tree. */
@@ -579,8 +541,10 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
   const sampleEvery = Duration.millis(platform === "win32" ? 5_000 : 1_000);
   const measure = Effect.fn("serverMetrics.measure")(function* (seconds: number) {
     // Each counter is divided by the time between its own two reads; a CIM probe can take seconds.
+    // Windows reports no context switches through getrusage, so wakeups are unknown there.
+    const countSwitches = platform === "win32" ? Effect.succeed(null) : devtools.contextSwitches;
     const switchesStart = yield* nowMs;
-    const firstSwitches = yield* contextSwitches(pid);
+    const firstSwitches = yield* countSwitches;
     const start = yield* nowMs;
     const first = yield* sample(pid);
     let rssPeak = first.rss;
@@ -590,9 +554,10 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     }
     const last = yield* sample(pid);
     const cpuElapsed = ((yield* nowMs) - start) / 1_000;
-    const lastSwitches = yield* contextSwitches(pid);
+    const lastSwitches = yield* countSwitches;
     const switchesElapsed = ((yield* nowMs) - switchesStart) / 1_000;
-    const switches = switchesBetween(firstSwitches, lastSwitches);
+    const switches =
+      firstSwitches === null || lastSwitches === null ? null : lastSwitches - firstSwitches;
     const heap = yield* devtools.heapAfterGc;
     const window: Window = {
       cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / cpuElapsed) * 100),

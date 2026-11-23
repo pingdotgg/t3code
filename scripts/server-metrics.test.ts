@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  compareMetrics,
-  heapGrowth,
-  slope,
-  switchesBetween,
-  type ServerMetrics,
-} from "./server-metrics-report.ts";
+import { compareMetrics, heapGrowth, slope, type ServerMetrics } from "./server-metrics-report.ts";
 
 type Quiet = { cpuPct: number; wakeupsPerSec: number | null; rssPeakMB: number };
 const meta = { commit: "abc", platform: "linux-x64", noAgentScope: true };
@@ -89,25 +83,5 @@ describe("slope", () => {
       [20, 195],
     ];
     expect(slope(points)).toBeCloseTo(1);
-  });
-});
-
-describe("switchesBetween", () => {
-  it.each([
-    ["a task in both samples counts its growth", [["1", 100]], [["1", 160]], 60],
-    [
-      "a task new in the second sample counts whole",
-      [["1", 100]],
-      [
-        ["1", 100],
-        ["2", 40],
-      ],
-      40,
-    ],
-    ["a task unreadable at first is left out", [["1", Number.NaN]], [["1", 100_060]], 0],
-    ["a task unreadable at the end is left out", [["1", 100]], [["1", Number.NaN]], 0],
-    ["a negative total is unknown", [["1", 100]], [["1", 40]], null],
-  ] as const)("%s", (_name, first, last, expected) => {
-    expect(switchesBetween(new Map(first), new Map(last))).toBe(expected);
   });
 });
