@@ -330,6 +330,16 @@ describe("question answer paths", () => {
       "A\tB\t\nC",
     ],
     [
+      "hidden text",
+      String.raw`{\rtf1\ansi A {\v B{\v0 C}D} E\v F\v0  G\v1 H\plain  I}`,
+      "A C E G I",
+    ],
+    [
+      "hidden text table and escapes",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\v B\u945?\'e9\cell\v0 C\cell\v\row\v0 D\cell}`,
+      "A\tC\t\nD",
+    ],
+    [
       "document breaks",
       String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
       "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
@@ -344,11 +354,37 @@ describe("question answer paths", () => {
       String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
       "Café Crème",
     ],
+    ["default ANSI code page", String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "Café"],
+    [
+      "DOS Cyrillic code page",
+      String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+      "Привет",
+    ],
     [
       "font character set",
       String.raw`{\rtf1\ansi\ansicpg1252\deff1{\fonttbl\f0\fnil\fcharset178 GeezaPro;\f1\fnil\fcharset0 LucidaGrande;}
 \f0 \'e3\'e1\'c7\'cd\'d9\'c9\f1 : caf\'e9, \f0\plain\'c7a}`,
       "ملاحظة: café, Ça",
+    ],
+    [
+      "ANSI font under another code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+      "€5 café",
+    ],
+    [
+      "font code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+      "Привет",
+    ],
+    [
+      "ANSI font in a Macintosh document",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+      "pridržana",
+    ],
+    [
+      "Macintosh font code page",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0\cpg10000 Geneva;}\f0 Caf\'8e}`,
+      "Café",
     ],
     [
       "font character set outside the font table",
@@ -845,6 +881,16 @@ describe("question answer paths", () => {
           absent: ["PAGEREF", "$500", "Moved", "\u2011"],
         },
         {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:m="urn:m"><w:body><w:p><w:r><w:t xml:space="preserve">Opening </w:t></w:r><m:oMath><m:r><m:rPr><m:sty m:val="p"/></m:rPr><w:rPr><w:vanish/></w:rPr><m:t>Formula</m:t></m:r></m:oMath><w:r><w:rPr><w:vanish/></w:rPr><w:t>Omitted</w:t></w:r><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t xml:space="preserve">Zero </w:t></w:r><w:r><w:rPr><w:vanish w:val="false"/></w:rPr><w:t xml:space="preserve">False </w:t></w:r><w:r><w:rPr><w:vanish w:val="off"/></w:rPr><w:t xml:space="preserve">Off </w:t></w:r><w:r><w:rPr><w:vanish w:val="true"/></w:rPr><w:t>Draft</w:t></w:r><w:r><w:rPr><w:vanish w:val="1"/></w:rPr><w:t>Note</w:t></w:r><w:r><w:rPr><w:vanish w:val="on"/></w:rPr><w:t>Aside</w:t></w:r><w:r><w:rPr><w:rPrChange><w:rPr><w:vanish/></w:rPr></w:rPrChange></w:rPr><w:t>Shown</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Opening Zero False Off Shown"],
+          absent: ["Omitted", "Draft", "Note", "Aside", "Formula"],
+        },
+        {
           ext: "odt",
           bounded: true,
           parts: {
@@ -907,9 +953,9 @@ describe("question answer paths", () => {
             "xl/workbook.xml":
               '<workbook><sheets><sheet name="Inventory" r:id="a"/><sheet name="Budget" r:id="b"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
-              '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/></Relationships>',
-            "xl/sharedStrings.xml": "<sst><si><t>Lantern</t></si></sst>",
-            "xl/styles.xml":
+              '<Relationships><Relationship Id="a" Target="worksheets/second.xml"/><Relationship Id="b" Target="worksheets/first.xml"/><Relationship Id="strings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="../catalog/items.xml"/><Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="../Formatting/Cells.xml"/></Relationships>',
+            "catalog/items.xml": "<sst><si><t>Lantern</t></si></sst>",
+            "formatting/cells.xml":
               '<styleSheet><numFmts><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="9"/><xf numFmtId="164"/></cellXfs></styleSheet>',
             "xl/worksheets/second.xml":
               '<worksheet><sheetData><row><c r="A1" t="s"><v>0</v></c><c r="C1"><v>37</v></c></row></sheetData></worksheet>',
@@ -995,7 +1041,9 @@ describe("question answer paths", () => {
             "ppt/presentation.xml": `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
               xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
               xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">
-              <p:sldIdLst><p:sldId id="256" r:id="b"/><p:sldId id="257" r:id="a"/></p:sldIdLst>
+              <p:sldIdLst xmlns:links="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                <p:sldId r:id="b" id="256"/><p:sldId links:id="a" id="257"/>
+              </p:sldIdLst>
               <p:extLst><p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"><p14:sectionLst>
                 <p14:section name="Schedule" id="{01F07B81-39E6-4BBB-9B89-66EA253FBD29}">
                   <p14:sldIdLst><p14:sldId id="256"/><p14:sldId id="257"/></p14:sldIdLst>

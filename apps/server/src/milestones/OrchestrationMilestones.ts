@@ -70,6 +70,7 @@ const make = Effect.gen(function* () {
     parentThreadId: thread.lineage.parentThreadId,
     actor,
     isSubagentChild: thread.lineage.relationshipToParent === "subagent",
+    ...(thread.workflowRun === undefined ? {} : { workflowRunId: thread.workflowRun.runId }),
   });
 
   const guestMilestones = (

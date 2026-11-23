@@ -64,6 +64,7 @@ import {
   pastedPathQueryLength,
 } from "~/composer-logic";
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { preserveReadingPosition } from "~/lib/preserveReadingPosition";
 import { caretLineDirection, ComposerTextDirectionExtension } from "~/composer-text-direction";
 import {
   collapseShownMarkdownSource,
@@ -113,7 +114,7 @@ import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
   groupUndoByChangeKind,
-  isPasteTransaction,
+  isPasteOrDropTransaction,
   markAsClipboardEdit,
   markAsCompositionReplace,
 } from "~/composer-undo-grouping";
@@ -1133,7 +1134,7 @@ function ComposerPromptEditorTiptapInner(
       contextIds,
       previousSnapshot.value !== nextValue,
       isHistoryTransaction(transaction),
-      isPasteTransaction(transaction),
+      isPasteOrDropTransaction(transaction),
     );
   };
 
@@ -1768,6 +1769,11 @@ function ComposerPromptEditorTiptapInner(
     );
     if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, modelKeys, skills]);
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the mounted editor's visible text anchored while its DOM width changes
+  useLayoutEffect(() => {
+    if (editor) return preserveReadingPosition(editor.view.dom);
+  }, [editor]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores ProseMirror focus and caret scroll when the keyed editor remounts, capturing focus on teardown
   useLayoutEffect(() => {

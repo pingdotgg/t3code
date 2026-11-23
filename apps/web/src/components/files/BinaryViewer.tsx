@@ -202,19 +202,28 @@ export default function BinaryViewer(props: {
   };
   const children = new Map<
     string,
-    { path: string; directory: boolean; size: number; modified: string | null }
+    { path: string; entryPath: string; directory: boolean; size: number; modified: string | null }
   >();
   for (const item of archive?.entries ?? []) {
-    if (!item.path.startsWith(folder)) continue;
-    const rest = item.path.slice(folder.length).replace(/\/$/, "");
+    const name = item.path.replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+    if (!name.startsWith(folder)) continue;
+    const rest = name.slice(folder.length);
     if (!rest) continue;
     const slash = rest.indexOf("/");
-    const path = slash < 0 ? item.path.replace(/\/$/, "") : `${folder}${rest.slice(0, slash)}`;
+    const path = slash < 0 ? name : `${folder}${rest.slice(0, slash)}`;
     const directory = slash >= 0 || item.directory;
-    const key = `${path}${directory ? "/" : ""}`;
+    // Files stay keyed by their raw name so `/a.txt` and `a.txt` remain two openable rows.
+    const key = directory ? `d:${path}` : `f:${item.path}`;
     const previous = children.get(key);
-    if (previous) previous.size += item.size;
-    else children.set(key, { path, directory, size: item.size, modified: item.modified });
+    if (previous && directory) previous.size += item.size;
+    else
+      children.set(key, {
+        path,
+        entryPath: item.path,
+        directory,
+        size: item.size,
+        modified: item.modified,
+      });
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -347,7 +356,7 @@ export default function BinaryViewer(props: {
                 )
                 .map((item) => (
                   <tr
-                    key={`${item.path}${item.directory ? "/" : ""}`}
+                    key={item.directory ? `d:${item.path}` : `f:${item.entryPath}`}
                     className="hover:bg-muted/40"
                   >
                     <td className="max-w-0 border-b border-border/60">
@@ -359,7 +368,7 @@ export default function BinaryViewer(props: {
                           else {
                             setSelectedPath(item.path);
                             setEntry(null);
-                            send({ type: "entry", path: item.path });
+                            send({ type: "entry", path: item.entryPath });
                           }
                         }}
                       >

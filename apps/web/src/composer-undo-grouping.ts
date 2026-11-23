@@ -18,10 +18,13 @@ export function markAsClipboardEdit(tr: Transaction, event: "paste" | "cut"): Tr
   return tr.setMeta(CLIPBOARD_EDIT_META, event);
 }
 
-/** Pasted or dropped text, which the user did not type. */
 export function isPasteTransaction(tr: Transaction): boolean {
-  const uiEvent = tr.getMeta("uiEvent");
-  return uiEvent === "paste" || uiEvent === "drop" || tr.getMeta(CLIPBOARD_EDIT_META) === "paste";
+  return tr.getMeta("uiEvent") === "paste" || tr.getMeta(CLIPBOARD_EDIT_META) === "paste";
+}
+
+/** Pasted or dropped text, which the user did not type. */
+export function isPasteOrDropTransaction(tr: Transaction): boolean {
+  return isPasteTransaction(tr) || tr.getMeta("uiEvent") === "drop";
 }
 
 /** Start a replacement undo group, keeping the IME edits together and prior typing separate. */

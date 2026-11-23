@@ -29,6 +29,7 @@ const namespacePrefixes: Record<string, string> = {
   "urn:oasis:names:tc:opendocument:xmlns:table:1.0": "table",
   "urn:oasis:names:tc:opendocument:xmlns:text:1.0": "text",
   "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0": "draw",
+  "urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0": "svg",
   "urn:oasis:names:tc:opendocument:xmlns:presentation:1.0": "presentation",
   "http://www.w3.org/1999/xlink": "xlink",
   "http://www.w3.org/1999/xhtml": "",
@@ -266,7 +267,7 @@ async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<st
   reserveMarkup(tag.length * 2 + spans.length + 5);
   return `<${tag}${spans}>${children}</${tag}>`;
 }
-async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
+async function odfHtml(node: XmlNode, archive: JSZip, imageAlt = ""): Promise<string> {
   if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
   if (node.name === "text:s" || node.name === "text:tab")
     return boundedMarkup(
@@ -278,12 +279,14 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       archive,
       archivePath("content.xml", node.attrs["xlink:href"] ?? ""),
     );
-    return src ? `<img src="${src}" alt="">` : "";
+    return src ? `<img src="${src}" alt="${boundedMarkup(escape(imageAlt))}">` : "";
   }
   if (
     [
       "office:annotation",
       "presentation:notes",
+      "svg:title",
+      "svg:desc",
       "text:tracked-changes",
       "office:scripts",
       "draw:object",
@@ -298,8 +301,16 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
     ].includes(node.name)
   )
     return "";
+  const childImageAlt =
+    node.name === "draw:frame"
+      ? ["svg:title", "svg:desc"]
+          .map((name) => node.children.find((child) => child.name === name))
+          .map((child) => (child ? text(child).trim() : ""))
+          .filter(Boolean)
+          .join(" ")
+      : "";
   let children = "";
-  for (const child of node.children) children += await odfHtml(child, archive);
+  for (const child of node.children) children += await odfHtml(child, archive, childImageAlt);
   const tags: Record<string, string> = {
     "text:p": "p",
     "text:h": "h2",
@@ -490,12 +501,16 @@ export function openNotebook(bytes: ArrayBuffer): OfficeWorkerResult {
           }
           const html = notebookText(data["text/html"]);
           if (html.trim() && htmlImagesFit(html)) return { kind: "html" as const, text: html };
-          return {
-            kind: "text" as const,
-            text: terminalOutputPlainText(
-              notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
-            ),
-          };
+          const text = terminalOutputPlainText(
+            notebookText(output.text ?? data["text/plain"] ?? tracebackLines(output.traceback)),
+          );
+          if (text.trim() || output.output_type !== "error") return { kind: "text" as const, text };
+          const summary = [output.ename, output.evalue]
+            .filter((part) => typeof part === "string")
+            .map((part) => terminalOutputPlainText(notebookText(part)))
+            .filter((part) => part.trim().length > 0)
+            .join(": ");
+          return { kind: "text" as const, text: summary };
         })
         .filter((output) => output.text.trim().length > 0),
     };
@@ -527,6 +542,21 @@ const RTF_CHARACTERS = new Map([
   ["rtlmark", "\u200f"],
 ]);
 
+const rtfCodePageLabel = (codePage: number) =>
+  (
+    {
+      0: "windows-1252",
+      866: "ibm866",
+      65001: "utf-8",
+      932: "shift_jis",
+      936: "gbk",
+      949: "euc-kr",
+      950: "big5",
+      874: "windows-874",
+      10000: "macintosh",
+    } as Record<number, string>
+  )[codePage] ?? `windows-${codePage}`;
+
 export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   if (bytes.byteLength > 8 * 1024 * 1024) throw new PreviewError({ code: "rtf-too-large" });
   // Keep byte offsets intact for binary destinations and multibyte code pages.
@@ -545,8 +575,11 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
     uc: 1,
     font: 0,
     fontTable: false,
+    fontFile: false,
     decoder: new TextDecoder("windows-1252"),
   };
+  // A font's \cpg, else its \fcharset, encodes the bytes written in that font. A \cpg inside
+  // \fontfile encodes the font's file name instead.
   const fonts = new Map<number, TextDecoder>();
   let defaultFont = 0;
   const stack: (typeof state)[] = [];
@@ -657,7 +690,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "fcharset" && state.fontTable) {
         const label = (
           {
-            0: state.decoder.encoding,
+            0: "windows-1252",
             1: state.decoder.encoding,
             77: "macintosh",
             128: "shift_jis",
@@ -677,6 +710,13 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
           } as Record<number, string>
         )[arg];
         if (label) fonts.set(state.font, new TextDecoder(label));
+      } else if (word === "fontfile") state.fontFile = true;
+      else if (word === "cpg" && state.fontTable && !state.fontFile) {
+        try {
+          fonts.set(state.font, new TextDecoder(rtfCodePageLabel(arg)));
+        } catch {
+          // An unknown font code page leaves the font on its \fcharset.
+        }
       } else if (
         [
           "colortbl",
@@ -701,20 +741,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         state.skip = true;
       else if (word === "mac") state.decoder = new TextDecoder("macintosh");
       else if (word === "ansicpg") {
-        const label =
-          (
-            {
-              65001: "utf-8",
-              932: "shift_jis",
-              936: "gbk",
-              949: "euc-kr",
-              950: "big5",
-              874: "windows-874",
-              10000: "macintosh",
-            } as Record<number, string>
-          )[arg] ?? `windows-${arg}`;
         try {
-          state.decoder = new TextDecoder(label);
+          state.decoder = new TextDecoder(rtfCodePageLabel(arg));
         } catch {
           throw new PreviewError({ code: "rtf-code-page" });
         }
