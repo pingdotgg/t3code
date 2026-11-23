@@ -1248,6 +1248,42 @@ const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, 
   return yield* registration.pipe(Effect.provideService(McpServer.McpServer, tracingServer));
 });
 
+/** Before MCP 2025-11-25 a bad argument is a -32602 that claude.ai shows only as "unavailable"; a tool error shows the model why. */
+const withInvalidArgumentsAsToolErrors = Effect.fn(
+  "McpHttpServer.withInvalidArgumentsAsToolErrors",
+)(function* <A, E, R>(registration: Effect.Effect<A, E, R>) {
+  const server = yield* McpServer.McpServer;
+  const reportingServer = McpServer.McpServer.of({
+    ...server,
+    addTool: Effect.fn("McpServer.addTool")(function (options) {
+      return server.addTool({
+        ...options,
+        handle: (payload) =>
+          options.handle(payload).pipe(
+            Effect.catchTags({
+              InvalidParams: (error) =>
+                Effect.serviceOption(McpSchema.McpRequestContext).pipe(
+                  Effect.flatMap((request) =>
+                    Option.isSome(request) &&
+                    (request.value.requestState !== undefined ||
+                      request.value.inputResponses !== undefined)
+                      ? Effect.fail(error)
+                      : Effect.succeed(
+                          new McpSchema.CallToolResult({
+                            isError: true,
+                            content: [{ type: "text", text: error.message }],
+                          }),
+                        ),
+                  ),
+                ),
+            }),
+          ),
+      });
+    }),
+  });
+  return yield* registration.pipe(Effect.provideService(McpServer.McpServer, reportingServer));
+});
+
 /** `McpServer.registerToolkit` advertises the full codec schema; agents get the compact one. */
 const withAdvertisedSchemas = Effect.fn("McpHttpServer.withAdvertisedSchemas")(function* <
   Tools extends Record<string, Tool.Any>,
@@ -1299,9 +1335,11 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) =>
   Layer.effectDiscard(
-    withToolAnalytics(
-      withToolSpans(
-        withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+    withInvalidArgumentsAsToolErrors(
+      withToolAnalytics(
+        withToolSpans(
+          withAdvertisedSchemas(toolkit, McpServer.registerToolkit(decodeAsAdvertised(toolkit))),
+        ),
       ),
     ),
   ).pipe(
