@@ -4232,6 +4232,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("drafts the pull request after opening when the host has no draft field", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/draft-post-create"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+
+      const actions: Array<PullRequestActionInput> = [];
+      const { manager } = yield* makeManager({
+        serverSettings: { openPullRequestsAsDrafts: true },
+        providerScenario: {
+          createsDraftChangeRequests: false,
+          prListSequence: [
+            [],
+            [
+              {
+                number: 81,
+                title: "Add draft PR flow",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/81",
+                baseRefName: "main",
+                headRefName: "feature/draft-post-create",
+              },
+            ],
+          ],
+        },
+        pullRequests: {
+          runAction: (action) => Effect.sync(() => void actions.push(action)),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+        projectId: ProjectId.make("project-1"),
+      });
+
+      expect(result.pr.status).toBe("created");
+      expect(actions).toMatchObject([
+        { repository: "pingdotgg/codething-mvp", number: 81, action: "draft" },
+      ]);
+    }),
+  );
+
   it.effect("opens the pull request ready for review when the setting is off", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
