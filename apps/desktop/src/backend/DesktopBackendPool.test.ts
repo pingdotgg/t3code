@@ -112,6 +112,10 @@ function layerPool(
   labelRef: Ref.Ref<string>,
   options: {
     readonly config?: DesktopBackendStartConfig;
+    readonly resolvePrimary?: Effect.Effect<DesktopBackendStartConfig>;
+    readonly onMainContentsCommand?: (
+      command: DesktopWindow.MainWindowContentsCommand,
+    ) => Effect.Effect<void>;
     readonly fileSystem?: Partial<FileSystem.FileSystem>;
     readonly spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
     readonly httpClient?: HttpClient.HttpClient;
@@ -180,9 +184,11 @@ function layerPool(
         }),
         DesktopBrowserHost.layer,
         Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
-          resolvePrimary: options.config
-            ? Effect.succeed(options.config)
-            : Effect.die("unexpected primary config resolve"),
+          resolvePrimary:
+            options.resolvePrimary ??
+            (options.config
+              ? Effect.succeed(options.config)
+              : Effect.die("unexpected primary config resolve")),
           resolvePrimaryLabel: Ref.get(labelRef),
           resolveWsl: () => Effect.die("unexpected WSL config resolve"),
           currentBootstrapToken: Effect.die("unexpected bootstrap token read"),
@@ -190,7 +196,12 @@ function layerPool(
         DesktopAppSettings.layerTest(),
         DesktopState.layer,
         DesktopWslEnvironment.layerTest(),
-        ElectronDialog.layer,
+        Layer.succeed(ElectronDialog.ElectronDialog, {
+          pickFolder: () => Effect.die("unexpected folder picker"),
+          pickFiles: () => Effect.die("unexpected file picker"),
+          showMessageBox: () => Effect.die("unexpected message box"),
+          showErrorBox: () => Effect.void,
+        } satisfies ElectronDialog.ElectronDialog["Service"]),
         ElectronApp.layer,
         Layer.succeed(DesktopWindow.DesktopWindow, {
           createMain: Effect.die("unexpected window create"),
@@ -206,7 +217,8 @@ function layerPool(
           dispatchMenuAction: () => Effect.die("unexpected menu action"),
           dispatchSnapShotEvent: () => Effect.void,
           zoomMain: () => Effect.die("unexpected zoom"),
-          runMainContentsCommand: () => Effect.die("unexpected main contents command"),
+          runMainContentsCommand:
+            options.onMainContentsCommand ?? (() => Effect.die("unexpected main contents command")),
           syncAppearance: Effect.void,
         } satisfies DesktopWindow.DesktopWindow["Service"]),
       ),
@@ -477,5 +489,71 @@ describe("DesktopBackendPool", () => {
       assert.equal(stopped.restartScheduled, false);
       assert.equal(Option.isNone(yield* pool.get(id)), true);
     }).pipe(Effect.provide(layerPool(Ref.makeUnsafe("Windows")))),
+  );
+
+  it.effect("reloads a main window that read the WSL endpoint before the Windows fallback", () =>
+    Effect.gen(function* () {
+      const events: string[] = [];
+      let resolves = 0;
+      const resolvePrimary = Effect.sync(() =>
+        resolves++ === 0
+          ? {
+              ...runningConfig,
+              preflightFailure: Option.some({
+                reason: "WSL still unavailable",
+                fatal: false,
+                retryLimit: 1,
+              }),
+            }
+          : runningConfig,
+      );
+      const ready = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const primary = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+        yield* primary.start;
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.await(ready);
+
+        assert.deepEqual(events, ["reload", "ready"]);
+      }).pipe(
+        Effect.provide(
+          layerPool(Ref.makeUnsafe("WSL"), {
+            resolvePrimary,
+            spawner: ChildProcessSpawner.make(() =>
+              Effect.gen(function* () {
+                const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+                const exit = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
+                  Effect.asVoid,
+                );
+                yield* Effect.addFinalizer(() => exit);
+                return ChildProcessSpawner.makeHandle({
+                  pid: ChildProcessSpawner.ProcessId(123),
+                  stdout: Stream.empty,
+                  stderr: Stream.empty,
+                  all: Stream.empty,
+                  exitCode: Deferred.await(exited),
+                  isRunning: Effect.succeed(true),
+                  kill: () => exit,
+                  stdin: Sink.drain,
+                  getInputFd: () => Sink.drain,
+                  getOutputFd: () => Stream.empty,
+                  unref: Effect.succeed(Effect.void),
+                });
+              }),
+            ),
+            httpClient: HttpClient.make((request) =>
+              Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(null, { status: 200 })),
+              ),
+            ),
+            onMainContentsCommand: (command) => Effect.sync(() => void events.push(command)),
+            onReady: Effect.sync(() => void events.push("ready")).pipe(
+              Effect.andThen(Deferred.succeed(ready, undefined)),
+              Effect.asVoid,
+            ),
+          }),
+        ),
+      );
+    }),
   );
 });
