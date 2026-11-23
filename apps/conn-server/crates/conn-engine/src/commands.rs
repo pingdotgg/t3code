@@ -421,6 +421,75 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
     })
 }
 
+/// `validateReusableThread` in T3's `ThreadLaunchService`: a launch may reuse only an empty,
+/// active thread of its own project.
+fn check_reusable(tx: &Tx<'_>, thread_id: &str, project_id: &str) -> Result<(), CommandError> {
+    let thread = live_thread(tx, thread_id)?;
+    if thread["projectId"] != project_id
+        || !thread["archivedAt"].is_null()
+        || !thread["deletedAt"].is_null()
+        || is_used(tx, thread_id)?
+    {
+        return reject(
+            "Only an empty active thread in the target project can change workspace during launch.",
+        );
+    }
+    Ok(())
+}
+
+/// A thread with a message or a run: what `expectedEmpty` and `onlyIfUnused` read.
+fn is_used(tx: &Tx<'_>, thread_id: &str) -> Result<bool, CommandError> {
+    Ok(tx.has(thread_id, "messages")? || tx.has(thread_id, "runs")?)
+}
+
+/// `exceededDispatchModeLimit` and `OrchestratorThreadAboveModeLimitError`.
+fn refuse_above_mode_limit(
+    thread_id: &str,
+    thread: &Value,
+    limit: &Value,
+) -> Result<(), CommandError> {
+    use conn_support::modes::{interaction_rank, runtime_rank};
+    let mode = |v: &Value, key: &str| v[key].as_str().unwrap_or_default().to_owned();
+    let (runtime, interaction) = (mode(thread, "runtimeMode"), mode(thread, "interactionMode"));
+    if runtime_rank(&runtime) > runtime_rank(&mode(limit, "runtimeMode"))
+        || interaction_rank(&interaction) > interaction_rank(&mode(limit, "interactionMode"))
+    {
+        return reject(format!(
+            "Thread {thread_id} now runs in {runtime}/{interaction} mode, above what this caller may change."
+        ));
+    }
+    Ok(())
+}
+
+/// A launch's own checks, run in its command's write before the decision. T3 runs them in
+/// `ThreadLaunchService` (`validateReusableThread`, the project check, `DispatchModeLimit`),
+/// outside the orchestrator: a refusal here is no outcome of the command, so it records no
+/// receipt and the launch id stays usable.
+pub(crate) fn admit_launch(tx: &Tx<'_>, command: &Value) -> Result<(), CommandError> {
+    let Some(thread_id) = command["threadId"].as_str() else {
+        return Ok(());
+    };
+    if let Some(project) = command["launchProjectId"].as_str()
+        && live_thread(tx, thread_id)?["projectId"] != project
+    {
+        return reject("Project identity changed.");
+    }
+    if let Some(project) = command["reuseProjectId"].as_str() {
+        check_reusable(tx, thread_id, project)?;
+    }
+    // The checkout the launch's claim recorded: T3 carries the workspace with the accepted
+    // message, so a reuse that rebound the thread meanwhile does not move this one.
+    if let Some(checkout) = command.get("launchCheckout").filter(|c| c.is_object())
+        && live_thread(tx, thread_id)?["worktreePath"] != checkout["worktreePath"]
+    {
+        return reject("The thread's checkout changed during the launch.");
+    }
+    if let Some(limit) = command.get("modeLimit").filter(|l| l.is_object()) {
+        refuse_above_mode_limit(thread_id, &live_thread(tx, thread_id)?, limit)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let mut c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
@@ -1729,13 +1798,29 @@ fn patch_thread(
     bump_updated_at: bool,
     patch: impl FnOnce(&mut Value, &str),
 ) -> Result<(), CommandError> {
+    patch_thread_for(tx, thread_id, event_type, bump_updated_at, None, patch)
+}
+
+/// [`patch_thread`] with the event filed under the command that wrote it.
+fn patch_thread_for(
+    tx: &mut Tx<'_>,
+    thread_id: &str,
+    event_type: &'static str,
+    bump_updated_at: bool,
+    command_id: Option<&str>,
+    patch: impl FnOnce(&mut Value, &str),
+) -> Result<(), CommandError> {
     let mut thread = live_thread(tx, thread_id)?;
     let now = tx.now().to_owned();
     patch(&mut thread, &now);
     if bump_updated_at {
         thread["updatedAt"] = json!(now);
     }
-    tx.append(Draft::new(thread_id, event_type, thread).payload_instance())?;
+    tx.append(
+        Draft::new(thread_id, event_type, thread)
+            .payload_instance()
+            .command(command_id),
+    )?;
     Ok(())
 }
 
@@ -1761,7 +1846,13 @@ fn thread_unarchive(tx: &mut Tx<'_>, command: Value) -> Outcome {
 }
 
 fn thread_delete(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    // Checked under the thread lock (T3's `onlyIfUnused`): a message sent since the client
+    // looked keeps the thread, and the delete is accepted with no change.
+    let only_if_unused = command["onlyIfUnused"] == true;
     let c: ThreadOnly = decode(command)?;
+    if only_if_unused && is_used(tx, &c.thread_id)? {
+        return Ok(vec![]);
+    }
     let mut effects = vec![];
     for run in tx
         .entities(&c.thread_id, "runs")?
@@ -1909,6 +2000,11 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
             ));
         }
     }
+    // A launch's claim on an existing thread (`expectedEmpty` in T3's `Orchestrator`).
+    let expects_empty = command["expectedEmpty"] == true;
+    if expects_empty && is_used(tx, &c.thread_id)? {
+        return reject(format!("Thread {} is no longer empty.", c.thread_id));
+    }
     let workspace_changed = command
         .get("worktreePath")
         .is_some_and(|p| *p != old["worktreePath"]);
@@ -1933,11 +2029,13 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let command_id = c.command_id.clone();
     let titled = c.title.is_some();
     let thread_id = c.thread_id.clone();
-    patch_thread(
+    patch_thread_for(
         tx,
         &c.thread_id,
         "thread.metadata-updated",
         true,
+        // The claim's event names its command, so a replay can find the thread it claimed.
+        expects_empty.then_some(command_id.as_str()),
         |t, now| {
             for field in ["branch", "worktreePath"] {
                 if let Some(value) = command.get(field) {

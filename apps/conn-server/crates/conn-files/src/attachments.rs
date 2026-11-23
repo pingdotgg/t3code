@@ -686,7 +686,8 @@ impl AttachmentStore {
         })
     }
 
-    /// Claims a message's uploads together, releasing earlier copies if any claim fails.
+    /// Claims a message's uploads together. If any claim fails, it releases the copies this
+    /// call made, and never a file an attachment already named (it passed unchanged).
     pub fn claim_all(
         &self,
         thread_id: &str,
@@ -694,11 +695,17 @@ impl AttachmentStore {
     ) -> Result<Vec<ChatAttachment>, String> {
         validate_claims(attachments)?;
         let mut claimed = Vec::with_capacity(attachments.len());
+        let mut made = Vec::new();
         for attachment in attachments {
             match self.claim(thread_id, attachment) {
-                Ok(kept) => claimed.push(kept),
+                Ok(kept) => {
+                    if attachment_id(&kept) != attachment_id(attachment) {
+                        made.push(kept.clone());
+                    }
+                    claimed.push(kept);
+                }
                 Err(reason) => {
-                    self.release(&claimed);
+                    self.release(&made);
                     return Err(reason);
                 }
             }
@@ -706,7 +713,8 @@ impl AttachmentStore {
         Ok(claimed)
     }
 
-    /// Removes claimed copies of a message that was not accepted.
+    /// Removes claimed copies of a message that was not accepted. Pass only the copies a claim
+    /// made: any other thread file named here is removed too.
     pub fn release(&self, claimed: &[ChatAttachment]) {
         for attachment in claimed {
             let id = match attachment {
@@ -720,6 +728,14 @@ impl AttachmentStore {
                 let _ = fs::remove_file(file.path);
             }
         }
+    }
+}
+
+fn attachment_id(attachment: &ChatAttachment) -> Option<&str> {
+    match attachment {
+        ChatAttachment::Image(a) => Some(&a.id),
+        ChatAttachment::File(a) => Some(&a.id),
+        ChatAttachment::Unknown(_) => None,
     }
 }
 

@@ -70,7 +70,7 @@ impl conn_engine::EngineHost for GitHost {
         project_root: String,
         worktree: conn_engine::ProvisionedWorktree,
         refused: Option<String>,
-    ) -> conn_engine::BoxFuture<'_, ()> {
+    ) -> conn_engine::BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
             use conn_vcs::worktree::{Removal, delete_branch, remove_worktree};
             let root = PathBuf::from(&project_root);
@@ -84,6 +84,7 @@ impl conn_engine::EngineHost for GitHost {
                 .lock()
                 .unwrap()
                 .push((worktree.path, worktree.branch, refused));
+            Ok(())
         })
     }
 }

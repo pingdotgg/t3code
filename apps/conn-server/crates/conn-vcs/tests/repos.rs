@@ -658,6 +658,112 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
     assert!(!git(&fx.work, &["branch", "--list", &branch]).contains(&branch));
 }
 
+/// T3's "deletes a claimed worktree's branch when setup is cancelled before checkout
+/// returns": a cancel while `git worktree add` runs its `post-checkout` hook stops the hook's
+/// whole process tree and removes the checkout and its branch.
+#[tokio::test]
+async fn a_cancel_during_post_checkout_removes_the_checkout_and_branch() {
+    use conn_vcs::setup::{self, ProvisionError, ProvisionRequest, WorktreeSetups};
+    use std::os::unix::fs::PermissionsExt;
+
+    let fx = Fixture::new("post-checkout");
+    let pids_dir = fx.root.path().join("pids");
+    std::fs::create_dir_all(&pids_dir).unwrap();
+    let hook = fx.work.join(".git/hooks/post-checkout");
+    std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+    let pids = pids_dir.display();
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\necho $$ > {pids}/hook\nsleep 31 &\necho $! > {pids}/child\nwait\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let setups = WorktreeSetups::new();
+    let worktrees = fx.root.path().join("worktrees");
+    let request = ProvisionRequest {
+        thread_id: "pc".into(),
+        project_root: fx.work.clone(),
+        base_ref: "main".into(),
+        branch: Some("feature-pc".into()),
+        start_from_origin: false,
+        setup_script: None,
+        worktrees_dir: worktrees.clone(),
+    };
+    let run = {
+        let setups = setups.clone();
+        tokio::spawn(async move { setup::provision(&setups, request).await })
+    };
+    let pids = [
+        read_pid(&pids_dir.join("hook")).await,
+        read_pid(&pids_dir.join("child")).await,
+    ];
+    assert!(setups.cancel("pc"));
+    let result = run.await.unwrap();
+    let left = survivors(&pids).await;
+    assert!(
+        matches!(result, Err(ProvisionError::Cancelled)),
+        "{result:?}"
+    );
+    assert_eq!(left, Vec::<u32>::new(), "the hook kept running");
+    assert!(
+        !git(&fx.work, &["worktree", "list", "--porcelain"]).contains("feature-pc"),
+        "the checkout stayed registered"
+    );
+    assert!(
+        !git(&fx.work, &["branch", "--list", "feature-pc"]).contains("feature-pc"),
+        "the branch stayed"
+    );
+    let mut stack = vec![worktrees];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            assert_ne!(
+                entry.file_name(),
+                "feature-pc",
+                "the checkout folder stayed"
+            );
+            if entry.path().is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+}
+
+/// A worktree the cleanup cannot remove (a locked one) keeps its branch, and the failed setup
+/// says what it left behind instead of failing quietly.
+#[tokio::test]
+async fn a_worktree_cleanup_cannot_remove_keeps_its_branch_and_says_so() {
+    use conn_vcs::setup::{self, ProvisionRequest, SetupScript, WorktreeSetups};
+
+    let fx = Fixture::new("locked-cleanup");
+    let setups = WorktreeSetups::new();
+    let failed = setup::provision(
+        &setups,
+        ProvisionRequest {
+            thread_id: "locked".into(),
+            project_root: fx.work.clone(),
+            base_ref: "main".into(),
+            branch: Some("feature-locked".into()),
+            start_from_origin: false,
+            setup_script: Some(SetupScript {
+                id: "s1".into(),
+                name: "Setup".into(),
+                command: "git worktree lock \"$T3CODE_WORKTREE_PATH\" && exit 3".into(),
+            }),
+            worktrees_dir: fx.root.path().join("worktrees"),
+        },
+    )
+    .await;
+    assert!(failed.is_err());
+    let error = setups.get("locked").unwrap().error.unwrap_or_default();
+    assert!(
+        error.contains("could not be removed"),
+        "the setup hid the worktree it left: {error}"
+    );
+    assert!(git(&fx.work, &["branch", "--list", "feature-locked"]).contains("feature-locked"));
+    let path = setups.get("locked").unwrap().worktree_path.unwrap();
+    git(&fx.work, &["worktree", "unlock", &path]);
+}
+
 /// Reads a PID the script wrote, waiting up to 10 s for the file.
 async fn read_pid(path: &std::path::Path) -> u32 {
     for _ in 0..200 {

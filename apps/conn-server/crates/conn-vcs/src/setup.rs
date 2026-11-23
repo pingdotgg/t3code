@@ -31,7 +31,7 @@ use crate::{
     error::{VcsError, VcsResult},
     process::ProcessError,
     repo::{self, git},
-    worktree::{self, CreateWorktree, Removal},
+    worktree::{self, CreateWorktree},
 };
 
 pub const FINISHED_RETENTION: Duration = Duration::from_secs(30);
@@ -376,14 +376,28 @@ pub async fn provision(
     let result = provision_stages(setups, &request, &cancel, &mut created).await;
     dropped.armed = false;
     if let Err(error) = &result {
-        if let Some((path, branch)) = created {
-            let root = request.project_root.as_path();
-            let _ = worktree::remove_worktree(root, &path, Removal::Force).await;
-            let _ = worktree::delete_branch(root, &branch, Removal::Force).await;
-        }
-        match error {
-            ProvisionError::Cancelled => setups.finish(thread, Phase::Cancelled, None),
-            other => setups.finish(thread, Phase::Failed, Some(&other.to_string())),
+        let left = match created {
+            Some((path, branch)) => {
+                worktree::discard(request.project_root.as_path(), &path, &branch)
+                    .await
+                    .err()
+                    .map(|e| {
+                        format!(
+                            "The worktree at {} could not be removed: {e}",
+                            path.display()
+                        )
+                    })
+            }
+            None => None,
+        };
+        match (error, left) {
+            (ProvisionError::Cancelled, left) => {
+                setups.finish(thread, Phase::Cancelled, left.as_deref());
+            }
+            (other, None) => setups.finish(thread, Phase::Failed, Some(&other.to_string())),
+            (other, Some(left)) => {
+                setups.finish(thread, Phase::Failed, Some(&format!("{other} {left}")));
+            }
         }
     }
     result
@@ -414,18 +428,27 @@ async fn provision_stages(
     }
 
     setups.stage_status(thread, StageId::Checkout, StageStatus::Running, None);
-    let worktree = cancellable(
+    let mut claimed = None;
+    let made = cancellable(
         cancel,
-        worktree::create_worktree(&CreateWorktree {
-            cwd: root.to_owned(),
-            ref_name: start.clone(),
-            new_ref_name: Some(branch.clone()),
-            base_ref_name: Some(request.base_ref.clone()),
-            worktrees_dir: request.worktrees_dir.clone(),
-        }),
+        worktree::create_worktree_claiming(
+            &CreateWorktree {
+                cwd: root.to_owned(),
+                ref_name: start.clone(),
+                new_ref_name: Some(branch.clone()),
+                base_ref_name: Some(request.base_ref.clone()),
+                worktrees_dir: request.worktrees_dir.clone(),
+            },
+            &mut claimed,
+        ),
     )
-    .await?;
-    *created = Some((worktree.path.clone(), branch.clone()));
+    .await;
+    // Known before the checkout ran: a cancel during it (a slow `post-checkout` hook) still
+    // removes the checkout and its branch.
+    if let Some(path) = claimed {
+        *created = Some((path, branch.clone()));
+    }
+    let worktree = made?;
     let path_text = worktree.path.to_string_lossy().into_owned();
     setups.update(thread, |s| {
         s.worktree_path = Some(path_text.clone());
@@ -433,7 +456,12 @@ async fn provision_stages(
     });
     setups.stage_status(thread, StageId::Checkout, StageStatus::Done, None);
 
-    if worktree.path.join(".gitmodules").exists() {
+    // A file check is blocking I/O: it runs off the runtime thread.
+    let gitmodules = worktree.path.join(".gitmodules");
+    let has_submodules = tokio::task::spawn_blocking(move || gitmodules.exists())
+        .await
+        .unwrap_or(false);
+    if has_submodules {
         setups.stage_status(thread, StageId::Submodules, StageStatus::Running, None);
         let result = cancellable(cancel, async {
             git(
@@ -670,12 +698,7 @@ async fn run_setup_script(
         .kill_on_drop(true)
         .spawn()
         .ok()?;
-    let group = GroupKill(
-        child
-            .id()
-            .and_then(|id| i32::try_from(id).ok())
-            .and_then(rustix::process::Pid::from_raw),
-    );
+    let group = crate::process::GroupKill::of(child.id());
     let (stdout, stderr) = (child.stdout.take(), child.stderr.take());
     let wait = async move {
         let code = child.wait().await.ok().and_then(|status| status.code());
@@ -693,17 +716,6 @@ async fn run_setup_script(
 async fn tail_pipe(setups: &WorktreeSetups, thread: &str, pipe: Option<impl AsyncRead + Unpin>) {
     if let Some(pipe) = pipe {
         tail_lines(setups, thread, pipe).await;
-    }
-}
-
-/// Kills a process group with `SIGKILL` when dropped.
-struct GroupKill(Option<rustix::process::Pid>);
-
-impl Drop for GroupKill {
-    fn drop(&mut self) {
-        if let Some(group) = self.0.take() {
-            let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
-        }
     }
 }
 

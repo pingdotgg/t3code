@@ -217,30 +217,38 @@ impl EngineHost for Host {
         })
     }
 
+    fn cancel_preparation(&self, thread_id: &str) {
+        self.vcs.setups.cancel(thread_id);
+    }
+
     fn discard_worktree(
         &self,
         thread_id: String,
         project_root: String,
         worktree: ProvisionedWorktree,
         refused: Option<String>,
-    ) -> BoxFuture<'_, ()> {
+    ) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            use conn_vcs::worktree::{Removal, delete_branch, remove_worktree};
             let root = PathBuf::from(project_root);
             let path = PathBuf::from(&worktree.path);
-            if let Err(error) = remove_worktree(&root, &path, Removal::Force).await {
-                eprintln!("discard worktree {}: {error}", worktree.path);
-            }
-            if let Err(error) = delete_branch(&root, &worktree.branch, Removal::Force).await {
-                eprintln!("discard branch {}: {error}", worktree.branch);
-            }
+            let discarded = conn_vcs::worktree::discard(&root, &path, &worktree.branch)
+                .await
+                .map_err(|e| e.to_string());
             // A refused command made no thread, so no agent ends its setup. A replay leaves
             // the setup to the attempt that made the thread.
             if let Some(reason) = refused {
+                let reason = match &discarded {
+                    Ok(()) => reason,
+                    Err(error) => format!(
+                        "{reason} The worktree at {} could not be removed: {error}",
+                        worktree.path
+                    ),
+                };
                 self.vcs
                     .setups
                     .finish(&thread_id, ProjectClonePhase::Failed, Some(&reason));
             }
+            discarded
         })
     }
 

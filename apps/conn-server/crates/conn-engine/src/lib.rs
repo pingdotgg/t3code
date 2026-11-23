@@ -222,16 +222,22 @@ pub trait EngineHost: Send + Sync {
     }
 
     /// A worktree made for a command that the engine then refused (`refused` holds why) or
-    /// that an earlier attempt had already accepted (`None`): remove it and its branch.
+    /// that an earlier attempt had already accepted (`None`): remove it, then its branch. An
+    /// `Err` says what stayed: the branch goes only once its worktree is gone.
     fn discard_worktree(
         &self,
         _thread_id: String,
         _project_root: String,
         _worktree: ProvisionedWorktree,
         _refused: Option<String>,
-    ) -> BoxFuture<'_, ()> {
-        Box::pin(std::future::ready(()))
+    ) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Ok(())))
     }
+
+    /// Asks the worktree setup running for `thread_id` to stop, as T3 interrupts a launch's
+    /// preparation at shutdown. The setup removes what it made and fails. The default has
+    /// nothing to stop.
+    fn cancel_preparation(&self, _thread_id: &str) {}
 
     /// The branch checked out in `cwd` (`GitWorkflowService.currentBranch`): `None` when HEAD
     /// is detached, the folder is no checkout, or git fails. A project-folder launch that

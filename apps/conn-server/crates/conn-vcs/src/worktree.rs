@@ -120,6 +120,16 @@ pub async fn managed_path(cwd: &Path, branch: &str, worktrees_dir: &Path) -> Vcs
 /// branch at `ref_name` first (tracking it when it is a remote branch) and removes it again if
 /// the checkout fails.
 pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
+    create_worktree_claiming(input, &mut None).await
+}
+
+/// [`create_worktree`], reporting the checkout's path in `claimed` once its new branch exists
+/// and before `git worktree add` runs (T3's `onWorktreeClaimed`). A caller that stops this
+/// future during the checkout (a slow `post-checkout` hook) then knows what to remove.
+pub async fn create_worktree_claiming(
+    input: &CreateWorktree,
+    claimed: &mut Option<PathBuf>,
+) -> VcsResult<Worktree> {
     let cwd = input.cwd.as_path();
     refuse_option_like(cwd, &input.ref_name)?;
     if let Some(new) = &input.new_ref_name {
@@ -163,6 +173,9 @@ pub async fn create_worktree(input: &CreateWorktree) -> VcsResult<Worktree> {
         }
     }
 
+    if input.new_ref_name.is_some() {
+        *claimed = Some(path.clone());
+    }
     let workers = repo::config_get(cwd, "checkout.workers")
         .await
         .unwrap_or(None)
@@ -346,6 +359,13 @@ pub async fn delete_branch(cwd: &Path, branch: &str, removal: Removal) -> VcsRes
     .run()
     .await?;
     Ok(())
+}
+
+/// Removes a worktree a launch made, then its branch: the branch goes only once the worktree
+/// is gone, so an `Err` leaves both, and says why.
+pub async fn discard(cwd: &Path, path: &Path, branch: &str) -> VcsResult<()> {
+    remove_worktree(cwd, path, Removal::Force).await?;
+    delete_branch(cwd, branch, Removal::Force).await
 }
 
 /// Every live worktree of the repository, the main checkout first.
