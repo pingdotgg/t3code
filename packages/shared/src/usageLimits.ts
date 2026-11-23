@@ -625,7 +625,7 @@ function poolKey(driver: ServerProvider["driver"], window: ServerProviderUsageWi
 
 function poolMember(account: LimitAccount, reported: ServerProviderUsageWindow, now: number) {
   const spentWeekly =
-    reported.kind === "session"
+    reported.kind === "session" || reported.kind === "daily"
       ? account.limits.windows.find(
           (window) =>
             window.usedPercent >= 100 &&
