@@ -192,9 +192,7 @@ describe("sidebar project filter", () => {
     vi.mocked(useProjects).mockReturnValue([project("alpha")]);
     await screen.rerender(tree());
 
-    await expect
-      .element(page.getByRole("combobox", { name: "Projects" }))
-      .toBeInTheDocument();
+    await expect.element(page.getByRole("combobox", { name: "Projects" })).toBeInTheDocument();
     expect(document.querySelector('[data-slot="combobox-popup"]')).toBeNull();
   });
 });

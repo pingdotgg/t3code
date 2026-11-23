@@ -338,7 +338,7 @@ export default function ProjectScriptsControl({
                     part="primary"
                     panel
                     disabled={!onRunScript}
-                    aria-label={`Run ${script.name}`}
+                    aria-label={gt("Run {name}", { name: script.name })}
                     onClick={() => onRunScript?.(script)}
                   >
                     <ScriptIcon icon={script.icon} className={THREAD_DETAILS_PANEL_ICON_CLASS} />
@@ -355,7 +355,7 @@ export default function ProjectScriptsControl({
                     variant="ghost"
                     part="secondary"
                     panel
-                    aria-label={`Edit ${script.name}`}
+                    aria-label={gt("Edit {name}", { name: script.name })}
                     onClick={() => openEditDialog(script)}
                   >
                     <SettingsIcon className="size-3.5" />
@@ -374,7 +374,9 @@ export default function ProjectScriptsControl({
               >
                 <DownloadIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
                 <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-                  Import {fileScript.name}
+                  <T>
+                    Import <Var>{fileScript.name}</Var>
+                  </T>
                 </span>
               </ThreadDetailsControl>
             ))}
@@ -382,7 +384,7 @@ export default function ProjectScriptsControl({
           <ThreadDetailsControl size="sm" variant="ghost" part="row" panel onClick={openAddDialog}>
             <PlusIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
             <span className={cn("min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
-              Add project script
+              <T>Add project script</T>
             </span>
           </ThreadDetailsControl>
         </>
