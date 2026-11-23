@@ -231,6 +231,7 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
               }
               ... on Issue {
                 number
+                url
                 repository {
                   nameWithOwner
                 }

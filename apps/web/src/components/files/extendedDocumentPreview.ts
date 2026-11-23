@@ -538,6 +538,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let state = {
     skip: false,
     deleted: false,
+    hiddenText: false,
     bold: false,
     italic: false,
     underline: false,
@@ -560,7 +561,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   };
   let run = "";
   let fallback = 0;
-  const hidden = () => state.skip || state.deleted;
+  const hidden = () => state.skip || state.deleted || state.hiddenText;
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const flush = () => {
@@ -703,6 +704,8 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         const label =
           (
             {
+              0: "windows-1252",
+              866: "ibm866",
               65001: "utf-8",
               932: "shift_jis",
               936: "gbk",
@@ -722,10 +725,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "ul") state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
+      else if (word === "v") state.hiddenText = arg !== 0;
       else if (word === "plain")
         state = {
           ...state,
           deleted: false,
+          hiddenText: false,
           bold: false,
           italic: false,
           underline: false,

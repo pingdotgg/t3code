@@ -64,6 +64,7 @@ rl.on("line", (line) => {
       return;
     }
     // Emit an early delta before the send response to verify parent buffering/ordering.
+    send({ type: "startupPhase", sendId: req.id, phase: "plugins" });
     send({ type: "delta", sendId: req.id, update: { type: "text-delta", text: "early-" } });
     send({ type: "response", id: req.id, ok: true, result: { runId: "run-worker-1", agentId: "agent-worker-1" } });
     if (mode === "cancel") {
@@ -308,8 +309,10 @@ describe("CursorAgentSdkProcessRunner", () => {
 
           const receivedDeltas: Array<string> = [];
           const firstDeltaGate = yield* Deferred.make<void>();
+          const startupPhases: Array<string> = [];
           const run = yield* session.send({
             message: "hi",
+            onStartupPhase: (phase) => Effect.sync(() => startupPhases.push(phase)),
             onDelta: (update) =>
               Effect.gen(function* () {
                 const text = (update as { readonly text?: string }).text ?? "";
@@ -320,6 +323,7 @@ describe("CursorAgentSdkProcessRunner", () => {
               }),
           });
           assert.equal(run.runId, "run-worker-1");
+          assert.deepEqual(startupPhases, ["plugins"]);
           yield* Deferred.await(firstDeltaGate);
 
           const steerOutcome = yield* run.steer!("change course");
