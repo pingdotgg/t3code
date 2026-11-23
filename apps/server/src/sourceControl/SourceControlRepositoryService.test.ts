@@ -201,6 +201,45 @@ it.effect("clones a looked-up repository after creating missing parent directori
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
+it.effect("lets a host whose remotes git cannot fetch clone with its own tool", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-rad-clone-" });
+    const destinationPath = path.join(parent, "sandbox");
+    const providerClones: Array<{ cwd: string; url: string; directory: string }> = [];
+    const gitCalls: Array<ReadonlyArray<string>> = [];
+    const rid = "rad:zGacgtCptk9cPMt7vDpUKwVALZvZ";
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const result = yield* service.cloneRepository({ remoteUrl: rid, destinationPath });
+      assert.strictEqual(result.remoteUrl, rid);
+      assert.deepStrictEqual(providerClones, [{ cwd: parent, url: rid, directory: "sandbox" }]);
+      assert.deepStrictEqual(gitCalls, []);
+    }).pipe(
+      Effect.provide(
+        layer({
+          provider: makeProvider({
+            kind: SourceControlProviderKind.make("radicle"),
+            cloneRepository: (input) =>
+              Effect.sync(() => {
+                providerClones.push(input);
+              }),
+          }),
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                gitCalls.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
 it.effect.each(["--bare", "source.git"])(
   "clones a local repository named %s as a working tree",
   (repositoryName) =>

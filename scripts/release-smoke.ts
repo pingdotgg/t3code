@@ -46,6 +46,7 @@ const workspaceFiles = [
   "packages/secret-provider-onepassword/package.json",
   "packages/source-control-azure-devops/package.json",
   "packages/source-control-bitbucket/package.json",
+  "packages/source-control-radicle/package.json",
   "packages/source-control-core/package.json",
   "packages/source-control-cursor-origin/package.json",
   "packages/source-control-definitions/package.json",

@@ -35,6 +35,7 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import { sourceControlDefinitions } from "./sourceControlDefinitions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { cloneUrlForProtocol, cloneUrlProtocol } from "@t3tools/shared/cloneUrl";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
@@ -442,17 +443,73 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  /** The host that clones `cloneUrl` with its own tool, when its remotes are not git URLs. */
+  const providerCloner = Effect.fn("SourceControlRepositoryService.providerCloner")(function* (
+    cloneUrl: string,
+  ) {
+    const kind = sourceControlDefinitions.recognizeRemote(cloneUrl)?.kind;
+    if (kind === undefined || kind === "unknown") return null;
+    const provider = yield* providers.get(kind).pipe(Effect.orElseSucceed(() => null));
+    const clone = provider?.cloneRepository;
+    return clone === undefined ? null : { kind, clone };
+  });
+
+  const runProviderClone = Effect.fn("SourceControlRepositoryService.runProviderClone")(function* (
+    cloner: {
+      readonly kind: SourceControlProviderKind;
+      readonly clone: NonNullable<
+        SourceControlProvider.SourceControlProvider["Service"]["cloneRepository"]
+      >;
+    },
+    destinationPath: string,
+    cloneUrl: string,
+    options?: SourceControlCloneOptions,
+  ) {
+    const timeoutMs = options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs;
+    const clone = cloner
+      .clone({
+        cwd: path.dirname(destinationPath),
+        url: cloneUrl,
+        directory: path.basename(destinationPath),
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlRepositoryError({
+              operation: "cloneRepository",
+              provider: cloner.kind,
+              detail: cause.detail,
+              cause,
+            }),
+        ),
+      );
+    if (timeoutMs === null) return yield* clone;
+    return yield* clone.pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new SourceControlRepositoryError({
+              operation: "cloneRepository",
+              provider: cloner.kind,
+              detail: `The clone timed out after ${Duration.format(Duration.millis(timeoutMs))}.`,
+            }),
+          ),
+      }),
+    );
+  });
+
   const cloneRepository = Effect.fn("SourceControlRepositoryService.cloneRepository")(function* (
     input: SourceControlCloneRepositoryInput,
     options?: SourceControlCloneOptions,
   ) {
     const prepared = yield* prepareClone(input);
-    const httpsUrl = httpsFallbackUrl(input, prepared);
-    const remoteUrl = yield* runClone(
-      input,
-      prepared.destinationPath,
-      prepared.cloneUrl,
-      options,
+    const cloner = yield* providerCloner(prepared.cloneUrl);
+    const httpsUrl = cloner === null ? httpsFallbackUrl(input, prepared) : null;
+    const remoteUrl = yield* (
+      cloner === null
+        ? runClone(input, prepared.destinationPath, prepared.cloneUrl, options)
+        : runProviderClone(cloner, prepared.destinationPath, prepared.cloneUrl, options)
     ).pipe(
       Effect.as(prepared.remoteUrl),
       // @effect-diagnostics-next-line catchConditionalRefailToCatchIf:off - The condition also narrows httpsUrl for the fallback closure.

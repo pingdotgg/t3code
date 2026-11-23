@@ -233,6 +233,15 @@ export class SourceControlProvider extends Context.Service<
       readonly repository: string;
       readonly visibility: SourceControlRepositoryVisibility;
     }) => Effect.Effect<SourceControlRepositoryCloneUrls, SourceControlProviderError>;
+    /**
+     * Clones `url` into `cwd/directory` with the host's own tool, for a host whose remotes git
+     * cannot fetch from a bare URL, such as Radicle's `rad:` IDs. Absent means `git clone`.
+     */
+    readonly cloneRepository?: (input: {
+      readonly cwd: string;
+      readonly url: string;
+      readonly directory: string;
+    }) => Effect.Effect<void, SourceControlProviderError>;
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;

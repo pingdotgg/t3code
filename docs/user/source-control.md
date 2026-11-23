@@ -1,7 +1,7 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, and Cursor
-Origin to clone and publish repositories, create pull requests, and review changes.
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, GitCafe, Cursor
+Origin, and Radicle to clone and publish repositories, create pull requests, and review changes.
 
 ## Review turn changes
 
@@ -179,6 +179,17 @@ origin auth login
 If cloning or pushing asks for a username, run `origin auth setup-git` to point Git at the CLI's
 credentials again. Origin repositories use HTTPS and are published privately. Repositories mirrored
 from GitHub keep their pull requests on GitHub; open those from the GitHub remote.
+
+### Radicle
+
+Install [Radicle](https://radicle.dev) 1.10 or newer, create an identity with `rad auth`, and keep
+`radicle-node` running. T3 Code works with the repositories your node holds, so there is no token to
+add. Clone a repository by its ID, such as `rad:z3gqcJUoA1n9HaHKufZs5FCSGazv5`.
+
+Radicle's pull requests are patches. Patches can be opened, edited, commented on, reviewed, drafted,
+closed, and merged. Merging pushes a merge to the default branch, which only a delegate of the
+repository can do. A patch's number in T3 Code is the first 10 characters of its ID read as a
+number. Line comments and reactions are not available yet.
 
 ## Start, clone, or publish a project
 

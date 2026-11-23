@@ -727,6 +727,65 @@ it.effect(
     }),
 );
 
+it.effect("continues through tied timestamps when numbers have more than nine digits", () =>
+  Effect.gen(function* () {
+    const boundary = "2026-10-12T00:00:00.000Z";
+    const older = "2026-10-11T00:00:00.000Z";
+    // Radicle numbers patches by the first 40 bits of their IDs.
+    const base = 373_735_391_070;
+    const rows = [1, 2, 3, 4, 5].map((offset) =>
+      changeRequest(base + offset, offset <= 3 ? boundary : older),
+    );
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "bitbucket",
+          host: "bitbucket.org",
+        }),
+      ],
+      providers: [
+        // Pages the way Bitbucket does: inclusively by update time, excluding rows already sent.
+        fakePullRequestProvider(SourceControlProviderKind.make("bitbucket"), {
+          listChangeRequests: ({ cursor, limit }) =>
+            Effect.sync(() => {
+              const seen = new Set(cursor?.seenAt ?? []);
+              const matching = rows.filter(
+                (row) =>
+                  (cursor === undefined || row.updatedAt <= cursor.updatedBefore) &&
+                  !seen.has(row.number),
+              );
+              return {
+                items: matching.slice(0, limit),
+                truncated: matching.length > limit,
+                continues: true,
+              };
+            }),
+        }),
+      ],
+    });
+    let page = yield* service.list({ state: "open", limit: 2 });
+    assert.deepStrictEqual(
+      page.entries.map((entry) => entry.number),
+      [base + 1, base + 2],
+    );
+    for (const expected of [[base + 3, base + 4], [base + 5]]) {
+      assert.isTrue(page.truncated);
+      assert.isNotEmpty(page.nextCursors);
+      page = yield* service.list({ state: "open", limit: 2, cursors: page.nextCursors });
+      assert.deepStrictEqual(
+        page.entries.map((entry) => entry.number),
+        expected,
+      );
+    }
+    assert.isFalse(page.truncated);
+    assert.deepStrictEqual(page.nextCursors, {});
+  }),
+);
+
 it.effect("keeps a row already sent at the boundary instant from arriving twice", () =>
   Effect.gen(function* () {
     const service = yield* makeService({
