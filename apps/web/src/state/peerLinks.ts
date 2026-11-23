@@ -43,7 +43,7 @@ const offersNoLinksAtom = Atom.make(false).pipe(Atom.withLabel("peer-links:offer
 /**
  * The machines `environmentId` links to, by name, while it offers links, and none otherwise.
  * Its agents can read threads there, and so can a client allowed to read threads on it.
- * A `wanted` machine the names lack makes them reread once they are stale.
+ * A `wanted` machine the names lack makes them reread.
  */
 export function useLinkedEnvironments(
   environmentId: EnvironmentId | null,

@@ -7,7 +7,6 @@ import {
   type PeerLinkSummary,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -202,10 +201,8 @@ describe("linkThroughRoutes", () => {
 
 describe("refreshNamesLacking", () => {
   // regression: #41707 a link made outside this client stayed unknown while the names were read
-  it.effect("rereads stale names that lack a wanted machine, and only then", () =>
+  it.effect("rereads fresh names that lack a wanted machine, once per miss", () =>
     Effect.gen(function* () {
-      vi.useFakeTimers({ toFake: ["Date"] });
-      yield* Effect.addFinalizer(() => Effect.sync(() => vi.useRealTimers()));
       const target = new PrimaryConnectionTarget({
         environmentId: id("via"),
         label: "Via",
@@ -253,14 +250,14 @@ describe("refreshNamesLacking", () => {
       yield* settled();
       expect(reads).toBe(1);
 
-      // Linked from the CLI or another client: the server has it, this client was not told.
-      stored = [...stored, { environmentId: id("new"), label: "New" }];
-      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
-      expect(reads).toBe(1);
-
-      vi.advanceTimersByTime(10_000);
       links.refreshNamesLacking(registry, target.environmentId, [id("known")]);
       expect(reads).toBe(1);
+
+      // Linked from the CLI or another client inside the names' stale time: the server has it,
+      // this client was not told.
+      stored = [...stored, { environmentId: id("new"), label: "New" }];
+      links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
+      // A second reader meeting the same machine joins the read under way.
       links.refreshNamesLacking(registry, target.environmentId, [id("new")]);
       const reread = yield* settled();
       expect(reads).toBe(2);

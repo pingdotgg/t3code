@@ -35,8 +35,6 @@ const threadViewKey = ({ environmentId, input }: LinkedThreadViewTarget) =>
     input: { environmentId: input.environmentId, threadId: input.threadId },
   });
 
-const NAMES_STALE_TIME_MS = 10_000;
-
 export function createPeerLinkEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
@@ -50,7 +48,7 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
   const names = createEnvironmentRpcQueryAtomFamily(runtime, {
     label: "environment-data:peer-links:names",
     tag: WS_METHODS.peerLinksNames,
-    staleTimeMs: NAMES_STALE_TIME_MS,
+    staleTimeMs: 10_000,
   });
   const refreshLinks = (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) =>
     Effect.sync(() => {
@@ -104,9 +102,9 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
     list,
     names,
     /**
-     * Rereads `environmentId`'s link names when they lack one of `wanted` and are stale. Links
-     * made elsewhere (the CLI, another client, a batch) are not pushed, so a reader that meets
-     * a machine the names lack asks once more.
+     * Rereads `environmentId`'s link names when they lack one of `wanted`, however fresh they
+     * are. Links made elsewhere (the CLI, another client, a batch) are not pushed, so a reader
+     * that meets a machine the names lack asks once more; a read under way already answers it.
      */
     refreshNamesLacking: (
       registry: AtomRegistry.AtomRegistry,
@@ -118,8 +116,6 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
       if (!AsyncResult.isSuccess(result) || result.waiting) return;
       const known = new Set(result.value.links.map((link) => link.environmentId));
       if (wanted.every((id) => known.has(id))) return;
-      // @effect-diagnostics-next-line globalDate:off - `AsyncResult` timestamps come from `Date.now`.
-      if (Date.now() - result.timestamp < NAMES_STALE_TIME_MS) return;
       registry.refresh(atom);
     },
     link: createEnvironmentRpcCommand(runtime, {
