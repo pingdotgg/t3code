@@ -87,7 +87,8 @@ export const make = Effect.fn("NpmRelease.make")(function* () {
             command: npmPath,
             // Named fields keep the output small; the full package document grows with every release.
             args: ["view", "--global", "--json", `t3@${spec}`, "version", "t3code"],
-            timeout: Duration.seconds(15),
+            // npm on some Windows machines takes over 15 s for this lookup.
+            timeout: Duration.seconds(60),
             maxOutputBytes: 256 * 1024,
           }),
         )
