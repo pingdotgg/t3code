@@ -134,7 +134,10 @@ export function buildTraitsTriggerDisplay(
         speedLabel ?? resolve(msg("Normal", { $context: "model speed tier" }));
       continue;
     }
-    if (descriptor.id === "ultracode" && descriptor.type === "boolean") {
+    if (
+      (descriptor.id === "ultracode" || descriptor.id === "swarm") &&
+      descriptor.type === "boolean"
+    ) {
       if (descriptor.currentValue === true) {
         ultracodeLabelIndex = labels.length;
         labels.push(descriptor.label);

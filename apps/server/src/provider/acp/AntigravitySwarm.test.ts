@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { readAntigravitySwarm } from "./AntigravitySwarm.ts";
+import { antigravitySwarmPrompt, readAntigravitySwarm } from "./AntigravitySwarm.ts";
 
 const COORDINATOR = "e1eca26b-11b5-41f8-9d9b-bb8a692b2125";
 const ADD_A = "a82657e1-5a66-4505-aecc-6844eec6d066";
@@ -199,4 +199,11 @@ it.layer(NodeServices.layer)("readAntigravitySwarm", (it) => {
       expect(yield* readAntigravitySwarm({ profileDirectory, sessionId: ADD_B })).toBeUndefined();
     }),
   );
+});
+
+it("starts a message as /swarm only when the toggle is on and no command is typed", () => {
+  expect(antigravitySwarmPrompt("fix the tests", true)).toBe("/swarm fix the tests");
+  expect(antigravitySwarmPrompt("fix the tests", false)).toBe("fix the tests");
+  expect(antigravitySwarmPrompt("/goal ship it", true)).toBe("/goal ship it");
+  expect(antigravitySwarmPrompt("  ", true)).toBe("  ");
 });

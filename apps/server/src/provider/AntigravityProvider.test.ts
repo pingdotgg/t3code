@@ -289,14 +289,20 @@ describe("Antigravity model catalog", () => {
         ["plain", null],
       ]),
     );
-    const thinkingOf = (slug: string) =>
-      models.find((model) => model.slug === slug)?.capabilities?.optionDescriptors?.[0];
+    const descriptorOf = (slug: string, id: string) =>
+      models
+        .find((model) => model.slug === slug)
+        ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === id);
+    const thinkingOf = (slug: string) => descriptorOf(slug, "thinking_level");
 
     expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
     expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
     expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
     expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+    for (const { slug } of models) {
+      expect(descriptorOf(slug, "swarm")).toMatchObject({ type: "boolean", label: "Swarm" });
+    }
   });
 });
 

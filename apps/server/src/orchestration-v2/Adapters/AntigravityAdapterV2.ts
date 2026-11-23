@@ -5,6 +5,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
 } from "@t3tools/contracts";
+import { getModelSelectionBooleanOptionValue } from "@t3tools/shared/model";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
@@ -38,10 +39,12 @@ import {
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import {
+  antigravitySwarmPrompt,
   antigravitySwarmTaskId,
   isAntigravitySwarmToolCall,
   readAntigravitySwarm,
 } from "../../provider/acp/AntigravitySwarm.ts";
+import { ANTIGRAVITY_SWARM_OPTION } from "../../provider/AntigravityProvider.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -297,6 +300,18 @@ export function makeAntigravityAcpAdapterFlavor(
       };
     },
     normalizeToolCall: normalizeAntigravityToolCall,
+    // The Swarm toggle is T3's, not an agent option: it starts each message with `/swarm`.
+    ownedModelOptionIds: [ANTIGRAVITY_SWARM_OPTION.id],
+    rewriteUserText: (text, turnInput) =>
+      Effect.succeed(
+        antigravitySwarmPrompt(
+          text,
+          getModelSelectionBooleanOptionValue(
+            turnInput.modelSelection,
+            ANTIGRAVITY_SWARM_OPTION.id,
+          ),
+        ),
+      ),
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     compactViaAdvertisedCommand: true,

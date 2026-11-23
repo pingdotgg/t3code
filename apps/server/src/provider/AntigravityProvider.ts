@@ -44,7 +44,6 @@ import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usag
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
-const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
 const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
@@ -65,14 +64,25 @@ type ThinkingConfig = NonNullable<ReturnType<typeof antigravityThinkingConfig>>;
 /** Thinking options each model reported when selected; `null` means it has none. */
 export type AntigravityThinkingLevels = ReadonlyMap<string, ThinkingConfig | null>;
 
+/** Sends each message as `/swarm`, so the agent runs it with a team of workers. */
+export const ANTIGRAVITY_SWARM_OPTION = {
+  id: "swarm",
+  label: "Swarm",
+  type: "boolean",
+} as const;
+
 function thinkingCapabilities(config: ThinkingConfig | null | undefined, observed: boolean) {
   const descriptor = config
     ? acpProviderOptionDescriptors({ configOptions: [config], modeState: undefined })[0]
     : undefined;
-  if (descriptor?.type !== "select") return EMPTY_MODEL_CAPABILITIES;
+  if (descriptor?.type !== "select") {
+    return createModelCapabilities({ optionDescriptors: [ANTIGRAVITY_SWARM_OPTION] });
+  }
   // Another model's selected level is not this model's default.
   const { currentValue: _currentValue, ...unobserved } = descriptor;
-  return createModelCapabilities({ optionDescriptors: [observed ? descriptor : unobserved] });
+  return createModelCapabilities({
+    optionDescriptors: [observed ? descriptor : unobserved, ANTIGRAVITY_SWARM_OPTION],
+  });
 }
 
 export function buildAntigravityModelsFromSession(

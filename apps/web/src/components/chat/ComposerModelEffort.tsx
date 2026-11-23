@@ -38,14 +38,16 @@ import {
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
-/** Service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
+/** Service tiers, Claude's Fast mode, and team modes (Ultracode, Swarm) sit in the footer. */
 function splitSpeed(
   selects: ReadonlyArray<SelectDescriptor>,
   toggles: ReadonlyArray<BooleanDescriptor>,
 ) {
   const speedSelect = selects.find((descriptor) => descriptor.id === "serviceTier") ?? null;
   const fastToggle = toggles.find((descriptor) => descriptor.id === "fastMode") ?? null;
-  const ultracodeToggle = toggles.find((descriptor) => descriptor.id === "ultracode") ?? null;
+  const ultracodeToggle =
+    toggles.find((descriptor) => descriptor.id === "ultracode" || descriptor.id === "swarm") ??
+    null;
   return {
     speedSelect,
     fastToggle,

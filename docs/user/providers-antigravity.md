@@ -123,7 +123,8 @@ activity.
 
 ### Swarms
 
-Start a swarm with `/swarm <task>`. The thread shows it as one workflow, titled with
+Start a swarm with `/swarm <task>`, or turn on **Swarm** in the model picker to send every
+message as a swarm. The thread shows it as one workflow, titled with
 the swarm's name, with a row for each worker: its brief, model, state, and the
 result it posted. Open a worker to read its brief and result, and select **Work**
 to see its recent steps. The run stays open while any worker is still working.

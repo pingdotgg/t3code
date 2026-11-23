@@ -24,6 +24,8 @@ import { ListSection } from "../../components/ui/ListSection";
 import { RowPressable } from "../../components/ui/RowPressable";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useThreadShell } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadFamilies } from "../../state/threads";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { SubagentStopButton } from "./SubagentStopButton";
 import {
@@ -173,7 +175,15 @@ function WorkflowMemberRow(props: {
   const shell = useThreadShell(
     threadId === null ? null : scopeThreadRef(props.environmentId, threadId),
   );
-  const canOpen = threadId !== null && shell !== null;
+  // The shell omits idle subagent threads; their family read still carries the row.
+  const family = useEnvironmentQuery(
+    threadId !== null && shell === null
+      ? threadFamilies.familyAtom(props.environmentId, threadId)
+      : null,
+  );
+  const canOpen =
+    threadId !== null &&
+    (shell !== null || family.data?.threads.some((row) => row.id === threadId) === true);
   const presentation = resolveSubagentRowPresentation(
     {
       title: member.title,

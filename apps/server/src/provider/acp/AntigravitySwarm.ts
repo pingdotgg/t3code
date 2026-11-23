@@ -23,6 +23,12 @@ const SUPPORT_ROLE = /^(narrator|monitor)(-\d+)?$/;
 // Workers open a final result with `[done]`, after the @mention that wakes its reader.
 const DONE_MARK = /^(?:@[A-Za-z0-9._-]+\s+)*\[done\]/i;
 
+/** With the Swarm toggle on, a message the user did not start with a command runs as `/swarm`. */
+export function antigravitySwarmPrompt(text: string, swarm: boolean | undefined): string {
+  const trimmed = text.trimStart();
+  return swarm === true && trimmed !== "" && !trimmed.startsWith("/") ? `/swarm ${text}` : text;
+}
+
 /** Native task id T3 gives a swarm, so its record survives every turn of the coordinator thread. */
 export const antigravitySwarmTaskId = (sessionId: string) => `swarm:${sessionId}`;
 
