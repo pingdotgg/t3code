@@ -132,6 +132,20 @@ describe("resolveThreadDetailsLimits", () => {
     });
   });
 
+  it("shows the freshest reading of the instance's login, as Usage → Limits does", () => {
+    const signedIn = (id: string, limits: ServerProviderUsageLimits): ServerProvider => ({
+      ...claudeInstance(limits),
+      instanceId: ProviderInstanceId.make(id),
+      auth: { status: "authenticated", type: "oauth", email: "me@example.com" },
+    });
+    const stale = { ...limitsAt(4), checkedAt: "2026-10-30T11:00:00.000Z" };
+    const fresh = limitsAt(30);
+    const providers = [signedIn("claude-work", stale), signedIn("claude-personal", fresh)];
+    expect(
+      resolveThreadDetailsLimits(ProviderInstanceId.make("claude-work"), null, providers, [], now),
+    ).toEqual({ kind: "instance", limits: fresh });
+  });
+
   it("pools only the accounts the hub routes the model to, even of another driver", () => {
     const sources = [
       hub("Hub", [
