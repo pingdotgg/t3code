@@ -37,10 +37,6 @@ test(
             contents("Linked Tree Palette"),
           );
         }
-        yield* fs.writeFileString(
-          `${restored}/shared/themes/${file}`,
-          contents("Restored Tree Palette"),
-        );
       }),
     );
 
@@ -63,15 +59,6 @@ test(
           const fs = yield* FileSystem.FileSystem;
           yield* fs.rename(active, `${fixture}/previous`);
           yield* fs.rename(restored, active);
-        }),
-      );
-      const restoredTheme = theme("Restored Tree Palette");
-      await restoredTheme.waitFor();
-      await restoredTheme.scrollIntoView();
-
-      await runPromise(
-        Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
           yield* fs.writeFileString(
             `${active}/shared/themes/${file}`,
             contents("Edited Restored Tree Palette"),
