@@ -1,6 +1,7 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import {
   type ProviderApprovalDecision,
   type ResponseContextRecord,
@@ -120,6 +121,7 @@ export interface TimelineRowActivityState {
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
+  providerStarting: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   latestRunId: RunId | null;
   /** The worktree setup of the live turn, drawn as the working row's first rows. */
   worktreeSetup: WorktreeSetupSnapshot | null;

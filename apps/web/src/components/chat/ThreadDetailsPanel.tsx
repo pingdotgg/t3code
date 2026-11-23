@@ -76,6 +76,8 @@ interface ThreadDetailsPanelProps extends Pick<
   /** Whether the panel's git control listens for the commit and push shortcut; see onGitShortcutHostChange. */
   gitShortcutListening?: boolean;
   onGitShortcutHostChange?: (hosting: boolean) => void;
+  /** False when no worktree can come from this folder, so it offers no workspace modes. */
+  offersWorkspaceModes: boolean;
   envLocked: boolean;
   availableEnvironments: readonly EnvironmentOption[];
   autoEnvironmentLabel?: string | undefined;
@@ -271,6 +273,8 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                               ) : undefined
                             }
                             {...branchToolbarProps}
+                            // Workspace modes follow the composer's rule, not this folder's own status.
+                            showGitControls={props.offersWorkspaceModes}
                           />
                         </div>
                       </div>

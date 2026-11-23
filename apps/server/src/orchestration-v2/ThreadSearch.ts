@@ -294,7 +294,10 @@ export const messageHitsQuery = (
                 SELECT 1 FROM orchestration_v2_projection_turn_items AS items
                 WHERE items.run_id = runs.run_id
                   AND json_extract(items.payload_json, '$.messageId') = messages.message_id
-                  AND json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+                  AND (
+                    json_extract(items.payload_json, '$.inputIntent') IS NOT 'queued_turn'
+                    OR json_extract(runs.payload_json, '$.startedAt') IS NOT NULL
+                  )
               )
             )
           )
