@@ -130,7 +130,11 @@ function epochMillis(value: string | undefined): number | undefined {
 }
 
 const tokenCount = (value: unknown) =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  value === undefined
+    ? 0
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : undefined;
 
 const capText = (value: string) =>
   value.length <= TEXT_CAP ? value : `${value.slice(0, TEXT_CAP)}…`;
@@ -185,10 +189,16 @@ async function readActivity(
   }
   if (tail === undefined) return undefined;
   const last = steps.at(-1);
-  let tokens = 0;
+  // An invalid count makes the total unknown, not smaller.
+  let tokens: number | undefined = 0;
   let toolCalls = 0;
   for (const step of steps) {
-    tokens += tokenCount(step.input_tokens) + tokenCount(step.output_tokens);
+    const input = tokenCount(step.input_tokens);
+    const output = tokenCount(step.output_tokens);
+    tokens =
+      tokens === undefined || input === undefined || output === undefined
+        ? undefined
+        : tokens + input + output;
     toolCalls += step.tool_calls?.length ?? 0;
   }
   return {
@@ -199,7 +209,7 @@ async function readActivity(
         : undefined,
     startedAt: epochMillis(steps[0]?.created_at),
     lastAt: epochMillis(last?.created_at),
-    usage: tail.whole ? { totalTokens: tokens, toolCalls } : undefined,
+    usage: tail.whole && tokens !== undefined ? { totalTokens: tokens, toolCalls } : undefined,
   };
 }
 
@@ -290,13 +300,12 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         ([left], [right]) =>
           (briefs.get(left)?.seq ?? Number.MAX_SAFE_INTEGER) -
             (briefs.get(right)?.seq ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right),
-      )
-      .slice(0, MAX_MEMBERS);
+      );
     let active = false;
     let totalTokens: number | undefined = 0;
     let toolCalls = 0;
     const agents: Array<OrchestrationV2WorkflowAgent> = [];
-    for (const [index, [name, member]] of workers.entries()) {
+    for (const [index, [name, member]] of workers.slice(0, MAX_MEMBERS).entries()) {
       const conversationId = member.conversation_id;
       const activity =
         conversationId !== undefined && NATIVE_ID.test(conversationId)
@@ -345,6 +354,15 @@ export const readAntigravitySwarm = Effect.fn("readAntigravitySwarm")(function* 
         ...(prompt === undefined || prompt === "" ? {} : { prompt: capText(prompt) }),
         ...(resultText === undefined || resultText === "" ? {} : { result: capText(resultText) }),
       });
+    }
+    // Workers past the cap are not shown, but one still at work keeps the swarm active.
+    for (const [, member] of workers.slice(MAX_MEMBERS)) {
+      if (active || killed(member) || member.conversation_id === undefined) continue;
+      if (!NATIVE_ID.test(member.conversation_id)) continue;
+      const activity = await readActivity(profileRoot, member.conversation_id).catch(
+        () => undefined,
+      );
+      if (activity !== undefined && !activity.ended && activity.failed === undefined) active = true;
     }
     const title = roster.title?.trim();
     return {

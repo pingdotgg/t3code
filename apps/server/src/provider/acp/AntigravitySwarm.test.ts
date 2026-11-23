@@ -186,6 +186,27 @@ it.layer(NodeServices.layer)("readAntigravitySwarm", (it) => {
     }),
   );
 
+  it.effect("leaves usage out when a count is not a valid number", () =>
+    Effect.gen(function* () {
+      const profileDirectory = yield* writeSwarm({
+        members: {
+          coordinator: member(COORDINATOR, "coordinator"),
+          "add-a": member(ADD_A, "worker"),
+        },
+        board: briefs,
+        transcripts: {
+          [ADD_A]: [
+            started,
+            { step_index: 1, type: "PLANNER_RESPONSE", input_tokens: -1, output_tokens: 5 },
+          ],
+        },
+      });
+      const swarm = yield* readAntigravitySwarm({ profileDirectory, sessionId: COORDINATOR });
+      expect(swarm?.workflow.agents[0]?.totalTokens).toBeUndefined();
+      expect(swarm?.workflow.totalTokens).toBeUndefined();
+    }),
+  );
+
   it.effect("reads only the swarm this session coordinates", () =>
     Effect.gen(function* () {
       const profileDirectory = yield* writeSwarm({
