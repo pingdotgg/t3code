@@ -1008,6 +1008,38 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
+  it.effect("reuses an unspent relay credential after the tunnel hostname fails to resolve", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        responses: [
+          () =>
+            Promise.reject(
+              Object.assign(new TypeError("fetch failed"), {
+                cause: Object.assign(new Error("getaddrinfo ENOTFOUND environment.example.test"), {
+                  code: "ENOTFOUND",
+                }),
+              }),
+            ),
+          Response.json(DESCRIPTOR),
+          accessToken("retry-access-token"),
+          websocketTicket("retry-ticket"),
+        ],
+      });
+
+      const attempt = Effect.gen(function* () {
+        const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+        return yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
+      });
+      const results = yield* Effect.all([Effect.result(attempt), Effect.result(attempt)]).pipe(
+        Effect.provide(harness.layer),
+      );
+
+      expect(results.map((result) => result._tag)).toEqual(["Failure", "Success"]);
+      expect(requestsTo(harness, "/oauth/token")).toBe(1);
+      expect(yield* Ref.get(harness.bootstrapCalls)).toBe(1);
+    }),
+  );
+
   it.effect("removes a newly refreshed token when websocket ticket authorization fails", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
