@@ -17,6 +17,7 @@ import {
   type PullRequestDetail,
   type PullRequestStack,
   type PullRequestRef,
+  type RepositoryOrigin,
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
@@ -159,7 +160,8 @@ const makeLayer = (input: {
   readonly stored: Deferred.Deferred<void>;
   readonly enabled?: boolean;
   readonly currentHead?: Ref.Ref<string>;
-  readonly identity?: typeof ACME_APP;
+  readonly identity?: typeof ACME_APP & { readonly origin?: RepositoryOrigin };
+  readonly locator?: typeof ACME_APP.locator;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -197,7 +199,7 @@ const makeLayer = (input: {
             workspaceRoot: input.workspace,
             repositoryIdentity: {
               ...(input.identity ?? ACME_APP),
-              locator: { ...ACME_APP.locator, remoteUrl: input.remote },
+              locator: input.locator ?? { ...ACME_APP.locator, remoteUrl: input.remote },
             },
           }),
       } as unknown as ProjectService.ProjectService["Service"]),
@@ -419,48 +421,53 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     }),
   );
 
-  it.effect("measures only the PR change using the renamed verified remote's fetch URL", () =>
-    Effect.gen(function* () {
-      const repositories = yield* makeRepositories;
-      const fork = `${repositories.root}/fork`;
-      yield* git(repositories.root, ["clone", "--quiet", repositories.remote, fork]);
-      yield* git(fork, ["branch", "stack-base", "main~1"]);
-      // The cached identity still names origin, which now belongs to the stale fork.
-      yield* git(repositories.workspace, ["remote", "rename", "origin", "upstream"]);
-      yield* git(repositories.workspace, ["remote", "add", "origin", fork]);
-      yield* git(repositories.workspace, [
-        "config",
-        `url.${repositories.remote}.insteadOf`,
-        "review-upstream:",
-      ]);
-      yield* git(repositories.workspace, ["remote", "set-url", "upstream", "review-upstream:"]);
-      const changed = yield* Deferred.make<string>();
-      const driver = yield* GitVcsDriver.GitVcsDriver;
-      const stored = yield* Deferred.make<void>();
-      const context = yield* Layer.build(
-        makeLayer({
-          ...repositories,
-          stored,
-          generate: (input) =>
-            git(input.cwd, ["diff", "--name-only", `${input.baseCommit}...HEAD`]).pipe(
-              Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-              Effect.orDie,
-              Effect.flatMap((names) => Deferred.succeed(changed, names)),
-              Effect.as({ stops: [] }),
-            ),
-        }),
-      );
-      const service = Context.get(
-        context,
-        PullRequestReviewGuideService.PullRequestReviewGuideService,
-      );
-      yield* service.generate(reference);
-      assert.strictEqual(yield* Deferred.await(changed), "feature.txt");
-      yield* Deferred.await(stored);
-      const result = yield* service.get(reference);
-      assert.strictEqual(result.guide?.headSha, repositories.headSha);
-      assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
-    }),
+  it.effect.each(["rewritten", "configured"] as const)(
+    "measures only the PR change through the renamed remote matched by its %s URL",
+    (locatorUrl) =>
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const fork = `${repositories.root}/fork`;
+        yield* git(repositories.root, ["clone", "--quiet", repositories.remote, fork]);
+        yield* git(fork, ["branch", "stack-base", "main~1"]);
+        // The cached identity still names origin, which now belongs to the stale fork.
+        yield* git(repositories.workspace, ["remote", "rename", "origin", "upstream"]);
+        yield* git(repositories.workspace, ["remote", "add", "origin", fork]);
+        yield* git(repositories.workspace, [
+          "config",
+          `url.${repositories.remote}.insteadOf`,
+          "review-upstream:",
+        ]);
+        yield* git(repositories.workspace, ["remote", "set-url", "upstream", "review-upstream:"]);
+        const changed = yield* Deferred.make<string>();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            ...(locatorUrl === "configured"
+              ? { locator: { ...ACME_APP.locator, remoteUrl: "review-upstream:" } }
+              : {}),
+            stored,
+            generate: (input) =>
+              git(input.cwd, ["diff", "--name-only", `${input.baseCommit}...HEAD`]).pipe(
+                Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+                Effect.orDie,
+                Effect.flatMap((names) => Deferred.succeed(changed, names)),
+                Effect.as({ stops: [] }),
+              ),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        yield* service.generate(reference);
+        assert.strictEqual(yield* Deferred.await(changed), "feature.txt");
+        yield* Deferred.await(stored);
+        const result = yield* service.get(reference);
+        assert.strictEqual(result.guide?.headSha, repositories.headSha);
+        assert.deepStrictEqual(result.guide?.stops[0]?.files, [{ path: "feature.txt" }]);
+      }),
   );
 
   it.effect("keeps excerpts despite the checkout's diff driver and a failing hook", () =>
@@ -555,6 +562,40 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
       assert.deepStrictEqual(result.guide, before.guide);
       assert.isFalse(yield* Deferred.isDone(stored));
       assert.isFalse(yield* Ref.get(generated));
+    }),
+  );
+
+  it.effect("writes a guide for a pull request on a fork whose canonical key is its upstream", () =>
+    Effect.gen(function* () {
+      const repositories = yield* makeRepositories;
+      const parent = `${repositories.root}/parent`;
+      yield* git(repositories.root, ["clone", "--quiet", "--bare", repositories.remote, parent]);
+      yield* git(repositories.workspace, ["remote", "add", "upstream", parent]);
+      const stored = yield* Deferred.make<void>();
+      const context = yield* Layer.build(
+        makeLayer({
+          ...repositories,
+          stored,
+          identity: {
+            ...ACME_APP,
+            canonicalKey: "github.com/parent/app",
+            displayName: "parent/app",
+            owner: "parent",
+            origin: { canonicalKey: "github.com/acme/app", remoteUrl: repositories.remote },
+          },
+          locator: { source: "git-remote", remoteName: "upstream", remoteUrl: parent },
+          generate: () => Effect.succeed({ stops: [] }),
+        }),
+      );
+      const service = Context.get(
+        context,
+        PullRequestReviewGuideService.PullRequestReviewGuideService,
+      );
+      const runs = yield* watchRuns;
+      yield* runs.generate(service, reference);
+      const result = yield* runs.settled(service, reference);
+      assert.notStrictEqual(result.run?._tag, "Failed", JSON.stringify(result.run));
+      assert.strictEqual(result.guide?.headSha, repositories.headSha);
     }),
   );
 

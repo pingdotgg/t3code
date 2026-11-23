@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import type { ReactNode } from "react";
 import { Smartphone } from "lucide-react";
 
@@ -11,6 +12,7 @@ export function DeviceLoadingView(props: {
   readonly error?: boolean;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <div
       role={props.error ? "alert" : "status"}
@@ -35,7 +37,9 @@ export function DeviceLoadingView(props: {
           <div
             className="flex w-24 gap-1"
             aria-label={
-              props.stage === "opening" ? "Step 1 of 2: open device" : "Step 2 of 2: connect video"
+              props.stage === "opening"
+                ? gt("Step 1 of 2: open device")
+                : gt("Step 2 of 2: connect video")
             }
           >
             <span className="h-1 flex-1 rounded-full bg-foreground/60" />

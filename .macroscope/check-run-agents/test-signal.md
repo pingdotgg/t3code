@@ -20,7 +20,7 @@ conclusion: neutral
 
 # Test signal review
 
-Review only the tests this pull request adds or grows. Tests it moves, renames, or deletes are not findings. The rules are in `docs/internals/testing.md` under `## What to test`; read that section first and hold new tests to it.
+Review only the tests this pull request adds or grows. Tests it moves, renames, or deletes are not findings. The rules are in `docs/internals/15_testing.md` under `## What to test`; read that section first and hold new tests to it.
 
 Post each finding as a brief inline comment on the new test with one fix. Ask only for fewer or smaller tests, never for more coverage.
 
