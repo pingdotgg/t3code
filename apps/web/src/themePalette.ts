@@ -145,14 +145,13 @@ function isThemeCss(value: unknown): value is string {
 
 function parseThemeBackdrop(value: unknown): ThemeBackdrop | undefined {
   if (!isRecord(value)) return undefined;
-  const shader = value.shader === "nimbus" ? "nimbus" : undefined;
   const glsl =
     typeof value.glsl === "string" &&
     value.glsl.trim().length > 0 &&
     value.glsl.length <= THEME_BACKDROP_GLSL_MAX_LENGTH
       ? value.glsl
       : undefined;
-  if (shader === undefined && glsl === undefined) return undefined;
+  if (glsl === undefined) return undefined;
   const fps =
     typeof value.fps === "number" && Number.isFinite(value.fps) && value.fps >= 1 && value.fps <= 60
       ? value.fps
@@ -165,8 +164,7 @@ function parseThemeBackdrop(value: unknown): ThemeBackdrop | undefined {
       ? value.opacity
       : undefined;
   return {
-    ...(shader !== undefined ? { shader } : {}),
-    ...(glsl !== undefined ? { glsl } : {}),
+    glsl,
     ...(fps !== undefined ? { fps } : {}),
     ...(opacity !== undefined ? { opacity } : {}),
   };
