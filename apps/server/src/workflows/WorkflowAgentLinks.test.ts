@@ -136,6 +136,29 @@ it.effect("registers a folder that is not a project there yet", () =>
   }),
 );
 
+it.effect("finds a Windows folder there however its separators are written", () =>
+  Effect.gen(function* () {
+    const there = peer({
+      t3_project_list: [
+        { projects: [{ id: "p-app", workspaceRoot: "C:\\work\\app" }], nextCursor: null },
+      ],
+      t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
+    });
+    yield* Effect.provide(
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.start(
+          { ...input, project: "C:/work/app" },
+          "env-b",
+          "workflow:k",
+          EnvironmentId.make("env-a"),
+        ),
+      ),
+      there.layer,
+    );
+    assert.equal(there.calls.at(-1)?.arguments.projectId, "p-app");
+  }),
+);
+
 it.effect("does not start anything while linked environments is off", () =>
   Effect.gen(function* () {
     const there = peer({}, false);

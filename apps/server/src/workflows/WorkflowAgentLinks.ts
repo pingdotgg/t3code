@@ -7,6 +7,7 @@ import {
   OrchestratorMcpThreadSendResult,
   OrchestratorMcpThreadWaitResult,
 } from "@t3tools/contracts";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -86,7 +87,11 @@ export const make = Effect.gen(function* () {
           ProjectToolkit.tools.t3_project_list.successSchema,
           { cursor, limit: 100 },
         );
-      const found = page.projects.find((project) => project.workspaceRoot === path);
+      const found = page.projects.find(
+        (project) =>
+          normalizeProjectPathForComparison(project.workspaceRoot) ===
+          normalizeProjectPathForComparison(path),
+      );
       if (found !== undefined) return found.id;
       cursor = page.nextCursor;
     }
