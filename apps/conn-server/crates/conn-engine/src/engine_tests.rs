@@ -320,109 +320,6 @@ async fn a_fork_receipt_belongs_to_its_target_thread() {
     dispatch(&engine, fork("b")).await;
 }
 
-/// Receipts from before they named an owner: migration 5 names it where the command's events
-/// prove it. A receipt it cannot prove is kept and answers a conflict, so nothing runs twice;
-/// a project's receipt never answers for a thread.
-#[tokio::test(flavor = "current_thread")]
-async fn receipts_from_before_owners_name_them_or_refuse() {
-    let db = TempDb::new("legacy-receipts");
-    {
-        let (engine, _) = open(&db);
-        dispatch(&engine, create("a", "c1")).await;
-        dispatch(&engine, create("b", "c2")).await;
-        // A message main indexed, with accents, for the search after the upgrade.
-        let mut thread = engine
-            .subscribe_thread(from_json(json!({"threadId": "a"})).unwrap())
-            .await
-            .unwrap();
-        next(&mut thread).await;
-        dispatch(&engine, message("a", "m1", "Ångström café citation")).await;
-        until_run_ends(&mut thread).await;
-        dispatch(
-            &engine,
-            json!({"type": "thread.settle", "commandId": "s1", "threadId": "a"}),
-        )
-        .await;
-        // Stop on an idle thread writes no event: nothing proves its thread.
-        dispatch(
-            &engine,
-            json!({"type": "thread.stop", "commandId": "stop-1", "threadId": "a"}),
-        )
-        .await;
-        let added =
-            std::env::temp_dir().join(format!("conn-legacy-project-{}", std::process::id()));
-        std::fs::create_dir_all(&added).unwrap();
-        engine
-            .call(
-                "projects.mutate",
-                json!({"type": "project.create", "commandId": "p1", "projectId": "project:p1",
-                    "title": "P", "workspaceRoot": added.to_string_lossy()}),
-            )
-            .await
-            .unwrap();
-    }
-    downgrade_to_v4(&db);
-    let (engine, _) = open(&db);
-    let settle_b = rejection(
-        &engine,
-        json!({"type": "thread.settle", "commandId": "s1", "threadId": "b"}),
-    )
-    .await;
-    assert!(
-        settle_b
-            .contains("Command s1 was already handled for thread a and cannot be replayed for b."),
-        "{settle_b}"
-    );
-    let b = engine.shell_snapshot().await.unwrap()["threads"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["id"] == "b")
-        .cloned()
-        .unwrap();
-    assert_eq!(b["settledOverride"], Value::Null, "b is not settled");
-    // Its own thread replays it.
-    dispatch(
-        &engine,
-        json!({"type": "thread.settle", "commandId": "s1", "threadId": "a"}),
-    )
-    .await;
-    // Unproved: refused, and kept.
-    let stop = rejection(
-        &engine,
-        json!({"type": "thread.stop", "commandId": "stop-1", "threadId": "b"}),
-    )
-    .await;
-    assert!(
-        stop.contains("Command stop-1 was already handled"),
-        "{stop}"
-    );
-    assert!(
-        engine
-            .inner()
-            .db(|s| s.receipt("stop-1"))
-            .await
-            .unwrap()
-            .is_some()
-    );
-    let project = rejection(
-        &engine,
-        json!({"type": "thread.settle", "commandId": "p1", "threadId": "b"}),
-    )
-    .await;
-    assert!(
-        project.contains("Conflicting receipt is not a thread command receipt."),
-        "{project}"
-    );
-    // Main's search index still answers, accents included.
-    let found = engine
-        .inner()
-        .db(|s| s.search_threads(&json!({"query": "Ångström café"})))
-        .await
-        .unwrap();
-    assert!(found.to_string().contains("\"a\""), "{found}");
-}
-
 /// T3's deciders emit their event even when nothing changes: a re-pin records `thread.pinned`
 /// with the thread's `updatedAt` kept. A command with no event answers its own thread's latest
 /// sequence, not another thread's.
@@ -553,127 +450,80 @@ fn downgrade_to_v4(db: &TempDb) {
     conn.execute_batch("PRAGMA user_version = 4").unwrap();
 }
 
-/// Main kept events but pruned receipts, so an id can have an older execution's events. The
-/// upgrade names an owner only from the event at the receipt's own sequence: B's retry is a
-/// replay, and A does not get B's receipt.
+/// v4 (main) → final: the upgrade adds the receipt columns and names no owner, so a retry of
+/// a command from before it is refused, never run twice; new commands and main's message index
+/// work as before.
 #[tokio::test(flavor = "current_thread")]
-async fn a_reused_id_after_pruning_belongs_to_its_last_execution() {
-    let db = TempDb::new("reused-id");
-    let settle =
-        |thread: &str| json!({"type": "thread.settle", "commandId": "x", "threadId": thread});
+async fn a_v4_store_upgrades_and_refuses_its_old_retries() {
+    let db = TempDb::new("v4-upgrade");
+    let root = std::env::temp_dir().join(format!("conn-v4-project-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let project = json!({"type": "project.create", "commandId": "p1", "projectId": "project:p1",
+        "title": "P", "workspaceRoot": root.to_string_lossy()});
     {
         let (engine, _) = open(&db);
         dispatch(&engine, create("a", "c1")).await;
-        dispatch(&engine, create("b", "c2")).await;
-        dispatch(&engine, settle("a")).await;
-        // Main pruned A's receipt; the id then ran again, for B.
-        engine
-            .inner()
-            .db(|store| {
-                store
-                    .raw()
-                    .execute("DELETE FROM receipts WHERE command_id = 'x'", [])
-                    .map_err(|e| e.to_string())
-            })
-            .await
-            .unwrap();
-        dispatch(&engine, settle("b")).await;
-    }
-    downgrade_to_v4(&db);
-    let (engine, _) = open(&db);
-    let b_events = engine.inner().db(|s| s.event_count("b")).await;
-    dispatch(&engine, settle("b")).await;
-    assert_eq!(
-        engine.inner().db(|s| s.event_count("b")).await,
-        b_events,
-        "a replay"
-    );
-    let a = rejection(&engine, settle("a")).await;
-    assert!(
-        a.contains("Command x was already handled for thread b and cannot be replayed for a."),
-        "{a}"
-    );
-}
-
-/// A v4 delegation's events end with the child's first message; its receipt still belongs to
-/// the parent, proved by the parent's task row naming the created child.
-#[tokio::test(flavor = "current_thread")]
-async fn a_legacy_delegation_belongs_to_its_parent() {
-    let db = TempDb::new("legacy-delegation");
-    let child = "thread:delegated-task:d1";
-    {
-        let (engine, _) = open(&db);
-        dispatch(&engine, create("t1", "c1")).await;
         let mut thread = engine
-            .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+            .subscribe_thread(from_json(json!({"threadId": "a"})).unwrap())
             .await
             .unwrap();
         next(&mut thread).await;
-        dispatch(&engine, message("t1", "c2", "hang")).await;
-        until_provider_turn(&mut thread).await;
-        dispatch(&engine, delegate("d1", "look around", None)).await;
-        let last = engine
-            .inner()
-            .db(|s| {
-                s.raw()
-                    .query_row(
-                        "SELECT sequence FROM receipts WHERE command_id = 'd1'",
-                        [],
-                        |r| r.get::<_, i64>(0),
-                    )
-                    .map_err(|e| e.to_string())
-            })
+        dispatch(&engine, message("a", "m1", "Ångström café citation")).await;
+        until_run_ends(&mut thread).await;
+        dispatch(
+            &engine,
+            json!({"type": "thread.settle", "commandId": "s1", "threadId": "a"}),
+        )
+        .await;
+        engine
+            .call("projects.mutate", project.clone())
             .await
             .unwrap();
-        let on: String = engine
-            .inner()
-            .db(move |s| {
-                s.raw()
-                    .query_row("SELECT thread_id FROM events WHERE seq = ?1", [last], |r| {
-                        r.get(0)
-                    })
-                    .map_err(|e| e.to_string())
-            })
-            .await
-            .unwrap();
-        assert_eq!(
-            on, child,
-            "the delegation's last event is the child's first message"
-        );
     }
     downgrade_to_v4(&db);
     let (engine, _) = open(&db);
-    dispatch(&engine, delegate("d1", "look around", None)).await;
-    let wrong = rejection(
+    let old = rejection(
         &engine,
-        json!({"type": "thread.settle", "commandId": "d1", "threadId": child}),
+        json!({"type": "thread.settle", "commandId": "s1", "threadId": "a"}),
     )
     .await;
     assert!(
-        wrong.contains("Command d1 was already handled for thread t1 and cannot be replayed for"),
-        "{wrong}"
+        old.contains("Command s1 was handled before receipts named their owner"),
+        "{old}"
     );
+    let retried = engine.call("projects.mutate", project).await;
+    assert!(
+        format!("{retried:?}").contains("Command p1 was handled before receipts named their owner"),
+        "{retried:?}"
+    );
+    dispatch(
+        &engine,
+        json!({"type": "thread.unsettle", "commandId": "u1", "threadId": "a", "reason": "user"}),
+    )
+    .await;
+    let found = engine
+        .inner()
+        .db(|s| s.search_threads(&json!({"query": "Ångström café"})))
+        .await
+        .unwrap();
+    assert!(found.to_string().contains("\"a\""), "{found}");
 }
 
-/// The upgrade from main's schema commits atomically: a failure leaves schema 4 and no owner,
-/// and the next open finishes it.
+/// The upgrade from main's schema commits atomically: a failure leaves schema 4 and none of
+/// the new columns, and the next open finishes it.
 #[tokio::test(flavor = "current_thread")]
 async fn the_receipt_upgrade_is_all_or_nothing() {
     let db = TempDb::new("upgrade-atomic");
     {
         let (engine, _) = open(&db);
         dispatch(&engine, create("a", "c1")).await;
-        dispatch(&engine, create("b", "c2")).await;
     }
     downgrade_to_v4(&db);
-    {
-        let conn = rusqlite::Connection::open(db.path()).unwrap();
-        conn.execute_batch(
-            "CREATE TRIGGER stop_upgrade BEFORE UPDATE ON receipts WHEN NEW.command_id = 'c2'
-             BEGIN SELECT RAISE(ABORT, 'test: stop the upgrade'); END;",
-        )
+    // A stray column makes the upgrade's last step fail.
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute_batch("ALTER TABLE receipts ADD COLUMN error TEXT")
         .unwrap();
-    }
     let mut config = EngineConfig::new(db.path());
     config.providers = vec![Arc::new(FakeProvider::new("claudeAgent"))];
     assert!(SqliteEngine::open(config).is_err(), "the upgrade fails");
@@ -683,18 +533,196 @@ async fn the_receipt_upgrade_is_all_or_nothing() {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, 4);
-        let columns: i64 = conn
+        let added: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM pragma_table_info('receipts') WHERE name = 'owner_kind'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(columns, 0, "no half-written owners");
-        conn.execute_batch("DROP TRIGGER stop_upgrade").unwrap();
+        assert_eq!(added, 0, "no column of a failed upgrade stays");
+        conn.execute_batch("ALTER TABLE receipts DROP COLUMN error")
+            .unwrap();
     }
     let (engine, _) = open(&db);
-    dispatch(&engine, create("a", "c1")).await;
+    dispatch(&engine, create("b", "c2")).await;
+}
+
+/// A project command's typed refusal from planning is its receipt, as T3's
+/// `commitRejectedProjectCommand`: a retry gets it again even after the conflict is gone. A
+/// refusal before planning (the folder) stays retryable. `project.update` records T3's
+/// `project.meta.update`.
+#[tokio::test(flavor = "current_thread")]
+async fn a_planned_project_refusal_is_replayed() {
+    let db = TempDb::new("project-refusal");
+    let (engine, _) = open(&db);
+    let folder = |name: &str| {
+        std::env::temp_dir()
+            .join(format!(
+                "conn-project-refusal-{}-{name}",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (one, missing) = (folder("one"), folder("missing"));
+    std::fs::create_dir_all(&one).unwrap();
+    let _ = std::fs::remove_dir_all(&missing);
+    let mutate = |command: Value| engine.call("projects.mutate", command);
+    let create_project = |id: &str, project: &str, root: &str| {
+        json!({"type": "project.create", "commandId": id, "projectId": project,
+            "title": "P", "workspaceRoot": root})
+    };
+    let cause = |result: Result<Value, EngineError<Value>>| match result {
+        Err(EngineError::Rejected(e)) => e["cause"].clone(),
+        other => panic!("expected a refusal: {other:?}"),
+    };
+    mutate(create_project("c1", "project:p1", &one))
+        .await
+        .unwrap();
+    let first = cause(mutate(create_project("c2", "project:p2", &one)).await);
+    assert_eq!(first["_tag"], "ProjectConflictError", "{first}");
+    mutate(json!({"type": "project.delete", "commandId": "d1", "projectId": "project:p1"}))
+        .await
+        .unwrap();
+    let again = cause(mutate(create_project("c2", "project:p2", &one)).await);
+    assert_eq!(
+        again, first,
+        "the recorded refusal, though the folder is free now"
+    );
+    // Refused before planning: the same id works once the folder exists.
+    let early = cause(mutate(create_project("c3", "project:p3", &missing)).await);
+    assert_eq!(early["_tag"], "ProjectOperationError", "{early}");
+    std::fs::create_dir_all(&missing).unwrap();
+    mutate(create_project("c3", "project:p3", &missing))
+        .await
+        .unwrap();
+    mutate(
+        json!({"type": "project.update", "commandId": "u1", "projectId": "project:p3",
+        "title": "Renamed"}),
+    )
+    .await
+    .unwrap();
+    let kind: String = engine
+        .inner()
+        .db(|s| {
+            s.raw()
+                .query_row(
+                    "SELECT command_type FROM receipts WHERE command_id = 'u1'",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap();
+    assert_eq!(kind, "project.meta.update");
+}
+
+/// T3's `readCommitted`: a replay whose project row is gone is a typed read error, not null.
+#[tokio::test(flavor = "current_thread")]
+async fn a_project_replay_without_its_row_is_a_read_error() {
+    let db = TempDb::new("project-replay-row");
+    let (engine, _) = open(&db);
+    let root = std::env::temp_dir().join(format!("conn-project-row-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let command = json!({"type": "project.create", "commandId": "c1", "projectId": "project:p1",
+        "title": "P", "workspaceRoot": root.to_string_lossy()});
+    engine
+        .call("projects.mutate", command.clone())
+        .await
+        .unwrap();
+    engine
+        .inner()
+        .db(|s| {
+            s.raw()
+                .execute("DELETE FROM projects WHERE id = 'project:p1'", [])
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .unwrap();
+    match engine.call("projects.mutate", command).await {
+        Err(EngineError::Rejected(e)) => {
+            assert_eq!(e["cause"]["_tag"], "ProjectOperationError", "{e}");
+            assert_eq!(
+                e["cause"]["message"],
+                "The accepted project command did not produce a project row."
+            );
+        }
+        other => panic!("expected a read error: {other:?}"),
+    }
+}
+
+/// T3's queue start (`startNextQueuedRun`) checks and starts the queued run on its effective
+/// selection: a message that follows the thread's selection takes the thread's current one.
+#[tokio::test(flavor = "current_thread")]
+async fn the_queue_starts_on_the_effective_selection() {
+    let db = TempDb::new("queue-effective");
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![
+        Arc::new(FakeProvider::new("claudeAgent")),
+        Arc::new(FakeProvider::new("other")),
+        Arc::new(FakeProvider::new("off")),
+    ];
+    config.host = Some(Arc::new(OneInstanceOff));
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "later")).await;
+    // The queued message follows the thread's selection; the turn ends with it waiting.
+    engine
+        .inner()
+        .db(|store| {
+            let mut tx = store.tx()?;
+            let mut message = tx.entity("t1", "messages", "message:c3")?.unwrap();
+            message["followsThreadSelection"] = json!(true);
+            tx.append(
+                crate::store::Draft::new("t1", "message.updated", message).run(Some("run:t1:2")),
+            )?;
+            let mut run = tx.entity("t1", "runs", "run:t1:1")?.unwrap();
+            run["status"] = json!("interrupted");
+            tx.append(crate::store::Draft::new("t1", "run.updated", run).run(Some("run:t1:1")))?;
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let select = |id: &str, instance: &str| {
+        json!({"type": "thread.model-selection.set", "commandId": id, "threadId": "t1",
+            "modelSelection": {"instanceId": instance, "model": "m"}})
+    };
+    // The thread is now on a provider the project turned off: the queue holds.
+    dispatch(&engine, select("s1", "off")).await;
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "r1", "threadId": "t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["runs"][1]["status"], "queued",
+        "held, not started on run:t1:2's own provider"
+    );
+    assert_eq!(p["runs"][1]["queueHeld"], true);
+    // On another enabled provider, the run starts there.
+    dispatch(&engine, select("s2", "other")).await;
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "r2", "threadId": "t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_ne!(p["runs"][1]["status"], "queued");
+    assert_eq!(p["runs"][1]["providerInstanceId"], "other");
 }
 
 /// A project write reads its receipt in its own transaction, as T3's `commitProjectCommand`:
@@ -2025,7 +2053,7 @@ async fn clients_add_rename_and_remove_projects() {
     let renamed = call(
         &engine,
         "projects.mutate",
-        json!({"type": "project.update", "commandId": "p3", "projectId": "project:new",
+        json!({"type": "project.update", "commandId": "p3-rename", "projectId": "project:new",
                "title": "Renamed", "pinned": true}),
     )
     .await

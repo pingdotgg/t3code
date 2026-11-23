@@ -352,6 +352,8 @@ async function sequence(side) {
   side.arm(transcript("plan_questions"));
   const asked = await side.step("start --wait --json: asks", startArgs(side, "Orbit task 3 thread 1"), "Ask me");
   const waiting = JSON.parse(asked.stdout || "{}");
+  // The question the providerInstanceId exception may excuse is this thread's, on this run.
+  side.asked = { threadId: waiting.threadId, runId: waiting.runId };
   const read = await copyRpc(side, "read", waiting.threadId);
   side.steps.push({ label: "t3_copy_rpc read", args: [], stdout: JSON.stringify(read.out), stderr: read.stderr, code: read.code });
   const ids = (read.out?.requests ?? []).map((r) => r.request_id).join("\n");
@@ -556,18 +558,19 @@ const keyOf = (row) => (row.type === "turn-item.updated" ? `${row.type}:${row.pa
  * The one known difference, matched row by row. T3's ingestor cancels a pending question when
  * its provider turn ends (`dismissNativeUserInputs`, the session's instance). Conn has no such
  * step: the question stays pending until its session is released, which expires it, and T3's
- * release names no instance. A Conn row is excused only when it is that question: expired
- * right after its own session's release, the one pending row of its thread and request, and
- * paired with exactly one T3 question cancelled for the same native request, on the same run
- * of the scenario, after exactly one pending row of its own thread, run and request.
+ * release names no instance. A Conn row is excused only when it is the question the scenario's
+ * `asked` step reported on each side: Conn's, on that thread and run, expired right after its
+ * own session's release, after the one pending row of its request; T3's, on its own `asked`
+ * thread and run, cancelled for the same native request after the one pending row of it.
  */
 const REQUEST = "runtime-request.updated";
 const runOrdinal = (run) => (typeof run === "string" ? run.slice(run.lastIndexOf(":") + 1) : undefined);
 const sameRef = (a, b) => a != null && JSON.stringify(a) === JSON.stringify(b);
 
-function excusedQuestion(rows, index, t3Rows) {
+function excusedQuestion(rows, index, t3Rows, connAsked, t3Asked) {
   const row = rows[index];
   const before = rows[index - 1];
+  if (connAsked?.threadId === undefined || t3Asked?.threadId === undefined) return false;
   const shaped =
     row.type === REQUEST &&
     row.instance === undefined &&
@@ -579,15 +582,23 @@ function excusedQuestion(rows, index, t3Rows) {
     before.payload?.status === "stopped" &&
     before.payload?.id === row.payload.responseCapability.providerSessionId;
   if (!shaped) return false;
+  if (row.thread !== connAsked.threadId) return false;
   const pending = rows.filter(
-    (r) =>
+    (r, i) =>
+      i < index &&
       r.type === REQUEST &&
       r.thread === row.thread &&
       r.payload?.id === row.payload.id &&
       r.payload?.status === "pending" &&
       r.instance !== undefined,
   );
-  if (pending.length !== 1 || (row.run !== undefined && row.run !== pending[0].run)) return false;
+  if (
+    pending.length !== 1 ||
+    pending[0].run !== connAsked.runId ||
+    (row.run !== undefined && row.run !== pending[0].run)
+  ) {
+    return false;
+  }
   const cancelled = t3Rows.filter(
     (t) =>
       t.type === REQUEST &&
@@ -598,8 +609,11 @@ function excusedQuestion(rows, index, t3Rows) {
   );
   if (cancelled.length !== 1) return false;
   const [match] = cancelled;
+  if (match.thread !== t3Asked.threadId || match.run !== t3Asked.runId) return false;
+  const matchIndex = t3Rows.indexOf(match);
   const t3Pending = t3Rows.filter(
-    (t) =>
+    (t, i) =>
+      i < matchIndex &&
       t.type === REQUEST &&
       t.thread === match.thread &&
       t.run === match.run &&
@@ -623,7 +637,7 @@ function instancesByKey(rows) {
 function compareInstances(t3, conn) {
   const t3Rows = storedEvents(t3);
   const connAll = storedEvents(conn);
-  const excused = connAll.map((_, i) => excusedQuestion(connAll, i, t3Rows));
+  const excused = connAll.map((_, i) => excusedQuestion(connAll, i, t3Rows, conn.asked, t3.asked));
   const count = excused.filter(Boolean).length;
   // The scenario asks one question; more matches would hide something else.
   const connRows = count === 1 ? connAll.filter((_, i) => !excused[i]) : connAll;

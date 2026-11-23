@@ -956,10 +956,23 @@ pub(crate) fn start_next_queued(
         }
         break run;
     };
-    // T3's `startNextQueuedRun`: a provider turned off for the project holds the queue for
-    // the user instead of starting the run.
+    // T3's `startNextQueuedRun`: the run starts on its effective selection (a message that
+    // follows the conversation takes the thread's current one), and a provider turned off for
+    // the project holds the queue for the user instead of starting it.
+    let queued_message = run["userMessageId"]
+        .as_str()
+        .map(|id| tx.entity(thread_id, "messages", id))
+        .transpose()?
+        .flatten();
+    if queued_message
+        .as_ref()
+        .is_some_and(follows_current_conversation)
+    {
+        run["modelSelection"] = thread["modelSelection"].clone();
+        run["providerInstanceId"] = thread["modelSelection"]["instanceId"].clone();
+    }
     let instance = run["providerInstanceId"].as_str().unwrap_or_default();
-    if !tx.provider_enabled(thread["projectId"].as_str(), instance) {
+    if !tx.queue_enabled(thread["projectId"].as_str(), instance) {
         hold_queue(tx, thread_id)?;
         return Ok(None);
     }
@@ -2477,6 +2490,18 @@ fn thread_snooze(tx: &mut Tx<'_>, command: Value) -> Outcome {
         t["updatedAt"] = json!(now);
         Ok(())
     })
+}
+
+/// T3's `followsCurrentConversation`: a queued message that runs on the thread's current
+/// selection, not the one it was queued with.
+fn follows_current_conversation(message: &Value) -> bool {
+    let buffered = message["createdBy"] == "agent"
+        && message["creationSource"] == "provider"
+        && !is_null(message, "notification")
+        && is_null(message, "delegatedCompletion");
+    !is_null(message, "delegatedCompletion")
+        || message["followsThreadSelection"] == true
+        || (message["notification"]["source"]["kind"] == "monitor" && !buffered)
 }
 
 /// A message the server queued by itself: a notification or a delegated-task completion. This

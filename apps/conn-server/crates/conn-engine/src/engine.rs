@@ -1345,7 +1345,7 @@ fn receipt_thread_id(command: &Value) -> String {
 
 /// A retried command's answer from its receipt (`replayCommandReceipt`): the refusal again,
 /// or a conflict when the id was handled for something else, else the sequence it answered.
-/// A receipt from before owners whose owner nothing proves is refused, never run again.
+/// A receipt from before owners (schema 4) is refused, never run again.
 fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, CommandError> {
     if let Some(refusal) = receipt.refusal {
         return Err(CommandError::Rejected(format!(
@@ -1371,7 +1371,7 @@ fn replay(key: &ReceiptKey<'_>, receipt: Receipt, guarded: bool) -> Result<u64, 
         }
         None => {
             return Err(CommandError::Rejected(format!(
-                "Command {} was already handled, for a thread its receipt does not name; it cannot be replayed for {thread}.",
+                "Command {} was handled before receipts named their owner; it cannot be replayed for {thread}.",
                 key.command_id
             )));
         }

@@ -22,6 +22,9 @@ pub(crate) struct ProjectFailure {
     pub message: String,
     pub cause: Option<Value>,
     pub internal: bool,
+    /// Refused by planning against the stored projects (T3's `planProjectCommand`): the
+    /// refusal is the command's receipt. Others (the folder, the store) can be retried.
+    planned: bool,
 }
 
 impl ProjectFailure {
@@ -30,6 +33,7 @@ impl ProjectFailure {
             message: message.into(),
             cause: None,
             internal: false,
+            planned: false,
         }
     }
     fn tagged(tag: &str, message: impl Into<String>) -> Self {
@@ -38,6 +42,33 @@ impl ProjectFailure {
             cause: Some(json!({"_tag": tag, "message": message})),
             message,
             internal: false,
+            planned: false,
+        }
+    }
+    fn planned(tag: &str, message: impl Into<String>) -> Self {
+        Self {
+            planned: true,
+            ..Self::tagged(tag, message)
+        }
+    }
+
+    /// The receipt's form of a planned refusal: the typed cause, as T3's
+    /// `encodeProjectCommandRejection`.
+    fn encode(&self) -> String {
+        self.cause
+            .clone()
+            .unwrap_or_else(|| json!({"message": self.message}))
+            .to_string()
+    }
+
+    fn decode(refusal: &str) -> Self {
+        let cause: Value =
+            serde_json::from_str(refusal).unwrap_or_else(|_| json!({"message": refusal}));
+        Self {
+            message: cause["message"].as_str().unwrap_or(refusal).to_owned(),
+            cause: Some(cause),
+            internal: false,
+            planned: true,
         }
     }
 }
@@ -48,6 +79,7 @@ impl From<String> for ProjectFailure {
             message,
             cause: None,
             internal: true,
+            planned: false,
         }
     }
 }
@@ -73,7 +105,7 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                 .project_any(&project_id)?
                 .is_some_and(|p| p["deletedAt"].is_null())
             {
-                return Err(ProjectFailure::tagged(
+                return Err(ProjectFailure::planned(
                     "ProjectConflictError",
                     format!("Project {project_id} already exists."),
                 ));
@@ -91,7 +123,7 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                 .project_by_root(root)?
                 .is_some_and(|p| p["deletedAt"].is_null())
             {
-                return Err(ProjectFailure::tagged(
+                return Err(ProjectFailure::planned(
                     "ProjectConflictError",
                     format!("Another project already uses {root}."),
                 ));
@@ -153,7 +185,7 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                     .project_by_root(root)?
                     .is_some_and(|p| p["id"] != project_id.as_str() && p["deletedAt"].is_null())
                 {
-                    return Err(ProjectFailure::tagged(
+                    return Err(ProjectFailure::planned(
                         "ProjectConflictError",
                         format!("Another project already uses {root}."),
                     ));
@@ -182,7 +214,7 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                 && icon.get("kind") == Some(&json!("monogram"))
                 && icon["text"].as_str().is_some_and(|t| t.chars().count() > 2)
             {
-                return Err(ProjectFailure::tagged(
+                return Err(ProjectFailure::planned(
                     "ProjectInvalidError",
                     "A monogram icon has at most two characters.",
                 ));
@@ -361,15 +393,38 @@ fn make_project_folder(home: &Path, name: &str) -> ProjectResult<(PathBuf, Optio
     Ok((folder, commit_error))
 }
 
-/// A project command's receipt key: its id, its type and its project.
+/// A project command's receipt key: its id, T3's command type and its project.
 struct ProjectCommand {
     id: String,
-    kind: String,
+    kind: &'static str,
     project_id: String,
 }
 
 impl ProjectCommand {
-    /// Whether this command may answer from `receipt` (T3's `ProjectService.commit`).
+    fn from_input(input: &Value) -> Self {
+        Self {
+            id: input["commandId"].as_str().unwrap_or_default().to_owned(),
+            // T3's receipt names the command it dispatched (`ProjectService.update`).
+            kind: match input["type"].as_str().unwrap_or_default() {
+                "project.update" => "project.meta.update",
+                "project.delete" => "project.delete",
+                _ => "project.create",
+            },
+            project_id: input["projectId"].as_str().unwrap_or_default().to_owned(),
+        }
+    }
+
+    fn key(&self) -> ReceiptKey<'_> {
+        ReceiptKey {
+            command_id: &self.id,
+            command_type: self.kind,
+            owner: ReceiptOwner::Project(&self.project_id),
+        }
+    }
+
+    /// Whether this command may answer from the receipt another write holds (T3's
+    /// `ProjectService.commit`): its own accepted one replays, its own refusal is refused
+    /// again, and any other is a conflict.
     fn check(&self, receipt: Receipt) -> ProjectResult<()> {
         let id = &self.id;
         match receipt.owner {
@@ -377,9 +432,7 @@ impl ProjectCommand {
                 if project == self.project_id && receipt.command_type == self.kind =>
             {
                 match receipt.refusal {
-                    Some(refusal) => Err(ProjectFailure::rejected(format!(
-                        "Command {id} was previously rejected: {refusal}"
-                    ))),
+                    Some(refusal) => Err(ProjectFailure::decode(&refusal)),
                     None => Ok(()),
                 }
             }
@@ -387,11 +440,11 @@ impl ProjectCommand {
                 "Command {id} was already used by {} for {project}.",
                 receipt.command_type
             ))),
-            Some(StoredOwner::Project(None)) => Err(ProjectFailure::rejected(format!(
-                "Command {id} was already used by a project command whose project is not recorded."
-            ))),
-            _ => Err(ProjectFailure::rejected(format!(
+            Some(StoredOwner::Thread(_)) => Err(ProjectFailure::rejected(format!(
                 "Command {id} was already used by a thread command."
+            ))),
+            Some(StoredOwner::Project(None)) | None => Err(ProjectFailure::rejected(format!(
+                "Command {id} was handled before receipts named their owner; it cannot be replayed."
             ))),
         }
     }
@@ -418,29 +471,37 @@ impl Inner {
     ) -> ProjectResult<T> {
         let result = self
             .db(move |store| {
-                if let Some(command) = &command
-                    && let Some(receipt) =
-                        store.outcome(&command.id).map_err(ProjectFailure::from)?
-                {
-                    command.check(receipt)?;
-                    let tx = store.tx().map_err(ProjectFailure::from)?;
-                    let value = replay(&tx);
-                    tx.rollback();
-                    return Ok((value?, vec![], store.high_water()));
-                }
                 let mut tx = store.tx().map_err(ProjectFailure::from)?;
+                // The id is taken inside this write; a receipt another command holds decides
+                // the answer here, and is never replaced.
+                if let Some(command) = &command
+                    && !tx.reserve(&command.key()).map_err(ProjectFailure::from)?
+                {
+                    let held = tx.outcome(&command.id).map_err(ProjectFailure::from)?;
+                    let answer = held
+                        .ok_or_else(|| ProjectFailure::from("The receipt vanished.".to_owned()))
+                        .and_then(|receipt| command.check(receipt))
+                        .and_then(|()| replay(&tx));
+                    tx.rollback();
+                    return Ok((answer?, vec![], store.high_water()));
+                }
                 match f(&mut tx) {
                     Ok((value, effects)) => {
-                        let receipt = command.as_ref().map(|c| ReceiptKey {
-                            command_id: &c.id,
-                            command_type: &c.kind,
-                            owner: ReceiptOwner::Project(&c.project_id),
-                        });
+                        let receipt = command.as_ref().map(ProjectCommand::key);
                         tx.commit(receipt.as_ref()).map_err(ProjectFailure::from)?;
                         Ok((value, effects, store.high_water()))
                     }
                     Err(e) => {
                         tx.rollback();
+                        // A refusal from planning is the command's outcome (T3's
+                        // `commitRejectedProjectCommand`); others stay retryable.
+                        if e.planned
+                            && let Some(command) = &command
+                        {
+                            store
+                                .record_refusal(&command.key(), &e.encode())
+                                .map_err(ProjectFailure::from)?;
+                        }
                         Err(e)
                     }
                 }
@@ -461,19 +522,20 @@ impl Inner {
     }
 
     pub(crate) async fn project_mutate(self: &Arc<Self>, input: Value) -> ProjectResult<Value> {
-        let command = ProjectCommand {
-            id: input["commandId"].as_str().unwrap_or_default().to_owned(),
-            kind: input["type"].as_str().unwrap_or_default().to_owned(),
-            project_id: input["projectId"].as_str().unwrap_or_default().to_owned(),
-        };
-        // A retried command returns the project as it is now.
+        let command = ProjectCommand::from_input(&input);
+        // A retried command returns the project as it is now (T3's `readCommitted`).
         let pid = command.project_id.clone();
         self.project_command_write(
             Some(command),
             move |tx| {
                 tx.project_any(&pid)
-                    .map(Option::unwrap_or_default)
-                    .map_err(ProjectFailure::from)
+                    .map_err(ProjectFailure::from)?
+                    .ok_or_else(|| {
+                        ProjectFailure::tagged(
+                            "ProjectOperationError",
+                            "The accepted project command did not produce a project row.",
+                        )
+                    })
             },
             move |tx| mutate(tx, &input),
         )

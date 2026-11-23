@@ -36,14 +36,16 @@ thread already active keeps its anchor and `updatedAt` but still records `thread
   gets the recorded refusal again (`Command … was previously rejected: …`), and a receipt
   answers only for its owner (`owner_kind` thread or project, `owner_id`; T3's
   `commandThreadId`, so a fork's and a merge-back's is the target thread). Receipts from
-  before owners (main's schema 4) get theirs from their own execution: the event at the
-  receipt's sequence must carry its command id, and a delegation's parent is the thread whose
-  task row names the created child. One nothing proves is kept and refused. The upgrade runs
-  in one transaction, a page of receipts at a time. A project receipt records its project and
-  command type, read in the project write itself (T3's `ProjectService.commit`).
+  before owners (main's schema 4) keep none, so a retry of a command from before the upgrade
+  is refused, never run twice. The upgrade runs in one transaction. A project command takes
+  its id inside its write (insert-if-absent; a receipt is never replaced), records its project
+  and T3's command type (`project.update` is `project.meta.update`), and records a refusal
+  from planning, which a retry gets again (T3's `commitRejectedProjectCommand`).
   Refusals made before the decision (access, a disabled provider) stay open, as T3's
   mode-limit refusals. A replayed `queue.resume` or `queued-run.start` checks the queue
-  again, and the queue start holds the queue when the run's provider is off for its project. A command that writes nothing answers its own thread's latest sequence.
+  again. The queue start resolves the run's effective selection (a message that follows the
+  conversation takes the thread's), and holds the queue when that provider is off by T3's queue
+  rule: only an explicit project override or a machine entry turns it off. A command that writes nothing answers its own thread's latest sequence.
 - Thread setters record their event even when nothing changes, as T3's deciders do.
   `thread.auto-settle` refuses a thread set active or changed after its snapshot, then
   settles. A settle whose `expectedLatestRunId` is not the latest run is refused. `thread.visit` keeps the later visit and records `thread.visit-recorded`.
@@ -56,8 +58,9 @@ Proof: `a_fork_receipt_belongs_to_its_target_thread`,
 `a_replayed_queue_resume_starts_what_waits`, `auto_settle_rechecks_the_thread_against_its_snapshot`,
 `a_settle_for_a_stale_run_is_refused`,
 `a_delayed_visit_keeps_the_later_time`, `a_merge_back_first_message_names_its_instance`,
-`the_receipt_high_water_reads_an_index`, `a_reused_id_after_pruning_belongs_to_its_last_execution`,
-`a_legacy_delegation_belongs_to_its_parent`, `the_receipt_upgrade_is_all_or_nothing`,
+`the_receipt_high_water_reads_an_index`, `the_receipt_upgrade_is_all_or_nothing`, `a_v4_store_upgrades_and_refuses_its_old_retries`,
+`a_planned_project_refusal_is_replayed`, `a_project_replay_without_its_row_is_a_read_error`,
+`a_receipt_is_never_replaced`, `the_queue_starts_on_the_effective_selection`,
 `a_project_write_checks_the_receipt_it_would_reuse`, `a_replayed_resume_holds_a_queue_whose_provider_is_off`,
 `a_stale_visit_loses_to_a_mark_in_mains_format`, `persists_rejected_command_receipts_across_retries` and the duplicate-create retry in
 `a_retried_command_returns_its_receipt` (T3's own tests, ported),
