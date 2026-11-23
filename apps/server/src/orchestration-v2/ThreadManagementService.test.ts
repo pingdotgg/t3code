@@ -38,6 +38,11 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import {
+  ThreadWorktreeRestore,
+  WorktreeRecreateError,
+} from "../workspace/restoreMissingWorktree.ts";
 
 it("stamps authoritative provenance on commands that create threads or messages", () => {
   const command: OrchestrationV2Command = {
@@ -63,6 +68,19 @@ it("stamps authoritative provenance on commands that create threads or messages"
       threadId: ThreadId.make("thread:elsewhere"),
       title: "Somewhere else",
     },
+    // A client's message goes through intake; only the server folds one into the creation.
+    initialMessage: {
+      messageId: MessageId.make("message:thread-management:forged"),
+      text: "Forged",
+      attachments: [],
+    },
+    // Nor a workflow run it is a step of.
+    workflowRun: {
+      environmentId: EnvironmentId.make("environment:elsewhere"),
+      runId: "run-1",
+      workflow: "fix",
+      step: "write",
+    },
   };
 
   const stamped = ThreadManagementService.withCreationProvenance(command, {
@@ -75,6 +93,8 @@ it("stamps authoritative provenance on commands that create threads or messages"
   });
   expect(stamped).not.toHaveProperty("linkOrigin");
   expect(stamped).not.toHaveProperty("delegatedFrom");
+  expect(stamped).not.toHaveProperty("initialMessage");
+  expect(stamped).not.toHaveProperty("workflowRun");
 });
 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
@@ -198,6 +218,101 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect.each([
+  { label: "fails a send that starts a turn", running: false },
+  { label: "still steers a running turn", running: true },
+])("sendToThread with a missing worktree that cannot be recreated $label", ({ running }) => {
+  const projectId = ProjectId.make("project:thread-management:worktree-gone");
+  const threadId = ThreadId.make("thread:thread-management:worktree-gone");
+  const dispatched: Array<string> = [];
+  const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(
+      Layer.succeed(ThreadWorktreeRestore, {
+        restore: () =>
+          Effect.fail(
+            new WorktreeRecreateError({
+              worktreePath: "/worktrees/gone",
+              branch: "t3/gone",
+              cause: new Error("branch_checked_out_in_worktree"),
+            }),
+          ),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(LegacyV1ThreadImporter.LegacyV1ThreadImporter)({
+        ensureTranscript: () => Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
+      }),
+    ),
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: {
+              id: threadId,
+              projectId,
+              deletedAt: null,
+              archivedAt: null,
+              worktreePath: "/worktrees/gone",
+              branch: "t3/gone",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
+            },
+            runs: running
+              ? [
+                  {
+                    id: RunId.make("run:thread-management:worktree-gone"),
+                    status: "running",
+                    activeAttemptId: "attempt:thread-management:worktree-gone",
+                  },
+                ]
+              : [],
+            providerTurns: running
+              ? [
+                  {
+                    runAttemptId: "attempt:thread-management:worktree-gone",
+                    status: "running",
+                  },
+                ]
+              : [],
+            messages: [],
+            turnItems: [],
+          } as unknown as OrchestrationV2ThreadProjection),
+        dispatch: (command) =>
+          Effect.sync(() => {
+            dispatched.push(command.type);
+            return { sequence: 1, storedEvents: [] } as never;
+          }),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provideMerge(layerReceiptsTest),
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      threads.sendToThread({
+        projectId,
+        threadId,
+        commandId: CommandId.make("command:thread-management:worktree-gone"),
+        messageId: MessageId.make("message:thread-management:worktree-gone"),
+        text: "Reply with ok.",
+        attachments: [],
+        mode: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    );
+    // The mock records no message, so a dispatched send ends in the projection read.
+    expect(error._tag).toBe(
+      running
+        ? "ThreadManagementDurableRunProjectionError"
+        : "ThreadManagementWorktreeRestoreError",
+    );
+    expect(dispatched).toEqual(running ? ["message.dispatch"] : []);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("waitForThread follows a restart continuation instead of the cut run", () =>
   Effect.gen(function* () {
@@ -358,6 +473,113 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
   }),
 );
 
+it.effect(
+  "a turn that ended without its result is waited past, and a later turn answers for it",
+  () =>
+    Effect.gen(function* () {
+      const projectId = ProjectId.make("project:thread-management:owed");
+      const threadId = ThreadId.make("thread:thread-management:owed");
+      const runId = RunId.make("run:thread-management:owed");
+      const wakeRunId = RunId.make("run:thread-management:owed:wake");
+      const subscribed = yield* Deferred.make<void>();
+      const events = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const outputSchema = { type: "object", required: ["head"] };
+      const run = (id: RunId, ordinal: number, fields: object) =>
+        ({ id, ordinal, ...fields }) as unknown as OrchestrationV2Run;
+      // The agent ended its turn to wait for something, without the result it was asked for.
+      let runs = [run(runId, 1, { status: "completed", outputSchema })];
+      const submitted: Array<unknown> = [];
+      const stored = (sequence: number, event: object) =>
+        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadEventSequence: () => Effect.succeed(0),
+            restartContinuationPending: () => Effect.succeed(false),
+            streamStoredEventsFrom: (input) =>
+              input?.eventType === "run.output-submitted"
+                ? Stream.fromEffect(Deferred.succeed(subscribed, undefined)).pipe(
+                    Stream.drain,
+                    Stream.concat(Stream.fromQueue(events)),
+                  )
+                : Stream.never,
+            getThreadRecords: () =>
+              Effect.sync(
+                () =>
+                  ({
+                    thread: { id: threadId, projectId, deletedAt: null },
+                    runs,
+                  }) as unknown as OrchestrationV2ThreadProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                submitted.push(command);
+                return { sequence: 1 } as never;
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const wait = { projectId, threadId, runId, timeoutMs: 60 * 60 * 1_000 };
+      // Without the option the ended turn is the answer, as before.
+      expect(yield* service.waitForThread(wait)).toMatchObject({ timedOut: false });
+      // A turn asked for nothing owes nothing, so the option does not hold it.
+      const plainRunId = RunId.make("run:thread-management:owed:plain");
+      runs = [run(plainRunId, 0, { status: "completed" }), ...runs];
+      expect(
+        yield* Effect.raceFirst(
+          service.waitForThread({ ...wait, runId: plainRunId, untilOutput: true }),
+          Effect.as(Deferred.await(subscribed), "waited for a result"),
+        ),
+      ).toMatchObject({ timedOut: false, run: { id: plainRunId } });
+      runs = runs.slice(1);
+
+      const fiber = yield* service
+        .waitForThread({ ...wait, untilOutput: true })
+        .pipe(Effect.forkChild);
+      yield* Effect.raceFirst(Deferred.await(subscribed), Fiber.await(fiber));
+      // Something wakes the thread. The turn it starts was asked for nothing, and submits anyway.
+      // A request queued behind it asks for a result of its own, and is not the one owed.
+      const queuedRunId = RunId.make("run:thread-management:owed:queued");
+      runs = [
+        ...runs,
+        run(wakeRunId, 2, { status: "running" }),
+        run(queuedRunId, 3, { status: "queued", outputSchema }),
+      ];
+      const accepted = yield* service.submitRunOutput({
+        threadId,
+        commandId: CommandId.make("command:thread-management:owed"),
+        json: '{"head":"abc"}',
+      });
+      expect(accepted.runId).toBe(runId);
+      expect(submitted).toMatchObject([
+        { type: "run.output.submit", runId, value: { head: "abc" } },
+      ]);
+      const output = { value: { head: "abc" }, submittedAt: "2026-01-01T00:00:00.000Z" };
+      runs = [run(runId, 1, { status: "completed", outputSchema, output }), runs[1]!, runs[2]!];
+      yield* Queue.offer(events, stored(1, { type: "run.output-submitted", payload: {} }));
+      expect(yield* Fiber.join(fiber)).toMatchObject({
+        timedOut: false,
+        run: { id: runId, output },
+      });
+
+      // The result is given once: a later plain turn has nothing to submit to.
+      const again = yield* service
+        .submitRunOutput({
+          threadId,
+          commandId: CommandId.make("command:thread-management:owed:again"),
+          json: '{"head":"def"}',
+        })
+        .pipe(Effect.flip);
+      expect(again.message).toContain("not asked for a result");
+    }),
+);
+
 it.effect("waitForThread settles delegated work on a thread rolled back past its only run", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:wait-rolled-back");
@@ -411,6 +633,53 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
       timedOut: false,
       run: { id: runId, status: "rolled_back" },
       resultRun: { id: runId, status: "rolled_back" },
+    });
+  }),
+);
+
+it.effect("waitForThread waits for output only from a run that was asked for one", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:wait-output");
+    const threadId = ThreadId.make("thread:thread-management:wait-output");
+    const askedRunId = RunId.make("run:thread-management:wait-output:asked");
+    const plainRunId = RunId.make("run:thread-management:wait-output:plain");
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadEventSequence: () => Effect.succeed(0),
+          restartContinuationPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: () => Stream.never,
+          getThreadRecords: () =>
+            Effect.succeed({
+              thread: { id: threadId, projectId, deletedAt: null },
+              runs: [
+                { id: askedRunId, status: "completed", outputSchema: { type: "object" } },
+                { id: plainRunId, status: "completed" },
+              ],
+            } as unknown as OrchestrationV2ThreadProjection),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const wait = (runId: RunId) =>
+      service
+        .waitForThread({ projectId, threadId, runId, timeoutMs: 60_000, untilOutput: true })
+        .pipe(Effect.forkChild);
+    const asked = yield* wait(askedRunId);
+    const plain = yield* wait(plainRunId);
+    yield* TestClock.adjust(Duration.millis(60_000));
+
+    // A later turn may still submit the result the first run owes.
+    expect(yield* Fiber.join(asked)).toMatchObject({ timedOut: true, run: { id: askedRunId } });
+    // Nothing can submit one for a run that never asked, so its end is the answer.
+    expect(yield* Fiber.join(plain)).toMatchObject({
+      timedOut: false,
+      run: { id: plainRunId, status: "completed" },
     });
   }),
 );
@@ -588,6 +857,11 @@ it.effect.each([
   { status: "completed" as const, followUp: "held-notification", settles: true },
   { status: "completed" as const, followUp: "user", settles: false },
   { status: "completed" as const, followUp: "steered-notification", settles: false },
+  // Send now cancels the queued run; its message joins the run that asked to settle.
+  { status: "completed" as const, followUp: "promoted-to-steer", settles: true },
+  // A delegated-completion wake cancelled unstarted because the turn already took the result.
+  { status: "completed" as const, followUp: "cancelled-delegated", settles: true },
+  { status: "completed" as const, followUp: "stopped-delegated", settles: false },
 ])("settleAfterRun handles $status with $followUp follow-up", ({ status, followUp, settles }) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:thread-management:settle-after-run");
@@ -606,6 +880,7 @@ it.effect.each([
       ordinal: 2,
       status: "running" as OrchestrationV2Run["status"],
       userMessageId: MessageId.make("follow-up"),
+      startedAt: followUp === "stopped-delegated" ? "2026-01-01T00:00:00.000Z" : null,
     };
     const dispatched: Array<string> = [];
     // The notification starts after the completed run was observed, before settlement commits.
@@ -635,10 +910,10 @@ it.effect.each([
                     { id: MessageId.make("original"), runId, role: "user" as const },
                     {
                       id: nextRun.userMessageId,
-                      runId: followUpId,
+                      runId: followUp === "promoted-to-steer" ? runId : followUpId,
                       role: "user" as const,
                       ...(followUp.endsWith("notification") ? { notification: {} } : {}),
-                      ...(followUp === "delegated" ? { delegatedCompletion: {} } : {}),
+                      ...(followUp.endsWith("delegated") ? { delegatedCompletion: {} } : {}),
                     },
                     { id: MessageId.make("reply"), runId: followUpId, role: "assistant" as const },
                     ...(followUp === "steered-notification"
@@ -702,7 +977,9 @@ it.effect.each([
           ? "failed"
           : followUp === "held-notification"
             ? "queued"
-            : "completed";
+            : followUp === "promoted-to-steer" || followUp.endsWith("ed-delegated")
+              ? "cancelled"
+              : "completed";
       yield* Queue.offer(events, {
         sequence: 1,
         event: { type: "run.updated", threadId, payload: nextRun },

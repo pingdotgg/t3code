@@ -27,6 +27,7 @@ import {
   type RichTextMark,
 } from "~/composer-rich-text";
 import { caretTakesMarksBefore, serializeEditorDoc } from "~/composer-rich-text-doc";
+import { isPasteTransaction } from "~/composer-undo-grouping";
 
 // Styled text the selection touches becomes source text with the source mark,
 // parsed back once the selection leaves. History steps only replay on the shape
@@ -221,9 +222,9 @@ function collapseRegion(tr: Transaction, region: TextRange, type: MarkType): voi
 function collapseMarkdownSource(
   tr: Transaction,
   keep: (region: TextRange) => boolean = () => false,
-): void {
+): TextRange[] {
   const type = tr.doc.type.schema.marks[MARKDOWN_SOURCE_MARK];
-  if (!type) return;
+  if (!type) return [];
   const regions: TextRange[] = [];
   for (const region of sourceRegions(tr.doc, type)) {
     const extended = withAdjacentDelimiters(tr.doc, region);
@@ -235,6 +236,7 @@ function collapseMarkdownSource(
     if (keep(region)) tr.addMark(region.from, region.to, type.create());
     else collapseRegion(tr, region, type);
   }
+  return regions;
 }
 
 function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) => number) {
@@ -248,7 +250,14 @@ function mapSelection(tr: Transaction, selection: Selection, map: (pos: number) 
 
 /** Parses all shown source first, so a command that splits it keeps its styles. */
 export const collapseShownMarkdownSource: Command = ({ tr }) => {
-  collapseMarkdownSource(tr);
+  const { selection } = tr;
+  const type = tr.doc.type.schema.marks[MARKDOWN_SOURCE_MARK];
+  const marks = tr.storedMarks ?? selection.$from.marks();
+  const regions = collapseMarkdownSource(tr);
+  // A caret after the closing markers is outside the styles, though parsed text there is inclusive.
+  if (type && selection.empty && regions.some(({ to }) => to === selection.from)) {
+    tr.setStoredMarks(type.removeFromSet(marks));
+  }
   return true;
 };
 
@@ -488,9 +497,10 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
       const source = markdownSourceKey.getState(state);
       if (source?.detached) return normalizeDetached(state, source.revealed);
+      // A paste is not typing: the caret ends past the pasted text's closing markers.
       const tr = normalizeMarkdownSource(
         state,
-        transactions.some((item) => item.docChanged),
+        transactions.some((item) => item.docChanged && !isPasteTransaction(item)),
       );
       // With nothing to undo, a recorded rewrite would only add a no-op undo.
       if (tr && undoDepth(state) === 0) tr.setMeta("addToHistory", false);
