@@ -1135,8 +1135,8 @@ pub async fn branch_commits(
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
+    #[test]
+    fn nested_head_probe_skips_only_exit_1_and_propagates_execution_errors() {
         let exited = |code| {
             Ok(GitOutput {
                 code,
@@ -1166,27 +1166,29 @@ mod tests {
             head_probe_has_commit(Err(timeout.clone())),
             Err(VcsError::Process(timeout))
         );
-        // A probe that a signal ends never finished: T3 fails the command before any exit
-        // code reaches the caller.
-        #[cfg(unix)]
-        {
-            let signalled = GitCommand::host_cli(
-                "test.signalled",
-                "sh",
-                Path::new("/"),
-                ["-c", "kill -TERM $$"],
-            )
-            .allow_exit(&[1])
-            .run()
-            .await;
-            let Err(error) = signalled.clone() else {
-                panic!("sh ended by SIGTERM succeeded: {signalled:?}");
-            };
-            assert_eq!(
-                head_probe_has_commit(signalled),
-                Err(VcsError::Process(error))
-            );
-        }
+    }
+
+    /// A probe that a signal ends never finished: T3 fails the command before any exit code
+    /// reaches the caller.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn nested_head_probe_propagates_a_signal() {
+        let signalled = GitCommand::host_cli(
+            "test.signalled",
+            "sh",
+            Path::new("/"),
+            ["-c", "kill -TERM $$"],
+        )
+        .allow_exit(&[1])
+        .run()
+        .await;
+        let Err(error) = signalled.clone() else {
+            panic!("sh ended by SIGTERM succeeded: {signalled:?}");
+        };
+        assert_eq!(
+            head_probe_has_commit(signalled),
+            Err(VcsError::Process(error))
+        );
     }
 
     #[test]
