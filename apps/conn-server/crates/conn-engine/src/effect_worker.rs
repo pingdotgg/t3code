@@ -51,6 +51,15 @@ pub(crate) struct TestHooks {
     )>,
 }
 
+/// The wait before settlement try `failures + 1`: 100 ms, doubling, at most 30 s (the
+/// backoff of T3's `retry`).
+fn settle_backoff(failures: u32) -> Duration {
+    let factor = 2u32.saturating_pow(failures.saturating_sub(1));
+    LOCK_RETRY
+        .saturating_mul(factor)
+        .min(Duration::from_secs(30))
+}
+
 /// A store too busy to write now: try again, the effect itself is done.
 fn locked(error: &rusqlite::Error) -> bool {
     matches!(
@@ -173,17 +182,32 @@ impl Inner {
     /// meets a locked store tries again (`retryWhileLocked`); one that fails otherwise settles
     /// the row `failed` instead (`terminalizeClaim`). T3 puts a replay-safe effect back in the
     /// queue there; we never run an effect twice (no worker retries yet), so every kind ends
-    /// `failed`, with the reason.
+    /// `failed`, with the reason. Where T3 gives up after one failed `fail`, the row would hold
+    /// its thread until a restart; here the settlement is tried again with backoff for as long
+    /// as this engine owns the store.
     async fn settle_ran(&self, id: i64) {
-        let error = match self.settle(id, Settled::Succeeded, None).await {
-            Ok(()) => return,
-            Err(e) => e,
-        };
-        eprintln!("conn-engine: could not settle effect {id}: {error}");
-        let reason = format!("Worker failed to settle the effect after execution started: {error}");
-        if let Err(e) = self.settle(id, Settled::Failed, Some(reason)).await {
-            // The row stays running and holds its thread until the next start cancels it.
-            eprintln!("conn-engine: could not fail effect {id} after its settlement failed: {e}");
+        let mut status = Settled::Succeeded;
+        let mut reason = None;
+        let mut failures = 0;
+        loop {
+            let error = match self.settle(id, status, reason.clone()).await {
+                Ok(()) => return,
+                Err(e) => e,
+            };
+            // A newer engine cancelled the row at its start; this one writes nothing more.
+            if self.engine_dropped.load(Ordering::SeqCst) {
+                return;
+            }
+            eprintln!("conn-engine: could not settle effect {id}: {error}");
+            if status == Settled::Succeeded {
+                status = Settled::Failed;
+                reason = Some(format!(
+                    "Worker failed to settle the effect after execution started: {error}"
+                ));
+            }
+            // The effect itself ran once; only its settlement is tried again, until it lands.
+            failures += 1;
+            tokio::time::sleep(settle_backoff(failures)).await;
         }
     }
 

@@ -357,8 +357,9 @@ pub async fn serve_with_instances(
         crate::text_generation::title::Titles::new(text_generators.clone())
             .with_providers(providers.clone(), Some(state_dir.join("attachments"))),
     ));
+    // Opening reads, migrates and recovers the store: on the blocking pool, not this thread.
     let sqlite_engine = Arc::new(or_exit(
-        SqliteEngine::open(config),
+        SqliteEngine::start(config).await,
         "cannot open the engine",
     ));
     let engine: Arc<dyn Engine> = sqlite_engine.clone();

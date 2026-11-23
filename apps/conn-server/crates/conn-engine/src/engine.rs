@@ -339,6 +339,15 @@ impl SqliteEngine {
         Ok(engine)
     }
 
+    /// [`Self::open`] for a caller on the runtime: the store is opened, migrated and recovered
+    /// on the blocking pool (AGENTS rule 2), and the effect worker starts once recovery
+    /// committed.
+    pub async fn start(config: EngineConfig) -> Result<Self, String> {
+        tokio::task::spawn_blocking(move || Self::open(config))
+            .await
+            .map_err(|e| format!("the engine's open stopped: {e}"))?
+    }
+
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
     /// provider's end and the capture leaves it.
     /// Holds a workspace's checkpoint lock, so a capture or a rollback there waits.

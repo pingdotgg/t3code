@@ -307,6 +307,31 @@ fn stored_high(conn: &Connection) -> StoreResult<u64> {
     Ok(high.max(0) as u64)
 }
 
+/// Whether a single-statement write may go ahead ([`Store::lease`]).
+pub(crate) enum Lease {
+    /// No engine took the store: write freely.
+    Unowned,
+    /// The statement checks this epoch against `meta.engine_epoch` itself.
+    Held(i64),
+    /// This engine was dropped: write nothing.
+    Released,
+}
+
+impl Lease {
+    /// The epoch a statement's [`lease_guard`] binds; `None` for a store no engine owns.
+    pub(crate) fn guard(&self) -> Option<i64> {
+        match self {
+            Self::Held(epoch) => Some(*epoch),
+            Self::Unowned | Self::Released => None,
+        }
+    }
+}
+
+/// The guard a single statement adds, with its epoch bound to `?{n}`.
+pub(crate) fn lease_guard(n: usize) -> String {
+    format!("(?{n} IS NULL OR ?{n} = (SELECT value FROM meta WHERE key = 'engine_epoch'))")
+}
+
 /// A write by an engine that no longer owns the store.
 pub(crate) const NOT_OWNER: &str = "store: this engine no longer owns the database";
 
@@ -417,6 +442,14 @@ impl Store {
 
     pub(crate) fn owner(&self) -> Option<&Owner> {
         self.owner.as_ref()
+    }
+
+    /// What a write outside [`Tx`] must check (`Owner`).
+    pub(crate) fn lease(&self) -> Lease {
+        match &self.owner {
+            None => Lease::Unowned,
+            Some(owner) => owner.epoch().map_or(Lease::Released, Lease::Held),
+        }
     }
 
     /// `EXPLAIN QUERY PLAN` details, one per step, for tests that prove an index is used.
@@ -1072,19 +1105,37 @@ impl Store {
         .collect()
     }
 
-    /// Moves a pending rollback to `phase`, with the provider's answer for `provider_done`.
-    pub(crate) fn set_rollback_phase(
+    /// Moves a pending rollback from phase `from` to `to`, with the provider's answer for
+    /// `provider_done`, in one write that also checks the engine's lease. `false` when nothing
+    /// moved: another engine owns the store, or the rollback is not in `from`. A caller then
+    /// must not contact the provider.
+    pub(crate) fn advance_rollback(
         &self,
         command_id: &str,
-        phase: &str,
+        from: &str,
+        to: &str,
         snapshot: Option<&Value>,
-    ) -> StoreResult<()> {
+    ) -> StoreResult<bool> {
+        let lease = self.lease();
+        if matches!(lease, Lease::Released) {
+            return Ok(false);
+        }
         self.conn
             .execute(
-                "UPDATE pending_rollbacks SET phase = ?2, snapshot = ?3 WHERE command_id = ?1",
-                rusqlite::params![command_id, phase, snapshot.map(Value::to_string)],
+                &format!(
+                    "UPDATE pending_rollbacks SET phase = ?3, snapshot = ?4
+                     WHERE command_id = ?1 AND phase = ?2 AND {}",
+                    lease_guard(5)
+                ),
+                rusqlite::params![
+                    command_id,
+                    from,
+                    to,
+                    snapshot.map(Value::to_string),
+                    lease.guard()
+                ],
             )
-            .map(drop)
+            .map(|changed| changed == 1)
             .map_err(err)
     }
 

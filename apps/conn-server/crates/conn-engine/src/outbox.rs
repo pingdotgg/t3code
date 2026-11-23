@@ -16,7 +16,7 @@
 use rusqlite::{Connection, params};
 
 use crate::commands::Effect;
-use crate::store::{Store, StoreResult, Tx, owns};
+use crate::store::{NOT_OWNER, Store, StoreResult, Tx, owns};
 
 /// The outbox table. `progress` is what a running effect recorded so a later process can go on
 /// from there (a rollback's phase and the provider's answer).
@@ -356,10 +356,20 @@ impl Store {
     }
 
     /// Cancels what a previous process left `pending` or `running`, at start, before anything
-    /// is claimed. Returns how many rows it cancelled.
+    /// is claimed. Returns how many rows it cancelled. The ownership check and the cancel are
+    /// one transaction: an engine whose open a newer one overtook gets [`NOT_OWNER`] and must
+    /// not go on, or it would cancel the newer engine's rows.
     pub(crate) fn cancel_unsettled_effects(&self) -> StoreResult<usize> {
         let now = self.now_iso();
-        self.raw()
+        let tx = rusqlite::Transaction::new_unchecked(
+            self.raw(),
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .map_err(err)?;
+        if !owns(&tx, self.owner())? {
+            return Err(NOT_OWNER.into());
+        }
+        let cancelled = tx
             .execute(
                 "UPDATE effect_outbox
                  SET status = 'cancelled', completed_at = ?1, updated_at = ?1,
@@ -367,7 +377,9 @@ impl Store {
                  WHERE status IN ('pending', 'running')",
                 [now],
             )
-            .map_err(err)
+            .map_err(err)?;
+        tx.commit().map_err(err)?;
+        Ok(cancelled)
     }
 
     /// The status of an outbox row.

@@ -399,6 +399,9 @@ enum RollbackFailure {
     Invalid(&'static str),
     Shared,
     Failed(String),
+    /// This engine may not send the provider rollback: another engine owns the store, or the
+    /// rollback is not in the phase this run left it in. It stops and writes nothing.
+    Fenced,
 }
 
 fn read_context(
@@ -516,6 +519,8 @@ struct RollbackProgress {
     /// The provider's answer: the row to commit, and the live session to move to it once the
     /// commit is done.
     provider: Option<(Value, Option<ProviderUpdate>)>,
+    /// This run moved the rollback to `provider`; a retry goes on from there.
+    provider_sent: bool,
     files_restored: bool,
     refs_deleted: bool,
 }
@@ -531,6 +536,7 @@ impl RollbackFailure {
             Self::Invalid(reason) => (*reason).to_owned(),
             Self::Shared => "shared-workspace".to_owned(),
             Self::Failed(detail) => detail.clone(),
+            Self::Fenced => "fenced".to_owned(),
         }
     }
 }
@@ -549,6 +555,13 @@ impl Inner {
         let outcome = loop {
             match self.try_rollback(&request, &mut progress).await {
                 Ok(()) => break Ok(()),
+                Err(RollbackFailure::Fenced) => {
+                    eprintln!(
+                        "conn-engine: rollback {} of {} is no longer this engine's",
+                        request.checkpoint_id, request.thread_id
+                    );
+                    return;
+                }
                 Err(failure) if attempt < ROLLBACK_ATTEMPTS => {
                     eprintln!(
                         "conn-engine: rollback {} of {} failed (attempt {attempt}), retrying: {}",
@@ -576,7 +589,8 @@ impl Inner {
                 }
                 RollbackFailure::Invalid(_)
                 | RollbackFailure::Shared
-                | RollbackFailure::Failed(_) => ROLLBACK_FAILED_MESSAGE,
+                | RollbackFailure::Failed(_)
+                | RollbackFailure::Fenced => ROLLBACK_FAILED_MESSAGE,
             };
             self.record_rollback_failure(&request, message).await;
         }
@@ -645,11 +659,22 @@ impl Inner {
         } else {
             let live = self.rollback_session(&context).await?;
             live.touch(self.clock.now_millis());
-            // From here a restart cannot tell whether the provider rolled back.
+            // From here a restart cannot tell whether the provider rolled back. Exactly one
+            // engine moves the rollback on, once; any other stops before the provider.
             let id = request.command_id.clone();
-            self.db(move |store| store.set_rollback_phase(&id, "provider", None))
+            let from = if progress.provider_sent {
+                "provider"
+            } else {
+                "admitted"
+            };
+            let moved = self
+                .db(move |store| store.advance_rollback(&id, from, "provider", None))
                 .await
                 .map_err(RollbackFailure::Failed)?;
+            if !moved {
+                return Err(RollbackFailure::Fenced);
+            }
+            progress.provider_sent = true;
             let snapshot = live
                 .session()
                 .rollback_thread(RollbackThreadInput {
@@ -667,11 +692,13 @@ impl Inner {
             let row = to_json(&snapshot.provider_thread);
             let (id, stored) = (request.command_id.clone(), row.clone());
             let kept = self
-                .db(move |store| store.set_rollback_phase(&id, "provider_done", Some(&stored)))
+                .db(move |store| {
+                    store.advance_rollback(&id, "provider", "provider_done", Some(&stored))
+                })
                 .await;
-            if let Err(e) = kept {
+            if !matches!(kept, Ok(true)) {
                 // A restart then records a failure instead of finishing the rollback.
-                eprintln!("conn-engine: could not keep a provider rollback's answer: {e}");
+                eprintln!("conn-engine: could not keep a provider rollback's answer: {kept:?}");
             }
             progress.provider = Some((row.clone(), Some((live, snapshot.provider_thread))));
             row

@@ -330,3 +330,61 @@ fn pruning_drops_old_settled_rows_in_batches_and_keeps_the_rest() {
     assert_eq!(left, ["failed", "pending", "running", "succeeded"]);
     assert_eq!(t.1.prune_settled_batch().unwrap(), 0);
 }
+
+fn rollback_phase(store: &Store, command: &str) -> String {
+    store
+        .raw()
+        .query_row(
+            "SELECT phase FROM pending_rollbacks WHERE command_id = ?1",
+            [command],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+/// The gate's probe: an engine replaced while its rollback was admitted must not mark the
+/// provider rollback sent (and then send it): the newer engine runs that rollback.
+#[test]
+fn a_replaced_engine_cannot_move_a_rollback_on() {
+    let mut t = TempStore::new("rollback-fence");
+    t.1.take_ownership().unwrap();
+    let tx = t.1.tx().unwrap();
+    tx.put_pending_rollback("rb", "t1", &json!({"providerThreadId": "p"}))
+        .unwrap();
+    tx.commit(None).unwrap();
+    let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
+    newer.take_ownership().unwrap();
+    assert!(
+        !t.1.advance_rollback("rb", "admitted", "provider", None)
+            .unwrap()
+    );
+    assert_eq!(rollback_phase(&newer, "rb"), "admitted");
+    // The owner moves it on exactly once; a second move from `admitted` moves nothing.
+    assert!(
+        newer
+            .advance_rollback("rb", "admitted", "provider", None)
+            .unwrap()
+    );
+    assert!(
+        !newer
+            .advance_rollback("rb", "admitted", "provider", None)
+            .unwrap()
+    );
+    assert_eq!(rollback_phase(&newer, "rb"), "provider");
+}
+
+/// The gate's probe: engine A opened, then engine B took the store and committed a start.
+/// A's startup cancellation, late, must not cancel B's row: a stale open aborts.
+#[test]
+fn a_stale_open_cancels_nothing() {
+    let mut t = TempStore::new("stale-open");
+    t.1.take_ownership().unwrap();
+    let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
+    newer.take_ownership().unwrap();
+    enqueue(&mut newer, &[start("t1", "r1")]);
+    assert_eq!(
+        t.1.cancel_unsettled_effects().unwrap_err(),
+        crate::store::NOT_OWNER
+    );
+    assert_eq!(newer.effect_status(1).unwrap().as_deref(), Some("pending"));
+}
