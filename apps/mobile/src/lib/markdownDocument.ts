@@ -7,6 +7,7 @@ import {
   absoluteFilePathMatches,
   inlineCodeFilePathCandidate,
   parseMarkdownFileLink,
+  rewriteSpacedFilesystemDestinations,
 } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
@@ -500,7 +501,11 @@ function markdownWithWindowsPathDestinations(markdown: string): string {
 
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 export function markdownForNativeParsing(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  const spacedPathsAngled = rewriteSpacedFilesystemDestinations(
+    markdownWithHtml(markdown),
+    (destination) => (/[<>]/.test(destination) ? destination : `<${destination}>`),
+  );
+  return markdownWithWindowsPathDestinations(spacedPathsAngled);
 }
 
 export function parseMarkdownDocument(markdown: string): Root {
