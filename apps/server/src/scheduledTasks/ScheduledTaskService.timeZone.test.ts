@@ -155,3 +155,33 @@ it.effect("does not dispatch an old-zone run that is due at startup in a new zon
     expect(restarted?.nextRunAt).toBe("2026-07-02T00:00:00.000Z");
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect("moves a future run to the next occurrence even when it is valid in the new zone", () =>
+  Effect.gen(function* () {
+    // Monday 10:00 in Honolulu; Kiritimati is exactly a day ahead (Tuesday 10:00).
+    yield* TestClock.setTime(Date.parse("2026-07-06T20:00:00.000Z"));
+    yield* Effect.gen(function* () {
+      const service = yield* ScheduledTaskService.ScheduledTaskService;
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const { task: created } = yield* service.upsert(
+        yield* task("scheduled-task:weekly", {
+          type: "fixed_time",
+          timeOfDay: "09:00",
+          weekdays: [1, 3, 4],
+        }),
+      );
+      // Wednesday 09:00 Honolulu, which is Thursday 09:00 in Kiritimati.
+      expect(created.nextRunAt).toBe("2026-07-08T19:00:00.000Z");
+
+      const moved = yield* service.subscribeList().pipe(
+        Stream.filter((list) => list.timeZone === "Pacific/Kiritimati"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* settings.updateSettings({ scheduledTaskTimeZone: "Pacific/Kiritimati" });
+      const list = yield* Fiber.join(moved).pipe(Effect.map(Option.getOrThrow));
+      // Wednesday 09:00 Kiritimati comes first.
+      expect(list.tasks[0]?.nextRunAt).toBe("2026-07-07T19:00:00.000Z");
+    }).pipe(Effect.provide(serviceLayer("Pacific/Honolulu")));
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

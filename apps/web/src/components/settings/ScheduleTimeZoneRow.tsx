@@ -11,8 +11,9 @@ import {
 import { T, useGT, Var } from "gt-react";
 import { useState } from "react";
 
-import { useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { serverEnvironment } from "../../state/server";
 import { useEnvironmentsWithScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 import { Button } from "../ui/button";
 import {
@@ -55,7 +56,9 @@ export function ScheduleTimeZoneRow({
   const mixed = zones.some((zone) => zone !== saved);
   const writable = useEnvironmentsWithScope(environments, AuthSettingsWriteScope);
   const canWrite = environments.some((environment) => writable.has(environment.environmentId));
-  const updateSettings = useUpdatePrimarySettings();
+  const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "schedule time zone update",
+  });
   const { contains } = useComboboxFilter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -66,7 +69,12 @@ export function ScheduleTimeZoneRow({
   const filtered = query.trim()
     ? choices.filter((zone) => contains(label(zone), query) || contains(zone, query))
     : choices;
-  const save = (zone: string) => updateSettings({ scheduledTaskTimeZone: zone });
+  const save = (zone: string) => {
+    for (const { environmentId } of environments) {
+      if (!writable.has(environmentId)) continue;
+      void updateSettings({ environmentId, input: { patch: { scheduledTaskTimeZone: zone } } });
+    }
+  };
 
   return (
     <SettingsRow

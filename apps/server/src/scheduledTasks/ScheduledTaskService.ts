@@ -1425,8 +1425,8 @@ export const layer = Layer.effect(
       ),
     );
 
-    // A stored fixed-time run that is not an occurrence of its schedule in `zone` was set in
-    // another zone, so it moves to the next occurrence there. Running rows settle on completion.
+    // A future fixed-time run is the next occurrence from now; a due one is kept only while it is
+    // an occurrence in `zone`, which preserves missed-run grace. Running rows settle on completion.
     const moveFixedTimeRunsToZone = Effect.fn("ScheduledTaskService.moveFixedTimeRunsToZone")(
       function* (zone: DateTime.TimeZone) {
         const now = yield* DateTime.nowInCurrentZone.pipe(DateTime.withCurrentZone(zone));
@@ -1438,15 +1438,18 @@ export const layer = Layer.effect(
           const decoded = yield* Effect.result(decodeRow(row));
           if (Result.isFailure(decoded) || decoded.success.schedule.type !== "fixed_time") continue;
           const task = decoded.success;
+          const next = nextRunAt(task, now);
           const dueAt = DateTime.makeZoned(task.nextRunAt ?? "", { timeZone: zone });
-          if (
-            Option.isSome(dueAt) &&
-            nextRunAt(task, DateTime.subtract(dueAt.value, { milliseconds: 1 })) === task.nextRunAt
-          )
-            continue;
+          const due = (task.nextRunAt ?? "") <= iso(now);
+          const kept = due
+            ? Option.isSome(dueAt) &&
+              nextRunAt(task, DateTime.subtract(dueAt.value, { milliseconds: 1 })) ===
+                task.nextRunAt
+            : next === task.nextRunAt;
+          if (kept) continue;
           yield* sql`
             UPDATE scheduled_tasks
-            SET next_run_at = ${nextRunAt(task, now)}, updated_at = ${iso(now)}
+            SET next_run_at = ${next}, updated_at = ${iso(now)}
             WHERE task_id = ${task.id} AND next_run_at IS ${task.nextRunAt}
           `;
         }

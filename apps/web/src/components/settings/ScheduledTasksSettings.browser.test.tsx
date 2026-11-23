@@ -63,7 +63,7 @@ const state = vi.hoisted(() => ({
   secondary: false,
   remove: vi.fn(),
   reportedZone: undefined as string | undefined,
-  readOnly: false,
+  readOnly: [] as string[],
   updateSettings: vi.fn(),
 }));
 const secondaryId = EnvironmentId.make("secondary");
@@ -75,8 +75,8 @@ function setup() {
   state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.secondary = false;
   state.reportedZone = undefined;
-  state.readOnly = false;
-  state.updateSettings.mockReset();
+  state.readOnly = [];
+  state.updateSettings.mockReset().mockReturnValue(Effect.succeed(DEFAULT_SERVER_SETTINGS));
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
   permissions.set(secondaryId, Atom.make(true));
@@ -91,7 +91,9 @@ vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
   readEnvironmentScope: () => true,
   useEnvironmentsWithScope: ((environments: ReadonlyArray<{ environmentId: EnvironmentId }>) =>
-    new Set(state.readOnly ? [] : environments.map((entry) => entry.environmentId))) as never,
+    new Set(
+      environments.map((entry) => entry.environmentId).filter((id) => !state.readOnly.includes(id)),
+    )) as never,
 }));
 
 function environment() {
@@ -140,6 +142,10 @@ vi.mock(import("../../state/server"), async (original) => {
         ...actual.serverEnvironment.deleteScheduledTask,
         run: state.remove,
       },
+      updateSettings: {
+        ...actual.serverEnvironment.updateSettings,
+        run: state.updateSettings,
+      },
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
@@ -149,9 +155,7 @@ vi.mock(import("../../state/server"), async (original) => {
       ) =>
         state.reportedZone === undefined
           ? actual.serverEnvironment.scheduledTasksLive(request)
-          : Atom.make(
-              AsyncResult.success({ tasks: [task], timeZone: state.reportedZone }),
-            )) as never,
+          : Atom.make(AsyncResult.success({ tasks: [], timeZone: state.reportedZone }))) as never,
     },
   };
 });
@@ -192,7 +196,6 @@ vi.mock(import("../../state/entities"), async (original) => ({
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
   ...(await original()),
   useEnvironmentSettings: (() => DEFAULT_UNIFIED_SETTINGS) as never,
-  useUpdatePrimarySettings: (() => state.updateSettings) as never,
 }));
 
 describe("ScheduledTasksSettings", () => {
@@ -240,12 +243,39 @@ describe("ScheduledTasksSettings", () => {
       .element(screen.getByRole("status").filter({ hasText: "This device is in" }))
       .toHaveTextContent(`This device is in ${deviceName}.Use ${deviceName}`);
     await screen.getByRole("button", { name: `Use ${deviceName}` }).click();
-    expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith({ scheduledTaskTimeZone: device });
+    await vi.waitFor(() =>
+      expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId,
+        input: { patch: { scheduledTaskTimeZone: device } },
+      }),
+    );
+  });
+
+  it("moves schedules on every writable environment, whatever the primary allows", async () => {
+    setup();
+    state.secondary = true;
+    state.readOnly = [environmentId];
+    const device = deviceTimeZone();
+    state.reportedZone = device === "Asia/Tokyo" ? "America/Denver" : "Asia/Tokyo";
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    await using screen = await render(
+      <RegistryContext.Provider value={registry}>
+        <ScheduledTasksSettings />
+      </RegistryContext.Provider>,
+    );
+    await screen.getByRole("button", { name: `Use ${device.replaceAll("_", " ")}` }).click();
+    await vi.waitFor(() =>
+      expect(state.updateSettings).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId: secondaryId,
+        input: { patch: { scheduledTaskTimeZone: device } },
+      }),
+    );
   });
 
   it("offers no time zone change on a connection that cannot write settings", async () => {
     setup();
-    state.readOnly = true;
+    state.readOnly = [environmentId];
     state.reportedZone = deviceTimeZone() === "Asia/Tokyo" ? "America/Denver" : "Asia/Tokyo";
     const registry = AtomRegistry.make();
     using _registry = { [Symbol.dispose]: () => registry.dispose() };
