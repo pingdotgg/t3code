@@ -553,7 +553,7 @@ setInterval(() => {}, 1_000);
         );
         yield* fs.writeFileString(
           path.join(bin, "systemctl"),
-          `#!/bin/sh\necho reload >> '${path.join(root, "reloads")}'\n`,
+          `#!/bin/sh\n[ "$*" = "--user daemon-reload" ] && echo reload >> '${path.join(root, "reloads")}'\n`,
         );
         yield* fs.chmod(path.join(bin, "busctl"), 0o755);
         yield* fs.chmod(path.join(bin, "systemctl"), 0o755);
