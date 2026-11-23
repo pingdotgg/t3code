@@ -7324,8 +7324,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
-      // Server deliveries settle quietly so their workers do not retry; a sender is told no.
-      if (command.creationSource === "server" || command.creationSource === "provider") {
+      // Agent deliveries from the server settle quietly so their workers do not retry; anything a
+      // user or an MCP caller sent is refused, so the caller rolls back what it staged.
+      if (
+        command.createdBy === "agent" &&
+        (command.creationSource === "server" || command.creationSource === "provider")
+      ) {
         yield* emit(
           events,
           command,

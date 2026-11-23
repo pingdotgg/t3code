@@ -2769,6 +2769,49 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("refuses an async answer on an archived thread and keeps the question pending", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-archived-question");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-archived-question-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-archived-question-project"),
+        title: "Archived question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const { requestId } = yield* seedPendingQuestion(threadId, null, { type: "message" });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-archived-question-archive"),
+        threadId,
+      });
+      const commandId = CommandId.make("runtime-archived-question-answer");
+      const answered = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId,
+          threadId,
+          requestId,
+          answers: { color: "Blue", sizes: ["Small"] },
+        })
+        .pipe(Effect.result);
+      assert.equal(answered._tag, "Failure");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.runtimeRequests[0]?.status, "pending");
+      assert.deepEqual(projection.messages, []);
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+    }),
+  );
+
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
