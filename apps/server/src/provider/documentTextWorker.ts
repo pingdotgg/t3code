@@ -838,7 +838,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         }
       }
     } else if (extension === ".epub") {
-      const rootfile = all(read("META-INF/container.xml"), "rootfile").next().value?.attrs[
+      let rootfile = all(read("META-INF/container.xml"), "rootfile").next().value?.attrs[
         "full-path"
       ];
       if (!rootfile) {
@@ -846,6 +846,10 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
         yield* notes;
         return;
       }
+      try {
+        const decoded = decodeURIComponent(rootfile);
+        if (files.has(decoded)) rootfile = decoded;
+      } catch {}
       const packageXml = read(rootfile);
       const items = new Map(
         [...all(packageXml, "item")].map((item) => [item.attrs.id, item.attrs.href]),
