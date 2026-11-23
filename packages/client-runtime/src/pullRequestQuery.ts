@@ -18,6 +18,7 @@ const CHECKS_VALUES: Record<string, PullRequestListFilters["checks"]> = {
 const QUERY_TOKEN = /(?:[^\s"]|"[^"]*")+/g;
 const MAX_QUALIFIER_VALUES = 10;
 const MAX_QUALIFIER_LENGTH = 200;
+const MAX_TEXT_LENGTH = 200;
 
 function qualifierValue(raw: string): string {
   return raw.replaceAll('"', "").trim();
@@ -120,7 +121,7 @@ export function parsePullRequestQuery(raw: string): {
     text.push(token);
   }
   return {
-    text: text.join(" "),
+    text: text.join(" ").slice(0, MAX_TEXT_LENGTH).trim(),
     filters: {
       ...(labels.length === 0 ? {} : { labels: labels.slice(0, MAX_QUALIFIER_VALUES) }),
       ...(excludedLabels.length === 0

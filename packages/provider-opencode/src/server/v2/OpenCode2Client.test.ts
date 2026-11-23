@@ -458,7 +458,25 @@ describe("OpenCode2Client usage limits", () => {
         [404, {}, undefined],
         [405, {}, undefined],
         [200, { location: { directory: "/remote" }, data: null }, "unsupported"],
+        [
+          200,
+          {
+            location: { directory: "/remote" },
+            data: { workspace: { id: "wrk_zen", usageURL: "https://opencode.ai" }, budgets: [] },
+          },
+          "unsupported",
+        ],
         [503, {}, "probeFailed"],
+        [
+          503,
+          {
+            _tag: "ServiceUnavailableError",
+            message:
+              "OpenCode Console budgets are unavailable: StatusCode: non 2xx status code (401 GET https://opencode.ai/console/api/policies/current-budgets)",
+            service: "opencode",
+          },
+          "probeFailed",
+        ],
         [401, {}, "probeFailed"],
         [200, { data: { workspace: {} } }, "probeFailed"],
       ] as const) {
@@ -477,8 +495,10 @@ describe("OpenCode2Client usage limits", () => {
         const result = yield* api.usageLimits("/remote");
         if (reason === undefined) assert.strictEqual(result, undefined);
         else assert.strictEqual(result?.unavailable?.reason, reason);
-        if (status === 200 && reason === "unsupported")
+        if ("data" in body && body.data === null)
           assert.include(result?.unavailable?.message ?? "", "signed in");
+        if ("message" in body)
+          assert.include(result?.unavailable?.message ?? "", "OpenCode Console budgets");
       }
     }),
   );

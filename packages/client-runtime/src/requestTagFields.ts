@@ -5,12 +5,14 @@ import {
   REQUEST_TAGS_MAX,
 } from "@t3tools/contracts";
 import type { LiteLLMDefaultRequestTag } from "@t3tools/contracts/settings";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 const REQUEST_TAG_FIELDS = [
-  { category: "jira", label: "Jira ticket", placeholder: "PROJ-1234" },
-  { category: "project", label: "Project", placeholder: "passport" },
-  { category: "env", label: "Environment", placeholder: "dev" },
-  { category: "tool", label: "Tool", placeholder: "Automatic" },
+  { category: "jira", label: msg("Jira ticket"), placeholder: msg("PROJ-1234") },
+  { category: "project", label: msg("Project"), placeholder: msg("passport") },
+  { category: "env", label: msg("Environment"), placeholder: msg("dev") },
+  { category: "tool", label: msg("Tool"), placeholder: msg("Automatic") },
 ] as const;
 
 type RequestTagFieldKey = (typeof REQUEST_TAG_FIELDS)[number]["category"] | "other";
@@ -44,18 +46,23 @@ const encodeFieldValue = (key: RequestTagFieldKey, value: string) =>
 export function requestTagFieldRows(
   driver: string | undefined,
   defaultTag: LiteLLMDefaultRequestTag,
+  resolve: MFunctionType = mFallback,
 ) {
   const toolPlaceholder =
     defaultTag.mode === "off"
-      ? "None"
-      : (automaticLiteLLMToolValue(driver, defaultTag) ?? "Automatic");
+      ? resolve(msg("None"))
+      : (automaticLiteLLMToolValue(driver, defaultTag) ?? resolve(msg("Automatic")));
   return [
     ...REQUEST_TAG_FIELDS.map(({ category, label, placeholder }) => ({
       key: category,
-      label,
-      placeholder: category === "tool" ? toolPlaceholder : placeholder,
+      label: resolve(label),
+      placeholder: category === "tool" ? toolPlaceholder : resolve(placeholder),
     })),
-    { key: "other" as const, label: "Other tags", placeholder: "team:platform" },
+    {
+      key: "other" as const,
+      label: resolve(msg("Other tags")),
+      placeholder: resolve(msg("team:platform")),
+    },
   ];
 }
 

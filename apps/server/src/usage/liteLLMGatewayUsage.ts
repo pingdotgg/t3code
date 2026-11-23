@@ -98,7 +98,7 @@ export interface GatewayUsageSource {
   readonly files: readonly {
     readonly path: string;
     readonly records: readonly UsageRecord[];
-    readonly malformedRecords: number;
+    readonly malformedRecords: readonly number[];
   }[];
 }
 
@@ -181,7 +181,7 @@ export const readGatewayUsage = Effect.fn("UsageService.readGatewayUsage")(funct
         hostId: "litellm",
         status: "ok",
         message: "Spend reported by the LiteLLM gateway in daily totals.",
-        files: [{ path: `${url}#${userId}`, records: providerRecords, malformedRecords: 0 }],
+        files: [{ path: `${url}#${userId}`, records: providerRecords, malformedRecords: [] }],
       });
     if (tags !== undefined) {
       tagsAvailable = true;

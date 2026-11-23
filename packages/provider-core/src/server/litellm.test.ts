@@ -413,6 +413,7 @@ const createLiteLLMInstance = (
       Effect.provideService(
         ProviderHost.ProviderHost,
         ProviderHost.ProviderHost.of({
+          compatibility: () => Effect.undefined,
           paths: {
             cwd: fixture.dir,
             baseDir: fixture.dir,

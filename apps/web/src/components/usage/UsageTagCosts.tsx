@@ -1,4 +1,6 @@
 import type { UsageGatewayTagCost, UsageProviderKind, UsageTagCost } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
+import type { MessageResolver } from "../../i18n/messages";
 import { useState } from "react";
 import * as Schema from "effect/Schema";
 import { formatCount, formatUsd } from "@t3tools/shared/usageFormat";
@@ -47,7 +49,7 @@ function gatewayTagRows(rows: readonly UsageGatewayTagCost[]): TagRow[] {
     .toSorted((a, b) => b.costUsd - a.costUsd || a.tag.localeCompare(b.tag));
 }
 
-function estimateTagRows(rows: readonly UsageTagCost[]): TagRow[] {
+function estimateTagRows(rows: readonly UsageTagCost[], m: MessageResolver): TagRow[] {
   return rows.map((row) => ({
     key: JSON.stringify([row.provider, row.tag]),
     tag: row.tag,
@@ -55,7 +57,7 @@ function estimateTagRows(rows: readonly UsageTagCost[]): TagRow[] {
     costUsd: row.costUsd,
     cost:
       row.pricedTurns === 0
-        ? "Unpriced"
+        ? m(msg("Unpriced"))
         : `${formatUsd(row.costUsd)}${row.unpricedTurns > 0 ? "+" : ""}`,
     counts: [formatCount(row.pricedTurns), formatCount(row.unpricedTurns)],
   }));
@@ -69,6 +71,8 @@ export function UsageTagCosts({
   /** Gateway-reported spend; when present it replaces the local estimates. */
   readonly gateway: readonly UsageGatewayTagCost[] | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [search, setSearch] = useState("");
   const [kind, setKind] = useState(ALL);
   const [provider, setProvider] = useState<UsageProviderKind | typeof ALL>(ALL);
@@ -78,8 +82,8 @@ export function UsageTagCosts({
     HiddenTags,
   );
   const fromGateway = gateway !== undefined;
-  const rows = fromGateway ? gatewayTagRows(gateway) : estimateTagRows(estimates);
-  const countHeadings = fromGateway ? ["Requests"] : ["Priced turns", "Unpriced"];
+  const rows = fromGateway ? gatewayTagRows(gateway) : estimateTagRows(estimates, m);
+  const countHeadings = fromGateway ? [gt("Requests")] : [gt("Priced turns"), gt("Unpriced")];
   const hidden = new Set(hiddenTags);
   const tags = [...new Set(rows.map((row) => row.tag))].toSorted();
   const kinds = [...new Set(tags.map(tagKind))].toSorted();
@@ -103,15 +107,15 @@ export function UsageTagCosts({
     <section className="flex flex-col gap-3" aria-labelledby="tag-cost-heading">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 id="tag-cost-heading" className="text-sm font-medium text-foreground">
-          {fromGateway ? "Spend by request tag" : "Cost by request tag"}
+          {fromGateway ? gt("Spend by request tag") : gt("Cost by request tag")}
         </h2>
         <div className="flex flex-wrap items-center gap-1">
           <Select value={kind} onValueChange={(value) => setKind(value ?? ALL)}>
-            <SelectTrigger aria-label="Tag type" size="compact" className="w-auto min-w-0">
-              <SelectValue>{kind === ALL ? "All types" : kind}</SelectValue>
+            <SelectTrigger aria-label={gt("Tag type")} size="compact" className="w-auto min-w-0">
+              <SelectValue>{kind === ALL ? gt("All types") : kind}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
-              <SelectItem value={ALL}>All types</SelectItem>
+              <SelectItem value={ALL}>{gt("All types")}</SelectItem>
               {kinds.map((value) => (
                 <SelectItem key={value} value={value}>
                   {value}
@@ -121,13 +125,17 @@ export function UsageTagCosts({
           </Select>
           {fromGateway ? null : (
             <Select value={provider} onValueChange={(value) => setProvider(value ?? ALL)}>
-              <SelectTrigger aria-label="Tag provider" size="compact" className="w-auto min-w-0">
+              <SelectTrigger
+                aria-label={gt("Tag provider")}
+                size="compact"
+                className="w-auto min-w-0"
+              >
                 <SelectValue>
-                  {provider === ALL ? "All providers" : PROVIDER_PRESENTATION[provider].label}
+                  {provider === ALL ? gt("All providers") : PROVIDER_PRESENTATION[provider].label}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem value={ALL}>All providers</SelectItem>
+                <SelectItem value={ALL}>{gt("All providers")}</SelectItem>
                 {providers.map((value) => (
                   <SelectItem key={value} value={value}>
                     {PROVIDER_PRESENTATION[value].label}
@@ -138,7 +146,9 @@ export function UsageTagCosts({
           )}
           <Menu>
             <MenuTrigger render={<Button size="xs" variant="ghost" />} disabled={tags.length === 0}>
-              {hiddenCount === 0 ? "Hide tags" : `${formatCount(hiddenCount)} hidden`}
+              {hiddenCount === 0
+                ? gt("Hide tags")
+                : gt("{count} hidden", { count: formatCount(hiddenCount) })}
             </MenuTrigger>
             <MenuPopup align="end" className="max-h-80">
               <MenuCheckboxItem
@@ -152,7 +162,7 @@ export function UsageTagCosts({
                   )
                 }
               >
-                Show all tags
+                {gt("Show all tags")}
               </MenuCheckboxItem>
               <MenuSeparator />
               {tags.map((tag) => (
@@ -169,8 +179,8 @@ export function UsageTagCosts({
           </Menu>
           <div className="w-48 max-w-full">
             <Input
-              aria-label="Search request tags"
-              placeholder="Search tags"
+              aria-label={gt("Search request tags")}
+              placeholder={gt("Search tags")}
               size="sm"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
@@ -180,25 +190,27 @@ export function UsageTagCosts({
       </div>
       <p className="text-xs text-muted-foreground">
         {fromGateway
-          ? "Spend the LiteLLM gateway reports for your keys, in daily totals."
-          : "The gateway did not share tag spend for this key, so these are local main-agent estimates at gateway rates. Unpriced turns are excluded."}{" "}
-        A request can carry several tags, so rows do not add up to total spend.
+          ? gt("Spend the LiteLLM gateway reports for your keys, in daily totals.")
+          : gt(
+              "The gateway did not share tag spend for this key, so these are local main-agent estimates at gateway rates. Unpriced turns are excluded.",
+            )}{" "}
+        {gt("A request can carry several tags, so rows do not add up to total spend.")}
       </p>
       {matching.length === 0 ? (
         <p className="py-4 text-sm text-muted-foreground">
           {rows.length > 0
-            ? "No tags match these filters."
-            : "No tag spend in this period. Run a tagged LiteLLM turn to start tracking."}
+            ? gt("No tags match these filters.")
+            : gt("No tag spend in this period. Run a tagged LiteLLM turn to start tracking.")}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="border-b text-xs text-muted-foreground">
               <tr>
-                <th className="pb-2 font-medium">Tag</th>
-                {fromGateway ? null : <th className="px-3 pb-2 font-medium">Provider</th>}
+                <th className="pb-2 font-medium">{gt("Tag")}</th>
+                {fromGateway ? null : <th className="px-3 pb-2 font-medium">{gt("Provider")}</th>}
                 <th className="pb-2 text-right font-medium">
-                  {fromGateway ? "Spend" : "Estimate"}
+                  {fromGateway ? gt("Spend") : gt("Estimate")}
                 </th>
                 {countHeadings.map((heading) => (
                   <th key={heading} className="ps-3 pb-2 text-right font-medium">
@@ -243,7 +255,7 @@ export function UsageTagCosts({
           </table>
           {matching.length > 100 ? (
             <p className="pt-2 text-xs text-muted-foreground">
-              Showing the first 100 rows. Use the filters to narrow the list.
+              {gt("Showing the first 100 rows. Use the filters to narrow the list.")}
             </p>
           ) : null}
         </div>

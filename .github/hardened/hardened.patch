@@ -135,9 +135,10 @@ index 1e1873568..77ad26015 100644
 diff --git a/apps/web/src/branding.logic.ts b/apps/web/src/branding.logic.ts
 --- a/apps/web/src/branding.logic.ts
 +++ b/apps/web/src/branding.logic.ts
-@@ -23,5 +23,5 @@ export function resolveWebAppStageLabel(input: {
+@@ -24,6 +24,6 @@ export function resolveWebAppStageLabel(input: {
  }): string {
    return (
+     // oxlint-disable-next-line t3code/no-untranslated-copy -- release channel name, part of the product name
 -    resolveHostedAppChannelLabel(input.hostedAppChannel) ?? (input.development ? "Dev" : "Beta")
 +    resolveHostedAppChannelLabel(input.hostedAppChannel) ?? (input.development ? "Dev" : "Hardened")
    );

@@ -280,6 +280,17 @@ it("signals linked-thread changes only when a linked answer could change", () =>
     null,
   ]);
 
+  const issue = { tracker: "linear", host: "linear.app", scope: "eng", key: "ENG-7" };
+  const issueLinks = makeLinkedThreadsChangeDetector();
+  expect(
+    [
+      event("thread.created", {}),
+      event("thread.issue-synced", { issues: [issue as never] }),
+      event("thread.issue-synced", { issues: [issue as never] }),
+      event("thread.issue-synced", { issues: [] }),
+    ].map(issueLinks),
+  ).toEqual([null, "changed", null, "changed"]);
+
   const afterRestart = makeLinkedThreadsChangeDetector();
   expect(afterRestart(event("thread.created", { title: "New" }))).toBe(null);
   expect(

@@ -5,6 +5,7 @@ import {
 import { parseLiteLLMRequestTags } from "@t3tools/contracts";
 import { TagIcon } from "lucide-react";
 import type { LiteLLMDefaultRequestTag } from "@t3tools/contracts/settings";
+import { useGT } from "gt-react";
 import { memo, useState } from "react";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -21,12 +22,14 @@ export const ComposerRequestTags = memo(function ComposerRequestTags(props: {
   size?: "sm" | "xs";
   onCommit: (text: string) => void;
 }) {
+  const gt = useGT();
   const size = props.size ?? "sm";
   const floatingLayerProps = useComposerMenuProps();
   const [open, setOpen] = useState(false);
   const [edit, setEdit] = useState<RequestTagFieldsResult | null>(null);
   const count = parseLiteLLMRequestTags(props.value).length;
-  const tooltip = count > 0 ? `LiteLLM tags: ${props.value}` : "Add LiteLLM tags";
+  const tooltip =
+    count > 0 ? gt("LiteLLM tags: {tags}", { tags: props.value }) : gt("Add LiteLLM tags");
 
   const close = () => {
     if (edit && !edit.error && !sameRequestTags(edit.tags, parseLiteLLMRequestTags(props.value)))
@@ -47,12 +50,14 @@ export const ComposerRequestTags = memo(function ComposerRequestTags(props: {
       <Tooltip>
         <TooltipTrigger
           render={
-            <PopoverTrigger render={<ComposerControl size={size} aria-label="LiteLLM tags" />} />
+            <PopoverTrigger
+              render={<ComposerControl size={size} aria-label={gt("LiteLLM tags")} />}
+            />
           }
         >
           <ComposerControlIcon icon={TagIcon} size={size} />
           <span data-composer-control-label className={count > 0 ? "tabular-nums" : "sr-only"}>
-            {count > 0 ? count : "Tags"}
+            {count > 0 ? count : gt("Tags")}
           </span>
         </TooltipTrigger>
         <TooltipPopup side="top">{tooltip}</TooltipPopup>
@@ -69,7 +74,7 @@ export const ComposerRequestTags = memo(function ComposerRequestTags(props: {
             }}
           />
           <p className="text-muted-foreground text-xs">
-            Track spend by tag in LiteLLM. All fields are optional.
+            {gt("Track spend by tag in LiteLLM. All fields are optional.")}
           </p>
         </div>
       </PopoverPopup>

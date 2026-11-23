@@ -347,6 +347,41 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.each([{ displayName: "Renamed" }, { accentColor: "#ff0000" }])(
+    "keeps the live instance when only %o changes",
+    (presentation) =>
+      Effect.gen(function* () {
+        let closed = 0;
+        const driver: typeof CodexDriver = {
+          ...CodexDriver,
+          create: (input) =>
+            Effect.gen(function* () {
+              const instance = yield* CodexDriver.create(input);
+              yield* Effect.addFinalizer(() => Effect.sync(() => closed++));
+              return instance;
+            }),
+        };
+        const instanceId = ProviderInstanceId.make("account-a");
+        const entry = {
+          driver: CodexDriver.driverKind,
+          enabled: false,
+          displayName: "Account A",
+          config: makeCodexConfig({}),
+        };
+        const { registry, mutator } = yield* makeProviderInstanceRegistry({
+          drivers: [driver],
+          configMap: { [instanceId]: entry },
+        });
+        const instance = yield* registry.getInstance(instanceId);
+        const changes = yield* registry.subscribeChanges;
+        yield* mutator.reconcile({ [instanceId]: { ...entry, ...presentation } });
+        expect(closed).toBe(0);
+        expect(yield* registry.getInstance(instanceId)).toBe(instance);
+        yield* PubSub.take(changes);
+        expect(yield* instance!.snapshot.getSnapshot).toMatchObject(presentation);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("treats an explicit in-config enabled:false as disabling despite the envelope", () =>
     Effect.gen(function* () {
       const staleId = ProviderInstanceId.make("codex_stale");
