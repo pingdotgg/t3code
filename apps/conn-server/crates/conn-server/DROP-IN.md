@@ -136,6 +136,27 @@ Not proven: a live turn through the tarball, Codex from the tarball (it needs no
 the release workflow itself (it has not run), and the server under Orbit's real
 `t3.service` with this layout (the earlier proof ran an older binary as `bin/t3`).
 
+### macOS app bundle (2026-11-23)
+
+On a Mac the server runs as `Conn Server.app` (`com.nckrtl.conn-server`, `LSUIElement`), not
+as a bare executable. `tools/macos-app.sh --from <folder with conn-server and sdk-host/> --out
+<dir>` builds it: the binary in `Contents/MacOS`, `sdk-host/` and Conn's icon in
+`Contents/Resources`, signed with Developer ID and the hardened runtime.
+
+**Why.** macOS privacy grants (TCC: Screen Recording, Files and Folders, Accessibility) belong
+to the process that launchd started, so they cover the server's children too: provider CLIs,
+`screencapture` calls by agents, and the Device panel's serve-sim stream, whose LiveKit WebRTC
+framework links ScreenCaptureKit and `CGDisplayStream`. For a bare executable TCC keys the
+grant by its path, so each new install path asks again and lists one more nameless entry
+without an icon. For a signed bundle TCC keys it by bundle id and team, and System Settings
+shows the bundle's name and icon.
+
+**Install.** Keep the bundle at one path (`~/Applications/Conn Server.app`) and replace it in
+place on updates; the launchd job runs `Contents/MacOS/conn-server`. The server finds the SDK
+host in `../Resources` when nothing sits beside the binary. The bundle is not notarized, so
+`spctl` rejects it ("Unnotarized Developer ID"); that does not matter for a launchd job,
+because Gatekeeper checks only quarantined files.
+
 ## 2. Conn desktop's local backend
 
 | What       | Desktop does                                                                                                                                                                                                                                                                 | Reference                                                                                                               | Conn Server                                                                                                                                                                |

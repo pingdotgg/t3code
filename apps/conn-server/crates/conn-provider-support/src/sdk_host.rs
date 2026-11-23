@@ -80,12 +80,14 @@ impl HelperCommand {
 /// The SDK host's script in a release folder (`tools/release-tarball.mjs`), beside the binary.
 pub const INSTALLED_SCRIPT: &str = "sdk-host/index.mjs";
 
-/// The SDK host installed in `dir`, the server binary's folder: the single executable
-/// `conn-sdk-host`, else the release tarball's `sdk-host/index.mjs`, run with `node` from PATH.
+/// The SDK host installed for a server binary in `dir`: the single executable `conn-sdk-host`,
+/// else the release tarball's `sdk-host/index.mjs`, run with `node` from PATH. Looks beside the
+/// binary, then in `../Resources`, where the macOS app bundle (`tools/macos-app.sh`) keeps it.
 pub fn installed_helper(dir: &Path) -> Option<PathBuf> {
-    [HELPER_EXECUTABLE, INSTALLED_SCRIPT]
-        .into_iter()
-        .map(|name| dir.join(name))
+    let resources = dir.parent().map(|contents| contents.join("Resources"));
+    std::iter::once(dir.to_path_buf())
+        .chain(resources)
+        .flat_map(|base| [HELPER_EXECUTABLE, INSTALLED_SCRIPT].map(|name| base.join(name)))
         .find(|p| p.is_file())
 }
 
@@ -811,6 +813,16 @@ mod tests {
         let sea = dir.join(HELPER_EXECUTABLE);
         std::fs::write(&sea, "").unwrap();
         assert_eq!(installed_helper(&dir), Some(sea));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // The macOS app bundle: the binary in Contents/MacOS, the SDK host in Contents/Resources.
+        let macos = dir.join("Contents/MacOS");
+        let bundled = dir.join("Contents/Resources").join(INSTALLED_SCRIPT);
+        std::fs::create_dir_all(&macos).unwrap();
+        std::fs::create_dir_all(bundled.parent().unwrap()).unwrap();
+        assert_eq!(installed_helper(&macos), None);
+        std::fs::write(&bundled, "").unwrap();
+        assert_eq!(installed_helper(&macos), Some(bundled));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
