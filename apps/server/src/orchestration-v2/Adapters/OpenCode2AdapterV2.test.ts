@@ -5424,6 +5424,65 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("shows send_to_user messages a subagent's Code Mode script sends", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      // Subagent sessions call the root thread's server, which records under the root thread.
+      const server = "t3-code-thread_opencode2-adapter";
+      const message = "Subagent mid-turn note";
+      yield* mcpSessions.recordToolResult(
+        threadId,
+        "send_to_user",
+        { message },
+        { sentMessage: message },
+      );
+      const script = toolOf(MIDDLE, "call-execute-child");
+      const { runtime, thread } = yield* resumed([
+        ...nestedLaunch.slice(0, 7),
+        event("session.execution.started", { sessionID: MIDDLE }),
+        event("session.tool.input.started", { ...script, name: "execute" }),
+        event("session.tool.called", { ...script, input: { code: "<script>" }, executed: true }),
+        event(
+          "session.tool.success",
+          {
+            ...script,
+            content: [{ type: "text", text: "done" }],
+            metadata: {
+              toolCalls: [
+                { tool: `${server}.send_to_user`, status: "completed", input: { message } },
+              ],
+              truncated: false,
+            },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: MIDDLE }),
+        event("session.tool.success", {
+          ...toolOf(SESSION, "call-middle"),
+          content: [{ type: "text", text: `<subagent sessionID="${MIDDLE}" state="completed">` }],
+          metadata: { sessionID: MIDDLE, status: "completed", truncated: false },
+          executed: false,
+        }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(withLineage(thread));
+      const shown = Array.from(yield* Fiber.join(events)).flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [sentMessageFromToolItem(event.turnItem)].filter((msg) => msg !== undefined)
+          : [],
+      );
+      assert.deepEqual(shown, [message]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a script replayed after a reconnect from taking a later script's page", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
