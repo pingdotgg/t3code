@@ -152,6 +152,7 @@ it.each([
 it.each([
   { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
   { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
+  { name: "window titled Window", title: "Window", bounds: { x: 0, y: 0, width: 400, height: 24 } },
   { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
   { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
   {
