@@ -5924,3 +5924,134 @@ async fn removing_a_queued_run_keeps_the_active_runs_approval() {
     assert_eq!(done["runs"].as_array().unwrap().len(), 2);
     assert_eq!(done["runtimeRequests"][0]["status"], "resolved");
 }
+
+/// An async question (`responseCapability: message`), such as one imported from T3 after its
+/// provider exited: the answer resolves the card and becomes one user message and one run
+/// (T3's "answers an async question after its provider exits and commits the answer once").
+#[tokio::test(flavor = "current_thread")]
+async fn an_async_question_is_answered_with_one_message_and_one_run() {
+    let db = TempDb::new("async-question");
+    let (engine, provider) = open(&db);
+    dispatch(&engine, create("t1", "create")).await;
+    let now = "2026-01-01T00:00:00.000Z";
+    let seed = vec![
+        crate::store::Draft::new(
+            "t1",
+            "node.updated",
+            json!({"id":"t1:node","threadId":"t1","runId":null,"parentNodeId":null,
+                "rootNodeId":"t1:node","kind":"user_input_request","status":"waiting",
+                "countsForRun":false,"providerThreadId":null,"providerTurnId":null,
+                "nativeItemRef":null,"runtimeRequestId":"t1:request","checkpointScopeId":null,
+                "startedAt":now,"completedAt":null}),
+        )
+        .node(Some("t1:node")),
+        crate::store::Draft::new(
+            "t1",
+            "runtime-request.updated",
+            json!({"id":"t1:request","nodeId":"t1:node","providerTurnId":null,
+                "nativeRequestRef":null,"kind":"user_input","status":"pending",
+                "responseCapability":{"type":"message"},"createdAt":now,"resolvedAt":null}),
+        )
+        .node(Some("t1:node")),
+        crate::store::Draft::new(
+            "t1",
+            "turn-item.updated",
+            json!({"id":"t1:item","type":"user_input_request","threadId":"t1","runId":null,
+                "nodeId":"t1:node","providerThreadId":null,"providerTurnId":null,
+                "nativeItemRef":null,"parentItemId":null,"ordinal":0,"status":"waiting",
+                "title":null,"startedAt":now,"completedAt":null,"updatedAt":now,
+                "requestId":"t1:request","questions":[
+                    {"id":"color","header":"Color","question":"Which color?","options":[]},
+                    {"id":"sizes","header":"Sizes","question":"Which sizes?","options":[],"multiSelect":true},
+                    {"id":"note","header":"Note","question":"Anything else?","options":[],"required":false}]}),
+        )
+        .node(Some("t1:node")),
+    ];
+    engine
+        .inner()
+        .db(move |s| {
+            let mut tx = s.tx()?;
+            for draft in seed {
+                tx.append(draft)?;
+            }
+            tx.commit(None)
+        })
+        .await
+        .unwrap();
+    let before = projection(&engine, "t1").await;
+    let respond = |id: &str, answers: Value| {
+        from_json(
+            json!({"type":"runtime-request.respond","commandId":id,"threadId":"t1",
+            "requestId":"t1:request","answers":answers}),
+        )
+        .unwrap()
+    };
+    for (index, answers) in [
+        json!({"color":" ","sizes":["Small"]}),
+        json!({"color":"Blue","sizes":[]}),
+        json!({"color":"Blue","sizes":["Small"," "]}),
+        json!({"color":"Blue","sizes":["Small"],"extra":" "}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let refused = engine
+            .dispatch(respond(&format!("invalid:{index}"), answers.clone()))
+            .await;
+        assert!(
+            matches!(refused, Err(EngineError::Rejected(_))),
+            "{answers}"
+        );
+        assert_eq!(projection(&engine, "t1").await, before, "{answers}");
+    }
+
+    let answers = json!({"color":"  Blue  ","sizes":["Small","Large"],"note":""});
+    let accepted = engine
+        .dispatch(respond("answer", answers.clone()))
+        .await
+        .unwrap();
+    let repeated = engine
+        .dispatch(respond("answer", answers.clone()))
+        .await
+        .unwrap();
+    assert_eq!(to_json(&repeated), to_json(&accepted));
+    let duplicate = engine.dispatch(respond("duplicate", answers.clone())).await;
+    assert!(matches!(duplicate, Err(EngineError::Rejected(_))));
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    drop(engine);
+    let (engine, _) = open(&db);
+    let after = projection(&engine, "t1").await;
+    assert_eq!(after["runtimeRequests"][0]["status"], "resolved");
+    assert_eq!(after["runtimeRequests"][0]["answers"], answers);
+    let item = &after["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == "t1:item")
+        .unwrap();
+    assert_eq!(item["status"], "completed");
+    assert_eq!(
+        item["questionAnswer"]["questionTextById"],
+        json!({"color":"Which color?","sizes":"Which sizes?","note":"Anything else?"})
+    );
+    let users: Vec<&Value> = after["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .collect();
+    assert_eq!(users.len(), 1);
+    assert_eq!(users[0]["id"], "async-answer:t1:request");
+    assert_eq!(
+        users[0]["text"],
+        "Which color?\nBlue\n\nWhich sizes?\nSmall, Large"
+    );
+    assert_eq!(users[0]["creationSource"], "server");
+    assert_eq!(after["runs"].as_array().unwrap().len(), 1);
+    assert_eq!(after["runs"][0]["status"], "completed");
+    assert_eq!(
+        provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
+        1
+    );
+}

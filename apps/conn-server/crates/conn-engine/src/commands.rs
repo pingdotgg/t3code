@@ -1541,6 +1541,7 @@ pub(crate) fn write_interrupt_result(
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RuntimeRequestRespond {
+    command_id: String,
     thread_id: String,
     request_id: String,
     decision: Option<Value>,
@@ -1558,6 +1559,30 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if request["status"] != "pending" {
         return reject("This request was already answered or has expired.");
     }
+    let declined = matches!(
+        c.decision.as_ref().and_then(Value::as_str),
+        Some("decline" | "cancel")
+    );
+    let node = request["nodeId"].as_str().map(str::to_owned);
+    // A question the provider can no longer take live (an imported or async one) is answered
+    // with a user message that starts a turn (T3's `responseCapability.type: message`).
+    let is_message = request["responseCapability"]["type"] == "message";
+    let message_reply = match is_message {
+        true if !declined => {
+            let item = node
+                .as_deref()
+                .map(|node| request_item(tx, &c, node))
+                .transpose()?
+                .flatten()
+                .filter(|item| item["type"] == "user_input_request");
+            let Some(item) = item else {
+                return reject("The question for this request was not found.");
+            };
+            let answers = c.answers.as_ref().and_then(Value::as_object);
+            Some(async_reply(&item, answers).map_err(|e| CommandError::Rejected(e.into()))?)
+        }
+        _ => None,
+    };
     request["status"] = json!("resolved");
     request["resolvedAt"] = json!(tx.now());
     if let Some(decision) = &c.decision {
@@ -1569,9 +1594,14 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if let Some(answers) = &c.answers {
         request["answers"] = answers.clone();
     }
-    let node = request["nodeId"].as_str().map(str::to_owned);
     tx.append(Draft::new(&c.thread_id, "runtime-request.updated", request).node(node.as_deref()))?;
     settle_request_rows(tx, &c, node.as_deref())?;
+    if is_message {
+        return match message_reply {
+            Some(text) => async_answer(tx, &c, text),
+            None => Ok(vec![]),
+        };
+    }
     Ok(vec![Effect::Respond {
         thread_id: c.thread_id,
         request: json!({
@@ -1581,6 +1611,105 @@ fn runtime_request_respond(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "answers": c.answers,
         }),
     }])
+}
+
+/// The request's approval or question item on its node.
+fn request_item(
+    tx: &Tx<'_>,
+    c: &RuntimeRequestRespond,
+    node_id: &str,
+) -> StoreResult<Option<Value>> {
+    Ok(tx
+        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
+        .into_iter()
+        .filter(|item| {
+            matches!(
+                item["type"].as_str(),
+                Some("approval_request" | "user_input_request")
+            ) && item["requestId"] == c.request_id.as_str()
+        })
+        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX)))
+}
+
+/// A non-blank string, or a non-empty list of non-blank strings (T3's
+/// `isMessageQuestionAnswer`). A `{answers: [...]}` object counts as its list.
+fn message_answer(answer: &Value) -> Option<String> {
+    let answer = answer.get("answers").unwrap_or(answer);
+    let blank = |text: &str| text.trim().is_empty();
+    match answer {
+        Value::String(text) if !blank(text) => Some(text.trim().to_owned()),
+        Value::Array(list) if !list.is_empty() => {
+            let parts: Option<Vec<&str>> = list
+                .iter()
+                .map(|v| v.as_str().filter(|text| !blank(text)))
+                .collect();
+            Some(parts?.join(", ").trim().to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// The user's reply to an async question: each answered question and its answer, in the
+/// question's order (`runtime-request.respond` in T3's `Orchestrator`). A skipped optional
+/// question is left out; a skipped required one, or an extra blank answer, is refused.
+fn async_reply(
+    item: &Value,
+    answers: Option<&serde_json::Map<String, Value>>,
+) -> Result<String, &'static str> {
+    const UNANSWERED: &str = "Answer each question before sending.";
+    let questions = item["questions"].as_array().map_or(&[][..], Vec::as_slice);
+    let empty = serde_json::Map::new();
+    let answers = answers.unwrap_or(&empty);
+    let known = |id: &str| questions.iter().any(|q| q["id"] == id);
+    if !answers
+        .iter()
+        .all(|(id, answer)| known(id) || message_answer(answer).is_some())
+    {
+        return Err(UNANSWERED);
+    }
+    let mut replies = vec![];
+    for question in questions {
+        let answer = question["id"]
+            .as_str()
+            .and_then(|id| answers.get(id))
+            .and_then(message_answer);
+        match answer {
+            Some(text) => replies.push(format!(
+                "{}\n{text}",
+                question["question"].as_str().unwrap_or_default()
+            )),
+            // Clients send "" for a skipped optional question.
+            None if question["required"] == false => {}
+            None => return Err(UNANSWERED),
+        }
+    }
+    if replies.is_empty() {
+        return Err("Enter an answer before sending.");
+    }
+    Ok(replies.join("\n\n"))
+}
+
+/// Sends the async answer as the user's message: it steers the active run, or queues or
+/// starts a turn, with a stable id so a second answer cannot add another.
+fn async_answer(tx: &mut Tx<'_>, c: &RuntimeRequestRespond, text: String) -> Outcome {
+    let dispatch_mode = match active_run(tx, &c.thread_id)? {
+        Some(run) => json!({"type": "steer_active", "targetRunId": run["id"]}),
+        None => json!({"type": "queue_after_active"}),
+    };
+    message_dispatch(
+        tx,
+        json!({
+            "type": "message.dispatch",
+            "commandId": c.command_id,
+            "threadId": c.thread_id,
+            "messageId": format!("async-answer:{}", c.request_id),
+            "text": text,
+            "attachments": [],
+            "createdBy": "user",
+            "creationSource": "server",
+            "dispatchMode": dispatch_mode,
+        }),
+    )
 }
 
 /// The answered request's node and its turn item end (`runtime-request.respond` in T3's
@@ -1609,17 +1738,7 @@ fn settle_request_rows(
                 .node(Some(node_id)),
         )?;
     }
-    let item = tx
-        .entities_where(&c.thread_id, "turnItems", "nodeId", node_id)?
-        .into_iter()
-        .filter(|item| {
-            matches!(
-                item["type"].as_str(),
-                Some("approval_request" | "user_input_request")
-            ) && item["requestId"] == c.request_id.as_str()
-        })
-        .min_by_key(|item| item["ordinal"].as_u64().unwrap_or(u64::MAX));
-    if let Some(mut item) = item {
+    if let Some(mut item) = request_item(tx, c, node_id)? {
         if item["type"] == "user_input_request"
             && let Some(answers) = &c.answers
         {
