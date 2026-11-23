@@ -367,6 +367,26 @@ describe("question answer paths", () => {
       "ملاحظة: café, Ça",
     ],
     [
+      "ANSI font under another code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl\f0\froman\fcharset0 Times-Roman;}\f0 \'805 caf\'e9}`,
+      "€5 café",
+    ],
+    [
+      "font code page",
+      String.raw`{\rtf1\ansi\ansicpg1251{\fonttbl{\f0\fnil\fcharset0\cpg1251 Arial;}{\f1\fnil\fcharset204 Arial{\*\fontfile\cpg1252 arial.ttf};}}\f0 \'cf\'f0\'e8\f1\'e2\'e5\'f2}`,
+      "Привет",
+    ],
+    [
+      "ANSI font in a Macintosh document",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0 LucidaGrande;}\f0 pridr\'9eana}`,
+      "pridržana",
+    ],
+    [
+      "Macintosh font code page",
+      String.raw`{\rtf1\mac\ansicpg10000{\fonttbl\f0\fnil\fcharset0\cpg10000 Geneva;}\f0 Caf\'8e}`,
+      "Café",
+    ],
+    [
       "font character set outside the font table",
       String.raw`{\rtf1\ansi{\fonttbl{\f0\fcharset178 A;}{\f0\fcharset0 B;}{\f1\fcharset0 C;}{\f2\fcharset178 D;}{\f2 E;}}{\stylesheet{\s0\f1\fcharset178 N;}}\f0 \'e3\f1\'e3\f2\'e3}`,
       "ããã",
