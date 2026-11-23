@@ -330,6 +330,16 @@ describe("question answer paths", () => {
       "A\tB\t\nC",
     ],
     [
+      "hidden text",
+      String.raw`{\rtf1\ansi A {\v B{\v0 C}D} E\v F\v0  G\v1 H\plain  I}`,
+      "A C E G I",
+    ],
+    [
+      "hidden text table and escapes",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\v B\u945?\'e9\cell\v0 C\cell\v\row\v0 D\cell}`,
+      "A\tC\t\nD",
+    ],
+    [
       "document breaks",
       String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
       "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
@@ -343,6 +353,12 @@ describe("question answer paths", () => {
       "explicit Macintosh code page",
       String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
       "Café Crème",
+    ],
+    ["default ANSI code page", String.raw`{\rtf1\ansi\ansicpg0 Caf\'e9}`, "Café"],
+    [
+      "DOS Cyrillic code page",
+      String.raw`{\rtf1\ansi\ansicpg866 \'8f\'e0\'a8\'a2\'a5\'e2}`,
+      "Привет",
     ],
     [
       "font character set",
