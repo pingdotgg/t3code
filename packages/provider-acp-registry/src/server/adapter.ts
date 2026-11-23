@@ -240,7 +240,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     matchesLocalAgentCommand(
       options.settings.commandPath,
       options.settings.source,
-      /^claude-agent-acp(\.exe|\.cmd)?$/i,
+      /^claude(?:-agent)?-acp(\.exe|\.cmd)?$/i,
     );
   const isDroid =
     registryAgentId === "factory-droid" ||
