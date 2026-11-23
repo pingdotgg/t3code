@@ -406,7 +406,9 @@ export function isAtomCommandInterrupted(result: AtomCommandResult<unknown, unkn
 export function squashAtomCommandFailure(result: {
   readonly cause: Cause.Cause<unknown>;
 }): unknown {
-  return Cause.squash(result.cause);
+  const squashed = Cause.squash(result.cause);
+  // A server `Effect.die("text")` decodes over RPC as a bare string; callers read `Error`s.
+  return typeof squashed === "string" ? new Error(squashed) : squashed;
 }
 
 export async function settleAsyncResult<A, E>(
@@ -1198,6 +1200,7 @@ export function createEnvironmentRpcCommand<
         readonly input: NoInfer<Input>;
       },
       registry: AtomRegistry.AtomRegistry,
+      exit: Exit.Exit<EnvironmentRpcSuccess<TTag>, unknown>,
     ) => Effect.Effect<void, never, R>;
   },
 ) {
@@ -1228,7 +1231,7 @@ export function createEnvironmentRpcCommand<
         Effect.tap(
           (result) => options.onSuccess?.(target, registry, result, started) ?? Effect.void,
         ),
-        Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
+        Effect.onExit((exit) => options.onSettled?.(target, registry, exit) ?? Effect.void),
       );
     },
   });
