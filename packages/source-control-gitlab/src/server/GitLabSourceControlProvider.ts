@@ -90,6 +90,25 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
 const GITLAB_HOST_NOT_LOGGED_IN_PATTERN =
   /\bnot (?:been )?authenticated with glab\b|\bno gitlab instances? ha(?:s|ve) been authenticated\b/iu;
 
+function gitLabSelfHosted(context: SourceControlUnknownRemoteRefinementInput["context"]) {
+  return {
+    kind: SourceControlProviderKind.make("gitlab"),
+    name: "GitLab Self-Hosted",
+    baseUrl: context.provider.baseUrl,
+  } as const;
+}
+
+// glab host matching requires the remote's exact spelling.
+function gitLabHost({ provider, remoteUrl }: SourceControlUnknownRemoteRefinementInput["context"]) {
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
+  const remoteHost = authority
+    ? authority.slice(authority.lastIndexOf("@") + 1)
+    : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
+  return remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
+    ? remoteHost.slice(0, provider.name.length)
+    : provider.name;
+}
+
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
   const host = input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
@@ -101,11 +120,7 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
     return GITLAB_HOST_NOT_LOGGED_IN_PATTERN.test(output) ? null : undefined;
   }
 
-  return {
-    kind: SourceControlProviderKind.make("gitlab"),
-    name: "GitLab Self-Hosted",
-    baseUrl: input.context.provider.baseUrl,
-  } as const;
+  return gitLabSelfHosted(input.context);
 }
 
 /** The caller refines only an identity no host recognised, so its remote is on an unknown host. */
@@ -144,24 +159,33 @@ export const discovery = {
   label: "GitLab",
   executable: "glab",
   versionArgs: ["--version"],
+  // glab first sends usage data to the current host, which waits on a host that is offline.
+  env: { GLAB_SEND_TELEMETRY: "false" },
   // Without --all, glab 1.79+ checks only the current host unless that is gitlab.com; older
   // glab lists every host and rejects --all. --all waits on every host, so ask it only after
   // the current host reports signed out.
   authArgs: ["auth", "status"],
   authRetryArgs: ["auth", "status", "--all"],
-  // glab host matching requires the remote's exact spelling.
-  remoteRefinementArgs: ({ provider, remoteUrl }) => {
-    const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/]+)/iu.exec(remoteUrl.trim())?.[1];
-    const remoteHost = authority
-      ? authority.slice(authority.lastIndexOf("@") + 1)
-      : remoteUrl.trim().replace(/^[^@:/]+@/u, "");
-    const host = remoteHost.toLowerCase().startsWith(provider.name.toLowerCase())
-      ? remoteHost.slice(0, provider.name.length)
-      : provider.name;
-    return ["auth", "status", "--hostname", host];
+  remoteRefinementArgs: (context) => ["auth", "status", "--hostname", gitLabHost(context)],
+  // A host-scoped user that differs from the global one is the host's own login; glab falls
+  // back to the global user, and older glab to $USER, for a host it has no login for.
+  localRemoteRefinement: {
+    args: (context) => [
+      ["config", "get", "user", "--host", gitLabHost(context)],
+      ["config", "get", "user", "--global"],
+    ],
+    env: { USER: "" },
+    refine: ([host, global], context) => {
+      const user = host?.exitCode === 0 ? host.stdout.trim() : "";
+      return user !== "" && global?.exitCode === 0 && user !== global.stdout.trim()
+        ? gitLabSelfHosted(context)
+        : undefined;
+    },
   },
   parseAuth: parseGitLabAuth,
   refineUnknownRemote: refineUnknownGitLabRemote,
+  // glab answers offline for a host it has no login for, so a probe that hangs is one it is signed in to.
+  refineTimedOutRemote: gitLabSelfHosted,
   installHint:
     "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlCliDiscoverySpec;
