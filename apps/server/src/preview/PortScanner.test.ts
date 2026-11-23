@@ -844,8 +844,8 @@ effectIt.effect.each([
   { platform: "darwin", listener: "renamed" },
   // ps prints `(node)` for a parent it cannot read yet, so the listener is read again later.
   { platform: "darwin", listener: "renamed-unreadable-parent" },
-  // A root-owned parent never becomes readable, so after one retry the listener is unowned.
-  { platform: "darwin", listener: "renamed-never-readable-parent" },
+  // Unreadable parents are retried at intervals after the initial retry.
+  { platform: "darwin", listener: "renamed-retrying-parent" },
 ] as const)(
   "attributes listeners to the agent thread on $platform ($listener), after the agent exits",
   ({ platform, listener }) => {
@@ -854,7 +854,8 @@ effectIt.effect.each([
     const otherPort = 43_125;
     // The agent CLI has the thread in its environment too; its own port is not a server.
     const agentListener =
-      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` + `p4300\ncagy\nn127.0.0.1:43126\n`;
+      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` +
+      (listener === "renamed-retrying-parent" ? "" : `p4300\ncagy\nn127.0.0.1:43126\n`);
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;
@@ -978,11 +979,22 @@ effectIt.effect.each([
       }
       if (!parentReadable) {
         expect(yield* scanner.scan()).toEqual([]);
-        if (listener === "renamed-never-readable-parent") {
+        if (listener === "renamed-retrying-parent") {
           expect(yield* scanner.scan()).toEqual([]);
           const reads = environmentReads;
           expect(yield* scanner.scan()).toEqual([]);
           expect(environmentReads).toBe(reads);
+          yield* TestClock.adjust(Duration.seconds(30));
+          expect(yield* scanner.scan()).toEqual([]);
+          expect(environmentReads).toBeGreaterThan(reads);
+          const readsAfterRetry = environmentReads;
+          expect(yield* scanner.scan()).toEqual([]);
+          expect(environmentReads).toBe(readsAfterRetry);
+          parentReadable = true;
+          yield* TestClock.adjust(Duration.seconds(30));
+          expect(yield* scanner.scan()).toMatchObject([
+            { port: agentPort, pid: 4242, terminal: null, agent: { threadId: "thread-agent" } },
+          ]);
           return;
         }
         parentReadable = true;

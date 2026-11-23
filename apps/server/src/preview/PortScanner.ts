@@ -89,6 +89,7 @@ export interface AgentCommandStopWatcher {
 const PORT_DISCOVERY_ENV = "T3CODE_PORT_DISCOVERY";
 
 const POLL_INTERVAL = Duration.seconds(3);
+const UNREADABLE_ANCESTRY_RETRY_MS = 30_000;
 const LSOF_TIMEOUT_MS = 5_000;
 const PROC_FD_WALK_LIMIT = 50_000;
 const SOCKET_OWNER_ATTEMPTS = 3;
@@ -560,15 +561,19 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
-  // Listeners whose ancestor was unreadable once. A second miss caches them as unowned, since a
-  // root-owned ancestor such as `login` or `sudo` is never readable.
-  const unreadableAncestry = new Set<number>();
+  // A null deadline requests one immediate retry before backing off unreadable ancestors.
+  const unreadableAncestry = new Map<number, number | null>();
 
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
   ) {
     const cached = yield* Ref.get(agentThreadsRef);
-    const unread = pids.filter((pid) => !cached.has(pid));
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const unread = pids.filter((pid) => {
+      const retryAt = unreadableAncestry.get(pid);
+      return !cached.has(pid) || (retryAt != null && retryAt <= nowMillis);
+    });
+    const unreadSet = new Set(unread);
     const readProcListener = Effect.fnUntraced(function* (pid: number) {
       const threadId = yield* fileSystem.readFileString(`/proc/${pid}/environ`).pipe(
         Effect.map(parseProcEnvironThread),
@@ -601,6 +606,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                 }),
               );
     const resolved = new Map(read);
+    for (const pid of unread) {
+      if (read.get(pid) != null) unreadableAncestry.delete(pid);
+    }
     const unowned = unread.filter((pid) => read.get(pid) === null);
     // Node's process.title can hide its launch environment from macOS ps.
     if (hostPlatform === "darwin" && unowned.length > 0) {
@@ -620,6 +628,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             parent = table.value.get(parent)?.ppid;
           }
           ancestry.set(pid, parents);
+          if (parents.length === 0) unreadableAncestry.delete(pid);
         }
         const parents = [...new Set([...ancestry.values()].flat())];
         if (parents.length > 0) {
@@ -635,12 +644,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             }
             if (
               resolved.get(pid) === null &&
-              ancestors.some((ancestor) => !variables.has(ancestor)) &&
-              !unreadableAncestry.has(pid)
+              ancestors.some((ancestor) => !variables.has(ancestor))
             ) {
-              unreadableAncestry.add(pid);
-              resolved.delete(pid);
-              agentScanPending = true;
+              if (unreadableAncestry.has(pid)) {
+                unreadableAncestry.set(pid, nowMillis + UNREADABLE_ANCESTRY_RETRY_MS);
+              } else {
+                unreadableAncestry.set(pid, null);
+                resolved.delete(pid);
+                agentScanPending = true;
+              }
+            } else {
+              unreadableAncestry.delete(pid);
             }
           }
         }
@@ -648,10 +662,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     const next = new Map<number, AgentListener | null>();
     for (const pid of pids) {
-      const listener = cached.has(pid) ? cached.get(pid) : resolved.get(pid);
+      const listener = unreadSet.has(pid) ? resolved.get(pid) : cached.get(pid);
       if (listener !== undefined) next.set(pid, listener);
     }
-    for (const pid of unreadableAncestry) if (!pids.includes(pid)) unreadableAncestry.delete(pid);
+    for (const pid of unreadableAncestry.keys())
+      if (!pids.includes(pid)) unreadableAncestry.delete(pid);
     yield* Ref.set(agentThreadsRef, next);
     return next;
   });
@@ -942,10 +957,14 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     // A server an agent started can outlive the agent, so listeners are read while the last scan
     // still found one.
+    const nowMillis = yield* Clock.currentTimeMillis;
     const agentsPossible =
       hostPlatform !== "win32" &&
       (runningAgents > 0 ||
         agentScanPending ||
+        [...unreadableAncestry.values()].some(
+          (retryAt) => retryAt !== null && retryAt <= nowMillis,
+        ) ||
         [...(yield* Ref.get(agentThreadsRef)).values()].some((threadId) => threadId !== null));
     if (terminalOwners.size === 0 && configuredUrls.length === 0 && !agentsPossible) {
       return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
@@ -1080,8 +1099,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* Ref.set(socketOwnersRef, new Map());
         yield* Ref.set(socketOwnerMissesRef, new Map());
         const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        if (
+          unreadableAncestry.size > 0 ||
+          [...threads.values()].some((threadId) => threadId !== null)
+        )
+          agentScanPending = true;
         unreadableAncestry.clear();
-        if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
       }),
     );
   });
