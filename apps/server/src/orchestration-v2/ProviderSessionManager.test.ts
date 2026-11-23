@@ -617,6 +617,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
           startTurn: () => options.startTurn ?? Effect.void,
+          resumeTurn: () => options.startTurn ?? Effect.void,
+          compactThread: () => options.startTurn ?? Effect.void,
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -2144,6 +2146,253 @@ it.effect.each([
         yield* TestClock.adjust("1 second");
         assert.isFalse(yield* manager.isLive(providerSessionId));
       }).pipe(Effect.provide(layerTest({ state, capabilities })));
+    }),
+);
+
+const idleReleaseAroundRun = (start: "compactThread" | "resumeTurn") =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make(`thread-${start}-outlasts-idle-timeout`);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const subscriber = yield* runtime.subscribeEvents!;
+      const terminal = yield* subscriber.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkScoped,
+      );
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+        nativeThreadId: `native-${threadId}`,
+      });
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      const run = {
+        appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+        threadId,
+        runId,
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+        rootNodeId: idAllocator.derive.rootNode({ runId }),
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+      };
+      const messageId = yield* idAllocator.allocate.message({ threadId, ordinal: 1 });
+      yield* start === "compactThread"
+        ? runtime.compactThread!({
+            ...run,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId,
+              text: "/compact",
+              attachments: [],
+            },
+          })
+        : runtime.resumeTurn!({ ...run, messageId });
+
+      // A running compaction or continuation can go minutes without a provider event.
+      yield* TestClock.adjust("2 seconds");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+
+      const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      assert.isDefined(queue);
+      yield* Queue.offer(queue!, {
+        type: "turn.terminal",
+        driver: CODEX_DRIVER,
+        providerThreadId: providerThread.id,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: CODEX_DRIVER,
+          nativeTurnId: `native-turn-${start}`,
+        }),
+        runOrdinal: 1,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      // The event pump marks the run idle before it publishes the event.
+      yield* Fiber.join(terminal);
+      yield* TestClock.adjust("2 seconds");
+      assert.isFalse(yield* manager.isLive(providerSessionId));
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1_000 })));
+  });
+
+it.effect.each([
+  { run: "compaction", start: "compactThread" },
+  { run: "manual continuation", start: "resumeTurn" },
+] as const)(
+  "ProviderSessionManagerV2 keeps a session through a $run that outlasts the idle timeout",
+  ({ start }) => idleReleaseAroundRun(start),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 rotates a stale run-scoped MCP credential and keeps the session busy during compaction",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-compact-rotates-stale-mcp-and-stays-busy");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: `native-${threadId}`,
+        });
+        const run1 = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const attempt1 = idAllocator.derive.runAttempt({ runId: run1, attemptOrdinal: 1 });
+        const run2 = idAllocator.derive.run({ threadId, ordinal: 2 });
+        const attempt2 = idAllocator.derive.runAttempt({ runId: run2, attemptOrdinal: 1 });
+        const run3 = idAllocator.derive.run({ threadId, ordinal: 3 });
+        const attempt3 = idAllocator.derive.runAttempt({ runId: run3, attemptOrdinal: 1 });
+        const makeTypedRunEvent = (
+          runId: RunId,
+          attemptId: RunAttemptId,
+          ordinal: number,
+          status: "interrupted" | "completed",
+        ) =>
+          Effect.map(idAllocator.allocate.event({ threadId }), (id) => ({
+            id,
+            type: "run.created" as const,
+            threadId,
+            runId,
+            nodeId: idAllocator.derive.rootNode({ runId }),
+            driver: CODEX_DRIVER,
+            occurredAt: now,
+            payload: {
+              id: runId,
+              threadId,
+              ordinal,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: providerThread.id,
+              userMessageId: MessageId.make(`msg-compact-mcp-${ordinal}`),
+              rootNodeId: idAllocator.derive.rootNode({ runId }),
+              activeAttemptId: attemptId,
+              status,
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+              outputSchema: { type: "object" as const },
+            },
+          }));
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            yield* makeTypedRunEvent(run1, attempt1, 1, "interrupted"),
+            yield* makeTypedRunEvent(run2, attempt2, 2, "completed"),
+          ],
+        });
+
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+          runId: run1,
+          attemptId: attempt1,
+          requireRunScopedMcp: true,
+        });
+        const config1 = yield* mcpSessions.read(threadId);
+        assert.isDefined(config1);
+        const token1 = config1!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+
+        const subscriber = yield* runtime.subscribeEvents!;
+        const terminal = yield* subscriber.events.pipe(
+          Stream.filter((event) => event.type === "turn.terminal"),
+          Stream.runHead,
+          Effect.forkScoped,
+        );
+        const messageId = yield* idAllocator.allocate.message({ threadId, ordinal: 3 });
+        yield* runtime.compactThread!({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId: run3,
+          runOrdinal: 3,
+          providerTurnOrdinal: 3,
+          attemptId: attempt3,
+          rootNodeId: idAllocator.derive.rootNode({ runId: run3 }),
+          providerThread,
+          modelSelection,
+          runtimePolicy,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId,
+            text: "/compact",
+            attachments: [],
+          },
+        });
+
+        const config3 = yield* mcpSessions.read(threadId);
+        assert.isDefined(config3);
+        const token3 = config3!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.notEqual(token3, token1);
+        assert.equal((yield* registry.resolve(token1))?.thread.runId, run1);
+        assert.equal((yield* registry.resolve(token3))?.thread.runId, run3);
+        assert.equal((yield* registry.resolve(token3))?.thread.attemptId, attempt3);
+
+        yield* TestClock.adjust("2 seconds");
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(queue);
+        yield* Queue.offer(queue!, {
+          type: "turn.terminal",
+          driver: CODEX_DRIVER,
+          providerThreadId: providerThread.id,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: CODEX_DRIVER,
+            nativeTurnId: "native-turn-compact-mcp",
+          }),
+          runOrdinal: 3,
+          status: "completed",
+          failure: null,
+          threadDisposition: "reusable",
+        });
+        yield* Fiber.join(terminal);
+        yield* TestClock.adjust("2 seconds");
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.isUndefined(yield* registry.resolve(token1));
+        assert.isUndefined(yield* registry.resolve(token3));
+      }).pipe(
+        Effect.provide(layerTest({ state, idleTimeoutMs: 1_000, mcpCredentialRotation: "live" })),
+      );
     }),
 );
 

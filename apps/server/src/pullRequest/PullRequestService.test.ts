@@ -40,6 +40,7 @@ import {
 import * as PullRequestProviderRegistry from "./PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
+import { resolveTarget } from "./pullRequestTarget.ts";
 
 function project(input: {
   readonly id: string;
@@ -425,6 +426,12 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
     // Agents get the forge tools only where the host is one T3 reads.
     assert.isTrue(yield* service.servesProject("p1" as ProjectId));
     assert.isFalse(yield* service.servesProject("p2" as ProjectId));
+    // ...and those tools build PR URLs through the same refined forge.
+    const target = yield* resolveTarget(
+      { repository: "team/project", number: 42 },
+      yield* service.addressedProject("p1" as ProjectId),
+    );
+    assert.strictEqual(target.url, "https://code.example.test/team/project/pull/42");
   }),
 );
 

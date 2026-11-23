@@ -3259,10 +3259,11 @@ export const layerWithOptions = (
                 }),
             ),
           );
+        // A start, continuation or compaction keeps the session busy until its turn.terminal.
         const runTrackedTurn = <A, E>(
           input: Pick<
             ProviderAdapter.ProviderAdapterV2TurnInput,
-            "threadId" | "providerThread" | "runId" | "attemptId" | "runOrdinal" | "modelSelection"
+            "threadId" | "providerThread" | "runId" | "attemptId" | "runOrdinal"
           >,
           releasedCause: string,
           run: () => Effect.Effect<A, E>,
@@ -3313,7 +3314,7 @@ export const layerWithOptions = (
                         ),
                   ),
                 ),
-                () => run().pipe(turnMetrics("send", input.modelSelection.model)),
+                run,
                 (_, exit) =>
                   Exit.isFailure(exit)
                     ? observeActivity(
@@ -3482,16 +3483,33 @@ export const layerWithOptions = (
             runTrackedTurn(input, "The provider session was released while the turn started.", () =>
               agentFeedbackMode.pipe(
                 Effect.flatMap((agentFeedback) => runtime.startTurn({ ...input, agentFeedback })),
+                turnMetrics("send", input.modelSelection.model),
               ),
             ),
           ...(runtime.resumeTurn === undefined
             ? {}
             : {
-                resumeTurn: (input) =>
+                resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
                   runTrackedTurn(
                     input,
                     "The provider session was released while the turn resumed.",
-                    () => runtime.resumeTurn!(input),
+                    () =>
+                      runtime.resumeTurn!(input).pipe(
+                        turnMetrics("resume", input.modelSelection.model),
+                      ),
+                  ),
+              }),
+          ...(runtime.compactThread === undefined
+            ? {}
+            : {
+                compactThread: (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+                  runTrackedTurn(
+                    input,
+                    "The provider session was released while the thread compacted.",
+                    () =>
+                      runtime.compactThread!(input).pipe(
+                        turnMetrics("compact", input.modelSelection.model),
+                      ),
                   ),
               }),
           steerTurn: (input) =>

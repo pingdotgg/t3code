@@ -3,10 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compareMetrics,
+  competingBetween,
   activityRenewalMissed,
+  describeFailure,
   heapGrowth,
+  loadWarnings,
   nextActivityReport,
+  noiseReport,
+  noisePairProblem,
   parsePsCpuTime,
+  profileMismatch,
   parseRunSelection,
   pathRewrites,
   pathSpellings,
@@ -43,6 +49,17 @@ const base: Quiet = { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500 };
 const cpuRuns = (...values: number[]) =>
   quietRuns(...values.map((cpuPct) => ({ ...base, cpuPct })));
 
+// Fixed floors, so these cases test how compare gates rather than the calibrated table.
+const gatedRules = [
+  { pattern: /cpuPct$/, floor: 1, gate: true },
+  { pattern: /wakeupsPerSec$/, floor: 20, gate: true },
+  { pattern: /MB$/, floor: 15, gate: true },
+  { pattern: /loopDelayP99Ms$/, floor: 5, gate: true },
+  { pattern: /loopDelayMaxMs$/, floor: 20, gate: true },
+  { pattern: /gcPauseMs$/, floor: 10, gate: true },
+  { pattern: /./, floor: 300, gate: true },
+];
+
 describe("compareMetrics", () => {
   it.each([
     ["a CPU jump past both the percentage and the floor", { cpuPct: 18.6 }, ["quiet.cpuPct"], []],
@@ -60,7 +77,12 @@ describe("compareMetrics", () => {
       ["quiet.rssPeakMB"],
     ],
   ])("one run each: %s", (_name, change, regressed, improved) => {
-    const result = compareMetrics(quietRuns(base), quietRuns({ ...base, ...change }));
+    const result = compareMetrics(
+      quietRuns(base),
+      quietRuns({ ...base, ...change }),
+      10,
+      gatedRules,
+    );
     expect(result.regressed).toEqual(regressed);
     expect(result.improved).toEqual(improved);
   });
@@ -75,10 +97,10 @@ describe("compareMetrics", () => {
   it("flags repeated runs only when the whole interval clears the limit", () => {
     const steady = cpuRuns(26.1, 27.4, 25.8);
     const fixed = cpuRuns(2.2, 2.5, 2.1);
-    expect(compareMetrics(steady, fixed).improved).toContain("quiet.cpuPct");
-    expect(compareMetrics(fixed, steady).regressed).toContain("quiet.cpuPct");
+    expect(compareMetrics(steady, fixed, 10, gatedRules).improved).toContain("quiet.cpuPct");
+    expect(compareMetrics(fixed, steady, 10, gatedRules).regressed).toContain("quiet.cpuPct");
     // The medians differ by 2.8 points, past the floor, but a resampled median can match.
-    expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9)).regressed).toEqual([]);
+    expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
   });
 
   it("reads a file written before loop delay and GC were recorded", () => {
@@ -129,6 +151,175 @@ describe("compareMetrics", () => {
   });
 });
 
+describe("compareMetrics with noise rules", () => {
+  const rules = [
+    { pattern: /cpuPct$/, floor: 1, gate: true },
+    { pattern: /loopDelayMaxMs$/, floor: 20, gate: false },
+    { pattern: /./, floor: 1_000, gate: true },
+  ];
+  it.each([
+    ["a gated metric past its floor", { cpuPct: 5 }, ["quiet.cpuPct"], []],
+    ["an ungated metric far past its floor", { loopDelayMaxMs: 300 }, [], ["quiet.loopDelayMaxMs"]],
+    ["an ungated metric under its floor", { loopDelayMaxMs: 20 }, [], []],
+  ])("%s", (_name, change, regressed, informational) => {
+    const result = compareMetrics(quietRuns(base), quietRuns({ ...base, ...change }), 10, rules);
+    expect(result.regressed).toEqual(regressed);
+    expect(result.informational).toEqual(informational);
+  });
+
+  it("marks an ungated metric in the table either way", () => {
+    const result = compareMetrics(quietRuns(base), quietRuns(base), 10, rules);
+    expect(result.table).toContain("| quiet.loopDelayMaxMs | 8 | 8 | 0% |  | noisy |");
+  });
+});
+
+describe("noisePairProblem", () => {
+  const at = (commit: string | null): ServerMetrics => ({ meta: { ...meta, commit }, runs: [] });
+  it.each([
+    ["one commit against itself", at("abc"), at("abc"), undefined],
+    [
+      "an A/B directory",
+      at("abc"),
+      at("def"),
+      "ab-out: a.json is abc and b.json def; noise floors need one commit against itself",
+    ],
+    [
+      "a file with no commit",
+      at(null),
+      at(null),
+      "ab-out: a.json or b.json records no commit, so it cannot be shown to be an A/A run",
+    ],
+  ])("%s", (_name, a, b, problem) => {
+    expect(noisePairProblem("ab-out", a, b)).toBe(problem);
+  });
+});
+
+describe("competingBetween", () => {
+  it.each([
+    ["a process that kept running", [["10:500", 900]], [["10:500", 960]], 60],
+    ["a new process, counted whole", [], [["11:700", 30]], 30],
+    ["a reused pid is a new process", [["10:500", 900]], [["10:800", 300]], 300],
+    ["a process that exited is lost", [["10:500", 900]], [], 0],
+  ] as const)("%s", (_name, before, after, seconds) => {
+    expect(competingBetween(new Map(before), new Map(after))).toBe(seconds);
+  });
+});
+
+describe("loadWarnings", () => {
+  const loaded = (cpus: number | null, ...machines: Array<[number | null, number | null]>) =>
+    ({
+      meta: { ...meta, cpus },
+      runs: machines.map(([load1, otherCpuCores]) => ({
+        machine: { load1, otherCpuCores, minutes: 10 },
+      })),
+    }) satisfies ServerMetrics;
+  it.each([
+    ["a quiet machine", loaded(16, [4, 1], [5, 2]), 0],
+    ["load past 0.75 per CPU with other processes unknown", loaded(16, [4, null], [12.5, null]), 1],
+    ["high load from the run's own agents", loaded(16, [21, 1]), 0],
+    ["other processes on a quarter of the cores", loaded(16, [4, 4.1]), 1],
+    ["no CPU count", loaded(null, [40, 40]), 0],
+    ["no machine state, as in older files", { meta: { ...meta, cpus: 16 }, runs: [{}] }, 0],
+  ])("%s", (_name, metrics, count) => {
+    expect(loadWarnings("before", metrics)).toHaveLength(count);
+  });
+
+  it("names the worst run", () => {
+    expect(loadWarnings("after", loaded(16, [13, 4.5], [14.2, 5]))[0]).toContain(
+      "after ran under heavy load in 2 of 2 runs (load up to 14.2 on 16 CPUs, other node/T3/agent processes up to 5 cores)",
+    );
+  });
+
+  it("is reported by compareMetrics", () => {
+    expect(compareMetrics(quietRuns(base), loaded(16, [20, null])).warnings).toHaveLength(1);
+  });
+});
+
+describe("noiseReport", () => {
+  it.each([
+    // Resampled medians differ by -0.3 to 1.1: half-width 0.7, so the floor is 0.35.
+    ["the A/A interval", cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3), 0.7, 0.1, 0.35],
+    // Constant sides: no interval, and medians 2 and 3.25 differ by 1.25.
+    ["the A/A median difference", cpuRuns(2, 2), cpuRuns(3.25, 3.25), 0, 1.25, 1.3],
+  ])("estimates a floor from %s, rounded up", (_name, a, b, halfWidth, aaDifference, floor) => {
+    const [row] = noiseReport([[a, b]]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
+    expect(row).toMatchObject({ halfWidth, aaDifference, suggestedFloor: floor });
+  });
+
+  it("leaves out wakeups counted with the delay sampler on one side only", () => {
+    const sampled: ServerMetrics = {
+      meta,
+      runs: quietRuns({ ...base, wakeupsPerSec: 160 }).runs.map((run) => ({
+        quiet: { ...run.quiet, loopSamples: 2_900 },
+      })),
+    };
+    const metrics = noiseReport([[quietRuns(base), sampled]]).rows.map(({ metric }) => metric);
+    expect(metrics).not.toContain("quiet.wakeupsPerSec");
+    expect(metrics).toContain("quiet.cpuPct");
+  });
+
+  it("takes the widest pair, and calls a metric noisy when its interval passes half its median", () => {
+    const quiet = [cpuRuns(2, 2.1), cpuRuns(2, 2.1)] as const;
+    const wild = [cpuRuns(1, 4), cpuRuns(2, 2)] as const;
+    const [row] = noiseReport([quiet, wild]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
+    expect(row?.halfWidth).toBe(1.5);
+    expect(row?.suggestedGate).toBe(false);
+  });
+
+  it("leaves out fields that describe a run", () => {
+    const withMachine = (metrics: ServerMetrics): ServerMetrics => ({
+      ...metrics,
+      runs: metrics.runs.map((run) => ({
+        ...run,
+        machine: { load1: 3, otherCpuCores: 1, minutes: 9 },
+      })),
+    });
+    const rows = noiseReport([[withMachine(cpuRuns(1)), withMachine(cpuRuns(1))]]).rows;
+    expect(rows.some(({ metric }) => metric.startsWith("machine."))).toBe(false);
+  });
+});
+
+describe("compareMetrics on working throughput", () => {
+  const working = (turnsPerMin: number) =>
+    ({
+      meta,
+      runs: [
+        {
+          working: {
+            active: {
+              "20": {
+                ...loopAtRest,
+                cpuPct: 90,
+                wakeupsPerSec: 1_600,
+                rssPeakMB: 700,
+                rssMB: 560,
+                heapAfterGcMB: 218,
+                turnsPerMin,
+                toRequestMs: { median: 4_000, p90: 9_000 },
+                turnEndMs: { median: 16_000, p90: 25_000 },
+                turnMs: { median: 24_000, p90: 36_000 },
+              },
+            },
+            heapMBPerThread: 0.2,
+            rssMBPerThread: 0.8,
+            cpuPctPerThread: 0,
+            loopDelayP99MsPerThread: 0,
+          },
+        },
+      ],
+    }) satisfies ServerMetrics;
+  const rules = [{ pattern: /turnsPerMin$/, floor: 2, gate: true }];
+  it.each([
+    ["fewer turns a minute", 20, ["working.active.20.turnsPerMin"], []],
+    ["more turns a minute", 45, [], ["working.active.20.turnsPerMin"]],
+    ["a move under the floor", 34, [], []],
+  ])("%s", (_name, turnsPerMin, regressed, improved) => {
+    const result = compareMetrics(working(33), working(turnsPerMin), 5, rules);
+    expect(result.regressed).toEqual(regressed);
+    expect(result.improved).toEqual(improved);
+  });
+});
+
 describe("compareMetrics on the busy shell snapshot", () => {
   const window = { cpuPct: 1, wakeupsPerSec: 10, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 };
   const busyRun = (shellMs: number, shellKB: number) =>
@@ -155,6 +346,41 @@ describe("compareMetrics on the busy shell snapshot", () => {
     ["40 KB larger, past it", busyRun(190, 140), ["busy.shellKB"]],
   ])("%s", (_name, after, regressed) => {
     expect(compareMetrics(busyRun(190, 100), after).regressed).toEqual(regressed);
+  });
+});
+
+describe("describeFailure", () => {
+  it.each([
+    ["a plain error", new Error("boom"), "boom"],
+    [
+      "an RPC error wrapping the server's",
+      new Error("RpcClientError", { cause: new Error("Command x was already handled") }),
+      "RpcClientError: Command x was already handled",
+    ],
+    ["a tagged error with no message", { _tag: "TimeoutError" }, "TimeoutError"],
+    [
+      "a cause that repeats its wrapper",
+      new Error("lost: gone", { cause: new Error("gone") }),
+      "lost: gone",
+    ],
+    ["a string", "exit 1", "exit 1"],
+  ])("%s", (_name, error, expected) => {
+    expect(describeFailure(error)).toBe(expected);
+  });
+});
+
+describe("profileMismatch", () => {
+  const withProfile = (profile?: string): ServerMetrics => ({
+    meta: profile === undefined ? meta : { ...meta, profile },
+    runs: [],
+  });
+  it.each([
+    ["two full runs", withProfile("full"), withProfile("full"), false],
+    ["a file from before profiles, against a full run", withProfile(), withProfile("full"), false],
+    ["two quick runs", withProfile("quick"), withProfile("quick"), false],
+    ["a full run against a quick one", withProfile(), withProfile("quick"), true],
+  ])("%s", (_name, before, after, refused) => {
+    expect(profileMismatch(before, after) !== undefined).toBe(refused);
   });
 });
 
