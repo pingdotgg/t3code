@@ -53,7 +53,7 @@ vp run scenarios:prove scripts/scenarios/<name>.e2e.ts --base main --upload-comm
 ```
 
 - One test per file (`WEB` from `./t3.ts` or `IOS` from `./t3-mobile.ts`). Seed projects and threads via `t3.project` / `t3.thread` before calling `t3.open(...)` so the app does not land on first-run setup.
-- Navigate directly with `t3.open(thread)` or `t3.open("/settings/...")` rather than clicking sidebar text; let `t3.open` complete pairing before other navigation.
+- In web scenarios, navigate directly with `t3.open(thread)` or `t3.open("/settings/...")` unless the scenario exercises sidebar navigation.
 - Put `expect` assertions only on the behavior the bug breaks, and take `app.screenshot("label")` where the bug shows so `scenarios:prove` pairs base and head captures. Never call `agent.act` or `agent.assert` (no model is configured).
 - The app starts with a minimal env (`PATH`, `HOME`, temp dir); pass extra env vars via `T3_SCENARIO_INHERIT_ENV='VAR,PREFIX_*'`. Run one scenario run at a time per checkout.
 - `scenarios:prove` exits `0` only when the test fails on base and passes on head (`1` = did not prove, `2` = app failed to start, `3` = scenario failed before its assertion). iOS scenarios lease a Simlock simulator and require `SIMLOCK_AGENT_DEVICE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`.
