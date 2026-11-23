@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - realpath.native resolves links before parent traversal.
-import * as NodeFS from "node:fs";
-
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -49,29 +46,4 @@ export const resolveSymlinkTarget = Effect.fn("symlink.resolveSymlinkTarget")(fu
     description: "Too many levels of symbolic links",
     pathOrDescriptor: filePath,
   });
-});
-
-// Node's JS realpath can collapse `..` before resolving a symlink in the preceding segment.
-const realPath = (entry: string) =>
-  Effect.callback<string, NodeJS.ErrnoException>((resume) => {
-    NodeFS.realpath.native(entry, (error, resolved) => {
-      resume(error ? Effect.fail(error) : Effect.succeed(resolved));
-    });
-  });
-
-/** Resolve a link for observation, including a missing target whose parent can be resolved. */
-export const resolveLinkedPath = Effect.fn("symlink.resolveLinkedPath")(function* (
-  entry: string,
-  link: string,
-) {
-  const path = yield* Path.Path;
-  const resolved = yield* realPath(entry).pipe(Effect.option);
-  if (Option.isSome(resolved)) return resolved.value;
-
-  const rawTarget = path.isAbsolute(link) ? link : `${path.dirname(entry)}${path.sep}${link}`;
-  const parent = yield* realPath(path.dirname(rawTarget)).pipe(Effect.option);
-  if (Option.isNone(parent)) return entry;
-
-  const unresolved = path.join(parent.value, path.basename(rawTarget));
-  return yield* resolveSymlinkTarget(unresolved).pipe(Effect.orElseSucceed(() => unresolved));
 });

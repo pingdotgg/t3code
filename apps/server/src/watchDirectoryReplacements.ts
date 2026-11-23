@@ -1,13 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off - parent watches need native filename filtering.
+// @effect-diagnostics nodeBuiltinImport:off - parent watches need native filename filtering and path resolution.
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
-import { resolveLinkedPath } from "@t3tools/shared/symlink";
+import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -67,6 +68,31 @@ const watchDirectoryEntry = (path: string, ready: Deferred.Deferred<void>) => {
     { bufferSize: 1, strategy: "sliding" },
   );
 };
+
+// Node's JS realpath can collapse `..` before resolving a symlink in the preceding segment.
+const realPath = (entry: string) =>
+  Effect.callback<string, NodeJS.ErrnoException>((resume) => {
+    NodeFS.realpath.native(entry, (error, resolved) => {
+      resume(error ? Effect.fail(error) : Effect.succeed(resolved));
+    });
+  });
+
+const resolveLinkedPath = Effect.fn("watchDirectoryReplacements.resolveLinkedPath")(function* (
+  entry: string,
+  link: string,
+) {
+  const path = yield* Path.Path;
+  const resolved = yield* realPath(entry).pipe(Effect.option);
+  if (Option.isSome(resolved)) return resolved.value;
+
+  // A dangling link needs a watch on the directory where its target should appear.
+  const rawTarget = path.isAbsolute(link) ? link : `${path.dirname(entry)}${path.sep}${link}`;
+  const parent = yield* realPath(path.dirname(rawTarget)).pipe(Effect.option);
+  if (Option.isNone(parent)) return entry;
+
+  const unresolved = path.join(parent.value, path.basename(rawTarget));
+  return yield* resolveSymlinkTarget(unresolved).pipe(Effect.orElseSucceed(() => unresolved));
+});
 
 /** Watch replacements of a configured directory and nearby ancestors of its symlink target. */
 export const watchDirectoryPath = (
