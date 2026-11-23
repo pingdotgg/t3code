@@ -22,6 +22,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { derive } from "./IdAllocator.ts";
 import { isOrchestrationV2WorkActive, latestProviderTurnForAttempt } from "@t3tools/contracts";
 
 function trimmed(value: string | null | undefined): string | undefined {
@@ -61,13 +62,16 @@ export function makeSubagentChildThread(input: {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
 }): OrchestrationV2AppThread {
+  // The remote parent delegated the parent thread, not its subagents.
+  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
   return {
-    ...input.parentThread,
+    ...inherited,
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,
     title: input.title,
     titleRegeneration: null,
+    titleRenamed: false,
     linkedPullRequest: null,
     pullRequests: [],
     historyOrigin: undefined,
@@ -187,7 +191,122 @@ export function withExecutedModelNote(
     : `Requested model ${requestedModel}; the provider reported running ${executedModel}.\n\n${result}`;
 }
 
+/** Run signal of the notice that carries a provider's stop reason on a completed run. */
+export const PROVIDER_STOP_REASON_SIGNAL = "provider-stop-reason";
+
+/** Turn item types `subagentResultForRun` reads; load at least these for its projection. */
+export const SUBAGENT_RESULT_TURN_ITEM_TYPES = [
+  "assistant_message",
+  "error",
+  "system_notice",
+  "run_interrupt_result",
+] as const satisfies ReadonlyArray<OrchestrationV2TurnItem["type"]>;
+
+/** The item carrying a provider's stop reason for a run, which its delegated result ends with. */
+export function subagentStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+) {
+  // Codex ends a hook-stopped turn as completed or interrupted, depending on its version.
+  const ids = [
+    derive.runSignalTurnItem({ runId: run.id, signal: PROVIDER_STOP_REASON_SIGNAL }),
+    derive.runSignalTurnItem({ runId: run.id, signal: "interrupt-result" }),
+  ];
+  return projection.turnItems.find(
+    (
+      item,
+    ): item is Extract<
+      OrchestrationV2TurnItem,
+      { readonly type: "system_notice" | "run_interrupt_result" }
+    > =>
+      ids.includes(item.id) &&
+      (item.type === "system_notice" || item.type === "run_interrupt_result"),
+  );
+}
+
+function withStopNotice(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems">,
+  run: OrchestrationV2Run,
+  text: string,
+): string {
+  const notice = subagentStopNotice(projection, run);
+  return notice === undefined ? text : `${text}\n\n${notice.message}`;
+}
+
+type MonitorNotice = Pick<OrchestrationV2ConversationMessage, "runId" | "notification">;
+
+/** Runs that only acknowledge a monitor update are never a task's work. */
+export function monitorUpdateRunIds(messages: ReadonlyArray<MonitorNotice>) {
+  return new Set(
+    messages
+      .filter(
+        (message) =>
+          message.notification?.source.kind === "monitor" &&
+          message.notification.outcome === "updated",
+      )
+      .map((message) => message.runId),
+  );
+}
+
+/**
+ * The same task's completed runs before `run`, latest first: where its report is when `run`
+ * completed without saying anything. Ends at another task's run or at any other outcome.
+ */
+export function delegatedTaskReportRuns(
+  projection: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly messages: ReadonlyArray<MonitorNotice>;
+  },
+  run: OrchestrationV2Run,
+): ReadonlyArray<OrchestrationV2Run> {
+  if (run.status !== "completed") return [];
+  const monitorRuns = monitorUpdateRunIds(projection.messages);
+  const earlier = projection.runs
+    .filter(
+      (candidate) =>
+        candidate.id !== run.id &&
+        candidate.startedAt !== null &&
+        candidate.status !== "rolled_back" &&
+        !monitorRuns.has(candidate.id) &&
+        runRanAfter(run, candidate),
+    )
+    .toSorted((a, b) => (runRanAfter(a, b) ? -1 : 1));
+  const end = earlier.findIndex(
+    (candidate) =>
+      candidate.status !== "completed" || candidate.delegatedTaskId !== run.delegatedTaskId,
+  );
+  return end === -1 ? earlier : earlier.slice(0, end);
+}
+
+/**
+ * `runs` scopes where a run that completed without saying anything finds its report, see
+ * `delegatedTaskReportRuns`. The projection must hold the assistant records of every run given.
+ */
 export function subagentResultForRun(
+  projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns"> & {
+    readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+  },
+  run: OrchestrationV2Run,
+) {
+  const result = resultOfRun(projection, run);
+  if (
+    run.status !== "completed" ||
+    result.messageId !== null ||
+    result.turnItemId !== null ||
+    subagentStopNotice(projection, run) !== undefined
+  )
+    return result;
+  for (const earlier of delegatedTaskReportRuns(
+    { runs: projection.runs ?? [], messages: projection.messages },
+    run,
+  )) {
+    const report = resultOfRun(projection, earlier);
+    if (report.messageId !== null || report.turnItemId !== null) return report;
+  }
+  return result;
+}
+
+function resultOfRun(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "turnItems" | "providerTurns">,
   run: OrchestrationV2Run,
 ): {
@@ -231,17 +350,21 @@ export function subagentResultForRun(
     failure !== undefined && turnItem !== null && turnItem.ordinal < failure.ordinal
       ? (message?.text ?? turnItem.text)
       : undefined;
+  const report = message?.text ?? turnItem?.text;
   const text =
     (failure?.type === "error"
       ? reportBeforeFailure === undefined
         ? failure.failure.message
         : `${failure.failure.message}\n\nLast assistant message before the run failed:\n\n${reportBeforeFailure}`
       : undefined) ??
-    message?.text ??
-    turnItem?.text ??
-    (run.status === "completed"
-      ? "Child task completed without an assistant result."
-      : `Child task ended with status ${run.status}.`);
+    withStopNotice(
+      projection,
+      run,
+      report ??
+        (run.status === "completed"
+          ? "Child task completed without an assistant result."
+          : `Child task ended with status ${run.status}.`),
+    );
   const executedModel = latestProviderTurnForAttempt(
     projection.providerTurns,
     run.activeAttemptId,
@@ -256,10 +379,23 @@ export function subagentResultForRun(
   };
 }
 
+export function subagentHoldsCompletion(
+  task: Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">,
+): boolean {
+  return (
+    isOrchestrationV2WorkActive(task.status) ||
+    // Publishing a child's result precedes scheduling its parent's wake.
+    // The parent still owes that follow-up even between those transactions.
+    (task.status !== "idle" &&
+      (task.completionDelivery?.state === "pending" ||
+        task.completionDelivery?.state === "claimed"))
+  );
+}
+
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
   readonly messages: ReadonlyArray<
-    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+    Pick<OrchestrationV2ConversationMessage, "runId" | "notification" | "createdBy">
   >;
   readonly subagents: ReadonlyArray<
     Pick<OrchestrationV2ThreadProjection["subagents"][number], "status" | "completionDelivery">
@@ -270,27 +406,23 @@ export function delegatedTaskProgress(projection: {
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
-  );
+  const monitorRuns = monitorUpdateRunIds(projection.messages);
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  const active = workRuns.some(
-    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  const held = (run: OrchestrationV2Run) => run.status === "queued" && run.queueHeld === true;
+  const active = workRuns.some((run) => !terminal(run.status) && !held(run));
+  // Held wakes wait on nobody, but a held message the user wrote is the child's next work.
+  const userRunIds = new Set(
+    projection.messages.flatMap((message) =>
+      message.createdBy === "user" && message.notification === undefined && message.runId !== null
+        ? [message.runId]
+        : [],
+    ),
   );
+  const awaitsUserRun = workRuns.some((run) => held(run) && userRunIds.has(run.id));
   const children =
-    projection.subagents.some(
-      (task) =>
-        isOrchestrationV2WorkActive(task.status) ||
-        // Publishing a child's result precedes scheduling its parent's wake.
-        // The parent still owes that follow-up even between those transactions.
-        (task.status !== "idle" &&
-          (task.completionDelivery?.state === "pending" ||
-            task.completionDelivery?.state === "claimed")),
-    ) ||
+    projection.subagents.some(subagentHoldsCompletion) ||
     projection.providerThreads.some((thread) =>
       backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? []),
     );
@@ -299,12 +431,14 @@ export function delegatedTaskProgress(projection: {
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      active || resultRun === undefined
+      active || awaitsUserRun || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
+    /** Working only because of a held message the user wrote, which a cancel does not wait for. */
+    onlyAwaitsUserRun: awaitsUserRun && !active && resultRun !== undefined,
   };
 }
 
