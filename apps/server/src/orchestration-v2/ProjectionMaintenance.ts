@@ -288,13 +288,18 @@ export const layer: Layer.Layer<ProjectionMaintenanceV2, never, SqlClient.SqlCli
     ) {
       const cutoff = DateTime.formatIso(DateTime.subtractDuration(now, RETAINED_EVENT_HISTORY));
       let purged = 0;
-      // Each batch is one statement that commits on its own, so no transaction spans a yield.
+      // Each batch commits on its own, so no transaction spans a yield. The transaction keeps
+      // another writer's statement from landing between the delete and changes().
       const deleteBatches = Effect.fnUntraced(function* (
         batch: (limit: number) => Effect.Effect<unknown, SqlError.SqlError>,
       ) {
         for (;;) {
-          yield* batch(ROW_BATCH_SIZE);
-          const changes = yield* sql<{ readonly count: number }>`SELECT changes() AS count`;
+          const changes = yield* sql.withTransaction(
+            Effect.andThen(
+              batch(ROW_BATCH_SIZE),
+              sql<{ readonly count: number }>`SELECT changes() AS count`,
+            ),
+          );
           const count = changes[0]?.count ?? 0;
           purged += count;
           yield* Effect.yieldNow;

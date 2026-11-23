@@ -527,8 +527,9 @@ it.effect("lists every thread-scoped projection table or names why it is kept", 
       "orchestration_v2_projection_threads",
       "orchestration_v2_projection_provider_sessions",
       "orchestration_v2_projection_provider_session_bindings",
-      // Kept exact by triggers on projection_turn_items.
+      // Kept exact by triggers on projection_turn_items and projection_runs.
       "orchestration_v2_projection_turn_item_counts",
+      "orchestration_v2_projection_thread_item_counts",
     ];
     assert.deepEqual(
       scoped
