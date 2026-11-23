@@ -74,7 +74,7 @@ import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
-import { checkOutput, latestOwedOutputRun, outputRequestProblem } from "./runOutput.ts";
+import { checkOutput, outputRequestProblem, resolveOwedOutputRun } from "./runOutput.ts";
 
 const isRunOutputDispatchRejectionError = Schema.is(Orchestrator.RunOutputDispatchRejectionError);
 
@@ -96,6 +96,7 @@ export function withCreationProvenance(
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
         initialMessage: _initialMessage,
+        workflowRun: _workflowRun,
         ...rest
       } = command;
       return { ...rest, ...provenance };
@@ -1040,11 +1041,33 @@ const make = Effect.gen(function* () {
     "ThreadManagementService.submitRunOutput",
   )(function* (input) {
     const records = yield* orchestrator.getThreadRecords(input.threadId, ["runs"]);
+    // A retry of a submission already taken answers for the run it went to, which a run asked for
+    // a result since may have followed. Replaying the receipt ignores the command's run and value.
+    const receipt = yield* receipts
+      .getByCommandId(input.commandId)
+      .pipe(Effect.orElseSucceed(() => Option.none()));
+    const anyRun = records.runs[0];
+    if (Option.isSome(receipt) && receipt.value.status === "accepted" && anyRun !== undefined) {
+      const replayed = yield* orchestrator.dispatch({
+        type: "run.output.submit",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: anyRun.id,
+        value: null,
+      });
+      const runId = replayed.storedEvents.find(({ event }) => event.type === "run.output-submitted")
+        ?.event.runId;
+      if (runId !== undefined) return { runId };
+    }
     const active = latestActiveRun(records);
     // A turn that ended without its result still owes it: the agent may have ended it to wait
-    // for something, and answer from the turn that woke it.
-    // Only an ended turn can owe one; a queued or running turn asked for one answers for itself.
-    const owed = latestOwedOutputRun(records.runs);
+    // for something, and answer from the turn that woke it. Only the newest started run asked for
+    // one can owe it, and only while the agent's conversation still reaches it.
+    const owed = yield* resolveOwedOutputRun(records.runs, () =>
+      orchestrator.getThreadRecords(input.threadId, ["runs", "turnItems"], {
+        turnItemTypes: ["user_message"],
+      }),
+    );
     const run = active?.outputSchema !== undefined ? active : owed;
     // Check whether a result is expected before caller identity so plain turns keep their message.
     if (active === undefined || run?.outputSchema === undefined) {
@@ -1398,6 +1421,15 @@ const make = Effect.gen(function* () {
           readonly status: ThreadManagementTerminalRunStatus;
         },
       } as const;
+    }
+    if (explicitRun?.status === "queued") {
+      const dispatch = yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        runId: explicitRun.id,
+      });
+      return { type: "interrupt_requested", run: explicitRun, dispatch } as const;
     }
     const interruptibleRun = latestActiveRun(target);
     if (interruptibleRun === undefined) {

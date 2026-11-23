@@ -1866,6 +1866,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             conversationOnly.storedEvents.map((stored) => stored.event.type),
             ["thread.metadata-updated", "checkpoint.rollback-requested"],
           );
+          yield* orchestrator.dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make("runtime-rollback-delete"),
+            threadId,
+          });
+          const deletedCommandId = CommandId.make("runtime-rollback-deleted");
+          const deletedSequence = yield* orchestrator.getThreadEventSequence(threadId);
+          const deleted = yield* orchestrator
+            .dispatch({
+              type: "checkpoint.rollback",
+              commandId: deletedCommandId,
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+              restoreFiles: false,
+            })
+            .pipe(Effect.flip);
+          assert.instanceOf(deleted, Orchestrator.OrchestratorDispatchError);
+          assert.equal(deleted.cause, `Thread ${threadId} is deleted.`);
+          assert.equal(yield* orchestrator.getThreadEventSequence(threadId), deletedSequence);
+          assert.deepEqual(yield* outbox.listByCommandId(deletedCommandId), []);
         } else {
           const error = yield* rollback.pipe(Effect.flip);
           assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
@@ -11933,6 +11954,70 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
       assert.isFalse(yield* effectWorker.runOnce());
     }),
   );
+
+  it.effect("cancels a named queued run and leaves the active one running", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-queued-interrupt-project");
+      const threadId = ThreadId.make("runtime-layer-queued-interrupt-thread");
+
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-queued-interrupt-project-create"),
+        projectId,
+        title: "Queued interrupt project",
+        workspaceRoot: "/tmp/runtime-layer-queued-interrupt-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-queued-interrupt-create"),
+        threadId,
+        projectId,
+        title: "Queued interrupt",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      for (const [key, dispatchMode] of [
+        ["active", { type: "start_immediately" }],
+        ["queued", { type: "queue_after_active" }],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-queued-interrupt-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-queued-interrupt-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode,
+        });
+      }
+      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.equal(queued?.status, "queued");
+
+      const interrupt = yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-queued-interrupt-command"),
+        threadId,
+        runId: queued!.id,
+      });
+      assert.equal(interrupt.type, "interrupt_requested");
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.runs.map((run) => run.status),
+        [active!.status, "cancelled"],
+      );
+    }),
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {
@@ -11964,7 +12049,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         branch: null,
         worktreePath: null,
       });
-      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+      const send = (
+        key: string,
+        outputSchema?: { readonly type: "object" },
+        freshContext?: boolean,
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -11976,36 +12065,74 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           attachments: [],
           modelSelection,
           ...(outputSchema === undefined ? {} : { outputSchema }),
+          ...(freshContext === undefined ? {} : { freshContext }),
           dispatchMode: { type: "start_immediately" },
         });
-      yield* send("asked", { type: "object" });
-      const asked = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      // The agent ended its turn to wait for something, without the result.
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make(`${threadId}-asked-completed`),
-            type: "run.updated",
-            threadId,
-            runId: asked.id,
-            occurredAt: asked.requestedAt,
-            payload: { ...asked, status: "completed", completedAt: asked.requestedAt },
-          },
-        ],
+      const runOf = Effect.fn(function* (key: string) {
+        const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+        return runs.find(
+          (run) => run.userMessageId === MessageId.make(`runtime-layer-owed-output-${key}`),
+        )!;
       });
+      // The agent ends its turn, to wait for something or because it is done.
+      const complete = Effect.fn(function* (key: string) {
+        const run = yield* runOf(key);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}-${key}-completed`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: run.requestedAt,
+              payload: { ...run, status: "completed", completedAt: run.requestedAt },
+            },
+          ],
+        });
+      });
+      const submit = (key: string, callerRunId?: RunId, json = '{"head":"abc"}') =>
+        threadManagement.submitRunOutput({
+          threadId,
+          commandId: CommandId.make(`runtime-layer-owed-output-submit-${key}`),
+          json,
+          ...(callerRunId === undefined ? {} : { callerRunId }),
+        });
+      const refused = Effect.fn(function* (key: string) {
+        const rejected = yield* submit(key).pipe(Effect.flip);
+        assert.include(rejected.message, "not asked for a result");
+      });
+      yield* send("asked", { type: "object" });
+      const asked = yield* runOf("asked");
+      yield* complete("asked");
       yield* send("woken");
 
-      const accepted = yield* threadManagement.submitRunOutput({
-        threadId,
-        commandId: CommandId.make("runtime-layer-owed-output-submit"),
-        json: '{"head":"abc"}',
-        callerRunId: asked.id,
-      });
+      const accepted = yield* submit("asked", asked.id);
       assert.equal(accepted.runId, asked.id);
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(after.runs.find((run) => run.id === asked.id)?.output?.value, {
         head: "abc",
       });
+
+      // Its reply was lost, and the retry comes once the next step's turn asked for a result.
+      yield* complete("woken");
+      yield* send("next", { type: "object" });
+      assert.equal((yield* submit("asked", asked.id)).runId, asked.id);
+      assert.isUndefined((yield* runOf("next")).output);
+
+      // A correction gave the result `next` owed, so a later plain turn owes nothing.
+      yield* complete("next");
+      yield* send("correction", { type: "object" });
+      yield* submit("correction", (yield* runOf("correction")).id);
+      yield* complete("correction");
+      yield* send("plain");
+      yield* refused("plain");
+
+      // A turn in a fresh conversation cannot answer for one the agent no longer sees.
+      yield* complete("plain");
+      yield* send("before-fresh", { type: "object" });
+      yield* complete("before-fresh");
+      yield* send("fresh", undefined, true);
+      yield* refused("fresh");
     }),
   );
 
@@ -12209,7 +12336,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
         branch: null,
         worktreePath: null,
       });
-      const send = (key: string, outputSchema?: { readonly type: "object" }) =>
+      const send = (
+        key: string,
+        outputSchema?: { readonly type: "object" },
+        options?: { readonly freshContext?: boolean; readonly scheduledTaskId?: ScheduledTaskId },
+      ) =>
         orchestrator.dispatch({
           type: "message.dispatch",
           createdBy: "user",
@@ -12221,6 +12352,10 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
           attachments: [],
           modelSelection,
           ...(outputSchema === undefined ? {} : { outputSchema }),
+          ...(options?.freshContext === undefined ? {} : { freshContext: options.freshContext }),
+          ...(options?.scheduledTaskId === undefined
+            ? {}
+            : { scheduledTaskId: options.scheduledTaskId }),
           dispatchMode: { type: "start_immediately" },
         });
       const latestRun = () =>
@@ -12519,6 +12654,95 @@ it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) =>
       assert.deepEqual(after.runs[0]?.output?.value, {
         answer: "landed-on-completion-race",
       });
+
+      // A scheduled fresh-context run is a side conversation and still allows the owed submission.
+      yield* send("run-before-sched", { type: "object" });
+      const beforeSched = yield* latestRun();
+      const beforeSchedAttempt = RunAttemptId.make(`${beforeSched.id}:attempt:1`);
+      yield* updateRun(beforeSched, "run-before-sched-completed", {
+        activeAttemptId: beforeSchedAttempt,
+        status: "completed",
+        completedAt: beforeSched.requestedAt,
+      });
+      yield* send("run-sched-fresh", undefined, {
+        freshContext: true,
+        scheduledTaskId: ScheduledTaskId.make("runtime-layer-sched-fresh-task"),
+      });
+      yield* orchestrator.dispatch({
+        type: "run.output.submit",
+        commandId: CommandId.make("runtime-layer-sched-fresh-owed-dispatch-submit"),
+        threadId,
+        runId: beforeSched.id,
+        callerRunId: beforeSched.id,
+        callerAttemptId: beforeSchedAttempt,
+        value: { answer: "landed-across-scheduled-fresh" },
+      });
+      const schedFresh = yield* latestRun();
+      yield* updateRun(schedFresh, "run-sched-fresh-completed", {
+        status: "completed",
+        completedAt: schedFresh.requestedAt,
+      });
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.id === beforeSched.id,
+        )?.output?.value,
+        { answer: "landed-across-scheduled-fresh" },
+      );
+
+      // An unscheduled fresh-context run moves the context boundary past the owed run under the lock.
+      yield* send("run-before-fresh", { type: "object" });
+      const beforeFresh = yield* latestRun();
+      const beforeFreshAttempt = RunAttemptId.make(`${beforeFresh.id}:attempt:1`);
+      yield* updateRun(beforeFresh, "run-before-fresh-completed", {
+        activeAttemptId: beforeFreshAttempt,
+        status: "completed",
+        completedAt: beforeFresh.requestedAt,
+      });
+      yield* send("run-unscheduled-fresh", undefined, { freshContext: true });
+      const acrossFresh = yield* orchestrator
+        .dispatch({
+          type: "run.output.submit",
+          commandId: CommandId.make("runtime-layer-fresh-owed-dispatch-submit"),
+          threadId,
+          runId: beforeFresh.id,
+          callerRunId: beforeFresh.id,
+          callerAttemptId: beforeFreshAttempt,
+          value: { answer: "stale-after-fresh-context" },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(acrossFresh, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(acrossFresh.cause, Orchestrator.RunOutputDispatchRejectionError);
+      assert.equal(acrossFresh.cause.reason, "inactive");
+      const unscheduledFresh = yield* latestRun();
+      yield* updateRun(unscheduledFresh, "run-unscheduled-fresh-completed", {
+        status: "completed",
+        completedAt: unscheduledFresh.requestedAt,
+      });
+
+      // Once a newer started turn asks for a result, an earlier unanswered turn no longer owes one.
+      yield* send("run-first", { type: "object" });
+      const first = yield* latestRun();
+      const firstAttempt = RunAttemptId.make(`${first.id}:attempt:1`);
+      yield* updateRun(first, "run-first-completed", {
+        activeAttemptId: firstAttempt,
+        status: "completed",
+        completedAt: first.requestedAt,
+      });
+      yield* send("run-superseded", { type: "object" });
+      const superseded = yield* orchestrator
+        .dispatch({
+          type: "run.output.submit",
+          commandId: CommandId.make("runtime-layer-superseded-owed-dispatch-submit"),
+          threadId,
+          runId: first.id,
+          callerRunId: first.id,
+          callerAttemptId: firstAttempt,
+          value: { answer: "stale-after-superseded" },
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(superseded, Orchestrator.OrchestratorDispatchError);
+      assert.instanceOf(superseded.cause, Orchestrator.RunOutputDispatchRejectionError);
+      assert.equal(superseded.cause.reason, "inactive");
     }),
   );
 });

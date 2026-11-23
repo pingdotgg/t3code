@@ -715,11 +715,15 @@ export const layerWithOptions = (
         runId: RunId | undefined,
         currentCredentialRunId?: RunId,
       ) =>
-        projectionStore
-          .getThreadRecords(threadId, ["runs"])
-          .pipe(
-            Effect.map(({ runs }) => runRequiresRunScopedMcp(runs, runId, currentCredentialRunId)),
-          );
+        projectionStore.getThreadRecords(threadId, ["runs"]).pipe(
+          Effect.flatMap(({ runs }) =>
+            runRequiresRunScopedMcp(runs, runId, currentCredentialRunId, () =>
+              projectionStore.getThreadRecords(threadId, ["runs", "turnItems"], {
+                turnItemTypes: ["user_message"],
+              }),
+            ),
+          ),
+        );
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
       const prepareMcpSession = (
         threadId: ThreadId,

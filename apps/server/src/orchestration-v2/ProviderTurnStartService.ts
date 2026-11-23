@@ -66,7 +66,7 @@ import {
   isSlashCommandMessage,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
-import { isProviderCommand, latestOwedOutputRun, outputInstructions } from "./runOutput.ts";
+import { isProviderCommand, outputInstructions, resolveOwedOutputRun } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -967,7 +967,11 @@ export const layer: Layer.Layer<
         brokenNativeThread &&
         providerThread.nativeThreadRef !== null &&
         !(yield* providerSessions.isLive(providerSessionId));
-      const owedOutputRun = latestOwedOutputRun(projection.runs);
+      const owedOutputRun = yield* resolveOwedOutputRun(projection.runs, () =>
+        projectionStore.getThreadRecords(input.threadId, ["runs", "turnItems"], {
+          turnItemTypes: ["user_message"],
+        }),
+      );
       const sessionResult = yield* Effect.result(
         providerSessions.open({
           threadId: projection.thread.id,
