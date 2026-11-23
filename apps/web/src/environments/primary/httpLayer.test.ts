@@ -52,7 +52,7 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
     Object.defineProperty(globalThis, "window", {
       configurable: true,
       value: {
-        location: { origin: "t3code://app" },
+        location: { origin: "kompas://app" },
         desktopBridge: {
           getLocalEnvironmentBootstrap: () => ({
             label: "Local environment",

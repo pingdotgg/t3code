@@ -170,6 +170,7 @@ export const PLUGIN_CATALOG = [
     url: "https://mcp.exa.ai/mcp",
     keyHeader: "x-api-key",
     keyPrefix: "",
+    keyless: true,
     docs: "https://exa.ai/docs/get-started/exa-mcp",
   },
   {
@@ -178,6 +179,7 @@ export const PLUGIN_CATALOG = [
     url: "https://mcp.tavily.com/mcp/",
     keyHeader: "Authorization",
     keyPrefix: "Bearer ",
+    keyless: false,
     docs: "https://docs.tavily.com/documentation/mcp",
   },
 ] as const;

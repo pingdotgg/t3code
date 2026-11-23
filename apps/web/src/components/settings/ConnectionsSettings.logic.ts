@@ -454,7 +454,7 @@ export function resolveCurrentOriginPairingUrl(
   currentHref: string = window.location.href,
 ): string | null {
   const url = new URL("/pair", currentHref);
-  // The packaged desktop window loads from t3code://app, which no other device can open.
+  // The packaged desktop window loads from kompas://app, which no other device can open.
   if ((url.protocol !== "http:" && url.protocol !== "https:") || isLoopbackHostname(url.hostname)) {
     return null;
   }

@@ -181,7 +181,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     val alert = manager.activeNotifications.single()
     assertEquals("5 agents finished", alert.notification.extras.getString(Notification.EXTRA_TITLE))
     assertEquals(titles, alert.notification.extras.getString(Notification.EXTRA_BIG_TEXT))
-    assertEquals("t3code-dev://", shadowOf(alert.notification.contentIntent).savedIntent.dataString)
+    assertEquals("kompas-dev://", shadowOf(alert.notification.contentIntent).savedIntent.dataString)
   }
 
   @Test
@@ -247,7 +247,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     val card = manager.activeNotifications.single().notification
     assertEquals(lines.joinToString("\n"), card.extras.getString(Notification.EXTRA_BIG_TEXT))
     assertEquals(
-      "t3code-dev://threads/environment/thread",
+      "kompas-dev://threads/environment/thread",
       shadowOf(card.contentIntent).savedIntent.dataString
     )
   }
@@ -327,7 +327,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
     assertEquals(listOf("Approve", "Dismiss"), card.actions.map { it.title.toString() })
     assertEquals(
-      "t3code-dev://threads/environment/thread",
+      "kompas-dev://threads/environment/thread",
       shadowOf(card.actions[0].actionIntent).savedIntent.dataString
     )
     assertEquals("Approve", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
@@ -344,7 +344,7 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     assertEquals("2 need you", next.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
     assertEquals("Answer", next.actions[0].title.toString())
     assertEquals(
-      "t3code-dev://threads/another-environment/another-thread",
+      "kompas-dev://threads/another-environment/another-thread",
       shadowOf(next.actions[0].actionIntent).savedIntent.dataString
     )
     assertEquals("Answer", next.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))

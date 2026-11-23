@@ -844,7 +844,7 @@ jobs:
         timeout-minutes: 5
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
-          PACKAGE_NAME: com.t3tools.t3code
+          PACKAGE_NAME: com.t3tools.kompas
           APK_OUTPUT_DIR: ${{ runner.temp }}/android-apk
         run: |
           if [ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]; then

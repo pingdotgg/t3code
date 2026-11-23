@@ -12,7 +12,7 @@ import { channelSwitchLabel } from "./sidebar/updateEverything.logic";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
-const DEFAULT_DESKTOP_RELEASE_REPOSITORY = "pingdotgg/t3code";
+const DEFAULT_DESKTOP_RELEASE_REPOSITORY = "slawk0/t3code";
 const GITHUB_REPOSITORY_SEGMENT = /^[A-Za-z0-9._-]+$/u;
 
 function isValidRepositorySegment(value: string | undefined): value is string {

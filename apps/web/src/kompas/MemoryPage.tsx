@@ -16,6 +16,7 @@ import { useThreadSearch } from "../state/queries";
 import { useAtomCommand } from "../state/use-atom-command";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatDay, KompasPage, Panel, PanelTitle, Progress } from "./KompasPage";
+import { useModelName } from "./ModelField";
 import { type Kompas, kompasEnvironment, useKompas, useReportFailure } from "./state";
 
 function EntryEditor(props: {
@@ -88,6 +89,7 @@ export function MemoryScopePanel(props: {
 }) {
   const gt = useGT();
   const locale = useLocale();
+  const modelName = useModelName(props.kompas.environmentId);
   const [editing, setEditing] = useState<string | null>(null);
   const { entries, used } = memoryInScope(props.kompas.snapshot, props.scope);
   const limit =
@@ -118,7 +120,8 @@ export function MemoryScopePanel(props: {
                 <div className="min-w-0 flex-1">
                   <p className="wrap-anywhere">{entry.text}</p>
                   <p className="text-muted-foreground text-sm">
-                    {entry.model ?? gt("You")} · {formatDay(entry.updatedAt, locale)}
+                    {entry.model === null ? gt("You") : modelName(entry.model)} ·{" "}
+                    {formatDay(entry.updatedAt, locale)}
                   </p>
                 </div>
                 <Button
@@ -154,11 +157,13 @@ export function MemoryScopePanel(props: {
 function Proposals({ kompas }: { readonly kompas: Kompas }) {
   const gt = useGT();
   const reportFailure = useReportFailure();
+  const modelName = useModelName(kompas.environmentId);
   const resolveMemory = useAtomCommand(kompasEnvironment.resolveMemory, { reportFailure: false });
   const { memory } = kompas.snapshot;
   return memory
     .filter((entry) => entry.status === "proposed")
     .map((entry) => {
+      const author = entry.model === null ? gt("The model") : modelName(entry.model);
       const replaced = memory.find((candidate) => candidate.id === entry.replacesId);
       const resolve = (approve: boolean) =>
         void resolveMemory({
@@ -173,8 +178,8 @@ function Proposals({ kompas }: { readonly kompas: Kompas }) {
           <div className="min-w-48 flex-1">
             <p className="font-medium text-primary text-sm">
               {entry.text === ""
-                ? gt("{model} wants to forget", { model: entry.model ?? gt("The model") })
-                : gt("{model} wants to remember", { model: entry.model ?? gt("The model") })}
+                ? gt("{model} wants to forget", { model: author })
+                : gt("{model} wants to remember", { model: author })}
             </p>
             <p className="wrap-anywhere">{entry.text === "" ? replaced?.text : entry.text}</p>
           </div>

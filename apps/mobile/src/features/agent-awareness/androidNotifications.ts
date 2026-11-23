@@ -21,7 +21,7 @@ export function supportsAndroidAgentNotifications(): boolean {
 
 function appScheme(): string {
   const scheme = Constants.expoConfig?.scheme;
-  return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code";
+  return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "kompas";
 }
 
 export function configureAndroidAgentNotifications(

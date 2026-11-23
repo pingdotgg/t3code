@@ -17,6 +17,15 @@ function useModelEntries(environmentId: EnvironmentId) {
   return { settings, providers, entries: providerInstanceEntriesFor(providers, settings, null) };
 }
 
+/** Names a model as its picker does; an unknown one keeps its id. */
+export function useModelName(environmentId: EnvironmentId) {
+  const providers =
+    useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? NO_PROVIDERS;
+  return (slug: string) =>
+    providers.flatMap((provider) => provider.models).find((model) => model.slug === slug)?.name ??
+    slug;
+}
+
 /** The model a new conversation starts with, or null while no provider is ready. */
 export function useDefaultModel(environmentId: EnvironmentId): ModelSelection | null {
   const { settings, entries } = useModelEntries(environmentId);

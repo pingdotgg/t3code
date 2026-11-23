@@ -1893,6 +1893,11 @@ code {
 
 /* Chat markdown rendering */
 
+[data-chat-mode] .chat-markdown {
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
 .chat-markdown > :first-child {
   margin-top: 0;
 }

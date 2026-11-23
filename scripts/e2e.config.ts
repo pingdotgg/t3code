@@ -177,7 +177,7 @@ export default {
         session: "t3-scenarios",
       }),
       app: {
-        bundleId: "com.t3tools.t3code.dev",
+        bundleId: "com.t3tools.kompas.dev",
         // Metro starts after the server listens, so it answering means both are up.
         readyUrl: `http://127.0.0.1:${MOBILE.metroPort}/status`,
         command: {

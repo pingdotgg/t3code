@@ -1699,10 +1699,18 @@ function codexThreadRuntimeParams(input: {
           },
         ]),
       ),
-      // The app owns memory; Codex's own would drift from what other models see.
+      // The app owns memory and plugins; Codex's own would drift from what other models see.
       ...(input.runtimePolicy?.profile === undefined
         ? {}
-        : { "memories.use_memories": false, "memories.generate_memories": false }),
+        : {
+            "memories.use_memories": false,
+            "memories.generate_memories": false,
+            "features.apps": false,
+            "features.plugins": false,
+            ...Object.fromEntries(
+              (input.stdioMcpServers ?? []).map((name) => [`mcp_servers.${name}.enabled`, false]),
+            ),
+          }),
       ...(t3Server === undefined
         ? {}
         : {

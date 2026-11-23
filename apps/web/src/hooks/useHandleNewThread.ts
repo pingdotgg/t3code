@@ -52,6 +52,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { getClientSettings, useClientSettings } from "./useSettings";
+import { defaultRuntimeModeFor } from "../kompas/runtimeMode";
 import { getLocalStorageItem, useLocalStorage } from "./useLocalStorage";
 import * as Schema from "effect/Schema";
 import { useAtomValue } from "@effect/atom-react";
@@ -225,11 +226,10 @@ export function createNewThreadHandler(router: AnyRouter) {
     const projectDefaultModelSelection = fallbackResolution.fallback
       ? fallbackResolution.selection
       : configuredDefaultModelSelection;
-    // A conversation has no checkout to work in, so full access would only reach the user's files.
-    const defaultRuntimeMode =
-      project?.isScratch === true && projectSettings.settings.defaultRuntimeMode === "full-access"
-        ? "auto-accept-edits"
-        : projectSettings.settings.defaultRuntimeMode;
+    const defaultRuntimeMode = defaultRuntimeModeFor(
+      project,
+      projectSettings.settings.defaultRuntimeMode,
+    );
     const resolveModelSelectionOverride = (destinationDraftId: DraftId) =>
       resolveNewThreadModelSelectionOverride({
         projectDefaultSelection: projectDefaultModelSelection ?? null,

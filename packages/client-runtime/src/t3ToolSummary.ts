@@ -817,6 +817,25 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "widget": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Showed {count} widget} other {Showed {count} widgets}}", {
+              count,
+            }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to show {count} widget} other {Tried to show {count} widgets}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "memory":
+      label = done ? resolve(msg("Updated memory")) : resolve(msg("Tried to update memory"));
+      break;
     case "html-render": {
       const count = selected.length;
       label = done

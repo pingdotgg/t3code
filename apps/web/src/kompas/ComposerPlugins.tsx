@@ -16,7 +16,7 @@ export function ComposerPlugins(props: { readonly threadId: ThreadId | null }) {
   const plugins = kompas?.snapshot.plugins.filter((plugin) => plugin.enabled) ?? [];
   if (kompas === null || threadId === null || plugins.length === 0) return null;
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-1 px-1">
+    <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
       {plugins.map((plugin) => {
         const enabled = pluginEnabledInThread(kompas.snapshot, plugin.id, threadId);
         return (

@@ -292,6 +292,21 @@ export function commandlessCommandLabel(
     : null;
 }
 
+/** A plugin's search call; its query says more than the tool's name. */
+function pluginSearch(
+  entry: Pick<WorkLogPresentationEntry, "label" | "toolTitle" | "toolData" | "structuredPayload">,
+): { readonly plugin: string; readonly query: string } | null {
+  const [, server, tool] =
+    /^(?:mcp__)?([\w-]+?)(?:__|\.)([\w.-]+)$/.exec(workEntryToolName(entry) ?? "") ?? [];
+  const query = asRecord(workEntryToolInput(entry))?.query;
+  return server !== undefined &&
+    tool?.includes("search") &&
+    typeof query === "string" &&
+    query !== ""
+    ? { plugin: server.charAt(0).toUpperCase() + server.slice(1), query }
+    : null;
+}
+
 export function resolveWorkEntryToolPresentation(
   entry: Pick<
     WorkLogPresentationEntry,
@@ -305,6 +320,18 @@ export function resolveWorkEntryToolPresentation(
     workEntryToolInput(entry),
   );
   const status = entry.toolLifecycleStatus ?? fallbackStatus;
+  const search = definition === null ? pluginSearch(entry) : null;
+  if (search !== null) {
+    return {
+      displayName: resolve(
+        status === "inProgress"
+          ? msg("Searching {plugin}: {query}", search)
+          : msg("Searched {plugin}: {query}", search),
+      ),
+      icon: undefined,
+      action: undefined,
+    };
+  }
   return resolveT3McpToolPresentation(
     definition,
     definition && t3ToolResultIndicatesFailure(workEntryToolOutput(entry)) ? "failed" : status,
@@ -769,7 +796,12 @@ export function summarizeToolGroup(
     .slice(0, 2)
     .sort((a, b) => a.index - b.index);
   const labels = selected.map(({ label }) => label);
-  if (sources.size > 0) {
+  const [firstEntry, ...otherEntries] = entries;
+  const onlySearch =
+    firstEntry !== undefined && otherEntries.length === 0 ? pluginSearch(firstEntry) : null;
+  if (onlySearch !== null) {
+    labels.unshift(resolve(msg("Searched {plugin}: {query}", onlySearch)));
+  } else if (sources.size > 0) {
     const sourceValues = [...sources.values()];
     const sourceNames = [...new Set(sourceValues.map((source) => source.name))];
     const names = joinClauses(sourceNames, resolve);

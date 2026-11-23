@@ -2643,13 +2643,18 @@ export function makeClaudeQueryOptions(input: {
       : {
           env: {
             ...(input.environment ?? process.env),
-            // The app owns memory; Claude's own would drift from what other models see.
+            // The app owns memory and plugins; Claude's own would drift from what other models see.
             ...(input.profileInstructions === undefined
               ? {}
-              : { CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1" }),
+              : {
+                  CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+                  CLAUDE_CODE_DISABLE_CLAUDE_MDS: "1",
+                  ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+                }),
           },
         }),
     ...(input.mcpServers === undefined ? {} : { mcpServers: input.mcpServers }),
+    ...(input.profileInstructions === undefined ? {} : { strictMcpConfig: true }),
     systemPrompt: {
       type: "preset" as const,
       preset: "claude_code" as const,

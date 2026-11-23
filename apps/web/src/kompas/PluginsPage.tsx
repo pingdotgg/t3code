@@ -417,7 +417,11 @@ function PluginsContent(props: {
             return (
               <Panel key={entry.name}>
                 <PanelTitle
-                  detail={gt("Web search for any model. Works without a key, within a free limit.")}
+                  detail={
+                    entry.keyless
+                      ? gt("Web search for any model. Works without a key, within a free limit.")
+                      : gt("Web search for any model. Sign in or add a key.")
+                  }
                 >
                   {entry.brand}
                 </PanelTitle>

@@ -18,7 +18,7 @@ const MANIFEST = `<manifest xmlns:android="http://schemas.android.com/apk/res/an
 </manifest>`;
 
 // Trimmed from the MainActivity.kt that `expo prebuild` generates for this app.
-const MAIN_ACTIVITY = `package com.t3tools.t3code
+const MAIN_ACTIVITY = `package com.t3tools.kompas
 
 import android.os.Build
 import android.os.Bundle

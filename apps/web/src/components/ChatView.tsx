@@ -298,8 +298,8 @@ import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ChatStartExtras, ChatStartHeadline } from "../kompas/ChatStart";
-import { ComposerPlugins } from "../kompas/ComposerPlugins";
-import { useChatMode, useHasPlugins } from "../kompas/state";
+import { defaultRuntimeModeFor } from "../kompas/runtimeMode";
+import { useChatMode } from "../kompas/state";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
   BranchRestoreConfirmHost,
@@ -1043,12 +1043,6 @@ export default function ChatView(props: ChatViewProps) {
   const [, setThreadErrorBannerDismissTick] = useState(0);
   const threadErrorIsServerRuntimeError =
     localServerError === null && visibleThreadError === serverRuntime?.lastError;
-  const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
-    .settings.defaultRuntimeMode;
-  const runtimeMode =
-    composerRuntimeMode ??
-    (isServerThread ? activeThread?.runtimeMode : undefined) ??
-    defaultRuntimeMode;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = canWriteSourceControl && isLocalDraftThread;
   const activeThreadId = activeThread?.id ?? null;
@@ -1205,6 +1199,14 @@ export default function ChatView(props: ChatViewProps) {
       ? scopeProjectRef(activeThreadEnvironmentId, activeThreadProjectId)
       : null;
   const activeProject = useProject(activeProjectRef);
+  const defaultRuntimeMode = defaultRuntimeModeFor(
+    activeProject,
+    resolveProjectSettings(settings, activeThread?.projectId ?? null).settings.defaultRuntimeMode,
+  );
+  const runtimeMode =
+    composerRuntimeMode ??
+    (isServerThread ? activeThread?.runtimeMode : undefined) ??
+    defaultRuntimeMode;
   const activeProjectSettings = resolveProjectSettings(
     settings,
     activeProject?.id ?? null,
@@ -1888,18 +1890,16 @@ export default function ChatView(props: ChatViewProps) {
           reportedModelSelection,
         );
   const chatMode = useChatMode();
-  const hasPlugins = useHasPlugins();
   const showComposerContextStrip =
     !embedded &&
-    (chatMode
-      ? hasPlugins && activeThreadId !== null
-      : shouldShowComposerContextStrip({
-          isDraftHeroState,
-          persistInActiveThreads: settings.persistComposerContextStrip,
-          hasActiveProject: activeProject !== null && !showProviderSubagentBar,
-          isGitRepo,
-          showEnvironmentIndicator: showComposerEnvironmentIndicator,
-        }));
+    !chatMode &&
+    shouldShowComposerContextStrip({
+      isDraftHeroState,
+      persistInActiveThreads: settings.persistComposerContextStrip,
+      hasActiveProject: activeProject !== null && !showProviderSubagentBar,
+      isGitRepo,
+      showEnvironmentIndicator: showComposerEnvironmentIndicator,
+    });
   const terminalShortcutLabelOptions = {
     context: {
       terminalFocus: true,
@@ -2074,8 +2074,10 @@ export default function ChatView(props: ChatViewProps) {
       ? activePreviewMiniPlayer
       : null;
   const canvasPreview = useThreadPreviewCanvasSource(activeThreadRef, shownPreviewMiniPlayer);
-  const threadPanelInlineOpen = useRightPanelStore((state) =>
-    selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, activeThreadRef, "inline"),
+  const threadPanelInlineOpen = useRightPanelStore(
+    (state) =>
+      !chatMode &&
+      selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, activeThreadRef, "inline"),
   );
   // Selects only the mode, so canvas resizes rerender the chat view only when the
   // card switches presentation.
@@ -2090,12 +2092,14 @@ export default function ChatView(props: ChatViewProps) {
         detailsCardInlineOpen: threadPanelInlineOpen,
       }).detailsCardMode,
   );
-  const threadPanelOpen = useRightPanelStore((state) =>
-    selectThreadPanelOpen(
-      state.threadPanelVisibilityByThreadKey,
-      activeThreadRef,
-      threadPanelPresentation,
-    ),
+  const threadPanelOpen = useRightPanelStore(
+    (state) =>
+      !chatMode &&
+      selectThreadPanelOpen(
+        state.threadPanelVisibilityByThreadKey,
+        activeThreadRef,
+        threadPanelPresentation,
+      ),
   );
   const supportsThreadPullRequests = serverConfig !== null;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -3533,6 +3537,7 @@ export default function ChatView(props: ChatViewProps) {
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
         data-chat-column
+        data-chat-mode={chatMode ? "" : undefined}
         inert={rightPanelMaximized}
         onMouseUp={preventMiddleClickPasteOutsideEditable}
       >
@@ -4002,12 +4007,7 @@ export default function ChatView(props: ChatViewProps) {
                             data-terminal-open={terminalUiState.terminalOpen ? "true" : undefined}
                             className="relative z-0"
                           >
-                            {showComposerContextStrip && chatMode ? (
-                              <div className="pointer-events-auto">
-                                <ComposerPlugins threadId={activeThread.id} />
-                              </div>
-                            ) : null}
-                            {showComposerContextStrip && !chatMode ? (
+                            {showComposerContextStrip ? (
                               <div className="pointer-events-auto">
                                 <BranchToolbar
                                   forceNewWorktree={multipleModelSelections !== null}
@@ -4103,7 +4103,7 @@ export default function ChatView(props: ChatViewProps) {
               />
             ) : null}
 
-            {embedded ? null : (
+            {embedded || chatMode ? null : (
               <>
                 <BranchRestoreConfirmHost
                   threadKey={activeThreadKey}

@@ -37,6 +37,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { cn } from "../lib/utils";
 import { useVisibleThreadShells } from "../state/entities";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { useModelName } from "./ModelField";
 import { useKompas, useStartConversation, useWorkstreamOf } from "./state";
 
 const RECENT_CONVERSATIONS = 40;
@@ -130,6 +131,7 @@ function ProjectSidebar(props: {
   readonly onNavigate: () => void;
 }) {
   const { workstream } = props;
+  const modelName = useModelName(props.environmentId);
   const stateLabel = useWorkstreamStateLabel();
   const gt = useGT();
   return (
@@ -189,7 +191,7 @@ function ProjectSidebar(props: {
                           state === "needs_input" && "text-warning-foreground",
                         )}
                       >
-                        {[thread.lastLine, thread.model].filter(Boolean).join(" · ")}
+                        {[thread.lastLine, modelName(thread.model)].filter(Boolean).join(" · ")}
                       </span>
                     </span>
                   </ThreadLink>

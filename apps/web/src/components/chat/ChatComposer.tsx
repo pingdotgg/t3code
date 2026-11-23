@@ -89,6 +89,8 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DEFAULT_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { ComposerPlugins } from "../../kompas/ComposerPlugins";
+import { useChatMode } from "../../kompas/state";
 import { deriveComposerSendState, getAntigravitySendBlockReason } from "../ChatView.logic";
 import { threadHasStarted } from "../../lib/chatThreadActions";
 import {
@@ -521,6 +523,7 @@ const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
 
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const gt = useGT();
+  const chatMode = useChatMode();
   const m = useMessages();
   const {
     composerDraftTarget,
@@ -3962,7 +3965,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             ? gt("Choose a project above to start a thread")
                             : showProviderUnavailable
                               ? gt("Enable a provider in Settings to send a message")
-                              : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
+                              : (offeredPromptSuggestion ??
+                                (chatMode
+                                  ? gt("Ask anything...")
+                                  : m(DEFAULT_COMPOSER_PLACEHOLDER)))
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
@@ -4048,6 +4054,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {composerAttachButton && !dictationTakesFooter ? (
                   <div className="me-2">{composerAttachButton}</div>
+                ) : null}
+                {chatMode && !dictationTakesFooter ? (
+                  <ComposerPlugins threadId={activeThreadId} />
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

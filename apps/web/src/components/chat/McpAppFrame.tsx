@@ -272,7 +272,7 @@ ${action.text}`,
               }
             : { width: current.width, maxHeight: MCP_APP_MAX_HEIGHT },
         platform: isElectron ? "desktop" : "web",
-        locale: navigator.language,
+        locale: document.documentElement.lang || navigator.language,
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         userAgent: `t3-code/${APP_VERSION}`,
         deviceCapabilities: {

@@ -240,7 +240,6 @@ const AddCardsTool = readonlyTool(
 const ListDecksTool = readonlyTool(
   Tool.make("flashcards_list_decks", {
     description: "The user's decks with how many cards are due.",
-    parameters: Schema.Struct({}),
     success: Schema.Struct({
       decks: Schema.Array(
         Schema.Struct({
@@ -284,7 +283,6 @@ const StudyStatsTool = readonlyTool(
   Tool.make("study_stats", {
     description:
       "The user's study streak, review counts and weakest cards, to advise what to repeat.",
-    parameters: Schema.Struct({}),
     success: Schema.Struct({
       streakDays: Schema.Number,
       reviewsToday: Schema.Number,
@@ -369,7 +367,6 @@ const SessionSearchTool = readonlyTool(
 const PluginToolsTool = readonlyTool(
   Tool.make("plugin_tools", {
     description: "Tools of the user's plugins in this conversation, with their input schemas.",
-    parameters: Schema.Struct({}),
     success: Schema.Struct({
       tools: Schema.Array(
         Schema.Struct({
@@ -442,7 +439,6 @@ const LibraryItem = Schema.Struct({
 const LibraryListTool = readonlyTool(
   Tool.make("project_library_list", {
     description: "This project's library: files, decks and notes.",
-    parameters: Schema.Struct({}),
     success: Schema.Struct({ items: Schema.Array(LibraryItem) }),
     failure: OrchestratorMcpFailure,
     failureMode: "return",

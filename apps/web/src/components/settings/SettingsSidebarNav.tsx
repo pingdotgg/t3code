@@ -1,3 +1,5 @@
+import { chatModeSettingsGroups } from "../../kompas/settingsGroups";
+import { useChatMode } from "../../kompas/state";
 import {
   lazy,
   Suspense,
@@ -146,7 +148,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const [compactSearchOpen, setCompactSearchOpen] = useState(false);
   const [activeResultIndex, setActiveResultIndex] = useState(0);
   const searchableItems = useAvailableSettingsSearchItems();
-  const navGroups = settingsNavGroups(useHasSecretProvidersEnvironment());
+  const allNavGroups = settingsNavGroups(useHasSecretProvidersEnvironment());
+  const navGroups = useChatMode() ? chatModeSettingsGroups(allNavGroups) : allNavGroups;
   const results = searchSettings(query, searchableItems, m);
   const isSearching = query.trim().length > 0;
   const hasResults = results.length > 0;

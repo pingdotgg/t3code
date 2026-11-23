@@ -1,25 +1,25 @@
 {
   "fill": {
-    "solid": "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "solid": "srgb:0.20784,0.32157,0.81961,1.00000"
   },
   "groups": [
     {
       "layers": [
         {
           "image-name": "text.svg",
-          "name": "Text",
+          "name": "Mark",
           "position": {
-            "scale": 8.5,
+            "scale": 25,
             "translation-in-points": [0, 0]
           }
         }
       ],
       "shadow": {
         "kind": "neutral",
-        "opacity": 0.5
+        "opacity": 0.3
       },
       "translucency": {
-        "enabled": true,
+        "enabled": false,
         "value": 0.5
       }
     }

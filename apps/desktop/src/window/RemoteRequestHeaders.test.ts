@@ -6,14 +6,14 @@ import {
 } from "./RemoteRequestHeaders.ts";
 
 const packagedPolicy: MainWindowRequestHeaderPolicy = {
-  desktopOrigin: "t3code://app",
+  desktopOrigin: "kompas://app",
   mainWebContentsId: 42,
   clerkFrontendApiHostname: "clerk.t3.codes",
   isDevelopment: false,
 };
 
 const devPolicy: MainWindowRequestHeaderPolicy = {
-  desktopOrigin: "t3code-dev://app",
+  desktopOrigin: "kompas-dev://app",
   mainWebContentsId: 42,
   clerkFrontendApiHostname: "clerk.t3.codes",
   devServerOrigin: "http://devbox.internal:5733",
@@ -32,7 +32,7 @@ describe("RemoteRequestHeaders", () => {
       webContentsId: 42,
       frame: { parent: null },
       requestHeaders: {
-        Origin: "t3code://app",
+        Origin: "kompas://app",
         "Sec-Fetch-Site": "cross-site",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Dest": "empty",
@@ -54,7 +54,7 @@ describe("RemoteRequestHeaders", () => {
       webContentsId: 42,
       frame: null,
       requestHeaders: {
-        origin: "t3code://app",
+        origin: "kompas://app",
         "Sec-Fetch-Site": "cross-site",
         Upgrade: "websocket",
       },
@@ -72,7 +72,7 @@ describe("RemoteRequestHeaders", () => {
         webContentsId: 42,
         frame: { parent: null },
         requestHeaders: {
-          Origin: "t3code://app",
+          Origin: "kompas://app",
           "Sec-Fetch-Site": "cross-site",
         },
       });
@@ -96,7 +96,7 @@ describe("RemoteRequestHeaders", () => {
           webContentsId: 42,
           frame: { parent: null },
           requestHeaders: {
-            Origin: "t3code-dev://app",
+            Origin: "kompas-dev://app",
             "Sec-Fetch-Site": "cross-site",
           },
         }),
@@ -113,7 +113,7 @@ describe("RemoteRequestHeaders", () => {
           webContentsId: 42,
           frame: { parent: null },
           requestHeaders: {
-            Origin: "t3code-dev://app",
+            Origin: "kompas-dev://app",
             "Sec-Fetch-Site": "cross-site",
             "Content-Type": "application/json",
           },
@@ -142,7 +142,7 @@ describe("RemoteRequestHeaders", () => {
         webContentsId: 42,
         frame: { parent: {} },
         requestHeaders: {
-          Origin: "t3code://app",
+          Origin: "kompas://app",
           "Sec-Fetch-Site": "cross-site",
         },
       }),
@@ -154,7 +154,7 @@ describe("RemoteRequestHeaders", () => {
         webContentsId: 99,
         frame: { parent: null },
         requestHeaders: {
-          Origin: "t3code://app",
+          Origin: "kompas://app",
           "Sec-Fetch-Site": "cross-site",
         },
       }),
@@ -166,7 +166,7 @@ describe("RemoteRequestHeaders", () => {
         webContentsId: undefined,
         frame: null,
         requestHeaders: {
-          Origin: "t3code://app",
+          Origin: "kompas://app",
           "Sec-Fetch-Site": "cross-site",
         },
       }),

@@ -40,10 +40,6 @@ export function useChatMode(): boolean {
   return data === null ? error === null : !data.settings.developerMode;
 }
 
-export function useHasPlugins(): boolean {
-  return useKompas()?.snapshot.plugins.some((plugin) => plugin.enabled) === true;
-}
-
 export function useWorkstreamOf(threadId: string | null | undefined): {
   readonly kompas: Kompas;
   readonly workstream: Workstream;

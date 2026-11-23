@@ -41,6 +41,7 @@ const optionsFor = (chart: Chart): EChartsCoreOption => {
     splitLine: { lineStyle: { color: line } },
     nameTextStyle: { color: soft },
   };
+  const xName = { nameLocation: "middle" as const, nameGap: 28 };
   const shared = {
     animationDuration: 200,
     color: [cssVar("--accent") || "#3552d1", ...PALETTE],
@@ -82,9 +83,15 @@ const optionsFor = (chart: Chart): EChartsCoreOption => {
     },
     xAxis:
       chart.type === "scatter"
-        ? { type: "value", scale: true, name: chart.xLabel, ...axis }
-        : { type: "category", data: chart.labels, name: chart.xLabel, ...axis },
-    yAxis: { type: "value", scale: chart.type !== "bar", name: chart.yLabel, ...axis },
+        ? { type: "value", scale: true, name: chart.xLabel, ...xName, ...axis }
+        : { type: "category", data: chart.labels, name: chart.xLabel, ...xName, ...axis },
+    yAxis: {
+      type: "value",
+      scale: chart.type !== "bar",
+      name: chart.yLabel,
+      ...axis,
+      nameTextStyle: { color: soft, align: "left" },
+    },
     series: chart.series.map((series) => ({
       type: chart.type,
       name: series.name,

@@ -119,14 +119,14 @@ it.each([true, false])("uses the active config syntax and user bindings (Lua: %s
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
     "custom bindings",
   );
-  const result = await hyprlandCaptureShortcut("com.t3tools.T3Code", "/home/test", directory);
+  const result = await hyprlandCaptureShortcut("com.t3tools.Kompas", "/home/test", directory);
   expect(result.shortcutConfigPath).toBe(
     NodePath.join(config, lua ? "bindings.lua" : "bindings.conf"),
   );
   expect(result.shortcutBinding).toBe(
     lua
-      ? 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("com.t3tools.T3Code:capture-window"))'
-      : "bind = CTRL SHIFT, 2, global, com.t3tools.T3Code:capture-window",
+      ? 'hl.bind("CTRL + SHIFT + 2", hl.dsp.global("com.t3tools.Kompas:capture-window"))'
+      : "bind = CTRL SHIFT, 2, global, com.t3tools.Kompas:capture-window",
   );
   expect(await NodeFSP.readFile(result.shortcutConfigPath, "utf8")).toBe("custom bindings");
 });

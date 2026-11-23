@@ -32,7 +32,7 @@ Create a Clerk JWT template named `t3-relay` with `{ "aud": "t3-code-relay" }`. 
 
 ### Desktop OAuth redirects
 
-Enable Clerk's Native API, add `t3code-dev://app/` and `t3code://app/` to the SSO redirect allowlist, and add `t3code-dev://app` and `t3code://app` to `allowed_origins` via `PATCH https://api.clerk.com/v1/instance` (preserving existing entries).
+Enable Clerk's Native API, add `kompas-dev://app/` and `kompas://app/` to the SSO redirect allowlist, and add `kompas-dev://app` and `kompas://app` to `allowed_origins` via `PATCH https://api.clerk.com/v1/instance` (preserving existing entries).
 
 ### Android native sign-in redirects
 

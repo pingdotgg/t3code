@@ -188,7 +188,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   )
     return "code";
   const toolPresentation = resolveWorkEntryToolPresentation(workEntry, undefined, m);
-  if (toolPresentation) return toolPresentation.icon;
+  if (toolPresentation?.icon) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
 
