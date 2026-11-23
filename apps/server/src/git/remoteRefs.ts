@@ -1,16 +1,4 @@
-// Git forbids ASCII space and control characters in ref names but allows Unicode whitespace such
-// as U+00A0 and U+3000, which `String.prototype.trim` would strip from a name's edges.
-export function trimAsciiWhitespace(value: string): string {
-  let start = 0;
-  let end = value.length;
-  while (start < end && isAsciiWhitespace(value.charCodeAt(start))) start++;
-  while (end > start && isAsciiWhitespace(value.charCodeAt(end - 1))) end--;
-  return value.slice(start, end);
-}
-
-function isAsciiWhitespace(code: number): boolean {
-  return code === 0x20 || (code >= 0x09 && code <= 0x0d);
-}
+import { trimAsciiWhitespace } from "@t3tools/contracts";
 
 export function parseRemoteNamesInGitOrder(stdout: string): ReadonlyArray<string> {
   const remoteNames: Array<string> = [];

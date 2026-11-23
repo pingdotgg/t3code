@@ -29,7 +29,7 @@ import {
   type VcsStatusResult,
 } from "@t3tools/contracts";
 
-import { trimAsciiWhitespace } from "./remoteRefs.ts";
+import { trimAsciiWhitespace } from "@t3tools/contracts";
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
