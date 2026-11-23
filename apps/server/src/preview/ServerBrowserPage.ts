@@ -965,10 +965,7 @@ const focusedTextField = async (page: Page, timeout: number) => {
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
-  if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
-    return;
-  }
+  if (locator !== null && input.clear) await locator.fill("", { timeout });
   const focused =
     locator === null
       ? await focusedTextField(page, timeout)
@@ -979,11 +976,12 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
       message: "The target is not an enabled text field, so no text was typed.",
     });
   }
-  if (input.clear) {
+  if (locator === null && input.clear) {
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.press("Delete");
   }
-  await page.keyboard.insertText(input.text);
+  // Pages that build their value from keydown never see insertText or fill.
+  await page.keyboard.type(input.text);
 };
 
 export const hover = async (

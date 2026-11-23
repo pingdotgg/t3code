@@ -417,10 +417,12 @@ describe("server browser element refs", () => {
     await ServerBrowserPage.type(page, { locator: "#w", text: "girona42" });
     expect(await page.locator("#w").getAttribute("data-keys")).toBe("girona42");
 
-    await page.locator("#w").evaluate((input: HTMLInputElement) => {
-      delete input.dataset.keys;
-      input.value = "";
-    });
+    await page
+      .locator("#w")
+      .evaluate((input: { value: string; dataset: Record<string, string | undefined> }) => {
+        delete input.dataset.keys;
+        input.value = "";
+      });
     await ServerBrowserPage.type(page, { locator: "#w", text: "girona42", clear: true });
     expect(await page.locator("#w").getAttribute("data-keys")).toBe("girona42");
   });
@@ -988,7 +990,7 @@ describe("server browser type", () => {
     ({
       locator: () => ({ last: () => ({ count: () => new Promise<number>(() => {}) }) }),
       evaluate: focusAnswer,
-      keyboard: { insertText: async (text: string) => void typed.push(text) },
+      keyboard: { type: async (text: string) => void typed.push(text) },
     }) as unknown as Page;
 
   it("types into the focused field when Playwright's utility world never answers", async () => {
