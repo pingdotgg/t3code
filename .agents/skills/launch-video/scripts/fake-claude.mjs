@@ -2,6 +2,7 @@
 // A stand-in `claude` CLI for staged launch videos: T3's real Claude provider runs it, and it
 // plays the scripted turns in FAKE_CLAUDE_SCRIPT over the Agent SDK's stream-json protocol.
 // Script format: see the launch-video SKILL.md. FAKE_CLAUDE_LOG records every line.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -43,8 +44,8 @@ const signInServers = new Map(
   ]),
 );
 const played = new Set();
-const fill = (value) => {
-  const vars = readJson(process.env.FAKE_CLAUDE_VARS ?? "", {});
+const fill = (value, local = {}) => {
+  const vars = { ...readJson(process.env.FAKE_CLAUDE_VARS ?? "", {}), ...local };
   const walk = (v) =>
     typeof v === "string"
       ? v.replace(/<var:([\w-]+)>/g, (m, name) => vars[name] ?? m)
@@ -276,7 +277,14 @@ async function playTurn(prompt) {
     session_id: sessionId,
   });
   let last = "";
-  for (const step of fill(turn.steps)) {
+  // `as` keeps a step's real output for later steps of the turn, as <var:name>.
+  const local = {};
+  for (const raw of turn.steps) {
+    const filled = fill(raw, local);
+    // `submit` hands a workflow agent step its typed result through T3's own MCP.
+    const step = filled.submit
+      ? { ...filled, tool: "t3_submit_output", input: { json: JSON.stringify(filled.submit) } }
+      : filled;
     if (step.wait) await sleep(step.wait);
     if (step.think) await streamText(step.think, "thinking");
     if (step.text) {
@@ -293,10 +301,22 @@ async function playTurn(prompt) {
           input: { command: step.bash, description: step.description ?? step.bash },
         },
       ]);
-      await sleep(step.ms ?? 1200);
-      toolResult(id, step.output ?? "", {
+      // `run` executes the command for real in the session's cwd, e.g. to push and open a PR.
+      let output = step.output ?? "";
+      if (step.run) {
+        const started = Date.now();
+        output = NodeChildProcess.execSync(step.bash, {
+          cwd,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        }).trim();
+        await sleep(Math.max(0, (step.ms ?? 1200) - (Date.now() - started)));
+      } else await sleep(step.ms ?? 1200);
+      if (step.as)
+        local[step.as] = step.pick ? (new RegExp(step.pick).exec(output)?.[0] ?? output) : output;
+      toolResult(id, output, {
         tool_use_result: {
-          stdout: step.output ?? "",
+          stdout: output,
           stderr: "",
           interrupted: false,
           isImage: false,

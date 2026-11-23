@@ -41,7 +41,11 @@ There are two ways to build one:
      so diffs and checkpoints show them, and `tool` (+ `input`), which calls that T3 MCP tool
      for real, e.g. `delegate_task`; with `server` and `output` it plays another MCP server's
      tool instead. `<var:name>` is filled from the JSON file at `FAKE_CLAUDE_VARS`, for ids
-     that change every run. `fake-claude.log` in the home records the protocol, for debugging.
+     that change every run. `bash` with `run: true` executes the command in the session's cwd
+     (to push a branch or open a pull request with a forge CLI); `as: "name"` keeps its output,
+     or the `pick` regex match in it, as `<var:name>` for the turn's later steps. A workflow
+     `agent` step with `returns` finishes on `submit: { ... }`, which hands it that value
+     through `t3_submit_output`. `fake-claude.log` in the home records the protocol, for debugging.
    - Titles, commit messages and branch names come from `claude -p --json-schema`: answer them
      with `{ match, json }` turns, where `match` is tested against the schema plus the prompt
      (`'"title"'`, `'"subject"[\\s\\S]*products\\.ts'`). Unanswered ones fail in the app.
