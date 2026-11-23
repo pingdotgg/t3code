@@ -1093,6 +1093,15 @@ async fn a_settle_waits_for_a_queued_user_message() {
     dispatch(&engine, message("t1", "c3", "follow-up")).await;
     dispatch(
         &engine,
+        json!({"type": "message.dispatch", "commandId": "c5", "threadId": "t1",
+            "messageId": "message:c5", "scheduledTaskId": "scheduled-task:x",
+            "text": "scheduled", "attachments": [],
+            "dispatchMode": {"type": "queue_after_active"},
+            "createdBy": "agent", "creationSource": "server"}),
+    )
+    .await;
+    dispatch(
+        &engine,
         json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
     )
     .await;
@@ -1109,6 +1118,27 @@ async fn a_settle_waits_for_a_queued_user_message() {
     assert!(refused.contains("has a queued message"), "{refused}");
     let shell = engine.shell_snapshot().await.unwrap();
     assert_eq!(shell["threads"][0]["settledOverride"], Value::Null);
+    // With the user's message removed, the settle cancels the scheduled run (T3's cohort
+    // cancel), so a later resume never runs it.
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.cancel", "commandId": "x1", "threadId": "t1",
+            "runId": "run:t1:2"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.settle", "commandId": "s2", "threadId": "t1"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "r1", "threadId": "t1"}),
+    )
+    .await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(p["thread"]["settledOverride"], "settled");
+    assert_eq!(p["runs"][2]["status"], "cancelled", "{}", p["runs"][2]);
 }
 
 /// T3's queue start moves the thread to the run's selection (`startNextQueuedRun`): an

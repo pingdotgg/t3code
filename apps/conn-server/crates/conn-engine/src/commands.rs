@@ -2394,7 +2394,9 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "Thread {thread_id} is still running and cannot be settled."
         ));
     }
-    // T3 settles past a queued message the server or a schedule sent, never a user's own.
+    // T3 settles past a queued message the server or a schedule sent, never a user's own, and
+    // cancels those automatic runs so a later resume never starts them.
+    let mut automatic_runs = vec![];
     for run in queued_runs(tx, &thread_id)? {
         let message_id = run["userMessageId"].as_str().unwrap_or_default();
         let message = tx.entity(&thread_id, "messages", message_id)?;
@@ -2406,6 +2408,10 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
                 "Thread {thread_id} has a queued message. Send it or remove it from the queue before settling."
             ));
         }
+        automatic_runs.push(run["id"].as_str().unwrap_or_default().to_owned());
+    }
+    for run_id in automatic_runs {
+        finish_run(tx, &thread_id, &run_id, "cancelled", None)?;
     }
     let settled_at = command["settledAt"].clone();
     thread_patch(tx, &command, "thread.settled", |t, now| {
