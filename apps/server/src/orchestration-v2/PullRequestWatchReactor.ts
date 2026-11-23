@@ -57,6 +57,8 @@ import {
 /** Checks take minutes; faster sweeps waste the account's shared host quota. */
 const SWEEP_MINUTES = 2;
 const READ_FAILURE_LIMIT = 8;
+/** A rate limit never ends a watch, but one this long is news the agent would otherwise miss. */
+const PAUSE_REPORT_MS = 20 * 60_000;
 /** Group reads in flight at once, inside the host's own request limit. */
 const GROUP_READS = 4;
 /** Without fingerprints, reread quiet PRs on snapshot changes or this interval to catch edits. */
@@ -298,6 +300,8 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => reportEnd(lifeKey(target), lifeOf(target), reason));
 
   const readFailures = new Map<string, number>();
+  /** When each group's current rate-limit pause began, and whether its watchers were told. */
+  const pauses = new Map<string, { readonly since: number; readonly reported: boolean }>();
   /** The last sweep's groups, whose pull requests get host change feeds. */
   let currentGroups: ReadonlyArray<WatchGroup> = [];
   // A pass reads watches and records new ones, so passes must not overlap.
@@ -381,6 +385,29 @@ export const make = Effect.gen(function* () {
       Effect.tap(() => ended(target, "unreadable")),
     );
   };
+
+  const reportPause = Effect.fn("PullRequestWatchReactor.reportPause")(function* (
+    group: WatchGroup,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    const pause = pauses.get(group.key);
+    if (pause === undefined) {
+      pauses.set(group.key, { since: now, reported: false });
+      return;
+    }
+    if (pause.reported || now - pause.since < PAUSE_REPORT_MS) return;
+    pauses.set(group.key, { ...pause, reported: true });
+    yield* eachTarget(group, (target) =>
+      record(target, target.watch, {
+        text: `T3 Code has not been able to read pull request #${target.link.number} (${target.link.url}) for ${minutes(now - pause.since)} minutes because the host is rate limiting requests. The watch stays on and resumes when the limit resets; check the pull request yourself if you need its state sooner.`,
+        notification: {
+          source: { kind: "monitor" },
+          outcome: "updated",
+          summary: `#${target.link.number}: rate limited, still watching`,
+        },
+      }).pipe(Effect.tap(() => woke(target))),
+    );
+  });
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
     function* (
@@ -636,6 +663,8 @@ export const make = Effect.gen(function* () {
     group: WatchGroup,
     fingerprint: ProviderChangeRequestWatchFingerprint | null,
   ) {
+    // The host answered the fingerprint, so any pause is over.
+    if (fingerprint !== null) pauses.delete(group.key);
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
     const plan = planRead(group, last, fingerprint, now);
@@ -672,7 +701,7 @@ export const make = Effect.gen(function* () {
         return;
       }
       const reason = providerFailureReason(detailRead.cause);
-      if (reason === "rate-limited") return;
+      if (reason === "rate-limited") return yield* reportPause(unended);
       // Transport and host failures can outlast the failure limit; keep the watch for recovery.
       if (reason === "failed") {
         readFailures.delete(group.key);
@@ -689,6 +718,7 @@ export const make = Effect.gen(function* () {
       return yield* Effect.failCause(detailRead.cause);
     }
     readFailures.delete(group.key);
+    pauses.delete(group.key);
     const detail = detailRead.value;
     for (const target of group.targets) {
       const life = lifeOf(target);
@@ -818,7 +848,7 @@ export const make = Effect.gen(function* () {
     }));
     if (changed === undefined) {
       currentGroups = groups;
-      for (const cache of [readFailures, lastReads, threadTails]) {
+      for (const cache of [readFailures, pauses, lastReads, threadTails]) {
         for (const key of cache.keys()) if (!byPullRequest.has(key)) cache.delete(key);
       }
     }
@@ -862,7 +892,11 @@ export const make = Effect.gen(function* () {
           }),
           Effect.flatMap((fingerprint) =>
             fingerprint === "paused"
-              ? endMergedSnapshots(group).pipe(Effect.asVoid)
+              ? endMergedSnapshots(group).pipe(
+                  Effect.flatMap((unended) =>
+                    unended.targets.length === 0 ? Effect.void : reportPause(unended),
+                  ),
+                )
               : reads.withPermit(
                   readGroup(group, fingerprint).pipe(
                     Effect.catchCause(

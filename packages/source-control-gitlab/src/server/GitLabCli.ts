@@ -11,6 +11,7 @@ import type * as DateTime from "effect/DateTime";
 
 import {
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type SourceControlRepositoryVisibility,
   type VcsError,
   type VcsProcessExitFailureKind,
@@ -27,6 +28,10 @@ import {
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+// glab's own message for these is a bare 404; private projects answer it to a signed-out glab too.
+const NOT_FOUND_DETAIL =
+  "GitLab returned 404 Not Found. Check that glab is signed in to this host (`glab auth status`) and can read the project.";
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
 // GitLab allows ~1M-character descriptions; glab's JSON escaping (`\u003c`) can grow one sixfold.
 const MERGE_REQUEST_LIST_MAX_BYTES = 8_000_000;
 const decodeJsonArray = Schema.decodeUnknownExit(
@@ -129,7 +134,9 @@ export class GitLabCliCommandError extends Schema.TaggedError<GitLabCliCommandEr
   gitLabCliExecutionErrorContext,
 ) {
   get detail(): string {
-    return "GitLab CLI command failed.";
+    return isVcsProcessExitError(this.cause) && this.cause.failureKind === "not-found"
+      ? this.cause.detail
+      : "GitLab CLI command failed.";
   }
 
   override get message(): string {
@@ -518,6 +525,7 @@ export const make = Effect.gen(function* () {
   const run = (
     input: Parameters<GitLabCli["Service"]["execute"]>[0],
     mapError: (error: VcsError) => GitLabCliError,
+    notFoundDetail = NOT_FOUND_DETAIL,
   ) =>
     process
       .run({
@@ -533,7 +541,7 @@ export const make = Effect.gen(function* () {
             : {}),
         },
         classifyFailure: classifyGlabFailure,
-        notFoundDetail: "Merge request not found.",
+        notFoundDetail,
         timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         ...(input.stdin === undefined ? {} : { stdin: input.stdin }),
         ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
@@ -553,16 +561,19 @@ export const make = Effect.gen(function* () {
     readonly reference: string;
     readonly args: ReadonlyArray<string>;
   }) =>
-    run(input, (error) =>
-      GitLabMergeRequestNotFoundError.fromVcsError(
-        {
-          operation: "execute",
-          command: "glab",
-          cwd: input.cwd,
-          reference: input.reference,
-        },
-        error,
-      ),
+    run(
+      input,
+      (error) =>
+        GitLabMergeRequestNotFoundError.fromVcsError(
+          {
+            operation: "execute",
+            command: "glab",
+            cwd: input.cwd,
+            reference: input.reference,
+          },
+          error,
+        ),
+      "Merge request not found.",
     );
 
   // glab's MR JSON names a fork's source project only by `source_project_id`.
