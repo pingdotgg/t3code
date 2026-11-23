@@ -207,6 +207,20 @@ impl Untracked {
 /// Status totals stop counting untracked files above this many bytes in all.
 pub const UNTRACKED_TOTALS_MAX_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Whether a nested repository's HEAD names a commit. Only "no such commit" (exit 1) says no,
+/// as in T3: a probe that fails otherwise leaves the folder to Git.
+async fn nested_repository_has_head(dir: &Path) -> bool {
+    let probe = git(
+        "GitVcsDriver.readUnifiedWorkingTreeReviewDiff.nestedRepositoryHead",
+        dir,
+        ["rev-parse", "--verify", "--quiet", "HEAD"],
+    )
+    .allow_exit(&[1])
+    .run()
+    .await;
+    !matches!(probe, Ok(out) if out.code == 1)
+}
+
 pub(crate) async fn prepare_untracked(
     cwd: &Path,
     paths: &[String],
@@ -266,6 +280,16 @@ pub(crate) async fn prepare_untracked(
     .stdout_text();
     let deleted: Vec<&str> = deleted.split('\0').filter(|p| !p.is_empty()).collect();
     untracked.retain(|p| !deleted.contains(&p.as_str()));
+    // A nested repository (listed with a trailing slash) with no commit cannot be indexed:
+    // Git before 2.53 fails the add, and later versions take it and fail every diff.
+    let mut indexable = Vec::with_capacity(untracked.len());
+    for path in untracked {
+        if path.ends_with('/') && !nested_repository_has_head(&cwd.join(&path)).await {
+            continue;
+        }
+        indexable.push(path);
+    }
+    let untracked = indexable;
     if untracked.is_empty() {
         return Ok(Untracked::None);
     }

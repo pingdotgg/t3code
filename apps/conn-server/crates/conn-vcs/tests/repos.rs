@@ -449,6 +449,46 @@ async fn diff_preview_shows_working_tree_branch_range_and_commit() {
     assert!(empty.sources.is_empty());
 }
 
+/// T3's `keeps the review working beside a nested repository`: `git init` inside the checkout
+/// leaves the working-tree review whole. The new repository joins it as a gitlink once it has
+/// its first commit, and the real index stays clean.
+#[tokio::test]
+async fn the_review_survives_an_unborn_nested_repository() {
+    let fx = Fixture::new("review-nested");
+    write(&fx.work, "README.md", "# repo\nafter\n");
+    write(&fx.work, "notes.txt", "new notes\n");
+    let mut input = preview_input(&fx.cwd());
+    input.source_kind = Some(InputKind::WorkingTree);
+    let working = || async {
+        let preview = review::diff_preview(input.clone()).await.unwrap();
+        preview
+            .sources
+            .into_iter()
+            .find(|s| s.kind == Kind::WorkingTree)
+            .unwrap()
+            .diff
+    };
+    let baseline = working().await;
+    assert!(baseline.contains("+after") && baseline.contains("+new notes"));
+
+    git(&fx.work, &["init", "-q", "scaffold"]);
+    let beside_unborn = working().await;
+    assert!(
+        beside_unborn.contains("+after") && beside_unborn.contains("+new notes"),
+        "{beside_unborn}"
+    );
+    assert!(!beside_unborn.contains("scaffold"), "{beside_unborn}");
+
+    git(
+        &fx.work.join("scaffold"),
+        &["commit", "-qm", "initial", "--allow-empty"],
+    );
+    let beside_born = working().await;
+    assert!(beside_born.contains("+new notes"), "{beside_born}");
+    assert!(beside_born.contains("scaffold"), "{beside_born}");
+    assert_eq!(git(&fx.work, &["diff", "--cached", "--name-only"]), "");
+}
+
 #[tokio::test]
 async fn diff_preview_truncates_large_patches() {
     let fx = Fixture::new("big");
