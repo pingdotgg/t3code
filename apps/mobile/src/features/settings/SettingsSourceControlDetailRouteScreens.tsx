@@ -239,7 +239,10 @@ export function SettingsIssueTrackerRouteScreen({
               />
             </SettingsSection>
           ) : null}
-          {usable && tracker.automationContainer !== undefined ? (
+          {/* Rules read statuses as the tracker's first account. */}
+          {usable &&
+          tracker.automationContainer !== undefined &&
+          route.params.accountId === undefined ? (
             <IssueAutomationSection
               environmentId={environmentId}
               tracker={tracker.tracker}

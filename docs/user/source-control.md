@@ -440,7 +440,8 @@ Threads can follow the status of the issues linked to them. Open the connected t
 **Settings → Source control & issues**, choose **Add team**, and use the **+** buttons to put the
 team's statuses in **Wake**, **Snooze**, or **Settle**. The rule applies to every thread linked
 to one of the team's issues, in any project. It changes threads, never issues. Linear is the
-supported tracker.
+supported tracker. Rules read statuses through the first Linear account you connected, so they
+cover the teams in its workspace.
 
 The server checks linked issues about once a minute while it runs, with or without a client
 open. Only a status change counts: the first check after you save a rule records the current

@@ -267,7 +267,10 @@ function TrackerRow({
               ) : null}
             </div>
           </fieldset>
-          {usable && tracker.automationContainer !== undefined ? (
+          {/* Rules read statuses as the tracker's first account. */}
+          {usable &&
+          tracker.automationContainer !== undefined &&
+          tracker.accountId === undefined ? (
             <div className="px-3 pb-4 sm:px-4">
               <IssueAutomationSettings
                 environmentId={environmentId}
