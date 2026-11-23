@@ -643,6 +643,9 @@ function markPaneLit(entry: PaneStrip, scrollLeft: number): void {
       `${Math.max(0, visibleEnd - lead)}px`,
     );
   }
+  const maxScroll = Math.max(0, strip.scrollWidth - strip.clientWidth);
+  setPaneLitProperty(entry.join, "--pane-join-max-scroll", `${maxScroll}px`);
+  setPaneLitProperty(entry.join, "--pane-join-lead-x", `${lead}px`);
   setPaneLitProperty(entry.join, "--pane-join-scroll", `${scrollLeft + lead}px`);
   markJoinFoot(entry, scrollLeft, lead, visibleEnd);
   if (!lit) return;
@@ -836,7 +839,9 @@ function moveJoin(
   const r = PANE_JOIN_RADIUS_PX;
   const e = PANE_JOIN_EAR_PX;
   const piece = (selector: string) => join.querySelector<HTMLElement>(selector);
-  for (const animation of join.getAnimations({ subtree: true })) animation.cancel();
+  for (const animation of join.firstElementChild?.getAnimations({ subtree: true }) ?? []) {
+    animation.cancel();
+  }
   piece('[data-jc="l"]')?.animate(
     [{ translate: `${from.x - e}px 0` }, { translate: `${to.x - e}px 0` }],
     timing,

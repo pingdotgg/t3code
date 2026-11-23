@@ -6806,6 +6806,23 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --pane-join-max-scroll {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-lead-x {
+  syntax: "*";
+  inherits: false;
+}
+@keyframes pane-join-scroll {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: calc(var(--pane-join-max-scroll, 0px) * -1) 0;
+  }
+}
+
 /* The strip's edge fade reads these on the strip alone (PaneTabs.tsx,
    markStripOverflow). Inherited, each scroll step restyled every tab. */
 @property --strip-overflow-start {
@@ -7188,6 +7205,16 @@ body {
       pointer-events: none;
     }
 
+    @supports (timeline-scope: --pane-strip-scroll) {
+      & [data-pane-notch=""] {
+        timeline-scope: --pane-strip-scroll;
+      }
+
+      & [data-pane-notch=""] [data-layout-tab-strip] {
+        scroll-timeline: --pane-strip-scroll inline;
+      }
+    }
+
     & [data-pane-notch=""] [data-pane-join] {
       display: block;
       position: absolute;
@@ -7203,6 +7230,17 @@ body {
       --jm: 0;
       --e: var(--pane-join-ear);
       --r: var(--pane-join-radius);
+
+      /* Lock the sibling join shape to the strip's scroll position on the
+         compositor so smooth chevron/wheel scrolling never lags a frame behind.
+         Keep the base translate at -scrollLeft so the first frame after moving
+         into a new header (before its timeline attaches) never jumps to 0. */
+      @supports (timeline-scope: --pane-strip-scroll) {
+        inset-inline-start: calc(var(--pane-join-lead-x, 0px) * -1);
+        translate: calc(var(--pane-join-lead-x, 0px) - var(--pane-join-scroll, 0px)) 0;
+        animation: pane-join-scroll linear both;
+        animation-timeline: --pane-strip-scroll;
+      }
 
       &[hidden] {
         display: none;
