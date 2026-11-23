@@ -3489,6 +3489,15 @@ html[data-theme-id] [data-chat-header] [data-toolbar-control][data-pressed] {
   background-color: var(--toolbar-control-hover);
 }
 
+/* The strip's floating chevrons sit over tab labels: lay a translucent hover
+   tint over the opaque control fill so the labels never show through. */
+html[data-theme-id]
+  [data-chat-header]
+  .surface-floating[data-slot="button"]:is(:hover, [data-pressed]) {
+  background-color: var(--toolbar-control);
+  background-image: linear-gradient(var(--toolbar-control-hover), var(--toolbar-control-hover));
+}
+
 html[data-theme-id] [data-chat-header] [data-slot="separator"] {
   background-color: var(--contrast-toolbar-border);
 }
