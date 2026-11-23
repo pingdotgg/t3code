@@ -7224,7 +7224,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ),
           );
 
-        const guardClientTerminalCreate = clientPolicyContext.pipe(
+        const guardClientTerminalCreate = Effect.gen(function* () {
+          // Stop already swept this session's terminals; a command started now would outlive it.
+          if (yield* Ref.get(stoppedRunQuarantine)) {
+            return yield* EffectAcpErrors.AcpRequestError.internalError(
+              "The T3 turn was stopped; terminal/create is refused until the next turn.",
+            );
+          }
+        }).pipe(
+          Effect.andThen(clientPolicyContext),
           Effect.flatMap(({ policy, turnKey }) => {
             const disposition = acpClientExecuteDisposition(policy);
             if (
@@ -7242,7 +7250,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (clientTerminals === undefined) return;
           yield* targetRuntime.handleCreateTerminal((request) =>
-            guardClientTerminalCreate.pipe(Effect.andThen(clientTerminals.create(request))),
+            clientTerminals.create(request, guardClientTerminalCreate),
           );
           yield* targetRuntime.handleTerminalOutput(clientTerminals.output);
           yield* targetRuntime.handleTerminalWaitForExit(clientTerminals.waitForExit);

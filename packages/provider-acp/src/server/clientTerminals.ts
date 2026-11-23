@@ -103,8 +103,10 @@ interface ManagedAcpTerminal {
 }
 
 export interface AcpClientTerminals {
+  /** `admit` runs under the creation permit, so a check it makes holds against `killSession`. */
   readonly create: (
     request: EffectAcpSchema.CreateTerminalRequest,
+    admit?: Effect.Effect<void, EffectAcpErrors.AcpRequestError>,
   ) => Effect.Effect<EffectAcpSchema.CreateTerminalResponse, EffectAcpErrors.AcpRequestError>;
   readonly output: (
     request: EffectAcpSchema.TerminalOutputRequest,
@@ -231,10 +233,11 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     return Effect.succeed(terminal);
   };
 
-  const create: AcpClientTerminals["create"] = (request) =>
+  const create: AcpClientTerminals["create"] = (request, admit = Effect.void) =>
     creationPermit.withPermit(
       Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
+          yield* admit;
           const liveCount = Array.from(terminals.values()).filter(
             (terminal) => !terminal.released && terminal.exitStatus === undefined,
           ).length;
@@ -466,12 +469,12 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   );
 
   const logged =
-    <Request, Response>(
+    <Args extends ReadonlyArray<unknown>, Response>(
       operation: string,
-      handler: (request: Request) => Effect.Effect<Response, EffectAcpErrors.AcpRequestError>,
+      handler: (...args: Args) => Effect.Effect<Response, EffectAcpErrors.AcpRequestError>,
     ) =>
-    (request: Request) =>
-      handler(request).pipe(
+    (...args: Args) =>
+      handler(...args).pipe(
         Effect.tapError((error) =>
           Effect.logWarning("ACP client terminal operation failed", {
             operation,

@@ -6985,6 +6985,11 @@ describe("AcpAdapterV2", () => {
       // Killed: a signal on POSIX, a non-zero exit code from taskkill on Windows.
       assert.notEqual(exitStatus, undefined);
       assert.notEqual(exitStatus?.exitCode, 0);
+      const lateCreate = yield* createTerminal!(
+        { sessionId: "mock-session-1", command: "sleep 30" },
+        { requestId: "exec-2-terminal", method: "terminal/create" },
+      ).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(lateCreate));
     }).pipe(Effect.provide(layerTest)),
   );
 
