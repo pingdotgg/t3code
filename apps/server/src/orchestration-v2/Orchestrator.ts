@@ -7571,7 +7571,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // An agent's automatic send must not overtake an earlier agent message still queued
+    // An agent's automatic send must not overtake its own earlier message still queued
     // (e.g. behind /compact), or the agent receives them out of send order.
     if (
       command.deliveryIntent === "auto" &&
@@ -7588,7 +7588,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             queuedRuns.map((run) => run.userMessageId),
           )
           .pipe(mapDispatchError(command));
-        if ([...queuedMessages.values()].some((message) => message.createdBy === "agent")) {
+        if (
+          [...queuedMessages.values()].some(
+            (message) =>
+              message.createdBy === "agent" && message.senderThreadId === command.senderThreadId,
+          )
+        ) {
           dispatchMode = { type: "queue_after_active" };
         }
       }
