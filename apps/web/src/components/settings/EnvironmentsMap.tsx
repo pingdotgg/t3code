@@ -205,7 +205,7 @@ const ROUTE_STYLES: Record<
 function routeKindLabel(kind: ConnectionRouteKind, gt: GT): string {
   switch (kind) {
     case "relay":
-      return "T3 Connect";
+      return gt("Cloud Connect");
     case "loopback":
       return gt("This device");
     case "lan":
@@ -2115,7 +2115,7 @@ const FleetScene = memo(function FleetScene({
               {...focusProps(
                 target,
                 rect,
-                gt("{label}, on your T3 Connect account, not added to this app. {status}", {
+                gt("{label}, on your Cloud Connect account, not added to this app. {status}", {
                   label: node.label,
                   status: connectAvailabilityText(node.availability, gt),
                 }),
