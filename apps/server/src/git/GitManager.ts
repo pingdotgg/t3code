@@ -66,7 +66,11 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
-import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  GitManagerError,
+  GitPullRequestMaterializationError,
+  trimAsciiWhitespace,
+} from "@t3tools/contracts";
 import {
   historicalMessage,
   renderHistory,
@@ -278,7 +282,7 @@ const prLookupGitReads = Context.Reference<SharedPrLookupGitReads | null>(
 function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return stdout
     .split("\n")
-    .map((name) => name.trim())
+    .map(trimAsciiWhitespace)
     .filter((name) => name.length > 0);
 }
 
@@ -2012,7 +2016,7 @@ export const make = Effect.gen(function* () {
           timeoutMs: 5_000,
         })).stdout
           .split("\n")
-          .map((ref) => ref.trim())
+          .map(trimAsciiWhitespace)
           .filter((ref) => ref.length > 0),
       );
       const matching = remoteNames.filter((name) => refs.has(`refs/remotes/${name}/${branch}`));
@@ -2049,7 +2053,7 @@ export const make = Effect.gen(function* () {
     const oidByRef = new Map(
       refs.stdout
         .split("\n")
-        .map((line) => line.trim().split("\u0000"))
+        .map((line) => trimAsciiWhitespace(line).split("\u0000"))
         .filter((entry): entry is [string, string] => entry.length === 2),
     );
     const localOid = oidByRef.get(localRef);
@@ -3354,7 +3358,7 @@ export const make = Effect.gen(function* () {
               const refNames = new Set(
                 trackingRefs.stdout
                   .split("\n")
-                  .map((remoteRef) => remoteRef.trim())
+                  .map(trimAsciiWhitespace)
                   .filter((remoteRef) => remoteRef.length > 0),
               );
               return remoteNames

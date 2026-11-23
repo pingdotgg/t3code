@@ -1327,6 +1327,16 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
       yield* throughPromptSettled;
+      // Progress keeps a command past the post-settle hold bound, which counts silence only.
+      for (const minute of [10, 20, 30]) {
+        yield* TestClock.adjust("10 minutes");
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...command,
+          status: "in_progress",
+          rawOutput: { output: `fetched ${minute} pages` },
+        });
+      }
       yield* TestClock.adjust("10 minutes");
       yield* send({
         sessionUpdate: "tool_call_update",
@@ -1346,6 +1356,115 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
       assert.lengthOf(offers, 0, "the open run needs no continuation");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A command whose terminal update never arrives would hold the run in Working forever with
+  // an empty pending list and a finished reply above Stop.
+  it.effect("settles a silent background command after the post-settle hold timeout", () =>
+    Effect.gen(function* () {
+      const { command, offers, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      const prompt = yield* throughPromptSettled;
+
+      // A running tool keeps the inactivity watchdog re-armed, so 20 silent minutes do not
+      // settle this run on their own.
+      yield* TestClock.adjust("20 minutes");
+      yield* TestClock.adjust("11 minutes");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "completed",
+        "the bounded hold finalizes the turn instead of leaving it running forever",
+      );
+      assert.equal(terminal?.type === "turn.terminal" && terminal.failure, null);
+      assert.lengthOf(offers, 0, "a silent command produces no wake on its own");
+      const commandItem = [...prompt, ...run].findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.isTrue(
+        commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
+        "the silent command is no longer left as live activity on a settled run",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps a silent scheduled wake in its run past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { usage, offers, send, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({}, undefined, undefined, {
+          initialToolCalls: [
+            {
+              sessionUpdate: "tool_call",
+              toolCallId: "call_schedule",
+              kind: "other",
+              title: "Run schedule",
+              status: "in_progress",
+              rawInput: { DurationSeconds: 3600, Prompt: "Continue the task" },
+            },
+          ],
+        });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("61 minutes");
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call_schedule",
+        status: "completed",
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Picked the task back up." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(
+        JSON.stringify(run),
+        "Picked the task back up.",
+        "the wake reply stays in the run",
+      );
+      assert.lengthOf(offers, 0);
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("keeps an unanswered question open past the command hold bound", () =>
+    Effect.gen(function* () {
+      const { command, usage, send, startTurn, until, throughPromptSettled, requestPermission } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      const question = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { toolCallId: "interaction_1", kind: "other", title: "Which port?" },
+          options: [
+            { optionId: "3000", name: "3000", kind: "allow_once" },
+            { optionId: "8080", name: "8080", kind: "allow_once" },
+          ],
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* TestClock.adjust("31 minutes");
+      yield* Fiber.interrupt(question);
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Here is the chart." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(run), "Here is the chart.", "the question kept the run open");
     }).pipe(Effect.provide(layerSession)),
   );
 

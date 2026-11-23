@@ -170,9 +170,11 @@ function* all(node: XmlNode, name: string | readonly string[]): Generator<XmlNod
     else yield* all(child, name);
   }
 }
-function* text(node: XmlNode): Generator<string, void> {
+function* text(node: XmlNode): Generator<TextPart, void> {
   if (HIDDEN.has(node.name)) return;
-  if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
+  // Word text boxes hold their own paragraphs inside the anchoring paragraph.
+  if (node.name === "txbxContent") yield* paragraphs(node);
+  else if (["tab", "ptab", "cell"].includes(node.name)) yield "\t";
   else if (["br", "line-break", "cr"].includes(node.name)) yield "\n";
   else if (node.name === "noBreakHyphen") yield "\u2011";
   else if (node.spaceCount !== undefined) {
@@ -457,6 +459,7 @@ function* rtf(source: string): Generator<string, void> {
   let state = {
     skip: false,
     deleted: false,
+    hiddenText: false,
     uc: 1,
     font: 0,
     fontTable: false,
@@ -467,7 +470,7 @@ function* rtf(source: string): Generator<string, void> {
   const fonts = new Map<number, typeof state.decoder>();
   let defaultFont = 0;
   const decoder = () => fonts.get(state.font) ?? state.decoder;
-  const hidden = () => state.skip || state.deleted;
+  const hidden = () => state.skip || state.deleted || state.hiddenText;
   const symbols = new Map([
     ["endash", "–"],
     ["emdash", characterEntities.mdash],
@@ -546,8 +549,10 @@ function* rtf(source: string): Generator<string, void> {
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
         if (control === "deleted") state.deleted = value !== 0;
+        else if (control === "v") state.hiddenText = value !== 0;
         else if (control === "plain") {
           state.deleted = false;
+          state.hiddenText = false;
           state.font = defaultFont;
         }
         if (control === "mac" || (control === "ansicpg" && value === 10000))
@@ -614,8 +619,17 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           .filter((rel) => rel.attrs.TargetMode !== "External")
           .map((rel) => [rel.attrs.Id, rel.attrs.Target]),
       );
-    if (extension === ".docx") yield* paragraphs(read("word/document.xml"));
-    else if ([".odt", ".ods", ".odp"].includes(extension)) {
+    if (extension === ".docx") {
+      // The package relationship names the main part; Word for the web saves word/document2.xml.
+      const target = files.has("_rels/.rels")
+        ? [...all(read("_rels/.rels"), "Relationship")].find(
+            (rel) =>
+              rel.attrs.Type?.endsWith("/officeDocument") && rel.attrs.TargetMode !== "External",
+          )?.attrs.Target
+        : undefined;
+      const main = target && NodePath.posix.normalize(target).replace(/^\//, "");
+      yield* paragraphs(read(main && files.has(main) ? main : "word/document.xml"));
+    } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt") yield* paragraphs(content);
       else {
