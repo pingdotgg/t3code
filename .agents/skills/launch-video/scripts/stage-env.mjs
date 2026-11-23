@@ -247,7 +247,7 @@ export async function createProject(
     git("config", "user.name", "Dana Reyes");
     git("config", "user.email", "dana@example.com");
     git("add", "--all");
-    git("commit", "--quiet", "-m", "Initial commit");
+    git("commit", "--quiet", "--allow-empty", "-m", "Initial commit");
   }
   const bearer = cli(environment.home, [
     "auth",

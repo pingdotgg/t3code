@@ -123,12 +123,12 @@ const assistant = (content, id = `msg_${uuid().replaceAll("-", "").slice(0, 24)}
     session_id: sessionId,
     uuid: uuid(),
   });
-const toolResult = (toolUseId, content, extra = {}) =>
+const toolResult = (toolUseId, content, extra = {}, isError = false) =>
   send({
     type: "user",
     message: {
       role: "user",
-      content: [{ tool_use_id: toolUseId, type: "tool_result", content, is_error: false }],
+      content: [{ tool_use_id: toolUseId, type: "tool_result", content, is_error: isError }],
     },
     parent_tool_use_id: null,
     session_id: sessionId,
@@ -279,82 +279,119 @@ async function playTurn(prompt) {
   let last = "";
   // `as` keeps a step's real output for later steps of the turn, as <var:name>.
   const local = {};
-  for (const raw of turn.steps) {
-    const filled = fill(raw, local);
-    // `submit` hands a workflow agent step its typed result through T3's own MCP.
-    const step = filled.submit
-      ? { ...filled, tool: "t3_submit_output", input: { json: JSON.stringify(filled.submit) } }
-      : filled;
-    if (step.wait) await sleep(step.wait);
-    if (step.think) await streamText(step.think, "thinking");
-    if (step.text) {
-      await streamText(step.text);
-      last = step.text;
-    }
-    if (step.bash) {
-      const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
-      assistant([
-        {
+  // The tool call awaiting its result, so a failing step can still answer it.
+  let pending;
+  const toolUse = (block) => {
+    pending = block.id;
+    assistant([block]);
+  };
+  const answer = (...args) => {
+    toolResult(...args);
+    pending = undefined;
+  };
+  try {
+    for (const raw of turn.steps) {
+      const filled = fill(raw, local);
+      // `submit` hands a workflow agent step its typed result through T3's own MCP.
+      const step = filled.submit
+        ? { ...filled, tool: "t3_submit_output", input: { json: JSON.stringify(filled.submit) } }
+        : filled;
+      if (step.wait) await sleep(step.wait);
+      if (step.think) await streamText(step.think, "thinking");
+      if (step.text) {
+        await streamText(step.text);
+        last = step.text;
+      }
+      if (step.bash) {
+        const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
+        toolUse({
           type: "tool_use",
           id,
           name: "Bash",
           input: { command: step.bash, description: step.description ?? step.bash },
-        },
-      ]);
-      // `run` executes the command for real in the session's cwd, e.g. to push and open a PR.
-      let output = step.output ?? "";
-      if (step.run) {
-        const started = Date.now();
-        output = NodeChildProcess.execSync(step.bash, {
-          cwd,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-        }).trim();
-        await sleep(Math.max(0, (step.ms ?? 1200) - (Date.now() - started)));
-      } else await sleep(step.ms ?? 1200);
-      if (step.as)
-        local[step.as] = step.pick ? (new RegExp(step.pick).exec(output)?.[0] ?? output) : output;
-      toolResult(id, output, {
-        tool_use_result: {
-          stdout: output,
-          stderr: "",
-          interrupted: false,
-          isImage: false,
-        },
-      });
-    }
-    if (step.tool) {
-      const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
-      // `server` names a scripted server whose answer is `output`; otherwise T3's own MCP runs it.
-      const serverName = step.server ?? Object.keys(mcpServers)[0] ?? "t3-code";
-      assistant([
-        { type: "tool_use", id, name: `mcp__${serverName}__${step.tool}`, input: step.input ?? {} },
-      ]);
-      if (step.server) await sleep(step.ms ?? 900);
-      const { text } = step.server
-        ? { text: step.output ?? "" }
-        : await callTool(step.tool, step.input ?? {}).catch((error) => ({ text: String(error) }));
-      toolResult(id, [{ type: "text", text }]);
-    }
-    // Real edits, so checkpoints and diffs show them. Paths are relative to the session's cwd.
-    if (step.edit || step.write) {
-      const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
-      const file = NodePath.resolve(cwd, step.edit ?? step.write);
-      const input = step.edit
-        ? { file_path: file, old_string: step.old, new_string: step.new }
-        : { file_path: file, content: step.content };
-      assistant([{ type: "tool_use", id, name: step.edit ? "Edit" : "Write", input }]);
-      await sleep(step.ms ?? 700);
-      if (step.edit) {
-        const before = NodeFS.readFileSync(file, "utf8");
-        if (!before.includes(step.old)) throw new Error(`${step.edit}: old text not found`);
-        NodeFS.writeFileSync(file, before.replace(step.old, step.new));
-      } else {
-        NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
-        NodeFS.writeFileSync(file, step.content);
+        });
+        // `run` executes the command for real in the session's cwd, e.g. to push and open a PR.
+        let output = step.output ?? "";
+        if (step.run) {
+          const started = Date.now();
+          output = NodeChildProcess.execSync(step.bash, {
+            cwd,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "pipe"],
+          }).trim();
+          await sleep(Math.max(0, (step.ms ?? 1200) - (Date.now() - started)));
+        } else await sleep(step.ms ?? 1200);
+        if (step.as)
+          local[step.as] = step.pick ? (new RegExp(step.pick).exec(output)?.[0] ?? output) : output;
+        answer(id, output, {
+          tool_use_result: {
+            stdout: output,
+            stderr: "",
+            interrupted: false,
+            isImage: false,
+          },
+        });
       }
-      toolResult(id, `The file ${file} has been updated successfully.`);
+      if (step.tool) {
+        const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
+        // `server` names a scripted server whose answer is `output`; otherwise T3's own MCP runs it.
+        const serverName = step.server ?? Object.keys(mcpServers)[0] ?? "t3-code";
+        toolUse({
+          type: "tool_use",
+          id,
+          name: `mcp__${serverName}__${step.tool}`,
+          input: step.input ?? {},
+        });
+        if (step.server) await sleep(step.ms ?? 900);
+        const { text, isError = false } = step.server
+          ? { text: step.output ?? "" }
+          : await callTool(step.tool, step.input ?? {}).catch((error) => ({
+              text: String(error),
+              isError: true,
+            }));
+        answer(id, [{ type: "text", text }], {}, isError);
+      }
+      // Real edits, so checkpoints and diffs show them. Paths are relative to the session's cwd.
+      if (step.edit || step.write) {
+        const id = `toolu_${uuid().replaceAll("-", "").slice(0, 24)}`;
+        const file = NodePath.resolve(cwd, step.edit ?? step.write);
+        const input = step.edit
+          ? { file_path: file, old_string: step.old, new_string: step.new }
+          : { file_path: file, content: step.content };
+        toolUse({ type: "tool_use", id, name: step.edit ? "Edit" : "Write", input });
+        await sleep(step.ms ?? 700);
+        if (step.edit) {
+          const before = NodeFS.readFileSync(file, "utf8");
+          if (!before.includes(step.old)) throw new Error(`${step.edit}: old text not found`);
+          NodeFS.writeFileSync(file, before.replace(step.old, step.new));
+        } else {
+          NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+          NodeFS.writeFileSync(file, step.content);
+        }
+        answer(id, `The file ${file} has been updated successfully.`);
+      }
     }
+  } catch (error) {
+    // A scripted step that fails (an edit whose text is gone, a command that exits non-zero)
+    // still ends the turn, as a failed one, so the app does not wait forever.
+    log("step failed", String(error));
+    if (pending) answer(pending, String(error.message ?? error), {}, true);
+    send({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      duration_ms: 4000,
+      duration_api_ms: 3500,
+      num_turns: 1,
+      result: String(error.message ?? error),
+      session_id: sessionId,
+      total_cost_usd: 0,
+      usage,
+      modelUsage: {},
+      permission_denials: [],
+      uuid: uuid(),
+    });
+    return;
   }
   send({
     type: "result",
