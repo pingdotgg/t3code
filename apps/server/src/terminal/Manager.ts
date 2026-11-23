@@ -1345,7 +1345,7 @@ function findStringEnd(
   input: string,
   start: number,
   isOsc: boolean,
-): { end: number; c1?: { effect: C1Effect; index: number } } | null {
+): { end: number; cut?: true; c1?: { effect: C1Effect; index: number } } | null {
   for (let index = start; index < input.length; index += 1) {
     const codePoint = input.charCodeAt(index);
     if ((isOsc && codePoint === 0x07) || isControlSequenceCancel(codePoint)) {
@@ -1354,7 +1354,7 @@ function findStringEnd(
     // Like xterm.js, an ESC that does not start ST ends the string and begins the next sequence.
     if (codePoint === 0x1b) {
       if (index + 1 >= input.length) return null;
-      return { end: input.charCodeAt(index + 1) === 0x5c ? index + 2 : index };
+      return input.charCodeAt(index + 1) === 0x5c ? { end: index + 2 } : { end: index, cut: true };
     }
     if (codePoint >= 0x80 && !isOsc) {
       const fullCodePoint = input.codePointAt(index) ?? codePoint;
@@ -1529,29 +1529,20 @@ export function sanitizeTerminalHistoryChunk(
           }
           return { visibleText, pendingControlSequence: held };
         }
-        const { end, c1 } = stringEnd;
+        const { end, cut, c1 } = stringEnd;
         const content = stripStringTerminator(
           prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
         );
-        // ST ends what the query's ESC cut short and leaves ground state, as the query does when it
-        // has its own terminator. Without one, the query ends at the next ESC, which history may
-        // strip, so ST would not replay the same and the query stays.
-        if (
-          nextCodePoint === 0x5d &&
-          isOscPaletteQuery(content) &&
-          /[\x07\x18\x1a]$|\x1b\\$/.test(input.slice(index, end))
-        ) {
-          append("\u001b\\");
-          index = end;
-          continue;
-        }
         const strip =
           dropped ||
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
+          (nextCodePoint === 0x5d && isOscPaletteQuery(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
         if (c1 === undefined || (!strip && c1.effect.next.length === 0 && !c1.effect.query)) {
+          // ST ends a string the next ESC cut short, as that ESC did, so history is in ground
+          // whatever becomes of the next sequence.
           if (!strip) {
-            append(prefix + input.slice(index, end));
+            append(prefix + input.slice(index, end) + (cut ? "\u001b\\" : ""));
           }
         } else {
           // ST stands in for a code point that cannot be replayed as it came.
@@ -1571,8 +1562,9 @@ export function sanitizeTerminalHistoryChunk(
           pendingControlSequence: input.slice(index, index + MAX_HELD_ESCAPE_LENGTH),
         };
       }
-      // ESC Z (DECID) is the legacy primary device attributes query.
-      if (nextCodePoint !== 0x5a) {
+      // ESC Z (DECID) is the legacy primary device attributes query. A second ESC restarts the
+      // sequence, so the first does nothing.
+      if (nextCodePoint !== 0x5a && input.charCodeAt(escapeSequenceEndIndex) !== 0x1b) {
         append(input.slice(index, escapeSequenceEndIndex));
       }
       index = escapeSequenceEndIndex;

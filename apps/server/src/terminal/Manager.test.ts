@@ -493,8 +493,7 @@ it("stops holding a control sequence that outgrows its limit", () => {
   const limit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
   // No final byte for a CSI and no terminator for a string.
   const digits = "0123456789 123\r\n".repeat(64);
-  // The next ESC cuts this query short, so it goes to history with no terminator. Nothing the
-  // drop writes may end it, or the replay would answer it.
+  // The next ESC cuts this query short. History leaves it out, so the replay cannot answer it.
   const leftOpen = "\u001b]4;1;?";
   // The terminal runs the carriage returns and line feeds inside a CSI while it waits for the
   // final byte.
@@ -507,7 +506,7 @@ it("stops holding a control sequence that outgrows its limit", () => {
       name: "DCS, split code point",
       open: `${leftOpen}\u001bPstuck`,
       end: splitCodePoint,
-      history: () => `${leftOpen}\u001bE`,
+      history: () => "\u001bE",
     },
     // Each piece's U+0090 ends the sequence before it and opens a DCS that the piece drops.
     {
@@ -528,7 +527,20 @@ it("stops holding a control sequence that outgrows its limit", () => {
       name: "CSI, final byte",
       open: `${leftOpen}\u001b[`,
       end: ["\n6n"],
-      history: (fed: string) => `${leftOpen}${lineBreaks(fed)}\n`,
+      history: (fed: string) => `${lineBreaks(fed)}\n`,
+    },
+    // History must be back in ground after a drop, as the live terminal is.
+    {
+      name: "CSI after a title the next ESC cuts short",
+      open: ["\u001b]0;title", "\u001b["],
+      end: ["31m"],
+      history: (fed: string) => `\u001b]0;title\u001b\\${lineBreaks(fed)}`,
+    },
+    {
+      name: "OSC after a lone ESC",
+      open: ["\u001b", "\u001b]0;"],
+      end: ["\u0007\u009a"],
+      history: () => "\u009a",
     },
     {
       name: "CSI, CAN",
@@ -566,7 +578,7 @@ it("stops holding a control sequence that outgrows its limit", () => {
     const fed = filler.repeat(Math.ceil(limit / filler.length) + 2);
 
     feed("before\n");
-    feed(open);
+    for (const data of [open].flat()) feed(data);
     for (let offset = 0; offset < fed.length; offset += filler.length) {
       feed(fed.slice(offset, offset + filler.length));
     }
@@ -1777,7 +1789,7 @@ it.layer(
       expect(
         reopened.history.startsWith(
           'prompt \u001b[!p\u001b["p\u001b[4 q\u001b[u' +
-            "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]4;3;?\u001b]0;x\u001b" +
+            "\u001b]4;1;red;2;?\u0007\u001b]0;t\u001b\\\u001b]0;x\u001b\\" +
             `\u001b[${"0".repeat(70_000)}31mXdone\n`,
         ),
       ).toBe(true);
