@@ -10,6 +10,11 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "store"] as const;
 
+// Wait names and store keys match exactly, so they keep their spaces.
+const ExactName = Schema.String.check(
+  Schema.makeFilter((name: string) => name.trim().length > 0, { expected: "a non-blank string" }),
+);
+
 const WorkflowTool = Tool.make("t3_workflow", {
   description:
     "Durable workflow runs on this server. start: `workflow`, `input`, `idempotencyKey` (same key, same run). list: runs, by `status`. read: one run and its steps. questions: what runs ask a person. hooks: the URL paths that start runs. store: what workflows keep, under keys starting with `key`; store_set a `key` to `value`; store_delete. signal: wake a wait with `value`, addressed by `runId` and `wait`, or by `workflow` and `channel`; answers a question as `{choice, reason?}`. resume: run a paused run's failed step again. cancel.",
@@ -29,8 +34,8 @@ const WorkflowTool = Tool.make("t3_workflow", {
     idempotencyKey: Schema.optional(TrimmedNonEmptyString),
     runId: Schema.optional(TrimmedNonEmptyString),
     status: Schema.optional(WorkflowRunStatus),
-    wait: Schema.optional(TrimmedNonEmptyString),
-    key: Schema.optional(TrimmedNonEmptyString),
+    wait: Schema.optional(ExactName),
+    key: Schema.optional(ExactName),
     channel: Schema.optional(TrimmedNonEmptyString),
     value: Schema.optional(Schema.Json),
     signalId: Schema.optional(
