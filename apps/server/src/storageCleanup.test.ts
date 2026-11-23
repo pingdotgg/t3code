@@ -1433,9 +1433,9 @@ describe("subagent worktree ownership", () => {
     }).pipe(Effect.provide(cleanupTestLayer)),
   );
 
-  it.effect(
-    "removes an isolated subagent worktree whose branch reached the default branch through its parent's merged pull request",
-    () =>
+  it.effect.each(["merge", "squash"] as const)(
+    "removes an isolated subagent worktree whose branch reached the default branch through its parent's merged pull request (%s)",
+    (strategy) =>
       Effect.gen(function* () {
         yield* TestClock.setTime(NOW_MS);
         const fixture = yield* cleanupFixture({
@@ -1456,13 +1456,18 @@ describe("subagent worktree ownership", () => {
         yield* command(repo, ["checkout", "parent-branch"]);
         yield* command(repo, ["merge", "--no-ff", "-m", "merge subagent", "feature"]);
         yield* command(repo, ["checkout", "main"]);
-        yield* command(repo, [
-          "merge",
-          "--no-ff",
-          "-m",
-          "merge parent pull request",
-          "parent-branch",
-        ]);
+        if (strategy === "merge") {
+          yield* command(repo, [
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge parent pull request",
+            "parent-branch",
+          ]);
+        } else {
+          yield* command(repo, ["merge", "--squash", "parent-branch"]);
+          yield* command(repo, ["commit", "-m", "squash parent pull request"]);
+        }
         yield* command(repo, ["push", "origin", "main"]);
         const parentHead = (yield* command(repo, ["rev-parse", "parent-branch"])).stdout.trim();
         fixture.setBranchPullRequests({
