@@ -338,6 +338,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
+  let cachedCliAccount: { key: string; account: string } | undefined;
   let generation = 0;
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
@@ -382,15 +383,26 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         });
       }
       accessToken = token.access_token;
-      account = yield* request(
-        HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
-          HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
-        ),
-      ).pipe(
-        Effect.flatMap(antigravityAccountFingerprint),
-        Effect.catch(() => sha256(`antigravity-cli\0${token.refresh_token || accessToken}`)),
-      );
+      const cliKey = yield* sha256(`antigravity-cli\0${token.refresh_token || accessToken}`);
+      if (cachedCliAccount?.key === cliKey) {
+        account = cachedCliAccount.account;
+      } else {
+        const resolved = yield* request(
+          HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
+            HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
+          ),
+        ).pipe(Effect.flatMap(antigravityAccountFingerprint), Effect.option);
+        if (Option.isSome(resolved)) {
+          account = resolved.value;
+          if (generation === startedGeneration) {
+            cachedCliAccount = { key: cliKey, account };
+          }
+        } else {
+          account = cliKey;
+        }
+      }
     } else {
+      cachedCliAccount = undefined;
       const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
       projectId = token.project_id;
       const fingerprint = yield* sha256(
@@ -499,6 +511,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     probe,
     clear: Effect.sync(() => {
       cached = undefined;
+      cachedCliAccount = undefined;
       generation++;
     }),
   };

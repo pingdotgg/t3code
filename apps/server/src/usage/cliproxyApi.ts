@@ -73,6 +73,7 @@ const CodexUsage = Schema.Struct({
     }),
   ),
 });
+const OPTIONAL_HUB_CALL_TIMEOUT = "2 seconds";
 // The usage endpoint can report a window without a utilization, as the CLI's own schema allows.
 const ClaudeWindow = Schema.Struct({
   utilization: Schema.NullOr(Schema.Number),
@@ -250,7 +251,17 @@ const CODEX_HUB: HubProvider = {
       : {}),
   }),
   read: Effect.fnUntraced(function* ({ account, call, checkedAt }) {
-    const usage = yield* decodeCodexUsage(yield* call(`${CODEX_BASE}/usage`));
+    const [usage, available] = yield* Effect.all(
+      [
+        call(`${CODEX_BASE}/usage`).pipe(Effect.flatMap(decodeCodexUsage)),
+        credits(call).pipe(
+          Effect.timeoutOption(OPTIONAL_HUB_CALL_TIMEOUT),
+          Effect.map(Option.getOrUndefined),
+          Effect.orElseSucceed(() => undefined),
+        ),
+      ],
+      { concurrency: 2 },
+    );
     const toWindow = (window: typeof CodexWindow.Type | null | undefined) =>
       window
         ? {
@@ -261,7 +272,6 @@ const CODEX_HUB: HubProvider = {
               : { windowDurationMins: window.limit_window_seconds / 60 }),
           }
         : null;
-    const available = yield* credits(call).pipe(Effect.orElseSucceed(() => undefined));
     const next = available?.[0];
     const planType =
       usage.plan_type ?? account.id_token?.plan_type ?? account.id_token?.chatgpt_plan_type;
@@ -379,17 +389,22 @@ const HUB_PROVIDERS = new Map<string, HubProvider>([
           return yield* new UsageLimitSourceError({ detail: "No Antigravity project reported." });
         }
         const requestedAt = DateTime.toEpochMillis(yield* DateTime.now);
-        const summary = yield* call(ANTIGRAVITY_SUMMARY_URL, { project });
+        // Local Antigravity reports no e-mail, so the Google account fingerprint is what pools the two.
+        const [summary, fingerprint] = yield* Effect.all(
+          [
+            call(ANTIGRAVITY_SUMMARY_URL, { project }),
+            call("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
+              Effect.flatMap(decodeJson),
+              Effect.flatMap(antigravityAccountFingerprint),
+              Effect.option,
+            ),
+          ],
+          { concurrency: 2 },
+        );
         const windows = yield* antigravitySummaryWindows(yield* decodeJson(summary), requestedAt);
         if (windows.length === 0) {
           return yield* new UsageLimitSourceError({ detail: "No Antigravity quota reported." });
         }
-        // Local Antigravity reports no e-mail, so the Google account fingerprint is what pools the two.
-        const fingerprint = yield* call("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
-          Effect.flatMap(decodeJson),
-          Effect.flatMap(antigravityAccountFingerprint),
-          Effect.option,
-        );
         const usageLimits = makeUsageLimits({ checkedAt, windows });
         return Option.match(fingerprint, {
           onNone: () => ({ ...listedIdentity(account), usageLimits }),
@@ -526,7 +541,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const [readings, models] = yield* Effect.all(
       [
         Effect.forEach(readable, ({ account, provider }) => readAccount(hub, account, provider), {
-          concurrency: 4,
+          concurrency: 16,
         }),
         Effect.forEach(
           readable,

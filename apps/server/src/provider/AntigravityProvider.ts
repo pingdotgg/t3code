@@ -380,6 +380,24 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     return yield* options.stampIdentity(next.draft);
   });
 
+  const checkUsageLimits = options.probeUsage
+    ? Effect.gen(function* () {
+        const before = yield* SubscriptionRef.get(metadata);
+        if (!settings.enabled || !before.draft.installed) return undefined;
+        const probed = yield* options.probeUsage!;
+        return yield* SubscriptionRef.modify(metadata, (state) => {
+          if (state.authRevision !== before.authRevision || !state.draft.installed) {
+            return [undefined, state] as const;
+          }
+          const usageLimits = resolveUsageLimitsAfterProbe({
+            published: state.draft.usageLimits,
+            probed,
+          });
+          return [usageLimits, { ...state, draft: { ...state.draft, usageLimits } }] as const;
+        });
+      })
+    : undefined;
+
   const maintenanceCapabilities =
     options.maintenanceCapabilities ??
     makeManualOnlyProviderMaintenanceCapabilities({
@@ -393,6 +411,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
+    ...(checkUsageLimits ? { checkUsageLimits } : {}),
     enrichSnapshot: ({ publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
@@ -576,7 +595,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       Effect.andThen(
         SubscriptionRef.update(metadata, (state) => {
           const { usageLimits: _previousAccount, ...draft } = state.draft;
-          return { ...state, draft };
+          return { authRevision: state.authRevision + 1, draft };
         }),
       ),
       Effect.andThen(

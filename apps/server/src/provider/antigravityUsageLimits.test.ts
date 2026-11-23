@@ -667,7 +667,10 @@ describe("Antigravity subscription limits", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { probe, tokenPath } = yield* fixture({ missingToken: true });
+      const { probe, tokenPath, requests } = yield* fixture({
+        missingToken: true,
+        userId: "google-user-1",
+      });
       // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
       yield* fs.writeFileString(
         path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
@@ -688,6 +691,9 @@ describe("Antigravity subscription limits", () => {
         "Sign in with Google to see Antigravity limits.",
       );
       expect(limits.unavailable?.reason).not.toBe("unsupported");
+      expect(requests.filter((request) => request.url.endsWith("/userinfo"))).toHaveLength(1);
+      yield* probe;
+      expect(requests.filter((request) => request.url.endsWith("/userinfo"))).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

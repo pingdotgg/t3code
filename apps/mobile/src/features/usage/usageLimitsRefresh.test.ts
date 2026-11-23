@@ -17,12 +17,20 @@ vi.mock("../../state/server", async () => {
     serverEnvironment: {
       refreshProviders: {
         label: "refresh providers",
-        run: (_registry: unknown, input: { readonly environmentId: string }) =>
-          Effect.promise(() => state.refresh(input.environmentId)).pipe(
+        run: (
+          _registry: unknown,
+          input: {
+            readonly environmentId: string;
+            readonly input?: { readonly limitsOnly?: boolean };
+          },
+        ) => {
+          expect(input.input).toEqual({ limitsOnly: true });
+          return Effect.promise(() => state.refresh(input.environmentId)).pipe(
             Effect.flatMap((result) =>
               result._tag === "Failure" ? Effect.failCause(result.cause) : Effect.void,
             ),
-          ),
+          );
+        },
       },
     },
   };

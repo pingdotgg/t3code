@@ -762,6 +762,15 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
         yield* harness.initialize;
         expect((yield* published)?.usageLimits).toEqual(limits);
+        const refreshedLimits: ServerProviderUsageLimits = {
+          checkedAt: "2026-10-09T12:00:30.000Z",
+          windows: [{ ...limits.windows[0]!, usedPercent: 80 }],
+        };
+        const probesBefore = yield* Ref.get(harness.probeCalls);
+        yield* Ref.set(usage, refreshedLimits);
+        yield* harness.provider.snapshot.refreshUsage!;
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(refreshedLimits);
+        expect(yield* Ref.get(harness.probeCalls)).toBe(probesBefore);
         // The second health check is the one the failed background read triggers.
         const checks = yield* Ref.make(0);
         const failedReadApplied = yield* Deferred.make<void>();
@@ -781,7 +790,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         });
         yield* harness.provider.snapshot.refresh;
         yield* Deferred.await(failedReadApplied);
-        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(refreshedLimits);
         yield* harness.provider.onSignedOut;
         expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
         yield* Ref.set(usage, {

@@ -42,7 +42,7 @@ export function installSubscriptionUsageRefresh(): () => void {
     runAtomCommand(
       appAtomRegistry,
       serverEnvironment.refreshProviders,
-      { environmentId, input: {} },
+      { environmentId, input: { limitsOnly: true } },
       { label: serverEnvironment.refreshProviders.label, reportFailure: false },
     ),
   );
