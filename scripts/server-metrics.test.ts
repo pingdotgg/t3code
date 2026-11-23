@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -5,9 +6,11 @@ import {
   heapGrowth,
   parsePsCpuTime,
   parseRunSelection,
+  ServerMetrics,
   slope,
-  type ServerMetrics,
 } from "./server-metrics-report.ts";
+
+const decodeMetrics = Schema.decodeSync(ServerMetrics);
 
 type Quiet = {
   cpuPct: number;
@@ -72,6 +75,20 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, steady).regressed).toContain("quiet.cpuPct");
     // The medians differ by 2.8 points, past the floor, but a resampled median can match.
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9)).regressed).toEqual([]);
+  });
+
+  it("reads a file written before loop delay and GC were recorded", () => {
+    const older = decodeMetrics({
+      meta,
+      runs: [
+        {
+          quiet: { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500, rssMB: 500, heapAfterGcMB: 200 },
+        },
+      ],
+    });
+    const result = compareMetrics(older, quietRuns(base));
+    expect(result.compared).toBe(5);
+    expect(result.table).toContain("| quiet.loopDelayP99Ms | – | 1.5 | n/a | | |");
   });
 
   it("counts how many metrics both sides share", () => {

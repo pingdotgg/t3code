@@ -7,13 +7,14 @@ const Window = Schema.Struct({
   rssPeakMB: Schema.Number,
   rssMB: Schema.Number,
   heapAfterGcMB: Schema.Number,
+  // Files written before these were recorded still decode, and compare shows them as n/a.
   /** Event-loop delay past the 10 ms sampling interval, from a histogram inside the server. */
-  loopDelayP50Ms: Schema.Number,
-  loopDelayP99Ms: Schema.Number,
-  loopDelayMaxMs: Schema.Number,
+  loopDelayP50Ms: Schema.optional(Schema.Number),
+  loopDelayP99Ms: Schema.optional(Schema.Number),
+  loopDelayMaxMs: Schema.optional(Schema.Number),
   /** GC events and their summed pause in the window, from a `gc` PerformanceObserver. */
-  gcCount: Schema.Number,
-  gcPauseMs: Schema.Number,
+  gcCount: Schema.optional(Schema.Number),
+  gcPauseMs: Schema.optional(Schema.Number),
 });
 export type Window = typeof Window.Type;
 const Spread = Schema.Struct({ median: Schema.Number, p90: Schema.Number });

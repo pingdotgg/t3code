@@ -59,7 +59,6 @@ const SLOW_MARKER = "[[stream-slowly]]";
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
 const LOOP_RESOLUTION_MS = 10;
 const LoopStats = Schema.Struct({
-  samples: Schema.Number,
   p50: Schema.Number,
   p99: Schema.Number,
   max: Schema.Number,
@@ -286,9 +285,11 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
   const decodeCpuProfile = Schema.decodeUnknownEffect(Schema.Struct({ profile: CpuProfile }));
   return {
     // getrusage keeps the switches of threads that already exited, unlike per-thread counters.
+    // The delay histogram's timer wakes an idle loop once per sample, so the same read takes its
+    // sample count off: a difference of two reads then covers one interval for both counters.
     contextSwitches: send("Runtime.evaluate", {
       expression:
-        "(() => { const u = process.resourceUsage(); return u.voluntaryContextSwitches + u.involuntaryContextSwitches; })()",
+        "(() => { const u = process.resourceUsage(); return u.voluntaryContextSwitches + u.involuntaryContextSwitches - (globalThis.__t3ServerMetrics?.delay.count ?? 0); })()",
       returnByValue: true,
     }).pipe(
       Effect.flatMap(decodeEvaluated),
@@ -300,11 +301,14 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
         const bench = (globalThis.__t3ServerMetrics ??= (() => {
           const { monitorEventLoopDelay, PerformanceObserver } = process.getBuiltinModule("node:perf_hooks");
           const state = { delay: monitorEventLoopDelay({ resolution: ${LOOP_RESOLUTION_MS} }), gcCount: 0, gcMs: 0 };
-          new PerformanceObserver((list) => {
-            for (const entry of list.getEntries()) { state.gcCount++; state.gcMs += entry.duration; }
-          }).observe({ entryTypes: ["gc"] });
+          state.count = (entries) => {
+            for (const entry of entries) { state.gcCount++; state.gcMs += entry.duration; }
+          };
+          state.gc = new PerformanceObserver((list) => state.count(list.getEntries()));
+          state.gc.observe({ entryTypes: ["gc"] });
           return state;
         })());
+        bench.gc.takeRecords();
         bench.delay.reset();
         bench.delay.enable();
         bench.gcCount = 0;
@@ -315,9 +319,10 @@ const inspect = Effect.fn("serverMetrics.inspect")(function* (url: string) {
       expression: `(() => {
         const bench = globalThis.__t3ServerMetrics;
         bench.delay.disable();
+        // GC entries reach the observer asynchronously; take the ones still queued.
+        bench.count(bench.gc.takeRecords());
         const ms = (ns) => Math.max(0, ns / 1e6 - ${LOOP_RESOLUTION_MS});
         return JSON.stringify({
-          samples: bench.delay.count,
           p50: ms(bench.delay.percentile(50)),
           p99: ms(bench.delay.percentile(99)),
           max: ms(bench.delay.max),
@@ -622,11 +627,10 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     // Read before the forced GC below, which would count as a pause.
     const loop = yield* devtools.loopRead;
     const switchesElapsed = (lastSwitches.at - firstSwitches.at) / 1_000;
-    // The delay histogram's timer wakes an idle loop once per sample; those wakeups are the harness's.
     const switches =
       firstSwitches.value === null || lastSwitches.value === null
         ? null
-        : Math.max(0, lastSwitches.value - firstSwitches.value - loop.samples);
+        : Math.max(0, lastSwitches.value - firstSwitches.value);
     const heap = yield* devtools.heapAfterGc;
     const window: Window = {
       cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / cpuElapsed) * 100),
