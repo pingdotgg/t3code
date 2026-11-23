@@ -5,6 +5,7 @@
  */
 import * as NodeCrypto from "node:crypto";
 
+import { bambuModelFromModules } from "./bambuReport.ts";
 import { MqttConnectRefusedError, MqttTlsConnection } from "./mqttTls.ts";
 
 export interface BambuVersionInfo {
@@ -256,7 +257,7 @@ export class BambuSession {
       const ota = info.module.find((module) => isObject(module) && module.name === "ota");
       if (isObject(ota)) {
         this.#version = {
-          productName: typeof ota.product_name === "string" ? ota.product_name : null,
+          productName: bambuModelFromModules(info.module),
           firmware: typeof ota.sw_ver === "string" ? ota.sw_ver : null,
         };
       }
@@ -286,7 +287,7 @@ function describeConnectError(error: unknown, target: BambuSessionTarget): strin
   if (error instanceof MqttConnectRefusedError) return error.message;
   const message = error instanceof Error ? error.message : String(error);
   if (/ECONNREFUSED/.test(message)) {
-    return `Nothing is listening on ${target.host}:8883. Check the IP address and that the printer is on.`;
+    return `Nothing is listening on ${target.host}:${target.port ?? 8883}. Check the IP address and that the printer is on.`;
   }
   if (/EHOSTUNREACH|ENETUNREACH|ETIMEDOUT|Timed out/.test(message)) {
     return `Could not reach the printer at ${target.host}. Check the IP address and that this machine is on the same network.`;

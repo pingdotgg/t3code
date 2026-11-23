@@ -13,12 +13,14 @@ import {
   validatePrinterBaseUrl,
 } from "../PrinterUrlGuard.ts";
 import { fetchBambuCameraFrame } from "../bambu/bambuCamera.ts";
+import { fetchBambuStreamFrame } from "../bambu/bambuStreamCamera.ts";
 import {
   BAMBU_CONTROLS_LOCKED_REASON,
   SPEED_PROFILE_LEVEL,
   bambuControlsLocked,
   bambuModelName,
   bambuReportToSnapshot,
+  bambuStreamCameraInfo,
   bambuUsesFrameCamera,
 } from "../bambu/bambuReport.ts";
 import { BambuSession, getBambuSession, type BambuSessionTarget } from "../bambu/BambuSession.ts";
@@ -26,6 +28,9 @@ import { bambuTrustedCertificates } from "../bambu/bambuTls.ts";
 
 const FIRST_REPORT_WAIT_MS = 4_000;
 const TEST_CONNECTION_WAIT_MS = 10_000;
+const STREAM_FRAME_WAIT_MS = 15_000;
+const LIVEVIEW_OFF_REASON =
+  "The printer's camera stream is off. Turn on LAN only liveview in the printer's network settings.";
 
 const failure = (config: BambuLanPrinterConfig, operation: string, reason: string) =>
   new PrinterOperationError({ operation, printerId: config.id, reason });
@@ -53,6 +58,8 @@ const resolveTarget = Effect.fn("BambuLanAdapter.resolveTarget")(function* (
     serial: config.serial.trim(),
     accessCode: secret.trim(),
     ca: bambuTrustedCertificates(),
+    // Printers always use 8883; an explicit port in the address is for test printers.
+    ...(url.port ? { port: Number(url.port) } : {}),
   };
   return target;
 });
@@ -149,7 +156,7 @@ export const bambuLanAdapter: PrinterAdapter<BambuLanPrinterConfig> = {
     }
     const model = bambuModelName(config.serial, version);
     const locked = bambuControlsLocked(report);
-    const camera = bambuUsesFrameCamera(model);
+    const camera = bambuUsesFrameCamera(model) || bambuStreamCameraInfo(report)?.kind === "stream";
     const modelText = model ?? "Bambu Lab printer";
     const firmware = version?.firmware ? ` (firmware ${version.firmware})` : "";
     return {
@@ -199,13 +206,31 @@ export const bambuLanAdapter: PrinterAdapter<BambuLanPrinterConfig> = {
         );
       }
       const target = yield* resolveTarget(config, secret, "bambu.camera");
+      const report = getBambuSession(target).report;
+      const stream = report ? bambuStreamCameraInfo(report) : null;
+      if (stream?.kind === "disabled") {
+        return yield* failure(config, "bambu.camera", LIVEVIEW_OFF_REASON);
+      }
       const bytes = yield* Effect.tryPromise({
         try: () =>
-          fetchBambuCameraFrame({
-            address: target.address,
-            accessCode: target.accessCode,
-            ca: target.ca,
-          }),
+          stream?.kind === "stream"
+            ? fetchBambuStreamFrame(
+                {
+                  address: target.address,
+                  host: target.host,
+                  port: stream.port,
+                  path: stream.path,
+                  tls: stream.tls,
+                  accessCode: target.accessCode,
+                  ca: target.ca,
+                },
+                STREAM_FRAME_WAIT_MS,
+              )
+            : fetchBambuCameraFrame({
+                address: target.address,
+                accessCode: target.accessCode,
+                ca: target.ca,
+              }),
         catch: (cause) =>
           failure(config, "bambu.camera", cause instanceof Error ? cause.message : String(cause)),
       });

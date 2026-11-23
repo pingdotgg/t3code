@@ -34,6 +34,7 @@ export function fetchBambuCameraFrame(options: {
       host: options.address,
       port: options.port ?? 6000,
       ca: [...options.ca],
+      maxVersion: "TLSv1.2",
       checkServerIdentity: () => undefined,
     });
     const finish = (error: Error | null, frame?: Uint8Array) => {

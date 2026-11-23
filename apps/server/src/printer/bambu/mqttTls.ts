@@ -183,6 +183,8 @@ export class MqttTlsConnection {
         host: options.host,
         port: options.port,
         ca: [...options.ca],
+        // P2S firmware 01.02.00.00 never answers a TLS 1.3 hello; every Bambu printer speaks 1.2.
+        maxVersion: "TLSv1.2",
         // Printer certificates name the printer's serial, not its LAN address, so the chain is
         // verified against Bambu's authorities without matching the hostname.
         checkServerIdentity: () => undefined,

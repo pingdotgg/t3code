@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalConsole:off globalDate:off globalTimers:off - Standalone development tool, not part of the server.
 /**
- * Fake Bambu Lab P1S for developing the direct Bambu connection: MQTT over TLS on 8883, camera on
- * 6000, refuses controls unless in Developer mode (`--mode dev`, or send SIGUSR1 to toggle).
+ * Fake Bambu Lab printer for developing the direct connection: MQTT over TLS, refusing controls
+ * unless in Developer mode (`--mode dev`, SIGUSR1 toggles). `--model p1s` serves camera frames on
+ * 6000; `--model x1c` streams RTSPS on 322 through mediamtx and ffmpeg (SIGUSR2 toggles liveview).
  * Copy `<state-dir>/ca.pem` into `<T3 home>/printer-certs/` so T3 Code trusts it.
  */
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -18,25 +20,49 @@ for (let i = 2; i < process.argv.length; i += 2) {
   const value = process.argv[i + 1];
   if (key && value !== undefined) args.set(key, value);
 }
-const SERIAL = args.get("serial") ?? "01P00A000000001";
+const MODEL = args.get("model") === "x1c" ? "x1c" : "p1s";
+const SERIAL = args.get("serial") ?? (MODEL === "x1c" ? "00M00A000000001" : "01P00A000000001");
+// Module lists follow real printers' replies (recorded in ha-bambulab's mock data).
+const PRODUCT_NAME = MODEL === "x1c" ? "Bambu Lab X1-Carbon" : "Bambu Lab P1S";
+const BOARD_MODULE =
+  MODEL === "x1c"
+    ? { name: "ap", product_name: "", hw_ver: "AP05", sw_ver: "00.00.32.14" }
+    : {
+        name: "esp32",
+        product_name: "",
+        hw_ver: "AP04",
+        project_name: "C12",
+        sw_ver: "00.00.32.14",
+      };
 const ACCESS_CODE = args.get("code") ?? "12345678";
 const HOST = args.get("host") ?? "127.0.0.1";
 const MQTT_PORT = Number(args.get("mqtt-port") ?? 8883);
 const CAMERA_PORT = Number(args.get("camera-port") ?? 6000);
+const RTSPS_PORT = Number(args.get("rtsps-port") ?? 322);
+const RTSP_PUBLISH_PORT = Number(args.get("rtsp-publish-port") ?? 8555);
+const STREAM_PATH = "streaming/live/1";
+let liveview = (args.get("liveview") ?? "on") !== "off";
 const STATE_DIR =
   args.get("state-dir") ?? NodePath.join(NodeOS.homedir(), ".t3", "fake-bambu-printer");
 const FRAMES_DIR = args.get("frames") ?? NodePath.join(STATE_DIR, "frames");
 let developerMode = (args.get("mode") ?? "normal") === "dev";
 
-const log = (message: string) => console.log(`[fake-p1s ${new Date().toISOString()}] ${message}`);
+const log = (message: string) =>
+  console.log(`[fake-${MODEL} ${new Date().toISOString()}] ${message}`);
 
-function ensureCertificates(): { key: string; cert: string; caPath: string } {
+function ensureCertificates(): {
+  key: string;
+  cert: string;
+  caPath: string;
+  keyPath: string;
+  certPath: string;
+} {
   NodeFS.mkdirSync(STATE_DIR, { recursive: true });
   const caKey = NodePath.join(STATE_DIR, "ca.key");
   const caPem = NodePath.join(STATE_DIR, "ca.pem");
-  const key = NodePath.join(STATE_DIR, "printer.key");
-  const csr = NodePath.join(STATE_DIR, "printer.csr");
-  const cert = NodePath.join(STATE_DIR, "printer.pem");
+  const key = NodePath.join(STATE_DIR, `printer-${SERIAL}.key`);
+  const csr = NodePath.join(STATE_DIR, `printer-${SERIAL}.csr`);
+  const cert = NodePath.join(STATE_DIR, `printer-${SERIAL}.pem`);
   const openssl = (...opensslArgs: string[]) =>
     NodeChildProcess.execFileSync("openssl", opensslArgs, { stdio: "ignore" });
   if (!NodeFS.existsSync(caPem)) {
@@ -89,7 +115,13 @@ function ensureCertificates(): { key: string; cert: string; caPath: string } {
     key: NodeFS.readFileSync(key, "utf8"),
     cert: NodeFS.readFileSync(cert, "utf8"),
     caPath: caPem,
+    keyPath: key,
+    certPath: cert,
   };
+}
+
+function rtspUrl(): string {
+  return liveview ? `rtsps://${HOST}:${RTSPS_PORT}/${STREAM_PATH}` : "disable";
 }
 
 const TOTAL_LAYERS = 221;
@@ -111,7 +143,10 @@ const BASE_REPORT: Json = {
   nozzle_target_temper: 220,
   bed_temper: 55,
   bed_target_temper: 55,
-  chamber_temper: 31,
+  // P1 printers have no chamber sensor and report 5; X1 reports its chamber under device.ctc.
+  ...(MODEL === "x1c"
+    ? { device: { ctc: { info: { temp: 31 }, state: 0 } } }
+    : { chamber_temper: 5 }),
   cooling_fan_speed: "15",
   big_fan1_speed: "0",
   big_fan2_speed: "0",
@@ -124,7 +159,13 @@ const BASE_REPORT: Json = {
   nozzle_diameter: "0.4",
   nozzle_type: "stainless_steel",
   sdcard: true,
-  ipcam: { ipcam_dev: "1", ipcam_record: "enable", timelapse: "disable", resolution: "1080p" },
+  ipcam: {
+    ipcam_dev: "1",
+    ipcam_record: "enable",
+    timelapse: "disable",
+    resolution: "1080p",
+    ...(MODEL === "x1c" ? { rtsp_url: rtspUrl() } : {}),
+  },
   ams: {
     tray_now: "0",
     ams: [
@@ -268,12 +309,19 @@ function handleRequest(client: Client, message: Json): void {
         module: [
           {
             name: "ota",
-            product_name: "Bambu Lab P1S",
+            product_name: PRODUCT_NAME,
             sn: SERIAL,
-            sw_ver: "01.08.02.00",
-            hw_ver: "OTA",
+            sw_ver: MODEL === "x1c" ? "01.09.00.01" : "01.08.02.00",
+            hw_ver: MODEL === "x1c" ? "N/A" : "OTA",
           },
-          { name: "ams/0", product_name: "AMS (1)", sn: `${SERIAL}-AMS`, sw_ver: "00.00.06.49" },
+          { ...BOARD_MODULE, sn: SERIAL },
+          {
+            name: "ams/0",
+            product_name: "AMS (1)",
+            sn: `${SERIAL}-AMS0`,
+            sw_ver: "00.01.06.62",
+            hw_ver: "AMS08",
+          },
         ],
       },
     });
@@ -430,45 +478,196 @@ NodeTls.createServer({ key: tls.key, cert: tls.cert }, (socket) => {
   socket.on("close", () => clients.delete(client));
 }).listen(MQTT_PORT, HOST, () => log(`MQTT on ${HOST}:${MQTT_PORT}, serial ${SERIAL}`));
 
-NodeTls.createServer({ key: tls.key, cert: tls.cert }, (socket) => {
-  let login = Buffer.alloc(0);
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let index = 0;
-  socket.on("data", (chunk: Buffer) => {
-    if (timer) return;
-    login = Buffer.concat([login, chunk]);
-    if (login.length < 80) return;
-    const user = login.subarray(16, 48).toString("ascii").replace(/\0+$/, "");
-    const code = login.subarray(48, 80).toString("ascii").replace(/\0+$/, "");
-    if (user !== "bblp" || code !== ACCESS_CODE || frames.length === 0) {
-      socket.end();
-      return;
-    }
-    const send = () => {
-      const frame = frames[index % frames.length]!;
-      index += 1;
-      const header = Buffer.alloc(16);
-      header.writeUInt32LE(frame.length, 0);
-      header.writeUInt32LE(1, 8);
-      socket.write(header);
-      socket.write(frame);
-    };
-    send();
-    timer = setInterval(send, 1_000);
-  });
-  socket.on("error", () => undefined);
-  socket.on("close", () => {
-    if (timer) clearInterval(timer);
-  });
-}).listen(CAMERA_PORT, HOST, () =>
-  log(`Camera on ${HOST}:${CAMERA_PORT} with ${frames.length} frame(s) from ${FRAMES_DIR}`),
-);
+function findTool(name: string, flag: string): string {
+  const configured = args.get(flag);
+  if (configured) return configured;
+  const dirs = [
+    ...(process.env.PATH ?? "").split(NodePath.delimiter),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+  ];
+  const found = dirs.map((dir) => NodePath.join(dir, name)).find((path) => NodeFS.existsSync(path));
+  if (!found)
+    throw new Error(`${name} not found. Install it (brew install ${name}) or pass --${flag}.`);
+  return found;
+}
+
+const children = new Set<NodeChildProcess.ChildProcess>();
+function spawnChild(
+  command: string,
+  commandArgs: string[],
+  label: string,
+): NodeChildProcess.ChildProcess {
+  const child = NodeChildProcess.spawn(command, commandArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  children.add(child);
+  const relay = (chunk: Buffer) => {
+    for (const line of chunk.toString("utf8").split("\n"))
+      if (line.trim()) log(`${label}: ${line.trim()}`);
+  };
+  child.stdout?.on("data", relay);
+  child.stderr?.on("data", relay);
+  child.on("exit", () => children.delete(child));
+  return child;
+}
+
+/** Serves the X1-style camera: mediamtx on RTSPS 322, fed by ffmpeg looping the first frame. */
+function startStream(): void {
+  const publisherPassword = NodeCrypto.randomBytes(12).toString("hex");
+  const configPath = NodePath.join(STATE_DIR, `mediamtx-${SERIAL}.yml`);
+  NodeFS.writeFileSync(
+    configPath,
+    [
+      "logLevel: warn",
+      "rtsp: true",
+      "rtspTransports: [tcp]",
+      'rtspEncryption: "optional"',
+      `rtspAddress: 127.0.0.1:${RTSP_PUBLISH_PORT}`,
+      `rtspsAddress: ${HOST}:${RTSPS_PORT}`,
+      `rtspServerKey: ${tls.keyPath}`,
+      `rtspServerCert: ${tls.certPath}`,
+      "rtspAuthMethods: [basic, digest]",
+      "rtmp: false",
+      "hls: false",
+      "webrtc: false",
+      "srt: false",
+      "moq: false",
+      "api: false",
+      "metrics: false",
+      "pprof: false",
+      "playback: false",
+      "authMethod: internal",
+      "authInternalUsers:",
+      "  - user: fakepublisher",
+      `    pass: ${publisherPassword}`,
+      '    ips: ["127.0.0.1"]',
+      "    permissions:",
+      `      - action: publish`,
+      `        path: ${STREAM_PATH}`,
+      "  - user: bblp",
+      `    pass: "${ACCESS_CODE}"`,
+      "    ips: []",
+      "    permissions:",
+      "      - action: read",
+      `        path: ${STREAM_PATH}`,
+      "paths:",
+      `  ${STREAM_PATH}:`,
+      "    source: publisher",
+      "",
+    ].join("\n"),
+    { mode: 0o600 },
+  );
+  spawnChild(findTool("mediamtx", "mediamtx"), [configPath], "mediamtx");
+  const frame = NodeFS.readdirSync(FRAMES_DIR)
+    .filter((name) => /\.jpe?g$/i.test(name))
+    .sort()[0];
+  if (!frame) throw new Error(`No .jpg frames in ${FRAMES_DIR} to stream.`);
+  const publish = () => {
+    // The orange bar sweeps along the bottom, so a stalled stream is easy to spot.
+    const ffmpeg = spawnChild(
+      findTool("ffmpeg", "ffmpeg"),
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-re",
+        "-loop",
+        "1",
+        "-framerate",
+        "15",
+        "-i",
+        NodePath.join(FRAMES_DIR, frame),
+        "-f",
+        "lavfi",
+        "-i",
+        "color=c=orange:s=96x10:r=15",
+        "-filter_complex",
+        "[0:v]scale=1280:-2[bg];[bg][1:v]overlay=x='mod(t*160,W)':y=H-18:shortest=0,format=yuv420p",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-tune",
+        "zerolatency",
+        "-g",
+        "30",
+        "-f",
+        "rtsp",
+        "-rtsp_transport",
+        "tcp",
+        `rtsp://fakepublisher:${publisherPassword}@127.0.0.1:${RTSP_PUBLISH_PORT}/${STREAM_PATH}`,
+      ],
+      "ffmpeg",
+    );
+    ffmpeg.on("exit", () => {
+      if (!stopping) setTimeout(publish, 2_000);
+    });
+  };
+  setTimeout(publish, 1_000);
+  log(
+    `Camera stream on rtsps://${HOST}:${RTSPS_PORT}/${STREAM_PATH} (liveview ${liveview ? "on" : "off"})`,
+  );
+}
+
+let stopping = false;
+const shutdown = () => {
+  stopping = true;
+  for (const child of children) child.kill("SIGTERM");
+  process.exit(0);
+};
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);
+
+if (MODEL === "x1c") {
+  startStream();
+} else {
+  NodeTls.createServer({ key: tls.key, cert: tls.cert }, (socket) => {
+    let login = Buffer.alloc(0);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let index = 0;
+    socket.on("data", (chunk: Buffer) => {
+      if (timer) return;
+      login = Buffer.concat([login, chunk]);
+      if (login.length < 80) return;
+      const user = login.subarray(16, 48).toString("ascii").replace(/\0+$/, "");
+      const code = login.subarray(48, 80).toString("ascii").replace(/\0+$/, "");
+      if (user !== "bblp" || code !== ACCESS_CODE || frames.length === 0) {
+        socket.end();
+        return;
+      }
+      const send = () => {
+        const frame = frames[index % frames.length]!;
+        index += 1;
+        const header = Buffer.alloc(16);
+        header.writeUInt32LE(frame.length, 0);
+        header.writeUInt32LE(1, 8);
+        socket.write(header);
+        socket.write(frame);
+      };
+      send();
+      timer = setInterval(send, 1_000);
+    });
+    socket.on("error", () => undefined);
+    socket.on("close", () => {
+      if (timer) clearInterval(timer);
+    });
+  }).listen(CAMERA_PORT, HOST, () =>
+    log(`Camera on ${HOST}:${CAMERA_PORT} with ${frames.length} frame(s) from ${FRAMES_DIR}`),
+  );
+}
 
 setInterval(() => broadcast({ print: { command: "push_status", ...tick() } }), 1_000);
 
 process.on("SIGUSR1", () => {
   developerMode = !developerMode;
   log(`Developer mode ${developerMode ? "on" : "off"}.`);
+  broadcast(fullReport());
+});
+
+process.on("SIGUSR2", () => {
+  liveview = !liveview;
+  state.ipcam = { ...(state.ipcam as Json), rtsp_url: rtspUrl() };
+  log(`LAN liveview ${liveview ? "on" : "off"}.`);
   broadcast(fullReport());
 });
 

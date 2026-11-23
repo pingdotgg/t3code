@@ -102,13 +102,70 @@ export function bambuModelName(serial: string, version: BambuVersionInfo | null)
   return SERIAL_PREFIX_MODELS.find(([prefix]) => upper.startsWith(prefix))?.[1] ?? null;
 }
 
-/**
- * P1 and A1 printers serve camera frames on TCP 6000. X1, X2 and H2 printers stream RTSPS on
- * port 322 instead, which this adapter does not read yet.
- */
+/** P1, A1 and A2 printers serve camera frames on TCP 6000; X1, X2, P2, H2 and H3 stream RTSP(S). */
 export function bambuUsesFrameCamera(model: string | null): boolean {
   if (!model) return true;
-  return !/\b(X1|X1E|X1 Carbon|X2|H2)/i.test(model);
+  return !/\b(X1|X2|P2|H2|H3)/i.test(model);
+}
+
+/**
+ * Printers without a chamber sensor (A1, A2, P1) report a placeholder 5 °C. Newer ones report under
+ * `device.ctc`, where H2 firmware packs the target into the high 16 bits and the reading below.
+ */
+function chamberTemperature(
+  report: JsonObject,
+  model: string | null,
+): { readonly actualC: number; readonly targetC: number | null } | null {
+  if (model && /\b(A1|A2|P1)/i.test(model)) return null;
+  const direct = num(report.chamber_temper);
+  const target = num(report.chamber_target_temper);
+  if (direct !== null) return { actualC: direct, targetC: target };
+  const device = isObject(report.device) ? report.device : null;
+  const ctc = isObject(device?.ctc) ? device.ctc : null;
+  const packed = num(isObject(ctc?.info) ? ctc.info.temp : null);
+  if (packed === null) return null;
+  if (packed > 0xffff) return { actualC: packed & 0xffff, targetC: Math.floor(packed / 0x10000) };
+  return { actualC: packed, targetC: target };
+}
+
+/** Names the model from `get_version` modules when the printer leaves `product_name` empty. */
+export function bambuModelFromModules(modules: ReadonlyArray<unknown>): string | null {
+  const list = modules.filter(isObject);
+  const ota = list.find((module) => module.name === "ota");
+  const productName = str(ota?.product_name);
+  if (productName) return productName;
+  const projects = new Set(list.map((module) => str(module.project_name)).filter(Boolean));
+  if (projects.has("N2S")) return "Bambu Lab A1";
+  if (projects.has("N1")) return "Bambu Lab A1 mini";
+  if (projects.has("C11")) return "Bambu Lab P1P";
+  if (projects.has("C12")) return "Bambu Lab P1S";
+  const boards = new Set(list.map((module) => str(module.hw_ver)).filter(Boolean));
+  if (boards.has("AP02")) return "Bambu Lab X1E";
+  return null;
+}
+
+export type BambuStreamCameraInfo =
+  | { readonly kind: "stream"; readonly port: number; readonly path: string; readonly tls: boolean }
+  | { readonly kind: "disabled" };
+
+/** Where an X1, X2 or H2 printer streams its camera; "disable" means LAN only liveview is off. */
+export function bambuStreamCameraInfo(report: JsonObject): BambuStreamCameraInfo | null {
+  const ipcam = isObject(report.ipcam) ? report.ipcam : null;
+  const url = str(ipcam?.rtsp_url);
+  if (!url) return null;
+  if (url === "disable") return { kind: "disabled" };
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "rtsps:" && parsed.protocol !== "rtsp:") return null;
+    return {
+      kind: "stream",
+      tls: parsed.protocol === "rtsps:",
+      port: parsed.port ? Number(parsed.port) : 322,
+      path: parsed.pathname && parsed.pathname !== "/" ? parsed.pathname : "/streaming/live/1",
+    };
+  } catch {
+    return null;
+  }
 }
 
 const MQTT_SIGNATURE_REQUIRED = 0x20000000n;
@@ -248,6 +305,18 @@ function hmsAlerts(report: JsonObject): ReadonlyArray<PrinterAlert> {
   return alerts;
 }
 
+function liveviewAlert(report: JsonObject): ReadonlyArray<PrinterAlert> {
+  if (bambuStreamCameraInfo(report)?.kind !== "disabled") return [];
+  return [
+    {
+      code: "CAMERA_LIVEVIEW_OFF",
+      severity: "warning",
+      message:
+        "The camera is off for other apps. Turn on LAN only liveview in the printer's network settings to see it here.",
+    },
+  ];
+}
+
 export interface BambuSnapshotInput {
   readonly config: BambuLanPrinterConfig;
   readonly report: JsonObject | null;
@@ -288,7 +357,8 @@ export function bambuReportToSnapshot(input: BambuSnapshotInput): PrinterSnapsho
   const nozzleTarget = num(report.nozzle_target_temper);
   const bedActual = num(report.bed_temper);
   const bedTarget = num(report.bed_target_temper);
-  const chamberActual = num(report.chamber_temper);
+  const chamber = chamberTemperature(report, model);
+  const chamberActual = chamber?.actualC ?? null;
   const round1 = (value: number | null) => (value === null ? null : Math.round(value * 10) / 10);
 
   const previousHistory = previous?.thermals.history ?? [];
@@ -317,7 +387,7 @@ export function bambuReportToSnapshot(input: BambuSnapshotInput): PrinterSnapsho
   const ipcam = isObject(report.ipcam) ? report.ipcam : null;
   const wifi = num(str(report.wifi_signal)?.replace(/dbm$/i, ""));
   const sdcard = report.sdcard;
-  const frameCamera = bambuUsesFrameCamera(model);
+  const hasCamera = bambuUsesFrameCamera(model) || bambuStreamCameraInfo(report)?.kind === "stream";
 
   const canControl = online && !locked;
   const settledIdle = status === "idle" || status === "finish" || status === "failed";
@@ -397,7 +467,7 @@ export function bambuReportToSnapshot(input: BambuSnapshotInput): PrinterSnapsho
       bed: { actualC: round1(bedActual), targetC: bedTarget, minC: 0, maxC: 120 },
       ...(chamberActual !== null
         ? {
-            chamber: { actualC: round1(chamberActual), targetC: num(report.chamber_target_temper) },
+            chamber: { actualC: round1(chamberActual), targetC: chamber?.targetC ?? null },
           }
         : {}),
       history,
@@ -420,14 +490,14 @@ export function bambuReportToSnapshot(input: BambuSnapshotInput): PrinterSnapsho
         : null,
       amsUnits: amsUnits(report),
     },
-    alerts: online ? hmsAlerts(report) : [],
+    alerts: online ? [...hmsAlerts(report), ...liveviewAlert(report)] : [],
     media: {
-      hasCamera: frameCamera,
+      hasCamera,
       hasCoverImage: false,
       hasPickImage: false,
-      cameraUpdatedAt: frameCamera && online ? nowIso : null,
+      cameraUpdatedAt: hasCamera && online ? nowIso : null,
       cameraStale: !online,
-      cameraRevision: (previous?.media.cameraRevision ?? 0) + (online && frameCamera ? 1 : 0),
+      cameraRevision: (previous?.media.cameraRevision ?? 0) + (online && hasCamera ? 1 : 0),
       coverUpdatedAt: null,
     },
     capabilities: {
