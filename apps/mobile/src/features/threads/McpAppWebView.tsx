@@ -366,6 +366,7 @@ export function ThreadMcpApp(props: {
       },
       openLink: async (url) => {
         const localThread = localHostedThreadRef(url, latest.current.props.environmentId);
+        // Confirm links leaving T3, or any link without a tap, to prevent timer-driven navigation.
         if (
           (!localThread || !userActive.current) &&
           !(await confirm(
