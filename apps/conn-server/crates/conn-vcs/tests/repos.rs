@@ -1071,4 +1071,92 @@ async fn a_saved_base_that_names_no_commit_falls_back_as_t3() {
         setups.get("stale").unwrap().base_ref.as_deref(),
         Some("beta")
     );
+
+    // A dangling `origin/HEAD`: it names `origin/next`, which the remote has but this clone
+    // never fetched. Git's `rev-parse` refuses it (`resolveDefaultBranchName`), so the
+    // checked-out commit is used, not the remote's `next`.
+    let remote_next = git(
+        &fx.work,
+        &[
+            "commit-tree",
+            "HEAD^{tree}",
+            "-p",
+            &remote_head,
+            "-m",
+            "next",
+        ],
+    )
+    .trim()
+    .to_owned();
+    git(
+        &fx.work,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{remote_next}:refs/heads/next"),
+        ],
+    );
+    git(&fx.work, &["update-ref", "-d", "refs/remotes/origin/next"]);
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/next",
+        ],
+    );
+    let made = setup::provision(
+        &setups,
+        request("dangling", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("dangling").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
+}
+
+/// The checkout probes ask the filesystem off the runtime thread: with the one blocking
+/// thread held, a probe of a missing folder cannot answer at its first poll.
+#[test]
+fn checkout_probes_stat_off_the_runtime_thread() {
+    use std::{
+        future::Future,
+        task::{Context, Waker},
+    };
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let dir = TempDir::new("blocking");
+    let missing = dir.path().join("missing");
+    runtime.block_on(async {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let (started, running) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            let _ = started.send(());
+            let _ = held.recv();
+        });
+        running.await.unwrap();
+
+        let mut cx = Context::from_waker(Waker::noop());
+        let mut branch = std::pin::pin!(conn_vcs::repo::current_branch(&missing));
+        let mut commit = std::pin::pin!(conn_vcs::repo::resolve_commit(&missing, "HEAD"));
+        assert!(
+            branch.as_mut().poll(&mut cx).is_pending(),
+            "current_branch stats on the runtime thread"
+        );
+        assert!(
+            commit.as_mut().poll(&mut cx).is_pending(),
+            "resolve_commit stats on the runtime thread"
+        );
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert_eq!(branch.await.unwrap(), None);
+        assert_eq!(commit.await.unwrap(), None);
+    });
 }

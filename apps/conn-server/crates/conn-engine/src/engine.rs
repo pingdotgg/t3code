@@ -1111,6 +1111,7 @@ impl Inner {
         &self,
         thread_id: &str,
         input: &Value,
+        missing_base: MissingBase,
     ) -> Result<crate::ProvisionedWorktree, (String, bool)> {
         let Some(host) = &self.host else {
             return Err(("This server cannot create worktrees.".into(), false));
@@ -1127,13 +1128,6 @@ impl Inner {
             .map_err(|e| (e, true))?
             .ok_or_else(|| ("The project does not exist.".to_owned(), false))?;
         let strategy = &input["workspaceStrategy"];
-        // A scheduled task's run launches its saved strategy, which can outlive its base
-        // (T3 checks only interactive launches before provisioning: `checkWorktreeBase`).
-        let missing_base = if input["initialMessage"]["scheduledTaskId"].is_string() {
-            MissingBase::FallBack
-        } else {
-            MissingBase::Fail
-        };
         host.provision_worktree(crate::WorktreeRequest {
             thread_id: thread_id.to_owned(),
             project_root: root,
@@ -1146,7 +1140,11 @@ impl Inner {
         .map_err(|e| (e, false))
     }
 
-    async fn launch(self: &Arc<Self>, input: Value) -> Result<Value, (String, bool)> {
+    async fn launch(
+        self: &Arc<Self>,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> Result<Value, (String, bool)> {
         let command_id = input["commandId"].as_str().unwrap_or_default().to_owned();
         let thread_id = input["threadId"]
             .as_str()
@@ -1175,7 +1173,9 @@ impl Inner {
                     // `thread.create` answers from its receipt; these values are not read.
                     (Value::Null, Value::Null)
                 } else {
-                    let made = self.provision_worktree(&thread_id, &input).await?;
+                    let made = self
+                        .provision_worktree(&thread_id, &input, missing_base)
+                        .await?;
                     (json!(made.branch), json!(made.path))
                 }
             }
@@ -1564,7 +1564,11 @@ impl Engine for SqliteEngine {
         ))
     }
 
-    fn launch_thread(&self, input: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
+    fn launch_thread_with(
+        &self,
+        input: Value,
+        missing_base: MissingBase,
+    ) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         Box::pin(async move {
             // `ThreadLaunchService` asks `assertProviderInstanceEnabled` before it makes the
             // thread, so a refused launch leaves no thread behind.
@@ -1585,7 +1589,7 @@ impl Engine for SqliteEngine {
                 })));
             }
             self.inner
-                .launch(input.clone())
+                .launch(input.clone(), missing_base)
                 .await
                 .map_err(|(message, internal)| {
                     if internal {

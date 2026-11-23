@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use conn_contract::{Command, ThreadId, from_json, to_json};
 use conn_engine::{BoxFuture, Engine, EngineError};
+use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 
 use super::{LaunchRequest, RUN_OUTCOME_WAIT, SendError, SendRequest, TaskRunner, ThreadShell};
@@ -137,7 +138,12 @@ impl TaskRunner for EngineRunner {
                 "createdBy": request.created_by,
                 "creationSource": request.creation_source,
             });
-            match self.engine.launch_thread(input).await {
+            // A saved strategy can outlive its base (T3's `worktreeFallbackBase`).
+            match self
+                .engine
+                .launch_thread_with(input, MissingBase::FallBack)
+                .await
+            {
                 Ok(result) => result["threadId"]
                     .as_str()
                     .map(str::to_owned)
@@ -285,12 +291,8 @@ impl TaskRunner for EngineRunner {
             if matches!(scratch, Ok(Value::Bool(true))) {
                 return true;
             }
-            // Only Git's "not a git repository" counts; a folder Git cannot read keeps its
-            // own error at launch.
-            matches!(
-                conn_vcs::checkpoint::is_repository(std::path::Path::new(&root)).await,
-                Ok(false)
-            )
+            // A repository Git cannot read keeps its worktree and its own error at launch.
+            conn_vcs::repo::is_plain_folder(std::path::Path::new(&root)).await
         })
     }
 }
