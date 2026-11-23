@@ -1,7 +1,6 @@
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, useGT, useMessages } from "gt-react";
-import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { ComposerTaskStatus } from "./chat/ComposerTaskStatus";
 import { isReturnedSurfaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -276,7 +275,7 @@ import { revisionedQuery } from "../state/revisionedQuery";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
-import { threadEnvironment } from "../state/threads";
+import { childThreadApprovalsAtom, threadEnvironment } from "../state/threads";
 import {
   resolveProviderSkillsForCwd,
   resolveProvidersForCwd,
@@ -1531,6 +1530,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     return map ?? EMPTY_RESOLVED_APPROVAL_DECISIONS;
   })();
+  const childThreadApprovals = useAtomValue(childThreadApprovalsAtom(activeThreadRef));
   const visiblePendingApprovalCount = pendingApprovals.filter(
     (approval) => !heldApprovalRequestIds.has(approval.requestId),
   ).length;
@@ -3779,6 +3779,7 @@ export default function ChatView(props: ChatViewProps) {
                 <ThreadTimeline
                   key={timelineInstance.revision}
                   pendingApprovals={pendingApprovals}
+                  childThreadApprovals={childThreadApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
                   resolvedApprovalDecisions={resolvedApprovalDecisions}
@@ -3901,7 +3902,19 @@ export default function ChatView(props: ChatViewProps) {
                 bottom={scrollToEndClearance + 4}
                 summary={scrollToEndSummary}
                 pendingApprovalCount={visiblePendingApprovalCount}
-                onScrollToEnd={() => scrollToEnd(true)}
+                pendingSubagentApprovalCount={childThreadApprovals.length}
+                onScrollToEnd={() => {
+                  if (visiblePendingApprovalCount === 0 && childThreadApprovals.length > 0) {
+                    const target = legendListRef.current
+                      ?.getScrollableNode()
+                      ?.querySelector<HTMLElement>("[data-approval-request-id]");
+                    if (target) {
+                      target.scrollIntoView({ block: "center", behavior: "smooth" });
+                      return;
+                    }
+                  }
+                  scrollToEnd(true);
+                }}
               />
             </div>
 
@@ -3959,7 +3972,6 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   >
                     <ComposerSurface.Shell contextRow={showComposerContextStrip}>
-                      <ChildThreadApprovals threadRef={activeThreadRef} />
                       <div
                         ref={setComposerRequestCardHost}
                         data-chat-composer-request-host="true"

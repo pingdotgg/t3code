@@ -975,13 +975,33 @@ function deriveUnsettledRunId(
   return isSettled ? null : latestRun.runId;
 }
 
+function subagentItemMatchesChildApproval(
+  item: OrchestrationV2TurnItem,
+  childApprovalThreadIds: ReadonlySet<ThreadId> | undefined,
+): boolean {
+  if (item.type !== "subagent" || !childApprovalThreadIds?.size) return false;
+  return (
+    (item.childThreadId !== null && childApprovalThreadIds.has(item.childThreadId)) ||
+    (item.remoteChild !== undefined && childApprovalThreadIds.has(item.remoteChild.threadId))
+  );
+}
+
 // Children can outlive their launching turn; keep cards visible while the footer counts them.
-function liveSubagentCardEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
+function liveSubagentCardEntryIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  childApprovalThreadIds?: ReadonlySet<ThreadId>,
+): ReadonlySet<string> {
   const visible = new Set<string>();
   let batch: Array<Extract<TimelineEntry, { kind: "event" }>> = [];
   const flush = () => {
     if (batch.length === 0) return;
-    if (batch.some((entry) => isLiveSubagentTurnItem(entry.projectedItem.item))) {
+    if (
+      batch.some(
+        (entry) =>
+          isLiveSubagentTurnItem(entry.projectedItem.item) ||
+          subagentItemMatchesChildApproval(entry.projectedItem.item, childApprovalThreadIds),
+      )
+    ) {
       for (const entry of batch) visible.add(entry.id);
     }
     batch = [];
@@ -2092,8 +2112,14 @@ function withoutRetriedPrompts(entries: ReadonlyArray<TimelineEntry>) {
 function workShownAsFinalAnswerOnly(
   entry: TimelineEntry,
   pendingApprovalRequestIds: ReadonlySet<RuntimeRequestId> | undefined,
+  childApprovalThreadIds: ReadonlySet<ThreadId> | undefined,
 ): boolean {
-  if (entry.kind === "event") return entry.projectedItem.item.type !== "subagent";
+  if (entry.kind === "event") {
+    return (
+      entry.projectedItem.item.type !== "subagent" ||
+      subagentItemMatchesChildApproval(entry.projectedItem.item, childApprovalThreadIds)
+    );
+  }
   if (entry.kind !== "work") return true;
   const work = entry.entry;
   const item = work.projectedItem?.item;
@@ -2168,6 +2194,7 @@ type RowEntriesInput = Pick<
   | "latestRun"
   | "runningRunId"
   | "pendingApprovalRequestIds"
+  | "childApprovalThreadIds"
 >;
 
 // Row derivation and the working window filter the same entries on one update.
@@ -2185,7 +2212,8 @@ function timelineRowEntries(input: RowEntriesInput) {
     cached.input.isWorking === input.isWorking &&
     shallow(cached.input.latestRun ?? null, input.latestRun ?? null) &&
     (cached.input.runningRunId ?? null) === (input.runningRunId ?? null) &&
-    shallow(cached.input.pendingApprovalRequestIds, input.pendingApprovalRequestIds)
+    shallow(cached.input.pendingApprovalRequestIds, input.pendingApprovalRequestIds) &&
+    shallow(cached.input.childApprovalThreadIds, input.childApprovalThreadIds)
   ) {
     return cached.entries;
   }
@@ -2209,7 +2237,11 @@ function filterRowEntries(input: RowEntriesInput) {
     const retainedReplyIds = retainedAssistantReplyEntryIds(entries);
     shown = entries.filter((entry, index) => {
       if (entry.kind !== "message") {
-        return workShownAsFinalAnswerOnly(entry, input.pendingApprovalRequestIds);
+        return workShownAsFinalAnswerOnly(
+          entry,
+          input.pendingApprovalRequestIds,
+          input.childApprovalThreadIds,
+        );
       }
       const { message } = entry;
       return (
@@ -2243,6 +2275,7 @@ function deriveTimelineTurnFolds(
     | "toolCallVisibility"
     | "revealedMessageId"
     | "turnWorkFold"
+    | "childApprovalThreadIds"
   >,
 ) {
   if (input.toolCallVisibility === "zen") return new Map<string, TurnFold>();
@@ -2263,7 +2296,7 @@ function deriveTimelineTurnFolds(
       latestRun: input.latestRun ?? null,
       unfoldedRunIds: new Set([...activeVisualResponseRunIds, ...failedRunIds]),
       runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
-      liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+      liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries, input.childApprovalThreadIds),
       retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
       resolve: m,
     });
@@ -2278,7 +2311,7 @@ function deriveTimelineTurnFolds(
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     // Fold membership does not depend on the diff stat the fold header shows.
     turnDiffSummaries: [],
-    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries),
+    liveSubagentEntryIds: liveSubagentCardEntryIds(timelineEntries, input.childApprovalThreadIds),
     retainedAssistantReplyEntryIds: retainedAssistantReplyEntryIds(timelineEntries),
     durationRowForBareReply: input.toolCallVisibility !== "hideAll",
     resolve: m,
@@ -2289,6 +2322,7 @@ export function deriveMessagesTimelineRows(
   input: {
     timelineEntries: ReadonlyArray<TimelineEntry>;
     pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
+    childApprovalThreadIds?: ReadonlySet<ThreadId>;
     latestRun?: TimelineLatestRun | null;
     /** The usage-limited run whose failure row the recovery notice replaces. */
     usageLimitRunId?: RunId | null;
@@ -2368,7 +2402,10 @@ export function deriveMessagesTimelineRows(
     if (runId != null && !compactionByRunId.has(runId)) compactionByRunId.set(runId, entry.entry);
   }
   const mergedCompactionIds = new Set<string>();
-  const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
+  const liveSubagentEntryIds = liveSubagentCardEntryIds(
+    timelineEntries,
+    input.childApprovalThreadIds,
+  );
   const retainedAssistantReplyIds = retainedAssistantReplyEntryIds(timelineEntries);
   const supersededFoldsByAnchorEntryId = deriveSupersededAttemptFolds(
     timelineEntries,
@@ -3015,7 +3052,12 @@ export function deriveMessagesTimelineRows(
         previous.projectedItem.item.type === "subagent" &&
         previous.projectedItem.item.runId === timelineEntry.projectedItem.item.runId &&
         previous.projectedItem.item.providerTurnId ===
-          timelineEntry.projectedItem.item.providerTurnId
+          timelineEntry.projectedItem.item.providerTurnId &&
+        !subagentItemMatchesChildApproval(
+          timelineEntry.projectedItem.item,
+          input.childApprovalThreadIds,
+        ) &&
+        !subagentItemMatchesChildApproval(previous.projectedItem.item, input.childApprovalThreadIds)
       ) {
         nextRows[nextRows.length - 1] = {
           ...previous,
@@ -3530,6 +3572,7 @@ export function applyWorkingWindow(
     | "isWorking"
     | "runlessWorkActive"
     | "pendingApprovalRequestIds"
+    | "childApprovalThreadIds"
     | "toolCallVisibility"
     | "revealedMessageId"
   >,
@@ -3632,6 +3675,7 @@ export function applyWorkingWindow(
       if (turnItem.type === "run_interrupt_request") interruptRequested = true;
       if (turnItem.type === "run_interrupt_result") interruptSettled = true;
       if (turnItem.type !== "subagent") continue;
+      if (subagentItemMatchesChildApproval(turnItem, input.childApprovalThreadIds)) continue;
       const previous = items.at(-1);
       if (
         previous?.kind === "agents" &&
@@ -4031,6 +4075,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds: previousExpandedAttempts,
     expandedWorkGroupIds: previousExpandedGroups,
     pendingApprovalRequestIds: previousPendingApprovalRequestIds,
+    childApprovalThreadIds: previousChildApprovalThreadIds,
     availableRevertTurnCounts: previousAvailableRevertTurnCounts,
     ...previousContext
   } = previous.input;
@@ -4042,6 +4087,7 @@ function replaceStreamingMessageRows(
     expandedAttemptIds,
     expandedWorkGroupIds,
     pendingApprovalRequestIds,
+    childApprovalThreadIds,
     availableRevertTurnCounts,
     ...context
   } = input;
@@ -4054,6 +4100,7 @@ function replaceStreamingMessageRows(
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||
     !shallow(previousPendingApprovalRequestIds, pendingApprovalRequestIds) ||
+    !shallow(previousChildApprovalThreadIds, childApprovalThreadIds) ||
     !shallow(previousAvailableRevertTurnCounts, availableRevertTurnCounts) ||
     !sameCheckpointSummaries(previousCheckpoints, turnDiffSummaries)
   ) {

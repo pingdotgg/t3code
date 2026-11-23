@@ -141,7 +141,7 @@ function ApprovalDiffLines({ diff }: { diff: string }) {
   });
 }
 
-function TimelineApprovalCard({
+export function TimelineApprovalCard({
   approval,
   title,
   ariaLabel,
