@@ -2,6 +2,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { resetBrowserHistoryForTests, useBrowserHistoryStore } from "./browserHistoryStore";
+import { randomUUID } from "./lib/utils";
 
 const storageKey = "t3code:browser-history:v1";
 const oldEntry = { url: "http://example.test/removed", lastVisitedAt: 1 };
@@ -165,10 +166,9 @@ it("bounds saved thread mappings while keeping live registrations", async () => 
 
 // A fresh module instance stands in for another tab: it gets its own store, IndexedDB connection
 // and BroadcastChannel without an iframe reloading the app's whole module graph.
-let documentCount = 0;
 async function openHistoryDocument() {
   const source = new URL("./browserHistoryStore.ts", import.meta.url);
-  source.searchParams.set("document", String(++documentCount));
+  source.searchParams.set("document", randomUUID());
   const module: typeof import("./browserHistoryStore") = await import(
     /* @vite-ignore */ source.href
   );
