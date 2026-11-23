@@ -6005,13 +6005,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   );
   // Reloaded at each turn and steer so downloaded manifest updates apply without a release.
   let modelCatalog = yield* loadModelCatalog;
-  // Results report the window Claude Code compacts against; outside the catalog it is the only source.
+  // getContextUsage reports the window Claude Code applies, including an autoCompactWindow cap.
+  const appliedContextWindows = new Map<string, number>();
+  // Results report the model's full window; outside the catalog it is the fallback source.
   const reportedContextWindows = new Map<string, number>();
+  const claudeApiModelId = (modelSelection: ModelSelection): string =>
+    compileClaudeModelSelection(modelSelection, modelCatalog).apiModelId;
   const claudeContextWindow = (modelSelection: ModelSelection): number | null =>
+    appliedContextWindows.get(claudeApiModelId(modelSelection)) ??
     resolveClaudeCatalogContextWindowTokens(modelCatalog, modelSelection) ??
-    reportedContextWindows.get(
-      compileClaudeModelSelection(modelSelection, modelCatalog).apiModelId,
-    ) ??
+    reportedContextWindows.get(claudeApiModelId(modelSelection)) ??
     null;
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
@@ -14122,6 +14125,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 Effect.tap((limits) =>
                   Effect.sync(() => {
                     context.contextLimits = limits;
+                    appliedContextWindows.set(
+                      claudeApiModelId(context.input.modelSelection),
+                      limits.maxTokens,
+                    );
                   }),
                 ),
                 Effect.catch((error) =>

@@ -11243,6 +11243,48 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("answers later window lookups with the capped window Claude applies", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        contextLimits: Effect.succeed({ maxTokens: 283_000, autoCompactThreshold: 250_000 }),
+      });
+      const turnInput = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-applied-context-window"),
+        text: "Continue.",
+        attachments: [],
+      });
+      assert.strictEqual(
+        harness.runtime.getModelContextWindow?.(turnInput.modelSelection),
+        200_000,
+      );
+      yield* harness.runtime.startTurn(turnInput);
+      const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 5 };
+      const frames = [
+        usageSnapshotFrame("msg_applied", "00000000-0000-4000-8000-000000000795", usage),
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000796", result: "Done." }),
+      ];
+      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "completed");
+      assert.strictEqual(
+        harness.runtime.getModelContextWindow?.(turnInput.modelSelection),
+        283_000,
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each([
     {
       name: "the limits Claude reports",
