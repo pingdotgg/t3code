@@ -28,6 +28,12 @@ vi.mock("../connection/runtime", async () => {
   };
 });
 
+const environment = vi.hoisted(() => ({ cloudVoiceStreaming: true }));
+vi.mock("../state/entities", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/entities")>()),
+  readEnvironmentSupportsCloudVoiceStreaming: () => environment.cloudVoiceStreaming,
+}));
+
 function capture() {
   let receive: ((event: { data: Float32Array | "stopped" }) => void) | undefined;
   const stopTrack = vi.fn();
@@ -350,3 +356,65 @@ it.each([
     );
   },
 );
+
+it.each([
+  { provider: "xai", enabled: true, supported: true, live: true },
+  { provider: "xai", enabled: false, supported: true, live: false },
+  // An older environment would ignore the provider and stream with its own model.
+  { provider: "xai", enabled: true, supported: false, live: false },
+  { provider: "openai", enabled: true, supported: true, live: false },
+] as const)("streams cloud dictation only through xAI's live endpoint: %j", async (input) => {
+  environment.cloudVoiceStreaming = input.supported;
+  const sockets: Array<{ url: string; sent: string[] }> = [];
+  using _socket = stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      sent: string[] = [];
+      constructor(url: string) {
+        super();
+        sockets.push({ url, sent: this.sent });
+        queueMicrotask(() => this.dispatchEvent(new Event("open")));
+      }
+      send(data: string) {
+        this.sent.push(data);
+      }
+      close() {}
+    },
+  );
+  using _network = vi.spyOn(globalThis, "fetch").mockImplementation(async (request, init) => {
+    const url = new Request(request, init).url;
+    if (url.endsWith("/api/voice/cloud/keys")) return Response.json({ openai: true, xai: true });
+    if (url.includes("/api/auth/websocket-ticket/"))
+      return Response.json({ ticket: "stream-ticket", expiresAt: "2030-01-01T00:00:00.000Z" });
+    throw new Error(`Unexpected request: ${url}`);
+  });
+  const abort = new AbortController();
+  using _abort = { [Symbol.dispose]: () => abort.abort() };
+  const options = { ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, speechLanguage: "fr" as const };
+  const platform = createBrowserVoiceInputPlatform({
+    prepared,
+    cloudProvider: input.provider,
+    hasAudioConsent: () => true,
+    getStreamingEnabled: () => input.enabled,
+    getTranscriptionOptions: () => options,
+    getMicrophoneId: () => "",
+    onLevel() {},
+    onDurationLimit() {},
+    onText() {},
+    onError() {},
+  });
+  const transcription = await platform.transcriber.prepare({ signal: abort.signal });
+  await vi.waitFor(() => expect(transcription.locale).toBe("fr"));
+  expect(Boolean(transcription.streaming)).toBe(input.live);
+  if (!input.live) return expect(sockets).toEqual([]);
+  expect(sockets.map(({ url }) => url)).toEqual([
+    "wss://transcription.example.test/ws/voice?wsTicket=stream-ticket",
+  ]);
+  await vi.waitFor(() =>
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({
+      type: "start",
+      options,
+      cloudProvider: "xai",
+    }),
+  );
+});

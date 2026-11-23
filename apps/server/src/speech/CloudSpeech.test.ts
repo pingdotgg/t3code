@@ -1,3 +1,5 @@
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { it } from "@effect/vitest";
 import { DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS, SecretProviderId } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -6,6 +8,9 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
+import type * as NetAddress from "effect/net/NetAddress";
+import * as Socket from "effect/socket/Socket";
 import { expect, vi } from "vite-plus/test";
 import * as ServerSettings from "../serverSettings.ts";
 import * as CloudSpeech from "./CloudSpeech.ts";
@@ -24,6 +29,7 @@ it.effect.each(["openai", "xai"] as const)("sends only to %s using its own saved
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(NodeSocket.layerWebSocketConstructor),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(
             Layer.mock(SecretResolver.SecretResolver)({
@@ -114,6 +120,7 @@ it.effect("uploads to OpenRouter only for a listed exact model, as zero-retentio
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(NodeSocket.layerWebSocketConstructor),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
         ),
@@ -172,6 +179,7 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
       Effect.provide(
         CloudSpeech.layer.pipe(
           Layer.provide(FetchHttpClient.layer),
+          Layer.provide(NodeSocket.layerWebSocketConstructor),
           Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
         ),
@@ -204,4 +212,139 @@ it.effect("removing a key while a catalog read is pending prevents the upload", 
     expect(uploads).toEqual([]);
     expect(exit._tag).toBe("Failure");
   }),
+);
+
+it.live("streams dictation to xAI live and finishes with the corrected transcript", () =>
+  Effect.gen(function* () {
+    const requests: Array<{ url: string; authorization: string | undefined }> = [];
+    const samples: number[] = [];
+    const controls: string[] = [];
+    const routes = HttpRouter.add(
+      "GET",
+      "/v1/stt",
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        requests.push({ url: request.url, authorization: request.headers.authorization });
+        const failing = request.headers.authorization === "Bearer failing-key";
+        if (!failing && request.headers.authorization !== "Bearer live-key")
+          return HttpServerResponse.empty({ status: 401 });
+        const socket = yield* request.upgrade;
+        yield* Effect.gen(function* () {
+          const writer = yield* socket.writer;
+          const reader = yield* socket.reader;
+          const send = (event: object) => writer.write(JSON.stringify(event));
+          yield* send({ type: "transcript.created" });
+          if (failing) {
+            yield* reader.pull;
+            return yield* send({ type: "error", message: "upstream detail" });
+          }
+          while (true) {
+            for (const frame of yield* reader.pull) {
+              if (typeof frame === "string") {
+                controls.push(frame);
+                // xAI restates the whole utterance once it ends, then sends an empty done event.
+                yield* send({
+                  type: "transcript.partial",
+                  text: "um T three code is live",
+                  is_final: true,
+                  speech_final: true,
+                });
+                return yield* send({ type: "transcript.done", text: "" });
+              }
+              samples.push(
+                new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getInt16(0, true),
+              );
+              if (samples.length === 1)
+                yield* send({
+                  type: "transcript.partial",
+                  text: "um T three code",
+                  is_final: true,
+                });
+              if (samples.length === 2)
+                yield* send({ type: "transcript.partial", text: "is live", is_final: false });
+            }
+          }
+        }).pipe(Effect.scoped);
+        return HttpServerResponse.empty();
+      }),
+    );
+    yield* Layer.build(HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }));
+    const address = (yield* HttpServer.HttpServer).address as NetAddress.InetAddress;
+    const origin = `ws://127.0.0.1:${address.port}`;
+    // Points the real xAI URL at the local server and tells the test when a reply was handled.
+    let replied: (() => void) | undefined;
+    const nextReply = () => new Promise<void>((resolve) => (replied = resolve));
+    const connect = yield* Socket.WebSocketConstructor.pipe(
+      Effect.provide(NodeSocket.layerWebSocketConstructor),
+    );
+    const service = yield* CloudSpeech.CloudSpeech.pipe(
+      Effect.provide(
+        CloudSpeech.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(
+            Layer.succeed(Socket.WebSocketConstructor)((url, options) => {
+              expect(url.startsWith("wss://api.x.ai/v1/stt?")).toBe(true);
+              const socket = connect(`${origin}/v1/stt${new URL(url).search}`, options);
+              socket.addEventListener("message", () => replied?.());
+              return socket;
+            }),
+          ),
+          Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+          Layer.provide(Layer.mock(SecretResolver.SecretResolver)({})),
+        ),
+      ),
+    );
+    const options = {
+      ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      speechLanguage: "en" as const,
+      speechCustomWords: [{ term: "T3 Code", aliases: ["T three code"] }],
+    };
+    const pcm = (sample: number) => new Uint8Array(new Float32Array([sample]).buffer);
+
+    yield* service.setKey("xai", Redacted.make("wrong-key"));
+    expect(yield* Effect.flip(service.startStream("xai", options))).toMatchObject({
+      provider: "xai",
+      reason: "unavailable",
+    });
+
+    yield* service.setKey("xai", Redacted.make("live-key"));
+    const stream = yield* service.startStream("xai", options);
+    const query = new URL(requests[1]!.url, origin).searchParams;
+    expect(Object.fromEntries(query)).toMatchObject({
+      model: "grok-voice-transcribe-2.0",
+      sample_rate: "16000",
+      encoding: "pcm",
+      interim_results: "true",
+      language: "en",
+      format: "true",
+      filler_words: "false",
+    });
+    expect(query.getAll("keyterm")).toEqual(["T3 Code"]);
+
+    let reply = nextReply();
+    expect(yield* stream.feed(pcm(0.5))).toEqual({ revision: 0, text: null });
+    yield* Effect.promise(() => reply);
+    reply = nextReply();
+    expect(yield* stream.feed(pcm(-0.5))).toEqual({
+      revision: 1,
+      text: { committed: "um T3 Code", tentative: "" },
+    });
+    yield* Effect.promise(() => reply);
+    expect(yield* stream.feed(pcm(0))).toEqual({
+      revision: 2,
+      text: { committed: "um T3 Code", tentative: " is live" },
+    });
+    expect(yield* stream.finish).toBe("T3 Code is live");
+    expect(samples).toEqual([16384, -16384, 0]);
+    expect(controls).toEqual(['{"type":"audio.done"}']);
+
+    // An xAI error mid-recording fails the next frame and the finish without upstream detail.
+    yield* service.setKey("xai", Redacted.make("failing-key"));
+    const failing = yield* service.startStream("xai", options);
+    reply = nextReply();
+    yield* failing.feed(pcm(0.5));
+    yield* Effect.promise(() => reply);
+    expect(yield* Effect.flip(failing.feed(pcm(0.5)))).toMatchObject({ reason: "unavailable" });
+    expect(yield* Effect.flip(failing.finish)).toMatchObject({ reason: "unavailable" });
+  }).pipe(Effect.scoped, Effect.provide(NodeHttpServer.layerTest)),
 );

@@ -1,5 +1,6 @@
 import {
   AuthOrchestrationOperateScope,
+  CloudSpeechError,
   SPEECH_STREAM_PATH,
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   SpeechStreamCommand,
@@ -15,6 +16,7 @@ import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as CloudSpeech from "./CloudSpeech.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 // A recording client streams audio continuously; behind a proxy a vanished
@@ -22,16 +24,18 @@ import * as SpeechService from "./SpeechService.ts";
 const SPEECH_SOCKET_IDLE_TIMEOUT = "15 seconds";
 
 const decodeCommand = Schema.decodeUnknownEffect(Schema.fromJsonString(SpeechStreamCommand));
+const isCloudSpeechError = Schema.is(CloudSpeechError);
 
 /** One socket owns one stream. Audio is processed and acknowledged in arrival order. */
 export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
   socket: Socket.Socket,
   speech: Pick<SpeechService.SpeechService["Service"], "startStream">,
+  cloud: Pick<CloudSpeech.CloudSpeech["Service"], "startStream">,
 ) {
   const scope = yield* Scope.Scope;
   const writer = yield* socket.writer;
   const send = (event: SpeechStreamEvent) => writer.write(JSON.stringify(event));
-  let stream: SpeechService.SpeechStream | undefined;
+  let stream: SpeechService.SpeechStream | CloudSpeech.CloudSpeechStream | undefined;
   let ended = false;
   const fail = Effect.fn("speech.failSocket")(function* (message: string) {
     if (ended) return;
@@ -48,7 +52,11 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
         const command = yield* decodeCommand(data);
         if (command.type === "start") {
           if (stream) return yield* fail("Speech stream already started.");
-          stream = yield* speech.startStream(command.options).pipe(Scope.provide(scope));
+          stream = command.cloudProvider
+            ? yield* cloud
+                .startStream(command.cloudProvider, command.options)
+                .pipe(Scope.provide(scope))
+            : yield* speech.startStream(command.options).pipe(Scope.provide(scope));
           yield* send({ type: "ready" });
           return;
         }
@@ -67,7 +75,14 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
     }).pipe(
       Effect.catch((cause) =>
         Effect.logError("live transcription operation failed", { cause }).pipe(
-          Effect.andThen(fail("Live transcription failed. Please try recording again.")),
+          Effect.andThen(
+            fail(
+              // Cloud errors say which key or quota to fix and carry no upstream detail.
+              isCloudSpeechError(cause)
+                ? cause.message
+                : "Live transcription failed. Please try recording again.",
+            ),
+          ),
         ),
       ),
     );
@@ -118,6 +133,7 @@ export const speechStreamRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const speech = yield* SpeechService.SpeechService;
+    const cloud = yield* CloudSpeech.CloudSpeech;
     return HttpRouter.add(
       "GET",
       SPEECH_STREAM_PATH,
@@ -130,7 +146,7 @@ export const speechStreamRouteLayer = Layer.unwrap(
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });
         const socket = yield* request.upgrade;
-        yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);
+        yield* runSpeechSocket(socket, speech, cloud).pipe(Effect.scoped);
         return HttpServerResponse.empty();
       }),
     );

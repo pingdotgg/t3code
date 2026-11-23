@@ -16,6 +16,8 @@ const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(SpeechStreamE
 export function openSpeechStream(input: {
   readonly url: string;
   readonly options: SpeechTranscriptionOptions;
+  /** Transcribe with this provider's live endpoint through the environment. */
+  readonly cloudProvider?: "xai" | undefined;
   readonly signal: AbortSignal;
   readonly canSend: () => boolean;
   readonly onText: (text: SpeechStreamText) => void;
@@ -83,7 +85,14 @@ export function openSpeechStream(input: {
   };
   socket.addEventListener("open", () => {
     if (!input.canSend()) return fail(translatableError(msg("Voice consent was revoked.")));
-    if (!closed) socket.send(JSON.stringify({ type: "start", options: input.options }));
+    if (!closed)
+      socket.send(
+        JSON.stringify({
+          type: "start",
+          options: input.options,
+          ...(input.cloudProvider ? { cloudProvider: input.cloudProvider } : {}),
+        }),
+      );
   });
   socket.addEventListener("message", (event) => {
     if (closed) return;

@@ -343,7 +343,12 @@ export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
 export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5 * 60;
 
 export const SpeechStreamCommand = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("start"), options: SpeechTranscriptionOptions }),
+  Schema.Struct({
+    type: Schema.Literal("start"),
+    options: SpeechTranscriptionOptions,
+    /** Transcribe with this provider's live endpoint instead of the environment's model. */
+    cloudProvider: Schema.optionalKey(Schema.Literal("xai")),
+  }),
   Schema.Struct({ type: Schema.Literal("finish") }),
 ]);
 

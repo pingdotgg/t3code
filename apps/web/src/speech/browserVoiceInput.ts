@@ -20,6 +20,7 @@ import type {
 import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { readEnvironmentSupportsCloudVoiceStreaming } from "../state/entities";
 import { readAppleSpeechLocales, resolveAppleSpeechLocale } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
 import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
@@ -95,9 +96,34 @@ export function createBrowserVoiceInputPlatform(input: {
         options,
       );
       throwIfVoiceTranscriptionAborted(options.signal);
-      return {
+      const cloudBatch = {
         locale: effectiveSpeechLanguage(cloudSpeechLanguages, recordingOptions.speechLanguage),
         transcribe: transcribeRecording,
+      };
+      // xAI is the only cloud provider with a live endpoint; the environment relays it.
+      if (
+        input.cloudProvider !== "xai" ||
+        !streamingEnabled ||
+        !readEnvironmentSupportsCloudVoiceStreaming(input.prepared.environmentId) ||
+        !canStream()
+      )
+        return cloudBatch;
+      const url = await runEnvironmentSpeech(
+        getEnvironmentSpeechStreamUrl(input.prepared),
+        options,
+      );
+      if (!canStream()) return cloudBatch;
+      return {
+        ...cloudBatch,
+        streaming: openSpeechStream({
+          url,
+          cloudProvider: "xai",
+          canSend: input.hasAudioConsent,
+          options: recordingOptions,
+          signal: options.signal,
+          onText: input.onText,
+          onError: (error) => input.onError(error.message),
+        }),
       };
     }
     const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(input.prepared), options);
