@@ -3,6 +3,22 @@ import { pngDimensions, sourceDimensions } from "../preview/FaviconCapture.ts";
 
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 
+export async function writeClipboardPng(png: Uint8Array, platform: NodeJS.Platform): Promise<void> {
+  if (!pngDimensions(Buffer.from(png.buffer, png.byteOffset, png.byteLength))) {
+    throw new Error("Not a PNG image");
+  }
+  if (png.byteLength > MAX_IMAGE_BYTES) throw new Error("PNG exceeded the size limit");
+  // Electron decodes and re-encodes an "image/png" item, dropping ancillary chunks; the raw OS
+  // format keeps the bytes. On Windows a raw-only PNG does not paste into Chromium, so it is Linux only.
+  const format =
+    platform === "linux" ? 'electron application/osclipboard;format="image/png"' : "image/png";
+  await Electron.clipboard.write([
+    new Electron.ClipboardItem({
+      [format]: new Blob([Uint8Array.from(png)], { type: "image/png" }),
+    }),
+  ]);
+}
+
 export async function copyContextMenuImage(
   contents: Electron.WebContents,
   params: Electron.ContextMenuParams,
@@ -108,15 +124,5 @@ async function copyFetchedImage(
   }
   if (png.byteLength > MAX_IMAGE_BYTES) throw new Error("PNG exceeded the size limit");
   if (contents.isDestroyed() || frame.isDestroyed()) return;
-  // Electron re-encodes "image/png" items; the raw format keeps the bytes, but that name is the
-  // native PNG format only on Linux.
-  const format =
-    png === bytes && platform === "linux"
-      ? 'electron application/osclipboard;format="image/png"'
-      : "image/png";
-  await Electron.clipboard.write([
-    new Electron.ClipboardItem({
-      [format]: new Blob([Uint8Array.from(png)], { type: "image/png" }),
-    }),
-  ]);
+  await writeClipboardPng(png, platform);
 }

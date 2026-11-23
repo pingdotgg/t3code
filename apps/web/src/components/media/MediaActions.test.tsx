@@ -184,3 +184,13 @@ it.each(["save", "copy-image", "open-file"])(
     expect(state.openFile).not.toHaveBeenCalled();
   },
 );
+
+it("copies an image through the desktop host so its PNG bytes stay unchanged", async () => {
+  state.sessions.set(environmentId, granted);
+  const writeClipboardPng = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("window", { desktopBridge: { writeClipboardPng } });
+  await useMediaActions(hostSource()).copyImage();
+  expect(state.png).toHaveBeenCalledWith("https://host.test/api/assets/image.png");
+  expect(writeClipboardPng).toHaveBeenCalledWith(new TextEncoder().encode("png"));
+  expect(state.clipboard).not.toHaveBeenCalled();
+});

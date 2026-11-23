@@ -102,6 +102,13 @@ export function useMediaActions(source: MediaActionSource) {
   };
   const copyImage = async () => {
     assertCanReadMedia();
+    const writeClipboardPng = window.desktopBridge?.writeClipboardPng;
+    if (writeClipboardPng) {
+      // Chromium re-encodes image clipboard writes, dropping PNG metadata; the desktop host does not.
+      const png = await readMediaPng(await actionUrl());
+      await writeClipboardPng(new Uint8Array(await png.arrayBuffer()));
+      return;
+    }
     if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") {
       throw new Error(
         m(msg("Image copying is unavailable. Use a secure browser connection or save the image.")),

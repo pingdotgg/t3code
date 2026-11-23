@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vite-plus/test";
 import type * as Electron from "electron";
-import { copyContextMenuImage } from "./ContextMenuImage.ts";
+import { copyContextMenuImage, writeClipboardPng } from "./ContextMenuImage.ts";
 
 const native = vi.hoisted(() => ({
   fetch: vi.fn(),
@@ -87,6 +87,7 @@ it.each([
   ["linux", "a thread image", mainFrame, RAW_PNG],
   ["linux", "an iframe image", frame, RAW_PNG],
   ["darwin", "a thread image", mainFrame, "image/png"],
+  ["win32", "a thread image", mainFrame, "image/png"],
 ] as const)(
   "on %s, copies %s's original PNG bytes, text chunks included",
   async (platform, _, sourceFrame, format) => {
@@ -106,6 +107,11 @@ it.each([
   },
 );
 
+it("refuses to write bytes that are not a PNG", async () => {
+  await expect(writeClipboardPng(Buffer.from("not a png"), "linux")).rejects.toThrow("Not a PNG");
+  expect(native.write).not.toHaveBeenCalled();
+});
+
 it("falls back to Chromium's copy for a thread image it cannot fetch", async () => {
   await copyImage({ frame: mainFrame, srcURL: "blob:https://example.com/image" });
   expect(native.fetch).not.toHaveBeenCalled();
@@ -120,7 +126,7 @@ it.each([
   native.image.isEmpty.mockReturnValue(true);
   contents.executeJavaScriptInIsolatedWorld.mockResolvedValue(Uint8Array.from(sourcePng).buffer);
   await copyImage();
-  const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
+  const blob = Object.values(native.write.mock.calls[0]?.[0][0].blobs ?? {})[0] as Blob;
   expect(Buffer.from(await blob.arrayBuffer())).toEqual(sourcePng);
   expect(native.image.toPNG).not.toHaveBeenCalled();
 });
@@ -143,7 +149,7 @@ it("copies a GIF larger than the favicon pixel limit", async () => {
   native.image.isEmpty.mockReturnValue(true);
   contents.executeJavaScriptInIsolatedWorld.mockResolvedValue(Uint8Array.from(sourcePng).buffer);
   await copyImage();
-  const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
+  const blob = Object.values(native.write.mock.calls[0]?.[0][0].blobs ?? {})[0] as Blob;
   expect(Buffer.from(await blob.arrayBuffer())).toEqual(sourcePng);
 });
 

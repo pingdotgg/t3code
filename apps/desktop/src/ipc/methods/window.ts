@@ -46,6 +46,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import { writeClipboardPng as writeClipboardImage } from "../../window/ContextMenuImage.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import { m } from "../../i18n/messages.ts";
 import * as IpcChannels from "../channels.ts";
@@ -376,6 +377,11 @@ class MediaReadError extends Schema.TaggedError<MediaReadError>()("MediaReadErro
   cause: Schema.Defect(),
 }) {}
 
+class ClipboardPngWriteError extends Schema.TaggedError<ClipboardPngWriteError>()(
+  "ClipboardPngWriteError",
+  { message: Schema.String, cause: Schema.Defect() },
+) {}
+
 // The renderer can display media it cannot fetch(); reading here keeps Save and Copy working for it.
 export const readMedia = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.READ_MEDIA_CHANNEL,
@@ -415,6 +421,27 @@ export const readMedia = DesktopIpc.makeIpcMethod({
       },
       catch: (cause) => new MediaReadError({ message: "Could not read media.", cause }),
     }).pipe(Effect.orElseSucceed(() => null));
+  }),
+});
+
+export const writeClipboardPng = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.WRITE_CLIPBOARD_PNG_CHANNEL,
+  payload: Schema.Uint8Array,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.writeClipboardPng")(function* (png, event) {
+    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    if (
+      event === undefined ||
+      Option.isNone(window) ||
+      window.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    const platform = yield* HostProcess.Platform;
+    yield* Effect.tryPromise({
+      try: () => writeClipboardImage(png, platform),
+      catch: (cause) => new ClipboardPngWriteError({ message: "Could not copy image.", cause }),
+    });
   }),
 });
 
