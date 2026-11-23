@@ -934,7 +934,7 @@ const threadStartCommand = Command.make("start", {
   ),
   option: Flag.String("option").pipe(
     Flag.withDescription(
-      "Model option as id=value, such as effort=high. Repeat for more. Needs --provider and --model.",
+      "Model option as id=value (Codex: reasoningEffort=high; Claude: effort=high). Ids depend on the model. Repeat for more. Needs --provider and --model.",
     ),
     Flag.atLeast(0),
   ),

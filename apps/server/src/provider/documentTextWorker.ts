@@ -149,6 +149,20 @@ function xml(source: string, extension: string): XmlNode {
 const children = (node: XmlNode | undefined) =>
   node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
 
+function slideRelationshipId(slide: XmlNode, inheritedAttributes: XmlNode["attrs"]) {
+  for (const [name, value] of Object.entries(slide.attrs)) {
+    if (!name.endsWith(":id")) continue;
+    const binding = `xmlns:${name.slice(0, -3)}`;
+    const namespace = slide.attrs[binding] ?? inheritedAttributes[binding];
+    if (
+      namespace === "http://schemas.openxmlformats.org/officeDocument/2006/relationships" ||
+      namespace === "http://purl.oclc.org/ooxml/officeDocument/relationships"
+    )
+      return value;
+  }
+  return slide.attrs["r:id"] ?? slide.attrs.id;
+}
+
 function retainCompatibilityFallback(parent: XmlNode, fallback: XmlNode): boolean {
   // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
   // Keep one when no Choice carries text, such as a chart with a VML caption.
@@ -765,10 +779,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const rels = relations("ppt/_rels/presentation.xml.rels");
       const [presentation] = children(read("ppt/presentation.xml"));
       const slideList = children(presentation).find((node) => node.name === "sldIdLst");
+      const inheritedAttributes = { ...presentation?.attrs, ...slideList?.attrs };
       let index = 0;
       for (const slide of children(slideList).filter((node) => node.name === "sldId")) {
         yield `\n\n## Slide ${++index}\n`;
-        const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id)?.Target;
+        const target = rels.get(slideRelationshipId(slide, inheritedAttributes))?.Target;
         if (!target) {
           skip(`slide relationship ${index}`);
           continue;

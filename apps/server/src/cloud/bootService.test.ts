@@ -22,6 +22,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import { serviceLauncherLockPath } from "../serviceLauncher.ts";
 import * as BootService from "./bootService.ts";
 import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
+import { RESTORE_OOMD_WATCH_SCRIPT } from "./userManagerOom.ts";
 import {
   decodeServiceUnit,
   disabledServiceTask,
@@ -1406,6 +1407,7 @@ process.disconnect();
         const outcome = yield* inside.restart;
         expect(commands).toEqual([
           "systemctl --user daemon-reload",
+          `/bin/sh -c ${RESTORE_OOMD_WATCH_SCRIPT}`,
           "systemctl --user enable t3code.service",
           "systemctl --user reset-failed t3code.service",
           "systemctl --user restart --no-block t3code.service",
