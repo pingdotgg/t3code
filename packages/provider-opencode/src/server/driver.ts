@@ -389,11 +389,51 @@ export const OpenCodeDriver: ProviderDriver<
         yield* OpenCode2Client.make.pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
       ),
     );
+    const legacyUsageLimits = readOpenCodeGoUsageLimits({
+      enabled: effectiveConfig.enabled,
+      serverUrl: effectiveConfig.serverUrl,
+      environment: processEnv,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, pathService),
+      Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.provideService(Digest.Digest, digest),
+    );
+    let unsupportedUsageVersion: string | undefined;
+    const checkUsageLimits = Effect.fn("OpenCodeDriver.checkUsageLimits")(
+      function* (directory = host.paths.cwd) {
+        if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
+        const runtime = yield* runtimeProbe.get;
+        if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
+          return yield* legacyUsageLimits;
+        const limits = yield* openCode2Server.withConnection((connection) =>
+          connection.usageLimits(directory),
+        );
+        if (limits === undefined) unsupportedUsageVersion = runtime.version;
+        if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
+        // Without a Console workspace the server reports nothing, but a local Go key still has usage.
+        const legacy = yield* legacyUsageLimits;
+        return limits !== undefined && legacy.unavailable?.reason === "unsupported"
+          ? limits
+          : legacy;
+      },
+      Effect.timeout("10 seconds"),
+      Effect.catch(() =>
+        Effect.map(DateTime.now, (now) => ({
+          checkedAt: DateTime.formatIso(now),
+          windows: [],
+          unavailable: {
+            reason: "probeFailed" as const,
+            message: "OpenCode could not read workspace usage.",
+          },
+        })),
+      ),
+    );
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
       v1: openCodeV1Adapter,
-      v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
+      v2: yield* OpenCode2AdapterV2.make(instanceId, { readUsageLimits: checkUsageLimits }).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),
       ),
     });
@@ -466,43 +506,6 @@ export const OpenCodeDriver: ProviderDriver<
       ),
     );
 
-    const legacyUsageLimits = readOpenCodeGoUsageLimits({
-      enabled: effectiveConfig.enabled,
-      serverUrl: effectiveConfig.serverUrl,
-      environment: processEnv,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, pathService),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-      Effect.provideService(Digest.Digest, digest),
-    );
-    let unsupportedUsageVersion: string | undefined;
-    const checkUsageLimits = Effect.gen(function* () {
-      if (!effectiveConfig.enabled) return yield* legacyUsageLimits;
-      const runtime = yield* runtimeProbe.get;
-      if (runtime.generation === "v1" || runtime.version === unsupportedUsageVersion)
-        return yield* legacyUsageLimits;
-      const limits = yield* openCode2Server.withConnection((connection) =>
-        connection.usageLimits(host.paths.cwd),
-      );
-      if (limits === undefined) unsupportedUsageVersion = runtime.version;
-      if (limits !== undefined && limits.unavailable?.reason !== "unsupported") return limits;
-      // Without a Console workspace the server reports nothing, but a local Go key still has usage.
-      const legacy = yield* legacyUsageLimits;
-      return limits !== undefined && legacy.unavailable?.reason === "unsupported" ? limits : legacy;
-    }).pipe(
-      Effect.timeout("10 seconds"),
-      Effect.catch(() =>
-        Effect.map(DateTime.now, (now) => ({
-          checkedAt: DateTime.formatIso(now),
-          windows: [],
-          unavailable: {
-            reason: "probeFailed" as const,
-            message: "OpenCode could not read workspace usage.",
-          },
-        })),
-      ),
-    );
     const checkProvider = Effect.all(
       {
         // A configured loopback server reports its running version. Probe the local
@@ -529,7 +532,7 @@ export const OpenCodeDriver: ProviderDriver<
           Effect.annotateLogs({ providerInstanceId: instanceId }),
           Effect.annotateSpans({ providerInstanceId: instanceId }),
         ),
-        usageLimits: checkUsageLimits,
+        usageLimits: checkUsageLimits(),
       },
       { concurrency: "unbounded" },
     ).pipe(
@@ -660,7 +663,7 @@ export const OpenCodeDriver: ProviderDriver<
       initialSnapshot: (settings) =>
         makePendingOpenCodeProvider(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
-      checkUsageLimits,
+      checkUsageLimits: checkUsageLimits(),
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
