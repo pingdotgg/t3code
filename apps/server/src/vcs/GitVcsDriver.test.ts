@@ -3153,9 +3153,8 @@ it.effect(
         assert.notInclude(filtered, "reuse.txt");
       }
 
-      // Reusing slot 1 for a different branch keeps the original branch label while it still points
-      // at the checkpoint commit, and falls back to [#1] once that branch is gone (never showing
-      // the unrelated reused branch name).
+      // Reusing slot 1 for a different branch and deleting the landed branch keeps the recorded
+      // checkpoint branch label (never showing the unrelated reused branch name or losing the label).
       const slot1 = path.join(root, "app.worktrees/1");
       yield* git(slot1, ["checkout", "-q", "-b", "later-unrelated", "main"]);
       const afterReuseNumstat = yield* driver.checkpoints.diffCheckpoints({
@@ -3172,7 +3171,7 @@ it.effect(
         ignoreWhitespace: false,
         format: "numstat",
       });
-      assert.include(afterDeleteNumstat, "1\t0\tapp [#1]/feature.txt");
+      assert.include(afterDeleteNumstat, "1\t0\tapp [feature #1]/feature.txt");
       assert.notInclude(afterDeleteNumstat, "later-unrelated");
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );

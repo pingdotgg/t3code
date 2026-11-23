@@ -665,6 +665,32 @@ const gitCommand = Effect.fn("GitVcsDriver.gitCommand")(
 const HEAD_MOVES_SCAN_LIMIT = 512;
 const HEAD_MARK_TRAILER = "T3-Head-Moved-At";
 const HEAD_MARK_TRAILER_PATTERN = new RegExp(`^${HEAD_MARK_TRAILER}: (\\d+) (\\d+)$`, "m");
+const WORKTREE_BRANCH_TRAILER = "T3-Worktree-Branch";
+const WORKTREE_BRANCH_TRAILER_PATTERN = new RegExp(`^${WORKTREE_BRANCH_TRAILER}: (.+)$`, "gm");
+
+function parseRecordedWorktreeBranches(message: string): Map<string, string> {
+  const branches = new Map<string, string>();
+  for (const match of message.matchAll(WORKTREE_BRANCH_TRAILER_PATTERN)) {
+    const raw = match[1]?.trim();
+    if (!raw) continue;
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        Array.isArray(parsed) &&
+        parsed.length === 2 &&
+        typeof parsed[0] === "string" &&
+        typeof parsed[1] === "string" &&
+        parsed[0].length > 0 &&
+        parsed[1].length > 0
+      ) {
+        branches.set(parsed[0], parsed[1]);
+      }
+    } catch {
+      // Ignore malformed trailers from external or older commits.
+    }
+  }
+  return branches;
+}
 
 // Parses "git version 2.34.1" or "git version 2.45.1.windows.1".
 const gitSupportsRemergeDiff = (versionOutput: string): boolean => {
@@ -1201,6 +1227,23 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         cwd,
         args: ["rev-parse", "--show-toplevel"],
       })).stdout.trimEnd();
+      const recordedWorktreeBranches = gitlinks.some((gitlink) =>
+        isNumberedWorktreePath(gitlink.path),
+      )
+        ? yield* execute({
+            operation,
+            cwd,
+            args: ["show", "-s", "--format=%B", `${to}^{commit}`],
+            allowNonZeroExit: true,
+          }).pipe(
+            Effect.map((result) =>
+              result.exitCode === 0
+                ? parseRecordedWorktreeBranches(result.stdout)
+                : new Map<string, string>(),
+            ),
+            Effect.orElseSucceed(() => new Map<string, string>()),
+          )
+        : new Map<string, string>();
       const nestedGit = (nestedCwd: string, args: ReadonlyArray<string>) =>
         execute({ operation, cwd: nestedCwd, args }).pipe(
           Effect.map((result) => result.stdout.trimEnd()),
@@ -1259,8 +1302,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             if (fileCount > NESTED_REPOSITORY_DIFF_MAX_FILES) return null;
             let displayPath = gitlink.path;
             if (isNumberedWorktreePath(gitlink.path)) {
-              let branch: string | null = null;
-              const currentBranch = yield* readWorktreeBranchName(nestedCwd);
+              let branch: string | null = recordedWorktreeBranches.get(gitlink.path) ?? null;
+              const currentBranch =
+                branch !== null ? null : yield* readWorktreeBranchName(nestedCwd);
               if (currentBranch !== null) {
                 const currentHead = yield* nestedGit(nestedCwd, [
                   "rev-parse",
@@ -2083,8 +2127,47 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 ),
               );
 
+        const worktreeBranchTrailers = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: [...indexConfig, "ls-files", "--cached", "--stage", "-z", "--", "*.worktrees/*"],
+          env: commitEnv,
+          allowNonZeroExit: true,
+        }).pipe(
+          Effect.flatMap((result) => {
+            if (result.exitCode !== 0 || result.stdout.length === 0) {
+              return Effect.succeed([] as ReadonlyArray<string>);
+            }
+            const baseDir = topLevel ?? input.cwd;
+            const numberedPaths = result.stdout.split("\0").flatMap((record) => {
+              const tab = record.indexOf("\t");
+              if (tab <= 0) return [];
+              const mode = record.slice(0, record.indexOf(" "));
+              const entryPath = record.slice(tab + 1);
+              return mode === GITLINK_MODE && isNumberedWorktreePath(entryPath) ? [entryPath] : [];
+            });
+            return Effect.forEach(
+              numberedPaths,
+              (entryPath) =>
+                readWorktreeBranchName(path.join(baseDir, entryPath)).pipe(
+                  Effect.map((branch) =>
+                    branch !== null
+                      ? `${WORKTREE_BRANCH_TRAILER}: ${JSON.stringify([entryPath, branch])}`
+                      : null,
+                  ),
+                ),
+              { concurrency: 4 },
+            ).pipe(Effect.map((items) => items.filter((item): item is string => item !== null)));
+          }),
+          Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+        );
+
+        const trailers = [
+          ...(headMark === undefined ? [] : [`${HEAD_MARK_TRAILER}: ${headMark}`]),
+          ...worktreeBranchTrailers,
+        ];
         const message = `t3 checkpoint ref=${input.checkpointRef}${
-          headMark === undefined ? "" : `\n\n${HEAD_MARK_TRAILER}: ${headMark}`
+          trailers.length === 0 ? "" : `\n\n${trailers.join("\n")}`
         }`;
         // Git before 2.31 leaves `head` unread; a range names the parent the commit got.
         const parentHead =
