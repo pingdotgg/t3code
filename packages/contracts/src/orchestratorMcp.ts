@@ -972,6 +972,7 @@ export type OrchestratorMcpEnvironmentUnlinkInput =
 export const OrchestratorMcpEnvironmentUnlinkResult = Schema.Struct({
   environmentId: EnvironmentId,
   removed: Schema.Boolean,
+  endedThere: Schema.Boolean,
 });
 export type OrchestratorMcpEnvironmentUnlinkResult =
   typeof OrchestratorMcpEnvironmentUnlinkResult.Type;

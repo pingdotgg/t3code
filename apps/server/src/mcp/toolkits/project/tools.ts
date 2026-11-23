@@ -7,6 +7,7 @@ import {
   ThreadId,
   RunId,
   OrchestrationV2DelegatedFrom,
+  OrchestrationV2WorkflowOrigin,
   OrchestrationV2RunStatus,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   RuntimeMode,
@@ -172,6 +173,8 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
           "One-shot: tell the agent no follow-ups will come and settle the thread when its first run completes. Needs a message.",
       }),
     ),
+    /** Set by a linked environment whose workflow run this thread is a step of; ignored otherwise. */
+    workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   }),
   success: Schema.Struct({
     threadId: ThreadId,

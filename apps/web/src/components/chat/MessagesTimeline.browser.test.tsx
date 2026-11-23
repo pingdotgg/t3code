@@ -626,6 +626,48 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => expect(viewport.scrollTop).toBeLessThan(atEnd));
   });
 
+  it("keeps the visible sentence in a long message when the chat width changes", async () => {
+    setup();
+    const size = { width: window.innerWidth, height: window.innerHeight };
+    onTestFinished(() => page.viewport(size.width, size.height));
+    await page.viewport(1200, 1400);
+    const props = { ...baseProps(), liveFollowEnabled: false };
+    const paragraphs = Array.from(
+      { length: 30 },
+      (_, index) =>
+        `Paragraph ${index + 1}. ${"A side panel should not move the sentence being read out of view. ".repeat(5)}`,
+    );
+    await using screen = await renderTimeline(
+      [message(paragraphs.join("\n\n"), { role: "assistant" })],
+      props,
+    );
+    screen.container.style.width = "900px";
+    const viewport = props.listRef.current!.getScrollableNode()!;
+    const target = page.getByText(paragraphs[15]!.trim(), { exact: true }).element();
+    await vi.waitFor(() => {
+      expect(viewport.scrollHeight).toBeGreaterThan(1000);
+      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+    });
+    await props.listRef.current!.scrollToOffset({
+      offset:
+        viewport.scrollTop +
+        target.getBoundingClientRect().top -
+        viewport.getBoundingClientRect().top -
+        24,
+      animated: false,
+    });
+    viewport.dispatchEvent(new Event("scroll"));
+    const before = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    expect(Math.abs(before - 24)).toBeLessThan(2);
+    for (const width of [500, 900]) {
+      screen.container.style.width = `${width}px`;
+      await vi.waitFor(() => {
+        const after = target.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+        expect(Math.abs(after - before)).toBeLessThan(30);
+      });
+    }
+  });
+
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
     setup();
     const props = baseProps();

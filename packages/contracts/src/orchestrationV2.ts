@@ -8,6 +8,12 @@ import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import {
+  AgentFeedbackPreview,
+  AgentFeedbackRequestStatus,
+  AgentFeedbackTrace,
+} from "./agentFeedback.ts";
+import {
+  GitRefName,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -156,6 +162,18 @@ export const OrchestrationV2LinkedSender = Schema.Struct({
 });
 export type OrchestrationV2LinkedSender = typeof OrchestrationV2LinkedSender.Type;
 
+/**
+ * The workflow run a thread is an agent step of, with the step's name. `environmentId` is where
+ * the run lives, which is another environment for a step that runs through a link.
+ */
+export const OrchestrationV2WorkflowOrigin = Schema.Struct({
+  environmentId: EnvironmentId,
+  runId: TrimmedNonEmptyString,
+  workflow: TrimmedNonEmptyString,
+  step: TrimmedNonEmptyString,
+});
+export type OrchestrationV2WorkflowOrigin = typeof OrchestrationV2WorkflowOrigin.Type;
+
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
 
@@ -173,12 +191,19 @@ export const OrchestrationV2AppThreadLineage = Schema.Struct({
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   rootThreadId: ThreadId,
   sideChat: Schema.optional(Schema.Boolean),
+  /** An agent step of a workflow run, which the thread's `workflowRun` names. */
+  workflowStep: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
 
-/** Subagents and side chats live inside their parent's view, never in thread lists. */
+/**
+ * Subagents and side chats live inside their parent's view, and a workflow run's agent steps
+ * inside the run's, never in thread lists.
+ */
 export const isListedThreadLineage = (lineage: OrchestrationV2AppThreadLineage): boolean =>
-  lineage.relationshipToParent !== "subagent" && lineage.sideChat !== true;
+  lineage.relationshipToParent !== "subagent" &&
+  lineage.sideChat !== true &&
+  lineage.workflowStep !== true;
 
 export const OrchestrationV2ContextTransferType = Schema.Literals([
   "fork",
@@ -482,7 +507,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -493,6 +518,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
@@ -757,17 +783,17 @@ export type OrchestrationV2RunBackgroundWorkCancelled =
 export const OrchestrationV2ThreadLaunchWorkspaceStrategy = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("root"),
-    branch: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(GitRefName),
   }),
   Schema.Struct({
     type: Schema.Literal("existing_worktree"),
     worktreePath: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
+    branch: Schema.optional(GitRefName),
   }),
   Schema.Struct({
     type: Schema.Literal("worktree"),
-    baseRef: TrimmedNonEmptyString,
-    branch: Schema.optional(TrimmedNonEmptyString),
+    baseRef: GitRefName,
+    branch: Schema.optional(GitRefName),
     startFromOrigin: Schema.optional(Schema.Boolean),
     repositories: Schema.optional(
       Schema.Array(Schema.Struct({ path: TrimmedNonEmptyString }))
@@ -1090,6 +1116,11 @@ export const OrchestrationV2ProviderSession = Schema.Struct({
       }),
     ).check(Schema.isMaxLength(32)),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * The slow step a provider is in while it starts a turn, such as `plugins`. A string, because
+   * clients already released reject a literal they do not know; they show the ones they do.
+   */
+  startupPhase: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   createdAt: Schema.DateTimeUtc,
   updatedAt: Schema.DateTimeUtc,
   lastError: Schema.NullOr(Schema.String),
@@ -1860,6 +1891,19 @@ const OrchestrationV2LinkRequestFields = {
   failure: Schema.optional(Schema.String),
 } as const;
 
+/**
+ * A report the user asked the agent to send to the T3 team, shown for approval. Send stores and
+ * sends exactly `preview`, with `conversationTrace` as its trace if the user included the
+ * conversation. Once answered, the card keeps only what was sent.
+ */
+const OrchestrationV2FeedbackRequestFields = {
+  type: Schema.Literal("feedback_request"),
+  preview: AgentFeedbackPreview,
+  /** The preview's trace with message text, sent instead if the user includes the conversation. */
+  conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
+  feedbackStatus: AgentFeedbackRequestStatus,
+} as const;
+
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2063,6 +2107,10 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2LinkRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -2366,7 +2414,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  branch: Schema.NullOr(TrimmedNonEmptyString),
+  branch: Schema.NullOr(GitRefName),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
@@ -2379,6 +2427,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -2956,6 +3005,10 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
+    ...OrchestrationV2FeedbackRequestFields,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("subagent"),
     subagentId: NodeId,
     origin: Schema.Literals(["provider_native", "app_owned"]),
@@ -3270,12 +3323,14 @@ export const OrchestrationV2Command = Schema.Union([
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
-    branch: Schema.NullOr(TrimmedNonEmptyString),
+    branch: Schema.NullOr(GitRefName),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     /** Only the server sets this; a client's thread.create never carries one. */
     linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
     /** Only the server sets this, with `linkOrigin`, for a linked environment's delegated task. */
     delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+    /** Only the server sets this, for a thread that is a workflow run's agent step. */
+    workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3425,10 +3480,10 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     title: Schema.optional(TrimmedNonEmptyString),
     regenerateTitle: Schema.optional(Schema.Boolean),
-    branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    branch: Schema.optional(Schema.NullOr(GitRefName)),
     worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
     expectedWorktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
-    expectedBranch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+    expectedBranch: Schema.optional(Schema.NullOr(GitRefName)),
     /** A message queued in the same commit, so a workspace change cannot settle the thread first. */
     continuation: Schema.optional(Schema.Struct({ messageId: MessageId, text: Schema.String })),
     /** Reject unless no message or run has landed on this thread. */
@@ -3503,7 +3558,7 @@ export const OrchestrationV2Command = Schema.Union([
     snapshotSequence: NonNegativeInt,
     expected: Schema.Struct({
       workspaceRoot: TrimmedNonEmptyString,
-      branch: Schema.NullOr(TrimmedNonEmptyString),
+      branch: Schema.NullOr(GitRefName),
       worktreePath: Schema.NullOr(TrimmedNonEmptyString),
       linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
       branchPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
@@ -3985,6 +4040,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     delivery: Schema.optional(OrchestrationV2SecretRequestDelivery),
     fields: Schema.optional(Schema.Array(OrchestrationV2SecretRequestField)),
     secretStatus: OrchestrationV2SecretRequestStatus,
+  }),
+  /** Internal so no client can mark a report sent without it being stored and sent. */
+  Schema.Struct({
+    type: Schema.Literal("feedback_request.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    turnItemId: TurnItemId,
+    preview: AgentFeedbackPreview,
+    conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
+    feedbackStatus: AgentFeedbackRequestStatus,
   }),
   /**
    * Records or updates a link an agent asked the user to make. Internal so no
