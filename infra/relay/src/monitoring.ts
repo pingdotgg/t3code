@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import { relayResourceNameForStage } from "./deploymentConfig.ts";
 
 const RUNBOOK_URL =
-  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/relay-observability.md#alerts";
+  "https://github.com/pingdotgg/t3code/blob/main/docs/operations/05_relay-observability.md#alerts";
 
 const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;

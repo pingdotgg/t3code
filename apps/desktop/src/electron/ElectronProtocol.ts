@@ -10,7 +10,11 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { BRAND_URL_SCHEME, BRAND_URL_SCHEME_DEV } from "@t3tools/shared/brand";
+import {
+  BRAND_DESKTOP_PROTOCOLS,
+  BRAND_URL_SCHEME,
+  BRAND_URL_SCHEME_DEV,
+} from "@t3tools/shared/brand";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
@@ -21,7 +25,12 @@ export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
 }
 
-function getDesktopOrigin(isDevelopment: boolean): string {
+export function isSupportedDesktopDeepLink(arg: string): boolean {
+  const lowered = arg.toLowerCase();
+  return BRAND_DESKTOP_PROTOCOLS.some((protocol) => lowered.startsWith(protocol));
+}
+
+export function getDesktopOrigin(isDevelopment: boolean): string {
   return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
 }
 

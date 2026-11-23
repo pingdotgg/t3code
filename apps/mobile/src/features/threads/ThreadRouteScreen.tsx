@@ -498,10 +498,10 @@ function ThreadRouteContent(
   };
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
-  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
+  const environmentId = useResolvedThreadEnvironmentId(environmentIdRaw, threadId);
   const routeThreadIdentity =
-    environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
+    environmentId !== null && threadId !== null ? `${environmentId}:${threadId}` : null;
   // The chosen mode survives thread switches; "route" only applies while the route
   // supplies an inspector, which is also the default whenever it does.
   const [chosenInspectorMode, setChosenInspectorMode] = useState<ThreadInspectorMode | null>(null);
@@ -589,12 +589,11 @@ function ThreadRouteContent(
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   };
-  const gitActionProgress = useGitActionProgress(
-    gitActionProgressTarget,
+  const gitActionThreadRef =
     selectedThread === null
       ? null
-      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
-  );
+      : { environmentId: selectedThread.environmentId, threadId: selectedThread.id };
+  const gitActionProgress = useGitActionProgress(gitActionProgressTarget, gitActionThreadRef);
 
   const handleOpenGitInspector = () => {
     navigation.setParams({ inspector: undefined });
@@ -822,7 +821,7 @@ function ThreadRouteContent(
     });
   };
   const threadGitControlProps = {
-    environmentId: environmentIdRaw ?? "",
+    environmentId: environmentId ?? "",
     threadId: threadId ?? "",
     onOpenFilesInspector: selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
     onOpenGitInspector: handleOpenGitInspector,
@@ -1033,7 +1032,7 @@ function ThreadRouteContent(
     <>
       <GitActionProgressOverlay
         progress={gitActionProgress}
-        onDismiss={dismissGitActionResult}
+        onDismiss={() => dismissGitActionResult(gitActionThreadRef)}
         onOpenPullRequest={openPullRequest}
       />
 

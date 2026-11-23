@@ -16,6 +16,8 @@ import { Input } from "../ui/input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
+import { useComposerMenuProps } from "./composerEventScope";
+import { useComposerMenuState } from "./useComposerMenuState";
 import {
   applyPrimeAgentCommandToPrompt,
   DEFAULT_AUTONOMOUS_MAX_TOKENS,
@@ -26,10 +28,12 @@ import {
 export function PrimeAgentComposerControls(props: {
   readonly size: ComposerControlSize;
   readonly isCloudSandbox: boolean;
+  readonly hidden?: boolean;
   readonly onPromptEdit: (edit: (prompt: string) => string) => void;
 }) {
   const gt = useGT();
-  const [open, setOpen] = useState(false);
+  const composerFloatingLayerProps = useComposerMenuProps();
+  const [open, setOpen] = useComposerMenuState(props.hidden);
   const [maxTurns, setMaxTurns] = useState(String(DEFAULT_AUTONOMOUS_MAX_TURNS));
   const [maxTokens, setMaxTokens] = useState(String(DEFAULT_AUTONOMOUS_MAX_TOKENS));
 
@@ -60,7 +64,13 @@ export function PrimeAgentComposerControls(props: {
           <T>Prime</T>
         </span>
       </PopoverTrigger>
-      <PopoverPopup side="top" align="start" width="md" padding="compact">
+      <PopoverPopup
+        side="top"
+        align="start"
+        width="md"
+        padding="compact"
+        {...composerFloatingLayerProps}
+      >
         <div className="grid gap-3">
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium text-xs text-foreground">

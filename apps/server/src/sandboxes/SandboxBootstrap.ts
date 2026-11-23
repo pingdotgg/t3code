@@ -89,14 +89,53 @@ export function buildHeadlessServerStartCommand(options: {
   ].join(" && ");
 }
 
-export function buildPairingCommand(publicUrl: string | null): string {
+export function buildPairingCommand(port: number = SANDBOX_SERVER_PORT): string {
   const cliLookup = `CLI=$(command -v ${BRAND_CLI_NAME} || command -v t3 || echo "npx -y t3")`;
-  const urlFlag = publicUrl !== null ? ` --url ${shellSingleQuote(publicUrl)}` : "";
+  // Wait briefly for the detached server to publish its runtime state before minting a pairing link.
+  const waitForReady = `i=0; while [ "$i" -lt 15 ]; do curl -fsS "http://127.0.0.1:${port}/.well-known/t3/environment" >/dev/null 2>&1 && break; i=$((i + 1)); sleep 1; done`;
   return [
     'export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:/usr/local/bin:$PATH"',
     cliLookup,
-    `$CLI pair${urlFlag}`,
+    waitForReady,
+    "$CLI pair",
   ].join(" && ");
+}
+
+function isLocalOrPrivateHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/gu, "").toLowerCase();
+  if (host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host === "::1") {
+    return true;
+  }
+  if (/^10\./u.test(host) || /^192\.168\./u.test(host)) return true;
+  const match172 = /^172\.(\d+)\./u.exec(host);
+  if (match172 !== null) {
+    const secondOctet = Number(match172[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) return true;
+  }
+  return false;
+}
+
+export function rewritePairingUrlForPublicOrigin(
+  pairingUrl: string | undefined,
+  publicUrl: string | null,
+): string | undefined {
+  if (pairingUrl === undefined || publicUrl === null) return pairingUrl;
+  try {
+    const parsedPairing = new URL(pairingUrl);
+    const parsedPublic = new URL(publicUrl);
+    if (
+      (parsedPairing.protocol === "http:" || parsedPairing.protocol === "https:") &&
+      isLocalOrPrivateHost(parsedPairing.hostname)
+    ) {
+      return new URL(
+        `${parsedPairing.pathname}${parsedPairing.search}${parsedPairing.hash}`,
+        parsedPublic.origin,
+      ).toString();
+    }
+  } catch {
+    // Keep original string if either URL cannot be parsed.
+  }
+  return pairingUrl;
 }
 
 export function extractPairingUrl(output: string): string | undefined {
@@ -163,11 +202,14 @@ export const bootstrapSandbox = Effect.fn("SandboxBootstrap.run")(function* (
   const pairExec = yield* input.driver
     .exec({
       providerSandboxId: input.providerSandboxId,
-      command: buildPairingCommand(connectionUrl),
+      command: buildPairingCommand(port),
       env: runtimeEnv,
     })
     .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
-  const pairingUrl = pairExec.exitCode === 0 ? extractPairingUrl(pairExec.stdout) : undefined;
+  const pairingUrl =
+    pairExec.exitCode === 0
+      ? rewritePairingUrlForPublicOrigin(extractPairingUrl(pairExec.stdout), connectionUrl)
+      : undefined;
 
   const envIdExec = yield* input.driver
     .exec({

@@ -119,6 +119,7 @@ function makePrimeAgentAcpAdapterFlavor(options: PrimeAgentAdapterV2Options): Ac
     approvalOptions: primeAgentApprovalOptions,
     compactViaAdvertisedCommand: true,
     terminateRuntimeProcessGroupOnInterrupt: true,
+    resumeMethod: "cli-flag",
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
 }

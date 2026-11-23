@@ -29,6 +29,7 @@ import {
   buildHeadlessServerStartCommand,
   buildPairingCommand,
   extractPairingUrl,
+  rewritePairingUrlForPublicOrigin,
 } from "./SandboxBootstrap.ts";
 import { SANDBOX_SERVER_PORT, SandboxConfig } from "./SandboxConfig.ts";
 import { SandboxRepository, SandboxRepositoryError } from "./SandboxRepository.ts";
@@ -311,10 +312,13 @@ const make = Effect.gen(function* () {
       const pairExec = yield* driver
         .exec({
           providerSandboxId: resumed.providerSandboxId,
-          command: buildPairingCommand(connectionUrl),
+          command: buildPairingCommand(SANDBOX_SERVER_PORT),
         })
         .pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
-      const pairingUrl = pairExec.exitCode === 0 ? extractPairingUrl(pairExec.stdout) : undefined;
+      const pairingUrl =
+        pairExec.exitCode === 0
+          ? rewritePairingUrlForPublicOrigin(extractPairingUrl(pairExec.stdout), connectionUrl)
+          : undefined;
 
       const nowIso = DateTime.formatIso(yield* DateTime.now);
       const updatedOption = yield* repository
