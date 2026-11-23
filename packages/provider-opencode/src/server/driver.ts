@@ -747,18 +747,29 @@ export const OpenCodeDriver: ProviderDriver<
                     [
                       snapshot.getSnapshot,
                       // A project's opencode.jsonc can define its own providers.
-                      readSettledOpenCode2Catalog(
-                        openCode2Server.withConnection(({ client }) =>
-                          loadOpenCode2DirectoryCatalog(client, cwd),
-                        ),
-                        processEnv,
-                      ).pipe(
-                        Effect.map(
-                          Option.map((catalog) =>
-                            openCode2ProviderModels(effectiveConfig, catalog),
+                      openCode2Server
+                        .withConnection(({ client, events, url }) => {
+                          const read = loadOpenCode2DirectoryCatalog(client, cwd);
+                          return readSettledOpenCode2Catalog(read, processEnv).pipe(
+                            Effect.tap((settled) =>
+                              catalogWatch.follow(url, events, read, {
+                                cwd,
+                                ...Option.match(settled, {
+                                  onNone: () => ({}),
+                                  onSome: (catalog) => ({ settled: catalog }),
+                                }),
+                              }),
+                            ),
+                          );
+                        })
+                        .pipe(
+                          Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
+                          Effect.map(
+                            Option.map((catalog) =>
+                              openCode2ProviderModels(effectiveConfig, catalog),
+                            ),
                           ),
                         ),
-                      ),
                       listOpenCode2Workspace(cwd).pipe(
                         // Leaves room for the reads around the scan wait, which uses the same override.
                         Effect.timeout(
@@ -818,6 +829,7 @@ export const OpenCodeDriver: ProviderDriver<
                 }),
               ),
             ),
+      workspaceRescans: catalogWatch.rescans,
       invalidateCaches: openCode2Server.forget,
       afterUpdate,
       orchestrationAdapter,

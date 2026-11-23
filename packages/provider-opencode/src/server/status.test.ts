@@ -1362,7 +1362,16 @@ it.effect("keeps the last listed catalog once its server has stopped", () =>
   Effect.gen(function* () {
     const live = [model("live-only")];
     let running = true;
-    const read = Effect.suspend(() => (running ? Effect.succeed(live) : Effect.fail("stopped")));
+    const read = Effect.suspend(() =>
+      running
+        ? Effect.succeed(live)
+        : Effect.fail(
+            new OpenCodeRuntime.OpenCodeRuntimeError({
+              operation: "model.list",
+              detail: "stopped",
+            }),
+          ),
+    );
     const events = yield* Queue.unbounded<{ readonly type: string }, "closed">();
     const watch = yield* makeOpenCode2CatalogWatch();
     const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
@@ -1391,5 +1400,39 @@ it.effect("keeps the last listed catalog once its server has stopped", () =>
     );
     yield* TestClock.adjust("1 second");
     NodeAssert.deepEqual(seen.at(-1), next);
+  }),
+);
+
+it.effect("rescans a directory whose catalog changes after its scan settled", () =>
+  Effect.gen(function* () {
+    const startup = [model("startup-only")];
+    const live = [model("live-only")];
+    let listed = startup;
+    const read = Effect.sync(() => listed);
+    const events = yield* Queue.unbounded<{ readonly type: string }>();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const rescans: Array<string> = [];
+    yield* Stream.runForEach(watch.rescans, (cwd) => Effect.sync(() => rescans.push(cwd))).pipe(
+      Effect.forkScoped,
+    );
+    const subscribe = Effect.succeed(Stream.fromQueue(events));
+    yield* watch.follow("server", subscribe, read, { cwd: "/project", settled: startup });
+    // A scan that never settled keeps what the watch last read, so it cannot rescan forever.
+    yield* watch.follow("server", subscribe, read, { cwd: "/unsettled" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled"]);
+    yield* watch.follow("server", subscribe, read, { cwd: "/unsettled" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled"]);
+
+    listed = live;
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled", "/project", "/unsettled"]);
+
+    // The rescan settles on the live catalog, and its own follow asks for nothing more.
+    yield* watch.follow("server", subscribe, read, { cwd: "/project", settled: live });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(rescans, ["/unsettled", "/project", "/unsettled"]);
   }),
 );

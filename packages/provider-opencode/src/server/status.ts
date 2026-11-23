@@ -647,9 +647,17 @@ export const readSettledOpenCode2Catalog = <E>(
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 
+// The registry keeps this many per-directory snapshots; older directories need no watch.
+const WATCHED_DIRECTORIES = 16;
+
+interface WatchedCatalog {
+  readonly read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>;
+  previous: string | undefined;
+}
+
 /**
  * OpenCode serves a startup snapshot until discovery ends and only `model.updated` says when, so
- * no wait proves a catalog complete. The watch re-reads after each check's reads and each change
+ * no wait proves a catalog complete. The watch re-reads after each followed read and each change
  * while the server's event stream lasts, borrowing nothing so a managed server still idles out.
  */
 export const makeOpenCode2CatalogWatch = Effect.fn(
@@ -657,32 +665,81 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
 )(function* () {
   const scope = yield* Effect.scope;
   const latest = yield* SubscriptionRef.make<ReadonlyArray<OpenCode2Model> | undefined>(undefined);
+  const rescans = yield* Queue.unbounded<string, Cause.Done>();
+  yield* Effect.addFinalizer(() => Queue.end(rescans));
   const reads = yield* Queue.sliding<void>(1);
-  let following: string | undefined;
+  let following:
+    | {
+        readonly server: string;
+        machine: WatchedCatalog | undefined;
+        readonly directories: Map<string, WatchedCatalog>;
+      }
+    | undefined;
+  const reread = (
+    watched: WatchedCatalog,
+    changed: (catalog: ReadonlyArray<OpenCode2Model>) => Effect.Effect<unknown>,
+  ) =>
+    watched.read.pipe(
+      Effect.flatMap((catalog) => {
+        const fingerprint = catalog.length > 0 ? catalogFingerprint(catalog) : undefined;
+        if (fingerprint === undefined || fingerprint === watched.previous) return Effect.void;
+        watched.previous = fingerprint;
+        return changed(catalog);
+      }),
+      // A stopped server fails every read; that must not discard the catalog it had listed.
+      Effect.retry({ times: 3, schedule: Schedule.spaced("1 second") }),
+      Effect.ignore,
+    );
   return {
-    /** The newest catalog the watch read; undefined when the last check knows better. */
+    /** The newest machine catalog the watch read; undefined when the last check knows better. */
     changes: SubscriptionRef.changes(latest),
-    /** Call beside each catalog read. `read` must not borrow the server. */
-    follow: <E, SE, RE>(
+    /** Directories whose catalog no longer matches the one their scan was given. */
+    rescans: Stream.fromQueue(rescans),
+    /**
+     * Call beside each catalog read. `read` must not borrow the server. A `directory` read
+     * reports the catalog its scan settled on, if any, and is rescanned once that changes.
+     */
+    follow: <E, SE>(
       server: string,
       subscribe: Effect.Effect<Stream.Stream<{ readonly type: string }, SE>, E, Scope.Scope>,
-      read: Effect.Effect<ReadonlyArray<OpenCode2Model>, RE>,
+      read: Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError>,
+      directory?: { readonly cwd: string; readonly settled?: ReadonlyArray<OpenCode2Model> },
     ) =>
       Effect.suspend(() => {
+        const started = following?.server !== server;
+        const watching = started
+          ? { server, machine: undefined, directories: new Map<string, WatchedCatalog>() }
+          : following!;
+        following = watching;
+        if (directory === undefined) {
+          watching.machine = { read, previous: watching.machine?.previous };
+        } else {
+          const { cwd, settled } = directory;
+          const previous = settled?.length
+            ? catalogFingerprint(settled)
+            : watching.directories.get(cwd)?.previous;
+          watching.directories.delete(cwd);
+          watching.directories.set(cwd, { read, previous });
+          for (const oldest of watching.directories.keys()) {
+            if (watching.directories.size <= WATCHED_DIRECTORIES) break;
+            watching.directories.delete(oldest);
+          }
+        }
         const requested = Queue.offer(reads, undefined).pipe(Effect.asVoid);
-        if (following === server) return requested;
-        following = server;
-        let previous: string | undefined;
-        const reread = read.pipe(
-          Effect.flatMap((catalog) => {
-            const fingerprint = catalog.length > 0 ? catalogFingerprint(catalog) : undefined;
-            if (fingerprint === undefined || fingerprint === previous) return Effect.void;
-            previous = fingerprint;
-            return SubscriptionRef.set(latest, catalog);
-          }),
-          // A stopped server fails every read; that must not discard the catalog it had listed.
-          Effect.retry({ times: 3, schedule: Schedule.spaced("1 second") }),
-          Effect.ignore,
+        if (!started) return requested;
+        const rereadAll = Effect.suspend(() =>
+          Effect.forEach(
+            [
+              ...(watching.machine
+                ? [reread(watching.machine, (catalog) => SubscriptionRef.set(latest, catalog))]
+                : []),
+              ...Array.from(watching.directories, ([cwd, watched]) =>
+                reread(watched, () => Queue.offer(rescans, cwd)),
+              ),
+            ],
+            (effect) => effect,
+            { concurrency: 4, discard: true },
+          ),
         );
         const watch = subscribe.pipe(
           Effect.flatMap((events) =>
@@ -691,7 +748,7 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
               Stream.merge(Stream.fromQueue(reads), { haltStrategy: "left" }),
               // OpenCode announces one change as a burst of events.
               Stream.debounce("250 millis"),
-              Stream.runForEach(() => reread),
+              Stream.runForEach(() => rereadAll),
               Effect.ignore,
             ),
           ),
@@ -700,7 +757,7 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
           Effect.scoped,
           Effect.ensuring(
             Effect.sync(() => {
-              if (following === server) following = undefined;
+              if (following === watching) following = undefined;
             }),
           ),
         );
