@@ -25,6 +25,7 @@ import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as ServerConfig from "../config.ts";
 import { gitCommandDuration, gitCommandsTotal } from "../observability/Metrics.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ProcessLauncher from "../process/ProcessLauncher.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import type * as VcsDriver from "./VcsDriver.ts";
@@ -152,6 +153,33 @@ it.effect.each([
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+// Forking the server for every git call stalls its event loop in proportion to its RSS.
+it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "runs git from the process launcher instead of forking the server",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const result = yield* driver.execute({
+        operation: "GitVcsDriver.test.parentPid",
+        cwd: process.cwd(),
+        args: ["-c", "alias.parent-pid=!awk '{print $4}' /proc/$PPID/stat", "parent-pid"],
+      });
+
+      assert.match(result.stdout.trim(), /^[1-9]\d*$/);
+      assert.notStrictEqual(Number(result.stdout.trim()), process.pid);
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(layerServerConfig),
+          Layer.provideMerge(VcsProcess.layer),
+          // The server's spawner stack, as server.ts builds it.
+          Layer.provide(ProcessLauncher.layerServer),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
 );
 
 interface UntrackedBlobChange {
@@ -2404,6 +2432,28 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       const repository = yield* driver.detectRepository(cwd);
       assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
       assert.strictEqual(repository?.metadataPath, ".git");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver keeps whitespace at the end of repository paths",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-edge-space-repo-" });
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      // The newline name takes the per-path fallback; the others take the one-spawn answer.
+      for (const name of ["repo ", "repo\r", "multi\nline "]) {
+        const cwd = path.join(parent, name);
+        const gitDir = path.join(parent, `${name.replace("\n", "")} metadata\u00a0`);
+        yield* fileSystem.makeDirectory(cwd);
+        yield* runGit(cwd, ["init", `--separate-git-dir=${gitDir}`]);
+
+        const repository = yield* driver.detectRepository(cwd);
+        assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
+        assert.strictEqual(repository?.metadataPath, yield* fileSystem.realPath(gitDir));
+      }
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
