@@ -187,7 +187,38 @@ function isPersistentDynamicToolInput(input: unknown): boolean {
   return Reflect.get(input, "persistent") === true;
 }
 
+const CODE_PREVIEW_LENGTH = 100;
+
+/** The script of a codemode call, which every harness passes as the tool's `code` input. */
+export function codemodeScript(item: {
+  readonly type: string;
+  readonly input?: unknown;
+}): string | undefined {
+  if (item.type !== "dynamic_tool" || item.input === null || typeof item.input !== "object") {
+    return undefined;
+  }
+  const code = Reflect.get(item.input, "code");
+  return typeof code === "string" && code.trim().length > 0 ? code : undefined;
+}
+
+function codePreview(item: PendingBackgroundWorkTurnItem): string | undefined {
+  const code = codemodeScript(item);
+  if (code === undefined) return undefined;
+  const preview = code
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("// @options"))
+    .join(" ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (preview.length === 0) return undefined;
+  return preview.length > CODE_PREVIEW_LENGTH
+    ? `${preview.slice(0, CODE_PREVIEW_LENGTH - 1).trimEnd()}…`
+    : preview;
+}
+
 function descriptionFromTurnItem(item: PendingBackgroundWorkTurnItem): string | undefined {
+  const preview = codePreview(item);
+  if (preview !== undefined) return preview;
   if (typeof item.title === "string" && item.title.trim().length > 0) {
     return item.title.trim();
   }
@@ -297,7 +328,11 @@ export function derivePendingBackgroundWork(input: {
         continue;
       }
       const { description: rawDescription, ...named } = task;
-      const description = rawDescription?.trim();
+      const nativeId = task.nativeItemId ?? task.taskId;
+      const item = input.turnItems.findLast(
+        (candidate) => nativeTaskIdFromTurnItem(candidate) === nativeId,
+      );
+      const description = (item && codePreview(item)) ?? rawDescription?.trim();
       byTaskId.set(task.taskId, {
         ...named,
         ...(task.kind === "subagent"

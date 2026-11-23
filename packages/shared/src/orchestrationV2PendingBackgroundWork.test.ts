@@ -177,6 +177,57 @@ describe("derivePendingBackgroundWork", () => {
     expect(tasks).toEqual([{ taskId: "cmd-1", description: "npm test", kind: "command" }]);
   });
 
+  it("names codemode work by the start of its script, for roster tasks and turn items", () => {
+    const script = `// @options: {"timeout_ms": 60000}\nconst r = await tools.bash({\n  command: "git status",\n});\nreturn r.output;`;
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+      providerThreads: [
+        {
+          id: "pt-1" as never,
+          pendingBackgroundTasks: [
+            {
+              taskId: "k9pai4iac",
+              nativeItemId: "toolu_1",
+              description: "codemode/codemode",
+              kind: "background_task",
+            },
+          ],
+        },
+      ],
+      turnItems: [
+        {
+          id: "item-claude" as never,
+          type: "dynamic_tool",
+          status: "completed",
+          title: "Codemode",
+          nativeItemRef: { nativeId: "toolu_1" },
+          input: { code: script },
+        },
+        {
+          id: "item-pi" as never,
+          type: "dynamic_tool",
+          status: "running",
+          title: "codemode",
+          nativeItemRef: { nativeId: "call_2" },
+          input: { code: `return "${"x".repeat(200)}";` },
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      {
+        taskId: "k9pai4iac",
+        nativeItemId: "toolu_1",
+        description: 'const r = await tools.bash({ command: "git status", }); return r.output;',
+        kind: "background_task",
+      },
+      {
+        taskId: "call_2",
+        description: `return "${"x".repeat(91)}…`,
+        kind: "background_task",
+      },
+    ]);
+  });
+
   it("dedupes roster entries against turn items by native task id", () => {
     const tasks = derivePendingBackgroundWork({
       latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },

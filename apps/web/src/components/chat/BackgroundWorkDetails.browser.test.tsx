@@ -96,6 +96,69 @@ it("opens full command details for short labels and keeps pending tasks current"
   await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
 });
 
+it("labels codemode work by its script and shows the whole script in details", async () => {
+  const script = 'const r = await tools.bash({ command: "git status" });\nreturn r.output;';
+  await using screen = await render(
+    <ThreadNow
+      attention={null}
+      syncPhase={null}
+      goal={null}
+      work={backgroundWorkNowItem({
+        environmentId: EnvironmentId.make("test"),
+        threadId: ThreadId.make("thread"),
+        tasks: [
+          {
+            taskId: "k9pai4iac",
+            nativeItemId: "toolu_1",
+            kind: "background_task",
+            description: 'const r = await tools.bash({ command: "git status" }); return r.output;',
+          },
+        ],
+        turnItems: [
+          {
+            id: TurnItemId.make("codemode-1"),
+            threadId: ThreadId.make("thread"),
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: {
+              driver: ProviderDriverKind.make("claudeAgent"),
+              nativeId: "toolu_1",
+              strength: "strong",
+            },
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: "Codemode",
+            startedAt: null,
+            completedAt: null,
+            updatedAt: DateTime.makeUnsafe("2026-11-09T00:00:00Z"),
+            type: "dynamic_tool" as const,
+            toolName: "mcp__codemode__codemode",
+            input: { code: script },
+            output: null,
+          },
+        ],
+        stopDisabled: false,
+        stopping: false,
+        onStop: async () => undefined,
+        onOpenThread: () => undefined,
+      })}
+    />,
+  );
+  await expect
+    .element(
+      page.getByText(
+        'Waiting · const r = await tools.bash({ command: "git status" }); return r.output;',
+      ),
+    )
+    .toBeVisible();
+  await screen.getByRole("button", { name: "Details", exact: true }).click();
+  await expect.element(page.getByRole("heading", { name: "Codemode", exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(page.getByRole("dialog").element().textContent).toContain(script));
+});
+
 it("gives a subagent the same status as the background work line", async () => {
   await using screen = await render(
     <ThreadNow

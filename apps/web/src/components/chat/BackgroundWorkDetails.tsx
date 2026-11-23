@@ -4,7 +4,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  codemodeScript,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
@@ -60,14 +63,17 @@ export function BackgroundWorkDetails(props: {
             {props.tasks.map((task) => {
               const item = props.turnItems.findLast((candidate) =>
                 task.itemId === undefined
-                  ? (candidate.nativeItemRef?.nativeId || candidate.id) === task.taskId
+                  ? (candidate.nativeItemRef?.nativeId || candidate.id) ===
+                    (task.nativeItemId ?? task.taskId)
                   : candidate.id === task.itemId,
               );
               const command =
                 task.command ?? (item?.type === "command_execution" ? item.input : undefined);
+              const script = item ? codemodeScript(item) : undefined;
               const description = task.description?.trim();
-              const title =
-                description && description !== command?.trim()
+              const title = script
+                ? item?.title?.trim() || kindLabel(task.kind)
+                : description && description !== command?.trim()
                   ? description
                   : command
                     ? gt("Command", { $context: "title of a background shell command" })
@@ -89,6 +95,11 @@ export function BackgroundWorkDetails(props: {
                     <div className="rounded-md border border-border bg-muted/20 p-3 font-mono text-xs whitespace-pre-wrap break-words">
                       <ShellCommandBlock command={command} />
                     </div>
+                  ) : null}
+                  {script ? (
+                    <pre className="max-h-80 overflow-auto rounded-md border border-border bg-muted/20 p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                      {script}
+                    </pre>
                   ) : null}
                   {itemId && streamsOutput && item?.status === "running" ? (
                     <div className="font-mono text-xs whitespace-pre-wrap break-words">
