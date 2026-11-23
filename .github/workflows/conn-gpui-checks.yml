@@ -1,0 +1,88 @@
+name: Conn GPUI checks
+
+# Format, Clippy and tests for the native GPUI macOS client. Same three commands as
+# apps/conn-gpui/scripts/check.sh. ci.yml treats apps/conn-gpui as inert, so this is
+# the only workflow that builds it. It also runs for the Conn Server crates it imports.
+
+on:
+  pull_request:
+    paths: &paths
+      - apps/conn-gpui/**
+      - apps/conn-server/Cargo.toml
+      - apps/conn-server/crates/conn-wire/**
+      - apps/conn-server/crates/conn-contract/**
+      - .github/workflows/conn-gpui-checks.yml
+  push:
+    branches:
+      - main
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: conn-gpui-checks-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Same as `channel` in apps/conn-gpui/rust-toolchain.toml.
+  RUST_TOOLCHAIN: "1.99.1"
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: "0"
+
+jobs:
+  checks:
+    name: Conn GPUI checks
+    runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-6vcpu-macos-27' || 'macos-15' }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/conn-gpui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Restore Cargo
+        id: cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-gpui/target
+          key: conn-gpui-checks-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-gpui/Cargo.lock') }}
+          restore-keys: conn-gpui-checks-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Save Cargo on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/conn-gpui/target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

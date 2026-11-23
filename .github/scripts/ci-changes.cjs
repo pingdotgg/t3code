@@ -14,8 +14,9 @@ const INERT = [
   /^apps\/conn-server\//,
   /^\.github\/workflows\/conn-server-/,
   /^\.github\/scripts\/conn-server-checks-paths\.(cjs|d\.cts)$/,
-  // The GPUI desktop client (Rust) checks itself with apps/conn-gpui/scripts/check.sh.
+  // The GPUI desktop client (Rust) has its own workflow (conn-gpui-checks.yml).
   /^apps\/conn-gpui\//,
+  /^\.github\/workflows\/conn-gpui-/,
   // The native SwiftUI iPhone app builds in Xcode, outside the pnpm workspace.
   /^apps\/ios\//,
 ];
