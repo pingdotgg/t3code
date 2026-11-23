@@ -168,7 +168,8 @@ export const make = Effect.gen(function* () {
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
-        label: item.label,
+        // Electron reads a single & as a mnemonic marker and drops it.
+        label: item.label.replaceAll("&", "&&"),
         enabled: !item.disabled,
         ...(typeof item.checked === "boolean" ? { type: "checkbox", checked: item.checked } : {}),
       };

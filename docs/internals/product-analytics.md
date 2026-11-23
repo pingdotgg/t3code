@@ -144,10 +144,22 @@ batch was sent every second for days.
 
 ## Collection boundary
 
-Keep analytics payloads to product metadata and normalized measurements. Do not
-send prompts, authentication material, raw provider payloads, user-assigned device
-names, or conversation identifiers. Client metadata is best effort; invalid values
-must not reject a connection. PostHog person profiles remain disabled.
+Keep analytics payloads to product metadata and normalized measurements. The one
+exception is `agent.feedback`, sent only while the user has turned on agent
+feedback: its `expected`, `actual`, and `workaround` fields are agent-written text,
+which [FeedbackService](../../apps/server/src/feedback/FeedbackService.ts) scrubs of
+file paths, values the server knows are private to the caller, and secret-shaped
+strings, and caps at 300 characters each. `userRequested: true` means the user saw the
+report in its preview card and pressed Send; only such a report carries
+`trace`, which the server builds from the thread when the card is shown: an outline of
+at least the last 5 turns with no text, plus the scrubbed message text of the turns the
+agent said the problem spans only when the user turned on the card's conversation switch, capped at 1,000 characters per message and 16 KB per
+trace so a telemetry batch stays small. Both traces live on the card's turn item until
+it is answered, so the server sends what the card showed and never text from a client. Tool inputs and outputs never go in it, and tools from other MCP servers go
+by one generic name. The server attaches no other prompts, authentication material,
+raw provider payloads, user-assigned device names, or conversation identifiers to
+any event. Client metadata is best effort; invalid values must not reject a
+connection. PostHog person profiles remain disabled.
 
 Dev-runner servers and the CI archive smoke test turn telemetry off, which also
 stops relay tracing, because each would count as a new install. Set

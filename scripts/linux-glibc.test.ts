@@ -40,6 +40,17 @@ Version definition section '.gnu.version_d' contains 1 entry:
   ).toBeUndefined();
 });
 
+// Rust std links pidfd_spawnp@GLIBC_2.39 weakly; the loader only warns when a weak version is missing.
+it("does not count weak requirements", () => {
+  expect(
+    parseGlibcNeeds(`Version needs section '.gnu.version_r' contains 1 entry:
+  0x0010: Version: 1  File: libc.so.6  Cnt: 2
+  0x0150:   Name: GLIBC_2.34  Flags: none  Version: 2
+  0x0160:   Name: GLIBC_2.39  Flags: WEAK  Version: 10
+`),
+  ).toBe("2.34");
+});
+
 it.each(["GLIBC_PRIVATE", "GLIBC_ABI_UNKNOWN"])("rejects unhandled requirement %s", (name) => {
   expect(() =>
     parseGlibcNeeds(`Version needs section '.gnu.version_r' contains 1 entry:

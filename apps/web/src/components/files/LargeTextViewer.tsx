@@ -1,16 +1,16 @@
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
+import { m } from "~/i18n/messages";
+import { Spinner } from "~/components/ui/spinner";
 import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useClientSettings } from "~/hooks/useSettings";
 import { FileSurfaceFailure, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import { PREVIEW_PAGE_ROWS, type TextPreviewResult } from "./largeTextProtocol";
+import { previewFailureText } from "./previewFailureMessages";
 import VirtualTablePreview from "./VirtualTablePreview";
 
 const FIRST_SCREEN_BYTES = 16 * 1024;
-
-function countLabel(count: number, noun: string) {
-  return `${count.toLocaleString()} ${noun}${count === 1 ? "" : "s"}`;
-}
 
 function firstScreen(text: string, delimiter: "," | "\t" | null, complete: boolean) {
   if (!text || text.includes("\0")) return [];
@@ -30,6 +30,36 @@ function firstScreen(text: string, delimiter: "," | "\t" | null, complete: boole
   return rows.slice(0, PREVIEW_PAGE_ROWS * 2);
 }
 
+type Meta = Extract<TextPreviewResult, { type: "meta" }>;
+
+function firstScreenState(text: string, delimiter: "," | "\t" | null, complete: boolean) {
+  const rows = firstScreen(text, delimiter, complete);
+  if (!rows.length) return null;
+  return {
+    pages: new Map(
+      [0, PREVIEW_PAGE_ROWS]
+        .filter((start) => start < rows.length)
+        .map((start) => [start / PREVIEW_PAGE_ROWS, rows.slice(start, start + PREVIEW_PAGE_ROWS)]),
+    ),
+    meta: {
+      type: "meta",
+      count: rows.length,
+      columns: rows.reduce((max, row) => Math.max(max, row.length), 1),
+      complete: false,
+    } satisfies Meta as Meta,
+  };
+}
+
+// Reopening a recent file paints its first screen at once while the worker indexes it again.
+const recentFirstScreens = new Map<string, { text: string; complete: boolean }>();
+
+function rememberFirstScreen(src: string, text: string, complete: boolean) {
+  recentFirstScreens.delete(src);
+  recentFirstScreens.set(src, { text, complete });
+  if (recentFirstScreens.size > 32)
+    recentFirstScreens.delete(recentFirstScreens.keys().next().value!);
+}
+
 export default function LargeTextViewer(props: {
   readonly name: string;
   readonly src?: string;
@@ -43,8 +73,14 @@ export default function LargeTextViewer(props: {
   /** A preview's own wrap toggle; omitted follows the word wrap setting. */
   readonly wordWrap?: boolean;
 }) {
-  const [meta, setMeta] = useState<Extract<TextPreviewResult, { type: "meta" }> | null>(null);
-  const [pages, setPages] = useState(new Map<number, string[][]>());
+  const gt = useGT();
+  const messages = useMessages();
+  const [initial] = useState(() => {
+    const cached = props.src === undefined ? undefined : recentFirstScreens.get(props.src);
+    return cached ? firstScreenState(cached.text, props.delimiter, cached.complete) : null;
+  });
+  const [meta, setMeta] = useState<Meta | null>(initial?.meta ?? null);
+  const [pages, setPages] = useState(initial?.pages ?? new Map<number, string[][]>());
   const [error, setError] = useState<string | null>(null);
   const worker = useRef<Worker | null>(null);
   const copyPending = useRef<{
@@ -65,25 +101,11 @@ export default function LargeTextViewer(props: {
     let prefetched = false;
     const paintFirstScreen = (text: string, complete: boolean) => {
       if (indexed || controller.signal.aborted) return;
-      const rows = firstScreen(text, props.delimiter, complete);
-      if (!rows.length) return;
+      const screen = firstScreenState(text, props.delimiter, complete);
+      if (!screen) return;
       prefetched = true;
-      setPages(
-        new Map(
-          [0, PREVIEW_PAGE_ROWS]
-            .filter((start) => start < rows.length)
-            .map((start) => [
-              start / PREVIEW_PAGE_ROWS,
-              rows.slice(start, start + PREVIEW_PAGE_ROWS),
-            ]),
-        ),
-      );
-      setMeta({
-        type: "meta",
-        count: rows.length,
-        columns: rows.reduce((max, row) => Math.max(max, row.length), 1),
-        complete: false,
-      });
+      setPages(screen.pages);
+      setMeta(screen.meta);
     };
     const startWorker = () => {
       if (controller.signal.aborted) return;
@@ -97,15 +119,20 @@ export default function LargeTextViewer(props: {
           copyPending.current?.resolve(result.text);
           copyPending.current = null;
         } else if (result.type === "error") {
-          copyPending.current?.reject(new Error(result.message));
+          copyPending.current?.reject(new Error(previewFailureText(result)));
           copyPending.current = null;
-          if (result.operation !== "copy") setError(result.message);
+          if (result.operation !== "copy") setError(previewFailureText(result));
         } else if (result.type === "meta") {
           indexed = true;
           if (prefetched) {
-            setPages(new Map());
-            pending.current.clear();
+            // Keeps the painted first screen until the worker's own pages replace it.
             prefetched = false;
+            pending.current.clear();
+            for (const index of [0, 1]) {
+              if (index * PREVIEW_PAGE_ROWS >= result.count) break;
+              pending.current.add(index);
+              engine.postMessage({ type: "page", index }, []);
+            }
           }
           setMeta(result);
         } else if (result.type === "page") {
@@ -130,9 +157,9 @@ export default function LargeTextViewer(props: {
         }
       });
       engine.addEventListener("error", () => {
-        copyPending.current?.reject(new Error("The text viewer stopped."));
+        copyPending.current?.reject(new Error(m(msg("The text viewer stopped."))));
         copyPending.current = null;
-        setError("Could not load the text viewer. Close the file and try again.");
+        setError(m(msg("Could not load the text viewer. Close the file and try again.")));
       });
       engine.postMessage(
         {
@@ -151,8 +178,12 @@ export default function LargeTextViewer(props: {
     };
     // Only this bounded prefix is parsed on the main thread. Indexing the full
     // file and fetching later pages remain in the worker.
+    const cached = props.src === undefined ? undefined : recentFirstScreens.get(props.src);
     if (props.sizeBytes === 0) {
       startWorker();
+    } else if (cached) {
+      paintFirstScreen(cached.text, cached.complete);
+      scheduleWorker();
     } else if (props.text !== undefined) {
       paintFirstScreen(
         props.text.slice(0, FIRST_SCREEN_BYTES),
@@ -160,7 +191,8 @@ export default function LargeTextViewer(props: {
       );
       scheduleWorker();
     } else if (props.src) {
-      void fetch(props.src, {
+      const src = props.src;
+      void fetch(src, {
         headers: { Range: `bytes=0-${FIRST_SCREEN_BYTES - 1}` },
         cache: "no-store",
         signal: controller.signal,
@@ -175,7 +207,9 @@ export default function LargeTextViewer(props: {
             return;
           }
           const total = Number(response.headers.get("content-range")?.split("/")[1]);
-          paintFirstScreen(await response.text(), total <= FIRST_SCREEN_BYTES);
+          const text = await response.text();
+          rememberFirstScreen(src, text, total <= FIRST_SCREEN_BYTES);
+          paintFirstScreen(text, total <= FIRST_SCREEN_BYTES);
         })
         .catch(() => {
           // The worker reports authorization, network and format failures.
@@ -184,7 +218,7 @@ export default function LargeTextViewer(props: {
     } else startWorker();
     return () => {
       controller.abort();
-      copyPending.current?.reject(new Error("Preview closed."));
+      copyPending.current?.reject(new Error(m(msg("Preview closed."))));
       copyPending.current = null;
       worker.current?.terminate();
       worker.current = null;
@@ -196,11 +230,11 @@ export default function LargeTextViewer(props: {
     () => () =>
       new Promise<string>((resolve, reject) => {
         if (!worker.current) {
-          reject(new Error("The file is unavailable."));
+          reject(new Error(m(msg("The file is unavailable."))));
           return;
         }
         if (copyPending.current) {
-          reject(new Error("Another copy is in progress."));
+          reject(new Error(m(msg("Another copy is in progress."))));
           return;
         }
         copyPending.current = { resolve, reject };
@@ -214,27 +248,41 @@ export default function LargeTextViewer(props: {
     );
   if (!meta || (meta.count > 0 && !pages.has(0))) return <FileSurfaceLoading />;
   const header = props.delimiter ? pages.get(0)?.[0] : undefined;
+  const rowCount = Math.max(0, meta.count - 1);
+  const columnCount = meta.count ? meta.columns : 0;
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div
         className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.delimiter
-          ? `${countLabel(Math.max(0, meta.count - 1), "row")} · ${countLabel(meta.count ? meta.columns : 0, "column")}`
-          : countLabel(meta.count, "line")}
+        {/* Counts appear once indexing ends; the prefix count alone would understate the file. */}
+        {!meta.complete
+          ? null
+          : props.delimiter
+            ? `${gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
+                count: rowCount,
+                formatted: rowCount.toLocaleString(),
+              })} · ${gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
+                count: columnCount,
+                formatted: columnCount.toLocaleString(),
+              })}`
+            : gt("{count, plural, one {{formatted} line} other {{formatted} lines}}", {
+                count: meta.count,
+                formatted: meta.count.toLocaleString(),
+              })}
         {meta.complete && meta.sizeBytes !== undefined
-          ? ` · ${meta.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(meta.sizeBytes)}`
-          : " · Indexing…"}
+          ? ` · ${meta.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(meta.sizeBytes, messages)}`
+          : null}
       </div>
       {!meta.complete ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
-          <FileSurfaceNotice>Loading the rest of the file…</FileSurfaceNotice>
+        <div className="pointer-events-none absolute right-4 bottom-3 z-20">
+          <Spinner size="md" tone="muted" />
         </div>
       ) : null}
       {meta.columns === 1024 ? (
         <FileSurfaceNotice>
-          Showing the first 1,024 columns. Source and Save retain every column.
+          <T>Showing the first 1,024 columns. Source and Save retain every column.</T>
         </FileSurfaceNotice>
       ) : null}
       {meta.count > 0 ? (
@@ -256,7 +304,7 @@ export default function LargeTextViewer(props: {
         />
       ) : (
         <div className="flex flex-1 items-center justify-center p-6 text-xs text-muted-foreground">
-          This file is empty.
+          <T>This file is empty.</T>
         </div>
       )}
     </div>
