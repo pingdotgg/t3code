@@ -1859,6 +1859,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const resolveReviewRepository = Effect.fn("resolveReviewRepository")(function* (
     cwd: string,
     needsCurrentBranch: boolean,
+    requireRepositoryRoot = false,
   ) {
     // A cached layout outlives a removed cwd, which must still read as a missing cwd.
     if (
@@ -1867,8 +1868,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ) {
       return null;
     }
-    const repository = yield* resolveRepositoryPaths(cwd);
-    if (repository?.worktreeRoot == null) return null;
+    const repository = yield* requireRepositoryRoot
+      ? resolveRepositoryPathsUncached(cwd)
+      : resolveRepositoryPaths(cwd);
+    if (
+      repository?.worktreeRoot == null ||
+      (requireRepositoryRoot && repository.isAtRepositoryRoot !== true)
+    )
+      return null;
     // The cached branch outlives a checkout made outside T3 Code, so it is read fresh.
     const currentBranch = needsCurrentBranch
       ? yield* readCurrentBranch("GitVcsDriver.review.currentBranch", cwd)
@@ -4687,14 +4694,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               .pipe(Effect.orElseSucceed(() => null));
             // Git otherwise walks out of an uninitialized module into its parent repository.
             if (actualRoot !== real) return null;
-            const manifest = yield* executeGit(
-              "GitVcsDriver.review.repositories",
-              real,
-              ["config", "-z", "--file=.gitmodules", "--get-regexp", "^submodule\\..*\\.path$"],
-              { allowNonZeroExit: true, maxOutputBytes: 1024 * 1024 },
-            );
+            const hasManifest = yield* fileSystem
+              .exists(path.join(real, ".gitmodules"))
+              .pipe(Effect.orElseSucceed(() => false));
+            // A deleted manifest is authoritative. Only a skip-worktree entry means Git hid it.
+            const sparseManifest =
+              !hasManifest &&
+              (yield* runGitStdout("GitVcsDriver.review.repositories.sparse", real, [
+                "ls-files",
+                "-t",
+                "--",
+                ".gitmodules",
+              ])).startsWith("S ");
+            const manifest =
+              hasManifest || sparseManifest
+                ? yield* executeGit(
+                    "GitVcsDriver.review.repositories",
+                    real,
+                    [
+                      "config",
+                      "-z",
+                      ...(sparseManifest ? ["--blob", "HEAD:.gitmodules"] : ["--file=.gitmodules"]),
+                      "--get-regexp",
+                      "^submodule\\..*\\.path$",
+                    ],
+                    { allowNonZeroExit: true, maxOutputBytes: 1024 * 1024 },
+                  )
+                : null;
             const children =
-              manifest.exitCode === 0
+              manifest?.exitCode === 0
                 ? manifest.stdout.split("\0").flatMap((record) => {
                     const separator = record.indexOf("\n");
                     if (separator < 0) return [];
@@ -4748,7 +4776,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const getReviewBranchCommits = Effect.fn("getReviewBranchCommits")(function* (
     input: ReviewBranchCommitsInput,
   ) {
-    const repository = yield* resolveReviewRepository(input.cwd, true);
+    const repository = yield* resolveReviewRepository(input.cwd, true, input.requireRepositoryRoot);
     if (!repository?.worktreeRoot) return { commits: [], truncated: false };
     const cwd = repository.worktreeRoot;
     const head = yield* executeGit(
@@ -4839,6 +4867,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const trackedReviewPreviewKey = (input: ReviewDiffPreviewInput) =>
     JSON.stringify([
       input.cwd,
+      input.requireRepositoryRoot === true,
       input.baseRef ?? null,
       input.sourceKind ?? null,
       input.ignoreWhitespace === true,
@@ -4890,13 +4919,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const reusesTracked = input.file === undefined && input.commitSha === undefined;
     const tracked = reusesTracked ? yield* takeTrackedReviewPreview(input) : undefined;
     const repository =
-      tracked?.repository ??
-      (yield* resolveReviewRepository(input.cwd, needsCurrentBranch).pipe(
-        Effect.catchTags({
-          GitCommandError: (error) =>
-            isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
-        }),
-      ));
+      tracked !== undefined && !input.requireRepositoryRoot
+        ? tracked.repository
+        : yield* resolveReviewRepository(
+            input.cwd,
+            needsCurrentBranch && tracked === undefined,
+            input.requireRepositoryRoot,
+          ).pipe(
+            Effect.map((resolved) =>
+              resolved === null ? null : (tracked?.repository ?? resolved),
+            ),
+            Effect.catchTags({
+              GitCommandError: (error) =>
+                isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+            }),
+          );
     if (!repository?.worktreeRoot) {
       return {
         cwd: input.cwd,
@@ -5288,11 +5325,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const getReviewDiffFileContents = Effect.fn("getReviewDiffFileContents")(function* (
     input: ReviewDiffFileContentsInput,
   ) {
-    const repositoryRoot = yield* runGitStdout(
-      "GitVcsDriver.getReviewDiffFileContents.repositoryRoot",
-      input.cwd,
-      ["rev-parse", "--show-toplevel"],
-    ).pipe(Effect.map((value) => value.trim()));
+    const repositoryRoot = input.requireRepositoryRoot
+      ? ((yield* resolveReviewRepository(input.cwd, false, true))?.worktreeRoot ?? "")
+      : yield* runGitStdout("GitVcsDriver.getReviewDiffFileContents.repositoryRoot", input.cwd, [
+          "rev-parse",
+          "--show-toplevel",
+        ]).pipe(Effect.map((value) => value.trim()));
     if (repositoryRoot.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the Git repository root.");
     }

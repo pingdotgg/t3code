@@ -307,8 +307,12 @@ export default function DiffPanel({
   const tracksFolders = (activeProject?.trackedFolders?.length ?? 0) > 0;
   const threadWorktreePath = activeThread?.worktreePath ?? null;
   // Unchanged repositories are listed too: work done outside a turn only shows in these scopes.
+  const readsTaskFolder =
+    visible && tracksFolders && activeThread != null && threadWorktreePath !== null;
+  const readsProjectFolders =
+    visible && tracksFolders && activeThread != null && threadWorktreePath === null;
   const taskFolderQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath !== null
+    readsTaskFolder
       ? filesystemEnvironment.taskFolder({
           environmentId: activeThread.environmentId,
           input: { worktreePath: threadWorktreePath },
@@ -316,7 +320,7 @@ export default function DiffPanel({
       : null,
   );
   const projectFoldersQuery = useEnvironmentQuery(
-    visible && tracksFolders && activeThread != null && threadWorktreePath === null
+    readsProjectFolders
       ? filesystemEnvironment.listFolders({
           environmentId: activeThread.environmentId,
           input: { projectId: activeThread.projectId },
@@ -368,8 +372,8 @@ export default function DiffPanel({
   const repositoryMissing =
     repositoryUnavailable &&
     repositoriesQuery.data !== null &&
-    !taskFolderQuery.isPending &&
-    !projectFoldersQuery.isPending;
+    (!readsTaskFolder || taskFolderQuery.data !== null) &&
+    (!readsProjectFolders || projectFoldersQuery.data !== null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears a persisted checkout and refs after discovery confirms it is gone
   useEffect(() => {
     if (repositoryMissing && routeThreadRef) {
@@ -382,7 +386,15 @@ export default function DiffPanel({
     repositoryUnresolved &&
     (repositoriesQuery.isPending || taskFolderQuery.isPending || projectFoldersQuery.isPending);
   const repositoryError =
-    repositoryUnresolved && !repositoryPending ? repositoriesQuery.error : null;
+    repositoryUnresolved && !repositoryPending
+      ? (repositoriesQuery.error ?? taskFolderQuery.error ?? projectFoldersQuery.error)
+      : null;
+  const refreshRepositories = () => {
+    repositoriesQuery.refresh();
+    taskFolderQuery.refresh();
+    projectFoldersQuery.refresh();
+  };
+  const requireRepositoryRoot = gitRepository !== null;
   const gitCwd = repositoryUnresolved ? undefined : (gitRepository?.cwd ?? activeCwd);
   const isGitRepo = threadFolderIsRepo || gitRepository !== null;
   const turnDiffSummaries = useThreadCheckpointSummaries(routeThreadRef);
@@ -492,6 +504,7 @@ export default function DiffPanel({
     canReadFiles && isGitSelection && activeThread && gitCwd
       ? {
           cwd: gitCwd,
+          ...(requireRepositoryRoot ? { requireRepositoryRoot: true } : {}),
           ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
           ...(selectedCommitSha !== null ? { commitSha: selectedCommitSha } : {}),
           ignoreWhitespace: diffIgnoreWhitespace,
@@ -527,6 +540,7 @@ export default function DiffPanel({
           environmentId: activeThread.environmentId,
           input: {
             cwd: gitCwd,
+            ...(requireRepositoryRoot ? { requireRepositoryRoot: true } : {}),
             ...(!repositoryMissing && rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
           },
         })
@@ -596,7 +610,7 @@ export default function DiffPanel({
   };
   const refreshPreviewQuery = branchDiffPreview.refresh;
   const refreshDiffFromUserAction = () => {
-    repositoriesQuery.refresh();
+    refreshRepositories();
     refreshPreviewQuery();
   };
 
@@ -714,6 +728,7 @@ export default function DiffPanel({
       ? createGitDiffFileContentsLoader(getDiffFileContents, {
           environmentId: activeThread.environmentId,
           cwd: preview.cwd,
+          ...(requireRepositoryRoot ? { requireRepositoryRoot: true } : {}),
           sourceKind: selectedGitSource.kind,
           baseRef: selectedGitSource.baseRef,
           headRef: selectedGitSource.headRef,
@@ -1263,7 +1278,7 @@ export default function DiffPanel({
               .map((repo) => repo.cwd)}
             value={gitCwd ?? null}
             onOpenChange={(open) => {
-              if (open) repositoriesQuery.refresh();
+              if (open) refreshRepositories();
               else setRepositoryQuery("");
             }}
             onValueChange={selectGitRepository}
@@ -1731,7 +1746,7 @@ export default function DiffPanel({
                 <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
                 {isGitSelection && repositoryError && routeThreadRef && (
                   <div className="flex flex-wrap gap-2">
-                    <Button size="xs" variant="secondary" onClick={repositoriesQuery.refresh}>
+                    <Button size="xs" variant="secondary" onClick={refreshRepositories}>
                       {gt("Retry")}
                     </Button>
                     <Button

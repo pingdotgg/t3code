@@ -199,6 +199,7 @@ function reviewFileQueries({
                 ...(previewInput ? { preview: previewInput } : {}),
                 request: {
                   cwd,
+                  ...(previewInput?.requireRepositoryRoot ? { requireRepositoryRoot: true } : {}),
                   ...(baseRef ? { baseRef } : {}),
                   ...(source.kind === "commit" ? { commitSha: source.id } : {}),
                   ...(source.mergeBase ? { mergeBase: source.mergeBase } : {}),

@@ -33,6 +33,7 @@ export type ReviewDiffChangeType = typeof ReviewDiffChangeType.Type;
 
 export const ReviewDiffPreviewInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  requireRepositoryRoot: Schema.optionalKey(Schema.Boolean),
   baseRef: Schema.optional(GitRefName),
   // A branch-range file read reuses its preview's merge base instead of resolving it again.
   mergeBase: Schema.optionalKey(ReviewMergeBase),
@@ -57,6 +58,7 @@ export type ReviewDiffPreviewInput = typeof ReviewDiffPreviewInput.Type;
 
 export const ReviewBranchCommitsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  requireRepositoryRoot: Schema.optionalKey(Schema.Boolean),
   baseRef: Schema.optional(GitRefName),
 });
 export type ReviewBranchCommitsInput = typeof ReviewBranchCommitsInput.Type;
@@ -109,6 +111,7 @@ export type ReviewDiffPreviewSource = typeof ReviewDiffPreviewSource.Type;
 
 export const ReviewDiffFileContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  requireRepositoryRoot: Schema.optionalKey(Schema.Boolean),
   sourceKind: ReviewDiffPreviewSourceKind,
   changeType: ReviewDiffChangeType,
   baseRef: Schema.NullOr(GitRefName),

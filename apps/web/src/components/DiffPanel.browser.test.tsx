@@ -39,6 +39,7 @@ const state = vi.hoisted(() => ({
   diffFilesCollapsed: false,
   project: {
     workspaceRoot: "/project",
+    trackedFolders: [] as string[],
     repositoryIdentity: null as { rootPath: string } | null,
   },
   toolCallItem: null as unknown,
@@ -48,6 +49,7 @@ const state = vi.hoisted(() => ({
   remoteRefs: null as unknown as ResultAtom<VcsListRefsResult>,
   repositories: null as unknown as ResultAtom<ReviewRepositoriesResult>,
   commits: null as unknown as ResultAtom<ReviewBranchCommitsResult>,
+  taskFolder: null as unknown as ResultAtom<unknown>,
   checkpoints: [] as unknown[],
   checkpointDiff: null as Partial<OrchestrationGetTurnDiffResult> | null,
 }));
@@ -81,7 +83,7 @@ vi.mock("~/state/entities", () => ({
 }));
 vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
-  filesystemEnvironment: {},
+  filesystemEnvironment: { taskFolder: () => state.taskFolder },
 }));
 vi.mock("~/hooks/useThreadRouteTarget", () => ({ useThreadRouteRef: () => state.threadRef }));
 vi.mock("~/hooks/useSettings", () => ({
@@ -151,8 +153,9 @@ function setup(failedBaseRef: string | null) {
   };
   reset();
   state.diffFilesCollapsed = false;
-  state.project = { workspaceRoot: "/project", repositoryIdentity: null };
+  state.project = { workspaceRoot: "/project", trackedFolders: [], repositoryIdentity: null };
   state.toolCallItem = null;
+  state.taskFolder = Atom.make(AsyncResult.initial());
   state.checkpoints = [];
   state.checkpointDiff = null;
   const patch = Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource, Error>>(
@@ -399,6 +402,24 @@ it("shows a failed repository discovery instead of the workspace diff", async ()
   ).toBeUndefined();
 });
 
+it("preserves a saved tracked repository when its folder list cannot load", async () => {
+  using context = setup(null);
+  state.project.trackedFolders = ["/tracked"];
+  state.taskFolder = Atom.make(AsyncResult.fail(new Error("task folder query failed")));
+  const key = scopedThreadKey(context.threadRef);
+  useDiffPanelStore.getState().selectRepository(context.threadRef, "/tracked/worktree");
+  useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
+  await using screen = await render(
+    <RegistryContext.Provider value={context.registry}>
+      <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(screen.getByText("task folder query failed", { exact: true })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Retry", exact: true })).toBeVisible();
+  expect(useDiffPanelStore.getState().repositoryCwdByThreadKey[key]).toBe("/tracked/worktree");
+  expect(useDiffPanelStore.getState().branchBaseRefByThreadKey[key]).toBe("main");
+});
+
 it("says a turn diff cut off at the server's size limit is incomplete", async () => {
   using context = setup("origin/orphan");
   state.checkpoints = [
@@ -544,7 +565,11 @@ it("opens a file from a tool call's diff by the path its agent recorded", async 
   using context = setup("origin/orphan");
   // A local thread in a project that is the repository's apps/web folder.
   state.thread = { ...state.thread!, worktreePath: null };
-  state.project = { workspaceRoot: "/repo/apps/web", repositoryIdentity: { rootPath: "/repo" } };
+  state.project = {
+    workspaceRoot: "/repo/apps/web",
+    trackedFolders: [],
+    repositoryIdentity: { rootPath: "/repo" },
+  };
   const status = AsyncResult.getOrThrow(context.registry.get(state.status));
   state.status = Atom.make(
     AsyncResult.success({ ...status, workingTree: { ...status.workingTree, rootPath: "/repo" } }),

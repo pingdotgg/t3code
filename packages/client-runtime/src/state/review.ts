@@ -163,6 +163,7 @@ export function createReviewEnvironmentAtoms<R, E>(
           JSON.stringify([
             environmentId,
             input.cwd,
+            input.requireRepositoryRoot === true,
             input.sourceKind,
             input.baseRef,
             input.headRef,

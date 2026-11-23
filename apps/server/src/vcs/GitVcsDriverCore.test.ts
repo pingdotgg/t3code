@@ -3475,6 +3475,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ],
           );
           assert.isFalse(repos.truncated);
+          const fs = yield* FileSystem.FileSystem;
+          yield* git(cwd, ["update-index", "--skip-worktree", ".gitmodules"]);
+          yield* fs.remove(NodePath.join(cwd, ".gitmodules"));
+          assert.deepStrictEqual(
+            (yield* driver.getReviewRepositories({ cwd })).repositories,
+            repos.repositories,
+          );
+          yield* git(cwd, ["update-index", "--no-skip-worktree", ".gitmodules"]);
+          assert.deepStrictEqual((yield* driver.getReviewRepositories({ cwd })).repositories, [
+            repos.repositories[0],
+          ]);
+          yield* git(cwd, ["checkout", "--", ".gitmodules"]);
           yield* git(cwd, [
             "config",
             "-f",
@@ -3523,6 +3535,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.notInclude(parent.diff, "changed auth");
           const auth = (yield* driver.getReviewDiffPreview({
             cwd: child,
+            requireRepositoryRoot: true,
             sourceKind: "working-tree",
           })).sources[0]!;
           assert.include(auth.diff, "+# changed auth");
@@ -3532,10 +3545,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             ["README.md"],
           );
           const file = yield* driver.getReviewDiffFileContents(
-            makeReviewDiffFileContentsInput(child),
+            makeReviewDiffFileContentsInput(child, { requireRepositoryRoot: true }),
           );
           assert.equal(file.newContents, "# changed auth\n");
-          const fs = yield* FileSystem.FileSystem;
           if ((yield* HostProcess.Platform) !== "win32") {
             const locked = NodePath.join(cwd, "locked");
             yield* fs.makeDirectory(locked);
@@ -3562,6 +3574,36 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             (yield* driver.getReviewRepositories({ cwd })).repositories,
             repos.repositories,
           );
+
+          const rootOnly = { cwd: child, requireRepositoryRoot: true } as const;
+          const tracked = yield* driver.getReviewDiffPreview({
+            ...rootOnly,
+            sourceKind: "working-tree",
+            trackedOnly: true,
+          });
+          assert.isDefined(tracked.completionToken);
+          yield* git(cwd, ["submodule", "deinit", "-f", "--", "packages/auth service"]);
+          const stale = yield* driver.getReviewDiffPreview({
+            ...rootOnly,
+            sourceKind: "working-tree",
+            completionToken: tracked.completionToken!,
+          });
+          assert.deepStrictEqual(stale.sources, []);
+          const patch = yield* driver.getReviewDiffPreview({
+            ...rootOnly,
+            file: { path: "README.md", previousPath: null, sourceKind: "working-tree" },
+          });
+          assert.deepStrictEqual(patch.sources, []);
+          assert.deepStrictEqual((yield* driver.getReviewBranchCommits(rootOnly)).commits, []);
+          const contentsError = yield* driver
+            .getReviewDiffFileContents(makeReviewDiffFileContentsInput(child, rootOnly))
+            .pipe(Effect.flip);
+          assert.include(contentsError.detail, "repository root");
+          const nestedWorkspace = yield* driver.getReviewDiffPreview({
+            cwd: child,
+            sourceKind: "working-tree",
+          });
+          assert.include(nestedWorkspace.sources[0]?.diff, "changed parent");
         }),
       ),
     );

@@ -74,16 +74,18 @@ export function useReviewSections(input: {
   const repositories = (repositoriesQuery.data?.repositories ?? []).map((repo) =>
     repo.path ? repo : { ...repo, name: selectedThreadProject?.title || repo.name },
   );
-  const selectedRepository =
-    repositories.find(
-      (repo) =>
-        repositoryChoice?.threadKey === reviewCache.threadKey && repo.cwd === repositoryChoice.cwd,
-    ) ?? repositories[0];
-  // A chosen child stays unresolved while discovery has no answer, so its review never shows the parent.
-  const repositoryUnresolved =
-    repositoryChoice?.threadKey === reviewCache.threadKey &&
-    repositoryChoice.cwd !== selectedThreadCwd &&
-    !repositoriesQuery.data;
+  const requestedCwd =
+    repositoryChoice?.threadKey === reviewCache.threadKey ? repositoryChoice.cwd : undefined;
+  const requestedRepository = repositories.find((repo) => repo.cwd === requestedCwd);
+  const selectedRepository = requestedRepository ?? repositories[0];
+  const repositoryUnavailable =
+    requestedCwd !== undefined && requestedCwd !== selectedThreadCwd && !requestedRepository;
+  const repositoryMissing =
+    repositoryUnavailable && repositoriesQuery.isSuccess && !repositoriesQuery.isPending;
+  if (repositoryMissing) {
+    setRepositoryChoice(null);
+  }
+  const repositoryUnresolved = repositoryUnavailable && !repositoryMissing;
   const reviewCwd = repositoryUnresolved
     ? null
     : selectedRepository?.path
@@ -94,7 +96,11 @@ export function useReviewSections(input: {
     canReadFiles && enabled && environmentId !== undefined && reviewCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: reviewCwd, sourceKind },
+          input: {
+            cwd: reviewCwd,
+            sourceKind,
+            ...(repositoryPath ? { requireRepositoryRoot: true } : {}),
+          },
         })
       : null;
   const workingTreePreview = useEnvironmentQuery(diffPreviewQuery("working-tree"));
@@ -220,7 +226,7 @@ export function useReviewSections(input: {
 
   const selectRepository = (cwd: string) => {
     if (!repositories.some((repo) => repo.cwd === cwd)) return;
-    if (selectedRepository?.cwd === cwd) return;
+    if ((requestedCwd ?? selectedThreadCwd) === cwd) return;
     setRepositoryChoice({ threadKey: reviewCache.threadKey, cwd });
     if (reviewCache.threadKey) setReviewSelectedSectionId(reviewCache.threadKey, null);
   };
