@@ -1027,7 +1027,7 @@ jobs:
   # A nightly install finds updates in releases.atom, which holds the 10 newest git tags of any
   # kind, so a burst of other tags hides every nightly. The `update-feed` release is the fixed URL
   # newer installs also read. Every unpaused scheduled tick and every nightly repairs it, then fails when
-  # the feed's first nightly is not the newest one. See docs/operations/release.md#update-feed.
+  # the feed's first nightly is not the newest one. See docs/operations/03_release.md#update-feed.
   update_feed:
     name: Check the update feed
     needs: [preflight, release]
@@ -1066,7 +1066,7 @@ jobs:
           gh api "repos/$GH_REPO/releases/tags/$RELEASE_TAG" --jq '{tag_name, name, body}' > nightly.json
           gh release view update-feed > /dev/null 2>&1 ||
             gh release create update-feed --prerelease --latest=false --title "Update feed" \
-              --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/release.md."
+              --notes "The desktop updater reads this release to find the newest nightly. Do not delete it. See docs/operations/03_release.md."
           gh release upload update-feed nightly.json --clobber
 
       # Every run, because the pointer can be current while the release's flags are wrong. A draft's
@@ -1090,7 +1090,7 @@ jobs:
             echo "::warning::releases.atom could not be read, so this run did not check it."
             exit 0
           fi
-          echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it, and neither can later builds that do not read the pointer when the feed names an older nightly. A preview from a branch not rebased onto main is the usual cause. See docs/operations/release.md#update-feed."
+          echo "::error::The first nightly in releases.atom is not $RELEASE_TAG. Nightly installs older than 0.1.10-nightly.20261112.4603 cannot reach it, and neither can later builds that do not read the pointer when the feed names an older nightly. A preview from a branch not rebased onto main is the usual cause. See docs/operations/03_release.md#update-feed."
           exit 1
 
   # The `t3` npm package is a launcher that downloads this version's CLI
@@ -1158,7 +1158,7 @@ jobs:
         run: |
           # The ./ keeps npm from reading the path as a GitHub owner/repo spec.
           if ! npm publish --access public --tag "$DIST_TAG" --provenance ./npm-packages/t3.tgz; then
-            echo "::error::npm publish failed. Make sure package t3 has a trusted publisher registered for .github/workflows/release.yml (see docs/operations/release.md)." >&2
+            echo "::error::npm publish failed. Make sure package t3 has a trusted publisher registered for .github/workflows/release.yml (see docs/operations/03_release.md)." >&2
             exit 1
           fi
 
@@ -1177,7 +1177,7 @@ jobs:
   # deployment until deploy_web aliases them, after the GitHub Release. It does
   # still move the project's own *.vercel.app production hostname at build time.
   # That hostname sits behind Vercel SSO and is not a user channel, so the
-  # npm-before-client order in docs/operations/release.md holds for users.
+  # npm-before-client order in docs/operations/03_release.md holds for users.
   build_web:
     name: Build hosted web app
     needs: [preflight, relay_public_config]

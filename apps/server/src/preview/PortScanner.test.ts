@@ -838,35 +838,46 @@ effectIt.effect.each(["linux", "darwin", "win32"] as const)(
 );
 
 effectIt.effect.each([
-  { platform: "linux", renamed: false, retryParent: false },
-  { platform: "darwin", renamed: false, retryParent: false },
-  { platform: "darwin", renamed: true, retryParent: false },
-  { platform: "darwin", renamed: true, retryParent: true },
-  { platform: "darwin", renamed: true, retryParent: "fallback" },
+  { platform: "linux", listener: "direct" },
+  { platform: "darwin", listener: "direct" },
+  // Node's process.title can hide a listener's environment from macOS ps; its parent has it.
+  { platform: "darwin", listener: "renamed" },
+  // ps prints `(node)` for a parent it cannot read yet, so the listener is read again later.
+  { platform: "darwin", listener: "renamed-unreadable-parent" },
 ] as const)(
-  "attributes listeners after the agent exits on $platform (renamed: $renamed, retry parent: $retryParent)",
-  ({ platform, renamed, retryParent }) => {
+  "attributes listeners to the agent thread on $platform ($listener), after the agent exits",
+  ({ platform, listener }) => {
+    const renamed = listener !== "direct";
     const agentPort = 43_124;
     const otherPort = 43_125;
-    const agentListener = `p4242\ncnode\nn127.0.0.1:${agentPort}\n`;
+    // The agent CLI has the thread in its environment too; its own port is not a server.
+    const agentListener =
+      `p4242\ncnode\nn127.0.0.1:${agentPort}\n` + `p4300\ncagy\nn127.0.0.1:43126\n`;
     const otherListener = `p5000\ncpostgres\nn127.0.0.1:${otherPort}\n`;
     let lsofStdout = otherListener;
     let lsofFails = false;
     let environmentFails = false;
     let lsofCalls = 0;
     let environmentReads = 0;
-    let parentReadable = !retryParent;
+    let parentReadable = listener !== "renamed-unreadable-parent";
     const requests: string[] = [];
     const missing = FileSystem.makeNoop({});
     const procEnviron: Record<string, string> = {
       "/proc/4242/environ": `PATH=/usr/bin\0${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
       "/proc/5000/environ": "PATH=/usr/bin\0",
     };
+    const procAgent: Record<string, string> = {
+      "/proc/4242/stat": "4242 (node) S 4300 4300 4300 0",
+      "/proc/4300/environ": `${PortScanner.AGENT_THREAD_ENV}=thread-agent\0`,
+      "/proc/4300/stat": `4300 (agy acp) S ${process.pid} 4300 4300 0`,
+    };
     const layer = layerScanner.pipe(
       Layer.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({
             readFileString: (path) => {
+              const agent = procAgent[path];
+              if (agent !== undefined) return Effect.succeed(agent);
               const content = procEnviron[path];
               if (content === undefined) return missing.readFileString(path);
               environmentReads += 1;
@@ -888,13 +899,13 @@ effectIt.effect.each([
                     )
                   : Effect.succeed(processOutput(lsofStdout));
               }
-              // A direct child of this process, so stop refuses it without signaling anything.
+              // In its agent CLI's process group, so stop refuses it without signaling anything.
               if (input.args[0] === "-A") {
                 return Effect.succeed(
                   processOutput(
                     renamed
-                      ? `4242 4240 4242\n4240 4241 4242\n4241 ${process.pid} 4242\n`
-                      : `4242 ${process.pid} 4242\n`,
+                      ? `4242 4240 4300\n4240 4300 4300\n4300 ${process.pid} 4300\n`
+                      : `4242 4300 4300\n4300 ${process.pid} 4300\n`,
                   ),
                 );
               }
@@ -908,18 +919,23 @@ effectIt.effect.each([
                 );
               }
               environmentReads += 1;
+              if (input.args.includes("pid=,command=")) {
+                return Effect.succeed(
+                  processOutput(
+                    (parentReadable
+                      ? `  4240 node parent.js ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`
+                      : "  4240 (node)\n") +
+                      `  4300 agy acp ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`,
+                  ),
+                );
+              }
               return Effect.succeed(
                 processOutput(
                   (renamed
-                    ? input.args.at(-1)?.split(",").includes("4241")
-                      ? (parentReadable
-                          ? `  4240 node parent.js ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n`
-                          : retryParent === "fallback"
-                            ? "  4240 (node)\n"
-                            : "") + `  4241 shell ${PortScanner.AGENT_THREAD_ENV}=other-thread\n`
-                      : "  4242 renamed-server\n"
-                    : `  4242 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n`) +
-                    "  5000 postgres -D /data PATH=/usr/bin\n",
+                    ? "  4242 4240 renamed-server\n"
+                    : `  4242 4300 node server.js PATH=/usr/bin ${PortScanner.AGENT_THREAD_ENV}=thread-agent HOME=/Users/dev\n`) +
+                    `  4300 ${process.pid} agy acp ${PortScanner.AGENT_THREAD_ENV}=thread-agent\n` +
+                    "  5000     1 postgres -D /data PATH=/usr/bin\n",
                 ),
               );
             },
@@ -958,7 +974,7 @@ effectIt.effect.each([
         expect(yield* scanner.scan()).toEqual([]);
         environmentFails = false;
       }
-      if (retryParent) {
+      if (!parentReadable) {
         expect(yield* scanner.scan()).toEqual([]);
         parentReadable = true;
       }
@@ -968,12 +984,13 @@ effectIt.effect.each([
       expect(requests).toEqual([]);
 
       expect(yield* scanner.scan()).toHaveLength(1);
-      expect(environmentReads).toBe(retryParent ? 5 : renamed ? 3 : 2);
+      const reads = { direct: 2, renamed: 3, "renamed-unreadable-parent": 5 }[listener];
+      expect(environmentReads).toBe(reads);
 
       // Stop reads its target's environment again rather than trust the cache, and still finds it.
       const stop = yield* Effect.flip(scanner.stopServer({ pid: 4242, port: agentPort }));
       expect(stop.reason).toBe("shared-group");
-      expect(environmentReads).toBe(retryParent ? 7 : renamed ? 5 : 3);
+      expect(environmentReads).toBe(reads + (renamed ? 2 : 1));
 
       lsofStdout = otherListener;
       expect(yield* scanner.scan()).toEqual([]);

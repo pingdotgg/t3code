@@ -2,26 +2,29 @@ import type { OpenCodeClient } from "@opencode/client/effect";
 import * as Effect from "effect/Effect";
 
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
-import type { OpenCode2Model } from "./status.ts";
+import { openCodePrice, type OpenCode2Model } from "./status.ts";
 
 // Cold catalogs take seconds; model reads already retry empty catalogs.
 const PROVIDER_NAME_TIMEOUT = "3 seconds";
 
-const listProviders = (client: OpenCodeClient, directory: string) =>
-  client.provider.list({ location: { directory } }).pipe(
+const locationOf = (directory: string | undefined) =>
+  directory === undefined ? {} : { location: { directory } };
+
+const listProviders = (client: OpenCodeClient, directory: string | undefined) =>
+  client.provider.list(locationOf(directory)).pipe(
     Effect.timeout(PROVIDER_NAME_TIMEOUT),
     Effect.map((list) => list.data),
   );
 
 const readCatalog = <E>(
   client: OpenCodeClient,
-  directory: string,
+  directory: string | undefined,
   providers: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly name: string }>, E>,
 ): Effect.Effect<ReadonlyArray<OpenCode2Model>, OpenCodeRuntime.OpenCodeRuntimeError> =>
   Effect.all(
     {
       // Callers bound the read: a busy host can hold it past OpenCode's own activation wait.
-      models: client.model.list({ location: { directory } }).pipe(Effect.map((list) => list.data)),
+      models: client.model.list(locationOf(directory)).pipe(Effect.map((list) => list.data)),
       providers,
     },
     { concurrency: "unbounded" },
@@ -30,6 +33,7 @@ const readCatalog = <E>(
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]));
       return models.map((model) => {
         const providerName = providerNames.get(model.providerID);
+        const baseCost = model.cost.find((cost) => cost.tier === undefined);
         return {
           providerID: model.providerID,
           id: model.id,
@@ -39,6 +43,7 @@ const readCatalog = <E>(
           family: model.family,
           released: model.time.released,
           deprecated: model.status === "deprecated",
+          ...(baseCost ? { price: openCodePrice(baseCost) } : {}),
         };
       });
     }),
@@ -53,7 +58,7 @@ const readCatalog = <E>(
   );
 
 /** Provider names are optional decoration; bound their read so models cannot stall. */
-export const loadOpenCode2Catalog = (client: OpenCodeClient, directory: string) =>
+export const loadOpenCode2Catalog = (client: OpenCodeClient, directory: string | undefined) =>
   readCatalog(
     client,
     directory,
