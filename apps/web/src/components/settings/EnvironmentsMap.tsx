@@ -79,6 +79,7 @@ import { Group, GroupSeparator } from "../ui/group";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Meter } from "../ui/meter";
+import { PanelFrame } from "../ui/panel-frame";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -1302,10 +1303,7 @@ function CodeOnlyNotice({
   const machines = dropped.machineIds.flatMap((id) => byId.get(id) ?? []);
   if (source === undefined || machines.length === 0) return null;
   return (
-    <div
-      role="status"
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 bg-background/50 px-3 py-2 text-meta"
-    >
+    <PanelFrame.Notice role="status">
       <p className="min-w-0 flex-1 basis-64 text-muted-foreground">
         {needsCodeText(machines.length, gt)}
       </p>
@@ -1329,7 +1327,7 @@ function CodeOnlyNotice({
       <Button size="icon-xs" variant="ghost" aria-label={gt("Dismiss")} onClick={onDismiss}>
         <XIcon />
       </Button>
-    </div>
+    </PanelFrame.Notice>
   );
 }
 

@@ -129,6 +129,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { PanelFrame } from "../ui/panel-frame";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
 import { Radio, RadioGroup } from "../ui/radio-group";
 import { ScrollArea } from "../ui/scroll-area";
@@ -218,6 +219,7 @@ export function DesignSystemPage() {
         <BadgesSection />
         <StatusSection />
         <GroupsSection />
+        <PanelsSection />
         <OverlaysSection />
         <PaletteSection />
         <FeedbackSection />
@@ -1152,6 +1154,74 @@ function GroupsSection() {
           Left
           <Separator orientation="vertical" />
           Right
+        </div>
+      </Specimen>
+    </Section>
+  );
+}
+
+/* Panels */
+
+function PanelsSection() {
+  return (
+    <Section
+      id="panels"
+      title="Panels"
+      layer="composed"
+      description="Structured frames for data tables, diffs, maps and inspectors. PanelFrame owns the card surface, radius, toolbar fill, notice strip and hairline dividers."
+    >
+      <Specimen
+        label="Panel frame (default density)"
+        source="<PanelFrame.Root> <Toolbar> <Notice> <Body> <Footer>"
+      >
+        <div className="w-full max-w-xl">
+          <PanelFrame.Root>
+            <PanelFrame.Toolbar className="justify-between">
+              <span className="text-label text-foreground">Diff preview</span>
+              <Button size="xs" variant="secondary">
+                Refresh
+              </Button>
+            </PanelFrame.Toolbar>
+            <PanelFrame.Notice>
+              <span className="min-w-0 flex-1">
+                Showing tracked changes. Checking untracked files…
+              </span>
+              <Button size="xs" variant="secondary">
+                Retry
+              </Button>
+            </PanelFrame.Notice>
+            <PanelFrame.Body>
+              <p className="p-3 text-body text-muted-foreground">
+                Panel body fills the remaining height without painting its own border or radius.
+              </p>
+            </PanelFrame.Body>
+            <PanelFrame.Footer>
+              <span>3 files changed</span>
+              <span>HEAD</span>
+            </PanelFrame.Footer>
+          </PanelFrame.Root>
+        </div>
+      </Specimen>
+      <Specimen label="Panel frame (compact density)" source='<PanelFrame.Root density="compact">'>
+        <div className="w-full max-w-xl">
+          <PanelFrame.Root density="compact">
+            <PanelFrame.Toolbar className="justify-between">
+              <span className="text-meta text-foreground">metrics.csv</span>
+              <span>42 rows</span>
+            </PanelFrame.Toolbar>
+            <PanelFrame.Notice render={<p />}>
+              This preview exceeds the size limit. Changes shown are incomplete.
+            </PanelFrame.Notice>
+            <PanelFrame.Body>
+              <p className="p-3 text-meta text-muted-foreground">
+                Compact density pairs caption notices and tight toolbars for dense panes.
+              </p>
+            </PanelFrame.Body>
+            <PanelFrame.Footer>
+              <span>UTF-8</span>
+              <span>4 columns</span>
+            </PanelFrame.Footer>
+          </PanelFrame.Root>
         </div>
       </Specimen>
     </Section>

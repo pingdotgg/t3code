@@ -22,6 +22,7 @@ const CATALOG_SECTIONS = [
   { id: "badges", label: "Badges and chips" },
   { id: "status", label: "Status and loading" },
   { id: "groups", label: "Groups" },
+  { id: "panels", label: "Panels" },
   { id: "overlays", label: "Menus and overlays" },
   { id: "palette", label: "Command palette" },
   { id: "feedback", label: "Feedback" },

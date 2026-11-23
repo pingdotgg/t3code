@@ -4,6 +4,7 @@ import type { DelimitedColumnKind } from "@t3tools/shared/delimitedPreview";
 import { useClientSettings } from "~/hooks/useSettings";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
+import { PanelFrame } from "~/components/ui/panel-frame";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { PREVIEW_PAGE_ROWS } from "./largeTextProtocol";
 
@@ -161,12 +162,14 @@ export default function VirtualTablePreview(props: {
           style={{ width: tableWidth }}
         >
           {!props.source ? (
-            <div
+            <PanelFrame.Toolbar
               role="row"
-              className="relative z-10 flex min-h-[29px] shrink-0 rounded-t-row border-b border-divider bg-card text-meta/4 text-muted-foreground"
+              flush
+              rounded="top"
+              className="relative z-10 min-h-[29px]"
             >
               <div
-                className="sticky left-0 z-10 shrink-0 rounded-tl-row bg-card"
+                className="sticky left-0 z-10 shrink-0 rounded-tl-row surface-card-fill"
                 style={{ width: rowHeader }}
               />
               <div style={{ width: offset(firstColumn), flexShrink: 0 }} />
@@ -190,7 +193,7 @@ export default function VirtualTablePreview(props: {
                   <TooltipPopup>{props.header?.[column] ?? columnLabel(column)}</TooltipPopup>
                 </Tooltip>
               ))}
-            </div>
+            </PanelFrame.Toolbar>
           ) : null}
           <ScaledRows
             {...props}

@@ -84,6 +84,7 @@ import { DiffViewControls } from "./diffs/DiffViewControls";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
 import { Button, InlineButton } from "./ui/button";
+import { PanelFrame } from "./ui/panel-frame";
 import { Switch } from "./ui/switch";
 import {
   Combobox,
@@ -1513,22 +1514,22 @@ export default function DiffPanel({
             )}
           >
             {preview?.incomplete && (
-              <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
+              <PanelFrame.Notice density="compact" render={<p />}>
                 {selectedPatchError
                   ? gt(
                       "Showing tracked changes. Untracked changes could not be loaded. Refresh to retry.",
                     )
                   : gt("Showing tracked changes. Checking untracked files...")}
-              </p>
+              </PanelFrame.Notice>
             )}
             {isSelectedPatchTruncated && !lazySource && (
-              <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
+              <PanelFrame.Notice density="compact" render={<p />}>
                 {isGitSelection && selectedGitSource?.files && !preview?.incomplete
                   ? gt(
                       "This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.",
                     )
                   : gt("This preview exceeds the size limit. Changes shown are incomplete.")}
-              </p>
+              </PanelFrame.Notice>
             )}
             {selectedPatchError && lazySource ? (
               <p className="shrink-0 px-3 text-caption text-error-foreground">
@@ -1536,7 +1537,7 @@ export default function DiffPanel({
               </p>
             ) : null}
             {omittedToolCallFiles > 0 && (
-              <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
+              <PanelFrame.Notice density="compact" render={<p />}>
                 {gt(
                   "This tool call changed {recorded} files. The recorded patch omits {omitted} of them.",
                   {
@@ -1544,7 +1545,7 @@ export default function DiffPanel({
                     omitted: omittedToolCallFiles,
                   },
                 )}
-              </p>
+              </PanelFrame.Notice>
             )}
             {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-meta">
