@@ -171,6 +171,50 @@ it("keeps a desktop browser's controls above its hosted webview from inside an i
   };
   expect(handle.contains(hit(handle))).toBe(true);
 
+  // Touch: tapping the handle toggles the pill closed, and pressing a pill button keeps it open.
+  using _capture = vi
+    .spyOn(HTMLElement.prototype, "setPointerCapture")
+    .mockImplementation(() => {});
+  const touchTap = async (target: Element) => {
+    const { left, top, width, height } = target.getBoundingClientRect();
+    const init = {
+      pointerId: 7,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      clientX: left + width / 2,
+      clientY: top + height / 2,
+      bubbles: true,
+      cancelable: true,
+    };
+    await act(() => {
+      target.dispatchEvent(new PointerEvent("pointerdown", { ...init, buttons: 1 }));
+      target.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0 }));
+      target.dispatchEvent(new MouseEvent("click", init));
+    });
+  };
+  await touchTap(handle);
+  expect(handle.hasAttribute("data-pill-open")).toBe(true);
+  await touchTap(handle);
+  expect(handle.hasAttribute("data-pill-open")).toBe(false);
+  await touchTap(handle);
+  expect(handle.hasAttribute("data-pill-open")).toBe(true);
+  await act(() =>
+    close.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: 7,
+        pointerType: "touch",
+        isPrimary: true,
+        button: 0,
+        buttons: 1,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  expect(handle.hasAttribute("data-pill-open")).toBe(true);
+  claimPaneFocus.mockClear();
+
   await act(() => (close as HTMLElement).focus());
   expect(close.contains(hit(close))).toBe(true);
   await page.getByRole("button", { name: "Close floating preview" }).click();

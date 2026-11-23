@@ -9,6 +9,13 @@ import {
   trackBrowserSurfaceSlot,
 } from "./browserSurfaceTracking";
 
+const focusReplayOrigins = new WeakMap<Event, EventTarget | null>();
+
+/** Original target of a synthetic `pointerdown` replayed from `aboveWebview` onto its slot. */
+export function browserSurfaceFocusReplayTarget(event: Event): EventTarget | null {
+  return focusReplayOrigins.get(event) ?? null;
+}
+
 /** An ancestor that clips the slot: its pane, the strip, the overview's frame. */
 interface ClipAncestor {
   readonly element: Element;
@@ -232,12 +239,12 @@ export function BrowserSurfaceSlot(props: {
               ref={aboveWebviewRef}
               onPointerDownCapture={(event) => {
                 // Portaled controls claim pane focus through their slot, as guest presses do.
-                slotRef.current?.dispatchEvent(
-                  new PointerEvent("pointerdown", {
-                    bubbles: true,
-                    pointerType: event.pointerType,
-                  }),
-                );
+                const replay = new PointerEvent("pointerdown", {
+                  bubbles: true,
+                  pointerType: event.pointerType,
+                });
+                focusReplayOrigins.set(replay, event.target);
+                slotRef.current?.dispatchEvent(replay);
               }}
               className="pointer-events-none fixed top-0 left-0 origin-top-left"
               style={{ zIndex: zIndex + 1, borderRadius: cornerRadius }}

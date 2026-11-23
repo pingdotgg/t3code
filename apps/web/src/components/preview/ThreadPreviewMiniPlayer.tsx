@@ -19,7 +19,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import { useChatCanvas } from "../chat/ChatCanvasContext";
 import type { ChatCanvasPreview } from "../chat/chatCanvasLayout";
-import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
+import { BrowserSurfaceSlot, browserSurfaceFocusReplayTarget } from "~/browser/BrowserSurfaceSlot";
 import {
   findActiveBrowserRecordingRuntimeTabId,
   useActiveBrowserRecordingTabIds,
@@ -445,7 +445,8 @@ function MiniPlayerShell({
   useEffect(() => {
     if (!pillOpen) return;
     const dismiss = (event: PointerEvent) => {
-      if (event.target instanceof Node && handleRef.current?.contains(event.target)) return;
+      const origin = browserSurfaceFocusReplayTarget(event) ?? event.target;
+      if (origin instanceof Node && handleRef.current?.contains(origin)) return;
       setPillOpen(false);
     };
     document.addEventListener("pointerdown", dismiss, true);
