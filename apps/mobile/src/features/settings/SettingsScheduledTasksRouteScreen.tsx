@@ -45,7 +45,9 @@ import {
   canonicalTimeZone,
   deviceTimeZone,
   scheduleTimeZoneLabel,
+  schedulesDifferFromDevice,
 } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import { AsyncResult, Atom } from "effect/reactivity";
 import type { MessageResolver } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
 import { useFocusEffect, useNavigation, usePreventRemove } from "@react-navigation/native";
@@ -537,6 +539,19 @@ export function SettingsScheduledTasksRouteScreen() {
 
 const zoneName = (zone: string) => zone.replaceAll("_", " ");
 
+// The zone each environment reports its schedules in, keyed by newline-joined environment ids.
+const scheduleZonesAtom = Atom.family((key: string) =>
+  Atom.make((get) =>
+    (key === "" ? [] : (key.split("\n") as EnvironmentId[])).map(
+      (environmentId) =>
+        AsyncResult.getOrElse(
+          get(serverEnvironment.scheduledTasksLive({ environmentId, input: {} })),
+          () => null,
+        )?.timeZone,
+    ),
+  ),
+);
+
 /** Daily and weekly tasks on every connected environment follow this zone, whatever the filter. */
 function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly SettingsTarget[] }) {
   const gt = useGT();
@@ -545,6 +560,9 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
   const scoped = resolveMobileSettingsTargets(targets, null);
   const saved = uniformMobileSetting(scoped, "scheduledTaskTimeZone");
   const device = deviceTimeZone();
+  const scheduleZones = useAtomValue(
+    scheduleZonesAtom(targets.map((target) => target.environmentId).join("\n")),
+  );
   const machine = gt("Each machine's time zone");
   const canWrite = targets.some((target) => writable.has(target.environmentId));
   const description = gt(
@@ -562,7 +580,7 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
   return (
     <SettingsSection
       footer={
-        saved !== null && saved !== "" && canonicalTimeZone(saved) !== canonicalTimeZone(device)
+        canWrite && schedulesDifferFromDevice(scheduleZones, device)
           ? gt("{description} This device is in {zone}.", { description, zone: zoneName(device) })
           : description
       }
@@ -576,7 +594,10 @@ function ScheduleTimeZoneSection({ targets }: { readonly targets: readonly Setti
                 {
                   id: "device",
                   title: gt("Use {zone}", { zone: zoneName(device) }),
-                  state: saved === device ? "on" : undefined,
+                  state:
+                    saved && canonicalTimeZone(saved) === canonicalTimeZone(device)
+                      ? "on"
+                      : undefined,
                 },
                 { id: "machine", title: machine, state: saved === "" ? "on" : undefined },
               ]
