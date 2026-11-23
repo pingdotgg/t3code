@@ -136,6 +136,9 @@ pub(crate) struct ConnApp {
     seam_drag: Option<SeamDrag>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
+    /// The live `subscribeServerConfig` projection: the provider catalog the composer, the model
+    /// picker, the status banner and the Providers settings page read.
+    server_config: std::sync::Arc<conn_state::providers::ServerConfigState>,
     overlay_subscriptions: Vec<gpui_kit::Subscription>,
     /// What had the keyboard before the palette or Settings opened; it gets it back on close.
     focus_before_overlay: Option<FocusHandle>,
@@ -335,11 +338,8 @@ impl ConnApp {
                 }
                 crate::chat::ChatEvent::DraftStartScratch => app.start_draft_scratch(cx),
                 crate::chat::ChatEvent::DraftAddProject => app.add_project_via_picker(window, cx),
-                crate::chat::ChatEvent::ScratchWorkspaceRoot(root) => {
-                    if app.scratch_workspace_root != *root {
-                        app.scratch_workspace_root = root.clone();
-                        app.sync_chat(cx);
-                    }
+                crate::chat::ChatEvent::OpenProviderSetup(instance_id) => {
+                    app.open_provider_setup(instance_id, window, cx);
                 }
                 crate::chat::ChatEvent::StartNewThread => {
                     app.start_new_thread(None, Some(window), cx);
@@ -464,6 +464,7 @@ impl ConnApp {
             seam_drag: None,
             command_palette: None,
             settings_modal: None,
+            server_config: std::sync::Arc::default(),
             overlay_subscriptions: Vec::new(),
             focus_before_overlay: None,
             sidebar_search_input,
@@ -729,6 +730,7 @@ impl ConnApp {
         );
         self.overlay_subscriptions.push(sub);
         self.settings_modal = Some(modal);
+        self.push_server_config(cx);
         self.sync_browser_visibility(cx);
         cx.notify();
     }
@@ -1030,7 +1032,6 @@ impl ConnApp {
                 }
                 if matches!(status, ConnectionStatus::Connected) {
                     self.orbit.connecting_server_id = None;
-                    self.chat.update(cx, |chat, cx| chat.refresh_providers(cx));
                 }
                 self.status = Some(status);
             }
@@ -1104,6 +1105,7 @@ impl ConnApp {
                     );
                 }
             }
+            ClientEvent::ServerConfig(event) => self.apply_server_config_event(*event, cx),
             ClientEvent::PanelRequest(request) => {
                 self.dispatch_agent_panel_request(request, cx);
             }
@@ -1116,6 +1118,15 @@ impl ConnApp {
                 }
             }
             ClientEvent::StreamEnded { tag, key, error } => {
+                if tag == "subscribeServerConfig" {
+                    // A stream that ends cleanly is asked for again. One that fails stays down:
+                    // a server without the method would fail again at once.
+                    match (&error, &self.connection) {
+                        (None, Some(connection)) => connection.subscribe_server_config(),
+                        (Some(error), _) => eprintln!("server config stream ended: {error}"),
+                        (None, None) => {}
+                    }
+                }
                 if tag == "orchestration.subscribeThread" && self.threads.contains_key(&key) {
                     if let Some(error) = error {
                         eprintln!("thread stream {key} ended: {error}");
@@ -1124,6 +1135,54 @@ impl ConnApp {
                     self.resubscribe_ended_threads();
                 }
             }
+        }
+    }
+
+    /// Applies one `subscribeServerConfig` event and hands the new catalog to every reader.
+    fn apply_server_config_event(
+        &mut self,
+        event: conn_contract::ServerConfigStreamEvent,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let change = std::sync::Arc::make_mut(&mut self.server_config).apply(event);
+        if change.config_changed {
+            let root = self
+                .server_config
+                .scratch_workspace_root()
+                .map(str::to_owned);
+            if self.scratch_workspace_root != root {
+                self.scratch_workspace_root = root;
+                self.sync_chat(cx);
+            }
+        }
+        if change.any() {
+            self.push_server_config(cx);
+        }
+    }
+
+    /// Gives the chat and an open Settings window the current server config.
+    fn push_server_config(&mut self, cx: &mut Context<'_, Self>) {
+        let config = std::sync::Arc::clone(&self.server_config);
+        self.chat.update(cx, |chat, cx| {
+            chat.set_server_config(std::sync::Arc::clone(&config), cx)
+        });
+        if let Some(modal) = &self.settings_modal {
+            modal.update(cx, |modal, cx| modal.set_server_config(config, cx));
+        }
+        cx.notify();
+    }
+
+    /// `Open provider setup`: Settings on the Providers page, on `instance_id`.
+    pub(crate) fn open_provider_setup(
+        &mut self,
+        instance_id: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.open_settings_page(Some(crate::settings::SettingsPage::Providers), window, cx);
+        if let Some(modal) = &self.settings_modal {
+            let instance_id = instance_id.to_owned();
+            modal.update(cx, |modal, cx| modal.focus_provider(instance_id, cx));
         }
     }
 
@@ -5533,6 +5592,7 @@ impl ConnApp {
         self.orbit.notice = None;
 
         self.shell = ShellState::default();
+        self.server_config = std::sync::Arc::default();
         self.threads.clear();
         self.ended_threads.clear();
         self.subscribed_thread_id = None;
@@ -5547,14 +5607,18 @@ impl ConnApp {
 
         let (connection, events) = Connection::start(config, crate::live::RT.handle());
         connection.subscribe_shell();
+        connection.subscribe_server_config();
         connection.subscribe_panel_requests(Some(self.device_name()));
         Self::pump_events(generation, orbit_server_id, events, cx);
 
         self.connection = Some(connection.clone());
+        let environment_key = self.server_url.clone();
         self.chat.update(cx, |chat, cx| {
             chat.set_error(None, cx);
+            chat.set_environment_key(environment_key);
             chat.set_connection(Some(connection.clone()), cx);
         });
+        self.push_server_config(cx);
         self.right_panel
             .update(cx, |panel, cx| panel.set_connection(Some(connection), cx));
         self.sync_chat(cx);

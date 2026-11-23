@@ -16,6 +16,7 @@ pub(crate) use self::composer_state::{
 mod draft_hero;
 mod icons;
 pub(crate) mod markdown;
+mod provider_banner;
 mod question_logic;
 mod question_panel;
 mod spinner;
@@ -159,8 +160,8 @@ pub(crate) enum ChatEvent {
     DraftStartScratch,
     /// `Add project` from the draft project combobox.
     DraftAddProject,
-    /// The server's `scratchWorkspaceRoot` from `server.getConfig`.
-    ScratchWorkspaceRoot(Option<String>),
+    /// `Open provider setup` for an instance (the status banner, the model picker).
+    OpenProviderSetup(String),
     /// Start a new thread from the empty state CTA.
     StartNewThread,
     /// Open Settings → Connections from the empty/offline state.
@@ -194,6 +195,13 @@ pub(crate) struct ChatView {
     draft: Option<DraftViewInfo>,
     hero: draft_hero::DraftHeroState,
     error_banner: Option<String>,
+    /// The live provider catalog the status banner reads.
+    server_config: std::sync::Arc<conn_state::providers::ServerConfigState>,
+    /// Scopes banner dismissals to one environment.
+    environment_key: Option<String>,
+    /// Banner keys the user dismissed this session.
+    dismissed_provider_banners: HashSet<String>,
+    provider_refreshing: bool,
     thread_id: Option<String>,
     thread_title: Option<String>,
     synchronized: bool,
@@ -379,8 +387,8 @@ impl ChatView {
                 ComposerEvent::SlashCommand(command) => {
                     cx.emit(ChatEvent::SlashCommand(command.clone()));
                 }
-                ComposerEvent::ScratchWorkspaceRoot(root) => {
-                    cx.emit(ChatEvent::ScratchWorkspaceRoot(root.clone()));
+                ComposerEvent::OpenProviderSetup(instance_id) => {
+                    cx.emit(ChatEvent::OpenProviderSetup(instance_id.clone()));
                 }
             },
         );
@@ -394,6 +402,10 @@ impl ChatView {
             draft: None,
             hero,
             error_banner: None,
+            server_config: std::sync::Arc::default(),
+            environment_key: None,
+            dismissed_provider_banners: HashSet::new(),
+            provider_refreshing: false,
             thread_id: None,
             thread_title: None,
             synchronized: true,
@@ -475,11 +487,6 @@ impl ChatView {
     #[cfg(test)]
     pub(crate) fn composer_for_test(&self) -> Entity<Composer> {
         self.composer.clone()
-    }
-
-    /// Re-fetches provider/model options from `server.getConfig` (e.g. once WS connects).
-    pub(crate) fn refresh_providers(&mut self, cx: &mut Context<'_, Self>) {
-        self.composer.update(cx, |c, cx| c.refresh_providers(cx));
     }
 
     /// Returns the composer's currently resolved `(instance_id, model_slug, options)` selection.
@@ -3150,6 +3157,7 @@ impl Render for ChatView {
             container.into_any_element()
         };
 
+        let provider_banner = self.render_provider_banner(cx);
         let question_banner = self.render_question_banner(window, cx);
         let banner_docked = question_banner.is_some();
         self.composer
@@ -3178,8 +3186,23 @@ impl Render for ChatView {
             .size_full()
             .min_h_0()
             .min_w_0()
+            .relative()
             .child(timeline)
             .child(composer_lane)
+            .when_some(provider_banner, |root, banner| {
+                root.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .flex()
+                        .justify_center()
+                        .px(px(CHAT_LANE_PADDING_X_PX))
+                        .pt(px(12.0))
+                        .child(banner),
+                )
+            })
     }
 }
 

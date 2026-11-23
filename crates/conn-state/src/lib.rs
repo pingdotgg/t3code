@@ -14,6 +14,8 @@
 mod annotations;
 mod drafts;
 mod layout;
+pub mod provider_auth;
+pub mod providers;
 mod scheduled;
 mod shell;
 mod sidebar;
