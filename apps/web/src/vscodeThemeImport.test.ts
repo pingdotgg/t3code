@@ -468,6 +468,35 @@ describe("VS Code theme import", () => {
     expect(getThemeColorsForMode(themes[2]!, "light")).toBeNull();
   });
 
+  it.each([
+    { name: "shared", light: "a {}", dark: "a {}", expected: [["Aurora", "a {}"]] },
+    { name: "light-only", light: "a {}", dark: undefined, expected: [["Aurora", "a {}"]] },
+    { name: "dark-only", light: undefined, dark: "a {}", expected: [["Aurora", "a {}"]] },
+    {
+      name: "conflicting",
+      light: "a {}",
+      dark: "b {}",
+      expected: [
+        ["Aurora Light", "a {}"],
+        ["Aurora Dark", "b {}"],
+      ],
+    },
+  ])("pairs light and dark halves with $name custom CSS", ({ light, dark, expected }) => {
+    const themes = pairVsCodeThemes(
+      (["light", "dark"] as const).map((appearance) => {
+        const css = appearance === "light" ? light : dark;
+        return parseThemeFile({
+          version: THEME_FILE_VERSION,
+          name: `Aurora ${appearance === "light" ? "Light" : "Dark"}`,
+          appearance,
+          colors: { canvas: appearance === "light" ? "#fafafa" : "#101014" },
+          ...(css ? { css } : {}),
+        });
+      }),
+    );
+    expect(themes.map((theme) => [theme.label, theme.css])).toEqual(expected);
+  });
+
   it("does not guess when a family is ambiguous", () => {
     const make = (name: string, type: "light" | "dark") =>
       parseVsCodeThemeFile({
@@ -485,22 +514,122 @@ describe("VS Code theme import", () => {
 
   it("tells same-named variants apart by their file names", () => {
     // Both Dracula theme files declare the same internal name.
-    const dracula = (bg: string) =>
-      parseVsCodeThemeFile({
+    const css = ".app { outline: 1px solid red; }";
+    const dracula = (bg: string) => ({
+      ...parseVsCodeThemeFile({
         name: "Dracula",
         type: "dark",
         colors: { "editor.background": bg, "editor.foreground": "#f8f8f2" },
-      });
+      }),
+      css,
+    });
     const themes = resolveThemeLabelCollisions([
       { theme: dracula("#282a36"), sourceName: "dracula.json" },
       { theme: dracula("#22232e"), sourceName: "dracula-soft.json" },
     ]);
     expect(themes.map((theme) => theme.label)).toEqual(["Dracula", "Dracula Soft"]);
     expect(themes.map((theme) => theme.id)).toEqual(["dracula", "dracula-soft"]);
+    expect(themes.map((theme) => theme.css)).toEqual([css, css]);
     const numbered = resolveThemeLabelCollisions([
       { theme: dracula("#282a36") },
       { theme: dracula("#22232e") },
     ]);
     expect(numbered.map((theme) => theme.label)).toEqual(["Dracula", "Dracula 2"]);
+    expect(numbered.map((theme) => theme.css)).toEqual([css, css]);
+  });
+
+  const darkVsCodeTheme = (name: string, background: string) =>
+    parseVsCodeThemeFile({
+      name,
+      type: "dark",
+      colors: { "editor.background": background, "editor.foreground": "#cdd6f4" },
+    });
+
+  it("keeps both digits of a suffix when a one-digit suffix just fits", () => {
+    const name = "GitHub Dark High Contrast Deuteranopia Preview";
+    const backgrounds = [
+      "#1e1e2e",
+      "#25203b",
+      "#152a26",
+      "#181825",
+      "#11111b",
+      "#232136",
+      "#101014",
+      "#24273a",
+      "#282a36",
+      "#22232e",
+    ];
+    const themes = resolveThemeLabelCollisions(
+      backgrounds.map((background) => ({ theme: darkVsCodeTheme(name, background) })),
+    );
+    expect(themes.map((theme) => theme.label)).toEqual([
+      name,
+      ...Array.from({ length: 8 }, (_, index) => `${name} ${index + 2}`),
+      "GitHub Dark High Contrast Deuteranopia Previe 10",
+    ]);
+    expect(new Set(themes.map((theme) => theme.id)).size).toBe(backgrounds.length);
+  });
+
+  it.each([
+    {
+      name: "Catppuccin Mocha High Contrast Accessible v2 🌙",
+      numberedBase: "Catppuccin Mocha High Contrast Accessible v2",
+    },
+    {
+      name: "İstanbul İncisi İzmir İskenderun İnegöl İpsala",
+      numberedBase: "İstanbul İncisi İzmir İskenderun İnegöl İ",
+    },
+  ])("keeps all numbered variants of $name", ({ name, numberedBase }) => {
+    const themes = resolveThemeLabelCollisions(
+      ["#1e1e2e", "#25203b", "#152a26"].map((background) => ({
+        theme: darkVsCodeTheme(name, background),
+      })),
+    );
+    expect(themes.map((theme) => theme.label)).toEqual([
+      name,
+      `${numberedBase} 2`,
+      `${numberedBase} 3`,
+    ]);
+    expect(new Set(themes.map((theme) => theme.id)).size).toBe(3);
+  });
+
+  it("does not take the ID of a later theme already named with that number", () => {
+    const name = "Catppuccin Mocha High Contrast Accessible Themes";
+    const numberedBase = "Catppuccin Mocha High Contrast Accessible Them";
+    const duplicates = ["#1e1e2e", "#25203b"].map((background) => ({
+      theme: darkVsCodeTheme(name, background),
+    }));
+    const peer = { theme: darkVsCodeTheme(`${numberedBase} 2`, "#152a26") };
+    const themes = resolveThemeLabelCollisions([...duplicates, peer]);
+    expect(themes.map(({ label }) => label)).toEqual([
+      name,
+      `${numberedBase} 3`,
+      `${numberedBase} 2`,
+    ]);
+    expect(themes.find(({ id }) => id === peer.theme.id)?.colors.canvas).toBe(
+      peer.theme.colors.canvas,
+    );
+  });
+
+  it("makes the appended number reach the ID when the name already contains that number", () => {
+    const name = "İzmir İzmit İznik İğdır İdil İspir İncir 2 Ö";
+    const themes = resolveThemeLabelCollisions(
+      ["#1e1e2e", "#25203b"].map((canvas) => ({
+        theme: parseThemeFile({
+          version: THEME_FILE_VERSION,
+          id: "izmir-nightfall",
+          name,
+          appearance: "dark",
+          colors: { canvas },
+        }),
+      })),
+    );
+    expect(themes.map(({ label, id }) => [label, id])).toEqual([
+      [name, "izmir-nightfall"],
+      [
+        "İzmir İzmit İznik İğdır İdil İspir İncir 2",
+        "i-zmir-i-zmit-i-znik-i-d-r-i-dil-i-spir-i-ncir-2",
+      ],
+    ]);
   });
 });
