@@ -26,11 +26,13 @@ const childCode = `
 const launcherCode = `
   import { spawn } from "node:child_process";
   import { once } from "node:events";
+  import { unlink } from "node:fs/promises";
   const [moduleUrl, appDataDirectory, stateDir, childCode] = process.argv.slice(1);
   const { make } = await import(moduleUrl);
   const recovery = make({
     appDataDirectory,
     stateDir,
+    launcherPid: process.pid,
     onRecovery: () => {},
     onError: (operation, error) => { throw new Error(operation, { cause: error }); },
   });
@@ -39,14 +41,14 @@ const launcherCode = `
     detached: true,
   });
   await once(backend, "spawn");
-  const forget = await recovery.track(backend.pid);
-  if (!forget) throw new Error("Backend fixture was not recorded");
+  const record = await recovery.track(backend.pid);
+  if (!record) throw new Error("Backend fixture was not recorded");
   const listening = once(backend, "message");
   backend.send("start");
   const [port] = await listening;
   process.send({ pid: backend.pid, port });
   await once(backend, "exit");
-  await forget();
+  await unlink(record);
 `;
 
 async function spawnTrackedBackend(
@@ -115,6 +117,7 @@ describe.runIf(NodeProcess.platform === "darwin")("macOS desktop backend recover
     const recovery = make({
       appDataDirectory: stateDir,
       stateDir,
+      launcherPid: NodeProcess.pid,
       onRecovery: (pid) => recovered.push(pid),
       onError: (_, error) => errors.push(error),
     });
@@ -155,6 +158,7 @@ describe.runIf(NodeProcess.platform === "darwin")("macOS desktop backend recover
     const recovery = make({
       appDataDirectory,
       stateDir,
+      launcherPid: NodeProcess.pid,
       onRecovery: (pid) => recovered.push(pid),
       onError: (_, error) => errors.push(error),
     });
@@ -171,6 +175,7 @@ describe.runIf(NodeProcess.platform === "darwin")("macOS desktop backend recover
     const otherHome = make({
       appDataDirectory,
       stateDir: NodePath.join(stateDir, "other"),
+      launcherPid: NodeProcess.pid,
       onRecovery: (pid) => recovered.push(pid),
       onError: (_, error) => errors.push(error),
     });

@@ -135,10 +135,10 @@ async function waitForExit(
 async function recoverRecord(
   native: MacProcessAuditToken,
   record: RecoveryRecord,
-  options: { signal: AbortSignal; onRecovery: (pid: number) => void },
+  options: { launcherPid: number; signal: AbortSignal; onRecovery: (pid: number) => void },
 ): Promise<boolean> {
   const backendPid = auditTokenPid(record.backend);
-  if (backendPid === NodeProcess.pid) return false;
+  if (backendPid === options.launcherPid) return false;
   // The launch record already binds the executable. Its vnode may be gone after
   // a volume disconnect, but the kernel still knows the recorded audit token.
   const ownsOrphan = () =>
@@ -182,6 +182,8 @@ async function canonicalHome(path: string): Promise<string> {
 export function make(input: {
   readonly appDataDirectory: string;
   readonly stateDir: string;
+  /** The desktop main process; this module runs in a helper so native calls stay off main. */
+  readonly launcherPid: number;
   readonly onRecovery: (pid: number) => void;
   readonly onError: (operation: string, error: unknown) => void;
 }) {
@@ -205,20 +207,21 @@ export function make(input: {
   };
 
   return {
-    async track(backendPid: number): Promise<(() => Promise<void>) | undefined> {
+    /** Returns the record path, which the launcher removes after observing the backend exit. */
+    async track(backendPid: number): Promise<string | undefined> {
       try {
         const [native, bootId, { prefix, executable }] = await Promise.all([
           loadMacProcessAuditToken(),
           readBootId(),
           scope(),
         ]);
-        const launcher = native.read(NodeProcess.pid);
+        const launcher = native.read(input.launcherPid);
         const backend = native.read(backendPid);
         // A token and executable alone do not prove this desktop actually spawned this process.
         if (
           launcher === undefined ||
           backend === undefined ||
-          native.parent(backendPid) !== NodeProcess.pid ||
+          native.parent(backendPid) !== input.launcherPid ||
           native.executable(backendPid) !== executable ||
           native.read(backendPid) !== backend
         ) {
@@ -243,11 +246,7 @@ export function make(input: {
             JSON.stringify({ version: 1, bootId, scope: prefix, launcher, backend }),
           );
         }
-        return async () => {
-          await NodeFSP.unlink(path).catch((error) => {
-            if (!isErrorCode(error, "ENOENT")) input.onError("forget backend", error);
-          });
-        };
+        return path;
       } catch (error) {
         input.onError("record backend", error);
         return undefined;
@@ -274,6 +273,7 @@ export function make(input: {
                   record.scope === prefix &&
                   (record.bootId !== bootId ||
                     (await recoverRecord(native, record, {
+                      launcherPid: input.launcherPid,
                       signal,
                       onRecovery: input.onRecovery,
                     }))))

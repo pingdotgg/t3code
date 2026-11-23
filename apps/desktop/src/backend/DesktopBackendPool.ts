@@ -24,7 +24,7 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
-import * as DesktopBackendRecovery from "./DesktopBackendRecovery.ts";
+import * as DesktopBackendRecoveryProcess from "./DesktopBackendRecoveryProcess.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
@@ -45,7 +45,7 @@ const makeRecovery = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   if (environment.platform !== "darwin" || !environment.isPackaged) return undefined;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
-  return DesktopBackendRecovery.make({
+  return DesktopBackendRecoveryProcess.make({
     appDataDirectory: environment.appDataDirectory,
     stateDir: environment.stateDir,
     onRecovery: (pid) =>
