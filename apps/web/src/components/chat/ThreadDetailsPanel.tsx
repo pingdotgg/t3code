@@ -12,6 +12,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 
 import type { ComposerThreadTarget, DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
+import { useWorktreeRepositoryChoices } from "../../hooks/useWorktreeRepositoryChoices";
 import { type EnvMode, type EnvironmentOption } from "../BranchToolbar.logic";
 import { BranchToolbar } from "../BranchToolbar";
 import GitActionsControl from "../GitActionsControl";
@@ -107,6 +108,9 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.projectId));
   const serverConfig = useServerConfigs().get(props.environmentId);
   const tracksFolders = (project?.trackedFolders?.length ?? 0) > 0;
+  const worktreeRepositoryChoices = useWorktreeRepositoryChoices(project);
+  // Same rule as the composer's workspace picker, so the two never disagree.
+  const offersWorkspaceModes = props.isGitRepo || worktreeRepositoryChoices.tracksGitRepositories;
   // A worktree thread reaches tracked repositories only through its own task folder.
   const taskFolderQuery = useEnvironmentQuery(
     // Asked whatever the project tracks now: a thread keeps its task folder when that changes.
@@ -220,6 +224,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         autoEnvironmentLabel={props.autoEnvironmentLabel}
                         onAutoEnvironment={props.onAutoEnvironment}
                         {...branchToolbarProps}
+                        showGitControls={offersWorkspaceModes}
                       />
                     ) : null}
 

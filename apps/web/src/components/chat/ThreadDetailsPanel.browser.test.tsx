@@ -125,7 +125,14 @@ function setup(input: {
   };
 }
 
-function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
+function Panel({
+  fixture,
+  draftEnvMode,
+}: {
+  fixture: ReturnType<typeof setup>;
+  /** Renders an unsent draft in this mode instead of a started thread. */
+  draftEnvMode?: "local" | "worktree";
+}) {
   const noop = () => {};
   const scriptResult = async () => ({ ok: true }) as never;
   return (
@@ -149,8 +156,8 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         threadId={threadRef.threadId}
         projectId={ProjectId.make("project")}
         composerDraftTarget={threadRef}
-        worktreePath={state.folder}
-        isServerThread
+        worktreePath={draftEnvMode === undefined ? state.folder : null}
+        isServerThread={draftEnvMode === undefined}
         activeProjectName={state.workspaceRoot === SCRATCH_ROOT ? "No project" : "plain"}
         activeProjectScripts={undefined}
         preferredScriptId={null}
@@ -161,10 +168,10 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         gitCwd={state.folder}
         workspaceMutationId={null}
         isGitRepo={false}
-        envLocked
+        envLocked={draftEnvMode === undefined}
         availableEnvironments={[]}
         onEnvModeChange={noop}
-        envMode="local"
+        envMode={draftEnvMode ?? "local"}
         startFromOrigin={false}
         onStartFromOriginChange={noop}
         onComposerFocusRequest={noop}
@@ -189,6 +196,13 @@ it("offers no git controls in a No project thread, but shows its linked pull req
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();
+});
+
+it("offers no New worktree to a No project draft whose default is New worktree", async () => {
+  using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
+  await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
+  await expect.element(page.getByLabelText("Run context: Current checkout")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /Run context/ })).not.toBeInTheDocument();
 });
 
 it("shows a linked pull request in a folder that is not a git repository", async () => {
