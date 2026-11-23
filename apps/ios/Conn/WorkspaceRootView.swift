@@ -129,6 +129,28 @@ struct WorkspaceRootView: View {
             SettingsRootSheet(store: store)
                 .presentationDetents([.large])
         }
+        .onAppear {
+            showPendingLink()
+            store.isInboxVisible = inboxOnScreen
+        }
+        .onDisappear { store.isInboxVisible = false }
+        .onChange(of: inboxOnScreen) { _, visible in store.isInboxVisible = visible }
+        .onChange(of: store.pendingLink) { _, _ in showPendingLink() }
+    }
+
+    /// The thread list is what the user sees: no thread pushed, no sheet, not searching.
+    private var inboxOnScreen: Bool {
+        navigationPath.isEmpty && selectedTab == .threads && !showingSettings && !isSearching
+    }
+
+    /// Shows a thread from a `conn://thread/...` URL or a push tap.
+    private func showPendingLink() {
+        guard let link = store.consumePendingLink() else { return }
+        showingSettings = false
+        isSearching = false
+        searchQuery = ""
+        selectedTab = .threads
+        navigationPath = [.thread(link.threadId)]
     }
 }
 

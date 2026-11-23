@@ -31,6 +31,11 @@ targets:
         embed: false
       - sdk: Security.framework
       - sdk: CoreFoundation.framework
+    entitlements:
+      path: Conn/Conn.entitlements
+      properties:
+        # Nick's installs are Apple Development builds, so APNs gives them sandbox tokens.
+        aps-environment: development
     info:
       path: Conn/Info.plist
       properties:
@@ -45,6 +50,10 @@ targets:
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
           NSAllowsLocalNetworking: true
+        # conn://thread/<environment>/<thread> opens a thread; push taps use the same route.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.nckrtl.conn.ios
+            CFBundleURLSchemes: [conn]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nckrtl.conn.ios

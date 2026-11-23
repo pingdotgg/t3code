@@ -31,6 +31,19 @@ enum KeychainStore {
         delete(account: bearerTokenAccount)
     }
 
+    private static let pushDeviceIdAccount = "push-device-id"
+
+    /// A stable UUID that names this install to the Orbit Gateway's push registry. It survives
+    /// sign-out, so a later registration replaces the same device row.
+    static func pushDeviceId() -> String {
+        if let existing = read(account: pushDeviceIdAccount), !existing.isEmpty {
+            return existing
+        }
+        let created = UUID().uuidString.lowercased()
+        write(created, account: pushDeviceIdAccount)
+        return created
+    }
+
     private static func read(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

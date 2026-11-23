@@ -3,11 +3,17 @@ import SwiftUI
 
 @main
 struct ConnApp: App {
-    @State private var store = CoreStore()
+    @UIApplicationDelegateAdaptor(ConnAppDelegate.self) private var appDelegate
+    @State private var store: CoreStore
+    @State private var push = PushRegistration.shared
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
         ConnSymbols.install()
+        let store = CoreStore()
+        _store = State(initialValue: store)
+        // Push taps can arrive at launch, before the first view appears.
+        ConnAppDelegate.store = store
     }
 
     var body: some Scene {
@@ -24,6 +30,20 @@ struct ConnApp: App {
             .kitAppearance()
             .onChange(of: scenePhase) { _, newPhase in
                 store.handleScenePhase(newPhase)
+            }
+            .onOpenURL { url in
+                if let link = ThreadLink(url: url) {
+                    store.open(link)
+                }
+            }
+            .task {
+                await push.start()
+            }
+            .sheet(isPresented: $push.showsExplainer) {
+                PushExplainerSheet(
+                    onTurnOn: { push.acceptExplainer() },
+                    onNotNow: { push.declineExplainer() }
+                )
             }
         }
     }
