@@ -103,6 +103,17 @@ describe("compareMetrics", () => {
     expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
   });
 
+  it("compares the unequal run counts an ab that stopped early leaves", () => {
+    const steady = cpuRuns(26.1, 27.4, 25.8);
+    const partial = compareMetrics(steady, cpuRuns(2.2, 2.5), 10, gatedRules);
+    expect(partial.improved).toContain("quiet.cpuPct");
+    expect(partial.table).toContain("(3 runs), after `abc` (2 runs)");
+    const single = compareMetrics(steady, cpuRuns(2.2), 10, gatedRules);
+    expect(single.improved).toContain("quiet.cpuPct");
+    expect(single.table).toContain("| quiet.cpuPct | 26.1 | 2.2 | -92% |  | better |");
+    expect(compareMetrics(steady, cpuRuns(), 10, gatedRules).compared).toBe(0);
+  });
+
   it("reads a file written before loop delay and GC were recorded", () => {
     const older = decodeMetrics({
       meta,

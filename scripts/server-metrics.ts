@@ -2376,19 +2376,36 @@ const abCommand = Command.make(
       yield* withSeed(unseeded[1], input),
     ] as const;
     const runs: [Measured[], Measured[]] = [[], []];
-    for (let round = 0; round < input.rounds; round++) {
-      // A B, then B A, so a drift in machine load lands on both sides.
-      for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
-        yield* Console.error(`round ${round + 1}/${input.rounds}: ${side === 0 ? "A" : "B"}`);
-        runs[side].push((yield* runOnce(sides[side])).measured);
+    // Written up front and after every run, so a failure keeps the finished runs and never leaves
+    // them beside an older file. compare takes unequal run counts.
+    const save = Effect.gen(function* () {
+      const loadAfter = yield* machineLoad;
+      const files = [
+        { meta: { ...metas[0], loadAfter }, runs: runs[0] },
+        { meta: { ...metas[1], loadAfter }, runs: runs[1] },
+      ] as const satisfies readonly [ServerMetrics, ServerMetrics];
+      yield* writeMetrics(Option.some(path.join(outDir, "a.json")), files[0]);
+      yield* writeMetrics(Option.some(path.join(outDir, "b.json")), files[1]);
+      return files;
+    });
+    let saved = yield* save;
+    yield* Effect.gen(function* () {
+      for (let round = 0; round < input.rounds; round++) {
+        // A B, then B A, so a drift in machine load lands on both sides.
+        for (const side of round % 2 === 0 ? ([0, 1] as const) : ([1, 0] as const)) {
+          yield* Console.error(`round ${round + 1}/${input.rounds}: ${side === 0 ? "A" : "B"}`);
+          runs[side].push((yield* runOnce(sides[side])).measured);
+          saved = yield* save;
+        }
       }
-    }
-    const loadAfter = yield* machineLoad;
-    const before: ServerMetrics = { meta: { ...metas[0], loadAfter }, runs: runs[0] };
-    const after: ServerMetrics = { meta: { ...metas[1], loadAfter }, runs: runs[1] };
-    yield* writeMetrics(Option.some(path.join(outDir, "a.json")), before);
-    yield* writeMetrics(Option.some(path.join(outDir, "b.json")), after);
-    yield* report(before, after, input.threshold);
+    }).pipe(
+      Effect.onError(() =>
+        Console.error(
+          `ab stopped early; ${outDir} keeps ${runs[0].length} A and ${runs[1].length} B runs`,
+        ),
+      ),
+    );
+    yield* report(saved[0], saved[1], input.threshold);
   }, Effect.scoped),
 ).pipe(
   Command.withDescription(
