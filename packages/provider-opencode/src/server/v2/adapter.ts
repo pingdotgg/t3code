@@ -4362,6 +4362,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       return files;
     });
 
+    const forgetThread = (nativeId: string, state: ThreadState) => {
+      threads.delete(nativeId);
+      for (const [child, owner] of childOwners) {
+        if (owner !== state) continue;
+        childOwners.delete(child);
+        threads.delete(child);
+      }
+    };
+
     const removeMcp = (mcp: { readonly name: string; readonly directory: string }) =>
       Effect.suspend(() =>
         client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
@@ -5326,14 +5335,40 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         ) {
           return;
         }
-        threads.delete(nativeId);
-        for (const [child, owner] of childOwners) {
-          if (owner !== state) continue;
-          childOwners.delete(child);
-          threads.delete(child);
-        }
+        forgetThread(nativeId, state);
         if (state.mcp !== undefined) yield* removeMcp(state.mcp);
       }),
+      // The server keeps a folder's project MCP servers running for as long as it has the
+      // folder's Location loaded. Idle threads are forgotten first: a later unloadThread
+      // would otherwise address the folder again and load it back.
+      unloadThreadsIn: Effect.fn("OpenCode2Adapter.unloadThreadsIn")(
+        function* ({ inWorkspace }) {
+          for (const [nativeId, state] of threads) {
+            if (
+              childOwners.has(nativeId) ||
+              !inWorkspace(state.directory) ||
+              state.active !== undefined ||
+              hasBackground(state)
+            )
+              continue;
+            forgetThread(nativeId, state);
+          }
+          const loaded = yield* client.debug.location.list();
+          yield* Effect.forEach(
+            loaded.filter((location) => inWorkspace(location.directory)),
+            (location) => client.debug.location.evict({ location }),
+            { discard: true },
+          );
+        },
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: OPENCODE_PROVIDER,
+              detail: "Failed to unload a removed workspace from the OpenCode server",
+              cause,
+            }),
+        ),
+      ),
       respondToRuntimeRequest: Effect.fn("OpenCode2Adapter.respondToRuntimeRequest")(
         function* (requestInput) {
           const entry = pending.get(requestInput.requestId);

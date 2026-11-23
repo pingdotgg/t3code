@@ -167,6 +167,7 @@ function selectOpenCodeRuntimeAdapter(input: {
   readonly resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>;
   readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly releaseWorkspace: (workspacePath: string) => Effect.Effect<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   const pick = <PE>(probed: Effect.Effect<ProbedOpenCode | undefined, PE>) =>
     byOpenCodeRuntime(probed, { v1: Effect.succeed(input.v1), v2: Effect.succeed(input.v2) });
@@ -192,6 +193,7 @@ function selectOpenCodeRuntimeAdapter(input: {
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
       Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
+    releaseWorkspace: input.releaseWorkspace,
   };
 }
 
@@ -392,6 +394,29 @@ export const OpenCodeDriver: ProviderDriver<
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
+      // A server loads a folder, and with it the folder's MCP servers, whenever the folder's
+      // skills and commands are listed, and keeps it for as long as it runs. Only a server on
+      // this machine can hold the folder.
+      releaseWorkspace: (workspacePath) => {
+        const dispose = (baseUrl: string, serverPassword: string | undefined) =>
+          OpenCodeRuntime.runOpenCodeSdk("instance.dispose", (signal) =>
+            openCodeRuntime
+              .createOpenCodeSdkClient({
+                baseUrl,
+                directory: workspacePath,
+                ...(serverPassword ? { serverPassword } : {}),
+              })
+              .instance.dispose({ directory: workspacePath }, { signal }),
+          );
+        const configured = effectiveConfig.serverUrl.trim();
+        return (
+          configured.length === 0
+            ? serverOwner.ifRunning((server) => dispose(server.url, server.serverPassword))
+            : isLocalOpenCodeServerUrl(configured)
+              ? dispose(configured, effectiveConfig.serverPassword)
+              : Effect.void
+        ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
+      },
       v1: openCodeV1Adapter,
       v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),

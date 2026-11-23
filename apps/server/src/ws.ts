@@ -280,6 +280,7 @@ import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts"
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
+import * as WorktreeRemoval from "./vcs/worktreeRemoval.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
@@ -3336,6 +3337,11 @@ export const layerWsRpc = (
             ),
             Effect.flatMap((removed) =>
               removed ? Effect.void : gitWorkflow.removeWorktree(input),
+            ),
+            // A provider process still exiting holds the folder open, which fails the delete on Windows.
+            Effect.provideService(
+              WorktreeRemoval.BeforeWorktreeDelete,
+              providerSessionManager.closeInWorkspace,
             ),
             // No project-root refresh here: the client awaits vcs.refreshStatus right after, and a
             // second refresh would queue behind this one and reread an unchanged repository.

@@ -120,6 +120,7 @@ function layerExecutorFor(input: {
         isLive: () => Effect.succeed(false),
         close: () => Effect.void,
         closeInstance: () => Effect.void,
+        closeInWorkspace: () => Effect.void,
         release: () => record("release"),
         detach: () => record("detach"),
         otherWorkingThreads: () => Effect.succeed([]),

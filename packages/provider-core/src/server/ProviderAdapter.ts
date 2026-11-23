@@ -854,6 +854,13 @@ export interface ProviderAdapterV2SessionRuntime {
     /** Also hide it from the provider's own clients where it can; resuming it must restore it. */
     readonly archive?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Unloads every thread working in a folder `inWorkspace` accepts, attached or not, and
+   * returns once their processes are gone. For sessions that outlive a single workspace.
+   */
+  readonly unloadThreadsIn?: (input: {
+    readonly inWorkspace: (cwd: string) => boolean;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
@@ -896,5 +903,10 @@ export class ProviderAdapterV2 extends Context.Service<
     readonly openSession: (
       input: ProviderAdapterV2OpenSessionInput,
     ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
+    /**
+     * Lets go of a folder that is about to be removed, in processes the provider keeps outside
+     * its sessions. Returns once they no longer hold it.
+     */
+    readonly releaseWorkspace?: (workspacePath: string) => Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/ProviderAdapter/ProviderAdapterV2") {}

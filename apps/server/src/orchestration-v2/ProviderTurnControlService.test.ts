@@ -215,6 +215,7 @@ function layerSessions(
       isLive: (providerSessionId) => Effect.succeed(providerSessionId === liveSessionId),
       close: () => Effect.void,
       closeInstance: () => Effect.void,
+      closeInWorkspace: () => Effect.void,
       release: () => Effect.void,
       detach: () => Effect.void,
       otherWorkingThreads: () => Effect.succeed([]),

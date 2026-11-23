@@ -5630,6 +5630,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #27018 the shared server kept a removed worktree's project MCP servers running
+  it.effect("evicts a removed workspace from the server and leaves the others loaded", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntimeWithInstructions([
+        ...opening,
+        out("session.get", { sessionID: SESSION }),
+        replyData("session.get", sessionInfo()),
+        ...noOpenRequests,
+        out("debug.location.list"),
+        reply("debug.location.list", [
+          { directory: "/work/other" },
+          { directory: WORK },
+          { directory: `${WORK}/nested` },
+        ]),
+        out("debug.location.evict", { "location[directory]": WORK }),
+        reply("debug.location.evict", null),
+        out("debug.location.evict", { "location[directory]": `${WORK}/nested` }),
+        reply("debug.location.evict", null),
+      ]);
+      const thread = yield* runtime.resumeThread({
+        providerThread: providerThread(yield* DateTime.now),
+        threadId,
+        modelSelection: bigPickle,
+        runtimePolicy: policy(),
+      });
+      yield* runtime.unloadThreadsIn!({ inWorkspace: (cwd) => cwd.startsWith(WORK) });
+      // The thread is forgotten, so the detach that follows cannot load the folder again.
+      yield* runtime.unloadThread!({ providerThread: thread });
+    }),
+  );
+
   // regression: #16142 OpenCode 2 threads were missing T3 Code's MCP tools
   it.effect("names each thread's MCP server within OpenCode's limits, one name per thread", () =>
     Effect.gen(function* () {
