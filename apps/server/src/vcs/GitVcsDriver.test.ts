@@ -426,9 +426,10 @@ it.effect.each(["interrupt", "timeout"] as const)(
           "s.on('close', () => process.exit(0));",
         ].join("\n"),
       );
-      yield* git(["config", "filter.lfs.clean", `"${process.execPath}" "${filter}"`]);
-      yield* git(["config", "filter.lfs.required", "true"]);
-      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs\n");
+      // Not "lfs": a machine-wide git-lfs install sets filter.lfs.process, which wins over clean.
+      yield* git(["config", "filter.lfs-standin.clean", `"${process.execPath}" "${filter}"`]);
+      yield* git(["config", "filter.lfs-standin.required", "true"]);
+      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs-standin\n");
       yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
 
       const fiber = yield* driver.checkpoints
@@ -481,9 +482,10 @@ it.effect("checkpoint staging moves Git LFS objects its clean filter wrote into 
         "process.stdout.write('oid sha256:' + oid + '\\n');",
       ].join("\n"),
     );
-    yield* git(["config", "filter.lfs.clean", `"${process.execPath}" "${filter}"`]);
-    yield* git(["config", "filter.lfs.required", "true"]);
-    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs\n");
+    // Not "lfs": a machine-wide git-lfs install sets filter.lfs.process, which wins over clean.
+    yield* git(["config", "filter.lfs-standin.clean", `"${process.execPath}" "${filter}"`]);
+    yield* git(["config", "filter.lfs-standin.required", "true"]);
+    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs-standin\n");
     yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
 
     yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
