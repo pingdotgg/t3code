@@ -150,6 +150,7 @@ const FILE_ICON_BY_EXTENSION: Readonly<Record<string, MarkdownFileIcon>> = {
   bz2: "zip",
   c: "c",
   cc: "cpp",
+  cjs: "javascript",
   cpp: "cpp",
   cxx: "cpp",
   css: "css",
