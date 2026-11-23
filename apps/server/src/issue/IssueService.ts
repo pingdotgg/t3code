@@ -393,13 +393,20 @@ const make = Effect.gen(function* () {
     const { lender, scope } = found;
     const matches = (candidate: SupportedProject) =>
       candidate.scope.toLowerCase() === scope.toLowerCase();
-    const bound =
-      sameTracker.find(
-        (candidate) => matches(candidate) && candidate.accountId === lender.accountId,
-      ) ?? sameTracker.find(matches);
-    return bound === undefined
-      ? { ...lender, scope, writable: false }
-      : { ...bound, writable: true };
+    const sameAccount = sameTracker.find(
+      (candidate) => matches(candidate) && candidate.accountId === lender.accountId,
+    );
+    if (sameAccount !== undefined) return { ...sameAccount, writable: true };
+    // Another account binds the scope: it serves only once it is seen reading the issue there,
+    // else the account that did read it lends a read-only view.
+    for (const candidate of sameTracker) {
+      if (!matches(candidate)) continue;
+      const read = yield* scopeOf(candidate);
+      if (read._tag === "Success" && read.success.toLowerCase() === scope.toLowerCase()) {
+        return { ...candidate, writable: true };
+      }
+    }
+    return { ...lender, scope, writable: false };
   });
 
   const requireWritable = (

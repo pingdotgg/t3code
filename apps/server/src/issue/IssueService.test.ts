@@ -913,6 +913,47 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect(
+    "keeps a read through the working account when only an expired one binds the scope",
+    () =>
+      Effect.gen(function* () {
+        const working = IssueTrackerAccountId.make("working");
+        const tracker = fakeStandaloneTracker({
+          // The task is in list 900, which only the expired first account binds.
+          issueScope: () =>
+            Effect.flatMap(IssueTrackerAccount, (account) =>
+              account === working
+                ? Effect.succeed("900")
+                : Effect.fail(
+                    new IssueTrackerError({
+                      tracker: LINEAR,
+                      operation: "issueScope",
+                      reason: "unauthenticated",
+                      detail: "expired",
+                    }),
+                  ),
+            ),
+        });
+        const service = yield* makeService({
+          projects: [project({ id: "web" }), project({ id: "api" })],
+          trackers: [tracker],
+          bindings: {
+            web: { tracker: LINEAR, scope: "900" },
+            api: { tracker: LINEAR, accountId: working, scope: "901" },
+          },
+        });
+        const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
+        expect(yield* service.detail({ ...ref, scope: "task", key: "xyz" })).toMatchObject({
+          projectId: "api",
+          scope: "900",
+          writable: false,
+        });
+        expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
+          scope: "900",
+        });
+      }),
+  );
+
   it.effect("names a key-only reference by the scope the tracker places it in", () =>
     Effect.gen(function* () {
       // The task's list is bound only by another project.
