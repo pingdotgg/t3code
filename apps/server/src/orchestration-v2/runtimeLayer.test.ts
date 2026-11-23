@@ -44,6 +44,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -2768,6 +2769,49 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  it.effect("refuses an async answer on an archived thread and keeps the question pending", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const threadId = ThreadId.make("runtime-archived-question");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("runtime-archived-question-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId,
+        projectId: ProjectId.make("runtime-archived-question-project"),
+        title: "Archived question",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const { requestId } = yield* seedPendingQuestion(threadId, null, { type: "message" });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-archived-question-archive"),
+        threadId,
+      });
+      const commandId = CommandId.make("runtime-archived-question-answer");
+      const answered = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId,
+          threadId,
+          requestId,
+          answers: { color: "Blue", sizes: ["Small"] },
+        })
+        .pipe(Effect.result);
+      assert.equal(answered._tag, "Failure");
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.runtimeRequests[0]?.status, "pending");
+      assert.deepEqual(projection.messages, []);
+      assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+    }),
+  );
+
   it.effect("reports an answer that never reaches its provider without reopening it", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -4604,6 +4648,62 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       });
       assert.isDefined((yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch);
     }),
+  );
+
+  it.effect.each(["archive", "delete"] as const)(
+    "a message sent to a thread after %s is refused and starts no provider turn",
+    (lifecycle) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const threadId = ThreadId.make(`message-after-${lifecycle}`);
+        const projectId = ProjectId.make(`message-after-${lifecycle}-project`);
+        yield* seedProject({
+          projectId,
+          title: "Hidden thread",
+          workspaceRoot: `/workspace/message-after-${lifecycle}`,
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`message-after-${lifecycle}-create`),
+          threadId,
+          projectId,
+          title: "Hidden thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: lifecycle === "archive" ? "thread.archive" : "thread.delete",
+          commandId: CommandId.make(`message-after-${lifecycle}-lifecycle`),
+          threadId,
+        });
+        const commandId = CommandId.make(`message-after-${lifecycle}-send`);
+        const sent = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId,
+            threadId,
+            messageId: MessageId.make(`message-after-${lifecycle}-send`),
+            text: "Work on a hidden thread",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+          })
+          .pipe(Effect.exit);
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(commandId)).map((effect) => effect.request.type),
+          [],
+        );
+        assert.isTrue(Exit.isFailure(sent));
+      }),
   );
 
   it.effect("archiving ends watches, and an archived thread cannot start one", () =>
