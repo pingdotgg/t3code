@@ -18,6 +18,7 @@ import { Command, Flag } from "effect/cli";
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 export class MigrateDevDbNotInWorktreeError extends Schema.TaggedError<MigrateDevDbNotInWorktreeError>()(
@@ -367,7 +368,29 @@ export class MigrateDevDbResumableWorkError extends Schema.TaggedError<MigrateDe
  */
 export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(function* (
   databasePath: string,
+  options: RunMigrateDevDbOptions = {},
 ) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const platform = yield* HostProcess.Platform;
+  // A symlink, `..` or another letter case can name the live database; compare where they lead.
+  const canonical = (file: string) =>
+    fs.realPath(file).pipe(
+      Effect.catch(() =>
+        fs
+          .realPath(path.dirname(file))
+          .pipe(Effect.map((dir) => path.join(dir, path.basename(file)))),
+      ),
+      Effect.orElseSucceed(() => path.resolve(file)),
+      Effect.map((resolved) => (platform === "linux" ? resolved : resolved.toLowerCase())),
+    );
+  const sharedHome = path.resolve(options.sharedHome ?? path.join(NodeOS.homedir(), ".t3"));
+  const [target, live] = yield* Effect.all([
+    canonical(databasePath),
+    canonical(path.join(sharedHome, "userdata", "statev2.sqlite")),
+  ]);
+  if (target === live) return yield* new MigrateDevDbSharedHomeError();
+  yield* ensureNotInUse(databasePath);
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const resumable = yield* resumableThreadIds();
@@ -382,10 +405,18 @@ export const dropResumableFamilies = Effect.fn("dropResumableDevDbFamilies")(fun
         Effect.gen(function* () {
           for (const { name } of yield* sql<{ name: string }>`
             SELECT m.name FROM sqlite_master m, pragma_table_info(m.name) c
-            WHERE m.type = 'table' AND c.name = 'thread_id'`) {
+            WHERE m.type = 'table' AND c.name = 'thread_id'
+              AND m.name <> ${PROVIDER_SESSIONS_TABLE}`) {
             yield* sql`DELETE FROM ${sql(name)}
               WHERE thread_id IN (SELECT thread_id FROM resumable_families)`;
           }
+          // A session a kept thread still binds stays, as pruning keeps it.
+          yield* sql`DELETE FROM ${sql(PROVIDER_SESSIONS_TABLE)}
+            WHERE thread_id IN (SELECT thread_id FROM resumable_families)
+              AND provider_session_id NOT IN (
+                SELECT provider_session_id FROM orchestration_v2_projection_provider_session_bindings
+                WHERE thread_id NOT IN (SELECT thread_id FROM resumable_families)
+              )`;
           yield* sql`DELETE FROM orchestration_v2_projection_context_transfers
             WHERE source_thread_id IN (SELECT thread_id FROM resumable_families)
                OR target_thread_id IN (SELECT thread_id FROM resumable_families)`;
@@ -724,11 +755,7 @@ export const migrateDevDbCommand = Command.make(
   ({ projects, threadsPerProject, baseDir, source, dropResumable }) =>
     Effect.gen(function* () {
       if (Option.isSome(dropResumable)) {
-        const path = yield* Path.Path;
-        const target = path.resolve(dropResumable.value);
-        const live = path.resolve(path.join(NodeOS.homedir(), ".t3", "userdata", "statev2.sqlite"));
-        if (target === live) return yield* new MigrateDevDbSharedHomeError();
-        const dropped = yield* dropResumableFamilies(target);
+        const dropped = yield* dropResumableFamilies(dropResumable.value);
         yield* Console.log(`Dropped ${dropped} resumable threads.`);
         return;
       }

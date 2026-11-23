@@ -57,6 +57,8 @@ import {
   slope,
   spread,
   parsePsCpuTime,
+  pathRewrites,
+  pathSpellings,
   parseRunSelection,
   summarizeProfiles,
   type FirstWord,
@@ -533,14 +535,22 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
       SELECT project_id, deleted_at IS NOT NULL AS deleted, workspace_root FROM projection_projects`;
     const home = environment.HOME ?? environment.USERPROFILE;
     const real = [
-      ...new Set([
-        ...(home ? [`${home.replace(/[\\/]+$/, "")}/`] : []),
-        ...projects.map((project) => project.workspace_root),
-      ]),
+      ...new Set(
+        [...(home ? [home] : []), ...projects.map((project) => project.workspace_root)].map(
+          (prefix) => prefix.replace(/[\\/]+$/, ""),
+        ),
+      ),
     ].filter((prefix) => prefix.length > 1);
     // The run's own directory sits under home too, so it is taken out before a value is judged.
+    const withoutRun = (column: string) =>
+      pathSpellings(directory).reduce(
+        (value, spelling) => sql`replace(${value}, ${spelling}, '')`,
+        sql`CAST(${sql(column)} AS TEXT)`,
+      );
     const mentionsReal = (column: string, prefix: string) =>
-      sql`instr(replace(CAST(${sql(column)} AS TEXT), ${directory}, ''), ${prefix}) > 0`;
+      sql.or(
+        pathSpellings(prefix).map((spelling) => sql`instr(${withoutRun(column)}, ${spelling}) > 0`),
+      );
     const columns: Array<{ table: string; column: string }> = [];
     for (const { name } of yield* sql<{ name: string; virtual: number }>`
       SELECT name FROM sqlite_master WHERE type = 'table' AND sql NOT LIKE 'CREATE VIRTUAL%'`) {
@@ -557,11 +567,22 @@ const seedBaseDir = Effect.fn("serverMetrics.seedBaseDir")(function* (
     // Every occurrence, mid-string too: a prompt or preview inside state JSON can name a path.
     // Longer prefixes first, so a project root is not cut by the home prefix inside it.
     const longestFirst = real.toSorted((a, b) => b.length - a.length);
+    // Every spelling, since JSON keeps a Windows path's backslashes doubled. Each goes to a marker
+    // first: the destination sits under home too, and a later, shorter prefix would rewrite it.
+    const rewrites = longestFirst.flatMap((prefix, index) =>
+      pathRewrites(prefix, path.join(gone, `root-${index}`)).map(([from, to], spelling) => ({
+        from,
+        to,
+        marker: `«t3-bench-gone-${index}-${spelling}»`,
+      })),
+    );
     for (const { table, column } of columns) {
-      for (const [index, prefix] of longestFirst.entries()) {
-        const moved = prefix.endsWith("/") ? `${gone}/` : `${gone}/root-${index}`;
-        yield* sql`UPDATE ${sql(table)} SET ${sql(column)} = replace(${sql(column)}, ${prefix}, ${moved})
-          WHERE instr(${sql(column)}, ${prefix}) > 0`;
+      for (const [from, to] of [
+        ...rewrites.map(({ from, marker }) => [from, marker] as const),
+        ...rewrites.map(({ marker, to }) => [marker, to] as const),
+      ]) {
+        yield* sql`UPDATE ${sql(table)} SET ${sql(column)} = replace(${sql(column)}, ${from}, ${to})
+          WHERE instr(${sql(column)}, ${from}) > 0`;
       }
     }
     const roots: string[] = [];

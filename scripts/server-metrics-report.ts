@@ -392,3 +392,21 @@ export function heapGrowth(
     .slice(0, 25)
     .map(({ bytes, ...entry }) => ({ ...entry, MB: round(bytes / 1e6, 2) }));
 }
+
+const spellings: ReadonlyArray<(path: string) => string> = [
+  (path) => path,
+  // JSON stores each backslash of a Windows path doubled.
+  (path) => path.replaceAll("\\", "\\\\"),
+  (path) => path.replaceAll("\\", "/"),
+];
+
+/** How a path can appear in a database's text: as written, JSON-escaped, with forward slashes. */
+export function pathSpellings(path: string) {
+  return [...new Set(spellings.map((spell) => spell(path)))];
+}
+
+/** Each spelling of `from` with the same spelling of `to`, for a textual rewrite. */
+export function pathRewrites(from: string, to: string) {
+  const pairs = new Map(spellings.map((spell) => [spell(from), spell(to)] as const));
+  return [...pairs];
+}

@@ -254,15 +254,20 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-resumable-" });
+      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-home-" });
       const database = yield* createFixtureSource(dir);
 
-      assert.equal(yield* dropResumableFamilies(database), 4);
-      const threads = yield* withDatabase(
+      assert.equal(yield* dropResumableFamilies(database, { sharedHome }), 4);
+      const { threads, sessions } = yield* withDatabase(
         database,
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          return yield* sql<{ thread_id: string }>`
-            SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
+          return {
+            threads: yield* sql<{ thread_id: string }>`
+              SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`,
+            sessions: yield* sql<{ provider_session_id: string }>`
+              SELECT provider_session_id FROM orchestration_v2_projection_provider_sessions`,
+          };
         }),
       );
       assert.deepStrictEqual(
@@ -275,7 +280,40 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
           "stopped-thread",
         ],
       );
-      assert.equal(yield* dropResumableFamilies(database), 0);
+      assert.deepStrictEqual(
+        sessions.map((row) => row.provider_session_id),
+        ["session-shared"],
+        "a session the kept stopped-thread still binds stays with it",
+      );
+      assert.equal(yield* dropResumableFamilies(database, { sharedHome }), 0);
+    }),
+  );
+
+  it.effect("refuses to drop from the shared database through a symlink", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sharedHome = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-shared-" });
+      const elsewhere = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-link-" });
+      const fixture = yield* createFixtureSource(sharedHome);
+      const live = path.join(sharedHome, "userdata", "statev2.sqlite");
+      yield* fs.makeDirectory(path.dirname(live), { recursive: true });
+      yield* fs.rename(fixture, live);
+      const link = path.join(elsewhere, "statev2.sqlite");
+      yield* fs.symlink(live, link);
+
+      const refused = yield* Effect.flip(dropResumableFamilies(link, { sharedHome }));
+      assert.equal(refused._tag, "MigrateDevDbSharedHomeError");
+      const threads = yield* withDatabase(
+        live,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const [row] = yield* sql<{ n: number }>`
+            SELECT COUNT(*) AS n FROM orchestration_v2_projection_threads`;
+          return Number(row?.n ?? 0);
+        }),
+      );
+      assert.equal(threads, 10, "the shared database is untouched");
     }),
   );
 

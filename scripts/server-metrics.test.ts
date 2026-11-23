@@ -6,6 +6,8 @@ import {
   heapGrowth,
   parsePsCpuTime,
   parseRunSelection,
+  pathRewrites,
+  pathSpellings,
   ServerMetrics,
   slope,
 } from "./server-metrics-report.ts";
@@ -247,5 +249,48 @@ describe("parseRunSelection", () => {
     ],
   ])("%s", (_name, input, expected) => {
     expect(parseRunSelection({ ...input, scenarios })).toEqual(expected);
+  });
+});
+
+describe("pathSpellings", () => {
+  it.each([
+    ["a POSIX path, one spelling", "/home/dev/repo", ["/home/dev/repo"]],
+    [
+      "a Windows path as written, JSON-escaped, and with forward slashes",
+      "C:\\Users\\dev\\repo",
+      ["C:\\Users\\dev\\repo", "C:\\\\Users\\\\dev\\\\repo", "C:/Users/dev/repo"],
+    ],
+  ])("%s", (_name, path, spellings) => {
+    expect(pathSpellings(path)).toEqual(spellings);
+  });
+});
+
+describe("pathRewrites", () => {
+  const rewrite = (text: string, from: string, to: string) =>
+    pathRewrites(from, to).reduce((value, [a, b]) => value.replaceAll(a, b), text);
+  it.each([
+    [
+      "a POSIX path in JSON",
+      '{"cwd":"/home/dev/repo/x"}',
+      "/home/dev/repo",
+      "/tmp/run/gone/root-0",
+      '{"cwd":"/tmp/run/gone/root-0/x"}',
+    ],
+    [
+      "a Windows path stored JSON-escaped",
+      '{"cwd":"C:\\\\Users\\\\dev\\\\repo\\\\x"}',
+      "C:\\Users\\dev\\repo",
+      "D:\\run\\gone\\root-0",
+      '{"cwd":"D:\\\\run\\\\gone\\\\root-0\\\\x"}',
+    ],
+    [
+      "a Windows path written with forward slashes",
+      "see C:/Users/dev/repo/x",
+      "C:\\Users\\dev\\repo",
+      "D:\\run\\gone\\root-0",
+      "see D:/run/gone/root-0/x",
+    ],
+  ])("%s", (_name, text, from, to, expected) => {
+    expect(rewrite(text, from, to)).toBe(expected);
   });
 });
