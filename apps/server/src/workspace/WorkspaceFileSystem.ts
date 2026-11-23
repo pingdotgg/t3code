@@ -23,6 +23,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
+import { unaliasWorktreeDisplayPath } from "../vcs/worktreeDisplayPath.ts";
 import * as KnownWorkspaces from "./KnownWorkspaces.ts";
 import * as WorkspaceEntries from "./WorkspaceEntries.ts";
 import * as WorkspacePaths from "./WorkspacePaths.ts";
@@ -173,7 +174,7 @@ export const make = Effect.gen(function* () {
 
   const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
     const expandedPath = expandHomePath(
-      yield* toHostPath(requestedPath),
+      yield* toHostPath(unaliasWorktreeDisplayPath(requestedPath)),
       yield* HostProcess.HomeDirectory,
     );
     // Chips ask as soon as an agent's message renders, and touching a network
@@ -259,7 +260,7 @@ export const make = Effect.gen(function* () {
   const resolveReadTarget = Effect.fn("WorkspaceFileSystem.resolveReadTarget")(function* (
     input: ProjectReadFileInput,
   ) {
-    const requestedPath = input.relativePath;
+    const requestedPath = unaliasWorktreeDisplayPath(input.relativePath);
     const hostPath =
       requestedPath.startsWith("~/") || requestedPath.startsWith("~\\")
         ? expandHomePath(requestedPath, yield* HostProcess.HomeDirectory)
@@ -301,7 +302,7 @@ export const make = Effect.gen(function* () {
 
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
-      relativePath: input.relativePath,
+      relativePath: requestedPath,
     });
 
     const realWorkspaceRoot = yield* Effect.tryPromise({
@@ -508,7 +509,7 @@ export const make = Effect.gen(function* () {
   ) {
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
-      relativePath: input.relativePath,
+      relativePath: unaliasWorktreeDisplayPath(input.relativePath),
     });
     const realWorkspaceRoot = yield* Effect.tryPromise({
       // Resolve `..` in cwd the way the relative path was resolved, before following links.

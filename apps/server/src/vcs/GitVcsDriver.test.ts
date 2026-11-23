@@ -3123,31 +3123,57 @@ it.effect(
           "1\t0\tnotes.txt",
           "1\t0\tapp/src/new.txt",
           "0\t1\tapp/src/old.txt",
-          "1\t0\tapp.worktrees/1/feature.txt",
-          "1\t0\tapp.worktrees/3/reuse.txt",
+          "1\t0\tapp [feature #1]/feature.txt",
+          "1\t0\tapp [reuse #3]/reuse.txt",
         ],
       );
 
       const patch = yield* driver.checkpoints.diffCheckpoints({ ...refs, ignoreWhitespace: false });
       assert.include(
         patch,
-        "diff --git a/app.worktrees/1/feature.txt b/app.worktrees/1/feature.txt",
+        "diff --git a/app [feature #1]/feature.txt b/app [feature #1]/feature.txt",
       );
-      assert.include(patch, "+++ b/app.worktrees/3/reuse.txt");
+      assert.include(patch, "+++ b/app [reuse #3]/reuse.txt");
       assert.include(patch, "Subproject commit");
       assert.notInclude(patch, "app.worktrees/2");
+      assert.notInclude(patch, "app [#2]");
       assert.notInclude(patch, "app.worktrees/4");
+      assert.notInclude(patch, "app [#4]");
       assert.include(patch, "+++ b/app/src/new.txt");
       assert.notInclude(patch, "base.txt");
 
-      const filtered = yield* driver.checkpoints.diffCheckpoints({
+      for (const requestedPath of ["app [feature #1]/feature.txt", "app.worktrees/1/feature.txt"]) {
+        const filtered = yield* driver.checkpoints.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          filePaths: [requestedPath],
+        });
+        assert.match(filtered, /^diff --git a\/app \[feature #1\]\/feature\.txt /);
+        assert.notInclude(filtered, "notes.txt");
+        assert.notInclude(filtered, "reuse.txt");
+      }
+
+      // Reusing slot 1 for a different branch keeps the original branch label while it still points
+      // at the checkpoint commit, and falls back to [#1] once that branch is gone (never showing
+      // the unrelated reused branch name).
+      const slot1 = path.join(root, "app.worktrees/1");
+      yield* git(slot1, ["checkout", "-q", "-b", "later-unrelated", "main"]);
+      const afterReuseNumstat = yield* driver.checkpoints.diffCheckpoints({
         ...refs,
         ignoreWhitespace: false,
-        filePaths: ["app.worktrees/1/feature.txt"],
+        format: "numstat",
       });
-      assert.match(filtered, /^diff --git a\/app\.worktrees\/1\/feature\.txt /);
-      assert.notInclude(filtered, "notes.txt");
-      assert.notInclude(filtered, "reuse.txt");
+      assert.include(afterReuseNumstat, "1\t0\tapp [feature #1]/feature.txt");
+      assert.notInclude(afterReuseNumstat, "later-unrelated");
+
+      yield* git(app, ["branch", "-D", "feature"]);
+      const afterDeleteNumstat = yield* driver.checkpoints.diffCheckpoints({
+        ...refs,
+        ignoreWhitespace: false,
+        format: "numstat",
+      });
+      assert.include(afterDeleteNumstat, "1\t0\tapp [#1]/feature.txt");
+      assert.notInclude(afterDeleteNumstat, "later-unrelated");
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 

@@ -44,6 +44,13 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { resolveSpawnCommand, runsGitWithoutConsole } from "@t3tools/shared/shell";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
 import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings";
+import {
+  extractAliasedWorktreePrefix,
+  formatWorktreeDisplayPrefix,
+  isNumberedWorktreePath,
+  readWorktreeBranchName,
+  unaliasWorktreeDisplayPath,
+} from "./worktreeDisplayPath.ts";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { removeEmptyDirectory, type RemoveEmptyDirectoryError } from "./removeEmptyDirectory.ts";
@@ -4522,7 +4529,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     repositoryRoot: string,
     relativePath: string,
   ) {
-    const parts = relativePath.split("/");
+    const realRelativePath = unaliasWorktreeDisplayPath(relativePath);
+    const parts = realRelativePath.split("/");
     if (parts.length < 2) return null;
     let prefix = "";
     for (let index = 0; index < parts.length - 1; index++) {
@@ -4539,6 +4547,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           nestedPath: prefix,
           nestedCwd,
           innerPath: parts.slice(index + 1).join("/"),
+          displayPrefix: extractAliasedWorktreePrefix(relativePath, prefix),
         };
       }
     }
@@ -4555,6 +4564,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         readonly patchLimit: number;
         readonly trackedOnly: boolean;
         readonly skipStatusCheck?: boolean;
+        readonly displayPrefix?: string;
         readonly file?: {
           readonly innerPath: string;
           readonly innerPreviousPath: string | null;
@@ -4579,6 +4589,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
         hasUntracked = statusResult.stdout.split("\0").some((entry) => entry.startsWith("?? "));
       }
+      const displayPrefix =
+        options.displayPrefix ??
+        (isNumberedWorktreePath(nestedPath)
+          ? formatWorktreeDisplayPrefix(nestedPath, yield* readWorktreeBranchName(nestedCwd))
+          : nestedPath);
       const nestedDiffArgs = [
         "-c",
         "diff.relative=false",
@@ -4590,8 +4605,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "--no-ext-diff",
         "--no-textconv",
         "--submodule=short",
-        `--src-prefix=a/${nestedPath}/`,
-        `--dst-prefix=b/${nestedPath}/`,
+        `--src-prefix=a/${displayPrefix}/`,
+        `--dst-prefix=b/${displayPrefix}/`,
         ...(options.ignoreWhitespace ? ["--ignore-all-space"] : []),
       ];
       const nestedPathArgs = options.file
@@ -4643,8 +4658,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         }
         const files = parseReviewNumstat(statResult.stdout).map((file) => ({
           ...file,
-          path: `${nestedPath}/${file.path}`,
-          previousPath: file.previousPath === null ? null : `${nestedPath}/${file.previousPath}`,
+          path: `${displayPrefix}/${file.path}`,
+          previousPath: file.previousPath === null ? null : `${displayPrefix}/${file.previousPath}`,
         }));
         if (options.metadataOnly || files.length === 0) {
           return { files, stdout: "", stdoutTruncated: false };
@@ -5239,10 +5254,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (input.file) {
       const nestedFile = yield* findNestedRepositoryForPath(cwd, input.file.path);
       if (nestedFile !== null) {
+        const unaliasedPreviousPath =
+          input.file.previousPath === null
+            ? null
+            : unaliasWorktreeDisplayPath(input.file.previousPath);
         const innerPreviousPath =
-          input.file.previousPath !== null &&
-          input.file.previousPath.startsWith(`${nestedFile.nestedPath}/`)
-            ? input.file.previousPath.slice(nestedFile.nestedPath.length + 1)
+          unaliasedPreviousPath !== null &&
+          unaliasedPreviousPath.startsWith(`${nestedFile.nestedPath}/`)
+            ? unaliasedPreviousPath.slice(nestedFile.nestedPath.length + 1)
             : null;
         const nestedResult = yield* readNestedRepositoryUncommittedDiff(
           cwd,
@@ -5252,6 +5271,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             metadataOnly: false,
             patchLimit,
             trackedOnly: input.trackedOnly === true,
+            ...(nestedFile.displayPrefix === undefined
+              ? {}
+              : { displayPrefix: nestedFile.displayPrefix }),
             file: { innerPath: nestedFile.innerPath, innerPreviousPath },
           },
         );
@@ -5690,11 +5712,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const targetPath = input.changeType === "deleted" ? input.oldPath : input.newPath;
     const nestedTarget = yield* findNestedRepositoryForPath(repositoryRoot, targetPath);
     if (nestedTarget !== null) {
-      const nestedOldPath = input.oldPath.startsWith(`${nestedTarget.nestedPath}/`)
-        ? input.oldPath.slice(nestedTarget.nestedPath.length + 1)
+      const unaliasedOldPath = unaliasWorktreeDisplayPath(input.oldPath);
+      const unaliasedNewPath = unaliasWorktreeDisplayPath(input.newPath);
+      const nestedOldPath = unaliasedOldPath.startsWith(`${nestedTarget.nestedPath}/`)
+        ? unaliasedOldPath.slice(nestedTarget.nestedPath.length + 1)
         : nestedTarget.innerPath;
-      const nestedNewPath = input.newPath.startsWith(`${nestedTarget.nestedPath}/`)
-        ? input.newPath.slice(nestedTarget.nestedPath.length + 1)
+      const nestedNewPath = unaliasedNewPath.startsWith(`${nestedTarget.nestedPath}/`)
+        ? unaliasedNewPath.slice(nestedTarget.nestedPath.length + 1)
         : nestedTarget.innerPath;
       const nestedInput: ReviewDiffFileContentsInput = {
         ...input,

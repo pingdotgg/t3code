@@ -4244,6 +4244,18 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const cleanWorktree = pathService.join(cwd, "repos", "app.worktrees", "2");
           yield* git(trackedDirty, ["worktree", "add", "--detach", cleanWorktree, "HEAD"]);
 
+          // Untracked branch-backed linked worktree (shows branch name and slot number).
+          const branchWorktree = pathService.join(cwd, "repos", "app.worktrees", "3");
+          yield* git(trackedDirty, [
+            "worktree",
+            "add",
+            "-b",
+            "feat/worktree-label",
+            branchWorktree,
+            "HEAD",
+          ]);
+          yield* writeTextFile(branchWorktree, "branch.txt", "branch worktree file\n");
+
           // Untracked unborn nested repository with an uncommitted file.
           const unborn = pathService.join(cwd, "unborn");
           yield* fs.makeDirectory(unborn);
@@ -4266,7 +4278,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               [
                 { path: "README.md", changeType: "change", additions: 1, deletions: 1 },
                 {
-                  path: "repos/app.worktrees/1/worktree.txt",
+                  path: "repos/app [#1]/worktree.txt",
+                  changeType: "new",
+                  additions: 1,
+                  deletions: 0,
+                },
+                {
+                  path: "repos/app [feat-worktree-label #3]/branch.txt",
                   changeType: "new",
                   additions: 1,
                   deletions: 0,
@@ -4285,11 +4303,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             assert.notInclude(source.diff, "Subproject commit");
             assert.notInclude(source.diff, "moved-clean");
             assert.notInclude(source.diff, "app.worktrees/2");
+            assert.notInclude(source.diff, "app [#2]");
             assert.include(source.diff, "diff --git a/README.md b/README.md");
             assert.include(source.diff, "diff --git a/repos/app/README.md b/repos/app/README.md");
             assert.include(
               source.diff,
-              "diff --git a/repos/app.worktrees/1/worktree.txt b/repos/app.worktrees/1/worktree.txt",
+              "diff --git a/repos/app [#1]/worktree.txt b/repos/app [#1]/worktree.txt",
+            );
+            assert.include(
+              source.diff,
+              "diff --git a/repos/app [feat-worktree-label #3]/branch.txt b/repos/app [feat-worktree-label #3]/branch.txt",
             );
             assert.include(source.diff, "diff --git a/unborn/draft.txt b/unborn/draft.txt");
           }
@@ -4303,7 +4326,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const metadataSource = metadataPreview.sources[0]!;
           assert.strictEqual(metadataSource.patchesDeferred, true);
           assert.strictEqual(metadataSource.diff, "");
-          assert.strictEqual(metadataSource.files?.length, 6);
+          assert.strictEqual(metadataSource.files?.length, 7);
 
           const singleNestedFile = yield* driver.getReviewDiffPreview({
             cwd,
@@ -4331,7 +4354,34 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           );
           assert.include(singleSource.diff, "+# edited in nested repo");
 
-          // Expanding file contents works for modified, new, and deleted nested files.
+          // Lazy single-file fetch accepts aliased worktree paths (even with a stale branch label).
+          const singleAliasedWorktreeFile = yield* driver.getReviewDiffPreview({
+            cwd,
+            file: {
+              path: "repos/app [stale-branch #3]/branch.txt",
+              previousPath: null,
+              sourceKind: "working-tree",
+            },
+          });
+          const singleAliasedSource = singleAliasedWorktreeFile.sources.find(
+            (entry) => entry.kind === "working-tree",
+          )!;
+          assert.deepStrictEqual(singleAliasedSource.files, [
+            {
+              path: "repos/app [stale-branch #3]/branch.txt",
+              previousPath: null,
+              changeType: "new",
+              additions: 1,
+              deletions: 0,
+            },
+          ]);
+          assert.include(
+            singleAliasedSource.diff,
+            "diff --git a/repos/app [stale-branch #3]/branch.txt b/repos/app [stale-branch #3]/branch.txt",
+          );
+          assert.include(singleAliasedSource.diff, "+branch worktree file");
+
+          // Expanding file contents works for modified, new (aliased and raw), and deleted nested files.
           const modifiedContents = yield* driver.getReviewDiffFileContents({
             cwd,
             sourceKind: "branch-range",
@@ -4351,11 +4401,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             sourceKind: "working-tree",
             baseRef: "HEAD",
             headRef: null,
+            oldPath: "repos/app [#1]/worktree.txt",
+            newPath: "repos/app [#1]/worktree.txt",
+            changeType: "new",
+          });
+          assert.deepStrictEqual(newContents, {
+            oldContents: "",
+            newContents: "dirty worktree file\n",
+          });
+
+          const branchContents = yield* driver.getReviewDiffFileContents({
+            cwd,
+            sourceKind: "working-tree",
+            baseRef: "HEAD",
+            headRef: null,
+            oldPath: "repos/app [feat-worktree-label #3]/branch.txt",
+            newPath: "repos/app [feat-worktree-label #3]/branch.txt",
+            changeType: "new",
+          });
+          assert.deepStrictEqual(branchContents, {
+            oldContents: "",
+            newContents: "branch worktree file\n",
+          });
+
+          const rawWorktreeContents = yield* driver.getReviewDiffFileContents({
+            cwd,
+            sourceKind: "working-tree",
+            baseRef: "HEAD",
+            headRef: null,
             oldPath: "repos/app.worktrees/1/worktree.txt",
             newPath: "repos/app.worktrees/1/worktree.txt",
             changeType: "new",
           });
-          assert.deepStrictEqual(newContents, {
+          assert.deepStrictEqual(rawWorktreeContents, {
             oldContents: "",
             newContents: "dirty worktree file\n",
           });
@@ -4378,7 +4456,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const status = yield* driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
           assert.deepStrictEqual(status.branchChanges, {
             baseRef: null,
-            insertions: 5,
+            insertions: 6,
             deletions: 3,
           });
         }),

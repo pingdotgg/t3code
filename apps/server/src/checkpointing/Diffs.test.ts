@@ -73,6 +73,9 @@ describe("isGitImport", () => {
   it("keeps a file inside a nested repository whose gitlink was authored", () => {
     const authored = new Set(["repos/app.worktrees/1"]);
     expect(isGitImport(file("repos/app.worktrees/1/src/a.ts"), authored)).toBe(false);
+    expect(isGitImport(file("repos/app [feat-x #1]/src/a.ts"), authored)).toBe(false);
+    expect(isGitImport(file("repos/app [#1]/src/a.ts"), authored)).toBe(false);
+    expect(isGitImport(file("repos/app [feat-x #10]/src/a.ts"), authored)).toBe(true);
     expect(isGitImport(file("repos/app.worktrees/10/src/a.ts"), authored)).toBe(true);
     expect(isGitImport(file("repos/app.worktrees"), authored)).toBe(true);
   });

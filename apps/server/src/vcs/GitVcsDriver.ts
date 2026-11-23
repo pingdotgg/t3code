@@ -50,6 +50,12 @@ import {
 } from "./GitVcsDriverCore.ts";
 import * as CheckoutCloner from "./CheckoutCloner.ts";
 import * as CheckpointCaptureIndex from "./checkpointCaptureIndex.ts";
+import {
+  formatWorktreeDisplayPrefix,
+  isNumberedWorktreePath,
+  readWorktreeBranchName,
+  unaliasWorktreeDisplayPath,
+} from "./worktreeDisplayPath.ts";
 import * as VcsDriver from "./VcsDriver.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
@@ -1250,17 +1256,66 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               `${gitlink.to}^{commit}`,
             ]);
             const fileCount = changed.split("\0").filter((file) => file !== "").length;
-            return fileCount > NESTED_REPOSITORY_DIFF_MAX_FILES
-              ? null
-              : { path: gitlink.path, cwd: nestedCwd, from: start, to: gitlink.to };
+            if (fileCount > NESTED_REPOSITORY_DIFF_MAX_FILES) return null;
+            let displayPath = gitlink.path;
+            if (isNumberedWorktreePath(gitlink.path)) {
+              let branch: string | null = null;
+              const currentBranch = yield* readWorktreeBranchName(nestedCwd);
+              if (currentBranch !== null) {
+                const currentHead = yield* nestedGit(nestedCwd, [
+                  "rev-parse",
+                  "--verify",
+                  "--quiet",
+                  "HEAD",
+                ]).pipe(Effect.orElseSucceed(() => ""));
+                const onCurrentBranch =
+                  currentHead === gitlink.to ||
+                  (currentHead !== "" &&
+                    gitlink.to !== forkPoint &&
+                    (yield* execute({
+                      operation,
+                      cwd: nestedCwd,
+                      args: ["merge-base", "--is-ancestor", gitlink.to, currentHead],
+                      allowNonZeroExit: true,
+                    })).exitCode === 0);
+                if (onCurrentBranch) branch = currentBranch;
+              }
+              if (branch === null) {
+                const pointing = yield* nestedGit(nestedCwd, [
+                  "for-each-ref",
+                  "--points-at",
+                  gitlink.to,
+                  "--format=%(refname:short)",
+                  "refs/heads/",
+                ]).pipe(
+                  Effect.map((stdout) =>
+                    stdout
+                      .split("\n")
+                      .map((line) => line.trim())
+                      .filter((line) => line.length > 0),
+                  ),
+                  Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+                );
+                branch =
+                  pointing.find((name) => name !== "main" && name !== "master") ??
+                  pointing[0] ??
+                  null;
+              }
+              displayPath = formatWorktreeDisplayPrefix(gitlink.path, branch);
+            }
+            return {
+              path: gitlink.path,
+              displayPath,
+              cwd: nestedCwd,
+              from: start,
+              to: gitlink.to,
+            };
           }).pipe(Effect.orElseSucceed(() => null)),
         { concurrency: 4 },
       );
       return ranges.filter((range) => range !== null);
     },
   );
-
-  const untrackedBlobs = CheckpointUntrackedBlobs.make(execute, fileSystem);
 
   const checkpointIdentity: NodeJS.ProcessEnv = {
     GIT_AUTHOR_NAME: "T3 Code",
@@ -2574,13 +2629,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       ).pipe(Effect.orElseSucceed(() => []))).filter(({ path: nestedPath }) =>
         !input.excludePaths?.some((excluded) => nestedPath === excluded || nestedPath.startsWith(`${excluded}/`))
       );
+      const normalizedFilePaths = input.filePaths?.map(unaliasWorktreeDisplayPath);
       const nestedFilePaths = (prefix: string) =>
-        input.filePaths === undefined || input.filePaths.includes(prefix)
+        normalizedFilePaths === undefined || normalizedFilePaths.includes(prefix)
           ? undefined
-          : input.filePaths
+          : normalizedFilePaths
               .filter((file) => file.startsWith(`${prefix}/`))
               .map((file) => file.slice(prefix.length + 1));
-      const rootFilePaths = input.filePaths?.filter(
+      const rootFilePaths = normalizedFilePaths?.filter(
         (file) =>
           !nestedRanges.some((range) => file === range.path || file.startsWith(`${range.path}/`)),
       );
@@ -2647,14 +2703,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         const filePaths = nestedFilePaths(range.path);
         if (remainingBytes <= 0 || filePaths?.length === 0) continue;
         const nestedDiff = yield* runDiff(range.cwd, [
-          ...diffArgs(range.path, range.from, range.to),
+          ...diffArgs(range.displayPath, range.from, range.to),
           ...(filePaths === undefined
             ? []
             : ["--", ...filePaths.map((file) => `:(top,literal)${file}`)]),
         ]);
         diff +=
           input.format === "numstat"
-            ? nestedDiff.replace(/(^|\0)(\d+|-)\t(\d+|-)\t/g, `$1$2\t$3\t${range.path}/`)
+            ? nestedDiff.replace(/(^|\0)(\d+|-)\t(\d+|-)\t/g, `$1$2\t$3\t${range.displayPath}/`)
             : nestedDiff;
       }
       return diff;

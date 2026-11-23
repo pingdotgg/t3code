@@ -30,6 +30,8 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { unaliasWorktreeDisplayPath } from "../vcs/worktreeDisplayPath.ts";
+
 import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
 import { WindowsVerbatimSpawn } from "./windowsVerbatimSpawn.ts";
 export {
@@ -820,9 +822,11 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
 ) {
   // Clients send `~/` host paths as written, and launches run without a shell to expand them.
   const home = yield* HostProcess.HomeDirectory;
-  const cwd = expandHomePath(input.cwd, home);
+  const cwd = unaliasWorktreeDisplayPath(expandHomePath(input.cwd, home));
   const projectRoot =
-    input.projectRoot === undefined ? undefined : expandHomePath(input.projectRoot, home);
+    input.projectRoot === undefined
+      ? undefined
+      : unaliasWorktreeDisplayPath(expandHomePath(input.projectRoot, home));
   const launch = yield* resolveEditorLaunch({ ...input, cwd, projectRoot });
   if (input.editor === "file-manager" && input.reveal === true) {
     const platform = yield* HostProcess.Platform;

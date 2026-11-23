@@ -1601,3 +1601,18 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
     );
   }),
 );
+
+it.effect("unaliases worktree display paths before launching an editor", () =>
+  Effect.gen(function* () {
+    const { exit, spawned } = yield* launchWindowsShimEditor(
+      "C:\\Projects\\dotfiles [migrate-bench-land #1]\\src\\file.ts:12:4",
+    );
+    assert.isTrue(Exit.isSuccess(exit));
+    assert.ok(spawned);
+    assert.isTrue(
+      spawned.command.endsWith(
+        ' ^"--goto^" ^"C:\\Projects\\dotfiles.worktrees\\1\\src\\file.ts:12:4^"',
+      ),
+    );
+  }),
+);

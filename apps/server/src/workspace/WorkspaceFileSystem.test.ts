@@ -961,5 +961,35 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
         }
       }),
     );
+
+    it.effect("reads, writes, and stats aliased worktree display paths", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "dotfiles.worktrees/1/src/file.ts", "before\n");
+
+        const readResult = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "dotfiles [migrate-bench-land #1]/src/file.ts",
+        });
+        expect(readResult.contents).toBe("before\n");
+        expect(readResult.relativePath).toBe("dotfiles.worktrees/1/src/file.ts");
+
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "dotfiles [migrate-bench-land #1]/src/file.ts",
+          contents: "after\n",
+        });
+        expect(
+          yield* fileSystem.readFileString(path.join(cwd, "dotfiles.worktrees/1/src/file.ts")),
+        ).toBe("after\n");
+
+        const aliasedAbs = path.join(cwd, "dotfiles [migrate-bench-land #1]/src/file.ts");
+        const meta = yield* workspaceFileSystem.getMetadata({ paths: [aliasedAbs] });
+        expect(meta.entries[0]?.kind).toBe("file");
+      }),
+    );
   });
 });
