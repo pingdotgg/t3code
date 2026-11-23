@@ -1836,7 +1836,7 @@ it.effect("queues a delegated completion wake whose steer the provider declined"
           (event) =>
             event.type === "run.updated" &&
             event.payload.id === first.runId &&
-            event.payload.status === "waiting",
+            event.payload.status === "completed",
         ),
         Stream.take(1),
         Stream.runDrain,

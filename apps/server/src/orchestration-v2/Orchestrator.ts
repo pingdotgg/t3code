@@ -1280,6 +1280,15 @@ function queuedRunCancellationEvents(
   return events;
 }
 
+function latestStartedRun(runs: ReadonlyArray<OrchestrationV2Run>): OrchestrationV2Run | undefined {
+  return runs
+    .filter((run) => run.status !== "queued")
+    .reduce<OrchestrationV2Run | undefined>(
+      (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
+      undefined,
+    );
+}
+
 function latestStableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | null {
@@ -1882,12 +1891,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const holdRunAwaitingCapture = Effect.fn("Orchestrator.holdRunAwaitingCapture")(function* (
     projection: OrchestrationV2ThreadProjection,
   ) {
-    const latest = projection.runs
-      .filter((run) => run.status !== "queued")
-      .reduce<OrchestrationV2Run | undefined>(
-        (current, run) => (current === undefined || run.ordinal > current.ordinal ? run : current),
-        undefined,
-      );
+    const latest = latestStartedRun(projection.runs);
     if (latest === undefined || !(yield* awaitsCheckpointCapture(latest))) return projection;
     return {
       ...projection,
@@ -3543,6 +3547,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
           Effect.orElseSucceed(() => false),
         );
+
+  const awaitLatestRunCapture = Effect.fn("Orchestrator.awaitLatestRunCapture")(
+    function* (threadId: ThreadId) {
+      const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      const latest = latestStartedRun(runs);
+      if (latest === undefined || !(yield* awaitsCheckpointCapture(latest))) return;
+      yield* effectOutbox.awaitSettled(`effect:checkpoint.capture:${latest.id}`);
+    },
+    (effect) => Effect.ignore(effect),
+  );
 
   const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
     threadId: ThreadId,
@@ -16684,6 +16698,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
+    // The latest stable run is the one with a checkpoint. Wait for a just-completed run's capture,
+    // outside the locks its commit takes, so a fork right after a turn starts from that turn.
+    if (
+      (command.type === "thread.fork" || command.type === "thread.merge_back") &&
+      command.sourcePoint.type === "latest_stable"
+    ) {
+      yield* awaitLatestRunCapture(command.sourceThreadId);
+    }
     const dispatch = threadDispatch.withLock(
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
