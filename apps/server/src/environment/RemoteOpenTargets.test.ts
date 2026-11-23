@@ -48,6 +48,15 @@ const useMacTailnet = () => {
         internal: false,
         cidr: "100.64.1.2/32",
       },
+      {
+        address: "fd7a:115c:a1e0::1",
+        netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        family: "IPv6",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "fd7a:115c:a1e0::1/128",
+        scopeid: 0,
+      },
     ],
   });
   NodeModule.syncBuiltinESMExports();
@@ -218,13 +227,13 @@ describe("RemoteOpenTargets", () => {
   it.effect("with a macOS Tailscale app, resolves the tailnet host without the CLI", () =>
     Effect.gen(function* () {
       const reverseLookup = useMacTailnet();
-      // The other VPN's address has a reverse name too, but not a MagicDNS one.
+      // Tailscale's resolver also names peers; the other VPN's address may match one.
       const reverseNames = (tailnetName: string | null) =>
         reverseLookup.mockImplementation((address) =>
           address === "100.64.1.2" && tailnetName !== null
             ? Promise.resolve([tailnetName])
             : address === "100.85.0.1"
-              ? Promise.resolve(["gw.vpn.example.com"])
+              ? Promise.resolve(["peer.tail1234.ts.net"])
               : Promise.reject(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })),
         );
       reverseNames("renamed.tail1234.ts.net.");
@@ -247,7 +256,7 @@ describe("RemoteOpenTargets", () => {
         { kind: "tailscale", host: "renamed.tail1234.ts.net", username: "t3-user" },
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
-      // No MagicDNS answer: a CGNAT address alone may belong to another VPN.
+      // No MagicDNS answer for this host's own address: no tailnet target.
       reverseNames(null);
       expect(yield* resolve({ ipv4: true, ipv6: false })).toEqual([
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },

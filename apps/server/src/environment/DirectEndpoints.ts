@@ -45,14 +45,6 @@ export class DirectEndpoints extends Context.Service<
 const isAdvertisableAddress = (address: string): boolean =>
   NodeNet.isIPv4(address) && !address.startsWith("127.") && isPrivateNetworkAddress(address);
 
-// macOS utun names need Tailscale's IPv6 range to identify them; WARP shares its IPv4 range.
-const isTailscaleInterface = (
-  name: string,
-  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
-): boolean =>
-  /^tailscale/i.test(name) ||
-  entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
-
 export function resolveBoundEndpoints(input: {
   readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
@@ -64,7 +56,9 @@ export function resolveBoundEndpoints(input: {
   if (isLoopbackHost(input.host)) return [];
   const tailscaleAddresses = new Set(
     Object.entries(input.interfaces).flatMap(([name, entries = []]) =>
-      isTailscaleInterface(name, entries) ? entries.map((entry) => entry.address) : [],
+      TailnetDiscovery.isTailscaleInterface(name, entries)
+        ? entries.map((entry) => entry.address)
+        : [],
     ),
   );
   const addresses = isWildcardHost(input.host)

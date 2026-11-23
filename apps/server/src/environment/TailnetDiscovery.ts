@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { isTailnetHost } from "@t3tools/shared/hostClassification";
 import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,9 +20,9 @@ export interface Tailnet {
   readonly fromCli: boolean;
 }
 
-// Other VPNs also use the CGNAT range, so only an address whose reverse name is a MagicDNS
-// name (always under ts.net) counts. Ask Tailscale's resolver directly: it answers even when
-// the Mac does not use Tailscale's DNS settings.
+// Tailscale's resolver answers for any tailnet node, so only an address on a local Tailscale
+// interface is asked about, and only a MagicDNS name (always under ts.net) is accepted.
+// Ask the resolver directly: it answers even when the Mac does not use Tailscale's DNS settings.
 const lookupMagicDnsName = (address: string) =>
   Effect.promise(() => {
     const resolver = new NodeDns.promises.Resolver({ tries: 1 });
@@ -35,23 +36,24 @@ const lookupMagicDnsName = (address: string) =>
     );
   }).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
 
+// macOS utun names need Tailscale's IPv6 range to identify them; other VPNs share its IPv4 range.
+export const isTailscaleInterface = (
+  name: string,
+  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
+): boolean =>
+  /^tailscale/i.test(name) ||
+  entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
+
 const readTailnetFromInterfaces = Effect.gen(function* () {
-  const candidates = Object.values(NodeOS.networkInterfaces())
-    .flatMap((addresses) => addresses ?? [])
-    .filter(
+  const address = Object.entries(NodeOS.networkInterfaces())
+    .flatMap(([name, entries = []]) => (isTailscaleInterface(name, entries) ? entries : []))
+    .find(
       (entry) =>
         !entry.internal && entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
-    )
-    .map((entry) => entry.address);
-  const names = yield* Effect.forEach(candidates, lookupMagicDnsName, {
-    concurrency: "unbounded",
-  });
-  const index = names.findIndex((name) => name !== null);
-  const magicDnsName = names[index];
-  const address = candidates[index];
-  return magicDnsName == null || address === undefined
-    ? null
-    : { magicDnsName, ipv4Addresses: [address], fromCli: false };
+    )?.address;
+  if (address === undefined) return null;
+  const magicDnsName = yield* lookupMagicDnsName(address);
+  return magicDnsName === null ? null : { magicDnsName, ipv4Addresses: [address], fromCli: false };
 });
 
 /**

@@ -436,6 +436,15 @@ describe("DirectEndpoints Tailscale Serve", () => {
           internal: false,
           cidr: "100.64.1.2/32",
         },
+        {
+          address: "fd7a:115c:a1e0::1",
+          netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+          family: "IPv6",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "fd7a:115c:a1e0::1/128",
+          scopeid: 0,
+        },
       ],
     });
     NodeModule.syncBuiltinESMExports();
