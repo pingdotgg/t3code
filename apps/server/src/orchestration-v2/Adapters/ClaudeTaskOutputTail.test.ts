@@ -127,6 +127,215 @@ describe("tailClaudeTaskOutput", () => {
       assert.deepEqual(chunks, ["one\n", "two\n"]);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.live("checks the cwd project slug before scanning root and reuses cached project dirs", () =>
+    Effect.gen(function* () {
+      const baseFs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* baseFs.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+      for (let i = 0; i < 20; i += 1) {
+        yield* baseFs.makeDirectory(path.join(root, `unrelated-dir-${i}`), { recursive: true });
+        yield* baseFs.writeFileString(path.join(root, `unrelated-file-${i}.log`), "x");
+      }
+      const cwd = path.resolve("/private/tmp/project");
+      const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+      const tasks = path.join(root, slug, SESSION_ID, "tasks");
+      const file = path.join(tasks, `${TASK_ID}.output`);
+      yield* baseFs.makeDirectory(tasks, { recursive: true });
+      yield* baseFs.writeFileString(file, "from-cwd\n");
+
+      const lateTaskId = "blatetask";
+      const lateFile = path.join(tasks, `${lateTaskId}.output`);
+      // The late file appears right after the first probe misses it, so the next poll must find it.
+      let createLateFileOnProbe = false;
+      let readDirCount = 0;
+      let existsCount = 0;
+      const countingFs: FileSystem.FileSystem = {
+        ...baseFs,
+        readDirectory: (target, options) => {
+          if (target === root) readDirCount += 1;
+          return baseFs.readDirectory(target, options);
+        },
+        exists: (target) => {
+          existsCount += 1;
+          if (createLateFileOnProbe && target === lateFile) {
+            createLateFileOnProbe = false;
+            return baseFs.writeFileString(lateFile, "late\n").pipe(Effect.as(false));
+          }
+          return baseFs.exists(target);
+        },
+      };
+
+      const cache = new Map<string, string>();
+      const chunks: Array<string> = [];
+      const stop = yield* Deferred.make<void>();
+      const first = yield* Deferred.make<void>();
+      const fiber = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: SESSION_ID,
+        taskId: TASK_ID,
+        cwd,
+        projectCache: cache,
+        stop,
+        onChunk: (chunk) =>
+          Effect.sync(() => chunks.push(chunk)).pipe(
+            Effect.andThen(Deferred.succeed(first, undefined)),
+          ),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, countingFs), Effect.forkScoped);
+      yield* Deferred.await(first);
+      yield* Deferred.succeed(stop, undefined);
+      yield* Fiber.join(fiber);
+
+      assert.deepEqual(chunks, ["from-cwd\n"]);
+      assert.equal(readDirCount, 0);
+      assert.equal(existsCount, 1);
+      assert.equal(cache.get(SESSION_ID), slug);
+
+      // Missing output file when session dir already exists under cwd slug should not scan root.
+      readDirCount = 0;
+      existsCount = 0;
+      createLateFileOnProbe = true;
+      const lateChunks: Array<string> = [];
+      const lateStop = yield* Deferred.make<void>();
+      const lateFirst = yield* Deferred.make<void>();
+      const lateFiber = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: SESSION_ID,
+        taskId: lateTaskId,
+        cwd,
+        projectCache: cache,
+        stop: lateStop,
+        onChunk: (chunk) =>
+          Effect.sync(() => lateChunks.push(chunk)).pipe(
+            Effect.andThen(Deferred.succeed(lateFirst, undefined)),
+          ),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, countingFs), Effect.forkScoped);
+      yield* Deferred.await(lateFirst);
+      yield* Deferred.succeed(lateStop, undefined);
+      yield* Fiber.join(lateFiber);
+      assert.deepEqual(lateChunks, ["late\n"]);
+      assert.equal(readDirCount, 0);
+
+      // Fallback scan for a non-matching project dir caches it for subsequent tasks in the session.
+      const otherSession = "1d92cc39-9e89-4889-bd22-3de9880233d4";
+      const otherTasks = path.join(root, "custom-slug", otherSession, "tasks");
+      yield* baseFs.makeDirectory(otherTasks, { recursive: true });
+      yield* baseFs.writeFileString(path.join(otherTasks, "btask1.output"), "one\n");
+      yield* baseFs.writeFileString(path.join(otherTasks, "btask2.output"), "two\n");
+
+      const firstFallbackChunks: Array<string> = [];
+      const stop1 = yield* Deferred.make<void>();
+      const got1 = yield* Deferred.make<void>();
+      const fiber1 = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: otherSession,
+        taskId: "btask1",
+        projectCache: cache,
+        stop: stop1,
+        onChunk: (chunk) =>
+          Effect.sync(() => firstFallbackChunks.push(chunk)).pipe(
+            Effect.andThen(Deferred.succeed(got1, undefined)),
+          ),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, countingFs), Effect.forkScoped);
+      yield* Deferred.await(got1);
+      yield* Deferred.succeed(stop1, undefined);
+      yield* Fiber.join(fiber1);
+      assert.deepEqual(firstFallbackChunks, ["one\n"]);
+      assert.equal(cache.get(otherSession), "custom-slug");
+
+      readDirCount = 0;
+      existsCount = 0;
+      const secondFallbackChunks: Array<string> = [];
+      const stop2 = yield* Deferred.make<void>();
+      const got2 = yield* Deferred.make<void>();
+      const fiber2 = yield* tailClaudeTaskOutput({
+        root,
+        sessionId: otherSession,
+        taskId: "btask2",
+        projectCache: cache,
+        stop: stop2,
+        onChunk: (chunk) =>
+          Effect.sync(() => secondFallbackChunks.push(chunk)).pipe(
+            Effect.andThen(Deferred.succeed(got2, undefined)),
+          ),
+      }).pipe(Effect.provideService(FileSystem.FileSystem, countingFs), Effect.forkScoped);
+      yield* Deferred.await(got2);
+      yield* Deferred.succeed(stop2, undefined);
+      yield* Fiber.join(fiber2);
+      assert.deepEqual(secondFallbackChunks, ["two\n"]);
+      assert.equal(readDirCount, 0);
+      assert.equal(existsCount, 1);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("aborts root directory scan immediately when stop completes during locate", () =>
+    Effect.gen(function* () {
+      const baseFs = yield* FileSystem.FileSystem;
+      const root = yield* baseFs.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+      const stop = yield* Deferred.make<void>();
+      let existsCount = 0;
+      const fakeFs: FileSystem.FileSystem = {
+        ...baseFs,
+        readDirectory: (target, options) =>
+          target === root
+            ? Effect.succeed(Array.from({ length: 20 }, (_, index) => `project-${index}`))
+            : baseFs.readDirectory(target, options),
+        exists: () =>
+          Effect.suspend(() => {
+            existsCount += 1;
+            if (existsCount === 2) {
+              return Deferred.succeed(stop, undefined).pipe(Effect.as(false));
+            }
+            return Effect.succeed(false);
+          }),
+      };
+
+      yield* tailClaudeTaskOutput({
+        root,
+        sessionId: SESSION_ID,
+        taskId: TASK_ID,
+        stop,
+        onChunk: () => Effect.void,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, fakeFs));
+
+      assert.equal(existsCount, 2);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "skips the task-file probe when stop completes during the session-directory check",
+    () =>
+      Effect.gen(function* () {
+        const baseFs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* baseFs.makeTempDirectoryScoped({ prefix: "claude-task-output-" });
+        const stop = yield* Deferred.make<void>();
+        const probes: Array<string> = [];
+        const fakeFs: FileSystem.FileSystem = {
+          ...baseFs,
+          readDirectory: (target, options) =>
+            target === root ? Effect.succeed(["project-0"]) : baseFs.readDirectory(target, options),
+          exists: (target) =>
+            Effect.suspend(() => {
+              probes.push(target);
+              // The session directory exists; stop lands while that check is in flight.
+              return target === path.join(root, "project-0", SESSION_ID)
+                ? Deferred.succeed(stop, undefined).pipe(Effect.as(true))
+                : Effect.succeed(false);
+            }),
+        };
+
+        yield* tailClaudeTaskOutput({
+          root,
+          sessionId: SESSION_ID,
+          taskId: TASK_ID,
+          stop,
+          onChunk: () => Effect.void,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, fakeFs));
+
+        assert.deepEqual(probes, [path.join(root, "project-0", SESSION_ID)]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
 
 describe("claudeTaskOutputRoot", () => {

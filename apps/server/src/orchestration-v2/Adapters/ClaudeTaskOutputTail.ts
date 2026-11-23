@@ -34,23 +34,106 @@ export function claudeTaskOutputRoot(
   return path.resolve(cwd ?? ".", base, `claude-${uid}`);
 }
 
+const claudeProjectSlug = (cwd: string, path: Path.Path): string =>
+  path.resolve(cwd).replace(/[^a-zA-Z0-9]/g, "-");
+
+const taskOutputFile = (
+  path: Path.Path,
+  root: string,
+  project: string,
+  sessionId: string,
+  taskId: string,
+): string => path.join(root, project, sessionId, "tasks", `${taskId}.output`);
+
 const locate = Effect.fn("ClaudeTaskOutputTail.locate")(function* (input: {
   readonly root: string;
   readonly sessionId: string;
   readonly taskId: string;
+  readonly stop: Deferred.Deferred<void>;
+  readonly abortOnStop: boolean;
+  readonly cwd: string | undefined;
+  readonly projectCache: Map<string, string>;
+  readonly realSlugRef: { resolved: boolean; value: string | undefined };
 }) {
+  const shouldAbort = () =>
+    input.abortOnStop ? Deferred.isDone(input.stop) : Effect.succeed(false);
+  if (yield* shouldAbort()) return Option.none<string>();
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const exists = (target: string) =>
+    fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false));
+  const probed = new Set<string>();
+
+  // Runs inside the ClaudeTaskOutputTail.locate span.
+  const probeKnownProject = Effect.fnUntraced(function* (
+    project: string,
+    rememberSessionDir: boolean,
+  ) {
+    probed.add(project);
+    const candidate = taskOutputFile(path, input.root, project, input.sessionId, input.taskId);
+    if (yield* exists(candidate)) {
+      input.projectCache.set(input.sessionId, project);
+      return { kind: "found" as const, file: candidate };
+    }
+    if (yield* shouldAbort()) return { kind: "aborted" as const };
+    if (yield* exists(path.join(input.root, project, input.sessionId))) {
+      if (rememberSessionDir) input.projectCache.set(input.sessionId, project);
+      return { kind: "session_exists" as const };
+    }
+    return { kind: "missing" as const };
+  });
+
+  // 1. Check the cached project directory for this session first.
+  const cachedProject = input.projectCache.get(input.sessionId);
+  if (cachedProject !== undefined) {
+    const result = yield* probeKnownProject(cachedProject, false);
+    if (result.kind === "found") return Option.some(result.file);
+    if (result.kind === "session_exists" || result.kind === "aborted") return Option.none<string>();
+    input.projectCache.delete(input.sessionId);
+  }
+
+  // 2. Check Claude Code's deterministic cwd slug before scanning root.
+  if (input.cwd !== undefined) {
+    const directSlug = claudeProjectSlug(input.cwd, path);
+    if (!probed.has(directSlug)) {
+      if (yield* shouldAbort()) return Option.none<string>();
+      const result = yield* probeKnownProject(directSlug, true);
+      if (result.kind === "found") return Option.some(result.file);
+      if (result.kind === "session_exists" || result.kind === "aborted")
+        return Option.none<string>();
+    }
+    if (!input.realSlugRef.resolved) {
+      input.realSlugRef.resolved = true;
+      const realCwd = yield* fileSystem
+        .realPath(input.cwd)
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (realCwd !== undefined) {
+        const slug = claudeProjectSlug(realCwd, path);
+        if (slug !== directSlug) input.realSlugRef.value = slug;
+      }
+    }
+    const realSlug = input.realSlugRef.value;
+    if (realSlug !== undefined && !probed.has(realSlug)) {
+      if (yield* shouldAbort()) return Option.none<string>();
+      const result = yield* probeKnownProject(realSlug, true);
+      if (result.kind === "found") return Option.some(result.file);
+      if (result.kind === "session_exists" || result.kind === "aborted")
+        return Option.none<string>();
+    }
+  }
+
+  // 3. Fall back to scanning root when cwd is absent or does not match Claude's directory slug.
+  if (yield* shouldAbort()) return Option.none<string>();
   const projects = yield* fileSystem.readDirectory(input.root).pipe(Effect.orElseSucceed(() => []));
   for (const project of projects) {
-    const candidate = path.join(
-      input.root,
-      project,
-      input.sessionId,
-      "tasks",
-      `${input.taskId}.output`,
-    );
-    if (yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+    if (probed.has(project)) continue;
+    if (yield* shouldAbort()) return Option.none<string>();
+    // Unrelated project dirs and regular files fail in one stat before probing tasks/<id>.output.
+    if (!(yield* exists(path.join(input.root, project, input.sessionId)))) continue;
+    if (yield* shouldAbort()) return Option.none<string>();
+    const candidate = taskOutputFile(path, input.root, project, input.sessionId, input.taskId);
+    if (yield* exists(candidate)) {
+      input.projectCache.set(input.sessionId, project);
       return Option.some(candidate);
     }
   }
@@ -64,6 +147,8 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
   readonly taskId: string;
   readonly stop: Deferred.Deferred<void>;
   readonly onChunk: (chunk: string) => Effect.Effect<void>;
+  readonly cwd?: string | null | undefined;
+  readonly projectCache?: Map<string, string> | undefined;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const pause = Deferred.await(input.stop).pipe(
@@ -73,9 +158,24 @@ export const tailClaudeTaskOutput = Effect.fn("ClaudeTaskOutputTail.tail")(funct
       orElse: () => Effect.succeed(false),
     }),
   );
+  const projectCache = input.projectCache ?? new Map<string, string>();
+  const trimmedCwd = input.cwd?.trim();
+  const cwd = trimmedCwd && trimmedCwd.length > 0 ? trimmedCwd : undefined;
+  const realSlugRef = { resolved: false, value: undefined as string | undefined };
   let file = Option.none<string>();
   for (let attempt = 0; Option.isNone(file); attempt += 1) {
-    file = yield* locate(input);
+    const stoppedBeforeLocate = yield* Deferred.isDone(input.stop);
+    if (attempt > 0 && stoppedBeforeLocate) return;
+    file = yield* locate({
+      root: input.root,
+      sessionId: input.sessionId,
+      taskId: input.taskId,
+      stop: input.stop,
+      abortOnStop: !stoppedBeforeLocate,
+      cwd,
+      projectCache,
+      realSlugRef,
+    });
     if (Option.isSome(file)) break;
     if (attempt + 1 >= MAX_LOCATE_ATTEMPTS || (yield* pause)) return;
   }
