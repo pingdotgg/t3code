@@ -1515,17 +1515,20 @@ export const layer = Layer.effect(
     let appliedZone: string | undefined;
     const applyZone = (zone: DateTime.TimeZone, onApplied: Effect.Effect<void> = Effect.void) =>
       moveFixedTimeRunsToZone(zone).pipe(
-        Effect.tap(() => Effect.sync(() => (appliedZone = DateTime.zoneToString(zone)))),
-        Effect.andThen(onApplied),
-        Effect.catchCause((cause) =>
-          Effect.sync(() => (appliedZone = undefined)).pipe(
-            Effect.andThen(
-              Effect.logWarning("Could not move scheduled tasks to the schedule time zone", {
-                cause,
-              }),
+        Effect.matchCauseEffect({
+          onFailure: (cause) =>
+            Effect.sync(() => (appliedZone = undefined)).pipe(
+              Effect.andThen(
+                Effect.logWarning("Could not move scheduled tasks to the schedule time zone", {
+                  cause,
+                }),
+              ),
             ),
-          ),
-        ),
+          onSuccess: () =>
+            Effect.sync(() => (appliedZone = DateTime.zoneToString(zone))).pipe(
+              Effect.andThen(onApplied),
+            ),
+        }),
       );
     // Unreadable settings leave stored runs alone rather than moving them to this machine's zone.
     yield* Result.isSuccess(configuredZone)
