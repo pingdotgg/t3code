@@ -109,7 +109,10 @@ export function issueTrackerSummary(
   if (!tracker.connected)
     return knownTrackerSentence(
       `Not connected. Add a ${tracker.credential.label.toLowerCase()} to list its issues.`,
-      [msg("Not connected. Add a personal api key to list its issues.")],
+      [
+        msg("Not connected. Add a personal api key to list its issues."),
+        msg("Not connected. Add a personal api token to list its issues."),
+      ],
       resolve,
     );
   if (tracker.account === null)
@@ -123,6 +126,10 @@ export function issueTrackerSummary(
         [
           msg(
             "Connected as {account} · no projects linked yet. Pick a team for a project to list its issues.",
+            { account: tracker.account },
+          ),
+          msg(
+            "Connected as {account} · no projects linked yet. Pick a list for a project to list its issues.",
             { account: tracker.account },
           ),
         ],

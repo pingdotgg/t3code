@@ -71,6 +71,7 @@
   "cd03eb1b84271c02": "Agent",
   "bfe1a60f3f9c60fb": "Omgång {turn} · {what}",
   "dfdaa6255a416140": "Översikt över {turns, plural, one {{turns} senaste omgång} other {{turns} senaste omgångar}}, {textTurns, plural, =0 {ingen meddelandetext} one {meddelandetext från den senaste omgången} other {meddelandetext från de senaste {textTurns} omgångarna}}{truncated, select, yes {, förkortad för att få plats} other {}}",
+  "260c6b45f52d2f27": "Lägger till texten i dina meddelanden och agentens svar under {textTurns, plural, one {den senaste omgången} other {de senaste {textTurns} omgångarna}}.",
   "afac52a5cc2dc801": "Det gick inte att skicka ditt svar. Försök igen.",
   "79d776428f4d0650": "Filen kunde inte läsas in. Återanslut och försök igen.",
   "3ea34cbb1ca5ba9b": "Förhandsvisningen avbröts.",
@@ -752,8 +753,10 @@
   "daa408bb99d21d18": "{kind, select, pr {Den här åtgärden pushar lokala commits och skapar en PR på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} mr {Den här åtgärden pushar lokala commits och skapar en MR på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} generic {Den här åtgärden pushar lokala commits och skapar en ändringsbegäran på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.} other {Den här åtgärden pushar lokala commits och skapar {changeRequest} på ”{branch}”. Du kan fortsätta på den här grenen eller skapa en funktionsgren och köra samma åtgärd där.}}",
   "8471c4c5a50ffde3": "Det går inte att bläddra bland ärenden för den här värden än.",
   "2f4a47129f89fe22": "Inte ansluten. Lägg till en personlig API-nyckel för att lista dess ärenden.",
+  "72d4e99a84f7b1f4": "Inte ansluten. Lägg till en personlig API-token för att lista dess ärenden.",
   "024baab60525a419": "Den sparade autentiseringsuppgiften avvisades.",
   "2613c232516f3c72": "Ansluten som {account} · inga projekt länkade än. Välj ett team för ett projekt för att lista dess ärenden.",
+  "cc88749dc036d096": "Ansluten som {account} · inga projekt länkade än. Välj en lista för ett projekt för att lista dess ärenden.",
   "77d07bfe2f8ee19d": "{count, plural, one {Ansluten som {account} · {count} projekt länkat} other {Ansluten som {account} · {count} projekt länkade}}",
   "3eb9a01099aaf799": "{count} s",
   "3618302947c280f0": "{count} min",
@@ -2733,9 +2736,9 @@
   "db7b3a938c45e56c": "Uppdateringen {version} är redo att laddas ned",
   "9a951140b69ba740": "Laddar ned uppdatering ({percent} %)",
   "7fdece033260e9fb": "Laddar ned uppdatering",
+  "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "09ef51903e99e876": "Uppdateringen har laddats ned. Klicka för att starta om och installera.",
   "d62631cab06d2b80": "Uppdateringen {version} har laddats ned. Klicka för att starta om och installera.",
-  "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "78a04e0e625c0990": "Uppdateringen misslyckades",
   "c24de5eb69373a55": "Den här {build}-versionen ignorerar {track}-versioner. Granska uppdateringsspåret i Inställningar för att slutföra bytet.",
   "b02ae45a6109c93b": "Uppdaterad",
@@ -3638,7 +3641,6 @@
   "4e0710d19dfc2e7e": "Skicka den här rapporten till T3-teamet?",
   "87d0ae0723ba75d1": "Det här är allt som lämnar din dator. Inget skickas förrän du trycker på Skicka.",
   "bf19826f81484328": "Ta med konversationen",
-  "260c6b45f52d2f27": "Lägger till texten i dina meddelanden och agentens svar under {textTurns, plural, one {den senaste omgången} other {de senaste {textTurns} omgångarna}}.",
   "ddb7e6f8ce99e657": "Bara den som kan köra agenter på den här datorn kan skicka eller avböja rapporten.",
   "03c1eb603c112f47": "Skicka inte",
   "653405e4ed498d9f": "Skicka",
@@ -8762,9 +8764,13 @@
   "ed83b25c71c98a20": "Välj en eller flera {scope} i {tracker} för varje projekt. Deras ärenden listas bredvid repots egna, och agenter skapar nya ärenden i det första om de inte ombeds välja ett annat.",
   "19c2d5e81ff8f89a": "{scope} i {tracker} för {project}",
   "68e061510b765772": "Inte kopplad",
+  "99d51127f573296b": "Ett konto till",
+  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
+  "99963c0142e17f00": "För det nya {tracker}-kontot.",
   "a2d95d39d3398bda": "Autentiseringsuppgiften avvisades",
   "9eae463720500113": "Lagras på servern.",
   "b6e27ab2537ef874": "Skapa en",
+  "6d8e4ebc889bace9": "Lägg till konto",
   "13ef526271b0f5d4": "Rensa alla villkor",
   "d1938a629f039515": "Ta bort villkor",
   "84a605b241ce65b7": "Ta bort gruppen och dess villkor",
@@ -11965,7 +11971,7 @@
   "12abd0fe135419bc": "automatisk pull standardgren aktuell utcheckning fast-forward upstream",
   "a22700a2aa679898": "Standardmetod för merge",
   "c4548ce84893201b": "pull request merge squash rebase senast vald",
-  "f6c5ffe0b40ce8e2": "linear jira ärenden ärendehanterare team api-nyckel anslut koppla projekt issues",
+  "b44c829dfd014c46": "linear clickup jira ärenden tracker team lista api-nyckel token anslut koppla projekt",
   "a4380762611c94e4": "Versionshantering",
   "2f251b69a6c324f3": "Intervall för Git-fetch",
   "deed4a583dfa2c44": "automatisk fjärrgren uppdatera bakgrund autentiseringsuppgifter säkerhetsnycklar sekunder av fetch",
@@ -12611,6 +12617,16 @@
   "156ff7b625287a1e": "Dölj överhoppade",
   "69b985b97ab45e6b": "Visa överhoppade ({count})",
   "2400254d362de84d": "Läser in arbetsflödeskörningar…",
+  "cae5c3205c01d062": [
+    {
+      "t": "span",
+      "i": 1,
+      "c": "En arbetsflödesfil har ett problem."
+    },
+    " ",
+    "Den senaste versionen som gick att läsa in körs vidare."
+  ],
+  "ed8ce6ebc73dc12d": "Öppna filen",
   "145e1f7503ba3b2c": [
     "Den här miljön har ingen körning med den länken.",
     " ",
@@ -12636,16 +12652,6 @@
       "c": "Läs guiden"
     }
   ],
-  "cae5c3205c01d062": [
-    {
-      "t": "span",
-      "i": 1,
-      "c": "En arbetsflödesfil har ett problem."
-    },
-    " ",
-    "Den senaste versionen som gick att läsa in körs vidare."
-  ],
-  "ed8ce6ebc73dc12d": "Öppna filen",
   "5d8d278ff828102d": "Alla arbetsflöden",
   "39459da07479f482": "Agent",
   "7741243632056b81": "{step} · transkript",
@@ -12789,9 +12795,5 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
-  "99d51127f573296b": "Ett konto till",
-  "8ec2c57414669b79": "Anslut en andra {tracker}-arbetsyta eller användare.",
-  "99963c0142e17f00": "För det nya {tracker}-kontot.",
-  "6d8e4ebc889bace9": "Lägg till konto"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
 }

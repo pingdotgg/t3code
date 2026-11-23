@@ -177,7 +177,7 @@ describe("resolveIssueLinkTarget", () => {
           connected: true,
           account: "julius",
           detail: null,
-          workspace: "clickup",
+          workspace: "Acme",
           scopes: [],
         },
       ],

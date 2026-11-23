@@ -830,6 +830,19 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect("names a key-only reference by the scope the tracker places it in", () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [project({ id: "web" })],
+        trackers: [fakeStandaloneTracker({ issueScope: () => Effect.succeed("901") })],
+        bindings: { web: { tracker: LINEAR, scope: "900", additionalScopes: ["901"] } },
+      });
+      expect(yield* service.projectScope("web" as ProjectId, { key: "xyz" })).toMatchObject({
+        scope: "901",
+      });
+    }),
+  );
+
   it.effect("lists a bound project's standalone scopes beside its git host and serves them", () =>
     Effect.gen(function* () {
       const listed: string[] = [];

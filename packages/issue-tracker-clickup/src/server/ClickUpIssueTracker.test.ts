@@ -122,10 +122,11 @@ describe("parseClickUpIssueUrl", () => {
   it("reads a task link and leaves anything else alone", () => {
     expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/t/86c0abcd"))).toEqual({
       host: "app.clickup.com",
-      workspace: "clickup",
+      workspace: "",
       scope: "task",
       key: "86c0abcd",
     });
+    expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/t/86c0abcd//x"))).toBeNull();
     expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/t/9015/DEV-12"))).toBeNull();
     expect(parseClickUpIssueUrl(new URL("https://app.clickup.com/9015/v/li/900"))).toBeNull();
     expect(parseClickUpIssueUrl(new URL("https://evil.test/t/86c0abcd"))).toBeNull();
@@ -148,7 +149,7 @@ describe("ClickUpIssueTracker", () => {
       const probe = yield* api.probeCredential("pk_new");
       expect(probe).toEqual({
         account: "julius",
-        workspace: "clickup",
+        workspace: "Acme",
         scopes: [
           { key: "901", name: "Product / Inbox" },
           { key: "900", name: "Product / Web / Sprint" },
@@ -286,6 +287,7 @@ describe("ClickUpIssueTracker", () => {
         "GET /task/abc": () => task("abc"),
         "GET /list/900": () => LIST,
         "GET /list/900/member": () => ({ members: [JULIUS, THEO] }),
+        "GET /team": () => ({ teams: [] }),
         "GET /space/77/tag": () => ({ tags: [{ name: "bug" }, { name: "Feature" }] }),
         "PUT /task/abc": () => ({}),
         "POST /task/abc/tag/Feature": () => ({}),
@@ -327,6 +329,7 @@ describe("ClickUpIssueTracker", () => {
       const { tracker, requests } = fakeClickUp({
         "GET /list/900": () => LIST,
         "GET /list/900/member": () => ({ members: [JULIUS, THEO] }),
+        "GET /team": () => ({ teams: [] }),
         "GET /space/77/tag": () => ({ tags: [{ name: "bug" }] }),
         "POST /list/900/task": () => task("new1", { custom_id: "DEV-7" }),
       });
@@ -449,6 +452,59 @@ describe("ClickUpIssueTracker", () => {
       yield* api.probeCredential("pk_new");
       yield* api.probeCredential("pk_new");
       expect(requests.map((request) => request.path)).toEqual(["/user", "/team", "/user"]);
+    }),
+  );
+
+  it.effect("keeps paging comments when ClickUp repeats the cursor's own comment", () =>
+    Effect.gen(function* () {
+      const page = [
+        comment("c26", 260),
+        ...Array.from({ length: 24 }, (_, i) => comment(`c${25 - i}`, 250 - i)),
+      ];
+      const { tracker } = fakeClickUp({ "GET /task/abc/comment": () => ({ comments: page }) });
+      const older = yield* (yield* tracker).getComments({
+        ...target,
+        key: "abc",
+        cursor: "260:c26",
+      });
+      expect(older.comments).toHaveLength(24);
+      expect(older.nextCursor).toBe("227:c2");
+    }),
+  );
+
+  it.effect("asks ClickUp for a closed listing by the list's closed statuses", () =>
+    Effect.gen(function* () {
+      const asked: Array<string[]> = [];
+      const { tracker } = fakeClickUp({
+        "GET /list/900": () => LIST,
+        "GET /list/900/task": ({ url }) => {
+          asked.push(url.searchParams.getAll("statuses[]"));
+          return { tasks: [task("a", { status: DONE })], last_page: true };
+        },
+      });
+      const page = yield* (yield* tracker).listIssues({ ...listing, state: "closed" });
+      expect(asked).toEqual([["complete"]]);
+      expect(page.items[0]?.state).toEqual({
+        category: "closed",
+        name: "complete",
+        closeReason: "completed",
+      });
+    }),
+  );
+
+  it.effect("assigns someone who reaches the list only through its workspace", () =>
+    Effect.gen(function* () {
+      const WIDE = user(7, "wide");
+      const { tracker, requests } = fakeClickUp({
+        "GET /task/abc": () => task("abc"),
+        "GET /list/900/member": () => ({ members: [THEO] }),
+        "GET /team": () => ({ teams: [{ id: "9015", name: "Acme", members: [{ user: WIDE }] }] }),
+        "PUT /task/abc": () => ({}),
+      });
+      yield* (yield* tracker).update({ ...target, key: "abc", assignees: ["theo", "wide"] });
+      expect(requests.find((request) => request.method === "PUT")?.body).toEqual({
+        assignees: { add: [7], rem: [] },
+      });
     }),
   );
 

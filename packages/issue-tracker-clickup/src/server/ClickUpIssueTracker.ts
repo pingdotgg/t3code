@@ -21,7 +21,7 @@ import {
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
-import { CLICKUP_HOST, CLICKUP_LINK_WORKSPACE, parseClickUpIssueUrl } from "../shared/issueUrl.ts";
+import { CLICKUP_HOST, parseClickUpIssueUrl } from "../shared/issueUrl.ts";
 import * as ClickUpApi from "./ClickUpApi.ts";
 
 const { Responses } = ClickUpApi;
@@ -81,11 +81,8 @@ const EPOCH = DateTime.formatIso(DateTime.makeUnsafe(0));
 
 function toState(status: ClickUpApi.ClickUpStatus): IssueState {
   return CLOSED_STATUS_TYPES.includes(status.type)
-    ? {
-        category: "closed",
-        name: status.status,
-        closeReason: status.type === "done" ? "completed" : "closed",
-      }
+    ? // ClickUp's `closed` type is its finished column, as `done` is: neither means abandoned.
+      { category: "closed", name: status.status, closeReason: "completed" }
     : { category: "open", name: status.status };
 }
 
@@ -139,11 +136,12 @@ function toComments(comments: ReadonlyArray<ClickUpApi.ClickUpComment>): IssueCo
 }
 
 /** Where older comments carry on: the oldest comment's date and id, as ClickUp pages by them. */
-function commentsCursor(comments: ReadonlyArray<ClickUpApi.ClickUpComment>): string | null {
-  const oldest = comments.at(-1);
-  return comments.length < COMMENTS_PAGE || oldest === undefined
-    ? null
-    : `${oldest.date}:${oldest.id}`;
+function commentsCursor(page: {
+  readonly comments: ReadonlyArray<ClickUpApi.ClickUpComment>;
+  readonly more: boolean;
+}): string | null {
+  const oldest = page.comments.at(-1);
+  return !page.more || oldest === undefined ? null : `${oldest.date}:${oldest.id}`;
 }
 
 /** `<page>:<offset>`: ClickUp pages are a fixed hundred, and a listing asks for fewer. */
@@ -250,12 +248,38 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           decode: Responses.comments,
         })
         .pipe(
-          Effect.map((data) =>
-            after === undefined
-              ? data.comments
-              : data.comments.filter((comment) => comment.id !== after.startId),
-          ),
+          Effect.map((data) => {
+            // A page past a cursor may repeat the cursor's own comment; a full raw page is
+            // what says more remain.
+            const comments =
+              after === undefined
+                ? data.comments
+                : data.comments.filter((comment) => comment.id !== after.startId);
+            return { comments, more: data.comments.length >= COMMENTS_PAGE && comments.length > 0 };
+          }),
         );
+
+    const workspaces = (operation: string, token?: string) =>
+      clickup
+        .request({ operation, method: "GET", path: "/team", decode: Responses.teams, token })
+        .pipe(Effect.map((data) => data.teams));
+
+    /**
+     * Whom a list's tasks can be given to: its own members, then the workspace's, since list
+     * members leave out people who reach the list only through its space or workspace.
+     */
+    const assignable = (operation: string, listId: string) =>
+      Effect.all([listMembers(operation, listId), workspaces(operation)], { concurrency: 2 }).pipe(
+        Effect.map(([members, teams]) => {
+          const everyone = [
+            ...members,
+            ...teams.flatMap((team) => (team.members ?? []).map((member) => member.user)),
+          ];
+          const byId = new Map<number, ClickUpApi.ClickUpUser>();
+          for (const user of everyone) if (!byId.has(user.id)) byId.set(user.id, user);
+          return [...byId.values()];
+        }),
+      );
 
     /** Tag names as the space spells them, refusing one the space does not have. */
     const tagNames = (operation: string, spaceId: string, names: ReadonlyArray<string>) =>
@@ -274,6 +298,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
                   : Effect.succeed(match.name);
               }),
             ),
+            Effect.map((matched) => [...new Set(matched)]),
           );
 
     /**
@@ -295,7 +320,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       };
       const known = assignees.map((wanted) => find(current, wanted));
       if (known.every((id) => id !== undefined)) return known;
-      const members = yield* listMembers(operation, listId);
+      const members = yield* assignable(operation, listId);
       return yield* Effect.forEach(assignees, (wanted, index) => {
         const id = known[index] ?? find(members, wanted);
         return id === undefined
@@ -332,13 +357,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
     const reachableLists = Effect.fn("ClickUpIssueTracker.reachableLists")(function* (
       token: string,
     ) {
-      const { teams } = yield* clickup.request({
-        operation: "probe",
-        method: "GET",
-        path: "/team",
-        decode: Responses.teams,
-        token,
-      });
+      const teams = yield* workspaces("probe", token);
       const perTeam = yield* Effect.forEach(
         teams,
         (team) =>
@@ -396,22 +415,28 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           }),
         { concurrency: SCOPE_CONCURRENCY },
       );
-      return perTeam.flat(2);
+      return { workspace: teams.map((team) => team.name).join(", "), scopes: perTeam.flat(2) };
     });
 
     const discovered = new Map<
       string,
-      { readonly at: number; readonly scopes: ReadonlyArray<IssueTrackerScope> }
+      {
+        readonly at: number;
+        readonly found: {
+          readonly workspace: string;
+          readonly scopes: ReadonlyArray<IssueTrackerScope>;
+        };
+      }
     >();
     const cachedLists = Effect.fn("ClickUpIssueTracker.cachedLists")(function* (token: string) {
       const now = yield* Clock.currentTimeMillis;
       const hit = discovered.get(token);
-      if (hit !== undefined && now - hit.at < DISCOVERY_TTL_MS) return hit.scopes;
-      const scopes = yield* reachableLists(token);
+      if (hit !== undefined && now - hit.at < DISCOVERY_TTL_MS) return hit.found;
+      const found = yield* reachableLists(token);
       for (const [key, entry] of discovered)
         if (now - entry.at >= DISCOVERY_TTL_MS) discovered.delete(key);
-      discovered.set(token, { at: now, scopes });
-      return scopes;
+      discovered.set(token, { at: now, found });
+      return found;
     });
 
     const api: StandaloneIssueTrackerApi = {
@@ -423,14 +448,25 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       // The token is checked on every probe; only the list discovery behind it is reused.
       probeCredential: Effect.fn("ClickUpIssueTracker.probeCredential")(function* (token) {
         const user = yield* viewer(token);
+        const { workspace, scopes } = yield* cachedLists(token);
         return {
           account: toActor(user).login,
-          workspace: CLICKUP_LINK_WORKSPACE,
-          scopes: yield* cachedLists(token),
+          ...(workspace === "" ? {} : { workspace }),
+          scopes,
         };
       }),
 
       getViewer: () => viewer().pipe(Effect.map((user) => toActor(user).login)),
+
+      getIssueLink: (input) =>
+        requireTaskId("getIssueLink", input.key).pipe(
+          Effect.flatMap((id) => getTask("getIssueLink", id)),
+          Effect.map((task) => ({
+            title: task.name.trim() || `#${task.id}`,
+            url: task.url,
+            displayKey: displayKeyOf(task),
+          })),
+        ),
 
       issueScope: (input) =>
         requireTaskId("issueScope", input.key).pipe(
@@ -451,12 +487,20 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             ? undefined
             : input.involvement === "assigned"
               ? yield* viewer().pipe(Effect.map((user) => user.id))
-              : (yield* listMembers("listIssues", listId)).find((user) =>
+              : (yield* assignable("listIssues", listId)).find((user) =>
                   sameLogin(user, assigneeLogins[0]!),
                 )?.id;
         if (assigneeLogins.length > 0 && narrowBy === undefined) {
           return { items: [], nextCursor: null };
         }
+        // ClickUp lists open tasks unless told otherwise; closed ones are asked for by status, so
+        // a page is not spent on open tasks a closed listing would only drop.
+        const closedStatuses =
+          input.state === "closed"
+            ? (yield* getList("listIssues", listId)).statuses
+                ?.filter((status) => CLOSED_STATUS_TYPES.includes(status.type))
+                .map((status) => status.status)
+            : undefined;
         const data = yield* clickup.request({
           operation: "listIssues",
           method: "GET",
@@ -467,6 +511,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             subtasks: true,
             include_closed: input.state !== "open",
             assignees: narrowBy === undefined ? undefined : [String(narrowBy)],
+            statuses: closedStatuses?.length ? closedStatuses : undefined,
             tags: input.labels,
           },
           decode: Responses.tasks,
@@ -517,7 +562,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
           { concurrency: 3 },
         );
         return {
-          ...toSummary(task, comments.length),
+          ...toSummary(task, comments.comments.length),
           body: task.markdown_description ?? task.description ?? "",
           viewer: me._tag === "Some" ? toActor(me.value).login : null,
           viewerPermissions: viewerPermissions(task.permission_level),
@@ -525,7 +570,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             list._tag === "Some"
               ? listStates(list.value, task.status).map(toState)
               : [toState(task.status)],
-          comments: toComments(comments),
+          comments: toComments(comments.comments),
           commentsCursor: commentsCursor(comments),
           events: [],
           linkedPullRequests: [],
@@ -537,11 +582,11 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
         const match = /^(\d+):([^:]+)$/.exec(input.cursor);
         if (match === null)
           return yield* failed("getComments", "The comment cursor is not ClickUp's.");
-        const comments = yield* listComments("getComments", id, {
+        const page = yield* listComments("getComments", id, {
           start: match[1]!,
           startId: match[2]!,
         });
-        return { comments: toComments(comments), nextCursor: commentsCursor(comments) };
+        return { comments: toComments(page.comments), nextCursor: commentsCursor(page) };
       }),
 
       create: Effect.fn("ClickUpIssueTracker.create")(function* (input) {
@@ -670,7 +715,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
         const listId = yield* requireListId("listCandidates", input.scope);
         const list = yield* getList("listCandidates", listId);
         const [tags, members] = yield* Effect.all(
-          [spaceTags("listCandidates", list.space.id), listMembers("listCandidates", listId)],
+          [spaceTags("listCandidates", list.space.id), assignable("listCandidates", listId)],
           { concurrency: 2 },
         );
         return {
@@ -680,8 +725,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
             description: null,
           })),
           assignees: members.map((user) => ({ ...toActor(user), id: String(user.id) })),
-          // List members leave out people who reach the list only through its space.
-          truncated: true,
+          // Workspace members may still be refused by a private space; ClickUp says so on save.
+          truncated: false,
         };
       }),
     };

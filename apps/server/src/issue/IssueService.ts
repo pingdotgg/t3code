@@ -372,7 +372,10 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const requireWritable = (ref: IssueScopeRef, operation: string) =>
+  const requireWritable = (
+    ref: IssueScopeRef & { readonly key?: string | undefined },
+    operation: string,
+  ) =>
     requireProject(ref).pipe(
       Effect.filterOrFail(
         (project) => project.writable,
@@ -773,7 +776,31 @@ const make = Effect.gen(function* () {
         detail: `This project does not track ${select?.scope?.trim()}. Use one of: ${[...new Set(supported.map((candidate) => candidate.scope))].join(", ")}.`,
       });
     }
-    return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
+    // A key-only reference to a tracker that places its own issues takes the issue's scope, so
+    // a thread link names the same scope as one made from a URL or the issue list.
+    const placed =
+      named === undefined && select?.key !== undefined && own.api.issueScope !== undefined
+        ? yield* own.api
+            .issueScope({
+              cwd: own.project.workspaceRoot,
+              host: own.host,
+              scope: own.scope,
+              key: select.key,
+            })
+            .pipe(
+              Effect.map((scope) =>
+                supported.find(
+                  (candidate) =>
+                    candidate.tracker === own.tracker &&
+                    candidate.scope.toLowerCase() === scope.toLowerCase(),
+                ),
+              ),
+              // Only a hint: the read or write that follows reports a missing issue itself.
+              Effect.orElseSucceed(() => undefined),
+            )
+        : undefined;
+    const scoped = placed ?? own;
+    return { projectId, tracker: scoped.tracker, host: scoped.host, scope: scoped.scope };
   });
 
   /** A host whose hostname does not name it, such as GitHub Enterprise Server, is vouched for by a project on it. */

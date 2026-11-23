@@ -108,7 +108,9 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
         (connection) =>
           connection.tracker === tracker &&
           connection.account !== null &&
-          connection.workspace?.toLowerCase() === link.workspace.toLowerCase(),
+          // A tracker whose links name no workspace (ClickUp) matches every account.
+          (link.workspace === "" ||
+            connection.workspace?.toLowerCase() === link.workspace.toLowerCase()),
       )
       .map((connection) => connection.accountId ?? null),
   );

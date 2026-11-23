@@ -87,7 +87,16 @@ const Named = Schema.Struct({ id: Schema.String, name: Schema.String });
 /** Each answer's decoder, compiled once. */
 export const Responses = {
   user: Schema.decodeUnknownEffect(Schema.Struct({ user: ClickUpUser })),
-  teams: Schema.decodeUnknownEffect(Schema.Struct({ teams: Schema.Array(Named) })),
+  teams: Schema.decodeUnknownEffect(
+    Schema.Struct({
+      teams: Schema.Array(
+        Schema.Struct({
+          ...Named.fields,
+          members: Schema.optional(Schema.Array(Schema.Struct({ user: ClickUpUser }))),
+        }),
+      ),
+    }),
+  ),
   spaces: Schema.decodeUnknownEffect(Schema.Struct({ spaces: Schema.Array(Named) })),
   folders: Schema.decodeUnknownEffect(
     Schema.Struct({
