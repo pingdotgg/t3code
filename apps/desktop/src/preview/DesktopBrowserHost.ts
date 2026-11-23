@@ -17,7 +17,12 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { createCdpRelayConnection, type CdpRelayConnection } from "./CdpRelay.ts";
-import { type FrameDetachWatch, routeMouseToFrame, sendPageCommand } from "./GuestInput.ts";
+import {
+  type FrameDetachWatch,
+  type PointerRoute,
+  routeMouseToFrame,
+  sendPageCommand,
+} from "./GuestInput.ts";
 
 const encodeEvent = Schema.encodeSync(Schema.fromJsonString(DesktopBrowserEvent));
 const decodeCommand = Schema.decodeUnknownOption(Schema.fromJsonString(DesktopBrowserCommand));
@@ -490,17 +495,18 @@ export const make = Effect.gen(function* () {
   const relayFor = (tab: AttachedTab) => {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
-    const routeMouse = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    const routeHidden = routeMouseToFrame(debuggee, tab.frameSessions, watchFrameDetach(tab));
+    // Read when the pointer queue reaches the event: a guest the window shows routes its own input.
+    const routeMouse: PointerRoute = (params) =>
+      shownTabs.get(keyOf(tab.key)) === true ? Promise.resolve(null) : routeHidden(params);
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      // A guest the window shows routes its own pointer input.
-      const shown = shownTabs.get(keyOf(tab.key)) === true;
       const result = await sendPageCommand(
         webContents,
         debuggee,
         method,
         params,
         sessionId,
-        shown ? undefined : routeMouse,
+        routeMouse,
       );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
@@ -661,6 +667,8 @@ export const make = Effect.gen(function* () {
     // Input routed to a frame would wait for a detach event the tab no longer hears.
     const listeners = [...tab.frameDetachListeners.values()].flatMap((set) => [...set]);
     tab.frameDetachListeners.clear();
+    // A route resolved after this would find no session and go to the page.
+    tab.frameSessions.clear();
     for (const listener of listeners) listener();
     syncPainting(tab);
     if (announced) emit({ type: "detached", ...key });

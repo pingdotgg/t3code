@@ -321,7 +321,10 @@ describe("preview guest input", () => {
         }
         for (const listener of detachListeners.get(sessionId) ?? []) listener();
       };
-      const sentTo: Array<string | undefined> = [];
+      let inputSentToUnanswered: () => void = () => {};
+      const unansweredInputSent = new Promise<void>((resolve) => {
+        inputSentToUnanswered = resolve;
+      });
       const input: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const lookups: Array<{ sessionId: string | undefined; x: unknown; y: unknown }> = [];
       const sendCommand = vi.fn(
@@ -350,8 +353,8 @@ describe("preview guest input", () => {
             const [left, top, right, bottom] = owner!.content;
             return { model: { content: [left, top, right, top, right, bottom, left, bottom] } };
           }
-          sentTo.push(sessionId);
           if (sessionId !== undefined && sessionId === unanswered.input) {
+            inputSentToUnanswered();
             return new Promise(() => {});
           }
           input.push({ sessionId, x: params["x"], y: params["y"] });
@@ -373,7 +376,7 @@ describe("preview guest input", () => {
           await send({ type, x, y }, routed);
         }
       };
-      return { click, send, detach, input, lookups, sentTo };
+      return { click, send, detach, input, lookups, unansweredInputSent };
     };
 
     it("sends it to the frame under the point, at the frame's own coordinates", async () => {
@@ -420,7 +423,7 @@ describe("preview guest input", () => {
     it("fails input that its frame never takes before detaching, without holding later input", async () => {
       const guest = makeFramedGuest(undefined, { input: "session-cross" });
       const pressed = guest.send({ type: "mousePressed", x: 75, y: 116 }, true);
-      await vi.waitFor(() => expect(guest.sentTo).toContain("session-cross"));
+      await guest.unansweredInputSent;
       guest.detach("session-cross");
       await expect(pressed).rejects.toThrow(/went away before it took this input/);
       await guest.click(650, 50);
