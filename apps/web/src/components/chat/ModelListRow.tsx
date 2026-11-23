@@ -42,6 +42,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     name: props.name,
     subProvider: props.subProvider,
   });
+  const lastSlash = displayName.lastIndexOf("/");
+  const pathTail = lastSlash > 0 ? Array.from(displayName.slice(lastSlash)).length : undefined;
 
   const row = (
     <ComboboxItem
@@ -71,10 +73,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
       />
       <div className="flex min-w-0 flex-1 items-center gap-2 text-left">
         <div className="flex min-w-0 text-sm font-normal leading-snug">
-          {/* Custom models often share a long prefix, so the cut keeps the end that tells them
-              apart. Its "…" would be read aloud, so screen readers get the sr-only name below. */}
+          {/* Custom models often share a long path, so the cut takes the path and keeps the model
+              name whole. Its "…" would be read aloud, so screen readers get the sr-only name below. */}
           <MiddleTruncate
             value={displayName}
+            {...(pathTail === undefined ? {} : { tail: pathTail })}
             showTitle={false}
             aria-hidden="true"
             // Names the row in full on hover only when it is cut off.

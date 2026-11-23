@@ -42,6 +42,22 @@ describe("MiddleTruncate", () => {
     );
   });
 
+  it("keeps a tail wider than the box inside it", async () => {
+    const value = "organization/qwen3-coder-480b-a35b-instruct-turbo";
+    await using screen = await render(
+      <div style={{ width: 80 }}>
+        <MiddleTruncate value={value} tail={value.length - 12} className="w-full" />
+      </div>,
+    );
+    const box = screen.container.querySelector<HTMLElement>("[title]")!;
+    const tail = box.querySelector<HTMLElement>("span:last-child")!;
+
+    expect(tail.getBoundingClientRect().right).toBeLessThanOrEqual(
+      box.getBoundingClientRect().right,
+    );
+    expect(tail.scrollWidth).toBeGreaterThan(tail.clientWidth);
+  });
+
   it.each([
     ["Fix the sidebar", 7],
     ["report\u2003\u2003draft.txt", 9],
