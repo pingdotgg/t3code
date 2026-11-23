@@ -3708,6 +3708,35 @@ it.effect(
     }),
 );
 
+it.effect("opening detail replaces a held review decision when the host sent one", () =>
+  Effect.gen(function* () {
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.succeed({
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              reviewDecision: "changes-requested",
+              checksState: "passing",
+            }),
+          getChangeRequest: () =>
+            Effect.succeed({
+              ...hostedChangeRequest("body"),
+              reviewDecision: "approved",
+            }),
+        }),
+      ],
+    });
+    yield* service.summary(reference);
+    yield* service.detail(reference);
+    const summary = yield* service.summary(reference);
+    assert.strictEqual(summary.reviewDecision, "approved");
+    assert.strictEqual(summary.checksState, "passing");
+  }),
+);
+
 it.effect("preserves merge queue removal details from the provider", () =>
   Effect.gen(function* () {
     const removal = { id: "RMQE_1", removedAt: "2026-07-02T00:00:00Z", reason: "CI failed" };
