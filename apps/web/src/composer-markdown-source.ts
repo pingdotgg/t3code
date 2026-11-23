@@ -264,8 +264,10 @@ function mapRange(mapping: Mapping, { from, to }: TextRange): TextRange {
   return { from: mapping.map(from, 1), to: mapping.map(to, -1) };
 }
 
+type ContinuedStyleSide = "before" | "after" | null;
+
 /** Shows styled text the selection touches as Markdown, returning the source it added. */
-function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takesBefore: boolean) {
+function revealStyledText(tr: Transaction, type: MarkType, styleSide: ContinuedStyleSide) {
   const { schema } = tr.doc.type;
   const selection = tr.selection;
   const ranges = collectStyledRanges(tr.doc).filter(
@@ -298,7 +300,7 @@ function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takes
   const map = (pos: number) => {
     let next = pos;
     for (const { at, length, closing } of insertions) {
-      const inside = typed && selection.empty && (closing ? takesBefore : !takesBefore);
+      const inside = selection.empty && styleSide === (closing ? "before" : "after");
       if (at < pos || (at === pos && (selection instanceof NodeSelection || closing !== inside))) {
         next += length;
       }
@@ -310,12 +312,15 @@ function revealStyledText(tr: Transaction, type: MarkType, typed: boolean, takes
 }
 
 /** Shows styled text the selection touches as Markdown, and parses source it left. */
-function normalizeMarkdownSource(state: EditorState, typed: boolean): Transaction | null {
+function normalizeMarkdownSource(
+  state: EditorState,
+  styleSide: ContinuedStyleSide,
+): Transaction | null {
   const type = state.schema.marks[MARKDOWN_SOURCE_MARK];
   if (!type) return null;
   const tr = state.tr;
   collapseMarkdownSource(tr, (region) => touches(state.selection, region));
-  revealStyledText(tr, type, typed, caretTakesMarksBefore(state));
+  revealStyledText(tr, type, styleSide);
   return tr.docChanged ? tr : null;
 }
 
@@ -334,7 +339,7 @@ function normalizeDetached(state: EditorState, revealed: TextRange[]): Transacti
     if (touches(state.selection, region)) kept.push(region);
     else collapseRegion(tr, region, type);
   }
-  const added = revealStyledText(tr, type, false, caretTakesMarksBefore(state));
+  const added = revealStyledText(tr, type, null);
   if (!tr.docChanged) return null;
   const shown = [...kept.map((region) => mapRange(tr.mapping, region)), ...added];
   return tr.setMeta(markdownSourceKey, shown).setMeta("addToHistory", false);
@@ -438,6 +443,7 @@ type MarkdownSourceState = {
 };
 
 const markdownSourceKey = new PluginKey<MarkdownSourceState>("composer-markdown-source");
+const textInputKey = new PluginKey("composer-markdown-text-input");
 
 function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   let view: EditorView | null = null;
@@ -496,10 +502,14 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
       if (!transactions.some((tr) => tr.docChanged || tr.selectionSet)) return null;
       const source = markdownSourceKey.getState(state);
       if (source?.detached) return normalizeDetached(state, source.revealed);
-      const tr = normalizeMarkdownSource(
-        state,
-        transactions.some((item) => item.docChanged),
-      );
+      const continueStyle =
+        state.storedMarks !== null ||
+        transactions.some(
+          (tr) => tr.getMeta(textInputKey) === true || tr.getMeta("composition") != null,
+        );
+      let styleSide: ContinuedStyleSide = null;
+      if (continueStyle) styleSide = caretTakesMarksBefore(state) ? "before" : "after";
+      const tr = normalizeMarkdownSource(state, styleSide);
       // With nothing to undo, a recorded rewrite would only add a no-op undo.
       if (tr && undoDepth(state) === 0) tr.setMeta("addToHistory", false);
       return tr;
@@ -507,11 +517,23 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   });
 }
 
-/** Keeps source `normalizeDetached` revealed out of what undo, redo and edits see. */
-const MarkdownSourceHistoryExtension = Extension.create({
-  name: "composer-markdown-source-history",
-  // Runs after undo grouping, so a rebased edit keeps the grouping chosen for it.
+const MarkdownSourceEditingExtension = Extension.create({
+  name: "composer-markdown-source-editing",
+  // Runs after input rules and undo grouping, which must see the original edit.
   priority: 1,
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: textInputKey,
+        props: {
+          handleTextInput(view, _from, _to, _text, insert) {
+            view.dispatch(insert().setMeta(textInputKey, true));
+            return true;
+          },
+        },
+      }),
+    ];
+  },
   dispatchTransaction({ transaction, next }) {
     const { editor } = this;
     const revealed = markdownSourceKey.getState(editor.state)?.revealed ?? [];
@@ -585,7 +607,7 @@ export const ComposerMarkdownSourceExtension = TiptapMark.create({
     };
   },
   addExtensions() {
-    return [MarkdownSourceHistoryExtension];
+    return [MarkdownSourceEditingExtension];
   },
   addProseMirrorPlugins() {
     return [markdownSourcePlugin(this.type), replayPlugin];

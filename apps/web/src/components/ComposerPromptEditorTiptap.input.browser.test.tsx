@@ -566,6 +566,28 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+it.each(["paste", "editor command"] as const)(
+  "types outside bold inserted by %s",
+  async (source) => {
+    await using screen = await mountEditor("");
+    const { editor } = screen;
+    await act(async () => {
+      editor.view.focus();
+      if (source === "editor command") {
+        editor.commands.insertContent({ type: "text", text: "DEV", marks: [{ type: "bold" }] });
+        return;
+      }
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "**DEV**");
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    await userEvent.keyboard("!");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("**DEV**!");
+  },
+);
+
 it.each([
   { literalText: false, imports: 1 },
   { literalText: true, imports: 0 },
