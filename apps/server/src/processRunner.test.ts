@@ -402,12 +402,20 @@ describe("ProcessRunner.layer", () => {
         const run = yield* runner
           .run({
             command: "sh",
-            args: ["-c", `(trap "" TERM; exec sleep 1000) & echo $!; wait`],
+            // The descendant prints its pid only once it ignores SIGTERM.
+            args: ["-c", `sh -c 'trap "" TERM; echo $$; exec sleep 1000' & wait`],
             onStdoutChunk: (chunk) =>
               Deferred.doneUnsafe(started, Exit.succeed(Number(new TextDecoder().decode(chunk)))),
           })
           .pipe(Effect.forkChild);
         const descendant = yield* Deferred.await(started);
+        const ignored = (yield* fs.readFileString(`/proc/${descendant}/status`)).match(
+          /^SigIgn:\s*([0-9a-f]+)$/m,
+        )?.[1];
+        expect(
+          BigInt(`0x${ignored ?? "0"}`) & (1n << 14n),
+          "the descendant ignores SIGTERM",
+        ).not.toBe(0n);
         yield* Fiber.interrupt(run);
         // A killed process stays a zombie until reaped, and a PID namespace's init may never reap it.
         const state = yield* fs.readFileString(`/proc/${descendant}/stat`).pipe(
@@ -655,13 +663,12 @@ describe("ProcessRunner.layer", () => {
         );
         const parentPid = runner
           .run({ command: "sh", args: ["-c", "echo $PPID"] })
-          .pipe(Effect.map((result) => Number(result.stdout.trim())));
+          .pipe(Effect.map((result) => expectHelperPid(result.stdout)));
         const first = yield* parentPid;
         const second = yield* parentPid;
 
         expect(blocked).toBe(true);
         expect(second).toBe(first);
-        expect(first).not.toBe(process.pid);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
