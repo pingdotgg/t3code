@@ -70,7 +70,8 @@ const writeScript = (path: string, lines: ReadonlyArray<string>) =>
     yield* fileSystem.chmod(path, 0o755);
   });
 
-// Puts fake `dpkg` and `pkexec` alone on PATH and stages a downloaded .deb.
+// Stages fake trusted system binaries (`dpkg`, `apt-get`, `pkexec`) and a downloaded .deb,
+// independent of the runner's UID and caller PATH.
 const stageDebInstall = (pkexec: (dir: string) => ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -81,11 +82,15 @@ const stageDebInstall = (pkexec: (dir: string) => ReadonlyArray<string>) =>
     const debPath = path.join(dir, "T3-Code-1.0.1-amd64.deb");
     yield* fileSystem.writeFileString(debPath, "fake deb");
     yield* writeScript(path.join(binDir, "dpkg"), ["exit 0"]);
+    yield* writeScript(path.join(binDir, "apt-get"), ["exit 0"]);
     yield* writeScript(path.join(binDir, "pkexec"), pkexec(dir));
-    yield* Effect.acquireRelease(
-      Effect.sync(() => vi.stubEnv("PATH", binDir)),
-      () => Effect.sync(() => vi.unstubAllEnvs()),
-    );
+    // Ensure non-root privilege path is exercised even when tests run as root.
+    if (typeof process.getuid === "function") {
+      yield* Effect.acquireRelease(
+        Effect.sync(() => vi.spyOn(process, "getuid").mockReturnValue(1000)),
+        (spy) => Effect.sync(() => spy.mockRestore()),
+      );
+    }
     Object.assign(autoUpdater, {
       quitAndInstallCalled: false,
       downloadedUpdateHelper: {
@@ -95,8 +100,41 @@ const stageDebInstall = (pkexec: (dir: string) => ReadonlyArray<string>) =>
     });
     electronStub.app.relaunch.mockReset();
     electronStub.app.quit.mockReset();
-    return { dir, debPath };
+    const updater = ElectronUpdater.makeWithOptions({ systemBinDirs: [binDir] });
+    return { dir, binDir, debPath, updater };
   });
+
+const unblockFifo = (fifoPath: string, flags: number) =>
+  Effect.sync(() => {
+    try {
+      const fd = NodeFS.openSync(fifoPath, flags | NodeFS.constants.O_NONBLOCK);
+      NodeFS.closeSync(fd);
+    } catch {
+      // No peer was waiting on the FIFO.
+    }
+  });
+
+const raceWithInstallExit = <A, E, R>(
+  step: Effect.Effect<A, E, R>,
+  install: Fiber.Fiber<void, ElectronUpdater.ElectronUpdaterQuitAndInstallError>,
+  unblock: Effect.Effect<void>,
+  stage: string,
+) =>
+  Effect.raceFirst(
+    step.pipe(Effect.map((value) => ({ _tag: "step" as const, value }))),
+    Fiber.await(install).pipe(
+      Effect.tap(() => unblock),
+      Effect.map((exit) => ({ _tag: "exited" as const, exit })),
+    ),
+  ).pipe(
+    Effect.flatMap((result) =>
+      result._tag === "step"
+        ? Effect.succeed(result.value)
+        : Effect.sync(() =>
+            assert.fail(`Installer exited before ${stage}: ${String(result.exit)}`),
+          ),
+    ),
+  );
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "ElectronUpdater .deb install",
@@ -107,7 +145,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         autoUpdater.logger = null;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const { dir, debPath } = yield* stageDebInstall((dir) => [
+        const { dir, binDir, debPath, updater } = yield* stageDebInstall((dir) => [
           'fd1="$(/usr/bin/readlink /proc/$$/fd/1)"',
           // Bounded so a blocking install fails the test instead of hanging the worker.
           `/usr/bin/timeout 10 /bin/sh -c "printf started > '${dir}/started'; read _ < '${dir}/release'"`,
@@ -139,24 +177,36 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
             ),
         );
 
-        const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
-        const install = yield* electronUpdater
+        const install = yield* updater
           .quitAndInstall({ isSilent: true, isForceRunAfter: true })
           .pipe(Effect.forkChild);
         // Both FIFOs need this event loop while pkexec runs; a spawnSync install deadlocks here.
-        yield* fileSystem.readFileString(started);
-        yield* fileSystem.writeFileString(release, "go\n");
+        yield* raceWithInstallExit(
+          fileSystem.readFileString(started),
+          install,
+          unblockFifo(started, NodeFS.constants.O_WRONLY),
+          "FIFO started signal",
+        );
+        yield* raceWithInstallExit(
+          fileSystem.writeFileString(release, "go\n"),
+          install,
+          unblockFifo(release, NodeFS.constants.O_RDONLY),
+          "FIFO release handshake",
+        );
         yield* Fiber.join(install);
 
         assert.equal(electronStub.app.relaunch.mock.calls.length, 1);
         assert.equal(electronStub.app.quit.mock.calls.length, 1);
         assert.equal(beforeQuitForUpdate, 1);
         const report = yield* fileSystem.readFileString(path.join(dir, "report"));
-        assert.include(report, `ARGS:--disable-internal-agent dpkg -i ${debPath}`);
+        assert.include(
+          report,
+          `ARGS:--disable-internal-agent ${path.join(binDir, "dpkg")} -i ${debPath}`,
+        );
         assert.include(report, "FD1:/dev/null");
         // A detached child leads its own session.
         assert.equal(report.match(/^SID:(\d+)$/m)?.[1], report.match(/^PID:(\d+)$/m)?.[1]);
-      }).pipe(Effect.provide([ElectronUpdater.layer, NodeServices.layer])),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
 
     it.live("a dismissed prompt skips the apt-get repair and the install can be retried", () =>
@@ -164,33 +214,34 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         autoUpdater.logger = null;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const { dir, debPath } = yield* stageDebInstall((dir) => [
+        const { dir, binDir, debPath, updater } = yield* stageDebInstall((dir) => [
           `printf '%s\\n' "$*" >> '${dir}/calls'`,
           `[ -f '${dir}/authorized' ] || exit 126`,
           'case "$*" in *"dpkg -i"*) exit 1 ;; esac',
         ]);
-        const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
         const readCalls = fileSystem
           .readFileString(path.join(dir, "calls"))
           .pipe(Effect.map((calls) => calls.trim().split("\n")));
 
         const dismissed = yield* Effect.exit(
-          electronUpdater.quitAndInstall({ isSilent: true, isForceRunAfter: true }),
+          updater.quitAndInstall({ isSilent: true, isForceRunAfter: true }),
         );
         assert.isTrue(Exit.isFailure(dismissed));
-        assert.deepEqual(yield* readCalls, [`--disable-internal-agent dpkg -i ${debPath}`]);
+        assert.deepEqual(yield* readCalls, [
+          `--disable-internal-agent ${path.join(binDir, "dpkg")} -i ${debPath}`,
+        ]);
         assert.equal(electronStub.app.quit.mock.calls.length, 0);
 
         // dpkg now fails on dependencies, so the retry repairs them with apt-get.
         yield* fileSystem.writeFileString(path.join(dir, "authorized"), "");
-        yield* electronUpdater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
+        yield* updater.quitAndInstall({ isSilent: true, isForceRunAfter: true });
         assert.deepEqual((yield* readCalls).slice(1), [
-          `--disable-internal-agent dpkg -i ${debPath}`,
-          "--disable-internal-agent apt-get install -f -y",
+          `--disable-internal-agent ${path.join(binDir, "dpkg")} -i ${debPath}`,
+          `--disable-internal-agent ${path.join(binDir, "apt-get")} install -f -y`,
         ]);
         assert.equal(electronStub.app.relaunch.mock.calls.length, 1);
         assert.equal(electronStub.app.quit.mock.calls.length, 1);
-      }).pipe(Effect.provide([ElectronUpdater.layer, NodeServices.layer])),
+      }).pipe(Effect.provide(NodeServices.layer)),
     );
   },
 );

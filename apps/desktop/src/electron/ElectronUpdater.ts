@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Spawns the .deb install outside electron-updater.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as Context from "effect/Context";
@@ -16,8 +17,14 @@ type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => 
 
 const PRIVILEGE_COMMANDS = ["gksudo", "kdesudo", "pkexec", "beesu"] as const;
 type PrivilegeCommand = (typeof PRIVILEGE_COMMANDS)[number] | "sudo";
+const TRUSTED_SYSTEM_BIN_DIRS: ReadonlyArray<string> = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
 // pkexec exits 126 when the user dismisses the prompt and 127 when not authorized; dpkg never ran.
 const AUTHORIZATION_EXIT_CODES: ReadonlySet<number | null> = new Set([126, 127]);
+
+interface ResolvedPrivilegeCommand {
+  readonly name: PrivilegeCommand;
+  readonly path: string;
+}
 
 interface DebUpdaterInternal {
   quitAndInstallCalled: boolean;
@@ -43,22 +50,27 @@ class DebInstallError extends Schema.TaggedError<DebInstallError>()("DebInstallE
   }
 }
 
-// electron-updater strips relative PATH entries so a writable directory cannot shadow dpkg.
-const sanitizedEnv = (): NodeJS.ProcessEnv => ({
+// Restrict PATH to trusted system directories so user-writable entries cannot shadow system tools.
+const sanitizedEnv = (binDirs: ReadonlyArray<string>): NodeJS.ProcessEnv => ({
   ...process.env,
-  PATH: (process.env.PATH ?? "")
-    .split(NodePath.delimiter)
-    .filter((dir) => NodePath.isAbsolute(dir))
-    .join(NodePath.delimiter),
+  PATH: binDirs.filter((dir) => NodePath.isAbsolute(dir)).join(NodePath.delimiter),
 });
 
-const spawnAsync = (cmd: string, args: ReadonlyArray<string>, detached = false) =>
+const spawnAsync = (
+  cmd: string,
+  args: ReadonlyArray<string>,
+  binDirs: ReadonlyArray<string>,
+  options: { readonly detached: boolean; readonly stdio: "ignore" | "inherit" } = {
+    detached: false,
+    stdio: "ignore",
+  },
+) =>
   Effect.callback<void, DebInstallError>((resume) => {
     let settled = false;
     const child = NodeChildProcess.spawn(cmd, args, {
-      env: sanitizedEnv(),
-      detached,
-      stdio: "ignore",
+      env: sanitizedEnv(binDirs),
+      detached: options.detached,
+      stdio: options.stdio,
     });
     child.once("error", (cause) => {
       if (settled) return;
@@ -81,54 +93,93 @@ const spawnAsync = (cmd: string, args: ReadonlyArray<string>, detached = false) 
     });
     // Never kill an in-flight dpkg transaction when the fiber is interrupted.
     return Effect.sync(() => {
-      if (!settled && detached) child.unref();
+      if (!settled && options.detached) child.unref();
     });
   });
 
-const hasCommand = (cmd: string) =>
-  spawnAsync("/bin/sh", ["-c", 'command -v -- "$1" >/dev/null 2>&1', "_", cmd]).pipe(
-    Effect.as(true),
-    Effect.orElseSucceed(() => false),
-  );
+const isExecutableFile = (filePath: string) =>
+  Effect.promise(async () => {
+    try {
+      const stat = await NodeFS.promises.stat(filePath);
+      if (!stat.isFile()) return false;
+      await NodeFS.promises.access(filePath, NodeFS.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
 
-const findPrivilegeCommand = Effect.gen(function* () {
-  for (const command of PRIVILEGE_COMMANDS) {
-    if (yield* hasCommand(command)) return command;
+// Untraced helper: callers (`findPrivilegeCommand`, `quitAndInstallDeb`) own the span.
+const resolveSystemBinary = Effect.fnUntraced(function* (
+  cmd: string,
+  binDirs: ReadonlyArray<string>,
+) {
+  for (const dir of binDirs) {
+    if (!NodePath.isAbsolute(dir)) continue;
+    const candidate = NodePath.join(dir, cmd);
+    if (yield* isExecutableFile(candidate)) return candidate;
   }
-  return "sudo" as const;
+  return null;
+});
+
+const findPrivilegeCommand = Effect.fn("ElectronUpdater.findPrivilegeCommand")(function* (
+  binDirs: ReadonlyArray<string>,
+) {
+  for (const name of [...PRIVILEGE_COMMANDS, "sudo"] as const) {
+    const path = yield* resolveSystemBinary(name, binDirs);
+    if (path !== null) return { name, path } satisfies ResolvedPrivilegeCommand;
+  }
+  return yield* new DebInstallError({
+    reason: "No privilege escalation command found in trusted system directories.",
+    exitCode: null,
+  });
 });
 
 const shellQuote = (arg: string): string => `'${arg.replace(/'/g, "'\\''")}'`;
 
 const privilegedCommand = (
-  sudo: PrivilegeCommand,
+  sudo: ResolvedPrivilegeCommand,
   appName: string,
   command: ReadonlyArray<string>,
 ): readonly [string, ReadonlyArray<string>] => {
   const comment = `${appName.replace(/["`$\\!\n\r;|&<>(){}*?[\]#~]/g, "")} would like to update`;
-  switch (sudo) {
+  switch (sudo.name) {
     case "pkexec":
-      return ["pkexec", ["--disable-internal-agent", ...command]];
+      return [sudo.path, ["--disable-internal-agent", ...command]];
     case "kdesudo":
-      return ["kdesudo", ["--comment", comment, "-c", command.map(shellQuote).join(" ")]];
+      return [sudo.path, ["--comment", comment, "-c", command.map(shellQuote).join(" ")]];
     case "gksudo":
-      return ["gksudo", ["--message", comment, command.map(shellQuote).join(" ")]];
+      return [sudo.path, ["--message", comment, command.map(shellQuote).join(" ")]];
+    case "beesu":
+      return [sudo.path, [command.map(shellQuote).join(" ")]];
     default:
-      return [sudo, command];
+      return [sudo.path, command];
   }
 };
+
+// Keep the controlling terminal when falling back to interactive terminal sudo.
+const isInteractiveSudo = (sudo: ResolvedPrivilegeCommand): boolean =>
+  sudo.name === "sudo" && Boolean(process.stdin.isTTY) && !process.env.SUDO_ASKPASS;
 
 const runAsRoot = Effect.fn("ElectronUpdater.runDebCommandAsRoot")(function* (
   deb: DebUpdaterInternal,
   command: readonly [string, ...Array<string>],
+  binDirs: ReadonlyArray<string>,
 ) {
   if (process.getuid?.() === 0) {
-    return yield* spawnAsync(command[0], command.slice(1), true);
+    return yield* spawnAsync(command[0], command.slice(1), binDirs, {
+      detached: true,
+      stdio: "ignore",
+    });
   }
-  const sudo = yield* findPrivilegeCommand;
-  deb._logger.info(`Running as non-root user, using ${sudo} to install`);
+  const sudo = yield* findPrivilegeCommand(binDirs);
+  deb._logger.info(`Running as non-root user, using ${sudo.name} to install`);
   const [cmd, args] = privilegedCommand(sudo, deb.app.name, command);
-  return yield* spawnAsync(cmd, args, true);
+  const interactiveSudo = isInteractiveSudo(sudo);
+  return yield* spawnAsync(cmd, args, binDirs, {
+    detached: !interactiveSudo,
+    stdio: interactiveSudo ? "inherit" : "ignore",
+  });
 });
 
 // DebUpdater.doInstall runs the privileged `dpkg -i` through spawnSync, freezing Electron's main
@@ -138,6 +189,7 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
   updater: DebUpdater,
   isSilent: boolean,
   isForceRunAfter: boolean,
+  binDirs: ReadonlyArray<string>,
 ) {
   const deb = updater as unknown as DebUpdaterInternal;
   if (deb.quitAndInstallCalled) {
@@ -154,29 +206,45 @@ const quitAndInstallDeb = Effect.fn("ElectronUpdater.quitAndInstallDeb")(functio
 
   deb.quitAndInstallCalled = true;
   yield* Effect.gen(function* () {
-    if (yield* hasCommand("dpkg")) {
-      yield* runAsRoot(deb, ["dpkg", "-i", installerPath]).pipe(
+    const dpkgPath = yield* resolveSystemBinary("dpkg", binDirs);
+    if (dpkgPath !== null) {
+      yield* runAsRoot(deb, [dpkgPath, "-i", installerPath], binDirs).pipe(
         Effect.catch((error) => {
           if (AUTHORIZATION_EXIT_CODES.has(error.exitCode)) return Effect.fail(error);
           deb._logger.warn(`${error.message}; fixing broken dependencies with apt-get`);
-          return runAsRoot(deb, ["apt-get", "install", "-f", "-y"]);
+          return Effect.gen(function* () {
+            const aptGetPath = yield* resolveSystemBinary("apt-get", binDirs);
+            if (aptGetPath === null) {
+              return yield* new DebInstallError({
+                reason: "apt-get command not found in trusted system directories.",
+                exitCode: null,
+              });
+            }
+            return yield* runAsRoot(deb, [aptGetPath, "install", "-f", "-y"], binDirs);
+          });
         }),
       );
-    } else if (yield* hasCommand("apt")) {
-      yield* runAsRoot(deb, [
-        "apt",
-        "install",
-        "-y",
-        "--allow-unauthenticated",
-        "--allow-downgrades",
-        "--allow-change-held-packages",
-        installerPath,
-      ]);
     } else {
-      return yield* new DebInstallError({
-        reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
-        exitCode: null,
-      });
+      const aptPath = yield* resolveSystemBinary("apt", binDirs);
+      if (aptPath === null) {
+        return yield* new DebInstallError({
+          reason: "Neither dpkg nor apt command found. Cannot install .deb package.",
+          exitCode: null,
+        });
+      }
+      yield* runAsRoot(
+        deb,
+        [
+          aptPath,
+          "install",
+          "-y",
+          "--allow-unauthenticated",
+          "--allow-downgrades",
+          "--allow-change-held-packages",
+          installerPath,
+        ],
+        binDirs,
+      );
     }
 
     if (isSilent ? isForceRunAfter : deb.autoRunAppAfterInstall) deb.app.relaunch();
@@ -283,121 +351,129 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
-/** @public */
-export const make = ElectronUpdater.of({
-  setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (options) {
-    return Effect.suspend(() => {
-      autoUpdater.setFeedURL(options);
-      return Effect.void;
-    });
-  }),
-  setAutoDownload: Effect.fn("ElectronUpdater.setAutoDownload")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.autoDownload = value;
-      return Effect.void;
-    });
-  }),
-  setAutoInstallOnAppQuit: Effect.fn("ElectronUpdater.setAutoInstallOnAppQuit")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.autoInstallOnAppQuit = value;
-      return Effect.void;
-    });
-  }),
-  setChannel: Effect.fn("ElectronUpdater.setChannel")(function (channel) {
-    return Effect.suspend(() => {
-      autoUpdater.channel = channel;
-      return Effect.void;
-    });
-  }),
-  setAllowPrerelease: Effect.fn("ElectronUpdater.setAllowPrerelease")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.allowPrerelease = value;
-      return Effect.void;
-    });
-  }),
-  allowDowngrade: Effect.sync(() => autoUpdater.allowDowngrade),
-  setAllowDowngrade: Effect.fn("ElectronUpdater.setAllowDowngrade")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.allowDowngrade = value;
-      return Effect.void;
-    });
-  }),
-  setFullChangelog: Effect.fn("ElectronUpdater.setFullChangelog")(function (value) {
-    return Effect.suspend(() => {
-      autoUpdater.fullChangelog = value;
-      return Effect.void;
-    });
-  }),
-  setDisableDifferentialDownload: Effect.fn("ElectronUpdater.setDisableDifferentialDownload")(
-    function (value) {
+export const makeWithOptions = (options?: {
+  readonly systemBinDirs?: ReadonlyArray<string>;
+}): ElectronUpdater["Service"] => {
+  const systemBinDirs = options?.systemBinDirs ?? TRUSTED_SYSTEM_BIN_DIRS;
+  return ElectronUpdater.of({
+    setFeedURL: Effect.fn("ElectronUpdater.setFeedURL")(function (feedOptions) {
       return Effect.suspend(() => {
-        autoUpdater.disableDifferentialDownload = value;
+        autoUpdater.setFeedURL(feedOptions);
         return Effect.void;
       });
-    },
-  ),
-  checkForUpdates: Effect.suspend(() => {
-    const channel = autoUpdater.channel;
-    return Effect.tryPromise({
-      try: () => autoUpdater.checkForUpdates(),
-      catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
-    }).pipe(Effect.asVoid);
-  }),
-  downloadUpdate: Effect.suspend(() => {
-    const channel = autoUpdater.channel;
-    return Effect.tryPromise({
-      try: () => autoUpdater.downloadUpdate(),
-      catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
-    }).pipe(Effect.asVoid);
-  }),
-  quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
-    isSilent,
-    isForceRunAfter,
-  }) {
-    return Effect.suspend(() => {
-      const channel = autoUpdater.channel;
-      if (autoUpdater instanceof DebUpdater) {
-        return quitAndInstallDeb(autoUpdater, isSilent, isForceRunAfter).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ElectronUpdaterQuitAndInstallError({
-                channel,
-                isSilent,
-                isForceRunAfter,
-                cause,
-              }),
-          ),
-        );
-      }
-      if (autoUpdater instanceof AppImageUpdater) relaunchWithoutInheritedDescriptors(autoUpdater);
-      return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
-        catch: (cause) =>
-          new ElectronUpdaterQuitAndInstallError({
-            channel,
-            isSilent,
-            isForceRunAfter,
-            cause,
-          }),
+    }),
+    setAutoDownload: Effect.fn("ElectronUpdater.setAutoDownload")(function (value) {
+      return Effect.suspend(() => {
+        autoUpdater.autoDownload = value;
+        return Effect.void;
       });
-    });
-  }),
-  on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
-    const eventTarget = autoUpdater as unknown as {
-      on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-      removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-    };
-    const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
-    return Effect.acquireRelease(
-      Effect.sync(() => {
-        eventTarget.on(eventName, untypedListener);
-      }),
-      () =>
+    }),
+    setAutoInstallOnAppQuit: Effect.fn("ElectronUpdater.setAutoInstallOnAppQuit")(function (value) {
+      return Effect.suspend(() => {
+        autoUpdater.autoInstallOnAppQuit = value;
+        return Effect.void;
+      });
+    }),
+    setChannel: Effect.fn("ElectronUpdater.setChannel")(function (channel) {
+      return Effect.suspend(() => {
+        autoUpdater.channel = channel;
+        return Effect.void;
+      });
+    }),
+    setAllowPrerelease: Effect.fn("ElectronUpdater.setAllowPrerelease")(function (value) {
+      return Effect.suspend(() => {
+        autoUpdater.allowPrerelease = value;
+        return Effect.void;
+      });
+    }),
+    allowDowngrade: Effect.sync(() => autoUpdater.allowDowngrade),
+    setAllowDowngrade: Effect.fn("ElectronUpdater.setAllowDowngrade")(function (value) {
+      return Effect.suspend(() => {
+        autoUpdater.allowDowngrade = value;
+        return Effect.void;
+      });
+    }),
+    setFullChangelog: Effect.fn("ElectronUpdater.setFullChangelog")(function (value) {
+      return Effect.suspend(() => {
+        autoUpdater.fullChangelog = value;
+        return Effect.void;
+      });
+    }),
+    setDisableDifferentialDownload: Effect.fn("ElectronUpdater.setDisableDifferentialDownload")(
+      function (value) {
+        return Effect.suspend(() => {
+          autoUpdater.disableDifferentialDownload = value;
+          return Effect.void;
+        });
+      },
+    ),
+    checkForUpdates: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: () => autoUpdater.checkForUpdates(),
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      }).pipe(Effect.asVoid);
+    }),
+    downloadUpdate: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: () => autoUpdater.downloadUpdate(),
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      }).pipe(Effect.asVoid);
+    }),
+    quitAndInstall: Effect.fn("ElectronUpdater.quitAndInstall")(function ({
+      isSilent,
+      isForceRunAfter,
+    }) {
+      return Effect.suspend(() => {
+        const channel = autoUpdater.channel;
+        if (autoUpdater instanceof DebUpdater) {
+          return quitAndInstallDeb(autoUpdater, isSilent, isForceRunAfter, systemBinDirs).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ElectronUpdaterQuitAndInstallError({
+                  channel,
+                  isSilent,
+                  isForceRunAfter,
+                  cause,
+                }),
+            ),
+          );
+        }
+        if (autoUpdater instanceof AppImageUpdater)
+          relaunchWithoutInheritedDescriptors(autoUpdater);
+        return Effect.try({
+          try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+          catch: (cause) =>
+            new ElectronUpdaterQuitAndInstallError({
+              channel,
+              isSilent,
+              isForceRunAfter,
+              cause,
+            }),
+        });
+      });
+    }),
+    on: Effect.fn("ElectronUpdater.on")(function (eventName, listener) {
+      const eventTarget = autoUpdater as unknown as {
+        on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
+        removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
+      };
+      const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
+      return Effect.acquireRelease(
         Effect.sync(() => {
-          eventTarget.removeListener(eventName, untypedListener);
+          eventTarget.on(eventName, untypedListener);
         }),
-    ).pipe(Effect.asVoid);
-  }),
-});
+        () =>
+          Effect.sync(() => {
+            eventTarget.removeListener(eventName, untypedListener);
+          }),
+      ).pipe(Effect.asVoid);
+    }),
+  });
+};
+
+/** @public */
+export const make = makeWithOptions();
 
 export const layer = Layer.succeed(ElectronUpdater, make);
