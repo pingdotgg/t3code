@@ -6053,7 +6053,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       { fetch: "statusDetailsRemote" },
       // Storage cleanup's merge check fetches the default branch on every sweep.
       { fetch: "fetchRemoteTrackingBranch" },
-    ] as const)("does not start Git auto-maintenance from background $fetch fetches", ({ fetch }) =>
+      // Startup pulls each project's default branch.
+      { fetch: "pullCurrentBranch" },
+    ] as const)("does not start Git auto-maintenance from $fetch", ({ fetch }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -6079,6 +6081,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
 
         const driver = yield* GitVcsDriver.GitVcsDriver;
         if (fetch === "statusDetailsRemote") yield* driver.statusDetailsRemote(cwd);
+        else if (fetch === "pullCurrentBranch") yield* driver.pullCurrentBranch(cwd);
         else
           yield* driver.fetchRemoteTrackingBranch({
             cwd,
@@ -10323,6 +10326,35 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           "Add feature",
         );
       }),
+    );
+
+    it.effect(
+      "publishes a new branch prefixed with another remote's name under its full name",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const origin = yield* makeTmpDir("git-remote-");
+          const fork = yield* makeTmpDir("git-fork-");
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(origin, ["init", "--bare"]);
+          yield* git(fork, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", origin]);
+          // e.g. the remote T3 adds when checking out a pull request from alice's fork.
+          yield* git(cwd, ["remote", "add", "alice", fork]);
+          yield* git(cwd, ["checkout", "-b", "alice/fix"]);
+          yield* writeTextFile(cwd, "fix.txt", "fix\n");
+          yield* git(cwd, ["add", "-A"]);
+          yield* driver.commit(cwd, "Add fix", "");
+
+          const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+          assert.deepInclude(pushed, { status: "pushed", upstreamBranch: "origin/alice/fix" });
+          assert.equal(
+            yield* git(origin, ["--git-dir=.", "rev-parse", "refs/heads/alice/fix"]),
+            yield* git(cwd, ["rev-parse", "HEAD"]),
+          );
+        }),
     );
 
     it.effect("still pushes a git-mangled tracking alias to its upstream head", () =>
