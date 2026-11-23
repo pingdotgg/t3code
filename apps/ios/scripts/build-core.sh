@@ -5,10 +5,9 @@ set -euo pipefail
 
 IOS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_ROOT="$(cd "$IOS_ROOT/../.." && pwd)"
-GPUI_ROOT="$REPO_ROOT/apps/conn-gpui"
 GENERATED_DIR="$IOS_ROOT/ConnCore/Generated"
 OUT_XCFRAMEWORK="$IOS_ROOT/build/ConnCore.xcframework"
-TARGET_DIR="${CARGO_TARGET_DIR:-$GPUI_ROOT/target-ios}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 
 IOS_TARGETS=(
   "aarch64-apple-ios"
@@ -25,11 +24,12 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
 fi
 
 if [[ ! -f "$GENERATED_DIR/conn_ffiFFI.h" || ! -f "$GENERATED_DIR/conn_ffiFFI.modulemap" ]]; then
-  echo "Missing generated headers in $GENERATED_DIR; run apps/conn-gpui/scripts/ios-bindings.sh first" >&2
+  echo "Missing generated headers in $GENERATED_DIR; run apps/ios/scripts/ios-bindings.sh first" >&2
   exit 1
 fi
 
-cd "$GPUI_ROOT"
+# conn-ffi is a member of the repo-root crates/ workspace, which pins the toolchain.
+cd "$REPO_ROOT"
 TOOLCHAIN_BIN="$(dirname "$(rustup which cargo)")"
 export PATH="$TOOLCHAIN_BIN:$PATH"
 

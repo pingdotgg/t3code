@@ -189,6 +189,7 @@ export default defineConfig({
       "apps/conn-gpui/**",
       // The native SwiftUI iPhone app (Xcode project, asset catalogs, generated bindings).
       "apps/ios/**",
+      "crates/**",
       "infra/task-cache/vendor/**",
       // Macroscope requires one glob per line; Markdown formatting corrupts it.
       ".macroscope/ignore.md",
@@ -228,6 +229,7 @@ export default defineConfig({
       "apps/conn-server/**",
       "apps/conn-gpui/**",
       "apps/ios/**",
+      "crates/**",
       "infra/task-cache/vendor/**",
       "dist",
       "dist-electron",

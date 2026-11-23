@@ -12,9 +12,11 @@ each part owns.
 | iPhone | SwiftUI on the shared Rust core (UniFFI) | 2026-11-22 |
 
 All three share one Rust protocol layer: `conn-wire` and `conn-contract` from
-`apps/conn-server`, and the GPUI-free client core in `crates/conn-client`, `conn-state`,
-`conn-theme` and `conn-orbit`. They live in one repository, so one commit can change the
-contract, the server and both clients.
+`apps/conn-server`, and the GPUI-free client core in the repo-root `crates/` workspace
+(`conn-client`, `conn-state`, `conn-theme`, `conn-orbit`, `conn-ffi`). The desktop and the
+server stay separate Cargo workspaces that use these crates by path, so the server's Linux
+builds never compile GPUI. They live in one repository, so one commit can change the contract,
+the server and both clients.
 
 ## Desktop: Rust + GPUI
 

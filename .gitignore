@@ -56,3 +56,6 @@ node_modules/
 /packages/ssh/.ssh-launcher-test-*/
 .t3-mobile-lab
 .lab-shots/
+
+# Cargo build output of the repo-root crates/ workspace.
+/target/

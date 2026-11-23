@@ -19,6 +19,10 @@ const INERT = [
   /^\.github\/workflows\/conn-gpui-/,
   // The native SwiftUI iPhone app builds in Xcode, outside the pnpm workspace.
   /^apps\/ios\//,
+  // The shared Rust core (crates/) and its root Cargo files; apps/conn-gpui/scripts/check.sh
+  // checks them.
+  /^crates\//,
+  /^(Cargo\.toml|Cargo\.lock|clippy\.toml|rustfmt\.toml|rust-toolchain\.toml)$/,
 ];
 
 // Shared test setup and vendored mobile dependencies affect every package.

@@ -1,13 +1,21 @@
 name: Conn GPUI checks
 
-# Format, Clippy and tests for the native GPUI macOS client. Same three commands as
-# apps/conn-gpui/scripts/check.sh. ci.yml treats apps/conn-gpui as inert, so this is
-# the only workflow that builds it. It also runs for the Conn Server crates it imports.
+# Format, Clippy and tests for the native GPUI macOS client and the shared Rust core in
+# crates/ (the root workspace, also used by the iPhone app). Same commands as
+# apps/conn-gpui/scripts/check.sh. ci.yml treats apps/conn-gpui and crates/ as inert, so
+# this is the only workflow that builds them. It also runs for the Conn Server crates
+# they import.
 
 on:
   pull_request:
     paths: &paths
       - apps/conn-gpui/**
+      - crates/**
+      - Cargo.toml
+      - Cargo.lock
+      - rust-toolchain.toml
+      - clippy.toml
+      - rustfmt.toml
       - apps/conn-server/Cargo.toml
       - apps/conn-server/crates/conn-wire/**
       - apps/conn-server/crates/conn-contract/**
@@ -27,7 +35,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same as `channel` in apps/conn-gpui/rust-toolchain.toml.
+  # Same as `channel` in rust-toolchain.toml and apps/conn-gpui/rust-toolchain.toml.
   RUST_TOOLCHAIN: "1.99.1"
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -63,9 +71,10 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
+            target
             apps/conn-gpui/target
-          key: conn-gpui-checks-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('apps/conn-gpui/Cargo.lock') }}
-          restore-keys: conn-gpui-checks-v1-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
+          key: conn-gpui-checks-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('Cargo.lock', 'apps/conn-gpui/Cargo.lock') }}
+          restore-keys: conn-gpui-checks-v2-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -76,6 +85,18 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Format shared core
+        working-directory: .
+        run: cargo fmt --all -- --check
+
+      - name: Clippy shared core
+        working-directory: .
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Test shared core
+        working-directory: .
+        run: cargo test --workspace
+
       - name: Save Cargo on main
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -84,5 +105,6 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
+            target
             apps/conn-gpui/target
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}

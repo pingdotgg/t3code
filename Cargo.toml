@@ -1,0 +1,69 @@
+# The shared Rust core: the GPUI-free crates that conn-gpui (macOS) and the SwiftUI iPhone app
+# (through conn-ffi) both build on. apps/conn-gpui and apps/conn-server stay separate workspaces
+# and depend on these crates by path, so the server's Linux and musl builds never pull in GPUI
+# or conn-gpui's [patch.crates-io].
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+# `apps/*` and `native/*` keep their own workspaces.
+exclude = ["apps", "native", "node_modules"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+rust-version = "1.95"
+
+[workspace.dependencies]
+conn-client = { path = "crates/conn-client" }
+conn-ffi = { path = "crates/conn-ffi" }
+conn-orbit = { path = "crates/conn-orbit" }
+conn-state = { path = "crates/conn-state" }
+conn-theme = { path = "crates/conn-theme" }
+
+# The wire and contract crates, still in the conn-server workspace.
+conn-wire = { path = "apps/conn-server/crates/conn-wire" }
+conn-contract = { path = "apps/conn-server/crates/conn-contract" }
+# Typed Orbit Gateway operations generated from OpenAPI (nckrtl/conn#227); no crate uses it yet.
+conn-gateway-api = { path = "apps/conn-server/crates/conn-gateway-api" }
+
+# Same pins as apps/conn-gpui, so both builds resolve the same versions.
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+tempfile = "=3.27.0"
+thiserror = "2"
+futures = "=0.3.34"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros"] }
+tokio-tungstenite = "0.29"
+tracing = "=0.1.44"
+url = "2"
+
+# The same lint set as apps/conn-gpui. `unsafe_code` is forbidden per crate (conn-client,
+# conn-state, conn-theme, conn-orbit); conn-ffi allows only UniFFI's generated FFI code.
+[workspace.lints.rust]
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+rc_mutex = "deny"
+redundant_clone = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+panic_in_result_fn = "warn"
+string_add = "warn"
+missing_assert_message = "warn"
+rc_buffer = "warn"
+large_futures = "warn"
+type_complexity = "allow"
+large_enum_variant = "allow"

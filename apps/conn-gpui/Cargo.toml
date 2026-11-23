@@ -11,12 +11,12 @@ publish = false
 rust-version = "1.95"
 
 [workspace.dependencies]
-# Local workspace crates
-conn-client = { path = "crates/conn-client" }
+# Local workspace crates; the shared GPUI-free core lives in the repo-root crates/ workspace.
+conn-client = { path = "../../crates/conn-client" }
 conn-desktop = { path = "crates/conn-desktop" }
-conn-orbit = { path = "crates/conn-orbit" }
-conn-state = { path = "crates/conn-state" }
-conn-theme = { path = "crates/conn-theme" }
+conn-orbit = { path = "../../crates/conn-orbit" }
+conn-state = { path = "../../crates/conn-state" }
+conn-theme = { path = "../../crates/conn-theme" }
 conn-web = { path = "crates/conn-web" }
 
 # Shared wire and contract crates from the sibling conn-server app in this monorepo.

@@ -32,7 +32,7 @@ This repo is cleared to build, test, and run locally on this Mac (or in `nick-vm
 
 ## Workspace boundaries (multi-agent safe)
 
-Keep crate boundaries strict so parallel sub-agents do not collide:
+Keep crate boundaries strict so parallel sub-agents do not collide. The GPUI-free shared core (`conn-client`, `conn-orbit`, `conn-state`, `conn-theme`, `conn-ffi`) lives in the repo-root `crates/` workspace, which the iPhone app (`apps/ios`) also builds on; this workspace keeps the desktop-only crates (`apps/conn-gpui/crates/`). Paths below are repo-relative.
 
 | Crate | Owns | Must NOT depend on |
 | --- | --- | --- |
@@ -40,14 +40,14 @@ Keep crate boundaries strict so parallel sub-agents do not collide:
 | `crates/conn-orbit` | GPUI-free, UniFFI-ready Orbit Gateway client (HTTPS + Reverb WSS via `rustls-platform-verifier` for macOS & iOS), Fleet/Nodes/Instances, primary `agent`-role node selection, Projects, Profile/Workspace/Theme 3-way sync, Tasks models/board/detail/insights/formatting, fixtures | `gpui` / `gpui-kit` / `sqlx` / process spawning / desktop UI |
 | `crates/conn-state` | Pure Rust client state, shell & thread reducers, workspace/tab/panel layout state, settings model, unit tests | `gpui` / `gpui-kit` / I/O |
 | `crates/conn-theme` | Conn theme definitions (Dark Ocean, T3 Light/Dark, Grove, Ocean, Ember, Iris), `color-mix` shell token derivation, GPUI `Hsla` conversion | networking / app views |
-| `crates/conn-web` | Embedded browser runtime (CEF-on-demand via `cef-rs`, DevTools/CDP, offscreen/host surfaces) | `conn-state` / app views |
+| `apps/conn-gpui/crates/conn-web` | Embedded browser runtime (CEF-on-demand via `cef-rs`, DevTools/CDP, offscreen/host surfaces) | `conn-state` / app views |
 | `crates/conn-ffi` | UniFFI Swift/iOS bridge wrapping `conn-client` + `conn-state` + `conn-orbit` (Tokio runtime, event pump, snapshot coalescing, generated FFI bindings) | `gpui` / `gpui-kit` / `conn-app` / `conn-web` |
-| `crates/conn-desktop` | Desktop-only native right-panel backends (API, Database/`sqlx`, MCP stdio/HTTP, Operator, Vault, desktop Orbit panel state & local Application Support storage re-exporting `conn-orbit`) | `gpui` / `gpui-kit` / `conn-app` |
-| `crates/conn-app` | GPUI desktop binary: macOS window frame, workspace rail, thread sidebar, 44px header, chat timeline, composer, right panel (Files, Diff, Terminal, Browser, etc.), Settings modal, command palette, automation hook | direct raw WS protocol logic |
+| `apps/conn-gpui/crates/conn-desktop` | Desktop-only native right-panel backends (API, Database/`sqlx`, MCP stdio/HTTP, Operator, Vault, desktop Orbit panel state & local Application Support storage re-exporting `conn-orbit`) | `gpui` / `gpui-kit` / `conn-app` |
+| `apps/conn-gpui/crates/conn-app` | GPUI desktop binary: macOS window frame, workspace rail, thread sidebar, 44px header, chat timeline, composer, right panel (Files, Diff, Terminal, Browser, etc.), Settings modal, command palette, automation hook | direct raw WS protocol logic |
 
 - `conn-client`, `conn-orbit`, `conn-state`, and `conn-theme` stay `#![forbid(unsafe_code)]`.
 - `unsafe` is permitted only in `conn-app` (macOS AppKit/Metal window shims), `conn-web` (CEF FFI), and generated UniFFI scaffolding inside `conn-ffi` (hand-written code in `conn-ffi` must remain free of `unsafe`); every hand-written `unsafe` block must carry a `// SAFETY:` comment (`undocumented_unsafe_blocks = "deny"`).
-- Keep `conn-client`, `conn-orbit`, `conn-state`, and `conn-theme` 100% GPUI-free so `cargo test -p conn-client -p conn-orbit -p conn-state -p conn-theme` runs in seconds with no window server and so the same Rust core can be exposed to the pure SwiftUI iOS client via UniFFI.
+- Keep `conn-client`, `conn-orbit`, `conn-state`, and `conn-theme` 100% GPUI-free so `cargo test --workspace` at the repo root runs them in seconds with no window server and so the same Rust core can be exposed to the pure SwiftUI iOS client via UniFFI.
 
 ## Visual parity rules (pixel-for-pixel Conn)
 

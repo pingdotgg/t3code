@@ -3,12 +3,13 @@
 # into apps/ios/ConnCore/Generated/.
 set -euo pipefail
 
-GPUI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO_ROOT="$(cd "$GPUI_ROOT/../.." && pwd)"
-OUT_DIR="$REPO_ROOT/apps/ios/ConnCore/Generated"
-TARGET_DIR="${CARGO_TARGET_DIR:-$GPUI_ROOT/target}"
+IOS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$IOS_ROOT/../.." && pwd)"
+OUT_DIR="$IOS_ROOT/ConnCore/Generated"
+TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 
-cd "$GPUI_ROOT"
+# conn-ffi is a member of the repo-root crates/ workspace.
+cd "$REPO_ROOT"
 
 echo "==> Building host conn-ffi cdylib"
 CARGO_TARGET_DIR="$TARGET_DIR" cargo build -p conn-ffi --lib

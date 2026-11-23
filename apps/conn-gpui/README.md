@@ -7,12 +7,16 @@ A native Rust + GPUI desktop client for **Conn** (Nick's fork of T3 Code), built
 ## Architecture at a glance
 
 ```text
-conn-gpui (Rust + GPUI desktop app)
+shared core (repo-root crates/, also used by apps/ios)
   ├── crates/conn-client  ──► WebSocket /ws (Effect RPC via apps/conn-server/crates/{conn-wire,conn-contract})
   ├── crates/conn-state   ──► Pure Rust reducers, workspace/thread/panel state (zero GPUI deps)
-  ├── crates/conn-theme   ──► Conn theme palettes + color-mix shell tokens -> GPUI Hsla
-  ├── crates/conn-web     ──► Embedded Chromium browser via CEF-on-demand (modeled on Threadbear)
-  └── crates/conn-app     ──► GPUI binary: frosted shell, workspace rail, sidebar, chat, composer, right panels
+  ├── crates/conn-theme   ──► Conn theme palettes + color-mix shell tokens
+  ├── crates/conn-orbit   ──► Orbit Gateway client
+  └── crates/conn-ffi     ──► UniFFI bridge for the iPhone app
+conn-gpui (Rust + GPUI desktop app, apps/conn-gpui/crates/)
+  ├── conn-desktop        ──► desktop-only panel backends (API, Database, MCP, Operator, Vault)
+  ├── conn-web            ──► Embedded Chromium browser via CEF-on-demand (modeled on Threadbear)
+  └── conn-app            ──► GPUI binary: frosted shell, workspace rail, sidebar, chat, composer, right panels
 ```
 
 ## Reference repositories

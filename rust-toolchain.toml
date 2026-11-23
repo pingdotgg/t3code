@@ -1,0 +1,6 @@
+# Pinned to match apps/conn-server and apps/conn-gpui so the shared crates build, lint and
+# format the same everywhere.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

@@ -1,0 +1,9 @@
+# BeautifulRust clippy configuration for the shared crates (same as apps/conn-gpui and apps/conn-server).
+
+# Prefer two-variant enums or explicit methods over bare bool parameters.
+max-fn-params-bools = 0
+
+# Allow unwrap, expect, and printing in tests, where a panic is the assertion.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-print-in-tests = true
