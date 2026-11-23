@@ -21,6 +21,7 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { makeInterruptResultTurnItem } from "./runInterruptResult.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 // Git processes are already capped server-wide; this keeps one thread from taking every slot.
@@ -259,6 +260,19 @@ export const layer: Layer.Layer<
           if (currentRun.status !== "waiting" && !stoppedNow) {
             return;
           }
+          // A Stop accepted once the provider's turn had ended stored only its request: the
+          // terminal already wrote `waiting`. That Stop still wins, and gets its result here.
+          const stopSignals = stoppedNow
+            ? []
+            : (yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
+                turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
+                turnItemRunIds: [run.id],
+              })).turnItems;
+          const stopRequest = stopSignals.some((item) => item.type === "run_interrupt_result")
+            ? undefined
+            : stopSignals.find((item) => item.type === "run_interrupt_request");
+          const settledStatus =
+            stopRequest === undefined ? ("completed" as const) : ("interrupted" as const);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =
             currentRun;
@@ -328,6 +342,27 @@ export const layer: Layer.Layer<
                   completedAt: capturedAt,
                 }),
               },
+              ...(stopRequest?.type !== "run_interrupt_request"
+                ? []
+                : [
+                    {
+                      id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                      type: "turn-item.updated" as const,
+                      threadId: input.threadId,
+                      runId: run.id,
+                      nodeId: rootNode.id,
+                      providerInstanceId: run.providerInstanceId,
+                      occurredAt: capturedAt,
+                      payload: makeInterruptResultTurnItem({
+                        idAllocator: ids,
+                        run,
+                        rootNode,
+                        providerThread,
+                        reason: stopRequest.message,
+                        completedAt: capturedAt,
+                      }),
+                    },
+                  ]),
               {
                 id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
                 type: "run.updated",
@@ -340,7 +375,7 @@ export const layer: Layer.Layer<
                   ? { ...runWithoutDelegatedCompletion, checkpointId: checkpoint.id }
                   : {
                       ...runWithoutDelegatedCompletion,
-                      status: "completed",
+                      status: settledStatus,
                       completedAt: capturedAt,
                       checkpointId: checkpoint.id,
                     },
@@ -358,7 +393,7 @@ export const layer: Layer.Layer<
                       occurredAt: capturedAt,
                       payload: {
                         ...rootNode,
-                        status: "completed" as const,
+                        status: settledStatus,
                         completedAt: capturedAt,
                         checkpointScopeId: scope.id,
                       },
