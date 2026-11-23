@@ -7,7 +7,7 @@ interface MarkdownAstNode {
   children?: MarkdownAstNode[];
 }
 
-const GITHUB_ALERT_MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\r?\n|$)/i;
+export const GITHUB_ALERT_MARKER = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\](?:\r?\n|$)/i;
 
 function readGithubAlert(node: MarkdownAstNode): void {
   if (node.type !== "blockquote") return;

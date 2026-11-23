@@ -29,6 +29,7 @@ const layerShellEnvironment = (prepared = true) =>
     installIntoProcess: Effect.succeed(prepared),
     awaitDiscovery: Effect.succeed(prepared),
     awaitUserShellDiscovery: Effect.succeed(prepared),
+    discoveryFinished: Effect.succeed(true),
     updates: Stream.empty,
   });
 
@@ -353,7 +354,12 @@ describe("DesktopBackendConfiguration", () => {
                 },
                 ensureNodePty: (distro) => {
                   observedDistros.push(distro);
-                  return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+                  return {
+                    ok: true,
+                    nodePath: "/usr/bin/node",
+                    resolvedPath: "/usr/bin:/bin",
+                    t3Home: null,
+                  };
                 },
                 getDistroIp: (distro) => {
                   observedDistros.push(distro);
@@ -384,10 +390,12 @@ describe("DesktopBackendConfiguration", () => {
       windowsArchivePath: string;
       runtimeId: string;
       sha256: string;
+      t3Home: string | null;
     }> = [];
     let probeCount = 0;
     let legacyCleanupCount = 0;
-    const linuxAppRoot = "/home/test/.t3/wsl-runtime/1.2.3-x64";
+    const t3Home = "/home/test/.config/t3";
+    const linuxAppRoot = `${t3Home}/wsl-runtime/1.2.3-x64`;
     const resolvedPath = "/home/test/.local/bin:/usr/bin:/bin";
 
     return withPackagedWslHarness(
@@ -398,17 +406,18 @@ describe("DesktopBackendConfiguration", () => {
           legacyCleanupCount += 1;
         }),
         wsl: () => ({
-          prepareRuntime: (_distro, archive) => {
+          prepareRuntime: (_distro, archive, archiveT3Home) => {
             observedArchives.push({
               windowsArchivePath: archive.windowsPath,
               runtimeId: archive.runtimeId,
               sha256: archive.sha256,
+              t3Home: archiveT3Home,
             });
             return { ok: true, linuxAppRoot };
           },
           probeRuntime: () => {
             probeCount += 1;
-            return { ok: true, resolvedPath };
+            return { ok: true, resolvedPath, t3Home };
           },
           ensureNodePty: () => {
             throw new Error("the staged runtime must not probe for node-pty");
@@ -426,6 +435,7 @@ describe("DesktopBackendConfiguration", () => {
               windowsArchivePath: archivePath,
               runtimeId: `sha256-${archiveHash}`,
               sha256: archiveHash,
+              t3Home,
             },
           ]);
           assert.equal(probeCount, 1);
@@ -441,12 +451,14 @@ describe("DesktopBackendConfiguration", () => {
             "--exec",
             "env",
             `PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${resolvedPath}`,
+            `T3CODE_HOME=${t3Home}`,
             `${linuxAppRoot}/t3`,
             "--bootstrap-fd",
             "0",
           ]);
           assert.notInclude(config.args, "/usr/bin/node");
           assert.equal(config.wslRuntimeId, `sha256-${archiveHash}`);
+          assert.equal(config.wslT3Home, t3Home);
           assert.equal(legacyCleanupCount, 1);
           assert.isTrue(Option.isNone(config.preflightFailure));
         }),
@@ -469,6 +481,7 @@ describe("DesktopBackendConfiguration", () => {
             ok: true,
             nodePath: "/usr/bin/node",
             resolvedPath: "/usr/bin:/bin",
+            t3Home: null,
           }),
         }),
       },
@@ -501,10 +514,14 @@ describe("DesktopBackendConfiguration", () => {
         archiveHash: "b".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: false, reason: "archive is corrupt" }),
-          invalidateRuntime: () => Effect.die("failed staging must not invalidate a runtime"),
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
-            return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+            return {
+              ok: true,
+              nodePath: "/usr/bin/node",
+              resolvedPath: "/usr/bin:/bin",
+              t3Home: null,
+            };
           },
         }),
       },
@@ -523,28 +540,30 @@ describe("DesktopBackendConfiguration", () => {
     );
   });
 
-  it.effect("resolveWsl retires a staged runtime whose launch probe fails", () => {
+  it.effect("resolveWsl does not stage a runtime when the login-shell probe fails", () => {
     const archiveHash = "c".repeat(64);
     const stagedAppRoot = `/home/test/.t3/wsl-runtime/sha256-${archiveHash}`;
     let probeCount = 0;
     const observedNodePtyRoots: string[] = [];
-    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash,
         wsl: () => ({
-          prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
+          prepareRuntime: () => {
+            throw new Error("a failed probe must not stage the runtime");
+          },
           probeRuntime: () => {
             probeCount += 1;
             return { ok: false, reason: "WSL login-shell PATH could not be resolved" };
           },
           ensureNodePty: (_distro, root) => {
             observedNodePtyRoots.push(root);
-            return { ok: true, nodePath: "/usr/bin/node", resolvedPath: "/usr/bin:/bin" };
+            return {
+              ok: true,
+              nodePath: "/usr/bin/node",
+              resolvedPath: "/usr/bin:/bin",
+              t3Home: null,
+            };
           },
         }),
       },
@@ -561,23 +580,17 @@ describe("DesktopBackendConfiguration", () => {
           assert.equal(config.entryPath, mountedEntryPath);
           assert.isUndefined(config.wslRuntimeId);
           assert.isTrue(Option.isNone(config.preflightFailure));
-          assert.deepEqual(invalidatedRuntimeIds, [`sha256-${archiveHash}`]);
         }),
     );
   });
 
   it.effect("resolveWsl keeps WSL retryable when the mounted fallback fails transiently", () => {
     const stagedAppRoot = "/home/test/.t3/wsl-runtime/cache";
-    const invalidatedRuntimeIds: string[] = [];
     return withPackagedWslHarness(
       {
         archiveHash: "f".repeat(64),
         wsl: () => ({
           prepareRuntime: () => ({ ok: true, linuxAppRoot: stagedAppRoot }),
-          invalidateRuntime: (_distro, runtimeId) =>
-            Effect.sync(() => {
-              invalidatedRuntimeIds.push(runtimeId);
-            }),
           probeRuntime: () => ({ ok: false, reason: "WSL login-shell PATH could not be resolved" }),
           ensureNodePty: () => ({
             ok: false,
@@ -595,7 +608,6 @@ describe("DesktopBackendConfiguration", () => {
           assert.isFalse(failure.fatal);
           assert.equal(failure.retryLimit, 12);
           assert.include(failure.reason, "timed out");
-          assert.deepEqual(invalidatedRuntimeIds, []);
         }),
     );
   });
@@ -632,7 +644,7 @@ describe("DesktopBackendConfiguration", () => {
                   isAvailable: true,
                   distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
                   windowsToWslPath: () => Option.some(linuxAppRoot),
-                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath }),
+                  ensureNodePty: () => ({ ok: true, nodePath, resolvedPath, t3Home: null }),
                   getDistroIp: () => Option.some("172.27.0.99"),
                 }),
               ),

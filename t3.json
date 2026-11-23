@@ -13,6 +13,11 @@
       "command": "node scripts/setup-worktree.ts",
       "icon": "configure",
       "runOnWorktreeCreate": true
+    },
+    {
+      "name": "Build + Install Nightly (macOS arm64)",
+      "command": "./scripts/build-install-nightly-mac-arm64.sh",
+      "icon": "build"
     }
   ]
 }
