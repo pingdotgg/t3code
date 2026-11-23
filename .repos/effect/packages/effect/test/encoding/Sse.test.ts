@@ -284,6 +284,28 @@ describe("Sse", () => {
       assert.strictEqual(error.reason.maxEventSize, 3)
     }))
 
+  it.effect("emits completed events before a later size error", () =>
+    Effect.gen(function*() {
+      const valid = "data: ready\n\n"
+      const invalid = "data: update in progress"
+      for (const chunks of [[valid + invalid], [valid, invalid]]) {
+        const data: Array<string> = []
+        const error = yield* Stream.fromIterable(chunks, { chunkSize: 1 }).pipe(
+          Stream.pipeThroughChannel(Sse.decode({ maxEventSize: 16 })),
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              data.push(event.data)
+            })
+          ),
+          Effect.flip
+        )
+        assert.deepStrictEqual(data, ["ready"])
+        assert.instanceOf(error, Sse.SseError)
+        assert.instanceOf(error.reason, Sse.EventTooLarge)
+        assert.strictEqual(error.reason.maxEventSize, 16)
+      }
+    }))
+
   it.effect("parses pending state just under maxEventSize", () =>
     Effect.gen(function*() {
       const events = yield* Stream.make("data: a\ndata: b", "\n\n").pipe(

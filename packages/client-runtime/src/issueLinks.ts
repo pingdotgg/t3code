@@ -1,4 +1,10 @@
-import type { IssueRef, IssueTrackerConnectionList } from "@t3tools/contracts";
+import {
+  IssueTrackerKind,
+  issueTrackerBindingScopes,
+  type IssueRef,
+  type IssueTrackerConnectionList,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import {
   LINEAR_HOST,
   LINEAR_KIND,
@@ -10,21 +16,22 @@ import type { EnvironmentProject } from "./state/shell.ts";
 
 type LinkProject = Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
 
-/** The host and scope a project's git-host tracker is bound to, the way the server resolves it. */
-function projectIssueBinding(project: LinkProject): {
-  readonly tracker: string;
-  readonly host: string;
-  readonly scope: string;
-} | null {
+const issueBindingsByRepository = new WeakMap<
+  RepositoryIdentity,
+  ReturnType<typeof sourceControlClients.issueBindings>
+>();
+
+/** The hosts and scopes a project's git-host tracker is bound to, the way the server resolves them. */
+function projectIssueBindings(project: LinkProject) {
   const identity = project.repositoryIdentity;
-  const scope = sourceControlClients.issueScope(identity);
-  const kind = identity?.provider;
-  if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
-  return {
-    tracker: kind,
-    host: sourceControlClients.changeRequestHost(identity, kind),
-    scope: scope.toLowerCase(),
-  };
+  if (identity == null) return [];
+  const cached = issueBindingsByRepository.get(identity);
+  if (cached !== undefined) return cached;
+  const bindings = sourceControlClients
+    .issueBindings(identity)
+    .map((binding) => ({ ...binding, scope: binding.scope.toLowerCase() }));
+  issueBindingsByRepository.set(identity, bindings);
+  return bindings;
 }
 
 function linkAuthority(url: string): string | null {
@@ -45,8 +52,9 @@ function parseIssueLink(
   if (parsed !== null || authority === null) return parsed;
   const hostname = new URL(url).hostname.toLowerCase();
   for (const project of projects) {
-    const binding = projectIssueBinding(project);
-    if (binding === null || (binding.host !== hostname && binding.host !== authority)) continue;
+    const bindings = projectIssueBindings(project);
+    if (!bindings.some((binding) => binding.host === hostname || binding.host === authority))
+      continue;
     const known = sourceControlClients.parseIssueUrl(url, project.repositoryIdentity?.provider);
     if (known !== null) return known;
   }
@@ -74,8 +82,8 @@ export function mayContainStandaloneIssueLink(text: string): boolean {
 
 /**
  * A standalone tracker link resolves through the project bound to its scope, else any bound to
- * the tracker, and only when it names the workspace the credential reaches: team keys repeat
- * across workspaces, so a link elsewhere stays an ordinary link.
+ * the tracker, and only through an account whose credential reaches the workspace it names: team
+ * keys repeat across workspaces, so a link elsewhere stays an ordinary link.
  */
 function resolveStandaloneIssueLink<Project extends LinkProject>(
   url: string,
@@ -86,21 +94,30 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
   const parsed = trackers === undefined ? null : parseStandaloneIssueLink(url);
   if (parsed === null || trackers === undefined) return null;
   const { tracker, link } = parsed;
-  const workspace = trackers.trackers.find(
-    (connection) => connection.tracker === tracker && connection.account !== null,
-  )?.workspace;
-  if (workspace?.toLowerCase() !== link.workspace.toLowerCase()) return null;
-  const { bindings } = trackers;
+  const accounts = new Set(
+    [...trackers.trackers, ...(trackers.accounts ?? [])]
+      .filter(
+        (connection) =>
+          connection.tracker === tracker &&
+          connection.account !== null &&
+          connection.workspace?.toLowerCase() === link.workspace.toLowerCase(),
+      )
+      .map((connection) => connection.accountId ?? null),
+  );
+  if (accounts.size === 0) return null;
+  const bindings = { ...trackers.bindings, ...trackers.accountBindings };
   const onTracker = projects.flatMap((project) => {
     const binding = bindings[project.id];
-    return binding?.tracker === tracker ? [{ project, binding }] : [];
+    return binding?.tracker === tracker && accounts.has(binding.accountId ?? null)
+      ? [{ project, binding }]
+      : [];
   });
   const preferFirst = (candidates: typeof onTracker) =>
     candidates.find((candidate) => candidate.project.id === preferredProjectId) ?? candidates[0];
   const scope = link.scope.toLowerCase();
-  const own = preferFirst(
-    onTracker.filter((candidate) => candidate.binding.scope.toLowerCase() === scope),
-  );
+  const boundScope = (candidate: (typeof onTracker)[number]) =>
+    issueTrackerBindingScopes(candidate.binding).find((key) => key.toLowerCase() === scope);
+  const own = preferFirst(onTracker.filter((candidate) => boundScope(candidate) !== undefined));
   const lender = own ?? preferFirst(onTracker);
   if (lender === undefined) return null;
   return {
@@ -109,7 +126,7 @@ function resolveStandaloneIssueLink<Project extends LinkProject>(
       projectId: lender.project.id,
       tracker: lender.binding.tracker,
       host: link.host,
-      scope: own === undefined ? link.scope : lender.binding.scope,
+      scope: (own && boundScope(own)) ?? link.scope,
       key: link.key,
     },
   };
@@ -140,14 +157,15 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
       input.preferredProjectId,
     );
   const { definition, link } = parsed;
-  const onHost = input.projects.flatMap((project) => {
-    const binding = projectIssueBinding(project);
-    return binding === null ||
-      binding.tracker !== definition.kind ||
-      (binding.host !== link.host && binding.host !== authority)
-      ? []
-      : [{ project, binding }];
-  });
+  const onHost = input.projects.flatMap((project) =>
+    projectIssueBindings(project)
+      .filter(
+        (binding) =>
+          binding.tracker === definition.kind &&
+          (binding.host === link.host || binding.host === authority),
+      )
+      .map((binding) => ({ project, binding })),
+  );
   const onAuthority = onHost.filter((candidate) => candidate.binding.host === authority);
   const bound = onAuthority.length > 0 ? onAuthority : onHost;
   const preferFirst = (candidates: typeof bound) =>
@@ -162,7 +180,7 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
     project: lender.project,
     ref: {
       projectId: lender.project.id,
-      tracker: lender.binding.tracker as IssueRef["tracker"],
+      tracker: IssueTrackerKind.make(lender.binding.tracker),
       host: lender.binding.host,
       scope: own === undefined ? link.scope : lender.binding.scope,
       key: link.key,

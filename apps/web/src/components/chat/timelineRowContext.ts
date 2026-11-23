@@ -1,4 +1,6 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import type {
   ProviderApprovalDecision,
   ResponseContextRecord,
@@ -37,7 +39,8 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
  */
 export interface TurnItemSource {
   readonly detail: TurnItemDetailSource;
-  readonly commandOutput: (target: {
+  /** Unset where output does not stream: a command row then shows the output its detail holds. */
+  readonly commandOutput?: (target: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Atom.Atom<AsyncResult.AsyncResult<CommandOutputView, unknown>>;
@@ -84,6 +87,8 @@ export interface TimelineRowSharedState {
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
+    /** How the click asked to open a subagent or side chat; a plain click when absent. */
+    intent?: SideThreadOpenIntent,
   ) => void;
   workflowOpening: WorkflowOpening | null;
   /** Absent hides "Fork from this response", as in the guest view. */
@@ -113,6 +118,7 @@ export interface TimelineRowActivityState {
   awaitingUser: boolean;
   isPreparingWorktree: boolean;
   providerStartingLabel: string | null;
+  providerStarting: NonNullable<ThreadRunSummary["providerStarting"]> | null;
   latestRunId: RunId | null;
   backgroundWorktreeSetup: WorktreeSetupSnapshot | null;
   liveAnswerPreview: string | null;
