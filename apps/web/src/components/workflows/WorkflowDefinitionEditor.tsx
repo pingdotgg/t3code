@@ -22,6 +22,7 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { FILE_LINK_REVEAL_UNSAFE_CSS } from "../files/fileSurfaceChrome";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
@@ -317,7 +318,7 @@ function Surface({
       )}
       <EditProvider createEditor={createEditor}>
         <Virtualizer
-          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto"
+          className="file-preview-virtualizer min-h-0 flex-1 overflow-auto [--code-background:var(--code-surface)]"
           config={{ overscrollSize: 600, intersectionObserverMargin: 1200 }}
         >
           <File
@@ -332,6 +333,7 @@ function Surface({
               theme: resolveDiffThemeName(resolvedTheme),
               preferredHighlighter: PREFERRED_HIGHLIGHTER,
               themeType: resolvedTheme,
+              unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: (_container, instance, phase) => onPostRender(instance.file, phase),
             }}
             className="min-h-full"

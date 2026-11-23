@@ -1392,11 +1392,11 @@ function CardHead({
 }) {
   return (
     <div className="min-w-0">
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 items-start gap-2">
         {mark === null || mark === undefined ? null : (
           <span className="grid h-6 shrink-0 place-items-center">{mark}</span>
         )}
-        <div className="min-w-0 flex-1 truncate text-title leading-6">{name}</div>
+        <div className="min-w-0 flex-1 text-title leading-6 break-words">{name}</div>
         {action === undefined || action === null ? null : <div className="shrink-0">{action}</div>}
       </div>
       {sub === undefined || sub === null || sub === "" ? null : (
