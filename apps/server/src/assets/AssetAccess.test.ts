@@ -1306,8 +1306,16 @@ describe("AssetAccess", () => {
       const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-asset-revision-" });
       const pages = path.join(root, "pages");
       yield* fileSystem.makeDirectory(pages);
+      // Coarse kernel clocks can stamp two quick same-size writes alike, so each edit gets its own mtime.
+      let editedAt = 1_000;
       const write = (name: string, text: string) =>
-        fileSystem.writeFileString(path.join(pages, name), text);
+        fileSystem
+          .writeFileString(path.join(pages, name), text)
+          .pipe(
+            Effect.andThen(
+              Effect.promise(() => NodeFSP.utimes(path.join(pages, name), ++editedAt, editedAt)),
+            ),
+          );
       yield* write("a.html", '<link rel="stylesheet" href="a.css"><script src="late.js"></script>');
       yield* write("a.css", "body { color: red; }");
       yield* write("b.html", "<h1>b</h1>");
