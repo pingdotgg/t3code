@@ -9,6 +9,7 @@ import type {
   SendOptions,
   SteerAckOutcome,
 } from "@cursor/sdk";
+import * as NodeAsyncHooks from "node:async_hooks";
 import {
   NonNegativeInt,
   type OrchestrationV2ProviderSession,
@@ -106,6 +107,8 @@ export interface CursorAgentSdkSendInput<Error> {
    * ends, which is often long after the run.
    */
   readonly onBackgroundShell?: (event: CursorBackgroundShellEvent) => Effect.Effect<void>;
+  /** Runs as the SDK enters each slow step of preparing the run, before the run starts. */
+  readonly onStartupPhase?: (phase: string) => Effect.Effect<void>;
 }
 
 interface CursorBackgroundShellRef {
@@ -550,6 +553,19 @@ interface CursorBackgroundShell {
   };
 }
 
+// The SDK names no step while it prepares a run, which can take minutes, so the @cursor/sdk patch
+// calls this hook as it enters each one. The hook is global: async context finds the send.
+const STARTUP_PHASE_HOOK = Symbol.for("@cursor/sdk.startupPhase");
+const startupPhaseListener = new NodeAsyncHooks.AsyncLocalStorage<(phase: string) => void>();
+
+function listeningForStartupPhases<A>(listener: (phase: string) => void, start: () => A): A {
+  const hooks = globalThis as Record<symbol, unknown>;
+  hooks[STARTUP_PHASE_HOOK] ??= (phase: unknown) => {
+    if (typeof phase === "string") startupPhaseListener.getStore()?.(phase);
+  };
+  return startupPhaseListener.run(listener, start);
+}
+
 // The SDK kills an agent's background shells when its run ends and reports their exit to no one.
 // The @cursor/sdk patch offers each new one to this hook; true keeps it past the run.
 const BACKGROUND_SHELL_HOOK = Symbol.for("@cursor/sdk.backgroundShell");
@@ -833,26 +849,33 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             return callbackChain;
           };
 
+          const startSdkRun = () => {
+            if (sendInput.summarize === true) return agent.summarize();
+            const options: SendOptions = {
+              ...sendInput.options,
+              onDelta: async ({ update }) => {
+                if (!callbacksReady) {
+                  pendingUpdates.push(update);
+                  return;
+                }
+                await dispatchUpdate(update);
+              },
+            };
+            if (sendInput.resume !== true) return agent.send(sendInput.message, options);
+            if (agent.resume === undefined) {
+              throw new Error("This Cursor SDK agent cannot resume.");
+            }
+            return agent.resume(options);
+          };
+          const onStartupPhase = sendInput.onStartupPhase;
           const startRun = () =>
             Effect.tryPromise({
-              try: () => {
-                if (sendInput.summarize === true) return agent.summarize();
-                const options: SendOptions = {
-                  ...sendInput.options,
-                  onDelta: async ({ update }) => {
-                    if (!callbacksReady) {
-                      pendingUpdates.push(update);
-                      return;
-                    }
-                    await dispatchUpdate(update);
-                  },
-                };
-                if (sendInput.resume !== true) return agent.send(sendInput.message, options);
-                if (agent.resume === undefined) {
-                  throw new Error("This Cursor SDK agent cannot resume.");
-                }
-                return agent.resume(options);
-              },
+              try: () =>
+                onStartupPhase === undefined
+                  ? startSdkRun()
+                  : listeningForStartupPhases((phase) => {
+                      void Effect.runPromiseWith(context)(onStartupPhase(phase));
+                    }, startSdkRun),
               catch: (cause) =>
                 runnerError(cause, sendInput.resume === true ? "run.resume" : "run.start"),
             });
