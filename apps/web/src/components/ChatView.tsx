@@ -313,7 +313,7 @@ import { NativeChildWorkDialog } from "./chat/NativeChildWorkDialog";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
-import { ChatHeader } from "./chat/ChatHeader";
+import { ChatHeader, type ChatHeaderHandle } from "./chat/ChatHeader";
 import { useSideChat } from "./chat/useSideChat";
 import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
@@ -667,6 +667,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const branchToolbarRef = useRef<BranchToolbarHandle>(null);
+  const chatHeaderRef = useRef<ChatHeaderHandle>(null);
   const citeAssistantText = (
     citation: AssistantCitation,
     sourceAnchor: AssistantCitationSourceAnchor,
@@ -2922,6 +2923,7 @@ export default function ChatView(props: ChatViewProps) {
         routeKind !== "draft" &&
         composerRef.current?.isCaretAtStart() === true &&
         queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+      "thread.rename": () => chatHeaderRef.current?.startRename() === true,
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3535,6 +3537,7 @@ export default function ChatView(props: ChatViewProps) {
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
             {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
             <ChatHeader
+              ref={chatHeaderRef}
               activeThreadEnvironmentId={activeThread.environmentId}
               activeThreadId={activeThread.id}
               isServerThread={isServerThread}

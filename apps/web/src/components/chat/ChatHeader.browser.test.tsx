@@ -1,4 +1,5 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { createRef, type Ref } from "react";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -22,16 +23,20 @@ vi.mock(import("~/hooks/useThreadActionMenu"), () => ({
 }));
 
 import { render, stubGlobal } from "../../../test/render";
-import { ChatHeader } from "./ChatHeader";
+import { ChatHeader, type ChatHeaderHandle } from "./ChatHeader";
 
-function header(title: string) {
+function header(
+  title: string,
+  options?: { ref?: Ref<ChatHeaderHandle>; isServerThread?: boolean },
+) {
   return (
     <>
       <ChatHeader
+        {...(options?.ref ? { ref: options.ref } : {})}
         activeThreadEnvironmentId={EnvironmentId.make("environment")}
         activeThreadId={ThreadId.make("thread")}
         activeThreadTitle={title}
-        isServerThread
+        isServerThread={options?.isServerThread ?? true}
         activeProject={null}
         parentThreadLink={null}
         onOpenThread={() => {}}
@@ -102,4 +107,22 @@ it("keeps the Escape that cancels a rename from also reaching window shortcuts",
   await expect.element(input).not.toBeInTheDocument();
   expect(persisted.title).toBe("New thread");
   expect(windowEscapes).toEqual([true]);
+});
+
+it("starts the inline rename from the rename shortcut handle", async () => {
+  persisted.title = "New thread";
+  const ref = createRef<ChatHeaderHandle>();
+  await using screen = await render(header(persisted.title, { ref, isServerThread: false }));
+  expect(ref.current?.startRename()).toBe(false);
+  await expect
+    .element(screen.getByRole("textbox", { name: "Thread title" }))
+    .not.toBeInTheDocument();
+
+  await screen.rerender(header(persisted.title, { ref }));
+  expect(ref.current?.startRename()).toBe(true);
+  const input = screen.getByRole("textbox", { name: "Thread title" });
+  await expect.element(input).toHaveFocus();
+  await userEvent.keyboard("Renamed{Enter}");
+  await expect.element(input).not.toBeInTheDocument();
+  expect(persisted.title).toBe("Renamed");
 });

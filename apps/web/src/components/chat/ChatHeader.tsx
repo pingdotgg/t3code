@@ -15,10 +15,12 @@ import { ChevronDownIcon } from "lucide-react";
 import {
   memo,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
@@ -45,7 +47,13 @@ import { textDirection } from "~/textDirection";
 import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 
+export interface ChatHeaderHandle {
+  /** Returns false when the thread cannot be renamed here. */
+  startRename: () => boolean;
+}
+
 interface ChatHeaderProps {
+  ref?: Ref<ChatHeaderHandle>;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -71,6 +79,7 @@ function resolveRenameCommit(input: {
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  ref,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -165,14 +174,16 @@ export const ChatHeader = memo(function ChatHeader({
       !isServerThread ||
       !readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)
     )
-      return;
+      return false;
     renameCommittedRef.current = false;
     setRenaming({
       environmentId: activeThreadEnvironmentId,
       threadId: activeThreadId,
       title: activeThreadTitle,
     });
+    return true;
   };
+  useImperativeHandle(ref, () => ({ startRename }));
   const commitRename = (title: string) => {
     setRenaming(null);
     if (!readEnvironmentScope(activeThreadEnvironmentId, AuthOrchestrationOperateScope)) return;

@@ -176,6 +176,10 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`thread.rename` (`f2` by default) renames the focused thread in place, like
+**Rename thread** in the thread menu. Press **Enter** to save or **Escape** to
+cancel.
+
 `thread.regenerateTitle` generates a new title for the focused thread, like
 **Regenerate title** in the thread menu. It has no default shortcut.
 
