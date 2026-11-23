@@ -28,28 +28,52 @@ window.Kit = (() => {
     if (!f) throw new Error(`Kit: no beat named ${name}`);
     return f;
   };
+  // CSS plus a trailing `:text(words)`, which keeps the matches whose text contains `words`.
+  const query = (doc, selector) => {
+    const match = /^(.*?):text\((.+)\)$/.exec(selector.trim());
+    if (!match) return [...doc.querySelectorAll(selector)];
+    return [...doc.querySelectorAll(match[1] || "*")].filter(
+      (node) =>
+        node.textContent.includes(match[2]) &&
+        ![...node.children].some(
+          (c) => c.textContent.includes(match[2]) && c.matches(match[1] || "*"),
+        ),
+    );
+  };
   const resolve = (target) => {
-    if (target instanceof Element) return { el: target, frame: null };
+    // Nodes from a beat belong to its iframe's realm, so `instanceof Element` misses them.
+    if (typeof target !== "string") {
+      const view = target.ownerDocument.defaultView;
+      return { el: target, frame: view === window ? null : view.frameElement };
+    }
     const split = target.indexOf(" >> ");
     if (split === -1) {
-      const el = document.querySelector(target);
+      const [el] = query(document, target);
       if (!el) throw new Error(`Kit: no element matches ${target}`);
       return { el, frame: null };
     }
     const frame = beat(target.slice(0, split));
     const sel = target.slice(split + 4);
-    const el = frame.contentDocument.querySelector(sel);
+    const [el] = query(frame.contentDocument, sel);
     if (!el) throw new Error(`Kit: no element matches ${sel} in beat ${frame.dataset.beat}`);
     return { el, frame };
   };
   // "* >> <selector>" matches in every beat.
   const all = (target) => {
     const split = target.indexOf(" >> ");
-    if (split === -1) return [...document.querySelectorAll(target)];
+    if (split === -1) return query(document, target);
     const name = target.slice(0, split);
     const docs =
       name === "*" ? frames().map((f) => f.contentDocument) : [beat(name).contentDocument];
-    return docs.flatMap((doc) => [...doc.querySelectorAll(target.slice(split + 4))]);
+    return docs.flatMap((doc) => query(doc, target.slice(split + 4)));
+  };
+  // Extra CSS in beats ("*" for all), e.g. to uncap a scrolling modal so the whole page shows.
+  const css = (name, text) => {
+    for (const f of name === "*" ? frames() : [beat(name)]) {
+      const style = f.contentDocument.createElement("style");
+      style.textContent = text;
+      f.contentDocument.head.append(style);
+    }
   };
   // A static edit to the frozen page, e.g. a dev-only label. Say so when you hand the video back.
   const text = (targets, value) => {
@@ -80,14 +104,19 @@ window.Kit = (() => {
     );
     for (const cam of cams) cam.style.animation = "none";
     for (const a of scripted) a.cancel();
+    // Everything is measured with the camera at rest; camera moves start only afterwards.
+    measuring = true;
     try {
-      const result = fn();
       for (const place of overlays.splice(0)) place();
-      return result;
+      return fn();
     } finally {
+      measuring = false;
+      for (const start of afterMeasure.splice(0)) start();
       for (const cam of cams) cam.style.animation = "";
     }
   };
+  let measuring = false;
+  const afterMeasure = [];
   // Overlays drawn on the story page over a target (so the app's own overflow cannot clip
   // them). They are measured and placed when placeCursor runs Kit.measure.
   const overlays = [];
@@ -146,6 +175,23 @@ window.Kit = (() => {
     ];
     return anim(target, keys, { at: 0, dur: end, ease: "linear" });
   };
+  // Captions in order: [[selector, from, to], ...]. Each fades in and out inside its window,
+  // and overlapping windows throw, since two captions on screen read as garbled text.
+  const captions = (list) =>
+    list.forEach(([target, from, to], i) => {
+      const next = list[i + 1];
+      if (next && next[1] < to) throw new Error(`Kit: caption ${target} overlaps ${next[0]}`);
+      anim(
+        target,
+        [
+          { opacity: 0, transform: "translateY(14px)" },
+          { opacity: 1, transform: "none", offset: 0.06 },
+          { opacity: 1, transform: "none", offset: 0.94 },
+          { opacity: 0, transform: "translateY(-8px)" },
+        ],
+        { at: from, dur: to - from, ease: "linear" },
+      );
+    });
   // The beats in order: [[name, at, fade?], ...]. Each shows from its `at` until the next beat
   // has finished fading in over it.
   const beats = (sequence) =>
@@ -226,6 +272,36 @@ window.Kit = (() => {
         ],
         { at, dur, ease: "ease-out" },
       ),
+    // Draws solid SVG strokes in (dashed ones keep their dashes and just fade in).
+    draw: (targets, at, dur = 0.6, step = 0.08) =>
+      all(targets).map((path, i) => {
+        const start = at + i * step;
+        const view = path.ownerDocument.defaultView;
+        if (view.getComputedStyle(path).strokeDasharray !== "none" || !path.getTotalLength) {
+          return anim(path, [{ opacity: 0 }, { opacity: 1 }], { at: start, dur });
+        }
+        const length = path.getTotalLength();
+        path.style.strokeDasharray = `${length}`;
+        return anim(path, [{ strokeDashoffset: length }, { strokeDashoffset: 0 }], {
+          at: start,
+          dur,
+          ease: "cubic-bezier(.4,0,.2,1)",
+        });
+      }),
+    // Wipes an element in from one side (dashed lines, a drag line following the pointer).
+    reveal: (t, at, dur = 0.5, from = "left") => {
+      const start = {
+        left: "inset(0 100% 0 0)",
+        right: "inset(0 0 0 100%)",
+        top: "inset(0 0 100% 0)",
+        bottom: "inset(100% 0 0 0)",
+      }[from];
+      return anim(t, [{ clipPath: start }, { clipPath: "inset(0 0 0 0)" }], {
+        at,
+        dur,
+        ease: "linear",
+      });
+    },
     // A punch: brief scale-up pulse that draws the eye.
     punch: (t, at, scale = 1.06) =>
       anim(
@@ -322,7 +398,9 @@ window.Kit = (() => {
       }
       return { offset: step.t / end, transform, easing: step.ease ?? "cubic-bezier(.65,0,.35,1)" };
     });
-    cam.animate(keys, { duration: end * 1000, fill: "both" });
+    const start = () => cam.animate(keys, { duration: end * 1000, fill: "both" });
+    if (measuring) afterMeasure.push(start);
+    else start();
   };
 
   // Segments: [realSeconds, animFrom, animTo]; animFrom == animTo holds the frame.
@@ -345,6 +423,8 @@ window.Kit = (() => {
     visible,
     el,
     all,
+    css,
+    captions,
     text,
     rect,
     centerOf,

@@ -162,6 +162,10 @@ describe("FileBrowserPanel", () => {
 
     row.click();
     await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(1));
+
+    // The selection stays put, so reopening the selected file must not depend on a selection change.
+    row.click();
+    await vi.waitFor(() => expect(onOpenFile).toHaveBeenCalledTimes(2));
   });
 
   it("keeps an expanded folder open when a very large listing rebuilds the tree", async () => {
