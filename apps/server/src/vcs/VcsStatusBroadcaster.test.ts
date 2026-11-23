@@ -2188,7 +2188,7 @@ describe("VcsStatusBroadcaster", () => {
   it.effect("a HEAD change while a checkout publish backs off unconfirms the branch", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
-      const arrivals = yield* Queue.unbounded<void>();
+      const pulls = yield* Queue.unbounded<void>();
       const failedRead = yield* Deferred.make<void>();
       let failBranchRead = false;
       const state: Parameters<typeof layerTestFor>[0] = {
@@ -2202,12 +2202,12 @@ describe("VcsStatusBroadcaster", () => {
         fileSystem: FileSystem.makeNoop({
           realPath: (target) => Effect.succeed(target),
           exists: () => Effect.succeed(true),
-          // The watch fiber only takes the next event after this one reached the first buffer.
+          // One event per pull: the next pull starts only after the last event passed the
+          // invalidation and reached the first buffer.
           watch: (_target, options) =>
-            Stream.fromQueue(events).pipe(
-              Stream.tap(() => Queue.offer(arrivals, undefined)),
-              Stream.onStart(Effect.sync(() => options?.onReady?.())),
-            ),
+            Stream.fromEffectRepeat(
+              Queue.offer(pulls, undefined).pipe(Effect.andThen(Queue.take(events))),
+            ).pipe(Stream.onStart(Effect.sync(() => options?.onReady?.()))),
         }),
         branchRead: () =>
           failBranchRead
@@ -2235,7 +2235,7 @@ describe("VcsStatusBroadcaster", () => {
         Effect.gen(function* () {
           state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName };
           yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
-          yield* Queue.take(arrivals);
+          yield* Queue.take(pulls);
         });
 
       yield* Effect.gen(function* () {
@@ -2246,6 +2246,7 @@ describe("VcsStatusBroadcaster", () => {
           () => Deferred.succeed(subscribed, undefined),
         ).pipe(Effect.forkScoped);
         yield* Deferred.await(subscribed);
+        yield* Queue.take(pulls);
 
         // The checkout's own HEAD read fails, so its publish backs off on the test clock.
         failBranchRead = true;
