@@ -6062,6 +6062,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
+            // T3's Full access policy is granular, under which Codex still asks before commands it
+            // deems dangerous. Managed-network asks enforce the user's allowlist, so they still ask.
+            if (
+              context.input.runtimePolicy.runtimeMode === "full-access" &&
+              context.input.runtimePolicy.approvalPolicy === undefined &&
+              context.input.runtimePolicy.sandboxPolicy === undefined &&
+              payload.networkApprovalContext == null &&
+              (payload.proposedNetworkPolicyAmendments ?? []).length === 0
+            ) {
+              return {
+                decision: "accept",
+              } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
+            }
             const allowance = sessionAllowance(payload.threadId, context);
             if (allowance.has("command")) {
               return {
