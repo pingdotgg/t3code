@@ -87,8 +87,8 @@ export const make = Effect.gen(function* () {
     ) => Effect.Effect<A, TextGenerationError>,
   ) {
     const textGenerator = yield* textGenerators.runner(selection.instanceId);
+    const selectedInstanceId = selection.instanceId;
     // A review guide reaches a text generator only through a fallback; it needs an agent instead.
-    const textGeneratorId = selection.instanceId;
     const textGeneratorCannotRun =
       textGenerator !== undefined && operation === "generateReviewGuide";
     if (textGenerator !== undefined && !textGeneratorCannotRun) {
@@ -103,8 +103,21 @@ export const make = Effect.gen(function* () {
       ),
     );
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    const selected = snapshots.find((provider) => provider.instanceId === selection.instanceId);
-    const selectedDisabled = selected?.enabled === false;
+    const selected = snapshots.find((provider) => provider.instanceId === selectedInstanceId);
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail: "Could not read provider settings.",
+            cause,
+          }),
+      ),
+    );
+    // A snapshot stays enabled while any project enables its instance, so check settings too.
+    const selectedDisabled =
+      selected?.enabled === false ||
+      !resolveProjectProviderInstanceEnabled(settings, projectId ?? null, selectedInstanceId);
     // Only a failed probe counts: a pending one is also not installed yet.
     const unusable =
       textGeneratorCannotRun ||
@@ -116,16 +129,6 @@ export const make = Effect.gen(function* () {
           (selected.status === "error" &&
             (!selected.installed || selected.auth.status === "unauthenticated"))));
     if (unusable || exhaustedUsageWindow(selected, now, selection.model)) {
-      const settings = yield* serverSettings.getSettings.pipe(
-        Effect.mapError(
-          (cause) =>
-            new TextGenerationError({
-              operation,
-              detail: "Could not read fallback model settings.",
-              cause,
-            }),
-        ),
-      );
       const rejected = selection;
       const fallbackWhere = (sameInstance: boolean) =>
         fallbackTextGenerationModelSelection(
@@ -152,14 +155,14 @@ export const make = Effect.gen(function* () {
       // Another instance first; the rejected instance's other models only when none qualifies.
       selection = fallbackWhere(false) ?? fallbackWhere(true) ?? selection;
     }
-    if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
+    if (textGeneratorCannotRun && selection.instanceId === selectedInstanceId) {
       return yield* new TextGenerationError({
         operation,
         detail:
           "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control & issues.",
       });
     }
-    if (selectedDisabled && selection.instanceId === selected.instanceId) {
+    if (selectedDisabled && selection.instanceId === selectedInstanceId) {
       return yield* new TextGenerationError({
         operation,
         detail:

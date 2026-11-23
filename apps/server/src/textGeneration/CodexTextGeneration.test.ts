@@ -669,6 +669,9 @@ const PREFLIGHT_PRIMARY_STATES = [
   "disabled",
   "disabled, thread default model cannot generate text",
   "disabled, fallback disabled for project",
+  "project-disabled",
+  "project-disabled, fallback disabled for project",
+  "enabled only by another project",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -792,15 +795,35 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
                 driver: ProviderDriverKind.make("claudeAgent"),
                 config: { customModels: [threadDefault.model] },
               },
+              ...(primaryState === "enabled only by another project"
+                ? { [primary]: { driver: ProviderDriverKind.make("codex"), enabled: false } }
+                : {}),
             },
             defaultModelSelection: threadDefault,
-            ...(primaryState.endsWith("fallback disabled for project")
-              ? {
-                  projectSettingsOverrides: {
-                    [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
-                  },
-                }
-              : {}),
+            projectSettingsOverrides: {
+              ...(primaryState === "enabled only by another project"
+                ? {
+                    [ProjectId.make("project-b")]: {
+                      providerInstances: { [primary]: { enabled: true } },
+                    },
+                  }
+                : {}),
+              ...(primaryState.startsWith("project-disabled") ||
+              primaryState.endsWith("fallback disabled for project")
+                ? {
+                    [projectId]: {
+                      providerInstances: {
+                        ...(primaryState.startsWith("project-disabled")
+                          ? { [primary]: { enabled: false } }
+                          : {}),
+                        ...(primaryState.endsWith("fallback disabled for project")
+                          ? { [fallback]: { enabled: false } }
+                          : {}),
+                      },
+                    },
+                  }
+                : {}),
+            },
           }),
           Layer.mock(TextGenerators.TextGenerators)({ runner: () => Effect.undefined }),
           Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
@@ -819,11 +842,18 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
           primaryState === "disabled, thread default model cannot generate text"
             ? threadDefault
             : selection,
-        projectId,
+        projectId: primaryState === "enabled only by another project" ? null : projectId,
       })
       .pipe(Effect.exit);
-    if (primaryState === "disabled, fallback disabled for project") {
+    if (
+      primaryState === "disabled, fallback disabled for project" ||
+      primaryState === "project-disabled, fallback disabled for project"
+    ) {
       expect(Exit.isFailure(generated)).toBe(true);
+      expect(Exit.isFailure(generated) && Cause.squash(generated.cause)).toMatchObject({
+        _tag: "TextGenerationError",
+        detail: expect.stringContaining("No text generation provider is available"),
+      });
       expect(calls).toEqual([]);
       return;
     }
