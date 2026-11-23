@@ -66,7 +66,11 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
-import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  GitManagerError,
+  GitPullRequestMaterializationError,
+  trimAsciiWhitespace,
+} from "@t3tools/contracts";
 import {
   historicalMessage,
   renderHistory,
@@ -199,6 +203,12 @@ export class GitManager extends Context.Service<
       readonly body: string;
       readonly baseBranch?: string | undefined;
       readonly draft?: boolean | undefined;
+      /**
+       * Opens it where only people with write access see it. The branch goes to the host's
+       * private companion repository and never to the repository itself. Fails on a host
+       * without private pull requests.
+       */
+      readonly private?: boolean | undefined;
     }) => Effect.Effect<GitCreatePullRequestResult, GitManagerServiceError>;
     readonly subscribePullRequestStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
@@ -272,7 +282,7 @@ const prLookupGitReads = Context.Reference<SharedPrLookupGitReads | null>(
 function parseRemoteNames(stdout: string): ReadonlyArray<string> {
   return stdout
     .split("\n")
-    .map((name) => name.trim())
+    .map(trimAsciiWhitespace)
     .filter((name) => name.length > 0);
 }
 
@@ -2006,7 +2016,7 @@ export const make = Effect.gen(function* () {
           timeoutMs: 5_000,
         })).stdout
           .split("\n")
-          .map((ref) => ref.trim())
+          .map(trimAsciiWhitespace)
           .filter((ref) => ref.length > 0),
       );
       const matching = remoteNames.filter((name) => refs.has(`refs/remotes/${name}/${branch}`));
@@ -2043,7 +2053,7 @@ export const make = Effect.gen(function* () {
     const oidByRef = new Map(
       refs.stdout
         .split("\n")
-        .map((line) => line.trim().split("\u0000"))
+        .map((line) => trimAsciiWhitespace(line).split("\u0000"))
         .filter((entry): entry is [string, string] => entry.length === 2),
     );
     const localOid = oidByRef.get(localRef);
@@ -2881,9 +2891,131 @@ export const make = Effect.gen(function* () {
         }),
     );
 
-  const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
-    "GitManager.createPullRequest",
-  )(function* (input) {
+  const openPrivatePullRequest = Effect.fn("GitManager.openPrivatePullRequest")(function* (
+    input: Parameters<GitManager["Service"]["createPullRequest"]>[0],
+  ) {
+    const { cwd } = input;
+    const provider = yield* sourceControlProvider(cwd);
+    const definition = sourceControlDefinitions.get(provider.kind);
+    const terms = definition.changeRequest;
+    const fail = (detail: string, cause?: unknown) =>
+      new GitManagerError({
+        operation: "createPullRequest",
+        cwd,
+        detail,
+        ...(cause === undefined ? {} : { cause }),
+      });
+    if (provider.privateChangeRequestRemote === undefined) {
+      return yield* fail(
+        `${definition.label} has no private ${terms.plural}. Nothing was pushed. Leave out private to open a public one.`,
+      );
+    }
+    const status = yield* gitCore.statusDetails(cwd);
+    const branch = status.branch;
+    if (!branch) return yield* fail("Cannot create a pull request from detached HEAD.");
+    const resolved = yield* resolvePrBase(cwd, branch, status.upstreamRef, {
+      isCrossRepository: false,
+      remoteName: publishedRemoteName(
+        yield* readConfigValueNullable(cwd, `branch.${branch}.remote`),
+      ),
+    });
+    const baseBranch = input.baseBranch ?? resolved.baseBranch;
+    if (baseBranch === branch) {
+      return yield* fail(
+        `${branch} is the base branch. Check out a feature branch to create ${terms.shortLabelWithArticle}.`,
+      );
+    }
+    const companion = yield* provider.privateChangeRequestRemote({ cwd });
+    const remoteName = yield* gitCore.ensureRemote({
+      cwd,
+      preferredName: companion.repository.split("/")[0] || "private",
+      url: companion.url,
+    });
+    // Recorded before the push, so a later push of this branch, by T3 or by plain `git push`,
+    // goes to the companion too and never publishes the branch.
+    yield* gitCore.writeConfigValue({
+      cwd,
+      key: `branch.${branch}.pushRemote`,
+      value: remoteName,
+    });
+    yield* gitCore
+      .execute({
+        operation: "GitManager.openPrivatePullRequest.push",
+        cwd,
+        args: ["push", "--", remoteName, `refs/heads/${branch}:refs/heads/${branch}`],
+        timeoutMs: null,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
+        ),
+        Effect.tapError(() => invalidateStatus(cwd)),
+      );
+    // The companion branch is the pull request's head, so status finds it through the upstream.
+    yield* gitCore
+      .setBranchUpstream({ cwd, branch, remoteName, remoteBranch: branch })
+      .pipe(Effect.ensuring(invalidateStatus(cwd)));
+    const findOpen = provider
+      .listChangeRequests({ cwd, headSelector: branch, state: "open" })
+      .pipe(
+        Effect.map(
+          (listed) =>
+            listed.find(
+              (pr) =>
+                pr.headRefName === branch &&
+                pr.headRepositoryNameWithOwner?.toLowerCase() ===
+                  companion.repository.toLowerCase(),
+            ) ?? null,
+        ),
+      );
+    const existing = yield* findOpen;
+    if (existing) {
+      return {
+        status: "opened_existing" as const,
+        url: existing.url,
+        number: existing.number,
+        baseBranch: existing.baseRefName,
+        headBranch: existing.headRefName,
+        title: existing.title,
+      };
+    }
+    const bodyFile = path.join(
+      tempDir,
+      `t3code-pr-body-${process.pid}-${yield* randomUUIDv4(cwd)}.md`,
+    );
+    yield* fileSystem
+      .writeFileString(bodyFile, input.body)
+      .pipe(
+        Effect.mapError((cause) => fail("Failed to write pull request body temp file.", cause)),
+      );
+    yield* provider
+      .createChangeRequest({
+        cwd,
+        baseRefName: baseBranch,
+        headSelector: branch,
+        title: input.title,
+        bodyFile,
+        private: true,
+        ...(input.draft === true ? { draft: true } : {}),
+      })
+      .pipe(
+        Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.ignore)),
+        Effect.ensuring(invalidateStatus(cwd)),
+      );
+    // The PR already exists at this point, so a failed lookup only loses its metadata.
+    const created = yield* findOpen.pipe(Effect.orElseSucceed(() => null));
+    return {
+      status: "created" as const,
+      ...(created ? { url: created.url, number: created.number } : {}),
+      baseBranch: created?.baseRefName ?? baseBranch,
+      headBranch: created?.headRefName ?? branch,
+      title: created?.title ?? input.title,
+    };
+  });
+
+  const pushAndOpenPullRequest = Effect.fn("GitManager.pushAndOpenPullRequest")(function* (
+    input: Parameters<GitManager["Service"]["createPullRequest"]>[0],
+  ) {
     const status = yield* gitCore.statusDetails(input.cwd);
     const needsPush = yield* createPrNeedsPush(input.cwd, status);
     if (needsPush && status.branch) {
@@ -2935,6 +3067,16 @@ export const make = Effect.gen(function* () {
           : Effect.void,
       ),
     );
+    return result;
+  });
+
+  const createPullRequest: GitManager["Service"]["createPullRequest"] = Effect.fn(
+    "GitManager.createPullRequest",
+  )(function* (input) {
+    const result =
+      input.private === true
+        ? yield* openPrivatePullRequest(input)
+        : yield* pushAndOpenPullRequest(input);
     const openedAsDraft =
       result.status === "created" &&
       (yield* sourceControlProvider(input.cwd)).createsDraftChangeRequests === true;
@@ -3216,7 +3358,7 @@ export const make = Effect.gen(function* () {
               const refNames = new Set(
                 trackingRefs.stdout
                   .split("\n")
-                  .map((remoteRef) => remoteRef.trim())
+                  .map(trimAsciiWhitespace)
                   .filter((remoteRef) => remoteRef.length > 0),
               );
               return remoteNames
