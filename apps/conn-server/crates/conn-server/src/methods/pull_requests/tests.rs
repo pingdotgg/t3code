@@ -148,7 +148,6 @@ fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
         text_generators: None,
         guide_runs: guide_writer::Runs::default(),
         agent_ends: agent_ends::AgentEnds::default(),
-        agent_reads: std::sync::OnceLock::new(),
     })
 }
 async fn call(table: &MethodTable, tag: &str, input: Value) -> Result<Value, Failure> {
@@ -1690,11 +1689,9 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
     };
     let ends = &panel.agent_ends;
     let mut own = watches::Watcher::new(panel.clone());
-    ends.command("t1", "cmd-1", closed(), None);
-    let read = ends
-        .command("t1", "cmd-1", closed(), Some(true))
-        .expect("read");
-    own.read_after_agent(read).await;
+    ends.command("t1", "cmd-1", closed(), None, None);
+    ends.command("t1", "cmd-1", closed(), None, Some(true));
+    own.read_after_agents().await;
     let quiet = shell
         .syncs
         .lock()
@@ -1717,10 +1714,8 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
 
     // A merge command that failed ended nothing itself: the merge found after it wakes.
     let mut failed = watches::Watcher::new(panel.clone());
-    let read = ends
-        .command("t1", "cmd-2", closed(), Some(false))
-        .expect("read");
-    failed.read_after_agent(read).await;
+    ends.command("t1", "cmd-2", closed(), None, Some(false));
+    failed.read_after_agents().await;
     let woken = shell
         .syncs
         .lock()
@@ -1731,11 +1726,9 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
 
     // Gate finding 3: a merge through the MCP tool is the calling thread's own; an
     // auto-merge that lands later still wakes.
-    let (reads_tx, mut reads) = tokio::sync::mpsc::channel(4);
-    let _ = panel.agent_reads.set(reads_tx);
     let mcp = |phase: &str| {
-        json!({"threadId": "t1", "itemId": "mcp-merge:1", "number": 7, "any": false,
-            "phase": phase})
+        json!({"threadId": "t1", "itemId": "mcp-merge:1", "host": "github.com",
+            "repository": "a/b", "numbers": [7], "phase": phase})
     };
     panel
         .mcp_call("agentMerge", mcp("running"))
@@ -1745,9 +1738,8 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
         .mcp_call("agentMerge", mcp("merged"))
         .await
         .expect("merged");
-    let read = reads.recv().await.expect("read after the MCP merge");
     let mut tool = watches::Watcher::new(panel.clone());
-    tool.read_after_agent(read).await;
+    tool.read_after_agents().await;
     let quiet = shell
         .syncs
         .lock()
@@ -1775,9 +1767,8 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
 #[tokio::test]
 async fn agent_merge_commands_reach_the_watch_loop() {
     let (feed, events) = tokio::sync::mpsc::channel(16);
-    let (tx, mut out) = tokio::sync::mpsc::channel(16);
     let ends = agent_ends::AgentEnds::default();
-    let task = tokio::spawn(watches::agent_events(events, ends.clone(), tx));
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
     let item = |id: &str, input: &str, status: &str, output: &str| {
         (
             "t1".to_owned(),
@@ -1805,15 +1796,41 @@ async fn agent_merge_commands_reach_the_watch_loop() {
         feed.send(event).await.expect("feed");
     }
     drop(feed);
-    let mut reads = Vec::new();
-    while let Some(read) = out.recv().await {
-        reads.push(read.item_id);
-    }
     task.await.expect("feed task");
-    assert_eq!(reads, ["m1", "m2"]);
-    assert!(ends.ends("t1", 7), "m1 waits for its read");
-    assert!(!ends.ends("t1", 8), "a failed merge owns nothing");
-    assert!(!ends.ends("t1", 9), "the run ended while m3 still ran");
+    let reads = ends.take_reads();
+    assert_eq!(
+        reads,
+        [("t1".to_owned(), vec!["m1".to_owned(), "m2".to_owned()])]
+    );
+    let repo = "github.com/a/b";
+    assert!(ends.ends("t1", repo, 7), "m1 waits for its read");
+    assert!(!ends.ends("t1", repo, 8), "a failed merge owns nothing");
+    assert!(
+        !ends.ends("t1", repo, 9),
+        "the run ended while m3 still ran"
+    );
+}
+
+/// Round-2 gate finding 7: the feed never waits on the loop. With no read taken, many ended
+/// merges still let a later command apply.
+#[tokio::test]
+async fn ended_merges_never_block_the_feed() {
+    let (feed, events) = tokio::sync::mpsc::channel(16);
+    let ends = agent_ends::AgentEnds::default();
+    let task = tokio::spawn(watches::agent_events(events, ends.clone()));
+    for i in 0..200 {
+        let event = json!({"type": "turn-item.updated", "payload": {"id": format!("m{i}"),
+            "type": "command_execution", "input": format!("gh pr merge {i}"),
+            "status": "completed", "output": "Merged"}});
+        feed.send(("t1".to_owned(), event)).await.expect("feed");
+    }
+    let running = json!({"type": "turn-item.updated", "payload": {"id": "late",
+        "type": "command_execution", "input": "gh pr merge 300", "status": "running"}});
+    feed.send(("t2".to_owned(), running)).await.expect("feed");
+    drop(feed);
+    task.await.expect("feed task");
+    assert!(ends.ends("t2", "github.com/a/b", 300));
+    assert_eq!(ends.take_reads()[0].1.len(), 200);
 }
 
 /// Gate finding 1: ownership changes apply while a host read is held, in both orders: an
@@ -1857,6 +1874,7 @@ async fn agent_merges_apply_during_a_held_host_read() {
                 "cmd",
                 conn_source_control::close_commands::closed_by("gh pr merge 7").expect("close"),
                 None,
+                None,
             );
         }
         let mut watcher = watches::Watcher::new(panel.clone());
@@ -1866,8 +1884,7 @@ async fn agent_merges_apply_during_a_held_host_read() {
         entered.notified().await;
         // The command feed runs while the host read is held.
         let (feed, events) = tokio::sync::mpsc::channel(4);
-        let (reads, _queued) = tokio::sync::mpsc::channel(4);
-        let applied = tokio::spawn(watches::agent_events(events, ends.clone(), reads));
+        let applied = tokio::spawn(watches::agent_events(events, ends.clone()));
         let event = if failed {
             merge("completed", "<exited with exit code 1>")
         } else {

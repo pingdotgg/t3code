@@ -115,8 +115,6 @@ struct Panel {
     guide_runs: guide_writer::Runs,
     /// The pull requests each thread's own agent is merging or closing (`watches.rs`).
     agent_ends: agent_ends::AgentEnds,
-    /// The watch loop's queue for the read after an agent's merge, once the loop runs.
-    agent_reads: std::sync::OnceLock<mpsc::Sender<agent_ends::AgentRead>>,
 }
 /// `PullRequestService.summary` and `runAction` for `createPullRequest`'s draft step.
 struct PanelDrafts<'a> {
@@ -450,34 +448,34 @@ impl Panel {
             "generateReviewGuide" => self.generate_review_guide(&input).await,
             // The calling thread merges a pull request through the MCP tool: like an agent's
             // `gh pr merge`, the watch ends quietly for it (`agent_ends.rs`).
+            // It names the repository and each pull request it merges (a stack's layers).
             "agentMerge" => {
-                let number = input.get("number").and_then(Value::as_u64).unwrap_or(0);
-                let closed = if input["any"] == true {
-                    conn_source_control::close_commands::ClosedBy::Any
-                } else {
-                    conn_source_control::close_commands::ClosedBy::Numbers([number].into())
-                };
+                let numbers: std::collections::BTreeSet<u64> = input["numbers"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_u64)
+                    .collect();
+                if numbers.is_empty() {
+                    return Ok(Value::Null);
+                }
                 let succeeded = match text(&input, "phase") {
                     "running" => None,
                     "merged" => Some(true),
                     _ => Some(false),
                 };
-                let read = self.agent_ends.command(
+                let repository = format!(
+                    "{}/{}",
+                    text(&input, "host").to_lowercase(),
+                    text(&input, "repository").to_lowercase()
+                );
+                self.agent_ends.command(
                     text(&input, "threadId"),
                     text(&input, "itemId"),
-                    closed,
+                    conn_source_control::close_commands::ClosedBy::Numbers(numbers),
+                    Some(repository),
                     succeeded,
                 );
-                if let Some(read) = read {
-                    match self.agent_reads.get() {
-                        Some(reads) => {
-                            if let Err(unsent) = reads.send(read).await {
-                                self.agent_ends.read_done(&unsent.0);
-                            }
-                        }
-                        None => self.agent_ends.read_done(&read),
-                    }
-                }
                 Ok(Value::Null)
             }
             // `servesProject`: false only when the project is on no host the panel reads.
@@ -1787,7 +1785,6 @@ impl Shared {
                         text_generators: deps.text_generators.clone(),
                         guide_runs: guide_writer::Runs::default(),
                         agent_ends: agent_ends::AgentEnds::default(),
-                        agent_reads: std::sync::OnceLock::new(),
                     })
                 })
                 .clone(),

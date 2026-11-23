@@ -10,7 +10,7 @@
 
 use super::{
     Panel, ReadKey,
-    agent_ends::{AgentEnds, AgentRead},
+    agent_ends::AgentEnds,
     links::{self, Links, Request},
 };
 use conn_source_control::{
@@ -185,17 +185,24 @@ impl Watcher {
 
     /// `endedByAgent`: the watching thread's own agent merged or closed this pull request.
     fn ended_by_agent(&self, target: &Target) -> bool {
+        let repository = format!(
+            "{}/{}",
+            text(&target.link, "host").to_lowercase(),
+            text(&target.link, "repository").to_lowercase()
+        );
         self.panel
             .agent_ends
-            .ends(target.thread_id(), target.number())
+            .ends(target.thread_id(), &repository, target.number())
     }
 
-    /// The read after an agent's close command ended (T3's `readThreadWatches` and `done`):
-    /// the thread's watches are read at once, quietly for those it closed, then the command
-    /// lets go of them.
-    pub(super) async fn read_after_agent(&mut self, read: AgentRead) {
-        self.read_thread_watches(&read.thread_id).await;
-        self.panel.agent_ends.read_done(&read);
+    /// The reads after agents' close commands ended (T3's `readThreadWatches` and `done`):
+    /// each thread's watches are read at once, quietly for those its commands closed, then
+    /// the commands let go of them.
+    pub(super) async fn read_after_agents(&mut self) {
+        for (thread_id, items) in self.panel.agent_ends.take_reads() {
+            self.read_thread_watches(&thread_id).await;
+            self.panel.agent_ends.read_done(&thread_id, &items);
+        }
     }
 
     /// `readThreadWatches`: each watched pull request of the thread, read now and in full.
@@ -846,14 +853,12 @@ pub(super) async fn run(panel: Arc<Panel>) {
         }
     });
     let _stop_links = AbortOnDrop(links_task);
-    // Ownership changes apply as events arrive; only the reads after them queue here.
-    let (agent_tx, mut agent_rx) = mpsc::channel::<AgentRead>(64);
-    let _ = panel.agent_reads.set(agent_tx.clone());
+    // Ownership changes apply as events arrive; only the reads after them wait for the loop.
+    let ends = panel.agent_ends.clone();
     let _stop_agents = match panel.engine.subscribe_command_events().await {
         Ok(events) => Some(AbortOnDrop(tokio::spawn(agent_events(
             events,
-            panel.agent_ends.clone(),
-            agent_tx,
+            ends.clone(),
         )))),
         Err(e) => {
             eprintln!("conn-server: pull request watches cannot follow agent merges: {e}");
@@ -867,7 +872,7 @@ pub(super) async fn run(panel: Arc<Panel>) {
         tokio::select! {
             _ = sweep.tick() => watcher.pass(None).await,
             Some(key) = rx.recv() => watcher.pass(Some(&key)).await,
-            Some(read) = agent_rx.recv() => watcher.read_after_agent(read).await,
+            () = ends.reads_ready() => watcher.read_after_agents().await,
         }
         if overflow.swap(false, std::sync::atomic::Ordering::Relaxed) {
             watcher.pass(None).await;
@@ -883,13 +888,9 @@ fn run_ended(status: &str) -> bool {
     )
 }
 
-/// Applies the engine's command events to [`AgentEnds`] as they arrive, and asks the watch
-/// loop for the read after each close command that ended. Other commands are skipped.
-pub(super) async fn agent_events(
-    mut events: mpsc::Receiver<(String, Value)>,
-    ends: AgentEnds,
-    reads: mpsc::Sender<AgentRead>,
-) {
+/// Applies the engine's command events to [`AgentEnds`] as they arrive; a close command that
+/// ended asks it for a read. Other commands are skipped. It never waits on the watch loop.
+pub(super) async fn agent_events(mut events: mpsc::Receiver<(String, Value)>, ends: AgentEnds) {
     let mut finished: std::collections::VecDeque<String> = Default::default();
     while let Some((thread_id, event)) = events.recv().await {
         let payload = &event["payload"];
@@ -917,11 +918,7 @@ pub(super) async fn agent_events(
             }
             finished.push_back(item_id.clone());
         }
-        if let Some(read) = ends.command(&thread_id, &item_id, closed, succeeded)
-            && reads.send(read).await.is_err()
-        {
-            return;
-        }
+        ends.command(&thread_id, &item_id, closed, None, succeeded);
     }
 }
 
