@@ -58,8 +58,6 @@ tokio-tungstenite.workspace = true
 # Scripted UI automation and screenshot capture hook for visual verification in nick-vm
 # (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.
 automation = ["gpui-kit/test-support"]
-# Embedded Chromium (CEF-on-demand) browser panel support via conn-web.
-cef = ["conn-web/cef"]
 # In-process Rust hot-patching via GPUI's built-in Subsecond integration (`dx serve --hot-patch`).
 hot-reload = ["dep:gpui-pre"]
 

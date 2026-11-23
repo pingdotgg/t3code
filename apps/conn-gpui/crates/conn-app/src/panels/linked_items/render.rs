@@ -4,6 +4,7 @@
 //! `ThreadDetailsIssueRows.tsx`, `PullRequestsUnavailableState.tsx`, and
 //! `LinkPullRequestDialog.tsx`, painted exclusively with `conn_theme::Tokens`.
 
+use crate::a11y::ConnA11yExt as _;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -225,6 +226,7 @@ pub(super) fn render_linked_list(
 
     let mut scroll = v_flex()
         .id("linked-items-scroll")
+        .a11y_group("panel.linked-items", "Linked items")
         .flex_1()
         .min_h_0()
         .w_full()
@@ -335,6 +337,7 @@ pub(super) fn render_linked_list(
             col.child(
                 div()
                     .id("linked-items-notice")
+                    .a11y_group("panel.linked-items.notice", "Linked items notice")
                     .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         on_dismiss(window, cx);
@@ -601,6 +604,7 @@ fn render_pull_request_row(
                 signals = signals.child(
                     div()
                         .id(SharedString::from(format!("linked-pr-watch-{index}")))
+                        .a11y_button(format!("panel.linked-items.pr-watch.{index}"), "Watch pull request")
                         .flex()
                         .flex_shrink_0()
                         .conn_tooltip(
@@ -828,6 +832,7 @@ fn render_pull_request_row(
         .child(
             div()
                 .id(SharedString::from(format!("linked-pr-more-{index}")))
+                .a11y_button(format!("panel.linked-items.pr-more.{index}"), "More pull request actions")
                 .relative()
                 .size(px(ROW_ACTION_BTN_PX))
                 .rounded(px(4.0))
@@ -862,6 +867,7 @@ fn render_pull_request_row(
     let on_open_pr = Rc::clone(&callbacks.on_open_pr);
     let mut row = h_flex()
         .id(SharedString::from(format!("linked-pr-row-{index}")))
+        .a11y_group(format!("panel.linked-items.pr.{index}"), "Linked pull request")
         .group(group_name)
         .relative()
         .w_full()
@@ -954,6 +960,7 @@ fn render_row_actions_menu(
 
     let mut list = div()
         .id(SharedString::from(format!("linked-pr-menu-{index}")))
+        .a11y_group(format!("panel.linked-items.pr-menu.{index}"), "Pull request actions")
         .flex()
         .flex_col()
         .min_w(px(176.0))
@@ -1088,6 +1095,7 @@ pub(super) fn render_link_dialog(
     let submit_btn = {
         let base = h_flex()
             .id("linked-items-dialog-submit")
+            .a11y_button("panel.linked-items.dialog-submit", "Submit")
             .h(px(OUTLINE_BTN_HEIGHT_PX))
             .px(px(10.0))
             .items_center()
@@ -1113,6 +1121,7 @@ pub(super) fn render_link_dialog(
 
     let dialog_card = v_flex()
         .id("linked-items-dialog-card")
+        .a11y_group("panel.linked-items.dialog", "Linked items dialog")
         .w(px(360.0))
         .max_w(gpui_kit::relative(0.92))
         .rounded(px(12.0))

@@ -294,6 +294,7 @@ pub(super) fn render_stash_menu(
 
     let mut list = div()
         .id("composer-stash-list")
+        .a11y_group("composer.stash-list", "Stashed drafts")
         .flex()
         .flex_col()
         .gap(px(2.0))
@@ -410,6 +411,7 @@ pub(super) fn render_stash_menu(
 
     div()
         .id("composer-stash-drawer")
+        .a11y_group("composer.stash", "Stashed drafts drawer")
         .flex()
         .flex_col()
         .mx(px(22.0))

@@ -401,6 +401,7 @@ fn render_implement_split(
         let highlight = hsla(tokens.shell_highlight);
         let menu = div()
             .id("chat-composer-implement-popup")
+            .a11y_group("composer.implement-popup", "Implement plan")
             .absolute()
             .bottom_full()
             .right_0()

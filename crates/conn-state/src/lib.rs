@@ -20,8 +20,8 @@ mod layout;
 pub mod model_preferences;
 mod order_keys;
 pub mod provider_auth;
-pub mod project_settings;
 pub mod provider_settings;
+pub mod project_settings;
 pub mod providers;
 mod scheduled;
 mod settled_shelf;
@@ -109,7 +109,7 @@ pub use crate::sidebar_nav::{
 };
 pub use crate::thread::{
     EntryTiming, ItemStatus, PendingApproval, PendingRequest, RunStatus, RunTiming,
-    SecretRequestStatus, ThreadContextWindowSnapshot, ThreadState, TimelineEntry,
+    SecretRequestStatus, SubagentModel, ThreadContextWindowSnapshot, ThreadState, TimelineEntry,
     TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
 };
 pub use crate::timeline::{

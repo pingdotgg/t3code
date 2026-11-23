@@ -23,6 +23,7 @@ pub(crate) use self::actions::{FollowUpBehavior, SendDispatch};
 pub(crate) use self::branch_picker::{BranchAction, BranchContext};
 pub(crate) use self::context_meter::ContextWindowSnapshot;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,9 +77,9 @@ pub(super) const COMPOSER_MAX_LINES: usize = 8;
 
 /// Composer card corner radius matching Conn's `rounded-2xl` (`16px`).
 const COMPOSER_RADIUS_PX: f32 = 16.0;
-/// Bottom breathing room below the composer card when the context strip is hidden
-/// (`ChatView.tsx:4067` `sm:h-[1.25rem]`).
-const COMPOSER_BOTTOM_SPACER_PX: f32 = 20.0;
+/// Bottom gap below the composer card when the context strip is hidden: the card's bottom
+/// lines up with the bottom of the sidebar's last line (Conn's `sm:h-[1.25rem]` was 4px lower).
+const COMPOSER_BOTTOM_SPACER_PX: f32 = crate::sidebar::thread_list::SIDEBAR_LAST_LINE_BOTTOM_INSET_PX;
 /// Symmetric vertical margin around the `22px` bottom context strip (`9px` top + `9px` bottom)
 /// so the strip sits visually balanced between the composer card and the bottom of the chat card.
 const CONTEXT_STRIP_VERTICAL_MARGIN_PX: f32 = 9.0;
@@ -284,6 +285,8 @@ pub(crate) struct Composer {
     /// Placeholder last pushed into the textarea.
     applied_placeholder: &'static str,
     next_attachment_id: u64,
+    /// Thumbnails of staged images, by `PendingAttachment::local_id`.
+    attachment_previews: HashMap<u64, Arc<gpui_kit::Image>>,
     editing_queued: Option<EditingQueuedRun>,
     dictation: DictationState,
     dictation_error: Option<String>,
@@ -434,6 +437,7 @@ impl Composer {
             history_position: None,
             applied_placeholder: COMPOSER_PLACEHOLDER,
             next_attachment_id: 1,
+            attachment_previews: HashMap::new(),
             editing_queued: None,
             dictation: DictationState::Idle,
             dictation_error: None,
@@ -1135,6 +1139,9 @@ impl Composer {
         let local_id = self.next_attachment_id;
         self.next_attachment_id = self.next_attachment_id.wrapping_add(1);
         let size_bytes = bytes.len();
+        if let Some(image) = super::attachment_thumb::preview_image(&mime_type, bytes.clone()) {
+            self.attachment_previews.insert(local_id, image);
+        }
         self.attachments.push(PendingAttachment {
             local_id,
             name: name.clone(),
@@ -1469,6 +1476,7 @@ impl Composer {
     fn remove_attachment(&mut self, local_id: u64, cx: &mut Context<'_, Self>) {
         let before = self.attachments.len();
         self.attachments.retain(|a| a.local_id != local_id);
+        self.attachment_previews.remove(&local_id);
         if self.attachments.len() != before {
             cx.notify();
         }
@@ -2680,6 +2688,7 @@ impl Render for Composer {
             DictationState::Idle => self.dictation_error.as_ref().map(|err| {
                 div()
                     .id("chat-composer-dictation-err")
+                    .a11y_group("composer.dictation-error", "Dictation error")
                     .max_w(px(180.0))
                     .truncate()
                     .cursor_pointer()
@@ -2714,6 +2723,7 @@ impl Render for Composer {
             card = card.child(
                 div()
                     .id("chat-composer-editing-queued-bar")
+                    .a11y_group("composer.editing-queued", "Editing queued message")
                     .flex()
                     .flex_row()
                     .items_center()
@@ -2844,6 +2854,20 @@ impl Render for Composer {
             }
             for att in &self.attachments {
                 let local_id = att.local_id;
+                if let Some(image) = self.attachment_previews.get(&local_id).cloned() {
+                    strip = strip.child(super::attachment_thumb::staged_image_chip(
+                        local_id,
+                        &att.name,
+                        image,
+                        matches!(att.status, AttachmentUploadStatus::Uploading),
+                        matches!(att.status, AttachmentUploadStatus::Error(_)),
+                        &tokens,
+                        cx.listener(move |composer, _, _, cx| {
+                            composer.remove_attachment(local_id, cx);
+                        }),
+                    ));
+                    continue;
+                }
                 let file_icon = crate::file_icons::file_icon(&att.name);
                 let icon_color = file_icon
                     .color
@@ -2858,6 +2882,7 @@ impl Render for Composer {
                 strip = strip.child(
                     div()
                         .id(SharedString::from(format!("composer-att-{local_id}")))
+                        .a11y_group(format!("composer.attachment.{local_id}"), "Attachment")
                         .flex()
                         .flex_row()
                         .items_center()
@@ -3204,6 +3229,8 @@ fn composer_surface_colors(tokens: &Tokens) -> (gpui_kit::Hsla, gpui_kit::Hsla) 
         Appearance::Light => hsla(tokens.card),
         Appearance::Dark => hsla(tokens.shell_field),
     };
+    // Web Conn's glass is 80% over a 12px backdrop blur. GPUI has no per-element backdrop blur
+    // (gpui-kit#3598), so the card stays opaque until it lands (Nick, 2026-11-23).
     (bg, hsla(tokens.shell_inner_border))
 }
 

@@ -1038,7 +1038,7 @@ impl ProvidersView {
             name = name.child(
                 div()
                     .truncate()
-                    .font_family("Menlo")
+                    .font_family(crate::theme::MONO_FONT)
                     .text_size(px(11.0))
                     .text_color(hsla(tokens.muted_foreground))
                     .child(model.slug.clone()),

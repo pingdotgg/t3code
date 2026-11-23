@@ -921,7 +921,7 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
     });
 
     // 1. Active thread with default `persistComposerContextStrip = false`: the composer card must
-    // sit above Conn's 20px (`h-[1.25rem]`, `ChatView.tsx:4067`) bottom spacer + ~4.5px shell
+    // sit above the 16px bottom spacer (the sidebar's last line bottom) + ~4.5px shell
     // inset/border (never slammed flush against the bottom of the window).
     const SHELL_BOTTOM_CHROME_PX: f32 = 4.5;
     let _ = cx.update_window(window, |_, window, cx| {
@@ -929,8 +929,8 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
         let card = window.find_by_label("Message input card");
         let bottom_gap = TEST_WINDOW_HEIGHT - f32::from(card.bounds().bottom());
         assert!(
-            (23.5..=26.0).contains(&bottom_gap),
-            "composer card must keep 20px bottom breathing room + ~4.5px shell inset (got {bottom_gap:.1}px)"
+            (19.5..=22.0).contains(&bottom_gap),
+            "composer card must keep 16px bottom breathing room + ~4.5px shell inset (got {bottom_gap:.1}px)"
         );
         assert!(
             window.try_find_by_label("Thread context").is_none(),
@@ -3376,4 +3376,234 @@ fn a_thread_a_message_matches_is_listed_after_the_title_matches_with_the_message
         Some("…the zebrafish migration finished…")
     );
     assert!(labelled(cx, window, "Failed thread card, conn-gpui"));
+}
+
+/// The launcher renders in the open, tab-less right panel, then gives way to a picked surface and
+/// does not return when a panel with tabs reopens. The "no tabs shows the launcher" rule itself
+/// is `LayoutState::shows_surface_launcher`; this drives its wiring through real frames, where
+/// debug assertions catch duplicate AX ids and hover styles.
+#[gpui_kit::test]
+fn the_right_panel_renders_the_launcher_then_a_picked_surface_without_panic(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+    let frames = |cx: &mut TestAppContext| {
+        for _ in 0..3 {
+            let _ = cx.update_window(window, |_, w, cx| w.render_frame(cx));
+            cx.run_until_parked();
+        }
+    };
+    let open = |cx: &mut TestAppContext| cx.update(|cx| app.read(cx).layout().right_panel_open);
+
+    cx.update(|cx| app.update(cx, |app, cx| app.toggle_right_panel(cx)));
+    frames(cx);
+    assert!(open(cx), "toggling opens the right panel on the launcher");
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_right_panel_tab(conn_state::RightPanelTab::Browser, cx);
+        });
+    });
+    frames(cx);
+
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.toggle_right_panel(cx);
+            app.toggle_right_panel(cx);
+        });
+    });
+    frames(cx);
+    assert!(open(cx), "reopening restores the panel with its tab");
+}
+
+// ---- the workspace rail: drag to reorder, right-click menu, remove ----
+
+fn rail_workspace(id: &str, name: &str) -> conn_desktop::orbit::OrbitWorkspace {
+    conn_desktop::orbit::OrbitWorkspace {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        color: "#3b82f6".to_owned(),
+        icon: None,
+        image: None,
+        project_refs: Vec::new(),
+        project_keys: Vec::new(),
+    }
+}
+
+fn mount_rail(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<ConnApp>) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(
+                vec![
+                    rail_workspace("ws-a", "Alpha"),
+                    rail_workspace("ws-b", "Beta"),
+                    rail_workspace("ws-c", "Gamma"),
+                ],
+                cx,
+            );
+        });
+    });
+    render_twice(cx, window);
+    (window, app)
+}
+
+fn rail_ids(cx: &mut TestAppContext, app: &Entity<ConnApp>) -> Vec<String> {
+    cx.read(|cx| app.read(cx).rail_workspace_ids_for_test())
+}
+
+#[gpui_kit::test]
+fn dragging_a_workspace_tile_makes_room_and_a_drop_reorders_the_rail(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    let gamma = row_center(cx, window, "Workspace Gamma");
+
+    drag_row(cx, window, alpha, gamma);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).rail_held_for_test()),
+        Some(("ws-a".to_owned(), "ws-c".to_owned())),
+        "held over Gamma's place"
+    );
+    assert!(
+        !labelled(cx, window, "Workspace Alpha"),
+        "the held tile has left its place for the pointer to carry"
+    );
+    assert_eq!(
+        rail_ids(cx, &app),
+        ["ws-a", "ws-b", "ws-c"],
+        "nothing is saved yet"
+    );
+
+    release(cx, window, gamma);
+    assert_eq!(rail_ids(cx, &app), ["ws-b", "ws-c", "ws-a"]);
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the click that ends a drag selects nothing"
+    );
+    let first = row_center(cx, window, "Workspace Beta");
+    let last = row_center(cx, window, "Workspace Alpha");
+    assert!(first.y < last.y, "the rail draws the new order");
+}
+
+#[gpui_kit::test]
+fn a_press_that_moves_less_than_six_pixels_selects_the_workspace(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let beta = row_center(cx, window, "Workspace Beta");
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.pointer_move(beta, None, cx);
+        window.pointer_down(beta, MouseButton::Left, cx);
+        window.pointer_move(
+            Point {
+                x: beta.x,
+                y: beta.y + px(4.0),
+            },
+            Some(MouseButton::Left),
+            cx,
+        );
+        window.pointer_up(beta, MouseButton::Left, cx);
+        window.render_frame(cx);
+    });
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    assert_eq!(rail_ids(cx, &app), ["ws-a", "ws-b", "ws-c"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("ws-b".to_owned()),
+        "a click still selects"
+    );
+}
+
+#[gpui_kit::test]
+fn escape_lets_go_of_a_held_workspace_tile_without_a_drop(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    let gamma = row_center(cx, window, "Workspace Gamma");
+    drag_row(cx, window, alpha, gamma);
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_some());
+    press(cx, window, "escape");
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    release(cx, window, gamma);
+    assert_eq!(
+        rail_ids(cx, &app),
+        ["ws-a", "ws-b", "ws-c"],
+        "nothing moved"
+    );
+    assert!(labelled(cx, window, "Workspace Alpha"), "the tile is back");
+}
+
+#[gpui_kit::test]
+fn a_lone_workspace_has_nothing_to_reorder(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_rail_workspaces_for_test(vec![rail_workspace("ws-a", "Alpha")], cx);
+        });
+    });
+    render_twice(cx, window);
+    let alpha = row_center(cx, window, "Workspace Alpha");
+    drag_row(
+        cx,
+        window,
+        alpha,
+        Point {
+            x: alpha.x,
+            y: alpha.y + px(120.0),
+        },
+    );
+    assert!(cx.read(|cx| app.read(cx).rail_held_for_test()).is_none());
+    release(cx, window, alpha);
+}
+
+#[gpui_kit::test]
+fn right_clicking_a_workspace_tile_offers_remove_workspace(cx: &mut TestAppContext) {
+    let (window, app) = mount_rail(cx);
+    click_row(cx, window, "Workspace Beta", MouseButton::Right);
+    assert!(cx.read(|cx| app.read(cx).rail_menu_open_for_test()));
+    assert!(labelled(cx, window, "Remove workspace"));
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "a right-click selects nothing"
+    );
+    press(cx, window, "escape");
+    assert!(
+        !cx.read(|cx| app.read(cx).rail_menu_open_for_test()),
+        "Escape closes the menu"
+    );
+}
+
+#[gpui_kit::test]
+fn removing_a_workspace_drops_it_and_the_active_one_falls_back_to_all_projects(
+    cx: &mut TestAppContext,
+) {
+    let (window, app) = mount_rail(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.select_workspace(Some("ws-b".to_owned()), cx);
+            app.remove_workspace_for_test("ws-c", cx);
+        });
+    });
+    render_twice(cx, window);
+    assert_eq!(rail_ids(cx, &app), ["ws-a", "ws-b"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        Some("ws-b".to_owned()),
+        "removing another workspace keeps the one in scope"
+    );
+    cx.update(|cx| app.update(cx, |app, cx| app.remove_workspace_for_test("ws-b", cx)));
+    render_twice(cx, window);
+    assert_eq!(rail_ids(cx, &app), ["ws-a"]);
+    assert_eq!(
+        cx.read(|cx| app.read(cx).active_workspace_for_test().map(str::to_owned)),
+        None,
+        "the removed workspace was in scope"
+    );
+    assert!(!labelled(cx, window, "Workspace Beta"));
 }

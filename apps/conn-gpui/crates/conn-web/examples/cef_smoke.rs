@@ -1,7 +1,7 @@
 //! Smoke test for `conn-web`'s on-demand offscreen CEF runtime on macOS.
 //!
 //! Usage:
-//!   cargo run -p conn-web --features cef --example cef_smoke -- http://127.0.0.1:8080/
+//!   cargo run -p conn-web --example cef_smoke -- http://127.0.0.1:8080/
 //!
 //! Downloads CEF if needed, creates an offscreen browser view, loads the
 //! requested URL, waits for a painted frame and page title, prints the title,

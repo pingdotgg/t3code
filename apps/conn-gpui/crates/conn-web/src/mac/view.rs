@@ -4,12 +4,14 @@
 //! device scale factor and forwards mouse, wheel, keyboard, and focus events
 //! explicitly from GPUI.
 
+use crate::context_menu::{self, ContextCommand, Entry, LinkTarget, MenuParams};
 use crate::{
     CursorKind, EditCommand, FrameSnapshot, KeyEvent, KeyEventKind, Modifiers, MouseButton, Rect,
     WebError, WebRuntimeState,
 };
 use cef::*;
 use std::cell::Cell;
+use std::ffi::{CString, c_char};
 use std::fmt;
 use std::os::raw::c_int;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
@@ -131,6 +133,8 @@ impl MacBrowserView {
             ViewLifeSpan::new(),
             ViewLoadHandler::new(shared.clone()),
             ViewDisplayHandler::new(shared.clone()),
+            ViewContextMenu::new(),
+            ViewDownloadHandler::new(),
         );
 
         let mut context = request_context_get_global_context();
@@ -498,8 +502,37 @@ impl MacBrowserView {
             slot.take();
         }
         if let Some(host) = self.browser.host() {
+            host.close_dev_tools();
             host.close_browser(1);
         }
+    }
+
+    /// Opens Chrome DevTools in a separate window, inspecting the element at `inspect_at`
+    /// (view coordinates) when given.
+    pub(crate) fn show_dev_tools(&self, inspect_at: Option<(i32, i32)>) {
+        if self.closed.get() {
+            return;
+        }
+        open_dev_tools(&self.browser, inspect_at);
+    }
+
+    /// Closes the DevTools window, if open.
+    pub(crate) fn close_dev_tools(&self) {
+        if self.closed.get() {
+            return;
+        }
+        if let Some(host) = self.browser.host() {
+            host.close_dev_tools();
+        }
+    }
+
+    /// Returns `true` while a DevTools window is open for this view.
+    pub(crate) fn has_dev_tools(&self) -> bool {
+        !self.closed.get()
+            && self
+                .browser
+                .host()
+                .is_some_and(|host| host.has_dev_tools() == 1)
     }
 }
 
@@ -627,15 +660,40 @@ fn cursor_from_u8(raw: u8) -> CursorKind {
     }
 }
 
+/// Opens Chrome DevTools for `browser` in its own top-level window, inspecting the element at
+/// `inspect_at` (view coordinates) when given. A DevTools window that is already open is
+/// brought forward by CEF.
+fn open_dev_tools(browser: &Browser, inspect_at: Option<(i32, i32)>) {
+    let Some(host) = browser.host() else {
+        return;
+    };
+    let window_info = WindowInfo {
+        runtime_style: RuntimeStyle::ALLOY,
+        window_name: CefString::from("Developer Tools"),
+        ..WindowInfo::default()
+    };
+    let settings = BrowserSettings::default();
+    let point = inspect_at.map(|(x, y)| Point { x, y });
+    host.show_dev_tools(Some(&window_info), None, Some(&settings), point.as_ref());
+}
+
 wrap_client! {
     struct ViewClient {
         render: RenderHandler,
         life: LifeSpanHandler,
         loads: LoadHandler,
         display: DisplayHandler,
+        menu: ContextMenuHandler,
+        downloads: DownloadHandler,
     }
 
     impl Client {
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(self.menu.clone())
+        }
+        fn download_handler(&self) -> Option<DownloadHandler> {
+            Some(self.downloads.clone())
+        }
         fn render_handler(&self) -> Option<RenderHandler> {
             Some(self.render.clone())
         }
@@ -647,6 +705,223 @@ wrap_client! {
         }
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(self.display.clone())
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn conn_web_pasteboard_set_string(utf8: *const c_char) -> bool;
+    fn conn_web_pasteboard_set_png(bytes: *const u8, length: usize) -> bool;
+    fn conn_web_open_url(utf8: *const c_char) -> bool;
+}
+
+/// Puts `text` on the macOS general pasteboard.
+fn copy_text(text: &str) {
+    let Ok(text) = CString::new(text) else {
+        return;
+    };
+    // SAFETY: `text` is a valid NUL-terminated string alive through the call; the shim only
+    // reads it.
+    let _ = unsafe { conn_web_pasteboard_set_string(text.as_ptr()) };
+}
+
+/// Puts PNG image bytes on the macOS general pasteboard.
+fn copy_png(png: &[u8]) {
+    // SAFETY: `png` is a live slice, and the shim copies `length` bytes from it before returning.
+    let _ = unsafe { conn_web_pasteboard_set_png(png.as_ptr(), png.len()) };
+}
+
+/// Opens an `http(s)` URL in the user's default browser. Other schemes are never handed to
+/// the system.
+fn open_external(url: &str) {
+    if !context_menu::is_web_url(url) {
+        return;
+    }
+    let Ok(url) = CString::new(url) else {
+        return;
+    };
+    // SAFETY: `url` is a valid NUL-terminated string alive through the call; the shim only
+    // reads it.
+    let _ = unsafe { conn_web_open_url(url.as_ptr()) };
+}
+
+fn cef_string(value: &CefStringUserfree) -> String {
+    CefString::from(value).to_string()
+}
+
+/// The parts of a right-click that decide which items Conn adds.
+fn menu_params(params: &ContextMenuParams) -> MenuParams {
+    MenuParams {
+        link_url: cef_string(&params.link_url()),
+        unfiltered_link_url: cef_string(&params.unfiltered_link_url()),
+        source_url: cef_string(&params.source_url()),
+        is_image: params.media_type() == ContextMenuMediaType::IMAGE
+            || params.has_image_contents() == 1,
+    }
+}
+
+wrap_download_image_callback! {
+    struct CopyImageCallback;
+
+    impl DownloadImageCallback {
+        // Re-encodes the fetched image as PNG, which covers `data:` and `http(s)` sources alike.
+        fn on_download_image_finished(
+            &self,
+            _image_url: Option<&CefString>,
+            _http_status_code: c_int,
+            image: Option<&mut Image>,
+        ) {
+            let Some(image) = image else {
+                return;
+            };
+            let Some(png) = image.as_png(1.0, 1, None, None) else {
+                return;
+            };
+            let mut bytes = vec![0_u8; png.size()];
+            if png.data(Some(&mut bytes), 0) == bytes.len() && !bytes.is_empty() {
+                copy_png(&bytes);
+            }
+        }
+    }
+}
+
+wrap_download_handler! {
+    struct ViewDownloadHandler;
+
+    impl DownloadHandler {
+        // "Save image as…" (and any other download) asks where to save, starting in Downloads.
+        fn on_before_download(
+            &self,
+            _browser: Option<&mut Browser>,
+            _download_item: Option<&mut DownloadItem>,
+            suggested_name: Option<&CefString>,
+            callback: Option<&mut BeforeDownloadCallback>,
+        ) -> c_int {
+            let Some(callback) = callback else {
+                return 0;
+            };
+            let name = suggested_name.map(|n| n.to_string()).unwrap_or_default();
+            let name = if name.is_empty() { "download".to_owned() } else { name };
+            let folder = std::env::var_os("HOME")
+                .map(|home| std::path::PathBuf::from(home).join("Downloads"))
+                .unwrap_or_default();
+            let path = folder.join(name);
+            callback.cont(Some(&CefString::from(path.to_string_lossy().as_ref())), 1);
+            1
+        }
+    }
+}
+
+wrap_context_menu_handler! {
+    struct ViewContextMenu;
+
+    impl ContextMenuHandler {
+        // Chromium's own items stay (Back, Forward, Reload, edit items). Conn removes Print and
+        // View Source (separate windows), puts link and image items on top in Chrome's order,
+        // and ends the menu with "Inspect".
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            let Some(model) = model else {
+                return;
+            };
+            for id in context_menu::REMOVED_COMMAND_IDS {
+                model.remove(id);
+            }
+
+            let leading = params
+                .map(|p| context_menu::leading_entries(&menu_params(p)))
+                .unwrap_or_default();
+            for (index, entry) in leading.into_iter().enumerate() {
+                match entry {
+                    Entry::Item(command) => {
+                        model.insert_item_at(
+                            index,
+                            command.id(),
+                            Some(&CefString::from(command.label())),
+                        );
+                    }
+                    Entry::Separator => {
+                        model.insert_separator_at(index);
+                    }
+                }
+            }
+
+            model.add_separator();
+            model.add_item(
+                ContextCommand::Inspect.id(),
+                Some(&CefString::from(ContextCommand::Inspect.label())),
+            );
+
+            let kinds: Vec<bool> = (0..model.count())
+                .map(|i| model.type_at(i) == MenuItemType::SEPARATOR)
+                .collect();
+            for index in context_menu::separators_to_remove(&kinds) {
+                model.remove_at(index);
+            }
+        }
+
+        fn on_context_menu_command(
+            &self,
+            browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            params: Option<&mut ContextMenuParams>,
+            command_id: c_int,
+            _event_flags: EventFlags,
+        ) -> c_int {
+            let Some(command) = ContextCommand::from_id(command_id) else {
+                return 0;
+            };
+            let (Some(browser), Some(params)) = (browser, params) else {
+                return 1;
+            };
+            let info = menu_params(params);
+            match command {
+                ContextCommand::Inspect => {
+                    open_dev_tools(browser, Some((params.xcoord(), params.ycoord())));
+                }
+                ContextCommand::OpenLink => {
+                    if let Some(LinkTarget::Web(url)) = context_menu::link_target(&info) {
+                        open_external(&url);
+                    }
+                }
+                ContextCommand::CopyLink => {
+                    if let Some(LinkTarget::Web(text) | LinkTarget::Other(text)) =
+                        context_menu::link_target(&info)
+                    {
+                        copy_text(&text);
+                    }
+                }
+                ContextCommand::CopyEmail => {
+                    if let Some(LinkTarget::Mail(address)) = context_menu::link_target(&info) {
+                        copy_text(&address);
+                    }
+                }
+                ContextCommand::OpenImage => open_external(&info.source_url),
+                ContextCommand::SaveImage => {
+                    if let Some(host) = browser.host() {
+                        host.start_download(Some(&CefString::from(info.source_url.as_str())));
+                    }
+                }
+                ContextCommand::CopyImage => {
+                    if let Some(host) = browser.host() {
+                        let mut callback = CopyImageCallback::new();
+                        host.download_image(
+                            Some(&CefString::from(info.source_url.as_str())),
+                            0,
+                            0,
+                            0,
+                            Some(&mut callback),
+                        );
+                    }
+                }
+                ContextCommand::CopyImageAddress => copy_text(&info.source_url),
+            }
+            1
         }
     }
 }

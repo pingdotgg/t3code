@@ -179,7 +179,6 @@ mod chat;
 mod panels;
 
 fn main() {
-    #[cfg(feature = "cef")]
     if let Some(code) = conn_web::maybe_run_subprocess() {
         std::process::exit(code);
     }

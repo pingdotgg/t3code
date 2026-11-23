@@ -634,6 +634,7 @@ pub(super) fn render_host_config(
         .child(
             div()
                 .id("device-hosts-scroll")
+                .a11y_group("panel.device.hosts", "Device hosts")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()

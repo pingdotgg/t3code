@@ -778,6 +778,7 @@ pub(crate) fn render_queue_popover(
     } else {
         let mut list = v_flex()
             .id("annotations-queue-list")
+            .a11y_group("panel.annotations.queue", "Annotation queue")
             .max_h(px(260.0))
             .overflow_y_scroll()
             .p(px(6.0))
@@ -861,6 +862,7 @@ pub(crate) fn render_queue_popover(
 
             let row = h_flex()
                 .id(SharedString::from(format!("ann-row-{}", record.id)))
+                .a11y_group(format!("panel.annotations.row.{}", record.id), "Annotation")
                 .items_start()
                 .gap(px(8.0))
                 .rounded(px(8.0))
@@ -1062,6 +1064,7 @@ pub(crate) fn render_pins_overlay(
 
     let mut layer = div()
         .id("annotations-pins-layer")
+        .a11y_group("panel.annotations.pins", "Annotation pins")
         .absolute()
         .inset_0()
         .overflow_hidden();

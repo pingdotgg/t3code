@@ -1,6 +1,7 @@
 //! Add/Edit connection form (`ConnectionForm` in Conn's `DatabasePanel.tsx`) and Conn's
 //! `outline` / `ghost` `size="sm"` buttons shared with the Database empty state.
 
+use crate::a11y::ConnA11yExt as _;
 use conn_desktop::database::DatabaseDriver;
 use conn_desktop::database::api::PanelConnection;
 use conn_theme::{Appearance, Tokens};
@@ -203,6 +204,7 @@ impl ConnectionFormState {
 
         let mut form = v_flex()
             .id("db-connection-form")
+            .a11y_group("panel.database.connection-form", "Connection form")
             .flex_1()
             .min_h_0()
             .w_full()

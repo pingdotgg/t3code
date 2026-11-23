@@ -1003,6 +1003,7 @@ impl DatabasePanel {
 
         let mut table_rows = v_flex()
             .id("db-tables-scroll")
+            .a11y_group("panel.database.tables", "Tables")
             .flex_1()
             .min_h_0()
             .w_full()
@@ -1039,6 +1040,7 @@ impl DatabasePanel {
                     table_rows = table_rows.child(
                         h_flex()
                             .id(SharedString::from(format!("db-table-{name}")))
+                            .a11y_button(format!("panel.database.table.{name}"), name.clone())
                             .h(px(28.0))
                             .w_full()
                             .items_center()
@@ -1082,6 +1084,7 @@ impl DatabasePanel {
             .child(
                 div()
                     .id("db-sql-scroll")
+                    .a11y_group("panel.database.sql", "SQL editor")
                     .min_h_0()
                     .w_full()
                     .overflow_y_scroll()
@@ -1219,6 +1222,7 @@ impl DatabasePanel {
             .child(
                 div()
                     .id("db-result-scroll")
+                    .a11y_group("panel.database.results", "Query results")
                     .flex_1()
                     .min_h_0()
                     .w_full()
@@ -1274,6 +1278,7 @@ impl Render for DatabasePanel {
 
         v_flex()
             .id("database-panel")
+            .a11y_group("panel.database", "Database")
             .size_full()
             // Capture phase intercepts Cmd+Enter / Ctrl+Enter before TextareaState inserts a newline.
             .capture_key_down(cx.listener(|panel, event: &KeyDownEvent, _, cx| {

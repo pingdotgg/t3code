@@ -64,6 +64,11 @@ const ROW_RADIUS_PX: f32 = 8.0;
 const CARD_RADIUS_PX: f32 = 6.0;
 /// `h-9` (`36px`) slim settled rows.
 const SLIM_ROW_HEIGHT_PX: f32 = 36.0;
+/// Distance from the sidebar's bottom edge to the bottom of its last slim row's text
+/// (`8px` content inset + the `8px` below a `20px` line in a `36px` row). The composer card
+/// uses it as its bottom gap so both bottoms line up.
+pub(crate) const SIDEBAR_LAST_LINE_BOTTOM_INSET_PX: f32 =
+    SIDEBAR_CONTENT_INSET_PX + (SLIM_ROW_HEIGHT_PX - 20.0) / 2.0;
 /// `rounded-md` (`6px`) on the search field and collapsible section header.
 const SEARCH_RADIUS_PX: f32 = 6.0;
 /// `size-7` (`28px`) for `SidebarHeaderIconButton` and `SidebarTrigger`.

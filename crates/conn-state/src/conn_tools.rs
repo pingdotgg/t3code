@@ -425,6 +425,85 @@ pub fn conn_tool_presentation(title: &str) -> Option<ConnToolPresentation> {
     looks_like_conn_tool(label).then(|| presentation(label))
 }
 
+const TASK_ID_PREFIXES: [&str; 2] = ["node:delegated-task:", "thread:delegated-task:"];
+
+/// Replaces delegated-task ids in agent-written text (`Delegated task node:delegated-task:…
+/// reached a terminal state.`) with the task's title, never the id. `title_of` maps a task or
+/// child thread id to its title. With no title the id is dropped: `Delegated task reached …`.
+#[must_use]
+pub fn humanize_delegated_task_ids<'a>(
+    text: &'a str,
+    title_of: &dyn Fn(&str) -> Option<String>,
+) -> Cow<'a, str> {
+    let Some(first) = TASK_ID_PREFIXES.iter().filter_map(|p| text.find(p)).min() else {
+        return Cow::Borrowed(text);
+    };
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..first]);
+    let mut rest = &text[first..];
+    while !rest.is_empty() {
+        if TASK_ID_PREFIXES.iter().any(|p| rest.starts_with(p)) {
+            let end = rest
+                .find(|c: char| {
+                    c.is_whitespace() || matches!(c, ',' | ';' | ')' | '(' | '"' | '\'')
+                })
+                .unwrap_or(rest.len());
+            let token = rest[..end].trim_end_matches(['.', ':']);
+            rest = &rest[token.len()..];
+            // The wake message names the task as `<id> (<title>) [<status>]`.
+            let mut inline_title = None;
+            if let Some(after) = rest.strip_prefix(" (")
+                && let Some(close) = after.find(')')
+            {
+                inline_title = Some(after[..close].trim().to_owned());
+                rest = &after[close + 1..];
+            }
+            let mut status = None;
+            if let Some(after) = rest.strip_prefix(" [")
+                && let Some(close) = after.find(']')
+            {
+                status = Some(after[..close].trim().to_owned()).filter(|s| !s.is_empty());
+                rest = &after[close + 1..];
+            }
+            match inline_title
+                .filter(|t| !t.is_empty())
+                .or_else(|| title_of(token))
+                .map(|t| t.trim().to_owned())
+                .filter(|t| !t.is_empty())
+            {
+                Some(title) => {
+                    out.push('\u{201c}');
+                    out.push_str(&title);
+                    out.push('\u{201d}');
+                }
+                None => {
+                    let before = out.trim_end();
+                    if before.ends_with("task") || before.ends_with("tasks") {
+                        // "Delegated task <id> reached" → "Delegated task reached".
+                        let trimmed = out.trim_end().len();
+                        out.truncate(trimmed);
+                    } else {
+                        out.push_str("a delegated task");
+                    }
+                }
+            }
+            if let Some(status) = status {
+                out.push(' ');
+                out.push_str(&status);
+            }
+        } else {
+            let next = rest
+                .char_indices()
+                .skip(1)
+                .find(|(i, _)| TASK_ID_PREFIXES.iter().any(|p| rest[*i..].starts_with(p)))
+                .map_or(rest.len(), |(i, _)| i);
+            out.push_str(&rest[..next]);
+            rest = &rest[next..];
+        }
+    }
+    Cow::Owned(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,5 +805,42 @@ mod tests {
         for title in ["mcp_é_x", "é", "conn-é_x", "mcp__é__é", "日本語"] {
             let _ = conn_tool_presentation(title);
         }
+    }
+
+    #[test]
+    fn delegated_task_ids_become_titles_or_disappear() {
+        let id =
+            "node:delegated-task:command:mcp:61932e5f-c62b-474b-8def-eed540b834a0:delegate-task";
+        let text = format!(
+            "Delegated task {id} reached a terminal state. Use task_status with taskId {id} to read the result."
+        );
+        let titled = humanize_delegated_task_ids(&text, &|found| {
+            (found == id).then(|| "Fix the minimap".to_owned())
+        });
+        assert_eq!(
+            titled,
+            "Delegated task \u{201c}Fix the minimap\u{201d} reached a terminal state. Use task_status with taskId \u{201c}Fix the minimap\u{201d} to read the result."
+        );
+        let untitled = humanize_delegated_task_ids(&text, &|_| None);
+        assert_eq!(
+            untitled,
+            "Delegated task reached a terminal state. Use task_status with taskId a delegated task to read the result."
+        );
+        assert!(!untitled.contains("node:"));
+        assert!(matches!(
+            humanize_delegated_task_ids("Nothing to change", &|_| None),
+            Cow::Borrowed(_)
+        ));
+        let wake = format!(
+            "Delegated task {id} (Conn #262: atomic launch review fixes) [completed]:\nDone."
+        );
+        assert!(humanize_delegated_task_ids(&wake, &|_| None).contains(
+            "Delegated task \u{201c}Conn #262: atomic launch review fixes\u{201d} completed:\nDone."
+        ));
+        let sentence_end = format!("Delegated task {id}.");
+        assert_eq!(
+            humanize_delegated_task_ids(&sentence_end, &|_| None),
+            "Delegated task."
+        );
     }
 }

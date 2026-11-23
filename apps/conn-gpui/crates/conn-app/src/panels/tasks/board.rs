@@ -126,6 +126,7 @@ pub(super) fn render_board(
 
     let lanes_scroller = div()
         .id("tasks-lanes-scroll")
+        .a11y_group("panel.tasks.lanes", "Task lanes")
         .flex()
         .flex_1()
         .min_h(px(256.0))
@@ -143,6 +144,7 @@ pub(super) fn render_board(
         .child(
             div()
                 .id("tasks-board-scroll")
+                .a11y_group("panel.tasks.board", "Task board")
                 .flex()
                 .flex_col()
                 .flex_1()
@@ -169,6 +171,8 @@ fn render_board_toolbar(
     let control_hover = to_hsla(tokens.shell_control);
 
     let mut search_group = chrome::soft_input_group(tokens)
+        .id("tasks-search")
+        .a11y_group("panel.tasks.search", "Search tasks")
         .pl(px(10.0))
         .pr(px(6.0))
         .gap(px(6.0))
@@ -202,6 +206,7 @@ fn render_board_toolbar(
     let on_toggle = Rc::clone(&callbacks.on_toggle_settings);
     let settings_btn = div()
         .id("tasks-board-settings-btn")
+        .a11y_button("panel.tasks.board-settings", "Board settings")
         .flex()
         .flex_shrink_0()
         .size(px(26.0))
@@ -231,8 +236,10 @@ fn render_board_toolbar(
         settings_anchor = settings_anchor.child(render_settings_menu(tokens, settings, callbacks));
     }
 
-    // `flex shrink-0 items-center gap-2 px-2 py-toolbar` (no bottom divider; top insights row draws bevel).
+    // `flex shrink-0 items-center gap-2 px-2 py-toolbar` (no divider above or below the insights strip).
     h_flex()
+        .id("tasks-board-toolbar")
+        .a11y_group("panel.tasks.toolbar", "Tasks toolbar")
         .w_full()
         .flex_shrink_0()
         .items_center()
@@ -324,6 +331,7 @@ fn render_settings_menu(
     let hidden_count = settings.hidden_lanes.len();
     let mut menu = v_flex()
         .id("tasks-board-settings-menu")
+        .a11y_group("panel.tasks.board-settings-menu", "Board settings menu")
         .min_w(px(208.0))
         .max_h(px(520.0))
         .overflow_y_scroll()
@@ -408,6 +416,10 @@ fn render_lane(
 
     let mut list = v_flex()
         .id(SharedString::from(format!("tasks-lane-list-{:?}", lane.id)))
+        .a11y_group(
+            format!("panel.tasks.lane-list.{:?}", lane.id),
+            format!("{} tasks", lane.label),
+        )
         .flex_1()
         .min_h_0()
         .w_full()
@@ -438,6 +450,8 @@ fn render_lane(
     }
 
     v_flex()
+        .id(SharedString::from(format!("tasks-lane-{:?}", lane.id)))
+        .a11y_group(format!("panel.tasks.lane.{:?}", lane.id), lane.label)
         .min_w(px(LANE_MIN_WIDTH_PX))
         .flex_1()
         .flex_basis(px(0.0))
@@ -502,6 +516,7 @@ fn render_task_card(
         let on_pr = Rc::clone(&callbacks.on_open_pr);
         h_flex()
             .id(SharedString::from(format!("tasks-card-pr-{task_id}")))
+            .a11y_button(format!("panel.tasks.card-pr.{task_id}"), "Open pull request")
             .flex_shrink_0()
             .items_center()
             .gap(px(4.0))

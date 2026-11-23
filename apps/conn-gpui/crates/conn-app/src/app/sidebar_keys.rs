@@ -392,6 +392,12 @@ impl ConnApp {
             self.consume_keystroke(cx);
             return;
         }
+        // `Escape` closes the workspace menu of the rail, which holds no focus of its own.
+        if self.rail_menu.is_some() && keystroke.key == "escape" {
+            self.dismiss_shell_popovers(cx);
+            self.consume_keystroke(cx);
+            return;
+        }
         if self.thread_menu.is_some() && self.thread_menu_focus.is_focused(window) {
             if let Some(key) = menu_key(&keystroke.key, mods)
                 && self.thread_menu_key(key, keystroke.modifiers.shift, window, cx)

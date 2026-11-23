@@ -11,6 +11,7 @@ mod stream;
 mod ui;
 mod workspace;
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -2057,6 +2058,7 @@ impl DevicePanel {
 
         div()
             .id("device-picker-scroll")
+            .a11y_group("panel.device.picker", "Device list")
             .flex()
             .flex_col()
             .flex_1()

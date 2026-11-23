@@ -143,7 +143,6 @@ pub(super) fn render_insights_strip(
                 tooltip_text,
                 span,
                 corners,
-                row_idx == 0,
                 Rc::clone(&callbacks.on_expand),
             ));
         }
@@ -160,6 +159,7 @@ pub(super) fn render_insights_strip(
     let mut section = div().relative().w_full().flex_shrink_0().child(
         div()
             .id("tasks-insights-scroll")
+            .a11y_group("panel.tasks.insights", "Task insights")
             .w_full()
             .overflow_x_scroll()
             .track_scroll(scroll)
@@ -214,14 +214,12 @@ fn render_insight_card(
     tooltip_text: String,
     span: usize,
     corners: [bool; 4],
-    top_row: bool,
     on_expand: Rc<dyn Fn(Option<InsightId>, &mut Window, &mut App)>,
 ) -> AnyElement {
     let fg = to_hsla(tokens.foreground);
     let muted = to_hsla(tokens.muted_foreground);
     let card_bg = to_hsla(surface.card_bg);
     let card_hover = to_hsla(surface.card_hover_bg);
-    let top_edge = to_hsla(surface.shell_card_edge);
 
     let formatted_value = result.value.map(|v| format_insight_value(spec.id, v));
     let min_w = span as f32 * CARD_MIN_WIDTH_PX + span.saturating_sub(1) as f32 * GRID_GAP_PX;
@@ -243,13 +241,10 @@ fn render_insight_card(
         .on_click(move |_, window, cx| on_expand(Some(spec.id), window, cx))
         .conn_tooltip(tooltip_text, tokens);
 
-    if top_row {
-        card = card.border_t_1().border_color(top_edge);
-    } else {
-        card = card
-            .border_t_1()
-            .border_color(gpui_kit::transparent_black());
-    }
+    // No divider line above or below the strip; the transparent border keeps tile sizes.
+    card = card
+        .border_t_1()
+        .border_color(gpui_kit::transparent_black());
     if corners[0] {
         card = card.rounded_tl(px(GROUP_RADIUS_PX));
     }
@@ -416,7 +411,7 @@ fn render_insight_detail(
         .gap(px(4.0))
         .rounded(px(GROUP_RADIUS_PX))
         .border_t_1()
-        .border_color(to_hsla(surface.shell_card_edge))
+        .border_color(gpui_kit::transparent_black())
         .bg(to_hsla(surface.card_bg))
         .px(px(12.0))
         .pt(px(10.0))

@@ -556,7 +556,10 @@ impl ConnApp {
 
     /// Whether a press, drag or sweep wants the pointer, so the window follows it.
     pub(crate) fn pointer_captured(&self) -> bool {
-        self.sidebar.press.is_some() || self.sidebar.drag.is_some() || self.sidebar.sweep.is_some()
+        self.sidebar.press.is_some()
+            || self.sidebar.drag.is_some()
+            || self.sidebar.sweep.is_some()
+            || self.rail_gesture.state.is_active()
     }
 
     /// The pointer moved while a button is down.
@@ -565,6 +568,10 @@ impl ConnApp {
         position: Point<Pixels>,
         cx: &mut Context<'_, Self>,
     ) {
+        // A workspace tile of the rail held (`rail_workspaces.rs`).
+        if self.rail_pointer_moved(position, cx) {
+            return;
+        }
         if let Some(press) = self.sidebar.press.clone()
             && hypot(position, press.origin) > DRAG_DISTANCE_PX
         {
@@ -584,6 +591,9 @@ impl ConnApp {
 
     /// The pointer was let go, or the drag was cancelled (`Escape`, a lost window).
     pub(crate) fn sidebar_pointer_released(&mut self, cancel: bool, cx: &mut Context<'_, Self>) {
+        if self.rail_pointer_released(cancel, cx) {
+            return;
+        }
         let had_press = self.sidebar.press.take().is_some();
         if let Some(drag) = self.sidebar.drag.take() {
             self.sidebar.suppress_click = true;

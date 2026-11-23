@@ -3,6 +3,7 @@
 //! field and `ToolbarGroup`; a file opens as its own tab showing a syntect-highlighted
 //! read-only preview (`projects.readFile`) under a breadcrumb subheader.
 
+use crate::a11y::ConnA11yExt as _;
 use std::fmt;
 
 use conn_client::Connection;
@@ -348,6 +349,7 @@ impl FilesPanel {
             .child(
                 div()
                     .id("files-refresh-btn")
+                    .a11y_button("panel.files.refresh", "Refresh files")
                     .size(px(TOOLBAR_BTN_SIZE_PX))
                     .rounded(px(9999.0))
                     .flex()
@@ -366,6 +368,7 @@ impl FilesPanel {
             explorer_actions = explorer_actions.child(
                 div()
                     .id("files-toggle-expand-btn")
+                    .a11y_button("panel.files.toggle-expand", "Expand or collapse folders")
                     .size(px(TOOLBAR_BTN_SIZE_PX))
                     .rounded(px(9999.0))
                     .flex()
@@ -468,6 +471,7 @@ impl FilesPanel {
                             // Pressed toggle brightens icon to `fg` with no fill (`nckrtl-shell-design`).
                             div()
                                 .id("files-preview-wrap-btn")
+                                .a11y_button("panel.files.preview-wrap", "Toggle line wrap")
                                 .size(px(TOOLBAR_BTN_SIZE_PX))
                                 .rounded(px(9999.0))
                                 .flex()
@@ -491,6 +495,7 @@ impl FilesPanel {
                         .child(
                             div()
                                 .id("files-preview-copy-btn")
+                                .a11y_button("panel.files.preview-copy", "Copy file contents")
                                 .size(px(TOOLBAR_BTN_SIZE_PX))
                                 .rounded(px(9999.0))
                                 .flex()
@@ -530,6 +535,7 @@ impl FilesPanel {
 
         let mut col = v_flex()
             .id("files-tree-scroll")
+            .a11y_group("panel.files.tree", "File tree")
             .flex_1()
             .min_h_0()
             .w_full()
@@ -580,6 +586,7 @@ impl FilesPanel {
 
             let item = h_flex()
                 .id(SharedString::from(format!("tree-row-{}", row.path)))
+                .a11y_button(format!("panel.files.row.{}", row.path), row.name.clone())
                 .mx(px(2.0))
                 .h(px(TREE_ROW_HEIGHT_PX))
                 .pl(px(indent_px))
@@ -648,6 +655,7 @@ impl FilesPanel {
 
         let container = v_flex()
             .id("files-preview-scroll")
+            .a11y_group("panel.files.preview", "File preview")
             .flex_1()
             .min_h_0()
             .w_full()

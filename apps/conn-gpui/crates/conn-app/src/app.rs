@@ -14,8 +14,8 @@ use crate::a11y::ConnA11yExt as _;
 use crate::drafts::{DraftBook, DraftContent, DraftThreadState, new_draft_id, now_ms};
 use crate::fixture::demo_shell_state;
 use crate::header::details_card::{
-    DetailsCardProps, DetailsCopyTarget, EditorTarget, ThreadDetailsState,
-    render_thread_details_card, thread_cwd,
+    DetailsCardProps, DetailsCopyTarget, EditorTarget, THREAD_DETAILS_CARD_GAP_PX,
+    ThreadDetailsState, render_thread_details_card, thread_cwd,
 };
 use crate::header::{ChatHeaderProps, render_chat_header};
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
@@ -32,14 +32,18 @@ use crate::sidebar::tree::SidebarTree;
 use crate::theme::{apply_kit_theme, hsla};
 use gpui_kit::prelude::FluentBuilder as _;
 
+mod rail_workspaces;
 mod sidebar_keys;
 mod sidebar_more;
 
 pub(crate) use self::sidebar_more::PressMode;
 
-actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
+actions!(
+    conn_app,
+    [ToggleSidebar, ToggleRightPanel, NewThread, ToggleTerminal]
+);
 
-/// Registers global shell keyboard shortcuts (`Cmd+B` and `Cmd+Alt+B`).
+/// Registers global shell keyboard shortcuts (`Cmd+B`, `Cmd+Alt+B` and `Cmd+J`).
 pub(crate) fn register_keybindings(cx: &mut App) {
     crate::palette::register_keybindings(cx);
     crate::settings::register_keybindings(cx);
@@ -47,7 +51,22 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-alt-b", ToggleRightPanel, None),
         KeyBinding::new("cmd-n", NewThread, None),
+        // `terminal.toggle` is `mod+j` in Conn's default keybindings.
+        KeyBinding::new("cmd-j", ToggleTerminal, None),
     ]);
+}
+
+/// The terminal drawer's default height (`DEFAULT_THREAD_TERMINAL_HEIGHT`).
+const TERMINAL_DRAWER_DEFAULT_PX: f32 = 280.0;
+/// `MIN_DRAWER_HEIGHT` in `ThreadTerminalDrawer.tsx`.
+const TERMINAL_DRAWER_MIN_PX: f32 = 180.0;
+/// `MAX_DRAWER_HEIGHT_RATIO` in `ThreadTerminalDrawer.tsx`.
+const TERMINAL_DRAWER_MAX_RATIO: f32 = 0.75;
+
+/// The terminal drawer's height kept within Conn's bounds for a window `viewport_h` tall.
+fn clamp_terminal_drawer_height(height: f32, viewport_h: f32) -> f32 {
+    let max = (viewport_h * TERMINAL_DRAWER_MAX_RATIO).max(TERMINAL_DRAWER_MIN_PX);
+    height.clamp(TERMINAL_DRAWER_MIN_PX, max)
 }
 
 /// A panel seam being dragged: which side, where the drag started, and the width then.
@@ -55,6 +74,8 @@ pub(crate) fn register_keybindings(cx: &mut App) {
 enum SeamDrag {
     Sidebar { from_x: f32, start: f32 },
     RightPanel { from_x: f32, start: f32 },
+    /// The terminal drawer's top edge: where the drag started, and the height then.
+    TerminalDrawer { from_y: f32, start: f32 },
 }
 
 /// A discarded draft, kept for `Undo`.
@@ -221,6 +242,9 @@ pub(crate) struct ConnApp {
     right_panel_file: Option<String>,
     right_panel_add_menu_open: bool,
     right_panel_maximized: bool,
+    /// The terminal drawer under the chat is open, and its height.
+    terminal_drawer_open: bool,
+    terminal_drawer_height: f32,
     seam_drag: Option<SeamDrag>,
     command_palette: Option<Entity<crate::palette::CommandPalette>>,
     settings_modal: Option<Entity<crate::settings::SettingsModal>>,
@@ -241,6 +265,10 @@ pub(crate) struct ConnApp {
     rename_in_header: bool,
     /// Open Thread Actions menu (sidebar right-click or header title).
     thread_menu: Option<ThreadMenuAnchor>,
+    /// Open workspace menu (right-click on a rail tile).
+    rail_menu: Option<crate::sidebar::rail::RailMenuAnchor>,
+    /// A workspace tile held in the rail, and where the tiles were painted.
+    rail_gesture: crate::sidebar::rail::RailGesture,
     /// Bumped to cancel a pending `Copy` submenu hover-intent close.
     thread_menu_copy_close_gen: u64,
     /// Bumped to cancel a pending header-title menu open (double-click renames instead).
@@ -564,10 +592,13 @@ impl ConnApp {
             drafts_path: crate::drafts::drafts_file_path(),
             saved_drafts_json: None,
             responding_approvals: HashSet::new(),
-            right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
+            // No tab until one is picked: opening the panel shows the surface launcher.
+            right_panel_open_tabs: Vec::new(),
             right_panel_file: None,
             right_panel_add_menu_open: false,
             right_panel_maximized: false,
+            terminal_drawer_open: false,
+            terminal_drawer_height: TERMINAL_DRAWER_DEFAULT_PX,
             seam_drag: None,
             command_palette: None,
             settings_modal: None,
@@ -581,6 +612,8 @@ impl ConnApp {
             _rename_sub: rename_sub,
             rename_in_header: false,
             thread_menu: None,
+            rail_menu: None,
+            rail_gesture: crate::sidebar::rail::RailGesture::default(),
             thread_menu_copy_close_gen: 0,
             header_menu_generation: 0,
             thread_details: ThreadDetailsState::default(),
@@ -3120,7 +3153,7 @@ impl ConnApp {
         self.right_panel.read(cx).browser_title(cx)
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_preview_eval(
         &mut self,
         expression: &str,
@@ -3130,7 +3163,7 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.browser_preview_eval(expression, cx))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_preview_call(
         &mut self,
         op: &str,
@@ -3141,7 +3174,7 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.browser_preview_call(op, params, cx))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub(crate) fn browser_screenshot(
         &self,
         path: &std::path::Path,
@@ -3467,6 +3500,49 @@ impl ConnApp {
         self.layout.right_panel_open = !self.layout.right_panel_open;
         self.sync_browser_visibility(cx);
         cx.notify();
+    }
+
+    /// Opens or closes the terminal drawer under the chat (`terminal.toggle`, `Cmd+J`). Opening
+    /// starts the shell on first use and focuses it; closing returns focus to the shell root.
+    pub(crate) fn toggle_terminal_drawer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.terminal_drawer_open = !self.terminal_drawer_open;
+        let terminal = self.right_panel.read(cx).terminal_entity();
+        if self.terminal_drawer_open {
+            terminal.update(cx, |terminal, cx| {
+                terminal.ensure_started(cx);
+                terminal.focus(window, cx);
+            });
+        } else {
+            self.seam_drag = None;
+            window.focus(&self.focus_handle, cx);
+        }
+        cx.notify();
+    }
+
+    /// Starts dragging the terminal drawer's top edge from pointer height `y`.
+    pub(crate) fn begin_terminal_drawer_drag(&mut self, y: f32, cx: &mut Context<'_, Self>) {
+        self.seam_drag = Some(SeamDrag::TerminalDrawer {
+            from_y: y,
+            start: self.terminal_drawer_height,
+        });
+        cx.notify();
+    }
+
+    /// Resets the terminal drawer to its default height (double-click on its handle).
+    pub(crate) fn reset_terminal_drawer_height(&mut self, cx: &mut Context<'_, Self>) {
+        self.terminal_drawer_height = TERMINAL_DRAWER_DEFAULT_PX;
+        self.seam_drag = None;
+        cx.notify();
+    }
+
+    /// The open right panel has no tab, so it lists the surfaces to open.
+    fn right_panel_shows_launcher(&self) -> bool {
+        self.layout
+            .shows_surface_launcher(self.right_panel_open_tabs.len())
     }
 
     /// The active right-panel surface.
@@ -4222,6 +4298,7 @@ impl ConnApp {
     /// Returns whether anything closed.
     fn dismiss_shell_popovers(&mut self, cx: &mut Context<'_, Self>) -> bool {
         let mut changed = self.thread_menu.take().is_some();
+        changed |= self.rail_menu.take().is_some();
         if changed {
             self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
         }
@@ -4450,10 +4527,15 @@ impl ConnApp {
 
     /// Applies one pointer move of a seam drag, keeping the chat column at least `640px`
     /// (`THREAD_MAIN_CONTENT_MIN_WIDTH`).
-    fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, viewport_w: f32) {
+    fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, y: f32, viewport: (f32, f32)) {
         const CHAT_MIN_WIDTH_PX: f32 = 640.0;
+        let (viewport_w, viewport_h) = viewport;
         let rail = crate::shell::WORKSPACE_RAIL_WIDTH_PX;
         match drag {
+            SeamDrag::TerminalDrawer { from_y, start } => {
+                self.terminal_drawer_height =
+                    clamp_terminal_drawer_height(start + (from_y - y), viewport_h);
+            }
             SeamDrag::Sidebar { from_x, start } => {
                 let right = if self.layout.right_panel_open {
                     self.layout.right_panel_width
@@ -4879,8 +4961,8 @@ impl ConnApp {
 
     /// Current layout state.
     #[cfg_attr(
-        not(feature = "automation"),
-        expect(dead_code, reason = "read by the automation hook")
+        all(not(feature = "automation"), not(test)),
+        expect(dead_code, reason = "read by the automation hook and UI tests")
     )]
     #[must_use]
     pub(crate) fn layout(&self) -> &LayoutState {
@@ -4914,6 +4996,7 @@ impl ConnApp {
                 layout: &self.layout,
                 draft_project_id: self.draft.as_ref().map(|d| d.project_id.as_str()),
                 details_open: self.thread_details.open,
+                terminal_open: self.terminal_drawer_open,
                 header_rename: (self.rename_in_header && self.renaming_thread_id.is_some())
                     .then_some(&self.rename_input),
                 tokens: &self.tokens,
@@ -4930,9 +5013,33 @@ impl ConnApp {
         // Matches real Conn (`ChatView.tsx`): the chat card re-roots `--background` to opaque
         // `--shell-card` (`bg-background`), keeping the chat surface deeper than the glossy outer
         // shell and slightly deeper than the translucent sidebar card.
-        let chat_card = inset_card(&self.tokens, &self.geometry, join)
-            .bg(hsla(self.tokens.shell_card))
-            .child(self.chat.clone());
+        let chat_card = inset_card(&self.tokens, &self.geometry, join).bg(hsla(self.tokens.shell_card));
+        // Conn hosts the terminal as a bottom sheet in the chat card (`ThreadTerminalDrawer`).
+        // The right panel's Terminal tab shows the same view, so the drawer yields to it.
+        let drawer_visible = self.terminal_drawer_open
+            && !(self.layout.right_panel_open
+                && self.layout.right_panel_tab == RightPanelTab::Terminal);
+        let chat_card = if drawer_visible {
+            let terminal = self.right_panel.read(cx).terminal_entity();
+            chat_card
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .min_h_0()
+                        .min_w_0()
+                        .child(self.chat.clone()),
+                )
+                .child(crate::panels::terminal_drawer::render_terminal_drawer(
+                    &terminal,
+                    clamp_terminal_drawer_height(self.terminal_drawer_height, viewport_h),
+                    &self.tokens,
+                    cx,
+                ))
+        } else {
+            chat_card.child(self.chat.clone())
+        };
 
         let mut column = div()
             .id("conn-chat-column")
@@ -4966,17 +5073,29 @@ impl ConnApp {
                     thread,
                     state: &self.thread_details,
                     environment_label: &environment_label,
-                    max_height: (viewport_h - 104.0).max(160.0),
+                    max_height: (viewport_h
+                        - self.geometry.header_height_px
+                        - self.geometry.shell_inset_px
+                        - 2.0 * THREAD_DETAILS_CARD_GAP_PX)
+                        .max(160.0),
                     tokens: &self.tokens,
                 },
                 cx,
             );
+            // Sits inside the chat card with Conn's `THREAD_DETAILS_CARD_GAP` (12px) from its
+            // top and right edges (`threadDetailsCardLayout.ts`); the card has no right margin
+            // when the right panel is joined to it.
+            let card_right_margin = if self.layout.right_panel_open {
+                0.0
+            } else {
+                self.geometry.shell_inset_px
+            };
             column = column.child(
                 gpui_kit::deferred(
                     div()
                         .absolute()
-                        .top(px(self.geometry.header_height_px))
-                        .right(px(self.geometry.workspace_controls_right_px))
+                        .top(px(self.geometry.header_height_px + THREAD_DETAILS_CARD_GAP_PX))
+                        .right(px(card_right_margin + THREAD_DETAILS_CARD_GAP_PX))
                         .child(card),
                 )
                 .with_priority(4),
@@ -5019,6 +5138,36 @@ impl ConnApp {
         }
         self.chat
             .update(cx, |chat, cx| chat.on_question_key(event, window, cx, true))
+    }
+
+    /// Handles a surface's letter while the launcher shows and nothing has the keyboard, as
+    /// Conn's launcher does. Returns whether the key was used.
+    fn handle_launcher_key(
+        &mut self,
+        event: &gpui_kit::KeyDownEvent,
+        window: &mut gpui_kit::Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if !self.right_panel_shows_launcher() {
+            return false;
+        }
+        let modifiers = event.keystroke.modifiers;
+        if modifiers.control || modifiers.platform || modifiers.alt || modifiers.shift {
+            return false;
+        }
+        if window
+            .focused(cx)
+            .is_some_and(|focused| focused != self.focus_handle)
+        {
+            return false;
+        }
+        match RightPanelTab::from_menu_shortcut(&event.keystroke.key) {
+            Some(tab) if self.available_right_panel_tabs().contains(&tab) => {
+                self.select_right_panel_tab(tab, cx);
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Handles a key while the add-surface menu is open: a surface's letter opens it, Escape
@@ -5136,8 +5285,21 @@ impl ConnApp {
                 right: false,
             },
         )
-        .bg(hsla(self.tokens.shell_card))
-        .child(self.right_panel.clone());
+        .bg(hsla(self.tokens.shell_card));
+        let card = if self.right_panel_shows_launcher() {
+            card.child(crate::panels::header::render_panel_launcher(
+                &self.tokens,
+                &available_tabs,
+                Rc::new({
+                    let app = cx.entity();
+                    move |tab, _, cx| {
+                        app.update(cx, |this, cx| this.select_right_panel_tab(tab, cx));
+                    }
+                }),
+            ))
+        } else {
+            card.child(self.right_panel.clone())
+        };
 
         let column = div()
             .id("conn-right-panel-column")
@@ -6494,6 +6656,10 @@ impl Render for ConnApp {
                         cx.stop_propagation();
                         return;
                     }
+                    if app.handle_launcher_key(event, window, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
                     if app.pick_question_option_from_idle_focus(event, window, cx) {
                         return;
                     }
@@ -6538,6 +6704,9 @@ impl Render for ConnApp {
             }))
             .on_action(cx.listener(|app, _: &ToggleRightPanel, _window, cx| {
                 app.toggle_right_panel(cx);
+            }))
+            .on_action(cx.listener(|app, _: &ToggleTerminal, window, cx| {
+                app.toggle_terminal_drawer(window, cx);
             }))
             .on_action(cx.listener(|app, _: &NewThread, window, cx| {
                 app.start_new_thread(None, Some(window), cx);
@@ -6642,6 +6811,7 @@ impl Render for ConnApp {
                     self.active_workspace.as_deref(),
                     &self.tokens,
                     &self.geometry,
+                    &self.rail_gesture,
                     cx,
                 ))
                 .child(render_thread_sidebar(
@@ -6784,7 +6954,8 @@ impl Render for ConnApp {
                                         app.apply_seam_drag(
                                             drag,
                                             f32::from(event.position.x),
-                                            viewport_w,
+                                            f32::from(event.position.y),
+                                            (viewport_w, viewport_h),
                                         );
                                     } else {
                                         app.seam_drag = None;
@@ -6793,7 +6964,7 @@ impl Render for ConnApp {
                                 });
                             },
                         );
-                        let up_entity = entity;
+                        let up_entity = entity.clone();
                         window.on_mouse_event(
                             move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
                                 if phase != gpui_kit::DispatchPhase::Capture {
@@ -6822,6 +6993,15 @@ impl Render for ConnApp {
                 &anchor,
                 viewport,
                 &self.thread_menu_focus,
+                &self.tokens,
+                cx,
+            ));
+        }
+
+        if let Some(anchor) = &self.rail_menu {
+            let anchor = anchor.clone();
+            root = root.child(crate::sidebar::rail::render_rail_menu(
+                &anchor,
                 &self.tokens,
                 cx,
             ));

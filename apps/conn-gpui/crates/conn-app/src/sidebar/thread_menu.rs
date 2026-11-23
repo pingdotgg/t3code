@@ -22,15 +22,15 @@ use crate::theme::{hsla, hsla_alpha};
 
 /// `menu.tsx` popup geometry (`rounded-xl`, `p-1`, `min-w-[10rem]`), rows
 /// `min-h-7 rounded-lg px-2 py-1 gap-2 text-sm`.
-const MENU_RADIUS_PX: f32 = 12.0;
-const MENU_ROW_RADIUS_PX: f32 = 8.0;
-const MENU_ROW_HEIGHT_PX: f32 = 28.0;
+pub(super) const MENU_RADIUS_PX: f32 = 12.0;
+pub(super) const MENU_ROW_RADIUS_PX: f32 = 8.0;
+pub(super) const MENU_ROW_HEIGHT_PX: f32 = 28.0;
 const MENU_MIN_WIDTH_PX: f32 = 180.0;
-const MENU_FONT_PX: f32 = 14.0;
-const MENU_LINE_PX: f32 = 20.0;
-const MENU_ICON_PX: f32 = 16.0;
+pub(super) const MENU_FONT_PX: f32 = 14.0;
+pub(super) const MENU_LINE_PX: f32 = 20.0;
+pub(super) const MENU_ICON_PX: f32 = 16.0;
 /// Row icons draw at 80% opacity; disabled rows at 64%.
-const MENU_ICON_OPACITY: f32 = 0.8;
+pub(super) const MENU_ICON_OPACITY: f32 = 0.8;
 const MENU_DISABLED_OPACITY: f32 = 0.64;
 
 /// One thread action (`ThreadActionMenuId`), limited to what `conn-gpui` ships.
@@ -414,7 +414,7 @@ pub(crate) fn render_thread_action_menu(
     .into_any_element()
 }
 
-fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
+pub(super) fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
         .id(id)
         .occlude()

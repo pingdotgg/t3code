@@ -18,6 +18,7 @@ mod mcp;
 mod pull_request;
 mod tasks;
 mod terminal;
+pub(crate) mod terminal_drawer;
 mod terminal_palette;
 mod tree;
 
@@ -222,7 +223,7 @@ impl RightPanel {
         self.browser.read(cx).title()
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub fn browser_preview_eval(
         &mut self,
         expression: &str,
@@ -232,7 +233,7 @@ impl RightPanel {
             .update(cx, |b, _| b.start_preview_eval(expression))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub fn browser_preview_call(
         &mut self,
         op: &str,
@@ -243,7 +244,7 @@ impl RightPanel {
             .update(cx, |b, _| b.start_preview_call(op, params))
     }
 
-    #[cfg(all(feature = "cef", feature = "automation"))]
+    #[cfg(feature = "automation")]
     pub fn browser_screenshot(
         &self,
         path: &std::path::Path,
@@ -340,6 +341,11 @@ impl RightPanel {
     ) {
         self.device
             .update(cx, |panel, cx| panel.set_server_config(config, cx));
+    }
+
+    /// The terminal view, which the shell also hosts as a bottom drawer under the chat.
+    pub(crate) fn terminal_entity(&self) -> Entity<TerminalPanel> {
+        self.terminal.clone()
     }
 
     /// Updates theme tokens across the tab strip and every right-panel surface.

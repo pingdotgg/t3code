@@ -240,6 +240,7 @@ pub(super) fn render_model_picker(
 
     let mut list = div()
         .id("model-picker-list")
+        .a11y_group("composer.model-picker.list", "Models")
         .flex()
         .flex_col()
         .gap(px(2.0))
@@ -525,6 +526,7 @@ pub(super) fn render_model_picker(
 
     div()
         .id("composer-model-picker-popup")
+        .a11y_group("composer.model-picker", "Model picker")
         .flex()
         .flex_col()
         .w(px(PICKER_WIDTH_PX + EFFORT_COLUMN_WIDTH_PX))
@@ -601,6 +603,7 @@ fn render_effort_column(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
 
     let mut rows = div()
         .id("model-picker-effort-rows")
+        .a11y_group("composer.model-picker.effort", "Effort levels")
         .flex()
         .flex_col()
         .gap(px(2.0))
@@ -1027,6 +1030,7 @@ fn render_picker_footer(view: &ModelPickerView<'_>, cx: &mut Context<'_, Compose
     footer = footer.child(
         div()
             .id("model-picker-follow-up")
+            .a11y_group("composer.model-picker.follow-up", "Follow-up behavior")
             .child(follow)
             .conn_tooltip("While a turn runs: steer it, or queue after it", tokens),
     );

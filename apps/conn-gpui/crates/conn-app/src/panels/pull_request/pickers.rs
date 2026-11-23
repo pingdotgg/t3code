@@ -118,6 +118,7 @@ pub(super) fn render_reviewer_picker(
 
         let mut list = v_flex()
             .id("pr-reviewer-picker-list")
+            .a11y_group("panel.pull-request.reviewer-list", "Reviewer candidates")
             .w_full()
             .max_h(px(260.0))
             .overflow_y_scroll()
@@ -210,6 +211,7 @@ pub(super) fn render_reviewer_picker(
 
         let popup = v_flex()
             .id("pr-reviewer-picker-popup")
+            .a11y_group("panel.pull-request.reviewer-picker", "Reviewer picker")
             .w(px(288.0))
             .rounded(px(12.0))
             .bg(to_hsla(tokens.popover))
@@ -294,6 +296,7 @@ pub(super) fn render_label_picker(
 
         let mut list = v_flex()
             .id("pr-label-picker-list")
+            .a11y_group("panel.pull-request.label-list", "Label candidates")
             .w_full()
             .max_h(px(260.0))
             .overflow_y_scroll()
@@ -330,6 +333,7 @@ pub(super) fn render_label_picker(
                     .map(ToOwned::to_owned);
                 let mut row = h_flex()
                     .id(SharedString::from(format!("pr-label-cand-{idx}")))
+                    .a11y_button(format!("panel.pull-request.label-candidate.{idx}"), "Label candidate")
                     .w_full()
                     .min_h(px(28.0))
                     .px(px(8.0))
@@ -394,6 +398,7 @@ pub(super) fn render_label_picker(
 
         let popup = v_flex()
             .id("pr-label-picker-popup")
+            .a11y_group("panel.pull-request.label-picker", "Label picker")
             .w(px(288.0))
             .rounded(px(12.0))
             .bg(to_hsla(tokens.popover))
