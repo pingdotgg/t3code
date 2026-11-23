@@ -1,7 +1,9 @@
-import { HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
+import { Divider, HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
   accessibilityLabel,
+  accessibilityHidden,
   activityBackgroundTint,
+  contentShape,
   font,
   foregroundStyle,
   frame,
@@ -9,6 +11,7 @@ import {
   padding,
   privacySensitive,
   resizable,
+  shapes,
 } from "@expo/ui/swift-ui/modifiers";
 import { createLiveActivity, type LiveActivityComponent } from "expo-widgets";
 import type { ReactElement } from "react";
@@ -98,13 +101,30 @@ export const WorkLiveActivity: LiveActivityComponent<WorkLiveActivityProps> = (
               : dark
                 ? "#91ccff"
                 : "#235e9a";
-  const path = hero?.deepLink;
-  const destination =
+  const destinationFor = (path: string | undefined) =>
     !stale && path?.startsWith("/threads/") && !path.includes("?") && !path.includes("#")
       ? `${props.appScheme ?? "t3code"}://${path.slice(1)}`
       : undefined;
+  const destination = destinationFor(hero?.deepLink);
   const link = (content: ReactElement) =>
     destination ? <Link destination={destination}>{content}</Link> : content;
+  const next =
+    stale || done
+      ? undefined
+      : activities.find(
+          (row) =>
+            row.deepLink !== hero?.deepLink &&
+            (row.phase.startsWith("waiting") ||
+              row.phase === "running" ||
+              row.phase === "starting"),
+        );
+  const nextDestination = destinationFor(next?.deepLink);
+  const nextStatus =
+    next?.phase === "waiting_for_approval"
+      ? (text?.approval ?? "Approval needed")
+      : next?.phase === "waiting_for_input"
+        ? (text?.input ?? "Input needed")
+        : next?.status;
 
   const logo = (size: number) => (
     <HStack modifiers={[frame({ width: size, height: size })]}>
@@ -196,12 +216,59 @@ export const WorkLiveActivity: LiveActivityComponent<WorkLiveActivityProps> = (
     expandedTrailing: (
       <HStack modifiers={[padding({ trailing: 6, vertical: 4 })]}>{glyph(16)}</HStack>
     ),
-    expandedBottom: link(
-      <VStack alignment="leading" spacing={4} modifiers={[padding({ horizontal: 8, bottom: 4 })]}>
-        {heading(15)}
-        {subject(13)}
-        {metadata(detail ?? (stale ? undefined : hero?.projectTitle))}
-      </VStack>,
+    expandedBottom: (
+      <VStack alignment="leading" spacing={6} modifiers={[padding({ horizontal: 8, bottom: 4 })]}>
+        {link(
+          <VStack
+            alignment="leading"
+            spacing={4}
+            modifiers={[
+              frame({ maxWidth: Infinity, minHeight: 44, alignment: "leading" }),
+              contentShape(shapes.rectangle()),
+            ]}
+          >
+            {heading(15)}
+            {subject(13)}
+            {metadata(detail ?? (stale ? undefined : hero?.projectTitle))}
+          </VStack>,
+        )}
+        {next && nextDestination ? (
+          <>
+            <Divider />
+            <Link destination={nextDestination}>
+              <HStack
+                spacing={6}
+                modifiers={[
+                  frame({ maxWidth: Infinity, minHeight: 44, alignment: "leading" }),
+                  contentShape(shapes.rectangle()),
+                ]}
+              >
+                <VStack alignment="leading" spacing={2}>
+                  {metadata(nextStatus)}
+                  <Text
+                    modifiers={[
+                      font({ size: 13, weight: "semibold" }),
+                      lineLimit(1),
+                      privacySensitive(),
+                    ]}
+                  >
+                    {next.threadTitle}
+                  </Text>
+                </VStack>
+                <Spacer minLength={4} />
+                <Image
+                  systemName="chevron.right"
+                  modifiers={[
+                    font({ size: 10, weight: "semibold" }),
+                    foregroundStyle("secondary"),
+                    accessibilityHidden(),
+                  ]}
+                />
+              </HStack>
+            </Link>
+          </>
+        ) : null}
+      </VStack>
     ),
   };
 };

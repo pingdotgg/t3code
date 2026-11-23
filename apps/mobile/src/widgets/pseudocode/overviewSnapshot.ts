@@ -94,6 +94,23 @@ export function reconcileOverviewSnapshot(
     : snapshot;
   return {
     ...merged,
+    ...(merged.work
+      ? {
+          work: {
+            ...merged.work,
+            messages: Object.fromEntries(
+              [...merged.work.recent, ...merged.work.review, ...merged.activities].flatMap(
+                ({ deepLink }) => {
+                  const message = merged.work?.messages?.[deepLink];
+                  const preview =
+                    message === undefined ? previous?.work?.messages?.[deepLink] : message;
+                  return preview ? [[deepLink, preview]] : [];
+                },
+              ),
+            ),
+          },
+        }
+      : {}),
     activities: merged.activities.map((row) => {
       const cached = previous?.activities.find(
         (other) =>

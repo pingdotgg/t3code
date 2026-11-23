@@ -19,18 +19,21 @@ Add **PseudoCode Overview** from the widget gallery. Touch and hold the widget,
 choose **Edit Widget**, and pick a view. You can add multiple copies.
 
 - **Overview** shows work in progress and the threads that need you. The
-  extra-large iPad widget puts activity next to recent threads and results.
+  extra-large iPad widget puts the thread that needs your attention next to
+  recent threads and results. It can show a preview of the last message.
 - **Active now** shows how many threads are working or need you. Larger sizes
-  include approvals, questions, and active projects when available.
+  include approvals, questions, and active projects when available. On iPad,
+  the extra-large layout groups threads that need you and threads still working.
 - **Recent threads** shows your newest threads by activity. The large widget
   has three individually tappable rows.
 - **Ready to review** shows finished or failed runs you haven't opened since
   they ended.
 
 Tap a row to open its thread. Small widgets open the single thread they show or
-the app's thread list. Recent threads and Ready to review use the last sync
-from the open app. Direct background updates refresh thread statuses and active counts.
-Delayed active counts are marked **Last known**.
+the app's thread list. Large Recent threads and Ready to review widgets show
+last-message previews when available. These previews use the app's last sync.
+Direct background updates refresh thread statuses and counts. Delayed active
+counts are marked **Last known**.
 
 The Overview widget can include AI progress summaries when the host has an
 enabled, signed-in Claude provider. Summaries use Haiku through that connection
@@ -51,6 +54,7 @@ Each card puts an approval or question first and opens that thread when tapped.
 When no thread needs you, it shows the current activity and any recent outcome
 it received. The compact Dynamic Island gives the number of threads that need
 you or are working. Hold the Dynamic Island to see the thread behind the status.
+If a second thread is active, you can open it from the expanded view too.
 
 Completed and failed tasks appear among recent results for up to an hour when
 activity refreshes. Failures show **Needs review** and a short error explanation

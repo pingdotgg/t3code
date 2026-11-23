@@ -2,12 +2,16 @@ import * as DateTime from "effect/DateTime";
 import { makeThreadShellFixture } from "../test-fixtures";
 import {
   EnvironmentId,
+  MessageId,
+  OrchestrationV2ProjectedTurnItem,
   ProjectId,
   ProviderInstanceId,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
+import { selectWidgetMessagePreview } from "./pseudocode/widgetMessagePreview";
 import {
   EMPTY_AGENT_WIDGET_SNAPSHOT,
   agentWidgetContentKey,
@@ -17,6 +21,7 @@ import {
 
 const environmentId = EnvironmentId.make("environment-1");
 const project = { environmentId, id: ProjectId.make("project-1"), title: "Project" };
+const decodeProjectedTurnItem = Schema.decodeSync(OrchestrationV2ProjectedTurnItem);
 type WidgetThread = ReturnType<typeof makeThreadShellFixture>;
 function thread(overrides: Partial<WidgetThread> = {}): WidgetThread {
   const shell = makeThreadShellFixture({
@@ -136,6 +141,65 @@ describe("agent widget snapshots", () => {
       now,
     });
     expect(agentWidgetContentKey(changed)).not.toBe(agentWidgetContentKey(snapshot));
+  });
+  it("stores bounded previews of settled messages and keys reloads by message id", () => {
+    const source = thread();
+    const messageAt = DateTime.makeUnsafe(source.updatedAt);
+    const base = buildAgentWidgetSnapshot({
+      projects: [project],
+      captureWork: true,
+      now: messageAt.epochMilliseconds,
+      threads: [source],
+    });
+    const visibleMessage = (id: string, text: string, streaming: boolean, position: number) =>
+      decodeProjectedTurnItem({
+        position,
+        visibility: "local",
+        sourceThreadId: source.id,
+        sourceItemId: "item-" + id,
+        item: {
+          id: "item-" + id,
+          threadId: source.id,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: position,
+          type: "assistant_message",
+          title: "Assistant",
+          status: streaming ? "running" : "completed",
+          messageId: MessageId.make(id),
+          text,
+          streaming,
+          startedAt: messageAt,
+          completedAt: streaming ? null : messageAt,
+          updatedAt: messageAt,
+        },
+      });
+    const snapshot = (messageId: string, text: string) => {
+      const preview = selectWidgetMessagePreview([
+        visibleMessage(messageId, text, false, 0),
+        visibleMessage("streaming", "A partial answer", true, 1),
+      ]);
+      const work = base.work!;
+      return {
+        ...base,
+        work: { ...work, messages: preview ? { [work.recent[0]!.deepLink]: preview } : {} },
+      };
+    };
+    const first = snapshot("message-1", `Waiting for your answer.\n\n${"👋".repeat(240)}`);
+    const preview = Object.values(first.work?.messages ?? {})[0];
+    expect(preview).toMatchObject({ id: "message-1", role: "assistant" });
+    expect(preview?.text).toMatch(/^Waiting for your answer\. 👋.*…$/u);
+    expect([...(preview?.text ?? "")]).toHaveLength(200);
+    expect(agentWidgetContentKey(first)).toBe(
+      agentWidgetContentKey(snapshot("message-1", "More text")),
+    );
+    expect(agentWidgetContentKey(first)).not.toBe(
+      agentWidgetContentKey(snapshot("message-2", "More text")),
+    );
   });
   it("merges background updates per environment and ignores late or removed-server pushes", () => {
     const secondEnvironment = EnvironmentId.make("environment-2");

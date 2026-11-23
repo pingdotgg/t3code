@@ -1,12 +1,17 @@
 import { Divider, HStack, Image, Link, Spacer, Text, VStack } from "@expo/ui/swift-ui";
 import {
+  accessibilityHidden,
+  background,
+  clipShape,
   contentShape,
+  fixedSize,
   font,
   foregroundStyle,
   frame,
   layoutPriority,
   lineLimit,
   monospacedDigit,
+  padding,
   privacySensitive,
   resizable,
   shapes,
@@ -47,6 +52,8 @@ export function OverviewWidget(
     noRecent: "No recent threads",
     noReview: "All caught up",
     sync: "Open PseudoCode to refresh",
+    you: "You",
+    agent: "Agent",
   };
   const family = environment.widgetFamily;
   const small = family === "systemSmall";
@@ -73,6 +80,8 @@ export function OverviewWidget(
   const inFlight = (phase: WorkThread["phase"]) =>
     phase === "starting" || phase === "running" || phase.startsWith("waiting");
   const active = (props.activities ?? []).filter((row) => inFlight(row.phase));
+  const waitingRows = active.filter((row) => row.phase.startsWith("waiting"));
+  const workingRows = active.filter((row) => !row.phase.startsWith("waiting"));
   const recent = (props.work?.recent ?? []).map((row) => {
     const source =
       props.environments?.find((entry) => entry.environmentId === row.environmentId)?.snapshot ??
@@ -105,8 +114,14 @@ export function OverviewWidget(
     return dark ? "#91ccff" : "#235e9a";
   };
 
-  const heading = (title: string) => (
-    <Text modifiers={[font({ textStyle: "headline", weight: "semibold" }), lineLimit(1)]}>
+  const heading = (title: string, section = false) => (
+    <Text
+      modifiers={[
+        font({ textStyle: section ? "subheadline" : "headline", weight: "semibold" }),
+        ...(section ? [foregroundStyle("secondary")] : []),
+        lineLimit(small ? 2 : 1),
+      ]}
+    >
       {title}
     </Text>
   );
@@ -125,12 +140,12 @@ export function OverviewWidget(
   const metric = (value: number, label: string, tint = "primary") => (
     <VStack
       alignment="leading"
-      spacing={1}
+      spacing={3}
       modifiers={[frame({ maxWidth: Infinity, alignment: "leading" })]}
     >
       <Text
         modifiers={[
-          font({ size: small ? 28 : 24, weight: "bold" }),
+          font({ size: small ? 25 : 22, weight: "semibold" }),
           monospacedDigit(),
           foregroundStyle(tint),
           lineLimit(1),
@@ -138,11 +153,20 @@ export function OverviewWidget(
       >
         {String(value)}
       </Text>
-      {caption(label)}
+      <Text
+        modifiers={[
+          font({ textStyle: "caption", weight: "medium" }),
+          foregroundStyle("secondary"),
+          lineLimit(2),
+          fixedSize({ vertical: true }),
+        ]}
+      >
+        {label}
+      </Text>
     </VStack>
   );
 
-  const row = (item: OverviewRow, showDetail: boolean) => {
+  const row = (item: OverviewRow, showDetail: boolean, previewLines = 0) => {
     const phase = stalePhase(item.phase);
     if (small) {
       return (
@@ -163,9 +187,11 @@ export function OverviewWidget(
     }
     const icon =
       item.projectIcon ?? props.projectIcons?.[`${item.environmentId}:${item.projectId}`];
+    const message = previewLines > 0 ? props.work?.messages?.[item.deepLink] : undefined;
+    const messageAuthor = message?.role === "user" ? (copy.you ?? "You") : (copy.agent ?? "Agent");
     const content = (
       <HStack
-        spacing={8}
+        spacing={10}
         modifiers={[
           frame({ maxWidth: Infinity, minHeight: 44, alignment: "leading" }),
           contentShape(shapes.rectangle()),
@@ -178,53 +204,89 @@ export function OverviewWidget(
               resizable(),
               widgetAccentedRenderingMode("fullColor"),
               frame({ width: 24, height: 24 }),
+              clipShape("roundedRectangle", 6),
+              accessibilityHidden(),
             ]}
           />
         ) : (
           <Image
             systemName="folder"
-            modifiers={[font({ size: 18 }), foregroundStyle("secondary")]}
+            modifiers={[
+              font({ size: 16 }),
+              foregroundStyle("secondary"),
+              frame({ width: 24, height: 24 }),
+              accessibilityHidden(),
+            ]}
           />
         )}
         <VStack
           alignment="leading"
-          spacing={2}
+          spacing={3}
           modifiers={[frame({ maxWidth: Infinity, alignment: "leading" })]}
         >
           <Text
             modifiers={[
               font({ textStyle: "subheadline", weight: "semibold" }),
-              lineLimit(1),
+              lineLimit(large && (wide ? previewLines > 2 : view !== "review") ? 2 : 1),
+              fixedSize({ vertical: true }),
               privacySensitive(),
             ]}
           >
             {item.threadTitle}
           </Text>
-          {caption(
-            showDetail && item.summary && phase !== "stale" ? item.summary : item.projectTitle,
-            "secondary",
-            true,
-          )}
+          <HStack spacing={5}>
+            <Text
+              modifiers={[
+                font({ textStyle: "caption", weight: "medium" }),
+                foregroundStyle(color(phase)),
+                lineLimit(1),
+                layoutPriority(1),
+              ]}
+            >
+              {labels[phase]}
+            </Text>
+            {caption("·")}
+            {caption(
+              showDetail && item.summary && phase !== "stale" ? item.summary : item.projectTitle,
+              "secondary",
+              true,
+            )}
+            {view === "recent" && (wide || !message) ? (
+              <>
+                <Spacer minLength={0} />
+                <Text
+                  date={new Date(item.updatedAt)}
+                  dateStyle="relative"
+                  modifiers={[
+                    font({ textStyle: "caption" }),
+                    foregroundStyle("secondary"),
+                    lineLimit(1),
+                  ]}
+                />
+              </>
+            ) : null}
+          </HStack>
+          {message ? (
+            <Text
+              modifiers={[
+                font({ textStyle: wide ? "footnote" : "caption" }),
+                foregroundStyle("secondary"),
+                lineLimit(previewLines),
+                privacySensitive(),
+              ]}
+            >
+              {`${messageAuthor} · ${message.text}`}
+            </Text>
+          ) : null}
         </VStack>
-        <VStack
-          alignment="trailing"
-          spacing={2}
+        <Image
+          systemName="chevron.right"
           modifiers={[
-            frame({ maxWidth: wide ? 142 : 105, alignment: "trailing" }),
-            layoutPriority(1),
+            font({ size: 10, weight: "semibold" }),
+            foregroundStyle("secondary"),
+            accessibilityHidden(),
           ]}
-        >
-          {caption(labels[phase], color(phase))}
-          <Text
-            date={new Date(item.updatedAt)}
-            dateStyle="relative"
-            modifiers={[
-              font({ textStyle: "caption2" }),
-              foregroundStyle("secondary"),
-              lineLimit(1),
-            ]}
-          />
-        </VStack>
+        />
       </HStack>
     );
     return (
@@ -234,30 +296,47 @@ export function OverviewWidget(
     );
   };
 
-  const list = (items: readonly OverviewRow[], empty: string, detail = false) =>
+  const list = (
+    items: readonly OverviewRow[],
+    empty: string,
+    detail = false,
+    firstPreview = 0,
+    otherPreviews = 0,
+  ) =>
     items.length ? (
       <VStack alignment="leading" spacing={8}>
-        {items.map((item) => row(item, detail))}
+        {items.map((item, index) => row(item, detail, index === 0 ? firstPreview : otherPreviews))}
       </VStack>
     ) : (
       caption(empty)
     );
 
-  const stats = (withBreakdown: boolean) => (
-    <VStack alignment="leading" spacing={wide ? 10 : 6}>
-      <HStack spacing={small ? 8 : 12} alignment="top">
-        {metric(working, copy.working, color(stalePhase("running")))}
-        {metric(waiting, copy.waiting, color(stalePhase("waiting_for_approval")))}
+  const panelStyle = tinted
+    ? []
+    : [background(dark ? "#23252B" : "#EBEEF3", shapes.roundedRectangle({ cornerRadius: 12 }))];
+  const statsStyle = small || tinted ? [] : [padding({ all: 8 }), ...panelStyle];
+  const breakdown = [
+    { count: approvals, label: copy.approvals },
+    { count: questions, label: copy.questions },
+    { count: props.activeProjectCount, label: copy.projects },
+  ].filter(({ count }) => count !== undefined && (count > 0 || view === "active"));
+  const stats = (
+    <VStack alignment="leading" spacing={6}>
+      <HStack spacing={small ? 8 : 4} alignment="top" modifiers={statsStyle}>
+        {metric(working, copy.working, working > 0 ? color(stalePhase("running")) : "primary")}
+        {metric(
+          waiting,
+          copy.waiting,
+          waiting > 0 ? color(stalePhase("waiting_for_approval")) : "primary",
+        )}
         {large && ready !== undefined ? metric(ready, copy.review) : null}
       </HStack>
-      {withBreakdown && (approvals !== undefined || props.activeProjectCount !== undefined) ? (
-        <HStack spacing={10} alignment="top">
-          {approvals !== undefined ? metric(approvals, copy.approvals) : null}
-          {questions !== undefined ? metric(questions, copy.questions) : null}
-          {props.activeProjectCount !== undefined
-            ? metric(props.activeProjectCount, copy.projects)
-            : null}
-        </HStack>
+      {large && breakdown.length > 0 ? (
+        <Text
+          modifiers={[font({ textStyle: "caption" }), foregroundStyle("secondary"), lineLimit(2)]}
+        >
+          {breakdown.map(({ count, label }) => `${label} ${count}`).join(" · ")}
+        </Text>
       ) : null}
       {delayed ? caption(copy.lastKnown) : null}
     </VStack>
@@ -265,73 +344,177 @@ export function OverviewWidget(
 
   const recentEmpty = props.work ? copy.noRecent : copy.sync;
   const reviewEmpty = props.work ? copy.noReview : copy.sync;
+  const smallRequest =
+    small && !delayed && (view === "overview" || view === "active") ? waitingRows[0] : undefined;
   const smallThread = small
     ? view === "recent"
       ? recent[0]
       : view === "review"
         ? review[0]
-        : undefined
+        : smallRequest
     : undefined;
   const root = [
     frame({ maxWidth: Infinity, maxHeight: Infinity, alignment: "topLeading" }),
     widgetURL(url(smallThread?.deepLink)),
   ];
+  const column = [frame({ maxWidth: Infinity, alignment: "topLeading" })];
+  const focusCard = (item: OverviewRow, label?: string, previewLines = 4) => (
+    <VStack alignment="leading" spacing={5} modifiers={[padding({ all: 12 }), ...panelStyle]}>
+      {label ? heading(label, true) : null}
+      {row(item, true, previewLines)}
+    </VStack>
+  );
 
-  if (wide && view === "overview") {
+  if (wide && (view === "overview" || view === "active")) {
+    const activeOnly = view === "active";
+    const focus =
+      waitingRows[0] ?? workingRows[0] ?? (activeOnly ? undefined : (review[0] ?? recent[0]));
+    const focusLabel =
+      waitingRows.length > 0
+        ? copy.waiting
+        : active.length > 0
+          ? copy.working
+          : review.length > 0
+            ? copy.review
+            : copy.recent;
+    const nextReview = review.find((item) => item.deepLink !== focus?.deepLink);
+    const otherRecent = recent.filter((item) => item.deepLink !== focus?.deepLink);
+    const remainingWaiting = waitingRows.filter((item) => item.deepLink !== focus?.deepLink);
+    const remainingWorking = workingRows.filter((item) => item.deepLink !== focus?.deepLink);
+    const showRecent = otherRecent.length > 0 || recent.length === 0;
+    const showRight = activeOnly
+      ? remainingWaiting.length > 0 || remainingWorking.length > 0
+      : showRecent || nextReview !== undefined;
     return (
-      <HStack alignment="top" spacing={20} modifiers={root}>
-        <VStack
-          alignment="leading"
-          spacing={10}
-          modifiers={[frame({ maxWidth: Infinity, alignment: "topLeading" })]}
-        >
+      <HStack alignment="top" spacing={16} modifiers={root}>
+        <VStack alignment="leading" spacing={10} modifiers={column}>
           {heading(copy.active)}
-          {props.activities === undefined ? caption(copy.sync) : stats(true)}
-          <Divider />
-          {list(active.slice(0, 2), copy.noActive, true)}
+          {props.activities === undefined ? caption(copy.sync) : stats}
+          {focus
+            ? focusCard(focus, focusLabel)
+            : props.activities !== undefined
+              ? caption(copy.noActive)
+              : null}
+          {!activeOnly && focus && !props.work?.messages?.[focus.deepLink] && remainingWorking[0]
+            ? row(remainingWorking[0], true)
+            : null}
         </VStack>
-        <Divider />
-        <VStack
-          alignment="leading"
-          spacing={8}
-          modifiers={[frame({ maxWidth: Infinity, alignment: "topLeading" })]}
-        >
-          {heading(copy.recent)}
-          {list(recent, recentEmpty)}
-          <Divider />
-          {heading(copy.review)}
-          {list(review.slice(0, 1), reviewEmpty)}
-        </VStack>
+        {showRight ? <Divider /> : null}
+        {showRight ? (
+          <VStack alignment="leading" spacing={8} modifiers={column}>
+            {activeOnly ? (
+              <>
+                {remainingWaiting.length ? heading(copy.waiting) : null}
+                {remainingWaiting
+                  .slice(0, 2)
+                  .map((item, index) => row(item, true, index === 0 ? 1 : 0))}
+                {remainingWorking.length ? heading(copy.working) : null}
+                {remainingWorking
+                  .slice(0, remainingWaiting.length >= 2 ? 1 : 2)
+                  .map((item, index) => row(item, true, index === 0 ? 1 : 0))}
+              </>
+            ) : (
+              <>
+                {showRecent ? heading(copy.recent) : null}
+                {showRecent ? list(otherRecent, recentEmpty, false, 1) : null}
+                {nextReview ? (
+                  <>
+                    {showRecent ? <Divider /> : null}
+                    {heading(copy.review)}
+                    {row(nextReview, false)}
+                  </>
+                ) : null}
+              </>
+            )}
+          </VStack>
+        ) : null}
       </HStack>
+    );
+  }
+
+  const resultCounts = props.work ? (
+    <HStack spacing={8} alignment="top" modifiers={statsStyle}>
+      {metric(props.work.finished, copy.finished, color("completed"))}
+      {metric(props.work.failed, copy.failed, color("failed"))}
+    </HStack>
+  ) : null;
+
+  const detailRows = view === "recent" ? recent : review;
+  const detailTitle = view === "recent" ? copy.recent : copy.review;
+  const detailEmpty = view === "recent" ? recentEmpty : reviewEmpty;
+  if (wide && (view === "recent" || view === "review") && detailRows[0]) {
+    const otherPreviewLines = view === "recent" ? 4 : 1;
+    return (
+      <VStack alignment="leading" spacing={10} modifiers={root}>
+        {heading(detailTitle)}
+        <HStack alignment="top" spacing={16}>
+          <VStack alignment="leading" spacing={8} modifiers={column}>
+            {view === "review" ? resultCounts : null}
+            {focusCard(detailRows[0], undefined, 6)}
+          </VStack>
+          {detailRows.length > 1 ? (
+            <>
+              <Divider />
+              <VStack alignment="leading" spacing={8} modifiers={column}>
+                {list(
+                  detailRows.slice(1, view === "recent" ? 3 : 5),
+                  detailEmpty,
+                  false,
+                  otherPreviewLines,
+                  otherPreviewLines,
+                )}
+              </VStack>
+            </>
+          ) : null}
+        </HStack>
+      </VStack>
     );
   }
 
   if (view === "recent" || view === "review") {
     const isRecent = view === "recent";
-    const limit = small ? 1 : large ? (isRecent ? 3 : wide ? 5 : 4) : 2;
+    const limit = small ? 1 : large ? (isRecent ? 3 : 4) : 2;
     return (
       <VStack alignment="leading" spacing={8} modifiers={root}>
-        {heading(isRecent ? copy.recent : copy.review)}
-        {large && !isRecent && props.work ? (
-          <HStack spacing={12}>
-            {metric(props.work.finished, copy.finished, color("completed"))}
-            {metric(props.work.failed, copy.failed, color("failed"))}
-          </HStack>
-        ) : null}
-        {list((isRecent ? recent : review).slice(0, limit), isRecent ? recentEmpty : reviewEmpty)}
+        {heading(detailTitle)}
+        {large && !isRecent ? resultCounts : null}
+        {list(
+          detailRows.slice(0, limit),
+          detailEmpty,
+          false,
+          large ? (isRecent ? 2 : 1) : 0,
+          wide ? 1 : 0,
+        )}
         {!small ? <Spacer minLength={0} /> : null}
       </VStack>
     );
   }
 
-  const rows = view === "active" ? active : (props.activities ?? []);
+  const showActive = view === "active" || active.length > 0;
+  const rows = showActive ? active : recent;
   return (
     <VStack alignment="leading" spacing={large ? 9 : 6} modifiers={root}>
       {heading(small || view === "active" ? copy.active : copy.overview)}
-      {props.activities === undefined ? caption(copy.sync) : stats(large)}
-      {!small && props.activities !== undefined
-        ? list(rows.slice(0, large ? 3 : 1), copy.noActive, large)
-        : null}
+      {props.activities === undefined ? caption(copy.sync) : stats}
+      {smallRequest ? (
+        <VStack alignment="leading" spacing={2}>
+          {caption(labels[smallRequest.phase], color(smallRequest.phase))}
+          {caption(smallRequest.threadTitle, "secondary", true)}
+        </VStack>
+      ) : null}
+      {!small && props.activities !== undefined ? (
+        <>
+          {large && view === "overview" && rows.length > 0
+            ? heading(showActive ? copy.active : copy.recent, true)
+            : null}
+          {list(
+            rows.slice(0, large ? 3 : 1),
+            showActive ? copy.noActive : recentEmpty,
+            large,
+            large && rows.length <= 1 ? 2 : 0,
+          )}
+        </>
+      ) : null}
       <Spacer minLength={0} />
     </VStack>
   );

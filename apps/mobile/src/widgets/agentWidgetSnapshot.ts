@@ -157,6 +157,9 @@ export function agentWidgetContentKey(snapshot: AgentWidgetSnapshot): string {
     work: snapshot.work && {
       ...snapshot.work,
       recent: snapshot.work.recent.map(({ updatedAt: _updatedAt, ...row }) => row),
+      messages:
+        snapshot.work.messages &&
+        Object.entries(snapshot.work.messages).map(([path, message]) => [path, message?.id]),
     },
     activities: snapshot.activities.map(({ updatedAt: _updatedAt, ...activity }) => activity),
     environments: snapshot.environments?.map(({ environmentId, snapshot }) => ({
@@ -212,8 +215,28 @@ export function mergeWidgetUpdate(
     .flatMap((entry) => entry.snapshot.activities)
     .sort((a, b) => priority(a.phase) - priority(b.phase) || b.updatedAt.localeCompare(a.updatedAt))
     .slice(0, 5);
+  const work = snapshot.work;
+  const messages = work?.messages;
+  const changed = new Set(
+    replacement.snapshot.activities.flatMap((row) => {
+      const prior = previous?.snapshot.activities.find((entry) => entry.deepLink === row.deepLink);
+      return prior && (prior.phase !== row.phase || prior.turnId !== row.turnId)
+        ? [row.deepLink]
+        : [];
+    }),
+  );
   return {
     ...snapshot,
+    ...(work && messages && changed.size > 0
+      ? {
+          work: {
+            ...work,
+            messages: Object.fromEntries(
+              Object.entries(messages).filter(([path]) => !changed.has(path)),
+            ),
+          },
+        }
+      : {}),
     activeCount: next.reduce((sum, entry) => sum + entry.snapshot.activeCount, 0),
     attentionCount: next.reduce((sum, entry) => sum + entry.snapshot.attentionCount, 0),
     activities,

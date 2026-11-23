@@ -10,6 +10,7 @@ import { environmentShell, environmentShellSummaryAtom } from "../../state/shell
 import { agentWidgetContentKey, buildAgentWidgetSnapshot } from "../../widgets/agentWidgetSnapshot";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { saveWidgetSnapshot } from "../../widgets/widgetStorage";
+import { useWidgetMessagePreviews } from "../../widgets/pseudocode/useWidgetMessagePreviews";
 
 const WIDGET_REFRESH_MS = 10 * 60_000;
 const liveEnvironmentKeyAtom = Atom.make((get) =>
@@ -51,6 +52,8 @@ function IosAgentWidgetSync() {
     () => buildAgentWidgetSnapshot({ projects, threads, captureWork: true }),
     [projects, threads],
   );
+  const [refreshTick, setRefreshTick] = useState(0);
+  const messages = useWidgetMessagePreviews(activitySnapshot, liveEnvironmentKey, refreshTick);
   const visibleProjectKeys = new Set(
     [
       ...activitySnapshot.activities,
@@ -66,6 +69,7 @@ function IosAgentWidgetSync() {
     );
     return {
       ...activitySnapshot,
+      ...(activitySnapshot.work ? { work: { ...activitySnapshot.work, messages } } : {}),
       projectIcons: Object.fromEntries(
         Object.entries(icons).filter(([key]) => workProjectKeys.has(key)),
       ),
@@ -74,10 +78,9 @@ function IosAgentWidgetSync() {
         return { ...row, ...(projectIcon ? { projectIcon } : {}) };
       }),
     };
-  }, [activitySnapshot, icons]);
+  }, [activitySnapshot, icons, messages]);
   const contentKey = `${liveEnvironmentKey}:${agentWidgetContentKey(snapshot)}`;
   const canPublish = catalog.isReady && (catalog.entries.size === 0 || shell.hasSnapshot);
-  const [refreshTick, setRefreshTick] = useState(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the timer that forces a periodic widget write
   useEffect(() => {
     const timer = setInterval(() => setRefreshTick((tick) => tick + 1), WIDGET_REFRESH_MS);

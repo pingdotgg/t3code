@@ -18,6 +18,13 @@ export interface WorkSnapshot {
   readonly review: readonly WorkThread[];
   readonly finished: number;
   readonly failed: number;
+  readonly messages?: Readonly<Record<string, WorkMessagePreview | null>>;
+}
+
+export interface WorkMessagePreview {
+  readonly id: string;
+  readonly role: "user" | "assistant";
+  readonly text: string;
 }
 
 export function createWorkSnapshotBuilder() {
@@ -37,7 +44,6 @@ export function createWorkSnapshotBuilder() {
       const meaningfulAt = [
         thread.createdAt,
         thread.latestUserAuthoredMessageAt ?? thread.latestUserMessageAt,
-        thread.latestVisibleMessage?.updatedAt,
         thread.latestRunRequestedAt,
         thread.latestRunStartedAt,
         thread.latestRunCompletedAt,

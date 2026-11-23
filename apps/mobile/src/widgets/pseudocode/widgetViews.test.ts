@@ -17,9 +17,13 @@ vi.mock("@expo/ui/swift-ui", () => ({
 vi.mock("@expo/ui/swift-ui/modifiers", () => {
   const noop = () => undefined;
   return {
+    accessibilityHidden: noop,
     accessibilityLabel: noop,
     activityBackgroundTint: noop,
+    background: noop,
+    clipShape: noop,
     contentShape: noop,
+    fixedSize: noop,
     font: noop,
     foregroundStyle: noop,
     frame: noop,
@@ -29,7 +33,7 @@ vi.mock("@expo/ui/swift-ui/modifiers", () => {
     padding: noop,
     privacySensitive: noop,
     resizable: noop,
-    shapes: { rectangle: noop },
+    shapes: { rectangle: noop, roundedRectangle: noop },
     widgetAccentedRenderingMode: noop,
     widgetURL: (url: string) => url,
   };
@@ -86,7 +90,19 @@ it("gives iPad recent rows individual destinations beside active work", () => {
       attentionCount: 3,
       approvalCount: 2,
       activities: [{ ...activeRow, headline: "Working" }],
-      work: { recent, review: [], finished: 0, failed: 0 },
+      work: {
+        recent,
+        review: [],
+        finished: 0,
+        failed: 0,
+        messages: {
+          [activeRow.deepLink]: {
+            id: "message",
+            role: "assistant",
+            text: "The build is ready for the next check.",
+          },
+        },
+      },
     },
     { widgetFamily: "systemExtraLarge", configuration: { view: "overview" } },
   );
@@ -100,10 +116,74 @@ it("gives iPad recent rows individual destinations beside active work", () => {
       "Working",
       "3",
       "Need you",
-      "Approvals",
-      "Questions",
+      "Approvals 2 · Questions 1",
       "Recent threads",
+      "Agent · The build is ready for the next check.",
     ]),
+  );
+});
+
+it("shows message previews in larger Recent threads widgets", () => {
+  const snapshot = {
+    work: {
+      recent: [{ ...activeRow, phase: "idle" as const }],
+      review: [],
+      finished: 0,
+      failed: 0,
+      messages: {
+        [activeRow.deepLink]: {
+          id: "message",
+          role: "user" as const,
+          text: "Check the staging logs.",
+        },
+      },
+    },
+  };
+  const widget = (size: "systemMedium" | "systemLarge" | "systemExtraLarge") =>
+    OverviewWidget(snapshot, {
+      widgetFamily: size,
+      configuration: { view: "recent" },
+    });
+  expect(childrenOf(widget("systemLarge"), "Text", "children")).toContain(
+    "You · Check the staging logs.",
+  );
+  expect(childrenOf(widget("systemExtraLarge"), "Text", "children")).toContain(
+    "You · Check the staging logs.",
+  );
+  expect(childrenOf(widget("systemMedium"), "Text", "children")).not.toContain(
+    "You · Check the staging logs.",
+  );
+});
+
+it("keeps three recent threads available when Overview has no active work", () => {
+  const recent = ["first", "second", "third"].map((threadId) => ({
+    ...activeRow,
+    phase: "idle" as const,
+    threadId: ThreadId.make(threadId),
+    deepLink: `/threads/remote/${threadId}`,
+  }));
+  const snapshot = {
+    activeCount: 0,
+    attentionCount: 0,
+    approvalCount: 0,
+    activeProjectCount: 0,
+    activities: [],
+    work: { recent, review: [], finished: 0, failed: 0 },
+  };
+  const overview = OverviewWidget(snapshot, { widgetFamily: "systemLarge", configuration: {} });
+  expect(childrenOf(overview, "Link", "destination")).toEqual(
+    recent.map((row) => `t3code://${row.deepLink.slice(1)}`),
+  );
+  expect(childrenOf(overview, "Text", "children")).toContain("Recent threads");
+  expect(childrenOf(overview, "Text", "children")).not.toContain(
+    "Approvals 0 · Questions 0 · Projects 0",
+  );
+  const active = OverviewWidget(snapshot, {
+    widgetFamily: "systemLarge",
+    configuration: { view: "active" },
+  });
+  expect(childrenOf(active, "Text", "children")).toContain(
+    "Approvals 0 · Questions 0 · Projects 0",
   );
 });
 
@@ -157,9 +237,11 @@ it("leads the Live Activity with attention and removes the active count when sta
   ]);
   expect(childrenOf(live.expandedBottom, "Link", "destination")).toEqual([
     "t3code-dev://threads/remote/approval",
+    "t3code-dev://threads/remote/working",
   ]);
   expect(childrenOf(live.compactTrailing, "Text", "children")).toEqual(["1"]);
   const stale = WorkLiveActivity(props, { ...environment, isStale: true });
   expect(childrenOf(stale.banner, "Text", "children")).toEqual(["Agent status out of date"]);
   expect(childrenOf(stale.compactTrailing, "Text", "children")).toEqual([]);
+  expect(childrenOf(stale.expandedBottom, "Link", "destination")).toEqual([]);
 });

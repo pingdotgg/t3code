@@ -23,6 +23,8 @@ export function overviewCopy() {
     noRecent: m(msg("No recent threads")),
     noReview: m(msg("All caught up")),
     sync: m(msg("Open PseudoCode to refresh")),
+    you: m(msg("You")),
+    agent: m(msg("Agent")),
   };
 }
 

@@ -132,6 +132,9 @@ it("merges exact stats from a capped background push and preserves the foregroun
     review: [],
     finished: 0,
     failed: 0,
+    messages: {
+      [row.deepLink]: { id: "response", role: "assistant" as const, text: "The build succeeded." },
+    },
   };
   await saveWidgetSnapshot({ ...snapshot(), work }, [environmentId]);
   await saveWidgetPush({
@@ -156,6 +159,13 @@ it("merges exact stats from a capped background push and preserves the foregroun
     activeProjectCount: 3,
     work,
   });
+  await saveWidgetSnapshot({ ...snapshot(), work: { ...work, messages: {} } }, []);
+  expect(storage.overview[0]?.props.work?.messages).toEqual(work.messages);
+  await saveWidgetSnapshot(
+    { ...snapshot(), work: { ...work, messages: { [row.deepLink]: null } } },
+    [environmentId],
+  );
+  expect(storage.overview[0]?.props.work?.messages).toEqual({});
 });
 
 it("keeps a project's resolved icon while foreground image loading restarts", async () => {
