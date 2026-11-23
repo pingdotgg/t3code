@@ -1264,11 +1264,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const privateLfs = path.join(privateObjects, "lfs");
       const publishLfsObjects = Effect.gen(function* () {
         const source = path.join(privateLfs, "objects");
-        const objects = (yield* fileSystem
-          .readDirectory(source, { recursive: true })
-          .pipe(Effect.orElseSucceed(() => []))).filter((entry) =>
-          /^[0-9a-f]{2}[\\/][0-9a-f]{2}[\\/][0-9a-f]{64}$/.test(entry),
-        );
+        const objects = (yield* fileSystem.readDirectory(source, { recursive: true }).pipe(
+          // Absent when no file went through the filter; any other failure must stop publication.
+          Effect.catchIf(
+            (cause) => cause.reason._tag === "NotFound",
+            () => Effect.succeed([]),
+          ),
+          Effect.mapError(
+            (cause) =>
+              new VcsCheckpointStorageError({
+                operation,
+                cwd: input.cwd,
+                stage: "publish",
+                cause,
+              }),
+          ),
+        )).filter((entry) => /^[0-9a-f]{2}[\\/][0-9a-f]{2}[\\/][0-9a-f]{64}$/.test(entry));
         if (objects.length === 0) return;
         const configured = yield* execute({
           operation,

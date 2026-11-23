@@ -502,6 +502,54 @@ it.effect("checkpoint staging moves Git LFS objects its clean filter wrote into 
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect("checkpoint capture fails instead of dropping Git LFS objects it cannot list", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
+    const cwd = path.join(sandbox, "repo");
+    yield* fs.makeDirectory(cwd);
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    // A file where git-lfs keeps its objects makes the store unreadable without being absent.
+    const filter = path.join(sandbox, "lfs-clean.cjs");
+    yield* fs.writeFileString(
+      filter,
+      [
+        "const fs = require('node:fs');",
+        `const storage = require('node:child_process').execSync('git config --default .git/lfs lfs.storage').toString().trim();`,
+        "fs.readFileSync(0);",
+        "fs.mkdirSync(storage, { recursive: true });",
+        "fs.writeFileSync(storage + '/objects', 'not a directory');",
+        "process.stdout.write('pointer\\n');",
+      ].join("\n"),
+    );
+    // Not "lfs": a machine-wide git-lfs install sets filter.lfs.process, which wins over clean.
+    yield* git(["config", "filter.lfs-standin.clean", `"${process.execPath}" "${filter}"`]);
+    yield* git(["config", "filter.lfs-standin.required", "true"]);
+    yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs-standin\n");
+    yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
+
+    const result = yield* driver.checkpoints
+      .captureCheckpoint({ cwd, checkpointRef })
+      .pipe(Effect.exit);
+
+    const error = Exit.isFailure(result) ? Cause.findErrorOption(result.cause) : Option.none();
+    assert.isTrue(
+      Option.isSome(error) &&
+        error.value._tag === "VcsCheckpointStorageError" &&
+        error.value.stage === "publish",
+    );
+    const ref = yield* driver.execute({
+      operation: "checkpoint-test",
+      cwd,
+      args: ["rev-parse", "--verify", "--quiet", checkpointRef],
+      allowNonZeroExit: true,
+    });
+    assert.strictEqual(ref.exitCode, 1);
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(["failure", "interrupt"] as const)(
   "checkpoint publication $0 preserves existing refs and permits retry",
   (stop) =>
