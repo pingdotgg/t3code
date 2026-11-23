@@ -534,40 +534,75 @@ function claudeDescendants(
   return found;
 }
 
-/** What a CLI started, by pid and start time, recorded from each process table read while it runs. */
-export function makeClaudeDescendantTracker(
-  cliPid: number,
+const processIdentity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
+
+/** What one CLI started, by pid and start time, recorded from each process table read while it runs. */
+function makeClaudeDescendantTracker(cliPid: number) {
+  const tracked = new Map<string, ClaudeProcessRow>();
+  // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
+  const record = (rows: ReadonlyArray<ClaudeProcessRow>, cliRunning: boolean) => {
+    const running = new Set(rows.map(processIdentity));
+    // `ps -A` lists itself, so no rows is a failed read.
+    if (rows.length === 0) return running;
+    const roots = cliRunning ? [cliPid] : [];
+    for (const [key, row] of tracked) {
+      if (running.has(key)) roots.push(row.pid);
+      else tracked.delete(key);
+    }
+    for (const row of claudeDescendants(rows, roots)) tracked.set(processIdentity(row), row);
+    return running;
+  };
+  return { tracked: tracked as ReadonlyMap<string, ClaudeProcessRow>, record };
+}
+
+/**
+ * Process table reads for every running CLI. A poll reads the table once for all of them, so the
+ * `ps` cost does not grow with open sessions.
+ */
+export function makeClaudeDescendantPoll(
   readProcessTable: Effect.Effect<ReadonlyArray<ClaudeProcessRow>>,
 ) {
-  const tracked = new Map<string, ClaudeProcessRow>();
-  const identity = (row: ClaudeProcessRow) => `${row.pid} ${row.started}`;
-  // The poll, a session close and the exit read one at a time, so each table is newer than all
-  // recorded here, and a pid and start time it no longer lists never run again.
+  const live = new Set<ReturnType<typeof makeClaudeDescendantTracker>>();
+  // Polls, session closes and exits read one at a time, so each table is newer than all recorded,
+  // and a pid and start time it no longer lists never run again.
   const reading = Semaphore.makeUnsafe(1);
-  // After exit the CLI's pid may belong to an unrelated process, so only tracked jobs are roots.
-  const refresh = Effect.fn("ClaudeAgentSdkQueryRunner.trackDescendants")(
-    function* (cliRunning: boolean) {
-      const rows = yield* readProcessTable;
-      const running = new Set(rows.map(identity));
-      // `ps -A` lists itself, so no rows is a failed read.
-      if (rows.length === 0) return running;
-      const roots = cliRunning ? [cliPid] : [];
-      for (const [key, row] of tracked) {
-        if (running.has(key)) roots.push(row.pid);
-        else tracked.delete(key);
-      }
-      for (const row of claudeDescendants(rows, roots)) tracked.set(identity(row), row);
-      return running;
-    },
-    (effect) => reading.withPermits(1)(effect),
-  );
+  const read = <A>(apply: (rows: ReadonlyArray<ClaudeProcessRow>) => A) =>
+    reading.withPermits(1)(readProcessTable.pipe(Effect.map(apply)));
   return {
-    tracked: tracked as ReadonlyMap<string, ClaudeProcessRow>,
-    refresh: refresh(true).pipe(Effect.asVoid),
-    /** Reads the table after the CLI exited: what it left that is still the same process. */
-    leftovers: refresh(false).pipe(
-      Effect.map((running) => [...tracked.values()].filter((row) => running.has(identity(row)))),
-    ),
+    // A table read before a CLI started may list an older process under its pid, so a poll records
+    // only into the CLIs tracked when its read began.
+    poll: reading
+      .withPermits(1)(
+        Effect.suspend(() => {
+          const tracked = [...live];
+          return readProcessTable.pipe(
+            Effect.map((rows) => {
+              for (const tracker of tracked) if (live.has(tracker)) tracker.record(rows, true);
+            }),
+          );
+        }),
+      )
+      .pipe(Effect.withSpan("ClaudeAgentSdkQueryRunner.trackDescendants")),
+    track: (cliPid: number) => {
+      const tracker = makeClaudeDescendantTracker(cliPid);
+      live.add(tracker);
+      return {
+        tracked: tracker.tracked,
+        refresh: read((rows) => void tracker.record(rows, true)),
+        /** Reads the table after the CLI exited: what it left that is still the same process. */
+        leftovers: Effect.sync(() => live.delete(tracker)).pipe(
+          Effect.andThen(
+            read((rows) => {
+              const running = tracker.record(rows, false);
+              return [...tracker.tracked.values()].filter((row) =>
+                running.has(processIdentity(row)),
+              );
+            }),
+          ),
+        ),
+      };
+    },
+    hasLive: () => live.size > 0,
   };
 }
 
@@ -1549,8 +1584,24 @@ export const layerQueryRunner: Layer.Layer<
     // Without an agent scope, a job that left the CLI's group escapes the group kill and is
     // re-parented once the CLI exits. So the CLI's tree is recorded while it runs, and what is
     // still the same process (pid and start time) is stopped after it exits.
+    const descendantPoll = makeClaudeDescendantPoll(readProcessTable);
+    // One poll serves every CLI. The first tracked CLI starts it; it stops once none is left.
+    let polling: Fiber.Fiber<unknown> | undefined;
     const trackDescendants = (cliPid: number) => {
-      const tracker = makeClaudeDescendantTracker(cliPid, readProcessTable);
+      const tracker = descendantPoll.track(cliPid);
+      polling ??= runFork(
+        descendantPoll.poll.pipe(
+          Effect.repeat({
+            schedule: Schedule.spaced(CLAUDE_DESCENDANT_POLL),
+            // Cleared in the same step that ends the poll, so the next tracked CLI starts a new one.
+            while: () => {
+              if (descendantPoll.hasLive()) return true;
+              polling = undefined;
+              return false;
+            },
+          }),
+        ),
+      );
       const stop = tracker.leftovers.pipe(
         Effect.map((rows) => {
           for (const row of rows) killClaudeDescendant(row);
@@ -1666,12 +1717,7 @@ export const layerQueryRunner: Layer.Layer<
             );
             if (unit === undefined && child.pid !== undefined) {
               const tracker = trackDescendants(child.pid);
-              const polling = runFork(
-                tracker.refresh.pipe(Effect.repeat(Schedule.spaced(CLAUDE_DESCENDANT_POLL))),
-              );
-              child.once("exit", () =>
-                runFork(Fiber.interrupt(polling).pipe(Effect.andThen(tracker.stop))),
-              );
+              child.once("exit", () => runFork(tracker.stop));
               refreshDescendants = tracker.refresh;
             }
             return child;

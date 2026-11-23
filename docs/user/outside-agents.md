@@ -138,14 +138,19 @@ Agents without OAuth support cannot connect.
 A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
 when something happens without reading threads over and over: a turn ended, an
 agent waits on a person, a guest asked something, a watched pull request woke
-its thread. Each of these is an event type it can poll or stream, narrowed to
-projects or threads. [Workflow runs](workflows.md) have their own event types,
-narrowed to workflows or runs: a run started, paused, resumed or ended, and a
-question it asks was raised or settled. Runs that another run started are left
-out unless asked for, as subagent threads are, and narrowing thread events to a
-run also picks out the threads that are its agent steps. The environment keeps its latest 1,000 milestones in
-memory, so a bot that was away longer, or reconnects after a restart, is told
-some may be missing and should reread the threads it cares about.
+its thread. [Workflow runs](workflows.md) are events too: a run started, paused,
+resumed or ended, or waits on a person. A bot can poll, stream, or receive each
+event type by webhook, narrowed to projects and threads or to workflows and
+runs; runs another run started are left out unless asked for, as subagent
+threads are, and narrowing thread events to a run picks out its agent steps.
+The environment keeps its latest 1,000 milestones in memory, so a bot that was
+away longer, or reconnects after a restart, is told some may be missing and
+should reread what it cares about. Webhooks go only to public `https` addresses,
+a subscription lasts at most an hour before the bot must renew it, and signing
+the bot out ends its subscriptions. To test with a receiver on your own machine
+or network, start the environment with `T3CODE_MCP_WEBHOOK_ALLOWED_HOSTS` set to
+its host names, for example `localhost,127.0.0.1`; those hosts may also use
+plain `http`.
 
 ## Scripts on the host
 
