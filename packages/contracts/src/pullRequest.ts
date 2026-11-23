@@ -4,6 +4,7 @@ import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import {
+  GitRefName,
   ForwardCompatibleArray,
   IsoDateTime,
   NonNegativeInt,
@@ -352,9 +353,13 @@ export const PullRequestStackMembership = Schema.Struct({
   number: PositiveInt,
   position: PositiveInt,
   size: PositiveInt,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
 });
 export type PullRequestStackMembership = typeof PullRequestStackMembership.Type;
+
+/** Who can read a pull request on a host that can hide one in a public repository. */
+export const PullRequestVisibility = Schema.Literals(["public", "private"]);
+export type PullRequestVisibility = typeof PullRequestVisibility.Type;
 
 export const PullRequestListEntry = Schema.Struct({
   stack: Schema.optional(PullRequestStackMembership),
@@ -367,8 +372,8 @@ export const PullRequestListEntry = Schema.Struct({
   title: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   author: Schema.NullOr(PullRequestActor),
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
+  baseBranch: GitRefName,
   state: PullRequestState,
   isDraft: Schema.Boolean,
   mergeability: PullRequestMergeability,
@@ -383,6 +388,8 @@ export const PullRequestListEntry = Schema.Struct({
   labels: Schema.Array(PullRequestLabel),
   reviewDecision: Schema.optional(PullRequestReviewDecision),
   checksState: Schema.optional(PullRequestChecksState),
+  /** Absent where the host has no private pull requests or names no visibility. */
+  visibility: Schema.optional(PullRequestVisibility),
 });
 export type PullRequestListEntry = typeof PullRequestListEntry.Type;
 
@@ -518,8 +525,8 @@ export const PullRequestSummary = Schema.Struct({
   url: TrimmedNonEmptyString,
   state: PullRequestState,
   isDraft: Schema.optional(Schema.Boolean),
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
+  baseBranch: GitRefName,
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   updatedAt: IsoDateTime,
@@ -545,14 +552,14 @@ export const PullRequestStack = Schema.Struct({
   id: TrimmedNonEmptyString,
   number: PositiveInt,
   url: TrimmedNonEmptyString,
-  base: TrimmedNonEmptyString,
+  base: GitRefName,
   layers: Schema.Array(
     Schema.Struct({
       number: PositiveInt,
       title: Schema.optional(Schema.String),
       isDraft: Schema.optional(Schema.Boolean),
       headSha: Schema.optional(TrimmedNonEmptyString),
-      headBranch: TrimmedNonEmptyString,
+      headBranch: GitRefName,
       state: PullRequestState,
     }),
   ),
@@ -659,14 +666,16 @@ export const PullRequestDetail = Schema.Struct({
   additions: NonNegativeInt,
   deletions: NonNegativeInt,
   changedFiles: NonNegativeInt,
-  headBranch: TrimmedNonEmptyString,
+  headBranch: GitRefName,
   headRepositoryNameWithOwner: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   headSha: Schema.optional(TrimmedNonEmptyString),
-  baseBranch: TrimmedNonEmptyString,
+  baseBranch: GitRefName,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
+  mergeCommitSha: Schema.optional(TrimmedNonEmptyString),
+  mergedBy: Schema.optional(PullRequestActor),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
@@ -682,6 +691,8 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
+  /** Absent where the host has no private pull requests or names no visibility. */
+  visibility: Schema.optional(PullRequestVisibility),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
@@ -834,6 +845,8 @@ export const PullRequestActionInput = Schema.Struct({
   /** Native stack scope; only send to environments advertising pullRequestStackActions. */
   stackNumber: Schema.optional(PositiveInt),
   expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
+  /** Merges refuse when the head commit is no longer this one. */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),

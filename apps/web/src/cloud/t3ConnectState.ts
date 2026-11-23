@@ -69,7 +69,6 @@ export type T3ConnectTurnOn =
  * `linkableHere` is the environment's own answer for this session (its link state).
  */
 export function resolveT3ConnectTurnOn(input: {
-  readonly desktopApp: boolean;
   readonly linkableHere: boolean;
   readonly cloudConfigured: boolean;
   readonly canReadRelay: boolean;
@@ -77,11 +76,7 @@ export function resolveT3ConnectTurnOn(input: {
   readonly connectDenial: string | undefined;
 }): T3ConnectTurnOn {
   if (input.connectDenial !== undefined) return { kind: "policy", reason: input.connectDenial };
-  return input.desktopApp &&
-    input.linkableHere &&
-    input.cloudConfigured &&
-    input.canReadRelay &&
-    input.canWriteRelay
+  return input.linkableHere && input.cloudConfigured && input.canReadRelay && input.canWriteRelay
     ? { kind: "here" }
     : { kind: "on-host" };
 }

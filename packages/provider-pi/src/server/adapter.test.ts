@@ -2078,6 +2078,30 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("counts a running Pi for port discovery until its session closes", () =>
+    Effect.gen(function* () {
+      const host = yield* ProviderHost.ProviderHost;
+      let running = 0;
+      yield* Effect.gen(function* () {
+        const fake = yield* makeFakePi;
+        yield* openRuntime(fake);
+        assert.equal(running, 1);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          trackAgent: () => {
+            running += 1;
+            return () => {
+              running -= 1;
+            };
+          },
+        }),
+      );
+      assert.equal(running, 0);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("gives notify and extension-error items distinct ids in each thread", () =>
     Effect.gen(function* () {
       const itemIds = new Set<string>();
@@ -3840,6 +3864,8 @@ describe("PiAdapterV2", () => {
         statuses: ["running", "running"],
         pending: [true],
       });
+      // pi-subagents can mark the run settled one snapshot before the member that ran last.
+      yield* emitSnapshot("failed", "running", "failed");
       yield* emitSnapshot("failed", "complete", "failed");
       assert.deepEqual(yield* collect("marker-2"), {
         statuses: ["completed", "failed"],
@@ -4129,6 +4155,62 @@ describe("PiAdapterV2", () => {
       assert.equal(
         turn.type === "provider_turn.updated" ? turn.providerTurn.model : null,
         "anthropic/model-b",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  it.effect("reports cached input as a share of input in live and completed token usage", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      fake.queueState({
+        sessionFile: FAKE_SESSION_FILE,
+        model: { provider: "anthropic", id: "large", contextWindow: 1_000_000 },
+      });
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      // Pi's message usage counts uncached input, cache reads and cache writes separately.
+      const usage = { input: 6, cacheRead: 40_101, cacheWrite: 10_561, output: 123 };
+      // Session stats total every message in the session, not this turn.
+      fake.queueStats({
+        tokens: {
+          input: 1_206,
+          cacheRead: 90_202,
+          cacheWrite: 60_622,
+          output: 250,
+          total: 152_280,
+        },
+        contextUsage: { tokens: 50_791, contextWindow: 1_000_000 },
+      });
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
+      yield* fake.emit({
+        type: "message_update",
+        usage: { ...usage, totalTokens: 50_791 },
+        assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "ok" },
+      });
+      const live = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage !== undefined,
+      );
+      assert.deepInclude(
+        live.type === "provider_turn.updated" ? live.providerTurn.tokenUsage : undefined,
+        { inputTokens: 50_668, cachedInputTokens: 40_101 },
+      );
+      yield* fake.emit({ type: "agent_settled" });
+      const completed = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepInclude(
+        completed.type === "provider_turn.updated" ? completed.providerTurn.tokenUsage : undefined,
+        { inputTokens: 50_668, cachedInputTokens: 40_101 },
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );

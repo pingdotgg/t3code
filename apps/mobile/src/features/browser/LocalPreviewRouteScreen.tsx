@@ -10,6 +10,7 @@ import { AppText } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { m } from "../../i18n/messages";
+import { useEnvironmentPreviewTunnelOff } from "../../state/entities";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserChrome } from "./BrowserBar";
@@ -49,11 +50,13 @@ export function LocalPreviewScreen(props: {
     useEnvironments().presentationById.get(environmentId)?.entry.target.label ??
     gt("the environment", { $context: "stands in for an environment name in a sentence" });
   const { themeVariables } = useAppearancePreferences();
+  const tunnelOff = useEnvironmentPreviewTunnelOff(environmentId);
   const webView = useRef<TunnelWebViewRef>(null);
   const [requested, setRequested] = useState(initialUrl);
   const [page, setPage] = useState<TunnelNavigation | null>(null);
   const [failed, setFailed] = useState(false);
   const [disconnected, setDisconnected] = useState(false);
+  const [outdated, setOutdated] = useState(false);
   const [debug, setDebug] = useState<string | undefined>(undefined);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   // After a failed load the webview reports no URL, so the address stays on the one asked for.
@@ -76,7 +79,7 @@ export function LocalPreviewScreen(props: {
   };
   const back = () => void webView.current?.goBack();
   const canGoBack = page?.canGoBack ?? false;
-  const pageColor = failed || unsupported !== null ? null : page?.pageColor || null;
+  const pageColor = failed || tunnelOff || unsupported !== null ? null : page?.pageColor || null;
 
   return (
     // Full screen spans the Duo's rail, so it insets its own sides; the pane is inset already.
@@ -120,12 +123,30 @@ export function LocalPreviewScreen(props: {
                 // A link to another port fails with that port's address, not the one typed earlier.
                 if (failure.url) setRequested(failure.url);
                 setDebug(failure.debug);
-                // Android reports no cause, so a refused tunnel request stands in for it there.
+                // Without a cause, a refused tunnel request reported through onAccess stands in.
                 if (failure.cause) setDisconnected(failure.cause === "environment");
+                setOutdated(failure.cause === "outdated");
                 setFailed(true);
               }}
             />
-            {unsupported !== null ? (
+            {tunnelOff ? (
+              <View
+                className="absolute inset-0 items-center justify-center"
+                style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}
+              >
+                <View className="w-full max-w-md">
+                  <EmptyState
+                    variant="plain"
+                    title={gt("{environment} doesn't share its localhost", {
+                      environment: environmentLabel,
+                    })}
+                    detail={gt(
+                      "The preview tunnel is off there, so its local servers only open in the streamed browser.",
+                    )}
+                  />
+                </View>
+              </View>
+            ) : unsupported !== null ? (
               <View
                 className="absolute inset-0 items-center justify-center"
                 style={{ backgroundColor: themeVariables["--color-sheet-solid"] }}
@@ -150,20 +171,27 @@ export function LocalPreviewScreen(props: {
                   <EmptyState
                     variant="plain"
                     title={
-                      disconnected
-                        ? gt("Not connected to {environment}", { environment: environmentLabel })
-                        : gt("Can't reach {host}", { host: hostOf(current) })
+                      outdated
+                        ? gt("Update T3 Code on {environment}", { environment: environmentLabel })
+                        : disconnected
+                          ? gt("Not connected to {environment}", { environment: environmentLabel })
+                          : gt("Can't reach {host}", { host: hostOf(current) })
                     }
                     detail={
-                      disconnected
+                      outdated
                         ? gt(
-                            "Pages on {environment}’s localhost load through its connection. Try again once it reconnects.",
+                            "{environment} runs a version of T3 Code that can't open its localhost pages on this device. Update it there, then try again.",
                             { environment: environmentLabel },
                           )
-                        : gt(
-                            "Nothing is listening on port {port} on {environment}. Start the server there, then try again.",
-                            { port: portOf(current), environment: environmentLabel },
-                          )
+                        : disconnected
+                          ? gt(
+                              "Pages on {environment}’s localhost load through its connection. Try again once it reconnects.",
+                              { environment: environmentLabel },
+                            )
+                          : gt(
+                              "Nothing is listening on port {port} on {environment}. Start the server there, then try again.",
+                              { port: portOf(current), environment: environmentLabel },
+                            )
                     }
                     actionLabel={gt("Try again")}
                     onAction={retry}
