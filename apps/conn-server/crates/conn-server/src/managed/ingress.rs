@@ -371,7 +371,6 @@ async fn ws(
     let options = SessionOptions {
         frame_parts: query.contains_key(conn_wire::frame_parts::QUERY_PARAM),
         max_message_bytes: crate::http::MAX_MESSAGE_BYTES,
-        idle_timeout: Duration::from_secs(60),
         context,
         gate: Some(SessionGate(handle)),
     };
