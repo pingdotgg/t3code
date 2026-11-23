@@ -270,13 +270,15 @@ private final class T3EnvironmentProxy {
   func store(proxyPort: UInt16) -> WKWebsiteDataStore {
     if let dataStore { return dataStore }
     let store = WKWebsiteDataStore.nonPersistent()
-    var proxy = ProxyConfiguration(
-      socksv5Proxy: .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: proxyPort)!)
+    // The C API, not the Swift overlay: the overlay links libswiftWebKit, which older iOS
+    // versions don't have, so the app would fail to launch there.
+    let proxy = nw_proxy_config_create_socksv5(
+      nw_endpoint_create_host("127.0.0.1", String(proxyPort))
     )
     // Only the stand-in host belongs to the environment; everything else loads directly.
-    proxy.matchDomains = [T3Loopback.standInHost]
-    proxy.allowFailover = false
-    store.proxyConfigurations = [proxy]
+    nw_proxy_config_add_match_domain(proxy, T3Loopback.standInHost)
+    nw_proxy_config_set_failover_allowed(proxy, false)
+    store.__proxyConfigurations = [proxy]
     dataStore = store
     return store
   }
