@@ -269,6 +269,32 @@ export const make = Effect.gen(function* () {
 
   /** By guest rather than attachment, since reopening DevTools reattaches the same guest. */
   const nativeCaptures = new WeakMap<Electron.WebContents, number>();
+  /** Nudge loops per guest; a guest is rethrottled only by the last, and only if they unthrottled it. */
+  const unthrottleHolds = new WeakMap<Electron.WebContents, { count: number; owned: boolean }>();
+
+  /** On Windows a hidden window's throttled guest draws no frame, and capturePage cannot wake it. */
+  const startNudging = (tab: AttachedTab) => {
+    if (tab.nudging !== null) return;
+    const { webContents } = tab.debuggee;
+    const hold = unthrottleHolds.get(webContents) ?? { count: 0, owned: false };
+    if (hold.count === 0 && !webContents.isDestroyed() && webContents.getBackgroundThrottling()) {
+      webContents.setBackgroundThrottling(false);
+      hold.owned = true;
+    }
+    hold.count += 1;
+    unthrottleHolds.set(webContents, hold);
+    tab.nudging = runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
+  };
+
+  const endNudging = (tab: AttachedTab) => {
+    if (tab.nudging === null) return;
+    tab.nudging = null;
+    const { webContents } = tab.debuggee;
+    const hold = unthrottleHolds.get(webContents);
+    if (!hold || --hold.count > 0) return;
+    unthrottleHolds.delete(webContents);
+    if (hold.owned && !webContents.isDestroyed()) webContents.setBackgroundThrottling(true);
+  };
 
   /**
    * A hidden, minimized or covered window (which Electron reports as visible) stops drawing its
@@ -285,7 +311,7 @@ export const make = Effect.gen(function* () {
             tabs.get(keyOf(tab.key)) !== tab ||
             webContents.isDestroyed()
           ) {
-            tab.nudging = null;
+            endNudging(tab);
             return Effect.void;
           }
           const inFlight = nativeCaptures.get(webContents) ?? 0;
@@ -308,12 +334,12 @@ export const make = Effect.gen(function* () {
     work: () => Promise<A>,
   ) => {
     tab.frameWaits.add(waits);
-    tab.nudging ??= runFork(nudgePaint(tab, PAINT_NUDGE_FIRST_MS));
+    startNudging(tab);
     return work().finally(() => {
       tab.frameWaits.delete(waits);
       if (tab.frameWaits.size > 0 || tab.nudging === null) return;
       runFork(Fiber.interrupt(tab.nudging));
-      tab.nudging = null;
+      endNudging(tab);
     });
   };
 
