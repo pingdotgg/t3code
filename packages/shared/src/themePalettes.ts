@@ -95,7 +95,13 @@ export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
 export type ThemeBackdrop = Readonly<{
-  glsl: string;
+  glsl?: string | undefined;
+  wgsl?: string | undefined;
+  hdr?: boolean | undefined;
+  hdrPeak?: number | undefined;
+  cellSize?: readonly [number, number] | undefined;
+  glyphScale?: number | undefined;
+  glyphs?: ReadonlyArray<string> | undefined;
   fps?: number | undefined;
   opacity?: number | undefined;
 }>;

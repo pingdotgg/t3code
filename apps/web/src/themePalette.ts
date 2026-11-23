@@ -151,7 +151,41 @@ function parseThemeBackdrop(value: unknown): ThemeBackdrop | undefined {
     value.glsl.length <= THEME_BACKDROP_GLSL_MAX_LENGTH
       ? value.glsl
       : undefined;
-  if (glsl === undefined) return undefined;
+  const wgsl =
+    typeof value.wgsl === "string" &&
+    value.wgsl.trim().length > 0 &&
+    value.wgsl.length <= THEME_BACKDROP_GLSL_MAX_LENGTH
+      ? value.wgsl
+      : undefined;
+  if (glsl === undefined && wgsl === undefined) return undefined;
+  const hdr = typeof value.hdr === "boolean" ? value.hdr : undefined;
+  const hdrPeak =
+    typeof value.hdrPeak === "number" &&
+    Number.isFinite(value.hdrPeak) &&
+    value.hdrPeak >= 1 &&
+    value.hdrPeak <= 10
+      ? value.hdrPeak
+      : undefined;
+  const cellSize =
+    Array.isArray(value.cellSize) &&
+    value.cellSize.length === 2 &&
+    typeof value.cellSize[0] === "number" &&
+    typeof value.cellSize[1] === "number" &&
+    value.cellSize[0] > 0 &&
+    value.cellSize[1] > 0
+      ? ([value.cellSize[0], value.cellSize[1]] as const)
+      : undefined;
+  const glyphScale =
+    typeof value.glyphScale === "number" &&
+    Number.isFinite(value.glyphScale) &&
+    value.glyphScale >= 1 &&
+    value.glyphScale <= 4
+      ? value.glyphScale
+      : undefined;
+  const glyphs =
+    Array.isArray(value.glyphs) && value.glyphs.every((g) => typeof g === "string")
+      ? (value.glyphs as ReadonlyArray<string>)
+      : undefined;
   const fps =
     typeof value.fps === "number" && Number.isFinite(value.fps) && value.fps >= 1 && value.fps <= 60
       ? value.fps
@@ -164,7 +198,13 @@ function parseThemeBackdrop(value: unknown): ThemeBackdrop | undefined {
       ? value.opacity
       : undefined;
   return {
-    glsl,
+    ...(glsl !== undefined ? { glsl } : {}),
+    ...(wgsl !== undefined ? { wgsl } : {}),
+    ...(hdr !== undefined ? { hdr } : {}),
+    ...(hdrPeak !== undefined ? { hdrPeak } : {}),
+    ...(cellSize !== undefined ? { cellSize } : {}),
+    ...(glyphScale !== undefined ? { glyphScale } : {}),
+    ...(glyphs !== undefined ? { glyphs } : {}),
     ...(fps !== undefined ? { fps } : {}),
     ...(opacity !== undefined ? { opacity } : {}),
   };

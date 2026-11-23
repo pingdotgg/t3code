@@ -9,8 +9,9 @@ import {
 export function ThemeBackdropHost() {
   const backdrop = useSyncExternalStore(subscribeThemeBackdrop, getActiveThemeBackdrop, () => null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const backendKey = backdrop?.wgsl ? "webgpu" : "webgl2";
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts and tears down the WebGL2 animation loop bound to the backdrop canvas
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts and tears down the GPU animation loop bound to the backdrop canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !backdrop) return;
@@ -21,6 +22,7 @@ export function ThemeBackdropHost() {
 
   return (
     <canvas
+      key={backendKey}
       ref={canvasRef}
       data-theme-backdrop-canvas=""
       aria-hidden="true"
