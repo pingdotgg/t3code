@@ -27,7 +27,11 @@ import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
-import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import {
+  PIERRE_TREE_UNSAFE_CSS,
+  pierreTreeStyle,
+  titleClippedPierreTreeRow,
+} from "~/pierre-tree-theme";
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
@@ -194,6 +198,9 @@ export default function FileBrowserPanel({
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
   const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  // Tree path of the revealed row. Folders restored or loaded later insert rows above it, so each
+  // path update scrolls to it again until the user takes over the scroll position.
+  const followedRevealRef = useRef<string | null>(null);
 
   // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
   const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
@@ -413,6 +420,9 @@ export default function FileBrowserPanel({
       controller.abort();
     };
   }, [load, selectedPath]);
+  const stopFollowingReveal = () => {
+    followedRevealRef.current = null;
+  };
   const handleSearchValueChange = (value: string) => {
     setQuery(value);
     if (value.trim().length === 0) {
@@ -453,9 +463,14 @@ export default function FileBrowserPanel({
       if (activeSearch !== null) model.closeSearch();
       model.resetPaths(treePaths, { initialExpandedPaths: [...expandedPathsRef.current] });
       if (activeSearch !== null) model.setSearch(activeSearch);
+    } else if (updates.length > 0) {
+      model.batch(updates);
+    } else {
       return;
     }
-    if (updates.length > 0) model.batch(updates);
+    if (followedRevealRef.current !== null) {
+      model.scrollToPath(followedRevealRef.current, { focus: false, offset: "center" });
+    }
   }, [ready, entryKinds, model, treePaths]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- expands every directory in the Pierre tree model while expand-all is on and no search is active
@@ -468,6 +483,7 @@ export default function FileBrowserPanel({
   useEffect(() => {
     if (!selectedPath) {
       handledRevealRef.current = null;
+      followedRevealRef.current = null;
       return;
     }
     const selectedKind = entryKinds.get(selectedPath);
@@ -495,6 +511,7 @@ export default function FileBrowserPanel({
     if (selectedInTree && treeSelectionPathRef.current === selectedPath) {
       treeSelectionPathRef.current = null;
       handledRevealRef.current = revealRequest;
+      followedRevealRef.current = null;
       return;
     }
     treeSelectionPathRef.current = null;
@@ -522,6 +539,7 @@ export default function FileBrowserPanel({
       focus: true,
       offset: "center",
     });
+    followedRevealRef.current = selectedTreePath;
     queueMicrotask(() => {
       syncingSelectionRef.current = false;
     });
@@ -538,7 +556,11 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
+      onWheel={stopFollowingReveal}
+      onPointerDown={stopFollowingReveal}
+      onTouchStart={stopFollowingReveal}
       onKeyDown={(event) => {
+        stopFollowingReveal();
         const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
         if (!isModPressed || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f")
           return;
@@ -627,7 +649,34 @@ export default function FileBrowserPanel({
           model={model}
           aria-label={gt("{projectName} files", { projectName })}
           className="min-h-0 flex-1 overflow-hidden"
+          onClickCapture={(event) => {
+            if (
+              event.defaultPrevented ||
+              event.button !== 0 ||
+              event.ctrlKey ||
+              event.metaKey ||
+              event.shiftKey ||
+              event.altKey ||
+              dragMention.isDragInProgress()
+            ) {
+              return;
+            }
+            // Pierre emits no change for its sole selected row; read before the click to avoid double opens.
+            const selected = model.getSelectedPaths();
+            const path = selected.length === 1 ? selected[0] : undefined;
+            if (!path || entryKindsRef.current.get(path) !== "file") return;
+            const clickedSelectedRow = event.nativeEvent
+              .composedPath()
+              .some(
+                (node) =>
+                  node instanceof HTMLElement && node.getAttribute("data-item-path") === path,
+              );
+            if (!clickedSelectedRow) return;
+            treeSelectionPathRef.current = path;
+            onOpenFile(panelPath(path));
+          }}
           style={pierreTreeStyle(resolvedTheme)}
+          onPointerOver={titleClippedPierreTreeRow}
         />
       )}
     </div>

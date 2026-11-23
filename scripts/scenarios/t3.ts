@@ -235,7 +235,7 @@ const readPairingPath = Effect.gen(function* () {
 });
 
 /** The id every thread link starts with, asked of the server the app talks to. */
-const environmentId = (baseUrl: string) =>
+export const environmentId = (baseUrl: string) =>
   HttpClient.get(`${baseUrl}/.well-known/t3/environment`).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
     Effect.flatMap(

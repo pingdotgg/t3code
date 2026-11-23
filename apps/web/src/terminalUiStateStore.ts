@@ -568,6 +568,22 @@ interface TerminalServerObservation {
   readonly snapshotId: string | symbol | undefined;
 }
 
+function forgetObservedTerminalId(
+  serverObservationsByThreadKey: Record<string, TerminalServerObservation>,
+  threadKey: string,
+  terminalId: string,
+): Record<string, TerminalServerObservation> {
+  const observation = serverObservationsByThreadKey[threadKey];
+  if (!observation?.ids.includes(terminalId)) {
+    return serverObservationsByThreadKey;
+  }
+  const ids = observation.ids.filter((id) => id !== terminalId);
+  if (ids.length === 0) {
+    return removeRecordEntry(serverObservationsByThreadKey, threadKey);
+  }
+  return { ...serverObservationsByThreadKey, [threadKey]: { ...observation, ids } };
+}
+
 interface TerminalUiStateStoreState {
   serverObservationsByThreadKey: Record<string, TerminalServerObservation>;
   terminalUiStateByThreadKey: Record<string, ThreadTerminalUiState>;
@@ -642,15 +658,32 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 suppression.suppressed,
               )
             : state.suppressedTerminalIdsByThreadKey;
+          // A listing from before this client placed the id is about an earlier terminal, so it
+          // must not make reconcile close the new one.
+          const nextServerObservationsByThreadKey =
+            suppression &&
+            !suppression.suppressed &&
+            !selectThreadTerminalUiState(
+              state.terminalUiStateByThreadKey,
+              threadRef,
+            ).terminalIds.includes(suppression.terminalId)
+              ? forgetObservedTerminalId(
+                  state.serverObservationsByThreadKey,
+                  terminalThreadKey(threadRef),
+                  suppression.terminalId,
+                )
+              : state.serverObservationsByThreadKey;
           if (
             nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
-            nextSuppressedTerminalIdsByThreadKey === state.suppressedTerminalIdsByThreadKey
+            nextSuppressedTerminalIdsByThreadKey === state.suppressedTerminalIdsByThreadKey &&
+            nextServerObservationsByThreadKey === state.serverObservationsByThreadKey
           ) {
             return state;
           }
           return {
             terminalUiStateByThreadKey: nextTerminalUiStateByThreadKey,
             suppressedTerminalIdsByThreadKey: nextSuppressedTerminalIdsByThreadKey,
+            serverObservationsByThreadKey: nextServerObservationsByThreadKey,
           };
         });
       };
