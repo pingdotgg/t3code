@@ -95,6 +95,7 @@ export function MobileExtensionInstallForm({
         <FolderBrowser
           environment={{ environmentId, platform }}
           pathInput={source}
+          disabled={busy}
           setPathInput={setSource}
           navigateToBrowsePath={async ({ browseDirectoryPath, selectedDirectoryName }) => {
             setSource(

@@ -28,12 +28,16 @@ if(message.type==='t3-extension-state'){if(message.theme){applyTheme(message.the
 if(message.type!=='t3-extension-response')return;const waiting=pending.get(message.requestId);if(!waiting)return;pending.delete(message.requestId);clearTimeout(waiting.timer);if(message.error)waiting.reject(new Error(message.error));else waiting.resolve(message.result);});
 window.addEventListener('pagehide',()=>{for(const waiting of pending.values()){clearTimeout(waiting.timer);waiting.reject(new Error('Extension panel closed.'));}pending.clear();});
 })();</script>`;
-  if (/<head\b[^>]*>/i.test(html))
-    return html.replace(/<head\b[^>]*>/i, (head) => `${head}${script}`);
-  if (/<html\b[^>]*>/i.test(html))
-    return html.replace(/<html\b[^>]*>/i, (root) => `${root}<head>${script}</head>`);
-  const doctype = /^\s*<!doctype[^>]*>/i.exec(html);
-  return doctype ? `${doctype[0]}${script}${html.slice(doctype[0].length)}` : `${script}${html}`;
+  // Only inspect the document preamble, where a real head can appear before any panel script.
+  const trivia = /^(?:[\t\n\f\r ]+|<!--(?:>|->|[\s\S]*?--!?>))*/;
+  const doctype = /^<!doctype[\t\n\f\r ]+[^>]*>/i;
+  const htmlTag = /^<html(?=[\t\n\f\r />])(?:[^"'<>]|"[^"]*"|'[^']*')*>/i;
+  const headTag = /^<head(?=[\t\n\f\r />])(?:[^"'<>]|"[^"]*"|'[^']*')*>/i;
+  let offset = html.startsWith("\uFEFF") ? 1 : 0;
+  for (const prefix of [trivia, doctype, trivia, htmlTag, trivia, headTag]) {
+    offset += prefix.exec(html.slice(offset))?.[0].length ?? 0;
+  }
+  return html.slice(0, offset) + script + html.slice(offset);
 }
 
 export function extensionPanelRequest(

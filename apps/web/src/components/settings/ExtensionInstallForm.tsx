@@ -158,6 +158,7 @@ export function ExtensionInstallForm({
           environmentId={environmentId}
           platform={platform}
           path={source}
+          disabled={busy}
           onSelect={setSource}
         />
       )}

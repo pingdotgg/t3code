@@ -28,6 +28,7 @@ export function FolderBrowser(props: {
   }) => Promise<boolean>;
   readonly pinnedDirectoryName?: string;
   readonly cloning?: boolean;
+  readonly disabled?: boolean;
 }) {
   const messages = useMessages();
   const browsePath = getFilesystemBrowsePath(props.pathInput, props.environment.platform);
@@ -103,6 +104,7 @@ export function FolderBrowser(props: {
             }
             isFirst
             right={null}
+            disabled={props.disabled}
             onPress={() => {
               if (browsePath.parentPath) {
                 void props.navigateToBrowsePath({
@@ -126,6 +128,7 @@ export function FolderBrowser(props: {
             }
             isFirst={index === 0 && !browsePath.canBrowseUp}
             right={null}
+            disabled={props.disabled}
             onPress={() => {
               void props.navigateToBrowsePath({
                 browseDirectoryPath: browsePath.directoryPath,

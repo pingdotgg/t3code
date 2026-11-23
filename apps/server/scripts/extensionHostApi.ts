@@ -1,10 +1,25 @@
 import { format } from "vite-plus/fmt";
 import * as Codegen from "effect/Codegen";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Representation from "effect/SchemaRepresentation";
 import { hostApiSchemas } from "../src/extensions/hostApiSchemas.ts";
 
-export async function generateExtensionHostApi(): Promise<string> {
+class ExtensionHostApiGenerationError extends Schema.TaggedError<ExtensionHostApiGenerationError>()(
+  "ExtensionHostApiGenerationError",
+  {
+    stage: Schema.Literals(["generate", "format"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message() {
+    return this.stage === "generate"
+      ? "Could not generate the extension host API types."
+      : "Could not format the extension host API types.";
+  }
+}
+
+function extensionHostApiSource(): string {
   let next = 0;
   const representation = Representation.toRepresentations(
     [
@@ -43,11 +58,23 @@ export async function generateExtensionHostApi(): Promise<string> {
     Object.keys(hostApiSchemas).map((name, index) => [name, document.representations[index]!]),
   );
   module.addSchemas(schemas, { references: document.references, typeOnly: true });
-  const source =
+  return (
     "// Generated from T3 service schemas by apps/server/scripts/extensionHostApi.ts.\n" +
-    module.print();
-  const result = await format("hostApi.generated.ts", source);
-  if (result.errors.length > 0)
-    throw new Error("The generated extension API could not be formatted.");
-  return result.code;
+    module.print()
+  );
 }
+
+export const generateExtensionHostApi = Effect.fn("generateExtensionHostApi")(function* () {
+  const source = yield* Effect.try({
+    try: extensionHostApiSource,
+    catch: (cause) => new ExtensionHostApiGenerationError({ stage: "generate", cause }),
+  });
+  const result = yield* Effect.tryPromise({
+    try: () => format("hostApi.generated.ts", source),
+    catch: (cause) => new ExtensionHostApiGenerationError({ stage: "format", cause }),
+  });
+  if (result.errors.length > 0) {
+    return yield* new ExtensionHostApiGenerationError({ stage: "format", cause: result.errors });
+  }
+  return result.code;
+});

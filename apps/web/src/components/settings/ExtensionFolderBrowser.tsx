@@ -14,11 +14,13 @@ export function ExtensionFolderBrowser({
   environmentId,
   platform,
   path,
+  disabled,
   onSelect,
 }: {
   environmentId: EnvironmentId;
   platform: string;
   path: string;
+  disabled: boolean;
   onSelect: (path: string) => void;
 }) {
   const gt = useGT();
@@ -52,7 +54,12 @@ export function ExtensionFolderBrowser({
       )}
       <div className="flex max-h-64 flex-col items-start gap-1 overflow-y-auto">
         {access.canReadFiles && browse.canBrowseUp && browse.parentPath && (
-          <Button type="button" variant="ghost" onClick={() => onSelect(browse.parentPath!)}>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={disabled}
+            onClick={() => onSelect(browse.parentPath!)}
+          >
             <ArrowUpIcon />
             ..
           </Button>
@@ -62,6 +69,7 @@ export function ExtensionFolderBrowser({
             key={entry.fullPath}
             type="button"
             variant="ghost"
+            disabled={disabled}
             onClick={() => onSelect(ensureBrowseDirectoryPath(entry.fullPath))}
           >
             <FolderIcon />
