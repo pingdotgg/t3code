@@ -110,6 +110,8 @@ impl Effect {
 pub(crate) enum CommandError {
     /// The client asked for something this state does not allow. A typed `Fail`.
     Rejected(String),
+    /// A send to an archived thread: T3 `ThreadManagementThreadArchivedError`, with its message.
+    ThreadArchived(String),
     /// The store failed. A defect.
     Store(String),
 }
@@ -426,7 +428,7 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     if (c.scheduled_task_id.is_some() || (c.created_by == "agent" && c.creation_source == "mcp"))
         && let Some(refusal) = crate::send_refusal(&thread)
     {
-        return reject(refusal);
+        return Err(CommandError::ThreadArchived(refusal));
     }
     let fresh = c.fresh_context == Some(true);
     if fresh {

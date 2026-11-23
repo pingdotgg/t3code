@@ -301,6 +301,10 @@ use tokio::sync::mpsc;
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// The `_tag` a refused dispatch's `cause` carries when the thread was archived before the
+/// send was admitted: T3's `ThreadManagementThreadArchivedError`.
+pub const THREAD_ARCHIVED_ERROR: &str = "ThreadManagementThreadArchivedError";
+
 /// Why a thread may not receive a send from an agent or a schedule, as `sendToThread` checks
 /// it (`ThreadManagementService.ts:872`): an archived thread receives no message. `thread` is
 /// a projection's `thread`. Both the `/mcp` send and the scheduled-task runner ask this.

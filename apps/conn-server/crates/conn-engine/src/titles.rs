@@ -145,10 +145,7 @@ impl Inner {
                 }
             }
         }
-        if let Err(
-            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
-        ) = self.dispatch_value(command).await
-        {
+        if let Err(e) = self.dispatch_value(command).await {
             eprintln!("conn-engine: could not apply the title for {thread_id}: {e}");
         }
     }

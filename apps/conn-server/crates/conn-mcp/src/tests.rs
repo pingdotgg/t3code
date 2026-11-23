@@ -4103,3 +4103,77 @@ async fn an_archive_between_the_timers_read_and_dispatch_still_sends_nothing() {
         "no session"
     );
 }
+
+/// `conn_thread_send` answers `thread_not_sendable` (T3 `ThreadManagementThreadArchivedError`,
+/// `OrchestratorMcpService.ts:256`) both when its own read finds the thread archived and when
+/// the archive lands between that read and the dispatch, which the engine refuses.
+#[tokio::test(flavor = "current_thread")]
+async fn thread_send_refuses_an_archive_between_its_read_and_dispatch() {
+    let fake = FakeProvider::new("claudeAgent");
+    let sessions = fake.sessions.clone();
+    let f = fixture_with_provider("send-archive-race", None, Arc::new(fake), None);
+    let mut operator = Client::open(&f.service, client(true)).await;
+    let thread = launch_as_swamp(&mut operator, "Destination", "baseline", "auto", "default").await;
+    operator
+        .ok(
+            "conn_thread_wait",
+            json!({"threadId": thread, "timeoutMs": 5000}),
+        )
+        .await;
+    let config = &f.service.config;
+    let racing = McpService::new(McpConfig {
+        preview: None,
+        devices: None,
+        refresh_provider: None,
+        files: None,
+        worktrees: None,
+        panels: None,
+        peers: None,
+        settings: None,
+        pull_requests: None,
+        clone_repository: None,
+        secrets: None,
+        test_logins: None,
+        engine: Arc::new(ArchiveBeforeDispatch {
+            inner: config.engine.clone(),
+            thread: thread.clone(),
+        }),
+        environment_id: config.environment_id.clone(),
+        label: config.label.clone(),
+        server_version: config.server_version.clone(),
+        platform: config.platform.clone(),
+        providers: config.providers.clone(),
+        hosted_app_url: config.hosted_app_url.clone(),
+        scheduled_tasks: None,
+        annotations: None,
+    });
+    racing.set_listen_address("0.0.0.0:4711".parse().unwrap());
+    let before = projection_of(&f, &thread).await;
+    let started = sessions.load(std::sync::atomic::Ordering::SeqCst);
+    let refusal = (
+        "thread_not_sendable".to_owned(),
+        format!("Thread {thread} is archived and cannot receive messages."),
+    );
+    let mut sender = Client::open(&racing, client(true)).await;
+    let send = json!({"threadId": thread, "message": "late", "clientRequestId": "late"});
+    assert_eq!(
+        sender.failure("conn_thread_send", send.clone()).await,
+        refusal,
+        "archived between read and dispatch"
+    );
+    let after = projection_of(&f, &thread).await;
+    assert!(
+        !after["thread"]["archivedAt"].is_null(),
+        "the archive landed"
+    );
+    let count = |p: &Value, kind: &str| p[kind].as_array().map_or(0, Vec::len);
+    assert_eq!(count(&after, "messages"), count(&before, "messages"));
+    assert_eq!(count(&after, "runs"), count(&before, "runs"));
+    assert_eq!(sessions.load(std::sync::atomic::Ordering::SeqCst), started);
+    // Archived before the read: the same answer, from the read.
+    assert_eq!(
+        operator.failure("conn_thread_send", send).await,
+        refusal,
+        "archived before the read"
+    );
+}

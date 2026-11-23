@@ -229,7 +229,9 @@ fn mutate(tx: &mut Tx<'_>, input: &Value) -> ProjectResult<(Value, Vec<Effect>)>
                 );
                 match outcome {
                     Ok(more) => effects.extend(more),
-                    Err(CommandError::Rejected(message)) => {
+                    Err(
+                        CommandError::Rejected(message) | CommandError::ThreadArchived(message),
+                    ) => {
                         return Err(ProjectFailure::tagged("ProjectOperationError", message));
                     }
                     Err(CommandError::Store(message)) => return Err(message.into()),

@@ -354,7 +354,9 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
     ) {
         Ok(more) => effects.extend(more),
         Err(CommandError::Store(e)) => return Err(e),
-        Err(CommandError::Rejected(e)) => eprintln!("conn-engine: could not wake {thread_id}: {e}"),
+        Err(CommandError::Rejected(e) | CommandError::ThreadArchived(e)) => {
+            eprintln!("conn-engine: could not wake {thread_id}: {e}")
+        }
     }
     Ok(effects)
 }

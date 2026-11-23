@@ -646,13 +646,22 @@ impl Cx<'_> {
             Ok(result) => Ok(conn_contract::to_json(&result)["sequence"]
                 .as_u64()
                 .unwrap_or(0)),
-            Err(EngineError::Rejected(error)) => Err(fail(
-                "orchestration_error",
-                conn_contract::to_json(&error)["message"]
-                    .as_str()
-                    .unwrap_or("The command was refused.")
-                    .to_owned(),
-            )),
+            Err(EngineError::Rejected(error)) => {
+                let error = conn_contract::to_json(&error);
+                // TS `OrchestratorMcpService` maps `ThreadManagementThreadArchivedError` so.
+                let code = if error["cause"]["_tag"] == conn_engine::THREAD_ARCHIVED_ERROR {
+                    "thread_not_sendable"
+                } else {
+                    "orchestration_error"
+                };
+                Err(fail(
+                    code,
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("The command was refused.")
+                        .to_owned(),
+                ))
+            }
             Err(EngineError::Internal(message)) => Err(internal(message)),
         }
     }

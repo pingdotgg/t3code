@@ -507,7 +507,17 @@ impl SqliteEngine {
 
 pub(crate) enum DispatchError {
     Rejected(String),
+    /// [`CommandError::ThreadArchived`]: the public dispatch names T3's error as the cause.
+    ThreadArchived(String),
     Internal(String),
+}
+
+impl std::fmt::Display for DispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (Self::Rejected(message) | Self::ThreadArchived(message) | Self::Internal(message)) =
+            self;
+        f.write_str(message)
+    }
 }
 
 impl Inner {
@@ -708,9 +718,7 @@ impl Inner {
         let refused = match result {
             Ok((_, false)) => return,
             Ok((_, true)) => None,
-            Err(DispatchError::Rejected(message) | DispatchError::Internal(message)) => {
-                Some(message.clone())
-            }
+            Err(error) => Some(error.to_string()),
         };
         host.discard_worktree(made.thread_id, made.project_root, made.worktree, refused)
             .await;
@@ -990,6 +998,7 @@ impl Inner {
             .await;
         let (effects, seq, replayed) = outcome.map_err(|e| match e {
             CommandError::Rejected(message) => DispatchError::Rejected(message),
+            CommandError::ThreadArchived(message) => DispatchError::ThreadArchived(message),
             CommandError::Store(message) => DispatchError::Internal(message),
         })?;
         if !replayed {
@@ -1183,7 +1192,9 @@ impl Inner {
         // `ThreadLaunchService` records the launch's own actor (a scheduled task's creator).
         let created_by = input["createdBy"].as_str().unwrap_or("user").to_owned();
         let to_err = |e: DispatchError| match e {
-            DispatchError::Rejected(message) => (message, false),
+            DispatchError::Rejected(message) | DispatchError::ThreadArchived(message) => {
+                (message, false)
+            }
             DispatchError::Internal(message) => (message, true),
         };
         let mut resumed = false;
@@ -1292,6 +1303,30 @@ const GENERIC_DISPATCH_PREFIXES: [&str; 3] = [
 
 /// An `OrchestrationV2DispatchCommandError` as T3's `ws.ts` builds it: a user-facing reason
 /// is both the `message` and the `detail`; without one, the generic message and no `detail`.
+/// A refused dispatch as the contract's error. An archive refusal names T3's
+/// `ThreadManagementThreadArchivedError` as its `cause`, so `/mcp` can tell it apart.
+fn dispatch_refusal(command: &Value, error: DispatchError) -> EngineError<DispatchCommandError> {
+    let body = |message: &str| {
+        dispatch_error_body(
+            command["commandId"].as_str().unwrap_or(""),
+            command["type"].as_str().unwrap_or(""),
+            message,
+        )
+    };
+    match error {
+        DispatchError::Rejected(message) => rejected(contract_error(body(&message))),
+        DispatchError::ThreadArchived(message) => {
+            let mut body = body(&message);
+            body["cause"] = json!({
+                "_tag": crate::THREAD_ARCHIVED_ERROR,
+                "threadId": command["threadId"],
+            });
+            rejected(contract_error(body))
+        }
+        DispatchError::Internal(message) => EngineError::Internal(message),
+    }
+}
+
 fn dispatch_error_body(command_id: &str, command_type: &str, reason: &str) -> Value {
     let reason = reason.trim();
     let user_facing = (!reason.is_empty()
@@ -1360,9 +1395,7 @@ impl Engine for SqliteEngine {
                 .dispatch_value(input)
                 .await
                 .map(|_| ())
-                .map_err(|e| match e {
-                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
-                })
+                .map_err(|e| e.to_string())
         })
     }
 
@@ -1376,9 +1409,7 @@ impl Engine for SqliteEngine {
                 .dispatch_value(command)
                 .await
                 .map(|_| ())
-                .map_err(|e| match e {
-                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
-                })
+                .map_err(|e| e.to_string())
         })
     }
 
@@ -1398,9 +1429,7 @@ impl Engine for SqliteEngine {
                 .dispatch_value(command)
                 .await
                 .map(|_| ())
-                .map_err(|e| match e {
-                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
-                })
+                .map_err(|e| e.to_string())
         })
     }
 
@@ -1430,9 +1459,7 @@ impl Engine for SqliteEngine {
                 .dispatch_value(input)
                 .await
                 .map(|_| ())
-                .map_err(|e| match e {
-                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
-                })
+                .map_err(|e| e.to_string())
         })
     }
 
@@ -1442,13 +1469,6 @@ impl Engine for SqliteEngine {
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>> {
         Box::pin(async move {
             let command = to_json(&command);
-            let refusal = |message: String| -> Result<DispatchCommandError, String> {
-                contract_error(dispatch_error_body(
-                    command["commandId"].as_str().unwrap_or(""),
-                    command["type"].as_str().unwrap_or(""),
-                    &message,
-                ))
-            };
             // A worktree delegate makes a checkout before its command commits: that runs on its
             // own task, so a caller that goes away cannot leave the checkout behind.
             let outcome = if command["type"] == "delegated_task.request"
@@ -1466,8 +1486,7 @@ impl Engine for SqliteEngine {
             match outcome {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
                     .map_err(|e| EngineError::Internal(e.to_string())),
-                Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),
-                Err(DispatchError::Internal(message)) => Err(EngineError::Internal(message)),
+                Err(error) => Err(dispatch_refusal(&command, error)),
             }
         })
     }
@@ -1494,13 +1513,6 @@ impl Engine for SqliteEngine {
     ) -> BoxFuture<'_, Result<DispatchCommandResult, EngineError<DispatchCommandError>>> {
         Box::pin(async move {
             let command = to_json(&command);
-            let refusal = |message: String| -> Result<DispatchCommandError, String> {
-                contract_error(dispatch_error_body(
-                    command["commandId"].as_str().unwrap_or(""),
-                    command["type"].as_str().unwrap_or(""),
-                    &message,
-                ))
-            };
             // The dispatch runs on its own task: once the store committed, its effects start
             // even if the caller is gone (a dropped socket aborts the caller's task).
             let inner = self.inner.clone();
@@ -1516,8 +1528,7 @@ impl Engine for SqliteEngine {
             match outcome {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
                     .map_err(|e| EngineError::Internal(e.to_string())),
-                Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),
-                Err(DispatchError::Internal(message)) => Err(EngineError::Internal(message)),
+                Err(error) => Err(dispatch_refusal(&command, error)),
             }
         })
     }

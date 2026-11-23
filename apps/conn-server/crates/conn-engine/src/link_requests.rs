@@ -234,7 +234,7 @@ pub(crate) fn record(tx: &mut Tx<'_>, command: Value) -> Outcome {
     ) {
         Ok(effects) => Ok(effects),
         Err(CommandError::Store(e)) => Err(CommandError::Store(e)),
-        Err(CommandError::Rejected(e)) => {
+        Err(CommandError::Rejected(e) | CommandError::ThreadArchived(e)) => {
             eprintln!("conn-engine: could not wake {thread_id}: {e}");
             Ok(vec![])
         }

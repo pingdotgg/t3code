@@ -1423,10 +1423,7 @@ impl Inner {
                 }
             }
             if let Some(command) = pushed
-                && let Err(
-                    crate::engine::DispatchError::Rejected(e)
-                    | crate::engine::DispatchError::Internal(e),
-                ) = self.dispatch_value(command).await
+                && let Err(e) = self.dispatch_value(command).await
             {
                 eprintln!("conn-engine: could not reopen watched checks after a push: {e}");
             }
@@ -1594,10 +1591,7 @@ impl Inner {
             "createdBy": "agent",
             "creationSource": creation_source,
         });
-        if let Err(
-            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
-        ) = self.dispatch_value(command).await
-        {
+        if let Err(e) = self.dispatch_value(command).await {
             eprintln!("conn-engine: could not start a continuation turn: {e}");
         }
     }
@@ -1790,11 +1784,7 @@ impl Inner {
                 "queuedRunId": queued,
                 "targetRunId": run_id,
             });
-            if let Err(
-                crate::engine::DispatchError::Rejected(e)
-                | crate::engine::DispatchError::Internal(e),
-            ) = self.dispatch_value(command).await
-            {
+            if let Err(e) = self.dispatch_value(command).await {
                 eprintln!("conn-engine: a waiting steer stays queued: {e}");
             }
         }
@@ -1872,10 +1862,7 @@ impl Inner {
         if message["context"].is_object() {
             command["context"] = message["context"].clone();
         }
-        if let Err(
-            crate::engine::DispatchError::Rejected(e) | crate::engine::DispatchError::Internal(e),
-        ) = self.dispatch_value(command).await
-        {
+        if let Err(e) = self.dispatch_value(command).await {
             eprintln!("conn-engine: could not queue a declined steer: {e}");
         }
     }
@@ -1938,11 +1925,7 @@ impl Inner {
                 "runId": run_id,
                 "reason": crate::commands::FORCE_STOP_REASON,
             });
-            if let Err(
-                crate::engine::DispatchError::Rejected(e)
-                | crate::engine::DispatchError::Internal(e),
-            ) = self.dispatch_value(command).await
-            {
+            if let Err(e) = self.dispatch_value(command).await {
                 eprintln!("conn-engine: Force stop could not end the run: {e}");
             }
             self.close_session(&thread_id).await;
