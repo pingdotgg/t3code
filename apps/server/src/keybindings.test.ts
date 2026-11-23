@@ -183,7 +183,7 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
           { key: "mod+shift+d+o", command: "terminal.new" },
           { key: "mod+x", command: "invalid.command" },
           { key: "mod+", command: "sidebar.toggle" },
-          { key: "mod+++", command: "sidebar.toggle" },
+          { key: "mod+a+++", command: "sidebar.toggle" },
         ]),
       );
 
