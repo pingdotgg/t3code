@@ -1920,6 +1920,56 @@ it.effect("delivers agent messages queued behind /compact before a later one ste
   }),
 );
 
+// regression: #41455 one sender's queued message holds back another sender's automatic steer
+it.effect("an agent's automatic send steers past another sender's queued message", () =>
+  Effect.gen(function* () {
+    const { started, steered, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "agent-steer-past-other-sender",
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = yield* startFirstTurn;
+      const active = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.status === "running",
+      )!;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("send-first"),
+        threadId,
+        messageId: MessageId.make("message:queued-first"),
+        text: "queued first",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("thread:sender-a"),
+      });
+      yield* worker.drain();
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("send-urgent"),
+        threadId,
+        messageId: MessageId.make("message:urgent"),
+        text: "urgent",
+        attachments: [],
+        dispatchMode: { type: "steer_active", targetRunId: active.id },
+        deliveryIntent: "auto",
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: ThreadId.make("thread:sender-c"),
+      });
+      yield* worker.drain();
+
+      assert.lengthOf(started, 1);
+      assert.deepEqual(
+        steered.map((text) => text.split("\n").at(-1)),
+        ["urgent"],
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // regression: #33454 a steer that restarts a completion wake run left its cohort claimed forever
 const restartCompletionWake = Effect.fn("restartCompletionWake")(function* (
   harness: Pick<
