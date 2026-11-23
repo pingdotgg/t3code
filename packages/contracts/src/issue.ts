@@ -675,6 +675,8 @@ export const IssueTrackerBindProjectInput = Schema.Struct({
   projectId: ProjectId,
   /** Null unbinds. */
   binding: Schema.NullOr(IssueTrackerProjectBinding),
+  /** On an unbind, the account the binding was made with; absent for a tracker's first. */
+  accountId: Schema.optionalKey(IssueTrackerAccountId),
 });
 export type IssueTrackerBindProjectInput = typeof IssueTrackerBindProjectInput.Type;
 

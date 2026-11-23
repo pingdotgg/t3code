@@ -101,29 +101,28 @@ describe("IssueTrackerConnections", () => {
         bindings: { work: { tracker: LINEAR, scope: "ENG" } },
         accountBindings: { home: { tracker: LINEAR, accountId, scope: "ENG" } },
       });
+      // An older client offers the added account's project as unbound; its unbind leaves it.
+      yield* connections.bindProject({ projectId: "home" as ProjectId, binding: null });
+      expect((yield* connections.list).accountBindings).toHaveProperty("home");
       yield* Effect.flip(connections.connect({ tracker: LINEAR, token: "bad", addAccount: true }));
+      expect(
+        yield* Effect.flip(
+          connections.connect({ tracker: LINEAR, token: "home", addAccount: true }),
+        ),
+      ).toMatchObject({ detail: "This credential is already connected as another account." });
       expect(secrets.size).toBe(2);
 
-      // A binding or removal that arrives while a replacement key is being checked waits for
-      // it, and the removal unbinds only that account's projects.
+      // A removal does not wait on a replacement key's probe, and the replacement then finds its
+      // account gone instead of storing a key for it.
       const replacing = yield* connections
         .connect({ tracker: LINEAR, accountId, token: "slow" })
         .pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(probing);
-      const binding = yield* connections
-        .bindProject({
-          projectId: "late" as ProjectId,
-          binding: { tracker: LINEAR, accountId, scope: "ENG" },
-        })
-        .pipe(Effect.forkChild({ startImmediately: true }));
-      expect((yield* connections.list).accountBindings).not.toHaveProperty("late");
-      const removing = yield* connections
-        .connect({ tracker: LINEAR, accountId, token: null })
-        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* connections.connect({ tracker: LINEAR, accountId, token: null });
       yield* Deferred.succeed(released, undefined);
-      yield* Fiber.join(replacing);
-      yield* Fiber.join(binding);
-      yield* Fiber.join(removing);
+      expect(yield* Effect.flip(Fiber.join(replacing))).toMatchObject({
+        detail: "This account is not saved on the server.",
+      });
       expect([...secrets.keys()]).toEqual(["issue-tracker-bGluZWFy-token"]);
       const after = yield* connections.list;
       expect([after.accounts, after.accountBindings]).toEqual([[], {}]);

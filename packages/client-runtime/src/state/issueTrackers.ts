@@ -2,9 +2,11 @@ import {
   MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES,
   WS_METHODS,
   issueTrackerBindingScopes,
+  type IssueTrackerBindProjectInput,
   type IssueTrackerConnection,
   type IssueTrackerConnectionList,
   type IssueTrackerProjectBinding,
+  type ProjectId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
@@ -159,6 +161,17 @@ export function issueTrackerBindingFor(
     scope,
     ...(additionalScopes.length === 0 ? {} : { additionalScopes }),
   };
+}
+
+/** The request that saves a project's picks under this account; an unbind names the account. */
+export function issueTrackerBindInput(
+  projectId: ProjectId,
+  { accountId }: TrackerAccount,
+  binding: IssueTrackerProjectBinding | null,
+): IssueTrackerBindProjectInput {
+  return binding === null && accountId !== undefined
+    ? { projectId, binding, accountId }
+    : { projectId, binding };
 }
 
 export function issueTrackerScopeOptions(

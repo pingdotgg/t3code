@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   boundIssueTrackerScopes,
   hasIssueTrackerTeams,
+  issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
   issueTrackerScopeOptions,
@@ -308,7 +309,10 @@ function ProjectBindings({
       ...current,
       [projectId]: boundIssueTrackerScopes(tracker, binding ?? undefined),
     }));
-    const result = await bind({ environmentId, input: { projectId, binding } });
+    const result = await bind({
+      environmentId,
+      input: issueTrackerBindInput(projectId, tracker, binding),
+    });
     if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
     setSaving(false);
   };

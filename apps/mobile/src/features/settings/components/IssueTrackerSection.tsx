@@ -1,5 +1,6 @@
 import {
   boundIssueTrackerScopes,
+  issueTrackerBindInput,
   issueTrackerBindingFor,
   issueTrackerBindings,
   issueTrackerScopeOptions,
@@ -257,7 +258,10 @@ export function IssueTrackerProjectRows(props: {
       ...current,
       [projectId]: boundIssueTrackerScopes(tracker, binding ?? undefined),
     }));
-    const result = await bind({ environmentId, input: { projectId, binding } });
+    const result = await bind({
+      environmentId,
+      input: issueTrackerBindInput(projectId, tracker, binding),
+    });
     if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
     setSaving(false);
   };
@@ -294,11 +298,7 @@ export function IssueTrackerProjectRows(props: {
             attributes: { disabled: locked || !scope.addable },
           })),
         ]}
-        onPressAction={({ nativeEvent }) => {
-          // Picking the checked "Not bound" must not clear a binding made with another account.
-          if (nativeEvent.event !== UNBOUND || value.length > 0)
-            void change(project.id, toggle(nativeEvent.event));
-        }}
+        onPressAction={({ nativeEvent }) => void change(project.id, toggle(nativeEvent.event))}
       >
         <SettingsRow
           icon="folder"

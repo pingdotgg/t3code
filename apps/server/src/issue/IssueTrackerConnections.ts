@@ -196,31 +196,52 @@ const make = Effect.gen(function* () {
     return disconnected(api, accountId);
   });
 
+  /** Whether another of the tracker's accounts already holds this exact credential. */
+  const heldElsewhere = Effect.fn("IssueTrackerConnections.heldElsewhere")(function* (
+    api: StandaloneIssueTrackerApi,
+    accountId: IssueTrackerAccountId | null,
+    token: string,
+  ) {
+    const saved = yield* bindings.listAccounts.pipe(
+      Effect.mapError(secretFailure(api.kind, "The saved accounts could not be read.")),
+    );
+    const others = [
+      null,
+      ...saved
+        .filter((account) => account.tracker === api.kind)
+        .map((account) => account.accountId),
+    ].filter((other) => other !== accountId);
+    for (const other of others) {
+      const stored = yield* secrets
+        .get(issueTrackerSecretName(api.kind, other))
+        .pipe(Effect.mapError(secretFailure(api.kind, "The stored credential could not be read.")));
+      if (Option.isSome(stored) && new TextDecoder().decode(stored.value) === token) return true;
+    }
+    return false;
+  });
+
   const connect: IssueTrackerConnections["Service"]["connect"] = Effect.fn(
     "IssueTrackerConnections.connect",
   )(function* (input) {
     const api = yield* requireTracker(input.tracker);
-    const existing =
-      input.addAccount === true ? null : yield* requireAccount(api.kind, input.accountId);
-    if (input.token === null) {
-      if (input.addAccount === true) {
+    const addAccount = input.addAccount === true;
+    const token = input.token;
+    if (token === null) {
+      if (addAccount) {
         return yield* new IssueTrackerConnectionError({
           tracker: input.tracker,
           reason: "failed",
           detail: "A new account needs a credential.",
         });
       }
-      return yield* disconnect(api, existing);
+      return yield* accountLock.withPermits(1)(
+        Effect.flatMap(requireAccount(api.kind, input.accountId), (existing) =>
+          disconnect(api, existing),
+        ),
+      );
     }
-    const accountId =
-      input.addAccount === true
-        ? IssueTrackerAccountId.make(
-            yield* random
-              .uuidV4()
-              .pipe(Effect.mapError(secretFailure(api.kind, "The account could not be created."))),
-          )
-        : existing;
-    const probed = yield* api.probeCredential(input.token).pipe(
+    // The tracker is asked before the lock, so a slow probe never holds up other settings.
+    const probed = yield* api.probeCredential(token).pipe(
       Effect.mapError(
         (error) =>
           new IssueTrackerConnectionError({
@@ -231,18 +252,39 @@ const make = Effect.gen(function* () {
           }),
       ),
     );
-    yield* secrets
-      .set(issueTrackerSecretName(api.kind, accountId), encoder.encode(input.token))
-      .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
-    if (input.addAccount === true && accountId !== null) {
-      const createdAt = DateTime.formatIso(yield* DateTime.now);
-      yield* bindings.addAccount({ tracker: api.kind, accountId, createdAt }).pipe(
-        Effect.tapError(() =>
-          Effect.ignore(secrets.remove(issueTrackerSecretName(api.kind, accountId))),
-        ),
-        Effect.mapError(secretFailure(api.kind, "The account could not be saved.")),
-      );
-    }
+    const accountId = yield* accountLock.withPermits(1)(
+      Effect.gen(function* () {
+        const accountId = addAccount
+          ? IssueTrackerAccountId.make(
+              yield* random
+                .uuidV4()
+                .pipe(
+                  Effect.mapError(secretFailure(api.kind, "The account could not be created.")),
+                ),
+            )
+          : yield* requireAccount(api.kind, input.accountId);
+        if (yield* heldElsewhere(api, accountId, token)) {
+          return yield* new IssueTrackerConnectionError({
+            tracker: input.tracker,
+            reason: "failed",
+            detail: "This credential is already connected as another account.",
+          });
+        }
+        yield* secrets
+          .set(issueTrackerSecretName(api.kind, accountId), encoder.encode(token))
+          .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
+        if (addAccount && accountId !== null) {
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          yield* bindings.addAccount({ tracker: api.kind, accountId, createdAt }).pipe(
+            Effect.tapError(() =>
+              Effect.ignore(secrets.remove(issueTrackerSecretName(api.kind, accountId))),
+            ),
+            Effect.mapError(secretFailure(api.kind, "The account could not be saved.")),
+          );
+        }
+        return accountId;
+      }),
+    );
     return {
       ...api.standalone,
       ...accountFields(accountId),
@@ -252,15 +294,28 @@ const make = Effect.gen(function* () {
       ...(probed.workspace === undefined ? {} : { workspace: probed.workspace }),
       scopes: probed.scopes,
     };
-  }, accountLock.withPermits(1));
+  });
 
   const bindProject: IssueTrackerConnections["Service"]["bindProject"] = Effect.fn(
     "IssueTrackerConnections.bindProject",
   )(function* (input) {
+    if (input.binding === null) {
+      // Older clients cannot see a project bound with an added account and offer it as unbound;
+      // an unbind that does not name the binding's account leaves it alone.
+      const current = (yield* bindings
+        .list(input.projectId)
+        .pipe(
+          Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
+        )).get(input.projectId);
+      if (current !== undefined && current.accountId !== input.accountId) return;
+    } else {
+      yield* requireAccount(
+        (yield* requireTracker(input.binding.tracker)).kind,
+        input.binding.accountId,
+      );
+    }
     // Unbinding names no tracker; the first registered one carries any report.
-    const tracker =
-      input.binding === null ? anyTracker : (yield* requireTracker(input.binding.tracker)).kind;
-    if (input.binding !== null) yield* requireAccount(tracker, input.binding.accountId);
+    const tracker = input.binding?.tracker ?? anyTracker;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
     yield* bindings
       .set({ projectId: input.projectId, binding: input.binding, updatedAt })

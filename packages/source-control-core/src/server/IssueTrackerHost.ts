@@ -48,19 +48,25 @@ export function asIssueTrackerAccount(
     listTemplates,
     listCandidates,
   } = api;
-  return {
-    ...api,
+  // Every key is required here, so a method added to IssueTrackerApi fails to compile until it
+  // is wrapped instead of silently running as the first account.
+  const wrapped: { readonly [K in keyof IssueTrackerApi]-?: IssueTrackerApi[K] | undefined } = {
+    kind: api.kind,
+    capabilities: api.capabilities,
     getViewer: (input) => as(api.getViewer(input)),
     listIssues: (input) => as(api.listIssues(input)),
     getIssue: (input) => as(api.getIssue(input)),
     getComments: (input) => as(api.getComments(input)),
-    ...(getIssueLink && { getIssueLink: (input) => as(getIssueLink(input)) }),
-    ...(create && { create: (input) => as(create(input)) }),
-    ...(comment && { comment: (input) => as(comment(input)) }),
-    ...(update && { update: (input) => as(update(input)) }),
-    ...(setState && { setState: (input) => as(setState(input)) }),
-    ...(setReaction && { setReaction: (input) => as(setReaction(input)) }),
-    ...(listTemplates && { listTemplates: (input) => as(listTemplates(input)) }),
-    ...(listCandidates && { listCandidates: (input) => as(listCandidates(input)) }),
+    getIssueLink: getIssueLink && ((input) => as(getIssueLink(input))),
+    create: create && ((input) => as(create(input))),
+    comment: comment && ((input) => as(comment(input))),
+    update: update && ((input) => as(update(input))),
+    setState: setState && ((input) => as(setState(input))),
+    setReaction: setReaction && ((input) => as(setReaction(input))),
+    listTemplates: listTemplates && ((input) => as(listTemplates(input))),
+    listCandidates: listCandidates && ((input) => as(listCandidates(input))),
   };
+  return Object.fromEntries(
+    Object.entries(wrapped).filter(([, value]) => value !== undefined),
+  ) as unknown as IssueTrackerApi;
 }
