@@ -42,9 +42,9 @@ impl ChatView {
 
     /// The banner for the composer's provider, unless the user dismissed this status.
     fn visible_provider_banner(&self, cx: &App) -> Option<(String, ProviderBanner)> {
-        let instance = self.composer.read(cx).selected_provider_instance()?;
-        let banner = self
-            .server_config
+        let composer = self.composer.read(cx);
+        let instance = composer.selected_provider_instance()?;
+        let banner = composer
             .catalog()
             .providers
             .iter()

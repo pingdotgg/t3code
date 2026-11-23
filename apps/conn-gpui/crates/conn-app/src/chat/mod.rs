@@ -3,6 +3,7 @@
 
 mod approval_card;
 mod approval_state;
+mod attachment_thumb;
 mod cache;
 mod cards;
 mod color;
@@ -217,6 +218,8 @@ pub(crate) struct ChatView {
     /// Thread opened at this instant and not painted yet (`CONN_GPUI_PERF_LOG`).
     perf_open: Option<(String, std::time::Instant)>,
     entry_timings: HashMap<String, EntryTiming>,
+    /// The model of each subagent card, by timeline entry id.
+    subagent_models: HashMap<String, conn_state::SubagentModel>,
     run_timings: HashMap<String, RunTiming>,
     turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
     expanded_ids: HashSet<String>,
@@ -233,6 +236,15 @@ pub(crate) struct ChatView {
     _input_sub: Subscription,
     /// Live connection for card actions (answers, secrets, omitted tool output).
     connection: Option<conn_client::Connection>,
+    /// Height of the composer lane, measured while painting. The timeline scrolls behind the
+    /// composer, so its last row keeps this much room below it.
+    composer_height: Rc<std::cell::Cell<f32>>,
+    /// The `composer_height` the last row was measured with.
+    composer_height_applied: f32,
+    /// Downloaded image attachments of sent messages, by attachment id (filled while rendering).
+    attachment_images: std::cell::RefCell<
+        HashMap<String, (Entity<attachment_thumb::AttachmentImageState>, Subscription)>,
+    >,
     /// The latest run when it was interrupted (`You stopped after ...`).
     interrupted_run_id: Option<String>,
     /// Copy button currently showing its check (`MessageCopyButton`).
@@ -418,6 +430,7 @@ impl ChatView {
             synced_revision: None,
             perf_open: None,
             entry_timings: HashMap::new(),
+            subagent_models: HashMap::new(),
             run_timings: HashMap::new(),
             turn_checkpoints: HashMap::new(),
             expanded_ids: HashSet::new(),
@@ -432,6 +445,9 @@ impl ChatView {
             composer,
             _input_sub: input_sub,
             connection,
+            composer_height: Rc::new(std::cell::Cell::new(0.0)),
+            composer_height_applied: 0.0,
+            attachment_images: std::cell::RefCell::new(HashMap::new()),
             interrupted_run_id: None,
             copied_message_key: None,
             _copy_reset: None,
@@ -460,13 +476,14 @@ impl ChatView {
     ) {
         self.connected = connection.is_some();
         self.connection = connection.clone();
+        self.attachment_images.borrow_mut().clear();
         self.composer
             .update(cx, |c, cx| c.set_connection(connection, cx));
         cx.notify();
     }
 
-    /// Stages local file paths into the composer attachment strip (used by automation and tests).
-    #[cfg(any(test, feature = "automation"))]
+    /// Stages local file paths into the composer attachment strip (files dropped on a thread row,
+    /// automation and tests).
     pub(crate) fn attach_paths(
         &mut self,
         paths: Vec<std::path::PathBuf>,
@@ -614,6 +631,7 @@ impl ChatView {
             self._working_tick = None;
             self.cache.clear();
             self.entry_timings.clear();
+            self.subagent_models.clear();
             self.run_timings.clear();
             self.turn_checkpoints.clear();
             self.expanded_ids.clear();
@@ -701,6 +719,13 @@ impl ChatView {
         self.has_more_history = thread.has_more_history;
         self.loading_earlier = thread.loading_earlier;
         self.entry_timings = thread.entry_timings.clone();
+        self.subagent_models = thread
+            .subagent_of_entry
+            .iter()
+            .filter_map(|(entry, subagent)| {
+                Some((entry.clone(), thread.subagent_models.get(subagent)?.clone()))
+            })
+            .collect();
         self.run_timings = thread.run_timings.clone();
         self.turn_checkpoints = thread.turn_checkpoints.clone();
         self.interrupted_run_id = thread
@@ -845,6 +870,16 @@ impl ChatView {
 
     /// Sets the model display label shown in the composer footer.
     /// Sets the project root used to shorten tool row paths.
+    /// The project whose provider overrides apply to the composer (`projectSettingsOverrides`).
+    pub(crate) fn set_project_id(
+        &mut self,
+        project_id: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.set_project_id(project_id, cx));
+    }
+
     pub(crate) fn set_workspace_root(&mut self, root: Option<String>, cx: &mut Context<'_, Self>) {
         if self.workspace_root != root {
             self.composer
@@ -1636,7 +1671,7 @@ impl ChatView {
             outer = outer.pt(px(16.0));
         }
         if idx + 1 == items.len() {
-            outer = outer.pb(px(16.0));
+            outer = outer.pb(px(16.0 + self.composer_height_applied));
         }
         outer.into_any_element()
     }
@@ -1773,6 +1808,7 @@ impl ChatView {
             grouped_with_previous,
             grouped_with_next,
         } = bubble;
+        let text = &*cache::humanize_task_ids(self.cache.rows(), text);
         // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
         // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
         let preview: String = text.chars().take(120).collect();
@@ -1800,7 +1836,8 @@ impl ChatView {
             .line_height(px(BODY_LINE_HEIGHT_PX))
             .text_color(hsla(self.tokens.message_foreground));
         if !attachments.is_empty() {
-            bubble = bubble.child(self.render_attachment_chips(&format!("user-{id}"), attachments));
+            bubble =
+                bubble.child(self.render_attachment_chips(&format!("user-{id}"), attachments, cx));
         }
         if !text.is_empty() {
             bubble = bubble.child(div().min_w_0().child(text.to_owned()));
@@ -1904,8 +1941,11 @@ impl ChatView {
             .text_color(bubble_fg);
 
         if !attachments.is_empty() {
-            bubble =
-                bubble.child(self.render_attachment_chips(&format!("queued-{id}"), attachments));
+            bubble = bubble.child(self.render_attachment_chips(
+                &format!("queued-{id}"),
+                attachments,
+                cx,
+            ));
         }
 
         if !text.is_empty() {
@@ -2086,6 +2126,7 @@ impl ChatView {
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let key = format!("agent-msg-{id}");
+        let text = &*cache::humanize_task_ids(self.cache.rows(), text);
         let expanded = self.expanded_ids.contains(&key);
         let toggle_key = key.clone();
         let preview = text
@@ -2285,8 +2326,10 @@ impl ChatView {
             }
             container = container.pb(px(8.0)).child(list);
         } else {
-            // Conn `turn-fold` row spacing: `pb-1.5` (6px).
-            container = container.pb(px(6.0));
+            // Nick (#280, #290): a settled fold's separator needs the same air below as above it.
+            // Above: 8px `pb-2` plus the label's half-leading (~4px), so 12px below.
+            // An active group has no separator, so it keeps Conn's `pb-1.5` (6px).
+            container = container.pb(px(if has_active { 6.0 } else { 12.0 }));
         }
 
         container.into_any_element()
@@ -2401,7 +2444,8 @@ impl ChatView {
                     ..
                 } => {
                     let rel_title = self.relative_title(title);
-                    let ax_label = tool_ax_label(kind, &rel_title, *status);
+                    let shown_title = icons::tool_display_title(kind, &rel_title).into_owned();
+                    let ax_label = tool_ax_label(kind, &shown_title, *status);
                     let failed = matches!(status, ItemStatus::Failed);
                     // Conn `latestToolKeepsActivityLive`: active when running OR succeeded during
                     // an active turn (so shimmer stays alive between consecutive tool calls).
@@ -2417,9 +2461,9 @@ impl ChatView {
                         (icon_muted, muted)
                     };
                     let label_el: AnyElement = if shimmer {
-                        shimmer_text(&rel_title, muted, bright_fg).into_any_element()
+                        shimmer_text(&shown_title, muted, bright_fg).into_any_element()
                     } else {
-                        rel_title.into_any_element()
+                        shown_title.into_any_element()
                     };
                     col = col.child(
                         div()
@@ -2698,10 +2742,11 @@ impl ChatView {
             ItemStatus::Failed => (hsla(self.tokens.destructive), hsla(self.tokens.destructive)),
             ItemStatus::Running | ItemStatus::Completed => (muted_icon(&self.tokens), muted),
         };
+        let shown_title = icons::tool_display_title(kind, title);
         let title_el: AnyElement = if matches!(status, ItemStatus::Running) {
-            shimmer_text(title, muted, bright_fg).into_any_element()
+            shimmer_text(&shown_title, muted, bright_fg).into_any_element()
         } else {
-            title.to_owned().into_any_element()
+            shown_title.to_string().into_any_element()
         };
 
         let leading: AnyElement = match status {
@@ -2714,7 +2759,7 @@ impl ChatView {
         };
 
         let ax_id = format!("timeline.work.{id}");
-        let ax_label = tool_ax_label(kind, title, status);
+        let ax_label = tool_ax_label(kind, &shown_title, status);
         // Conn `WorkLogRow`: `min-h-6` (24px), `gap-1.5` (6px), `px-0.5`, `24px` icon box, `text-sm leading-relaxed`.
         let mut line = div()
             .id(SharedString::from(format!("tool-{id}")))
@@ -3056,6 +3101,14 @@ impl Render for ChatView {
                 .child(self.render_draft_hero(&draft, window, cx));
         }
 
+        let composer_height = self.composer_height.get();
+        if (composer_height - self.composer_height_applied).abs() > 0.5 {
+            self.composer_height_applied = composer_height;
+            let count = self.cache.items().len();
+            if count > 0 {
+                self.list_state.remeasure_items(count - 1..count);
+            }
+        }
         let timeline: AnyElement = if self.cache.items().is_empty() && !self.synchronized {
             let muted = hsla(self.tokens.muted_foreground);
             div()
@@ -3134,7 +3187,14 @@ impl Render for ChatView {
                 .w_full()
                 .min_w_0()
                 .overflow_hidden()
-                .child(virtual_list)
+                .child(virtual_list);
+            // The scrollbar and the jump pill stay above the composer the timeline runs under.
+            let mut above_composer = div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right_0()
+                .bottom(px(composer_height))
                 .child(
                     div()
                         .absolute()
@@ -3152,9 +3212,10 @@ impl Render for ChatView {
                 container = container.child(toc_overlay);
             }
             if show_latest_pill {
-                container = container.child(toc::render_scroll_to_bottom_pill(&self.tokens, cx));
+                above_composer =
+                    above_composer.child(toc::render_scroll_to_bottom_pill(&self.tokens, cx));
             }
-            container.into_any_element()
+            container.child(above_composer).into_any_element()
         };
 
         let provider_banner = self.render_provider_banner(cx);
@@ -3163,11 +3224,30 @@ impl Render for ChatView {
         self.composer
             .update(cx, |c, cx| c.set_stash_docked(banner_docked, cx));
 
+        // The lane floats over the timeline's bottom edge; the timeline pads its last row by the
+        // measured height so the final message still scrolls fully above the card.
+        let measured_height = Rc::clone(&self.composer_height);
         let mut composer_lane = div()
-            .flex_none()
-            .w_full()
+            .absolute()
+            .bottom_0()
+            .left_0()
+            .right_0()
             .px(px(CHAT_LANE_PADDING_X_PX))
-            .pt(px(8.0));
+            .pt(px(8.0))
+            .child(
+                gpui_kit::canvas(
+                    move |bounds, window, _| {
+                        let height = f32::from(bounds.size.height);
+                        if (measured_height.get() - height).abs() > 0.5 {
+                            measured_height.set(height);
+                            window.refresh();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            );
         if let Some(error) = self.error_banner.as_deref() {
             composer_lane = composer_lane.child(self.render_error_banner(error, cx));
         }
@@ -3187,7 +3267,7 @@ impl Render for ChatView {
             .min_h_0()
             .min_w_0()
             .relative()
-            .child(timeline)
+            .child(div().absolute().inset_0().flex().flex_col().child(timeline))
             .child(composer_lane)
             .when_some(provider_banner, |root, banner| {
                 root.child(

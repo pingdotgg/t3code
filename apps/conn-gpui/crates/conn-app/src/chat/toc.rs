@@ -13,8 +13,9 @@
 
 use conn_theme::Tokens;
 use gpui_kit::{
-    AnyElement, Context, FontWeight, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, deferred, div, px,
+    AnimationExt as _, AnyElement, Context, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, SharedString, SpringAnimation, SpringConfig,
+    StatefulInteractiveElement, Styled, deferred, div, px,
 };
 
 use super::cache::TocEntry;
@@ -26,6 +27,10 @@ use crate::a11y::ConnA11yExt as _;
 const MAX_VISIBLE_TICKS: usize = 36;
 /// Vertical spacing per tick row (px) so preview tooltip aligns vertically with the hovered tick.
 const TICK_ROW_HEIGHT_PX: f32 = 10.0;
+
+/// Tick length spring: critically damped (`damping = 2 * sqrt(stiffness * mass)`), natural
+/// frequency 27 rad/s, so a length change settles in about 150 ms like web's `duration-150`.
+const TICK_SPRING: SpringConfig = SpringConfig::new(729.0, 54.0, 1.0);
 
 /// Fisheye width curve matching `TimelineMinimap.tsx` (`w-6` = 24px scaled by `1.0 / 0.667 / 0.417 / 0.333`).
 #[must_use]
@@ -175,8 +180,6 @@ pub(super) fn render_toc_overlay(
             tick_focus
         } else if is_in_view {
             tick_in_view
-        } else if entry.has_error {
-            hsla_alpha(tokens.destructive, 0.55)
         } else if matches!(distance, Some(1)) {
             tick_near
         } else {
@@ -209,7 +212,16 @@ pub(super) fn render_toc_overlay(
                 .on_click(cx.listener(move |view, _, _, cx| {
                     view.jump_to_toc_item(item_index, cx);
                 }))
-                .child(div().w(px(bar_w)).h(px(2.0)).rounded_full().bg(bar_color)),
+                .child(
+                    // Web's strip: `transition-transform duration-150` (ease `cubic-bezier(.4,0,.2,1)`).
+                    // A critically damped spring settles in about the same 150 ms and, unlike a
+                    // timed tween, picks up from the current length when the target changes mid-flight.
+                    div().h(px(2.0)).rounded_full().bg(bar_color).with_spring(
+                        SharedString::from(format!("chat-toc-bar-{}", entry.turn_number)),
+                        SpringAnimation::new(TICK_SPRING).to(bar_w),
+                        |bar, width| bar.w(px(width)),
+                    ),
+                ),
         );
     }
 
@@ -322,9 +334,13 @@ pub(super) fn render_scroll_to_bottom_pill(
     tokens: &Tokens,
     cx: &mut Context<'_, ChatView>,
 ) -> AnyElement {
-    let bg = hsla(tokens.popover);
-    let hover_bg = hsla(tokens.shell_highlight);
-    let border = hsla(tokens.shell_inner_border);
+    // Web's `Button variant="glass"` (`surface-glass`): `--background` at `--glass-opacity` (80%),
+    // `border-border/60`, and on hover only the border firms up. The fill must not change on
+    // hover, or the text behind shows through more than at rest. GPUI has no per-element backdrop
+    // blur (gpui-kit#3598), so the fill stays opaque until it lands (Nick, 2026-11-23).
+    let bg = hsla(tokens.background);
+    let border = hsla_alpha(tokens.border, 0.60);
+    let hover_border = hsla(tokens.border);
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
 
@@ -357,7 +373,7 @@ pub(super) fn render_scroll_to_bottom_pill(
                     .line_height(px(16.0))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(fg)
-                    .hover(move |s| s.bg(hover_bg))
+                    .hover(move |s| s.border_color(hover_border))
                     .occlude()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(|view, _, _, cx| {

@@ -54,6 +54,9 @@ const MENU_ROW_RADIUS_PX: f32 = 8.0;
 const MENU_ROW_HEIGHT_PX: f32 = 28.0;
 const MENU_MIN_WIDTH_PX: f32 = 160.0;
 const MENU_SIDE_OFFSET_PX: f32 = 6.0;
+/// Launcher rows (`RightPanelEmptyState`): `h-8` rows in a `max-w-xs` (320px) column.
+const LAUNCHER_ROW_HEIGHT_PX: f32 = 32.0;
+const LAUNCHER_MAX_WIDTH_PX: f32 = 320.0;
 /// Menu row icons draw at 80% opacity (`[&>svg]:opacity-80`); disabled rows at 64%.
 const MENU_ICON_OPACITY: f32 = 0.8;
 const MENU_DISABLED_OPACITY: f32 = 0.64;
@@ -138,6 +141,40 @@ pub(crate) fn panel_tab_icon_path(tab: RightPanelTab) -> &'static str {
         RightPanelTab::Device => "superhero/phone.svg",
         RightPanelTab::File => "superhero/file.svg",
     }
+}
+
+/// One row of the surface list: the `+` menu and the empty-panel launcher draw the same rows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PanelMenuItem {
+    pub(crate) tab: RightPanelTab,
+    pub(crate) label: &'static str,
+    pub(crate) icon: &'static str,
+    pub(crate) shortcut: &'static str,
+    /// Offered as enabled; the rest show dimmed, as in Conn.
+    pub(crate) available: bool,
+}
+
+impl PanelMenuItem {
+    /// The AX identifier suffix: `Pull request` -> `pull-request`.
+    fn slug(&self) -> String {
+        self.label.to_ascii_lowercase().replace(' ', "-")
+    }
+}
+
+/// The surface list in Conn's order (`RightPanelTab::MENU_ORDER`), the single source for the `+`
+/// menu and the launcher.
+#[must_use]
+pub(crate) fn panel_menu_items(available_tabs: &[RightPanelTab]) -> Vec<PanelMenuItem> {
+    RightPanelTab::MENU_ORDER
+        .into_iter()
+        .map(|tab| PanelMenuItem {
+            tab,
+            label: panel_tab_label(tab),
+            icon: panel_tab_icon_path(tab),
+            shortcut: tab.menu_shortcut(),
+            available: available_tabs.contains(&tab),
+        })
+        .collect()
 }
 
 /// State passed to [`render_panel_header`].
@@ -523,18 +560,20 @@ fn render_add_panel_menu(
         .shadow(vec![shadow])
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
 
-    for tab in RightPanelTab::MENU_ORDER {
-        let available = available_tabs.contains(&tab);
-        let label = panel_tab_label(tab);
+    for item in panel_menu_items(available_tabs) {
+        let PanelMenuItem {
+            tab,
+            label,
+            icon,
+            shortcut,
+            available,
+        } = item;
         let on_add = on_add_tab.clone();
         let mut row = h_flex()
             .id(SharedString::from(format!("right-panel-add-{label}")))
             .a11y(
                 gpui_kit::Role::MenuItem,
-                format!(
-                    "panel.add-menu.{}",
-                    label.to_ascii_lowercase().replace(' ', "-")
-                ),
+                format!("panel.add-menu.{}", item.slug()),
                 label,
             )
             .w_full()
@@ -547,11 +586,7 @@ fn render_add_panel_menu(
             .text_size(px(TAB_FONT_SIZE_PX))
             .line_height(px(TAB_LINE_HEIGHT_PX))
             .text_color(fg)
-            .child(superhero_icon(
-                panel_tab_icon_path(tab),
-                HEADER_ICON_PX,
-                icon_color,
-            ))
+            .child(superhero_icon(icon, HEADER_ICON_PX, icon_color))
             .child(div().min_w_0().truncate().child(label))
             .child(
                 div()
@@ -560,7 +595,7 @@ fn render_add_panel_menu(
                     .text_size(px(MENU_SHORTCUT_FONT_PX))
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(muted)
-                    .child(tab.menu_shortcut()),
+                    .child(shortcut),
             );
         // Browser profiles submenu is out of scope (`docs/scope.md` #17/#31): no chevron.
         row = if available {
@@ -584,6 +619,89 @@ fn render_add_panel_menu(
             .child(list),
     )
     .with_priority(1)
+}
+
+/// The empty right panel: Conn's `RightPanelEmptyState` (`Open a surface`), the `+` menu's rows
+/// listed in the panel body. Picking one opens that surface as a tab.
+pub(crate) fn render_panel_launcher(
+    tokens: &Tokens,
+    available_tabs: &[RightPanelTab],
+    on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
+) -> impl IntoElement {
+    let fg = to_hsla(tokens.foreground);
+    let muted = to_hsla(tokens.muted_foreground);
+    // `hover:bg-accent/60`.
+    let hover_bg = to_hsla(tokens.shell_highlight);
+
+    let mut rows = div().flex().flex_col().gap(px(2.0));
+    for item in panel_menu_items(available_tabs) {
+        let on_add = on_add_tab.clone();
+        let tab = item.tab;
+        let mut row = h_flex()
+            .id(SharedString::from(format!(
+                "right-panel-launcher-{}",
+                item.slug()
+            )))
+            .a11y_button(format!("panel.launcher.{}", item.slug()), item.label)
+            .w_full()
+            .h(px(LAUNCHER_ROW_HEIGHT_PX))
+            .px(px(10.0))
+            .gap(px(10.0))
+            .items_center()
+            .rounded(px(CONTROL_RADIUS_PX))
+            .text_size(px(TAB_FONT_SIZE_PX))
+            .line_height(px(TAB_LINE_HEIGHT_PX))
+            .text_color(fg)
+            .child(superhero_icon(item.icon, HEADER_ICON_PX, fg))
+            .child(div().flex_1().min_w_0().truncate().child(item.label))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_size(px(MENU_SHORTCUT_FONT_PX))
+                    .font_weight(gpui_kit::FontWeight::MEDIUM)
+                    .text_color(muted)
+                    .child(item.shortcut),
+            );
+        row = if item.available {
+            row.cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_add(tab, window, cx);
+                })
+        } else {
+            // `opacity-50`.
+            row.opacity(0.5)
+        };
+        rows = rows.child(row);
+    }
+
+    div()
+        .id("right-panel-launcher")
+        .a11y_group("panel.launcher", "Open a surface")
+        .flex()
+        .flex_1()
+        .min_h_0()
+        .items_center()
+        .justify_center()
+        .px(px(24.0))
+        .child(
+            div()
+                .w_full()
+                .max_w(px(LAUNCHER_MAX_WIDTH_PX))
+                .py(px(24.0))
+                .child(
+                    div()
+                        .mb(px(12.0))
+                        .text_center()
+                        .text_size(px(TAB_FONT_SIZE_PX))
+                        .line_height(px(TAB_LINE_HEIGHT_PX))
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                        .text_color(fg)
+                        .child("Open a surface"),
+                )
+                .child(rows),
+        )
 }
 
 #[cfg(test)]
@@ -617,6 +735,21 @@ mod tests {
             RightPanelTab::from_menu_shortcut("q"),
             Some(RightPanelTab::Database)
         );
+    }
+
+    #[test]
+    fn menu_and_launcher_share_one_item_list() {
+        let items = panel_menu_items(&[RightPanelTab::Browser, RightPanelTab::Tasks]);
+        let order: Vec<RightPanelTab> = items.iter().map(|item| item.tab).collect();
+        assert_eq!(order, RightPanelTab::MENU_ORDER.to_vec());
+        let available: Vec<&str> = items
+            .iter()
+            .filter(|item| item.available)
+            .map(|item| item.label)
+            .collect();
+        assert_eq!(available, ["Browser", "Tasks"]);
+        assert_eq!(items[8].slug(), "pull-request");
+        assert_eq!(items[0].icon, panel_tab_icon_path(RightPanelTab::Browser));
     }
 
     #[test]

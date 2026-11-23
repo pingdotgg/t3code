@@ -380,6 +380,63 @@ struct ItemPlace {
     ordinal: i64,
 }
 
+/// The model a subagent runs on, from the projection's `subagents` and `subagent.updated`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubagentModel {
+    /// Model slug (`model`, else the selection's model).
+    pub model: Option<String>,
+    /// Provider instance that runs the subagent.
+    pub instance_id: Option<String>,
+    /// Model options (`reasoningEffort`, ...) by option id, as strings.
+    pub options: HashMap<String, String>,
+}
+
+impl SubagentModel {
+    fn from_subagent(subagent: &conn_contract::OrchestrationV2Subagent) -> Self {
+        let selection = subagent.model_selection.as_ref();
+        let model = non_empty(subagent.model.clone()).or_else(|| {
+            selection
+                .and_then(|s| s.model.as_str())
+                .map(str::to_owned)
+                .and_then(|m| non_empty(Some(m)))
+        });
+        let options = selection
+            .and_then(|s| s.options.as_ref())
+            .and_then(Option::as_ref)
+            .map(model_option_strings)
+            .unwrap_or_default();
+        Self {
+            model,
+            instance_id: non_empty(Some(subagent.provider_instance_id.clone())),
+            options,
+        }
+    }
+}
+
+/// Reads `ModelSelection.options` (`[{"id", "value"}]`, or an object) into string values.
+fn model_option_strings(options: &serde_json::Value) -> HashMap<String, String> {
+    let text = |value: &serde_json::Value| match value {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    };
+    match options {
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                let id = item.get("id")?.as_str()?.to_owned();
+                Some((id, text(item.get("value")?)?))
+            })
+            .collect(),
+        serde_json::Value::Object(map) => map
+            .iter()
+            .filter_map(|(id, value)| Some((id.clone(), text(value)?)))
+            .collect(),
+        _ => HashMap::new(),
+    }
+}
+
 /// One thread's timeline from `orchestration.subscribeThread`.
 #[derive(Clone, Debug, Default)]
 pub struct ThreadState {
@@ -401,6 +458,10 @@ pub struct ThreadState {
     pub run_timings: HashMap<String, RunTiming>,
     /// Ready filesystem checkpoints with changed files, keyed by `run_id`.
     pub turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
+    /// The model of each subagent, by subagent id.
+    pub subagent_models: HashMap<String, SubagentModel>,
+    /// The subagent id behind each `subagent` timeline entry, by entry id.
+    pub subagent_of_entry: HashMap<String, String>,
     /// Changes whenever [`Self::apply`], [`Self::apply_projection`], or
     /// [`Self::prepend_history_page`] runs, and is unique across all thread states,
     /// so views can skip re-syncing a timeline that did not change.
@@ -793,10 +854,20 @@ impl ThreadState {
         } else {
             projection.turn_items.len()
         };
+        self.subagent_models = projection
+            .subagents
+            .iter()
+            .map(|s| (s.id.clone(), SubagentModel::from_subagent(s)))
+            .collect();
+        self.subagent_of_entry.clear();
         let mut entries = Vec::with_capacity(capacity);
         let mut entry_index: HashMap<String, usize> = HashMap::with_capacity(capacity);
         let mut ingest = |mut item: ProjectionTurnItem| {
             hydrate_deduped_projection_item(&mut item, &message_texts, &subagent_bodies);
+            if let ProjectionTurnItem::Subagent(sub) = &item {
+                self.subagent_of_entry
+                    .insert(sub.id.clone(), sub.subagent_id.clone());
+            }
             if let ProjectionTurnItem::Compaction(c) = &item {
                 self.record_compaction(c);
             }
@@ -1195,6 +1266,10 @@ impl ThreadState {
                     self.approval_details
                         .insert(i.id.clone(), ApprovalDetails::from_item(i));
                 }
+                if let TurnItem::Subagent(i) = &ev.payload {
+                    self.subagent_of_entry
+                        .insert(i.id.clone(), i.subagent_id.clone());
+                }
                 let timing = extract_turn_item_timing(&ev.payload);
                 self.entry_timings.insert(item_id.clone(), timing);
                 if let Some((id, place)) = place_of_turn_item(&ev.payload) {
@@ -1242,6 +1317,14 @@ impl ThreadState {
                 self.record_provider_thread(&ev.payload)
             }
             DomainEvent::ProviderTurnUpdated(ev) => self.record_provider_turn(&ev.payload),
+            DomainEvent::SubagentUpdated(ev) => {
+                let model = SubagentModel::from_subagent(&ev.payload);
+                let changed = self.subagent_models.get(&ev.payload.id) != Some(&model);
+                if changed {
+                    self.subagent_models.insert(ev.payload.id, model);
+                }
+                changed
+            }
             // Projection metadata events that do not directly add or alter timeline entries.
             DomainEvent::ThreadCreated(_)
             | DomainEvent::ThreadArchived(_)
@@ -1251,7 +1334,6 @@ impl ThreadState {
             | DomainEvent::RunAttemptCreated(_)
             | DomainEvent::RunAttemptUpdated(_)
             | DomainEvent::NodeUpdated(_)
-            | DomainEvent::SubagentUpdated(_)
             | DomainEvent::ProviderSessionAttached(_)
             | DomainEvent::ProviderSessionDetached(_)
             | DomainEvent::PlanUpdated(_)
@@ -2519,5 +2601,32 @@ mod timing_tests {
         assert_eq!(state.question_context("q-empty"), None);
         assert_eq!(state.question_context("q-no-run"), None);
         assert_eq!(state.question_context("missing"), None);
+    }
+}
+
+#[cfg(test)]
+mod subagent_model_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn model_options_read_from_an_array_or_an_object() {
+        let expected = HashMap::from([
+            ("reasoningEffort".to_owned(), "medium".to_owned()),
+            ("fastMode".to_owned(), "true".to_owned()),
+        ]);
+        assert_eq!(
+            model_option_strings(&json!([
+                { "id": "reasoningEffort", "value": "medium" },
+                { "id": "fastMode", "value": true },
+                { "id": "ignored", "value": null }
+            ])),
+            expected
+        );
+        assert_eq!(
+            model_option_strings(&json!({ "reasoningEffort": "medium", "fastMode": true })),
+            expected
+        );
+        assert!(model_option_strings(&json!("medium")).is_empty());
     }
 }

@@ -1,6 +1,6 @@
 # Status
 
-**State:** Phases 1–5 + right-panel parity surfaces (Files, Diff, Terminal, Browser/CEF, API, Database, MCP, Tasks, Pull Request, Linked Items, Device live streaming) integrated, passing `scripts/check.sh` + `--features automation` + `--features cef` clippy + live `conn-server` tests, and **side-by-side visually verified in `nick-vm` via VMPal against `Conn.app`** in both T3 Code Light and Dark Ocean.
+**State:** Phases 1–5 + right-panel parity surfaces (Files, Diff, Terminal, Browser/CEF, API, Database, MCP, Tasks, Pull Request, Linked Items, Device live streaming) integrated, passing `scripts/check.sh` + `--features automation` clippy + live `conn-server` tests, and **side-by-side visually verified in `nick-vm` via VMPal against `Conn.app`** in both T3 Code Light and Dark Ocean.
 
 Keep this file accurate. Update it whenever a milestone lands, a proof passes, or a blocker is found.
 
@@ -89,15 +89,16 @@ scripts/automate.py '{"cmd":"theme","id":"t3-code-light"}' '{"cmd":"screenshot",
 scripts/run-app.sh stop; scripts/dev-server.sh stop
 ```
 
-With the CEF browser:
+The embedded CEF browser is always compiled in; CEF itself downloads on first use into
+`~/Library/Application Support/conn-gpui/cef/`.
 
 ```sh
-CARGO_FLAGS="--features cef" scripts/run-app.sh
+scripts/run-app.sh
 scripts/automate.py '{"cmd":"browse","url":"http://127.0.0.1:8765/"}' '{"cmd":"browser-state"}'
-CARGO_TARGET_DIR=target-cef cargo run -p conn-web --example cef_smoke --features cef -- http://127.0.0.1:8765/
+cargo run -p conn-web --example cef_smoke -- http://127.0.0.1:8765/
 ```
 
-CEF lint check: `CARGO_TARGET_DIR=target-cef cargo clippy -p conn-web -p conn-app --all-targets --features conn-web/cef,conn-app/cef,conn-app/automation -- -D warnings`.
+Lint check: `cargo clippy -p conn-web -p conn-app --all-targets --features conn-app/automation -- -D warnings`.
 
 - Auth: `conn-server auth session issue --token-only` writes a bearer to `/tmp/conn-gpui-dev/bearer`; the app reads `CONN_GPUI_SERVER` + `CONN_GPUI_TOKEN_FILE` (or `CONN_GPUI_PAIRING_URL`). Without them it shows a demo fixture.
 - Claude turns: the dev server uses a private copy of `apps/conn-server/helpers/sdk-host` with npm deps in `/tmp/conn-gpui-dev/sdk-host`; seed threads with `conn-server thread start <project> "<msg>" --provider claudeAgent --model haiku --wait --state-dir /tmp/conn-gpui-dev/state`.

@@ -369,6 +369,62 @@ impl Connection {
         }
     }
 
+    /// Downloads a stored chat attachment (`assets.createUrl` for an `attachment` resource,
+    /// then `GET` of the signed URL), as the web client does for message thumbnails.
+    ///
+    /// # Errors
+    /// Returns [`ClientError`] if the RPC, URL resolution or the download fails.
+    pub async fn fetch_attachment_bytes(
+        &self,
+        attachment_id: &str,
+    ) -> Result<Vec<u8>, ClientError> {
+        let payload = conn_contract::AssetCreateUrlInput {
+            resource: conn_contract::AssetResource::Attachment(
+                conn_contract::AssetResourceAttachment {
+                    tag: lit::Attachment,
+                    attachment_id: attachment_id.to_owned(),
+                    file_name: None,
+                    mime_type: None,
+                    disposition: None,
+                    render_intent: None,
+                },
+            ),
+        };
+        let created = self
+            .call::<conn_contract::rpc::assets::create_url::Payload, conn_contract::rpc::assets::create_url::Success>(
+                "assets.createUrl",
+                &payload,
+            )
+            .await?;
+        let url = self.http_base_url.join(&created.relative_url)?;
+        let http = self.http.clone();
+        let bearer = self.bearer.read().ok().and_then(|g| g.clone());
+        self.run_on_tokio(
+            async move {
+                let mut req = http.get(url);
+                if let Some(token) = bearer {
+                    req = req.bearer_auth(token);
+                }
+                let resp = req
+                    .send()
+                    .await
+                    .map_err(|err| ClientError::Connection(err.to_string()))?;
+                if !resp.status().is_success() {
+                    return Err(ClientError::Connection(format!(
+                        "attachment download failed ({})",
+                        resp.status()
+                    )));
+                }
+                resp.bytes()
+                    .await
+                    .map(|bytes| bytes.to_vec())
+                    .map_err(|err| ClientError::Connection(err.to_string()))
+            },
+            "attachment download",
+        )
+        .await
+    }
+
     /// Subscribes to `orchestration.subscribeShell`.
     ///
     /// Items arrive as [`ClientEvent::Shell`]. Automatically resubscribes after reconnect using

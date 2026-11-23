@@ -8,6 +8,7 @@ mod detail;
 mod format;
 mod insights;
 
+use crate::a11y::ConnA11yExt as _;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -846,6 +847,7 @@ impl Render for TasksPanel {
 
         v_flex()
             .id("tasks-panel")
+            .a11y_group("panel.tasks", "Tasks")
             .size_full()
             .min_h_0()
             .overflow_hidden()

@@ -4,6 +4,7 @@
 //! Pure and GPUI-free, so conn-gpui and the iOS app (`conn-ffi`) read one projection. The live
 //! projection of `subscribeServerConfig` events is [`ServerConfigState`].
 
+use crate::model_preferences::{ModelPreferences, sort_models_for_instance};
 use conn_contract::{
     ServerConfig, ServerConfigStreamEvent, ServerProviderAuthStatus,
     ServerProviderCompatibilityStatus, ServerProviderState, ServerProvidersItemItem,
@@ -270,10 +271,51 @@ pub struct ModelOption {
     pub is_default: bool,
     pub is_legacy: bool,
     pub is_new: bool,
+    /// Added by the user in Settings → Providers → Models (`isCustom`). Never hidden.
+    pub is_custom: bool,
+    /// The server reported capabilities for it. A custom or fallback model may have none.
+    pub has_capabilities: bool,
     pub descriptors: Vec<ModelOptionDescriptor>,
 }
 
 impl ModelOption {
+    /// `describeModelCapabilities`: `Fast mode`, and `No reasoning` when `flag_missing_reasoning`
+    /// (other models of the provider reason) and this discovered model has no reasoning control.
+    /// Alias slugs (`default`, Cursor's `auto`) defer to the provider, so reasoning is unknown.
+    #[must_use]
+    pub fn capability_labels(&self, flag_missing_reasoning: bool) -> Vec<&'static str> {
+        let mut labels = Vec::new();
+        let fast = self.descriptors.iter().any(|descriptor| match descriptor {
+            ModelOptionDescriptor::Boolean { id, .. } => id == "fastMode",
+            ModelOptionDescriptor::Select { id, choices, .. } => {
+                id == "serviceTier"
+                    && choices
+                        .iter()
+                        .any(|choice| choice.id == "fast" || choice.label == "Fast")
+            }
+        });
+        if fast {
+            labels.push("Fast mode");
+        }
+        if flag_missing_reasoning
+            && !self.is_custom
+            && self.has_capabilities
+            && !matches!(self.slug.as_str(), "default" | "auto")
+            && !self.has_reasoning_control()
+        {
+            labels.push("No reasoning");
+        }
+        labels
+    }
+
+    /// Whether a descriptor of this model sets reasoning.
+    #[must_use]
+    pub fn has_reasoning_control(&self) -> bool {
+        self.descriptors
+            .iter()
+            .any(ModelOptionDescriptor::is_reasoning)
+    }
+
     /// Compact trigger label (`getTriggerDisplayModelName`): `"Gemini 4 Neon"` -> `"4 Neon"`,
     /// `"Claude Sonnet 4.6"` -> `"Sonnet 4.6"`, `"GPT-5.4"` stays.
     #[must_use]
@@ -607,24 +649,21 @@ pub struct ProviderGroup {
     pub show_badge: bool,
     /// `setup.canAuthenticate`; `None` when the server sent no setup block.
     pub can_authenticate: Option<bool>,
-    /// `setup.documentationUrl`.
-    pub documentation_url: Option<String>,
     /// The snapshot's own `displayName`, else the humanised driver. The banner names the
     /// provider with it (`status.displayName?.trim() || formatProviderDriverKindLabel(driver)`).
     pub provider_label: String,
     /// `getProviderCompatibilityNote`: one quiet line for a version Orbit should change.
     pub compatibility_note: Option<String>,
-    /// The signed-in account's email, for the setup page (`auth.email`).
-    pub auth_email: Option<String>,
     /// `auth.type`, for the setup page (`gemini-api-key`, `agent-platform`, ...).
     pub auth_type: Option<String>,
-    /// `auth.canLogout`.
-    pub can_logout: Option<bool>,
+    /// Models this provider's CLI is too old to run (`updateRequiredModels`).
+    pub update_required: Vec<UpdateRequiredModel>,
     /// `auth.label`, a product or plan name.
     pub auth_label: Option<String>,
     /// The installed CLI's version.
     pub version: Option<String>,
-    /// `hasProviderSetup`: Antigravity always, any other provider when `setup.canAuthenticate`.
+    /// `hasProviderSetup`: Antigravity only. Every other provider signs in through the Orbit AI
+    /// router, so its setup is its runtime fields, not a sign-in.
     pub has_setup: bool,
     pub models: Vec<ModelOption>,
     /// User-invocable provider skills for the `$` menu.
@@ -747,12 +786,10 @@ impl ProviderGroup {
             );
         }
         if self.unauthenticated {
-            return if !self.has_setup {
-                "Sign in via the CLI to authenticate again.".to_owned()
-            } else if self.driver == "antigravity" {
-                "Open provider setup to sign in with Google.".to_owned()
+            return if self.has_setup {
+                "Open provider setup to connect it.".to_owned()
             } else {
-                "Open provider setup to sign in.".to_owned()
+                "Sign in via the CLI to authenticate again.".to_owned()
             };
         }
         let name = &self.provider_label;
@@ -855,7 +892,14 @@ pub struct ModelCatalog {
     /// Every instance the server lists, in server order, disabled and model-less ones too.
     /// Threads keep the id of an instance that left the picker, so lookups read this list.
     pub instances: Vec<ProviderInstanceInfo>,
+    /// Favorites, hidden models and order. Hidden models leave the picker but stay findable,
+    /// so a thread that uses one still shows its name and options.
+    pub preferences: ModelPreferences,
 }
+
+/// The picker rail's Favorites tab, as a `selected_provider`. Instance ids start with a
+/// letter, so it never names an instance.
+pub const FAVORITES_TAB: &str = "@favorites";
 
 impl ModelCatalog {
     /// Builds a [`ModelCatalog`] from a typed `conn_contract::ServerConfig`.
@@ -945,10 +989,6 @@ impl ModelCatalog {
                     .find(|info| info.instance_id == item.instance_id)
                     .is_some_and(|info| info.show_badge),
                 can_authenticate: item.setup.as_ref().map(|s| s.can_authenticate),
-                documentation_url: item
-                    .setup
-                    .as_ref()
-                    .and_then(|s| s.documentation_url.clone()),
                 provider_label: item
                     .display_name
                     .as_deref()
@@ -959,19 +999,20 @@ impl ModelCatalog {
                     .compatibility_advisory
                     .as_ref()
                     .and_then(compatibility_note),
-                auth_email: item
-                    .auth
-                    .email
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned),
                 auth_type: item.auth.r#type.clone(),
-                can_logout: item.auth.can_logout,
+                update_required: item
+                    .update_required_models
+                    .iter()
+                    .flatten()
+                    .map(|model| UpdateRequiredModel {
+                        slug: model.slug.clone(),
+                        name: model.name.clone(),
+                        min_version: model.min_version.clone(),
+                    })
+                    .collect(),
                 auth_label: item.auth.label.clone(),
                 version: item.version.clone(),
-                has_setup: item.driver == "antigravity"
-                    || item.setup.as_ref().is_some_and(|s| s.can_authenticate),
+                has_setup: item.driver == "antigravity",
                 models,
                 skills,
                 supported_runtime_modes,
@@ -987,6 +1028,57 @@ impl ModelCatalog {
             providers: order_provider_groups(groups),
             unlisted: unlisted_groups,
             instances,
+            preferences: ModelPreferences::default(),
+        }
+    }
+
+    /// The catalog with the environment's model preferences: each instance's models in its
+    /// saved order (`applyInstanceModelPreferences`), with hidden models and favorites kept
+    /// for the picker.
+    #[must_use]
+    pub fn with_preferences(mut self, preferences: ModelPreferences) -> Self {
+        let none = std::collections::HashSet::new();
+        for group in self.providers.iter_mut().chain(self.unlisted.iter_mut()) {
+            let order = preferences.instance(&group.instance_id).model_order;
+            if order.is_empty() {
+                continue;
+            }
+            let models = std::mem::take(&mut group.models);
+            group.models =
+                sort_models_for_instance(models, |m| m.slug.as_str(), &order, &none, false);
+        }
+        self.preferences = preferences;
+        self
+    }
+
+    /// Whether the picker leaves `model` out: hidden in Settings, and not a custom model.
+    #[must_use]
+    pub fn is_hidden(&self, model: &ModelOption) -> bool {
+        !model.is_custom && self.preferences.is_hidden(&model.instance_id, &model.slug)
+    }
+
+    /// Whether `model` is a favorite.
+    #[must_use]
+    pub fn is_favorite(&self, model: &ModelOption) -> bool {
+        self.preferences
+            .is_favorite(&model.instance_id, &model.slug)
+    }
+
+    /// The tab the picker opens on (`selectedInstanceId`'s initial value): Favorites when a
+    /// favorite can be picked and the active provider is ready, else the active provider.
+    #[must_use]
+    pub fn initial_picker_tab(&self, active_instance_id: Option<&str>) -> Option<String> {
+        let active_ready = active_instance_id.is_none_or(|id| {
+            self.providers
+                .iter()
+                .find(|p| p.instance_id == id)
+                .is_none_or(|p| p.ready)
+        });
+        let has_pickable_favorite = self.pickable_models().any(|m| self.is_favorite(m));
+        if active_ready && has_pickable_favorite {
+            Some(FAVORITES_TAB.to_owned())
+        } else {
+            active_instance_id.map(str::to_owned)
         }
     }
 
@@ -995,7 +1087,7 @@ impl ModelCatalog {
         self.providers.iter().filter(|p| p.enabled)
     }
 
-    /// Returns the preferred default model across available providers:
+    /// Returns the preferred default model across available providers, hidden models aside:
     /// first ready provider's `is_default` model, else first model of a ready provider,
     /// else any `is_default` model, else the very first model in the catalog.
     #[must_use]
@@ -1004,13 +1096,14 @@ impl ModelCatalog {
             .iter()
             .filter(|p| p.ready)
             .flat_map(|p| p.models.iter())
+            .filter(|m| !self.is_hidden(m))
             .find(|m| m.is_default)
             .or_else(|| {
                 self.providers
                     .iter()
                     .filter(|p| p.ready)
                     .flat_map(|p| p.models.iter())
-                    .next()
+                    .find(|m| !self.is_hidden(m))
             })
             .or_else(|| {
                 self.providers
@@ -1068,7 +1161,7 @@ impl ModelCatalog {
             .iter()
             .filter(|p| p.ready)
             .flat_map(|p| p.models.iter())
-            .filter(|m| !is_synthetic_default(m))
+            .filter(|m| !is_synthetic_default(m) && !self.is_hidden(m))
     }
 
     /// Returns the models visible for the active provider tab and search query.
@@ -1078,6 +1171,20 @@ impl ModelCatalog {
     /// A provider that is not ready lists no model, as in Conn.
     #[must_use]
     pub fn filtered_models(
+        &self,
+        selected_provider: Option<&str>,
+        query: &str,
+    ) -> Vec<&ModelOption> {
+        let mut models = self.unsorted_filtered_models(selected_provider, query);
+        // `sortProviderModelItems`: favorites first, except in Favorites, which keeps the
+        // providers' order. The sort is stable.
+        if selected_provider != Some(FAVORITES_TAB) || !query.trim().is_empty() {
+            models.sort_by_key(|m| !self.is_favorite(m));
+        }
+        models
+    }
+
+    fn unsorted_filtered_models(
         &self,
         selected_provider: Option<&str>,
         query: &str,
@@ -1097,6 +1204,13 @@ impl ModelCatalog {
                             .as_deref()
                             .is_some_and(|sp| sp.to_ascii_lowercase().contains(&needle))
                 })
+                .collect();
+        }
+
+        if selected_provider == Some(FAVORITES_TAB) {
+            return self
+                .pickable_models()
+                .filter(|m| self.is_favorite(m))
                 .collect();
         }
 
@@ -1163,6 +1277,8 @@ fn model_option_from_contract(
         is_default: model.is_default.unwrap_or(false),
         is_legacy: model.is_legacy.unwrap_or(false),
         is_new: model.badge.is_some(),
+        is_custom: model.is_custom,
+        has_capabilities: model.capabilities.is_some(),
         descriptors,
     }
 }
@@ -1219,6 +1335,218 @@ fn humanize_slug(driver: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// A model that needs a newer provider CLI (`updateRequiredModels`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UpdateRequiredModel {
+    pub slug: String,
+    pub name: String,
+    pub min_version: String,
+}
+
+/// `parseSemver`: `major.minor.patch` with an optional `-prerelease`, `v` and build metadata
+/// ignored. A short version is padded with zeros.
+fn parse_semver(value: &str) -> Option<(u64, u64, u64, Vec<String>)> {
+    let trimmed = value.trim();
+    let without_build = trimmed.split('+').next().unwrap_or("");
+    let (main, prerelease) = without_build
+        .split_once('-')
+        .map_or((without_build, ""), |(main, pre)| (main, pre));
+    let mut segments: Vec<&str> = main
+        .split('.')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+    while !segments.is_empty() && segments.len() < 3 {
+        segments.push("0");
+    }
+    let [major, minor, patch] = segments.as_slice() else {
+        return None;
+    };
+    let number = |s: &str| {
+        let s = s.strip_prefix('v').unwrap_or(s);
+        (!s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+            .then(|| s.parse::<u64>().ok())
+            .flatten()
+    };
+    Some((
+        number(major)?,
+        number(minor)?,
+        number(patch)?,
+        prerelease
+            .split('.')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect(),
+    ))
+}
+
+/// `compareSemverVersions`: negative, zero or positive. A version that does not parse sorts
+/// as text after one that does.
+#[must_use]
+pub fn compare_semver(left: &str, right: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (Some(l), Some(r)) = (parse_semver(left), parse_semver(right)) else {
+        return left.cmp(right);
+    };
+    let by_number = (l.0, l.1, l.2).cmp(&(r.0, r.1, r.2));
+    if by_number != Ordering::Equal {
+        return by_number;
+    }
+    match (l.3.is_empty(), r.3.is_empty()) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => return Ordering::Greater,
+        (false, true) => return Ordering::Less,
+        (false, false) => {}
+    }
+    for (a, b) in l.3.iter().zip(&r.3) {
+        let numeric = |s: &str| {
+            s.chars()
+                .all(|c| c.is_ascii_digit())
+                .then(|| s.parse::<u64>().ok())
+                .flatten()
+        };
+        let order = match (numeric(a), numeric(b)) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => a.cmp(b),
+        };
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    l.3.len().cmp(&r.3.len())
+}
+
+/// `formatConjunctionList` in English: `A`, `A and B`, `A, B, and C`.
+fn conjunction_list(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => (*one).to_owned(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
+impl ProviderGroup {
+    /// `formatProviderUpdateRequiredNotice`: the models this provider's CLI is too old for,
+    /// narrowed by the picker's search `query`, and the version that runs them.
+    #[must_use]
+    pub fn update_required_notice(&self, query: &str) -> Option<String> {
+        let query = query.trim().to_lowercase();
+        let models: Vec<&UpdateRequiredModel> = self
+            .update_required
+            .iter()
+            .filter(|model| {
+                query.is_empty()
+                    || model.name.to_lowercase().contains(&query)
+                    || model.slug.to_lowercase().contains(&query)
+            })
+            .collect();
+        let first = models.first()?;
+        let min_version = models
+            .iter()
+            .fold(first.min_version.as_str(), |highest, model| {
+                if compare_semver(&model.min_version, highest).is_gt() {
+                    model.min_version.as_str()
+                } else {
+                    highest
+                }
+            });
+        let version = if min_version.starts_with('v') {
+            min_version.to_owned()
+        } else {
+            format!("v{min_version}")
+        };
+        let names: Vec<&str> = models.iter().map(|model| model.name.as_str()).collect();
+        let names = conjunction_list(&names);
+        Some(if self.driver == "codex" {
+            format!("Update the Codex CLI to {version} or newer to use {names}.")
+        } else {
+            let provider = if self.driver == "claudeAgent" {
+                "Claude Code".to_owned()
+            } else {
+                format_driver_name(&self.driver)
+            };
+            format!("Update {provider} to {version} or newer to use {names}.")
+        })
+    }
+}
+
+/// Which provider a composer sends with, and where `Open provider settings` leads when none
+/// is usable (`resolveComposerProviderSelection`, `ChatComposer.tsx:934-945`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProviderSelection {
+    /// The usable instance, if any.
+    pub selected: Option<String>,
+    /// No instance is usable: the footer offers `Open provider settings`.
+    pub none_available: bool,
+    /// The instance the footer's setup button opens: the one asked for, else the first
+    /// instance that has a setup path. `None` disables the button.
+    pub setup_instance: Option<String>,
+}
+
+impl ModelCatalog {
+    /// `resolveComposerProviderSelection`: `candidates` are the instances the thread, its draft
+    /// and its project ask for, in order. The first enabled, available candidate wins; else a
+    /// ready instance of the requested driver, then any ready one, then any enabled and
+    /// available one that has not failed.
+    #[must_use]
+    pub fn resolve_selection(&self, candidates: &[Option<&str>]) -> ProviderSelection {
+        let entries = self.all_groups();
+        let selectable = |group: &&ProviderGroup| group.enabled && group.available;
+        let requested = candidates.iter().flatten().next().copied();
+        let requested_driver = requested
+            .and_then(|id| entries.iter().find(|g| g.instance_id == id))
+            .or_else(|| entries.first())
+            .map(|group| group.driver.as_str());
+        let pick = |pool: &[&ProviderGroup]| -> Option<String> {
+            pool.iter()
+                .find(|group| group.ready)
+                .or_else(|| {
+                    pool.iter()
+                        .find(|g| selectable(g) && g.status != ServerProviderState::Error)
+                })
+                .map(|group| group.instance_id.clone())
+        };
+        let selected = candidates
+            .iter()
+            .flatten()
+            .find_map(|id| {
+                entries
+                    .iter()
+                    .find(|g| g.instance_id == *id && selectable(g))
+                    .map(|g| g.instance_id.clone())
+            })
+            .or_else(|| {
+                let same_driver: Vec<&ProviderGroup> = entries
+                    .iter()
+                    .copied()
+                    .filter(|g| Some(g.driver.as_str()) == requested_driver)
+                    .collect();
+                pick(&same_driver)
+            })
+            .or_else(|| pick(&entries));
+        let none_available = selected.is_none();
+        let setup_instance = none_available
+            .then(|| {
+                requested.map(str::to_owned).or_else(|| {
+                    entries
+                        .iter()
+                        .find(|g| g.has_setup)
+                        .map(|g| g.instance_id.clone())
+                })
+            })
+            .flatten();
+        ProviderSelection {
+            selected,
+            none_available,
+            setup_instance,
+        }
+    }
 }
 
 /// One provider instance as the server lists it, for clients that only need to name it (the
@@ -1408,13 +1736,15 @@ pub struct ServerConfigChange {
     pub providers_changed: bool,
     /// The scratch root or a capability the client reads differs.
     pub config_changed: bool,
+    /// `settingsUpdated` (or a snapshot) brought different settings.
+    pub settings_changed: bool,
 }
 
 impl ServerConfigChange {
     /// True when anything a view reads changed.
     #[must_use]
     pub fn any(self) -> bool {
-        self.providers_changed || self.config_changed
+        self.providers_changed || self.config_changed || self.settings_changed
     }
 }
 
@@ -1427,6 +1757,7 @@ impl ServerConfigChange {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServerConfigState {
     providers: Vec<ServerProvidersItemItem>,
+    settings: Option<conn_contract::ServerSettings>,
     catalog: ModelCatalog,
     scratch_workspace_root: Option<String>,
     model_catalog_refresh: bool,
@@ -1451,10 +1782,53 @@ impl ServerConfigState {
         self.loaded
     }
 
-    /// The parsed provider catalog.
+    /// The parsed provider catalog, as enabled on the machine (no project in scope).
     #[must_use]
     pub fn catalog(&self) -> &ModelCatalog {
         &self.catalog
+    }
+
+    /// The server's settings: provider instances, project overrides and the rest. `None` until
+    /// a snapshot arrived.
+    #[must_use]
+    pub fn settings(&self) -> Option<&conn_contract::ServerSettings> {
+        self.settings.as_ref()
+    }
+
+    /// The catalog with each instance enabled as the settings say
+    /// (`applyProviderInstanceSettings`). A server that sends no `providerInstances` keeps the
+    /// flags of its snapshot. The environment's model preferences apply.
+    fn build_catalog(&self) -> ModelCatalog {
+        let items: Vec<Option<ServerProvidersItemItem>> = self
+            .providers
+            .iter()
+            .map(|provider| {
+                let mut provider = provider.clone();
+                if let Some(settings) = self
+                    .settings
+                    .as_ref()
+                    .filter(|settings| settings.provider_instances.is_some())
+                {
+                    provider.enabled = crate::provider_settings::settings_instance_enabled(
+                        settings,
+                        &provider.instance_id,
+                    );
+                }
+                Some(provider)
+            })
+            .collect();
+        let preferences = self
+            .settings
+            .as_ref()
+            .map(ModelPreferences::from_settings)
+            .unwrap_or_default();
+        ModelCatalog::from_providers(&items).with_preferences(preferences)
+    }
+
+    /// Every provider as the server sent it, in server order.
+    #[must_use]
+    pub fn providers(&self) -> &[ServerProvidersItemItem] {
+        &self.providers
     }
 
     /// One provider as the server sent it.
@@ -1490,8 +1864,10 @@ impl ServerConfigState {
                 let next = apply_provider_deltas(&self.providers, &deltas.payload.providers);
                 self.set_providers(next)
             }
+            ServerConfigStreamEvent::SettingsUpdated(updated) => {
+                self.set_settings(updated.payload.settings)
+            }
             ServerConfigStreamEvent::KeybindingsUpdated(_)
-            | ServerConfigStreamEvent::SettingsUpdated(_)
             | ServerConfigStreamEvent::EnvironmentThemesUpdated(_)
             | ServerConfigStreamEvent::UsageLimitSourcesUpdated(_) => ServerConfigChange::default(),
         }
@@ -1507,7 +1883,13 @@ impl ServerConfigState {
             || refresh != self.model_catalog_refresh;
         self.scratch_workspace_root = scratch;
         self.model_catalog_refresh = refresh;
+        let settings_changed = self.settings.as_ref() != Some(&config.settings);
+        self.settings = Some(config.settings.clone());
         let mut change = self.set_providers(config.providers.iter().flatten().cloned().collect());
+        if settings_changed && !change.providers_changed {
+            self.catalog = self.build_catalog();
+        }
+        change.settings_changed = settings_changed;
         change.config_changed = config_changed;
         if !was_loaded {
             change.providers_changed = true;
@@ -1520,12 +1902,24 @@ impl ServerConfigState {
         if next == self.providers {
             return ServerConfigChange::default();
         }
-        let items: Vec<Option<ServerProvidersItemItem>> = next.iter().cloned().map(Some).collect();
-        self.catalog = ModelCatalog::from_providers(&items);
         self.providers = next;
+        self.catalog = self.build_catalog();
         ServerConfigChange {
             providers_changed: true,
-            config_changed: false,
+            ..ServerConfigChange::default()
+        }
+    }
+
+    /// `settingsUpdated`: new settings can switch instances on or off.
+    fn set_settings(&mut self, settings: conn_contract::ServerSettings) -> ServerConfigChange {
+        if self.settings.as_ref() == Some(&settings) {
+            return ServerConfigChange::default();
+        }
+        self.settings = Some(settings);
+        self.catalog = self.build_catalog();
+        ServerConfigChange {
+            settings_changed: true,
+            ..ServerConfigChange::default()
         }
     }
 }
@@ -1667,6 +2061,16 @@ mod live_tests {
         antigravity["models"] = json!([{
             "slug": "gemini-4-neon", "name": "Gemini 4 Neon", "isCustom": false, "capabilities": null
         }]);
+        // Settings turn it on; its provider entry follows once a session started.
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerInstances"]["antigravity"] =
+            json!({ "driver": "antigravity", "enabled": true });
+        let change = state.apply(event(json!({
+            "version": 1,
+            "type": "settingsUpdated",
+            "payload": { "settings": settings }
+        })));
+        assert!(change.settings_changed && !change.providers_changed);
         let change = state.apply(event(json!({
             "version": 1,
             "type": "providerStatuses",
@@ -1736,6 +2140,8 @@ mod live_tests {
             .as_array_mut()
             .expect("array");
         providers.push(work);
+        snapshot["config"]["settings"]["providerInstances"]["codex_work"] =
+            json!({ "driver": "codex" });
         state.apply(event(snapshot));
         let catalog = state.catalog();
         assert_eq!(catalog.driver_for_instance("codex_work"), Some("codex"));
@@ -1820,10 +2226,7 @@ mod live_tests {
             .expect("object")
             .remove("message");
         let banner = banner_for(antigravity).expect("raised");
-        assert_eq!(
-            banner.message,
-            "Open provider setup to sign in with Google."
-        );
+        assert_eq!(banner.message, "Open provider setup to connect it.");
         assert!(banner.offers_setup);
 
         let mut codex = provider_json("codex");
@@ -1834,6 +2237,172 @@ mod live_tests {
         let banner = banner_for(codex).expect("raised");
         assert_eq!(banner.message, "Sign in via the CLI to authenticate again.");
         assert!(!banner.offers_setup);
+    }
+
+    #[test]
+    fn update_required_models_name_the_version_that_runs_them() {
+        let with_models = |id: &str, models: Value| {
+            let mut provider = provider_json(id);
+            provider["updateRequiredModels"] = models;
+            let item: ServerProvidersItemItem =
+                serde_json::from_value(provider).expect("provider decodes");
+            ModelCatalog::from_providers(&[Some(item)])
+                .providers
+                .remove(0)
+        };
+        let codex = with_models(
+            "codex",
+            json!([
+                { "slug": "gpt-7", "name": "GPT-7", "minVersion": "0.170.0" },
+                { "slug": "gpt-7-pro", "name": "GPT-7 Pro", "minVersion": "v0.171.2" },
+            ]),
+        );
+        assert_eq!(
+            codex.update_required_notice("").as_deref(),
+            Some("Update the Codex CLI to v0.171.2 or newer to use GPT-7 and GPT-7 Pro.")
+        );
+        assert_eq!(
+            codex.update_required_notice(" pro ").as_deref(),
+            Some("Update the Codex CLI to v0.171.2 or newer to use GPT-7 Pro.")
+        );
+        assert_eq!(codex.update_required_notice("sonnet"), None);
+        let claude = with_models(
+            "claudeAgent",
+            json!([
+                { "slug": "a", "name": "A", "minVersion": "2.1.0" },
+                { "slug": "b", "name": "B", "minVersion": "2.0.0" },
+                { "slug": "c", "name": "C", "minVersion": "2.0.5" },
+            ]),
+        );
+        assert_eq!(
+            claude.update_required_notice("").as_deref(),
+            Some("Update Claude Code to v2.1.0 or newer to use A, B, and C.")
+        );
+    }
+
+    #[test]
+    fn semver_compares_numbers_then_prereleases() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        assert_eq!(compare_semver("0.171.2", "0.170.9"), Greater);
+        assert_eq!(compare_semver("v1.2", "1.2.0"), Equal);
+        assert_eq!(compare_semver("1.0.0-rc.1", "1.0.0"), Less);
+        assert_eq!(compare_semver("1.0.0-rc.2", "1.0.0-rc.10"), Less);
+        assert_eq!(compare_semver("1.0.0+build", "1.0.0"), Equal);
+    }
+
+    fn settings_event(codex: bool, claude: bool) -> ServerConfigStreamEvent {
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerInstances"]["codex"] = json!({ "driver": "codex", "enabled": codex });
+        settings["providerInstances"]["claudeAgent"] =
+            json!({ "driver": "claudeAgent", "enabled": claude });
+        event(
+            json!({ "version": 1, "type": "settingsUpdated", "payload": { "settings": settings } }),
+        )
+    }
+
+    #[test]
+    fn the_composer_provider_falls_back_and_then_offers_setup() {
+        let mut state = loaded();
+        let pick = |state: &ServerConfigState, candidates: &[Option<&str>]| {
+            state.catalog().resolve_selection(candidates)
+        };
+        assert_eq!(
+            pick(&state, &[Some("claudeAgent")]).selected.as_deref(),
+            Some("claudeAgent")
+        );
+        assert_eq!(
+            pick(&state, &[None, Some("antigravity")])
+                .selected
+                .as_deref(),
+            Some("codex"),
+            "a disabled instance gives way to the first ready one"
+        );
+        state.apply(settings_event(false, false));
+        let none = pick(&state, &[Some("codex")]);
+        assert!(none.none_available && none.selected.is_none());
+        assert_eq!(
+            none.setup_instance.as_deref(),
+            Some("codex"),
+            "the one asked for"
+        );
+        let anything = pick(&state, &[]);
+        assert!(anything.none_available);
+        assert_eq!(
+            anything.setup_instance.as_deref(),
+            Some("antigravity"),
+            "else the first instance with a setup path"
+        );
+    }
+
+    #[test]
+    fn model_preferences_hide_order_and_favor_models_in_the_picker() {
+        let mut state = loaded();
+        let (first, second) = ("gpt-6.1-sol", "gpt-6-astra");
+        let mut settings = snapshot_json()["config"]["settings"].clone();
+        settings["providerModelPreferences"] = json!({
+            "codex": { "hiddenModels": [first], "modelOrder": [second] },
+            "claudeAgent": { "modelOrder": ["claude-sonnet-5-5"] },
+        });
+        settings["favorites"] = json!([{ "provider": "codex", "model": second }]);
+        state.apply(event(json!({
+            "version": 1, "type": "settingsUpdated", "payload": { "settings": settings }
+        })));
+        let catalog = state.catalog();
+        assert_eq!(
+            catalog.providers[0].models[0].slug, second,
+            "the saved order leads"
+        );
+        assert_eq!(catalog.providers[1].models[0].slug, "claude-sonnet-5-5");
+        let listed: Vec<&str> = catalog
+            .filtered_models(Some("codex"), "")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(listed, [second], "hidden models leave the picker");
+        let searched: Vec<&str> = catalog
+            .filtered_models(None, "s")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(searched.first(), Some(&second), "favorites lead a search");
+        assert!(
+            catalog.find_model(Some("codex"), first).is_some(),
+            "a hidden model stays findable for threads that use it"
+        );
+        assert_ne!(
+            catalog.default_model().map(|m| m.slug.as_str()),
+            Some(first)
+        );
+        let favorites: Vec<&str> = catalog
+            .filtered_models(Some(FAVORITES_TAB), "")
+            .iter()
+            .map(|m| m.slug.as_str())
+            .collect();
+        assert_eq!(favorites, [second]);
+        assert_eq!(
+            catalog.initial_picker_tab(Some("codex")).as_deref(),
+            Some(FAVORITES_TAB)
+        );
+        assert_eq!(
+            loaded()
+                .catalog()
+                .initial_picker_tab(Some("codex"))
+                .as_deref(),
+            Some("codex"),
+            "without favorites the active provider opens"
+        );
+    }
+
+    #[test]
+    fn a_server_without_provider_instances_keeps_its_own_enabled_flags() {
+        let mut snapshot = snapshot_json();
+        snapshot["config"]["settings"]
+            .as_object_mut()
+            .expect("settings")
+            .remove("providerInstances");
+        let mut state = ServerConfigState::new();
+        state.apply(event(snapshot));
+        assert_eq!(state.catalog().providers.len(), 2);
     }
 
     #[test]
@@ -2102,6 +2671,8 @@ mod tests {
             is_default: false,
             is_legacy: false,
             is_new: false,
+            is_custom: false,
+            has_capabilities: true,
             descriptors,
         }
     }

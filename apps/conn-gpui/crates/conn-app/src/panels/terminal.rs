@@ -4,6 +4,7 @@
 //! repaints only on PTY output (no continuous animation/blink loop), and kills the PTY child
 //! process when dropped.
 
+use crate::a11y::ConnA11yExt as _;
 use std::borrow::Cow;
 use std::fmt;
 use std::path::PathBuf;
@@ -233,6 +234,11 @@ impl TerminalPanel {
         let cwd = resolve_cwd(self.workspace_root.as_deref());
         self.session = Some(self.start_session(cwd, cx));
         cx.notify();
+    }
+
+    /// Moves keyboard focus to the terminal.
+    pub(crate) fn focus(&self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        window.focus(&self.focus, cx);
     }
 
     /// Restarts the login shell in the current workspace root.
@@ -691,6 +697,7 @@ impl Render for TerminalPanel {
             .child(
                 div()
                     .id("terminal-clear-btn")
+                    .a11y_button("panel.terminal.clear", "Clear terminal")
                     .size(px(TOOLBAR_BTN_SIZE_PX))
                     .rounded(px(9999.0))
                     .flex()
@@ -710,6 +717,7 @@ impl Render for TerminalPanel {
             .child(
                 div()
                     .id("terminal-restart-btn")
+                    .a11y_button("panel.terminal.restart", "Restart terminal")
                     .size(px(TOOLBAR_BTN_SIZE_PX))
                     .rounded(px(9999.0))
                     .flex()
@@ -729,6 +737,7 @@ impl Render for TerminalPanel {
 
         v_flex()
             .id("terminal-panel")
+            .a11y_group("panel.terminal", "Terminal")
             .relative()
             .size_full()
             .track_focus(&self.focus)

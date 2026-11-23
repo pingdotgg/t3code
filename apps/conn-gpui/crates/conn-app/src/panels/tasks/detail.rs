@@ -95,6 +95,8 @@ pub(super) fn render_task_detail(
 
     let on_board = Rc::clone(&callbacks.on_show_board);
     let mut nav = h_flex()
+        .id("tasks-detail-nav")
+        .a11y_group("panel.tasks.detail.breadcrumbs", "Task breadcrumbs")
         .w_full()
         .h(px(NAV_HEIGHT_PX))
         .flex_shrink_0()
@@ -161,6 +163,8 @@ pub(super) fn render_task_detail(
 
     nav = nav.child(
         div()
+            .id("tasks-detail-live-status")
+            .a11y_group("panel.tasks.detail.live-status", "Live status")
             .ml_auto()
             .flex_shrink_0()
             .text_color(muted.opacity(0.70))
@@ -276,6 +280,8 @@ fn render_detail_body(
         .unwrap_or(task.summary.title.as_str());
 
     let title_block = div()
+        .id("tasks-detail-title")
+        .a11y_group("panel.tasks.detail.title", title_text.to_owned())
         .w_full()
         .px(px(DETAIL_PAD_X_PX))
         .py(px(16.0))
@@ -316,26 +322,39 @@ fn render_detail_body(
         _ => render_brief(tokens, task, subtask),
     };
 
-    div()
-        .id("tasks-detail-scroll")
+    // The title stays fixed under the breadcrumbs; only the content below it scrolls.
+    v_flex()
+        .id("tasks-detail-body")
+        .a11y_group("panel.tasks.detail", "Task detail")
         .flex_1()
         .min_h_0()
         .w_full()
-        .overflow_y_scroll()
-        .track_scroll(scroll)
-        .pb(px(32.0))
+        .overflow_hidden()
+        .child(title_block.flex_shrink_0())
         .child(
-            v_flex()
+            div()
+                .id("tasks-detail-scroll")
+                .a11y_group("panel.tasks.detail.content", "Task detail content")
+                .flex_1()
+                .min_h_0()
                 .w_full()
-                .child(title_block)
-                .when_some(key_values, |col, kv| col.child(kv))
-                .child(tabs)
+                .overflow_x_hidden()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .pb(px(32.0))
                 .child(
-                    div()
+                    v_flex()
                         .w_full()
-                        .px(px(DETAIL_PAD_X_PX))
-                        .pt(px(18.0))
-                        .child(tab_body),
+                        .min_w_0()
+                        .when_some(key_values, |col, kv| col.child(kv))
+                        .child(tabs)
+                        .child(
+                            div()
+                                .w_full()
+                                .px(px(DETAIL_PAD_X_PX))
+                                .pt(px(18.0))
+                                .child(tab_body),
+                        ),
                 ),
         )
         .into_any_element()
@@ -498,6 +517,7 @@ fn render_key_values(
         "Usage",
         div()
             .id("tasks-detail-usage")
+            .a11y_group("panel.tasks.detail.usage", "Usage")
             .min_w_0()
             .truncate()
             .conn_tooltip(usage.description, tokens)
@@ -829,6 +849,7 @@ fn render_subtask_row(
             let on_agents = Rc::clone(&callbacks.on_open_subtask);
             div()
                 .id(SharedString::from(format!("tasks-subtask-agent-{sub_id}")))
+                .a11y_button(format!("panel.tasks.subtask-agent.{sub_id}"), "Open agents")
                 .ml(px(9.0))
                 .mt(px(6.0))
                 .size(px(20.0))
@@ -1052,6 +1073,7 @@ fn render_agent_row(
 
     let mut el = h_flex()
         .id(SharedString::from(format!("tasks-agent-{}", row.agent.id)))
+        .a11y_button(format!("panel.tasks.agent.{}", row.agent.id), "Agent")
         .w_full()
         .min_h(px(32.0))
         .px(px(10.0))

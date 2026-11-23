@@ -9,7 +9,7 @@
 use conn_state::{ShellState, ThreadShell};
 use conn_theme::Tokens;
 use gpui_kit::{
-    AnyElement, Context, InteractiveElement as _, IntoElement as _, MouseButton,
+    AnyElement, Context, FocusHandle, InteractiveElement as _, IntoElement as _, MouseButton,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
     TestSupportExt as _, anchored, deferred, div, px,
 };
@@ -22,15 +22,15 @@ use crate::theme::{hsla, hsla_alpha};
 
 /// `menu.tsx` popup geometry (`rounded-xl`, `p-1`, `min-w-[10rem]`), rows
 /// `min-h-7 rounded-lg px-2 py-1 gap-2 text-sm`.
-const MENU_RADIUS_PX: f32 = 12.0;
-const MENU_ROW_RADIUS_PX: f32 = 8.0;
-const MENU_ROW_HEIGHT_PX: f32 = 28.0;
+pub(super) const MENU_RADIUS_PX: f32 = 12.0;
+pub(super) const MENU_ROW_RADIUS_PX: f32 = 8.0;
+pub(super) const MENU_ROW_HEIGHT_PX: f32 = 28.0;
 const MENU_MIN_WIDTH_PX: f32 = 180.0;
-const MENU_FONT_PX: f32 = 14.0;
-const MENU_LINE_PX: f32 = 20.0;
-const MENU_ICON_PX: f32 = 16.0;
+pub(super) const MENU_FONT_PX: f32 = 14.0;
+pub(super) const MENU_LINE_PX: f32 = 20.0;
+pub(super) const MENU_ICON_PX: f32 = 16.0;
 /// Row icons draw at 80% opacity; disabled rows at 64%.
-const MENU_ICON_OPACITY: f32 = 0.8;
+pub(super) const MENU_ICON_OPACITY: f32 = 0.8;
 const MENU_DISABLED_OPACITY: f32 = 0.64;
 
 /// One thread action (`ThreadActionMenuId`), limited to what `conn-gpui` ships.
@@ -239,6 +239,30 @@ pub(crate) fn build_thread_action_menu_items(state: &ThreadMenuState) -> Vec<Thr
     items
 }
 
+/// The menu of the threads picked for a bulk action (`handleMultiSelectContextMenu`): the rows of
+/// `conn_state::bulk_menu`, each running the thread action of the same name on every picked thread.
+#[must_use]
+pub(crate) fn build_bulk_menu_items(facts: conn_state::BulkFacts) -> Vec<ThreadMenuItem> {
+    use ThreadMenuAction as A;
+    use conn_state::BulkAction;
+    conn_state::bulk_menu(facts)
+        .into_iter()
+        .map(|entry| {
+            let (action, icon) = match entry.action {
+                BulkAction::Unpin => (A::Unpin, "superhero/unpin.svg"),
+                BulkAction::Settle => (A::Settle, "superhero/check-circle.svg"),
+                BulkAction::RegenerateTitles => (A::RegenerateTitle, "superhero/refresh.svg"),
+                BulkAction::MarkUnread => (A::MarkUnread, "superhero/mail-open.svg"),
+                BulkAction::Delete => (A::Delete, "superhero/delete.svg"),
+            };
+            let mut item = ThreadMenuItem::new(action, entry.label, icon);
+            item.disabled = entry.disabled;
+            item.destructive = entry.destructive;
+            item
+        })
+        .collect()
+}
+
 /// What a sidebar draft row's menu offers (`buildDraftActionMenuItems`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DraftMenuState {
@@ -285,6 +309,18 @@ pub(crate) fn build_draft_action_menu_items(state: DraftMenuState) -> Vec<Thread
     items
 }
 
+/// Where the keyboard is in an open menu: the highlighted row of each level. The pointer moves it
+/// too (Conn focuses the row under the pointer), so there is one highlight.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MenuCursor {
+    /// The highlighted row of the menu; none while it has only just opened with the pointer.
+    pub(crate) root: Option<usize>,
+    /// The highlighted row of the open submenu.
+    pub(crate) sub: Option<usize>,
+    /// The keyboard is in the submenu.
+    pub(crate) in_sub: bool,
+}
+
 /// Where the open Thread Actions menu sits and which thread it acts on.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ThreadMenuAnchor {
@@ -292,10 +328,14 @@ pub(crate) struct ThreadMenuAnchor {
     pub(crate) thread_id: String,
     /// The menu belongs to a new-thread draft row ([`build_draft_action_menu_items`]).
     pub(crate) draft: bool,
+    /// The menu acts on every thread picked for a bulk action ([`build_bulk_menu_items`]).
+    pub(crate) bulk: bool,
     /// Window-space pointer position of the right-click (or the header chevron click).
     pub(crate) position: Point<Pixels>,
     /// Whether the `Copy` submenu is open.
     pub(crate) copy_open: bool,
+    /// The highlighted rows.
+    pub(crate) cursor: MenuCursor,
 }
 
 /// Submenu close grace period when the pointer moves onto a sibling top-level row
@@ -350,6 +390,7 @@ pub(crate) fn render_thread_action_menu(
     items: &[ThreadMenuItem],
     anchor: &ThreadMenuAnchor,
     viewport: gpui_kit::Size<Pixels>,
+    focus: &FocusHandle,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> AnyElement {
@@ -359,6 +400,7 @@ pub(crate) fn render_thread_action_menu(
         anchor,
         MenuLevel::Root,
         viewport,
+        Some(focus),
         tokens,
         cx,
     );
@@ -372,7 +414,7 @@ pub(crate) fn render_thread_action_menu(
     .into_any_element()
 }
 
-fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
+pub(super) fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
         .id(id)
         .occlude()
@@ -389,12 +431,17 @@ fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_ki
         .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "renders one menu level from the anchor, viewport, focus and theme"
+)]
 fn render_menu_list(
     id_prefix: &'static str,
     items: &[ThreadMenuItem],
     anchor: &ThreadMenuAnchor,
     level: MenuLevel,
     viewport: gpui_kit::Size<Pixels>,
+    focus: Option<&FocusHandle>,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -413,6 +460,14 @@ fn render_menu_list(
         menu_ax_id,
         menu_ax_label,
     );
+    // The menu takes the keyboard; its keys come from the app (`intercept_keystroke`).
+    if let Some(focus) = focus {
+        list = list.track_focus(focus);
+    }
+    let highlighted_row = match level {
+        MenuLevel::Root => anchor.cursor.root,
+        MenuLevel::Submenu => anchor.cursor.sub.filter(|_| anchor.cursor.in_sub),
+    };
 
     for (idx, item) in items.iter().enumerate() {
         if item.separator_before && idx > 0 {
@@ -426,6 +481,7 @@ fn render_menu_list(
         };
         let has_children = !item.children.is_empty();
         let hover_intent = submenu_hover_intent(level, has_children);
+        let highlighted = highlighted_row == Some(idx) && !item.disabled;
         let action = item.action;
         let thread_id = anchor.thread_id.clone();
         let is_draft = anchor.draft;
@@ -433,6 +489,7 @@ fn render_menu_list(
             .id(SharedString::from(format!("{id_prefix}-{idx}")))
             .test_support()
             .a11y(gpui_kit::Role::MenuItem, action.ax_id(), item.label.clone())
+            .aria_selected(highlighted)
             .relative()
             .flex()
             .flex_row()
@@ -463,14 +520,20 @@ fn render_menu_list(
             ));
         }
 
+        if has_children {
+            row = row.aria_expanded(anchor.copy_open);
+        }
         if item.disabled {
             row = row.opacity(MENU_DISABLED_OPACITY);
         } else {
+            if highlighted {
+                row = row.bg(highlight);
+            }
             row = row
                 .cursor_pointer()
-                .hover(move |s| s.bg(highlight))
                 .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
                     if *hovered {
+                        app.highlight_thread_menu_row(level == MenuLevel::Submenu, idx, cx);
                         match hover_intent {
                             SubmenuHoverIntent::Open => app.open_thread_menu_copy_submenu(cx),
                             SubmenuHoverIntent::KeepOpen => app.keep_thread_menu_copy_open(cx),
@@ -500,6 +563,7 @@ fn render_menu_list(
                 anchor,
                 MenuLevel::Submenu,
                 viewport,
+                None,
                 tokens,
                 cx,
             );

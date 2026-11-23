@@ -1032,7 +1032,7 @@ impl ScheduledTasksView {
                                         .bg(hsla(self.tokens.shell_control))
                                         .border_1()
                                         .border_color(hsla(self.tokens.shell_control_raised_border))
-                                        .font_family("Menlo")
+                                        .font_family(crate::theme::MONO_FONT)
                                         .text_size(px(11.0))
                                         .text_color(muted)
                                         .truncate()
@@ -1757,7 +1757,7 @@ impl ScheduledTasksView {
                             .p(px(10.0))
                             .rounded(px(6.0))
                             .bg(hsla(self.tokens.shell_control))
-                            .font_family("Menlo")
+                            .font_family(crate::theme::MONO_FONT)
                             .text_size(px(11.0))
                             .text_color(fg)
                             .child(body),

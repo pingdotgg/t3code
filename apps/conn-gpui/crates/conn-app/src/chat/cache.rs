@@ -288,6 +288,27 @@ fn is_active_work_entry(entry: &TimelineEntry) -> bool {
     )
 }
 
+/// The task title for a delegated-task id: the matching `Subagent` row's title.
+pub(super) fn delegated_task_title(rows: &[CachedRow], id: &str) -> Option<String> {
+    rows.iter().find_map(|row| match &row.entry {
+        TimelineEntry::Subagent {
+            id: task_id,
+            child_thread_id,
+            title,
+            ..
+        } if task_id == id || child_thread_id.as_deref() == Some(id) => Some(title.clone()),
+        _ => None,
+    })
+}
+
+/// Agent-written text with delegated-task ids swapped for the task title (never the node id).
+pub(super) fn humanize_task_ids<'a>(
+    rows: &[CachedRow],
+    text: &'a str,
+) -> std::borrow::Cow<'a, str> {
+    conn_state::conn_tools::humanize_delegated_task_ids(text, &|id| delegated_task_title(rows, id))
+}
+
 fn single_line_preview(text: &str) -> String {
     let first = text
         .lines()
@@ -701,7 +722,7 @@ impl RowCache {
                             turn_number: toc.len() + 1,
                             item_index: out_idx,
                             entry_id: id.clone(),
-                            preview: single_line_preview(text),
+                            preview: single_line_preview(&humanize_task_ids(rows, text)),
                             assistant_preview: None,
                             is_agent_prompt: *created_by_agent,
                             has_checkpoint: false,
@@ -1397,6 +1418,35 @@ mod tests {
         assert_eq!(
             stats.splice_start, 2,
             "editing queued text to same length must invalidate its VirtualItem key"
+        );
+    }
+
+    #[test]
+    fn delegated_task_ids_in_agent_prompts_show_the_task_title() {
+        let task_id = "node:delegated-task:command:mcp:abc:delegate-task";
+        let rows = vec![CachedRow::new(
+            TimelineEntry::Subagent {
+                id: task_id.to_owned(),
+                child_thread_id: None,
+                title: "Fix the minimap".to_owned(),
+                role: "claudeAgent".to_owned(),
+                status: conn_state::TurnItemStatus::Completed,
+                summary: None,
+                remote_label: None,
+                created_at: None,
+                started_at: None,
+                completed_at: None,
+            },
+            None,
+        )];
+        let text = format!("Delegated task {task_id} reached a terminal state.");
+        assert_eq!(
+            humanize_task_ids(&rows, &text),
+            "Delegated task \u{201c}Fix the minimap\u{201d} reached a terminal state."
+        );
+        assert_eq!(
+            humanize_task_ids(&[], &text),
+            "Delegated task reached a terminal state."
         );
     }
 }

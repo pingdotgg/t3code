@@ -7,43 +7,29 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
-[features]
-default = []
-cef = [
-    "dep:bzip2",
-    "dep:cef",
-    "dep:cef-dll-sys",
-    "dep:libc",
-    "dep:sha1",
-    "dep:sha2",
-    "dep:tar",
-    "dep:ureq",
-]
-
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-# Optional CEF download/verify/unpack dependencies (enabled by feature `cef`).
-bzip2 = { workspace = true, optional = true }
-sha1 = { workspace = true, optional = true }
-sha2 = { workspace = true, optional = true }
-tar = { workspace = true, optional = true }
-ureq = { workspace = true, optional = true }
+# CEF download/verify/unpack dependencies. CEF itself downloads on first use at runtime.
+bzip2.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+tar.workspace = true
+ureq.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cef = { workspace = true, optional = true }
-cef-dll-sys = { workspace = true, optional = true }
-libc = { workspace = true, optional = true }
+cef.workspace = true
+cef-dll-sys.workspace = true
+libc.workspace = true
 
 [build-dependencies]
 cc.workspace = true
 
 [[example]]
 name = "cef_smoke"
-required-features = ["cef"]
 
 [lints]
 workspace = true

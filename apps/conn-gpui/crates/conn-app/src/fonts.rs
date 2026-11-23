@@ -1,38 +1,65 @@
 //! Fonts the app registers at launch.
 //!
-//! Conn's `--font-mono` is `ui-monospace`, which macOS resolves to SF Mono. The system copy is
-//! a private family GPUI cannot name, but Terminal.app ships SF Mono as ordinary font files.
-//! Register those, so code, inline code and terminals draw in SF Mono as in Conn; without them
-//! the app falls back to Menlo, Conn's next choice.
+//! The app's monospace font is JetBrains Mono (SIL Open Font License 1.1, see
+//! `assets/fonts/jetbrains-mono/OFL.txt`), embedded in the binary like the icon sets so code,
+//! inline code, diffs and terminals look the same on every Mac, installed copy or not.
+
+use std::borrow::Cow;
 
 use gpui_kit::App;
+use rust_embed::RustEmbed;
 
-const SF_MONO_DIR: &str = "/System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts";
-const SF_MONO_FILES: &[&str] = &[
-    "SF-Mono-Regular.otf",
-    "SF-Mono-RegularItalic.otf",
-    "SF-Mono-Medium.otf",
-    "SF-Mono-Semibold.otf",
-    "SF-Mono-Bold.otf",
-];
+#[derive(RustEmbed)]
+#[folder = "assets/fonts/jetbrains-mono"]
+#[include = "*.ttf"]
+struct JetBrainsMono;
 
-/// Registers SF Mono. Returns false when it could not (the app then shows Menlo-like
-/// fallback glyphs for [`crate::theme::MONO_FONT`]).
+/// Registers JetBrains Mono. Returns false when it could not (the app then shows fallback
+/// glyphs for [`crate::theme::MONO_FONT`]).
 pub(crate) fn register(cx: &mut App) -> bool {
-    let fonts: Vec<std::borrow::Cow<'static, [u8]>> = SF_MONO_FILES
-        .iter()
-        .filter_map(|name| std::fs::read(format!("{SF_MONO_DIR}/{name}")).ok())
-        .map(std::borrow::Cow::Owned)
+    let fonts: Vec<Cow<'static, [u8]>> = JetBrainsMono::iter()
+        .filter_map(|name| JetBrainsMono::get(&name))
+        .map(|file| file.data)
         .collect();
-    if fonts.is_empty() {
-        eprintln!("fonts: SF Mono not found in {SF_MONO_DIR}");
-        return false;
-    }
     match cx.text_system().add_fonts(fonts) {
         Ok(()) => true,
         Err(error) => {
-            eprintln!("fonts: could not register SF Mono: {error}");
+            eprintln!("fonts: could not register JetBrains Mono: {error}");
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JetBrainsMono;
+    use crate::theme::MONO_FONT;
+
+    /// The headless test platform has no real text system, so check what the registration feeds
+    /// it: every embedded face carries the family name `MONO_FONT` asks for.
+    #[test]
+    fn embedded_faces_are_the_mono_family() {
+        let faces: Vec<_> = JetBrainsMono::iter()
+            .filter(|name| name.ends_with(".ttf"))
+            .collect();
+        assert_eq!(
+            faces.len(),
+            6,
+            "regular, italic, medium, semibold, bold, bold italic"
+        );
+        for name in faces {
+            let Some(file) = JetBrainsMono::get(&name) else {
+                panic!("{name} listed but not embedded");
+            };
+            // The name table stores Windows names as UTF-16BE.
+            let wide: Vec<u8> = MONO_FONT
+                .encode_utf16()
+                .flat_map(u16::to_be_bytes)
+                .collect();
+            assert!(
+                file.data.windows(wide.len()).any(|w| w == wide.as_slice()),
+                "{name} does not carry the family name {MONO_FONT}"
+            );
         }
     }
 }
