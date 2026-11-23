@@ -40,16 +40,14 @@ import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH } from "../../lib/layout";
+import { NATIVE_INSPECTOR_MIN_MAIN_WIDTH, nativeSidebarColumnWidth } from "../../lib/layout";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "./workspace/WorkspaceTabsContext";
-import {
-  WorkspaceNativeTabs,
-  WorkspaceSidebarTabsFooter,
-} from "./workspace/WorkspaceNativeTabs.ios";
+import { WorkspaceNativeTabs } from "./workspace/WorkspaceNativeTabs.ios";
+import { WorkspaceTabDock } from "./workspace/WorkspaceTabDock";
+import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { useWorkspaceCompose } from "./workspace/useWorkspaceCompose";
-import { NAVIGATION_TAB_ORDER } from "./workspace/navigation-tab-order";
 import { selectedIssueKeyOf } from "../issues/issueParams";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
@@ -361,7 +359,7 @@ function WorkspaceColumns(
 
   const primary = props.descriptors[props.primary.key];
   if (!primary) return null;
-  const primaryColumnWidth = (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
+  const primaryColumnWidth = nativeSidebarColumnWidth(layout);
   return (
     <Split.Host
       ref={hostRef}
@@ -432,16 +430,7 @@ function WorkspaceColumns(
           <ColumnScreen
             descriptor={primary}
             primary
-            footer={
-              deviceType === "pad" ? (
-                <View
-                  pointerEvents="box-none"
-                  style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 128 }}
-                >
-                  <WorkspaceSidebarTabsFooter />
-                </View>
-              ) : undefined
-            }
+            footer={deviceType === "pad" ? <WorkspaceTabDock placement="column" /> : undefined}
             selectedThreadKey={selectedThreadKey}
             selectedPullRequestKey={selectedPullRequestKey}
             selectedIssueKey={selectedIssueKey}

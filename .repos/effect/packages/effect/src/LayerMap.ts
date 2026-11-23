@@ -14,6 +14,7 @@ import * as Context from "./Context.ts"
 import * as Duration from "./Duration.ts"
 import * as Effect from "./Effect.ts"
 import { identity } from "./Function.ts"
+import * as InternalRecord from "./internal/record.ts"
 import { getStackTraceLimit, setStackTraceLimit } from "./internal/stackTraceLimit.ts"
 import * as Layer from "./Layer.ts"
 import type * as Option from "./Option.ts"
@@ -217,6 +218,9 @@ export const make: <
  *
  * The record keys become the keys accepted by the returned `LayerMap`, and the
  * record values are the layers built for those keys.
+ * Preloading discovers own enumerable string and symbol keys. Non-enumerable
+ * and inherited entries are ignored during preloading; explicitly requested
+ * entries may be non-enumerable or inherited.
  *
  * **Example** (Creating a layer map from a record)
  *
@@ -264,7 +268,7 @@ export const make: <
  * @since 3.14.0
  */
 export const fromRecord = <
-  const Layers extends Record<string, Layer.Layer<any, any, any>>,
+  const Layers extends Record<PropertyKey, Layer.Layer<any, any, any>>,
   const Preload extends boolean = false
 >(
   layers: Layers,
@@ -287,7 +291,7 @@ export const fromRecord = <
 > =>
   make((key: keyof Layers) => layers[key], {
     ...options,
-    preloadKeys: options?.preload ? Object.keys(layers) : undefined
+    preloadKeys: options?.preload ? InternalRecord.ownEnumerableKeys(layers) as Array<keyof Layers> : undefined
   }) as any
 
 /**
@@ -366,8 +370,14 @@ export interface TagClass<
 }
 
 /**
- * Create a `LayerMap` service that provides a dynamic set of resources based on
+ * Creates a `LayerMap` service that provides a dynamic set of resources based on
  * a key.
+ *
+ * **Details**
+ *
+ * With the `layers` option, preloading uses own enumerable string and symbol
+ * keys from that record. Non-enumerable and inherited entries are ignored
+ * during preloading; explicitly requested entries may be non-enumerable or inherited.
  *
  * **Example** (Defining a layer map service)
  *
@@ -428,7 +438,7 @@ export const Service = <Self>() =>
         | undefined
     }, Options>
     | NoExcessProperties<{
-      readonly layers: Record<string, Layer.Layer<any, any, any>>
+      readonly layers: Record<PropertyKey, Layer.Layer<any, any, any>>
       readonly dependencies?: ReadonlyArray<Layer.Layer<any, any, any>> | undefined
       readonly idleTimeToLive?: IdleTimeToLiveInput<any> | undefined
       /**
