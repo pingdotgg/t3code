@@ -95,6 +95,11 @@ const CapabilityGatedTool = Tool.make("capability-gated", {
 )
 
 const TestToolkit = Toolkit.make(
+  Tool.make("preview", {
+    parameters: Schema.Struct({ caption: Schema.String }),
+    success: Schema.Struct({ caption: Schema.String, png: Schema.Uint8ArrayFromBase64 }),
+    failure: Schema.String
+  }),
   SharedTool,
   JsonArrayTool,
   StructuredOnlyTool,
@@ -187,8 +192,23 @@ const makeFixture = Effect.fnUntraced(function*(
     structuredInvocations: 0,
     capabilityInvocations: 0
   }
-  const toolkitLayer = McpServer.toolkit(TestToolkit).pipe(
+  const toolkitLayer = McpServer.toolkit(TestToolkit, {
+    content: {
+      preview: ({ caption, png }) => {
+        if (caption === "broken") throw new Error("private renderer error")
+        return [
+          { type: "text", text: caption },
+          { type: "image", data: png, mimeType: "image/png" },
+          { type: "resource", resource: { uri: "test://preview", text: caption } }
+        ]
+      }
+    }
+  }).pipe(
     Layer.provideMerge(TestToolkit.toLayer(TestToolkit.of({
+      preview: ({ caption }) =>
+        caption === "missing"
+          ? Effect.fail("not found")
+          : Effect.succeed({ caption, png: Uint8Array.of(137, 80, 78, 71) }),
       shared: () =>
         Effect.sync(() => {
           state.sharedInvocations++
@@ -1366,7 +1386,7 @@ describe("McpServer protocol adapters", () => {
         assert.instanceOf(error, McpSchema.McpReverseOperationUnsupported)
       }
       assert.strictEqual(sends, 0)
-    }).pipe(Effect.scoped))
+    }))
 
   it.effect("should reject direct reverse operations when the selected protocol is stateless", () =>
     Effect.gen(function*() {
@@ -1424,7 +1444,7 @@ describe("McpServer protocol adapters", () => {
         assert.strictEqual(error.protocolVersion, protocol.protocolVersion)
       }
       assert.strictEqual(sends, 0)
-    }).pipe(Effect.scoped))
+    }))
 
   // Old wire projections map true to {} and false to { not: {} } without changing nested semantics.
   // https://json-schema.org/draft/2020-12/json-schema-core#section-4.3.2
@@ -1638,19 +1658,47 @@ describe("McpServer protocol adapters", () => {
       }
     }))
 
-  it.effect("should project non-object JSON Toolkit outputs only for the July protocol", () =>
+  it.effect("should preserve declared failures and scrub content mapper defects", () =>
+    Effect.gen(function*() {
+      const { post } = yield* makeFixture()
+      const client = yield* initialize(post, "2025-11-25")
+      for (
+        const [caption, text] of [["missing", "\"not found\""], [
+          "broken",
+          "Tool execution failed due to an internal server error."
+        ]]
+      ) {
+        const result = resultOf(yield* client.request("tools/call", { name: "preview", arguments: { caption } }))
+        assert.isTrue(result.isError)
+        assert.deepStrictEqual(result.content, [{ type: "text", text }])
+      }
+    }))
+
+  it.effect("should project ordinary toolkit outputs per revision and preserve mapped content blocks", () =>
     Effect.gen(function*() {
       const fixture = yield* makeFixture()
+
+      const previewParams = { name: "preview", arguments: { caption: "example" } }
+      const assertPreview = (message: JsonRpcResponse) => {
+        const result = resultOf(message)
+        assert.deepStrictEqual(result.content, [
+          { type: "text", text: "example" },
+          { type: "image", data: "iVBORw==", mimeType: "image/png" },
+          { type: "resource", resource: { uri: "test://preview", text: "example" } }
+        ])
+        assert.notProperty(result, "structuredContent")
+      }
 
       for (const protocolVersion of ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"] as const) {
         const client = yield* initialize(fixture.post, protocolVersion)
         const tools = listedTools(yield* client.request("tools/list"))
-        for (const name of ["shared", "json-array", "union-result"]) {
+        for (const name of ["shared", "json-array", "union-result", "preview"]) {
           const tool = tools.find((tool) => tool.name === name)
           assert.isDefined(tool)
           assert.notProperty(tool, "outputSchema")
         }
 
+        assertPreview(yield* client.request("tools/call", previewParams))
         for (const name of ["shared", "json-array"]) {
           const result = resultOf(yield* client.request("tools/call", { name }))
           assert.notProperty(result, "structuredContent")
@@ -1675,6 +1723,9 @@ describe("McpServer protocol adapters", () => {
           Effect.flatMap(decodeJsonRpcResponse)
         )
       )
+      const preview = listResult.find((tool) => tool.name === "preview")
+      assert.isDefined(preview)
+      assert.notProperty(preview, "outputSchema")
       assert.deepStrictEqual(listResult.find((tool) => tool.name === "shared")?.outputSchema, { type: "string" })
       assert.deepStrictEqual(listResult.find((tool) => tool.name === "json-array")?.outputSchema, {
         type: "array",
@@ -1710,6 +1761,14 @@ describe("McpServer protocol adapters", () => {
         ]
       })
 
+      assertPreview(
+        yield* readJsonRpcResponse(
+          yield* fixture.post(
+            modernRequest(45, "tools/call", previewParams),
+            { ...modernHeaders("tools/call"), "Mcp-Name": "preview" }
+          )
+        )
+      )
       const callResponse = yield* fixture.post(
         modernRequest(43, "tools/call", { name: "shared", arguments: {} }),
         { ...modernHeaders("tools/call"), "Mcp-Name": "shared" }
