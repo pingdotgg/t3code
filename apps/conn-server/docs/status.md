@@ -13,6 +13,11 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Undo of a settle (2026-11-23):** `thread.unsettle` reads `restoreUnsettledAt`, as T3's
+`Orchestrator.ts`: a time restores the Active anchor the settle cleared, `null` restores no
+anchor, and a time that does not parse refuses the command. A thread already active keeps its
+anchor. Proof: `thread_lifecycle_commands_reach_the_shell_row` in `conn-engine`.
+
 **Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
 T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
 out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`

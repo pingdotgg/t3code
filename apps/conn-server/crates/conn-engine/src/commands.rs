@@ -2299,12 +2299,28 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
     }])
 }
 
+/// `thread.unsettle` as `Orchestrator.ts`. An undo of a settle sends `restoreUnsettledAt`, the
+/// Active anchor the settle cleared, so the thread goes back to its place, not to the top.
 fn thread_unsettle(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let anchor = match command.get("restoreUnsettledAt") {
+        None => None,
+        Some(Value::Null) => Some(Value::Null),
+        Some(at) => {
+            let text = at.as_str().unwrap_or_default();
+            let Some(millis) = crate::time::millis_from_iso(text) else {
+                let thread_id = command["threadId"].as_str().unwrap_or_default();
+                return reject(format!(
+                    "Thread {thread_id} unsettle anchor {text} is not a valid time."
+                ));
+            };
+            Some(json!(crate::time::iso_from_millis(millis)))
+        }
+    };
     thread_patch(tx, &command, "thread.unsettled", |t, now| {
         if t["settledOverride"] != "active" {
             t["settledOverride"] = json!("active");
             t["settledAt"] = Value::Null;
-            t["unsettledAt"] = json!(now);
+            t["unsettledAt"] = anchor.unwrap_or_else(|| json!(now));
             t["updatedAt"] = json!(now);
         }
         Ok(())

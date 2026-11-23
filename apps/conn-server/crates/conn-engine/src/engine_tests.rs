@@ -1795,6 +1795,44 @@ async fn thread_lifecycle_commands_reach_the_shell_row() {
     assert_eq!(r["settledOverride"], "active");
     assert!(r["unsettledAt"].is_string());
 
+    // An undo of a settle restores the Active anchor it cleared, as T3 does.
+    let anchor = r["unsettledAt"].clone();
+    let restore = |n: u32, at: Value| {
+        cmd(
+            n,
+            "thread.unsettle",
+            json!({"reason": "user", "restoreUnsettledAt": at}),
+        )
+    };
+    dispatch(&engine, cmd(71, "thread.settle", json!({}))).await;
+    dispatch(&engine, restore(72, json!("2020-01-02T03:04:05.006Z"))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["settledOverride"], "active");
+    assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.006Z");
+    assert_ne!(r["unsettledAt"], anchor);
+    // Already active keeps its anchor.
+    dispatch(&engine, restore(73, json!("2021-01-01T00:00:00.000Z"))).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["unsettledAt"], "2020-01-02T03:04:05.006Z");
+    dispatch(&engine, cmd(74, "thread.settle", json!({}))).await;
+    dispatch(&engine, restore(75, Value::Null)).await;
+    let r = row(&engine.shell_snapshot().await.unwrap());
+    assert_eq!(r["settledOverride"], "active");
+    assert_eq!(r["unsettledAt"], Value::Null);
+    let bad = engine
+        .dispatch(from_json(restore(76, json!("not a time"))).unwrap())
+        .await;
+    let Err(EngineError::Rejected(e)) = bad else {
+        panic!("an anchor that is not a time is refused");
+    };
+    assert!(
+        to_json(&e)
+            .to_string()
+            .contains("unsettle anchor not a time is not a valid time"),
+        "{}",
+        to_json(&e)
+    );
+
     dispatch(
         &engine,
         cmd(
