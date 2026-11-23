@@ -1323,6 +1323,31 @@ function codexUsageLimitError(
   );
 }
 
+const CODEX_NATIVE_CAPACITY_DETAILS = new Set([
+  "Selected model is at capacity. Please try a different model.",
+  "Policy-restricted capacity is unavailable. Please try again later.",
+]);
+
+/**
+ * Codex surfaces server-directed capacity retries (whose Retry-After waits can
+ * exceed `PROVIDER_RETRY_BUDGET_MS`) through `responseStreamDisconnected` with
+ * the overload display string in `additionalDetails`. Leave those native waits
+ * running rather than letting the generic retry watchdog interrupt the turn.
+ */
+function codexNativeCapacityRetry(
+  code: string | null,
+  additionalDetails: string | undefined,
+): boolean {
+  if (code === "serverOverloaded" || code === "policyCapacityUnavailable") {
+    return true;
+  }
+  return (
+    code === "responseStreamDisconnected" &&
+    additionalDetails !== undefined &&
+    CODEX_NATIVE_CAPACITY_DETAILS.has(additionalDetails)
+  );
+}
+
 function codexTerminalFailureClass(
   errorInfo: CodexErrorInfo | null | undefined,
   code: string | null,
@@ -1433,6 +1458,7 @@ interface ActiveCodexProviderRetry {
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
   readonly startedAt: DateTime.Utc;
+  readonly watchdogStartedAt?: DateTime.Utc;
   readonly itemOrdinal: number;
   readonly id: TurnItemId | undefined;
 }
@@ -5451,6 +5477,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const itemOrdinal =
               previous?.itemOrdinal ??
               (yield* resolveItemOrdinal(context, codexFailureItemKey(context)));
+            const nativeCapacityRetry = codexNativeCapacityRetry(code, additionalDetails);
+            const watchdogStartedAt = nativeCapacityRetry
+              ? undefined
+              : (previous?.watchdogStartedAt ?? updatedAt);
             const state: ActiveCodexProviderRetry = {
               id: previous === undefined ? codexFailureItemId(context) : previous.id,
               ...(previous?.context === undefined ? {} : { context: previous.context }),
@@ -5465,6 +5495,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               retry,
               failure,
               startedAt: previous?.startedAt ?? updatedAt,
+              ...(watchdogStartedAt === undefined ? {} : { watchdogStartedAt }),
               itemOrdinal,
             };
             yield* Ref.update(providerRetries, (current) => {
@@ -5472,17 +5503,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updated.set(context.providerTurnId, state);
               return updated;
             });
-            yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
-              // Every notice aims at the same deadline, so repeated notices cannot extend it.
-              Effect.delay(
-                Math.max(
-                  0,
-                  PROVIDER_RETRY_BUDGET_MS -
-                    (DateTime.toEpochMillis(updatedAt) - DateTime.toEpochMillis(state.startedAt)),
+            if (watchdogStartedAt !== undefined) {
+              yield* failStalledProviderRetry(context, state, payload.error.codexErrorInfo).pipe(
+                // Every notice aims at the same deadline, so repeated notices cannot extend it.
+                Effect.delay(
+                  Math.max(
+                    0,
+                    PROVIDER_RETRY_BUDGET_MS -
+                      (DateTime.toEpochMillis(updatedAt) -
+                        DateTime.toEpochMillis(watchdogStartedAt)),
+                  ),
                 ),
-              ),
-              Effect.forkIn(scope, { startImmediately: true }),
-            );
+                Effect.forkIn(scope, { startImmediately: true }),
+              );
+            }
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CODEX_PROVIDER,

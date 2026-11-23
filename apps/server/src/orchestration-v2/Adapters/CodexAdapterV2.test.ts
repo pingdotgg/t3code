@@ -6032,6 +6032,230 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("keeps a native Codex capacity reconnect running past the retry watchdog budget", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-native-capacity-reconnect";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          {
+            type: "emit_inbound",
+            label: "error/capacity-retry-1",
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: "Reconnecting... 1/5",
+                  additionalDetails: "Selected model is at capacity. Please try a different model.",
+                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            afterMs: 11 * 60 * 1000,
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const retryShown = yield* Deferred.make<void>();
+      let interruptCount = 0;
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? Deferred.succeed(retryShown, undefined)
+            : Effect.void,
+        (method) =>
+          Effect.sync(() => {
+            if (method === "turn/interrupt") interruptCount += 1;
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          text: "Continue.",
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+        }),
+      );
+      yield* Deferred.await(retryShown);
+      yield* TestClock.adjust("10 minutes");
+      assert.isEmpty(harness.terminalEvents());
+      assert.equal(interruptCount, 0);
+      yield* TestClock.adjust("1 minute");
+      yield* harness.firstTerminal;
+      const terminal = harness.terminalEvents()[0];
+      assert.equal(terminal?.status, "completed");
+      assert.equal(interruptCount, 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("resets the retry watchdog window around a native Codex capacity reconnect", () =>
+    Effect.gen(function* () {
+      const scenario = "codex-capacity-retry-watchdog-reset";
+      const nativeThreadId = `native-${scenario}-thread`;
+      const nativeTurnId = `native-${scenario}-turn`;
+      const transcript = makeCodexReplayTranscript({
+        scenario,
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Continue." }),
+          {
+            type: "emit_inbound",
+            label: "error/non-capacity-1",
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: "Reconnecting... 1/5",
+                  additionalDetails: "stream closed before response.completed",
+                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "error/capacity-2",
+            afterMs: 5 * 60 * 1000,
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: "Reconnecting... 2/5",
+                  additionalDetails: "Selected model is at capacity. Please try a different model.",
+                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: null } },
+                },
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "error/non-capacity-3",
+            afterMs: 7 * 60 * 1000,
+            frame: {
+              method: "error",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                willRetry: true,
+                error: {
+                  message: "Reconnecting... 3/5",
+                  additionalDetails: "exceeded retry limit, last status: 429 Too Many Requests",
+                  codexErrorInfo: { responseStreamDisconnected: { httpStatusCode: 429 } },
+                },
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "turn/interrupt",
+            frame: {
+              id: 4,
+              method: "turn/interrupt",
+              params: { threadId: nativeThreadId, turnId: nativeTurnId },
+            },
+          },
+          { type: "emit_inbound", label: "turn/interrupt", frame: { id: 4, result: {} } },
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "interrupted" }),
+              },
+            },
+          },
+        ],
+      });
+      const retryShown = yield* Deferred.make<void>();
+      const interruptSent = yield* Deferred.make<void>();
+      let interruptCount = 0;
+      const harness = yield* makeCodexReplayHarness(
+        transcript,
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "error"
+            ? Deferred.succeed(retryShown, undefined)
+            : Effect.void,
+        (method) =>
+          Effect.gen(function* () {
+            if (method === "turn/interrupt") {
+              interruptCount += 1;
+              yield* Deferred.succeed(interruptSent, undefined);
+            }
+          }),
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          text: "Continue.",
+          attemptId: RunAttemptId.make(`attempt-${scenario}`),
+        }),
+      );
+      yield* Deferred.await(retryShown);
+      // Minute 5: capacity reconnect replaces the non-capacity state; minute 10 must not fire.
+      yield* TestClock.adjust("10 minutes");
+      assert.isEmpty(harness.terminalEvents());
+      assert.equal(interruptCount, 0);
+      // Minute 12: non-capacity 429 retry arrives and gets a fresh 10-minute budget (minute 22).
+      yield* TestClock.adjust("11 minutes");
+      assert.isEmpty(harness.terminalEvents());
+      assert.equal(interruptCount, 0);
+      yield* TestClock.adjust("1 minute");
+      yield* harness.firstTerminal;
+      yield* Deferred.await(interruptSent);
+      assert.equal(interruptCount, 1);
+      const terminal = harness.terminalEvents()[0];
+      assert.equal(terminal?.status, "failed");
+      if (terminal?.status !== "failed") return;
+      assert.equal(terminal.failure.class, "usage_limit");
+      assert.equal(terminal.retry?.attempt, 3);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "interrupted"] as const)(
     "retains Codex reasoning parts when the turn is %s",
     (terminalStatus) =>
