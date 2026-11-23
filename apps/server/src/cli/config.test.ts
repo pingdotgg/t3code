@@ -581,6 +581,41 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     }),
   );
 
+  it.effect.each([
+    { label: "a shared server", shared: true, requested: undefined, expected: false },
+    {
+      label: "a shared server with an explicit request",
+      shared: true,
+      requested: true,
+      expected: true,
+    },
+    { label: "a regular web server", shared: false, requested: undefined, expected: true },
+  ])("resolves project bootstrapping for $label", ({ shared, requested, expected }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-shared-bootstrap-" });
+      const resolved = yield* resolveServerConfig(
+        {
+          ...minimalDesktopFlags(baseDir),
+          mode: Option.some("web"),
+          autoBootstrapProjectFromCwd: Option.fromUndefinedOr(requested),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({ env: { T3CODE_SHARED_SERVER: String(shared) } }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.autoBootstrapProjectFromCwd).toBe(expected);
+    }),
+  );
+
   it.effect("reports the desktop bootstrap as the source of endpoints it supplied", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

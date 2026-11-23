@@ -405,7 +405,7 @@ export const resolveServerConfig = Effect.fn("config.resolveServerConfig")(funct
       normalizedFlags.autoBootstrapProjectFromCwd,
       Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
     ),
-    () => mode === "web",
+    () => mode === "web" && !env.sharedServer,
   );
   const logWebSocketEvents = Option.getOrElse(
     resolveOptionPrecedence(
