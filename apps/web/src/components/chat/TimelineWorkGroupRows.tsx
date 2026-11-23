@@ -4,6 +4,7 @@ import {
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
 import {
+  TimelineApprovalCtx,
   type TimelinePendingRequest,
   type TimelineRow,
   TimelineRowActivityCtx,
@@ -13,7 +14,7 @@ import {
   type WorkGroupViewedImage,
 } from "./timelineRowContext";
 import { V2SubagentGroup } from "./TimelineV2EventRow";
-import { TimelinePendingApprovalRow } from "./TimelinePendingApprovalRow";
+import { ApprovalWorkEntryRow } from "./TimelineWorkEntryRow";
 import {
   ActivityShimmerOverlay,
   MESSAGE_HEADING_LEVEL,
@@ -125,21 +126,16 @@ export const WorkGroupSection = memo(function WorkGroupSection({
   isExpandedToolGroup: boolean;
   displayLabel?: string | undefined;
 }) {
-  const {
-    workspaceRoot,
-    routeThreadKey,
-    onToggleWorkEntry,
-    onWorkEntryContentReady,
-    pendingApprovals,
-  } = use(TimelineRowCtx);
+  const { workspaceRoot, routeThreadKey, onToggleWorkEntry, onWorkEntryContentReady } =
+    use(TimelineRowCtx);
   const gt = useGT();
-  const nonEmptyEntries = groupedEntries.filter((entry) => {
-    const item = entry.projectedItem?.item;
-    return (
-      (item?.type === "approval_request" && pendingApprovals.has(item.requestId)) ||
-      workEntryIsVisibleInGroup(entry, isExpandedToolGroup)
-    );
-  });
+  const singleItem = groupedEntries.length === 1 ? groupedEntries[0]?.projectedItem?.item : null;
+  if (singleItem?.type === "approval_request") {
+    return <ApprovalWorkEntryRow item={singleItem} />;
+  }
+  const nonEmptyEntries = groupedEntries.filter((entry) =>
+    workEntryIsVisibleInGroup(entry, isExpandedToolGroup),
+  );
 
   if (nonEmptyEntries.length === 0) return null;
   if (isExpandedToolGroup && nonEmptyEntries.every((entry) => entry.itemType === "reasoning")) {
@@ -534,9 +530,10 @@ export function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind:
   const m = useMessages();
   const { isCompacting, isPreparingWorktree, liveAnswerPreview, providerStartingLabel } =
     use(TimelineRowActivityCtx);
+  const approvalCtx = use(TimelineApprovalCtx);
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
   // A failed group keeps this disclosure while an approval waits, but nothing is thinking then.
-  const live = ctx.pendingApprovals.size === 0;
+  const live = approvalCtx.pendingApprovals.size === 0;
   const { groupId } = row;
   const activity = (
     <LiveActivityRow
@@ -688,9 +685,7 @@ export function LiveWorkEntryTimelineRow({
   const threadLabel = threadReadLabel(label, row.entry, threadTarget, m);
 
   const item = row.entry.projectedItem?.item;
-  const pendingApproval =
-    item?.type === "approval_request" ? ctx.pendingApprovals.get(item.requestId) : undefined;
-  if (pendingApproval) return <TimelinePendingApprovalRow approval={pendingApproval} />;
+  if (item?.type === "approval_request") return <ApprovalWorkEntryRow item={item} />;
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
   const thoughtLine =
@@ -1388,16 +1383,23 @@ function WorkingBarSlot({
         <span className="min-w-0 truncate">{pendingRequest.label}</span>
       </>
     );
-    // Both are answered in the composer. A question's answer goes in the
-    // editor, so the slot focuses it; an approval uses the card's buttons,
-    // which the editor cannot reach, so the slot only names it.
+    // A question's answer goes in the composer editor, so the slot focuses it; an approval
+    // lives in the timeline, so clicking scrolls its card into view.
     const focusComposer = pendingRequest.kind === "question" ? ctx.onFocusComposer : null;
+    const scrollToApproval =
+      pendingRequest.kind === "approval"
+        ? () => {
+            document
+              .querySelector("[data-approval-request-id]")
+              ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        : null;
     const className = cn(
       "inline-flex h-[22px] min-w-0 shrink items-center gap-1.5 rounded-row text-meta focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       pendingRequest.kind === "approval"
         ? "bg-warning-foreground/10 px-2 text-warning-foreground"
         : "text-info-foreground",
-      focusComposer && "cursor-pointer",
+      (focusComposer || scrollToApproval) && "cursor-pointer",
     );
     return (
       <Tooltip>
@@ -1405,6 +1407,8 @@ function WorkingBarSlot({
           render={
             focusComposer ? (
               <WorkingBarControl variant="question" onClick={focusComposer} />
+            ) : scrollToApproval ? (
+              <WorkingBarControl variant="chip" tone="warning" onClick={scrollToApproval} />
             ) : (
               <span className={className} />
             )
@@ -1415,7 +1419,11 @@ function WorkingBarSlot({
         <TooltipPopup>
           <span className="block">{pendingRequest.label}</span>
           <span className="block">
-            <T>Answer in the composer</T>
+            {pendingRequest.kind === "approval" ? (
+              <T>Scroll to approval</T>
+            ) : (
+              <T>Answer in the composer</T>
+            )}
           </span>
         </TooltipPopup>
       </Tooltip>

@@ -1,5 +1,6 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import type { ChildThreadApproval } from "@t3tools/client-runtime/state/thread-requests";
 import {
   type ProviderApprovalDecision,
   type ResponseContextRecord,
@@ -48,12 +49,6 @@ export interface TurnItemSource {
 }
 
 export interface TimelineRowSharedState {
-  pendingApprovals: ReadonlyMap<RuntimeRequestId, PendingApproval>;
-  respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
-  canOperateThread: boolean;
-  onRespondToApproval:
-    | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
-    | undefined;
   citationRequest: AssistantCitationTarget | null;
   /** Absent hides "Reply", as in the guest view. */
   onReplyToResponse: ((response: ResponseContextRecord) => boolean) | undefined;
@@ -137,9 +132,39 @@ export interface TimelineRowActivityState {
   threadErrorMessage: string | null;
 }
 
+export interface TimelineApprovalState {
+  readonly pendingApprovals: ReadonlyMap<RuntimeRequestId, PendingApproval>;
+  /** First live, unheld approval in timeline order: owns document-level Enter/Escape shortcuts. */
+  readonly activeShortcutRequestId: RuntimeRequestId | null;
+  readonly respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
+  readonly resolvedApprovalDecisions: ReadonlyMap<RuntimeRequestId, ProviderApprovalDecision>;
+  readonly childApprovalsByThreadKey: ReadonlyMap<string, ReadonlyArray<ChildThreadApproval>>;
+  readonly canOperateThread: boolean;
+  readonly onRespondToApproval:
+    | ((requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => Promise<unknown>)
+    | undefined;
+  readonly onApprovalAnswered: (() => void) | null;
+}
+
+const DEFAULT_TIMELINE_APPROVAL_STATE: TimelineApprovalState = {
+  pendingApprovals: new Map(),
+  activeShortcutRequestId: null,
+  respondingRequestIds: [],
+  resolvedApprovalDecisions: new Map(),
+  childApprovalsByThreadKey: new Map(),
+  canOperateThread: false,
+  onRespondToApproval: undefined,
+  onApprovalAnswered: null,
+};
+
 export const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 
 export const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+
+/** Approval state for timeline cards and answered rows; changes never re-render other rows. */
+export const TimelineApprovalCtx = createContext<TimelineApprovalState>(
+  DEFAULT_TIMELINE_APPROVAL_STATE,
+);
 
 /** Rows an open wake-ups fold reveals, by id. Its own context: it changes only when a fold does. */
 export const TimelineWakeUpsRailCtx = createContext<ReturnType<typeof wakeUpsRailRows>>(new Map());

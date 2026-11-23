@@ -85,6 +85,8 @@ import {
   type ModelSelection,
   type PreviewAnnotationPayload,
   ProviderInstanceId,
+  type ProviderApprovalDecision,
+  type RuntimeRequestId,
   type ServerProvider,
   type ScopedThreadRef,
   type ThreadId,
@@ -446,6 +448,8 @@ const EMPTY_RUNS: ThreadStructure["runs"] = [];
 const EMPTY_AUTO_UPDATE_ENVIRONMENTS: ReadonlyArray<EnvironmentPresentation> = [];
 const EMPTY_COMPOSER_BANNER_ITEMS: ReadonlyArray<ComposerBannerStackItem> = [];
 const EMPTY_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
+const EMPTY_RESOLVED_APPROVAL_DECISIONS: ReadonlyMap<RuntimeRequestId, ProviderApprovalDecision> =
+  new Map();
 
 type ChatViewProps =
   | {
@@ -1514,6 +1518,26 @@ export default function ChatView(props: ChatViewProps) {
   );
   const onHeldRequestIdsChange = useStableCallback((requestIds: ReadonlySet<string>) => {
     setHeldApprovalRequestIds((current) => (shallow(current, requestIds) ? current : requestIds));
+  });
+  const resolvedApprovalDecisions = (() => {
+    const requests = serverProjection?.runtimeRequests;
+    if (!requests || requests.length === 0) return EMPTY_RESOLVED_APPROVAL_DECISIONS;
+    let map: Map<RuntimeRequestId, ProviderApprovalDecision> | null = null;
+    for (const request of requests) {
+      if (request.status === "resolved" && request.decision !== undefined) {
+        map ??= new Map();
+        map.set(request.id, request.decision);
+      }
+    }
+    return map ?? EMPTY_RESOLVED_APPROVAL_DECISIONS;
+  })();
+  const visiblePendingApprovalCount = pendingApprovals.filter(
+    (approval) => !heldApprovalRequestIds.has(approval.requestId),
+  ).length;
+  const onApprovalAnsweredStable = useStableCallback(() => {
+    if (visiblePendingApprovalCount <= 1 && layoutPane.focused) {
+      requestAnimationFrame(() => composerRef.current?.focusAtEnd());
+    }
   });
   // Answering an approval or question on any client resumes quota spending, so include it in the key.
   const usageLimitsKey =
@@ -3757,7 +3781,9 @@ export default function ChatView(props: ChatViewProps) {
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}
+                  resolvedApprovalDecisions={resolvedApprovalDecisions}
                   onRespondToApproval={onRespondToApprovalStable}
+                  onApprovalAnswered={onApprovalAnsweredStable}
                   canOperateThread={canOperateThread}
                   threadDetailRef={routeThreadDetailRef}
                   entriesInput={timelineEntriesInput}
@@ -3874,6 +3900,7 @@ export default function ChatView(props: ChatViewProps) {
                 visible={showScrollToBottom && !isThreadFindActive}
                 bottom={scrollToEndClearance + 4}
                 summary={scrollToEndSummary}
+                pendingApprovalCount={visiblePendingApprovalCount}
                 onScrollToEnd={() => scrollToEnd(true)}
               />
             </div>
