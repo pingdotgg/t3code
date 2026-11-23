@@ -47,6 +47,17 @@ const base: Quiet = { cpuPct: 0.3, wakeupsPerSec: 7, rssPeakMB: 500 };
 const cpuRuns = (...values: number[]) =>
   quietRuns(...values.map((cpuPct) => ({ ...base, cpuPct })));
 
+// Fixed floors, so these cases test how compare gates rather than the calibrated table.
+const gatedRules = [
+  { pattern: /cpuPct$/, floor: 1, gate: true },
+  { pattern: /wakeupsPerSec$/, floor: 20, gate: true },
+  { pattern: /MB$/, floor: 15, gate: true },
+  { pattern: /loopDelayP99Ms$/, floor: 5, gate: true },
+  { pattern: /loopDelayMaxMs$/, floor: 20, gate: true },
+  { pattern: /gcPauseMs$/, floor: 10, gate: true },
+  { pattern: /./, floor: 300, gate: true },
+];
+
 describe("compareMetrics", () => {
   it.each([
     ["a CPU jump past both the percentage and the floor", { cpuPct: 18.6 }, ["quiet.cpuPct"], []],
@@ -64,7 +75,12 @@ describe("compareMetrics", () => {
       ["quiet.rssPeakMB"],
     ],
   ])("one run each: %s", (_name, change, regressed, improved) => {
-    const result = compareMetrics(quietRuns(base), quietRuns({ ...base, ...change }));
+    const result = compareMetrics(
+      quietRuns(base),
+      quietRuns({ ...base, ...change }),
+      10,
+      gatedRules,
+    );
     expect(result.regressed).toEqual(regressed);
     expect(result.improved).toEqual(improved);
   });
@@ -79,10 +95,10 @@ describe("compareMetrics", () => {
   it("flags repeated runs only when the whole interval clears the limit", () => {
     const steady = cpuRuns(26.1, 27.4, 25.8);
     const fixed = cpuRuns(2.2, 2.5, 2.1);
-    expect(compareMetrics(steady, fixed).improved).toContain("quiet.cpuPct");
-    expect(compareMetrics(fixed, steady).regressed).toContain("quiet.cpuPct");
+    expect(compareMetrics(steady, fixed, 10, gatedRules).improved).toContain("quiet.cpuPct");
+    expect(compareMetrics(fixed, steady, 10, gatedRules).regressed).toContain("quiet.cpuPct");
     // The medians differ by 2.8 points, past the floor, but a resampled median can match.
-    expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9)).regressed).toEqual([]);
+    expect(compareMetrics(fixed, cpuRuns(2.2, 5, 9), 10, gatedRules).regressed).toEqual([]);
   });
 
   it("reads a file written before loop delay and GC were recorded", () => {

@@ -226,20 +226,41 @@ export interface NoiseRule {
   readonly gate: boolean;
 }
 
+/** Shown, never counted: these A/A intervals were wider than half the metric (see `noise`). */
+const informational = (pattern: RegExp): NoiseRule => ({ pattern, floor: 0, gate: false });
+
+// Estimated from 5-round A/A runs on cups (16 cores, load 1 to 20) on 2026-11-23, rounded up.
+// busy and soak had no A/A run and keep the earlier floors.
 export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
-  { pattern: /^scaling\..*cpuPctPerThread$/, floor: 0.2, gate: true },
-  { pattern: /^scaling\./, floor: 2, gate: true },
+  informational(/loopDelayP50Ms$/),
+  informational(/^(rest|quiet|streaming|clients\.attached\.\d+)\.loopDelay(P99|Max)Ms$/),
+  informational(/^(rest|quiet|clients\.attached\.\d+)\.gc(Count|PauseMs)$/),
+  informational(/^(streaming|pipeline)\.gcPauseMs$/),
+  informational(/^(pipeline\.loopDelayMaxMs|clients\.storm\.loopDelayP99Ms|quiet\.cpuPct)$/),
+  informational(/^scaling\.(cpuPct|wakeups)PerThread$/),
+  informational(/^(firstWord\..*|pipeline\.turnEndMs)\.p90$/),
+  { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
+  { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
   { pattern: /^soak\./, floor: 20, gate: true },
-  { pattern: /cpuPct$/, floor: 1, gate: true },
-  { pattern: /wakeupsPerSec$/, floor: 20, gate: true },
+  { pattern: /^startup\.readyMs$/, floor: 450, gate: true },
+  { pattern: /^firstWord\./, floor: 600, gate: true },
+  { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },
+  { pattern: /^pipeline\.(toRequestMs\.p90|msPerTurn)$/, floor: 600, gate: true },
+  { pattern: /^clients\.storm\.resubscribedMs$/, floor: 200, gate: true },
+  { pattern: /^rest\.cpuPct$/, floor: 1, gate: true },
+  { pattern: /cpuPct$/, floor: 3.5, gate: true },
+  { pattern: /^(rest|quiet)\.wakeupsPerSec$/, floor: 12, gate: true },
+  { pattern: /wakeupsPerSec$/, floor: 110, gate: true },
+  { pattern: /rssPeakMB$/, floor: 16, gate: true },
+  { pattern: /rssMB$/, floor: 4, gate: true },
+  { pattern: /heapAfterGcMB$/, floor: 1, gate: true },
   { pattern: /MB$/, floor: 15, gate: true },
   { pattern: /KB$/, floor: 20, gate: true },
   { pattern: /\.(shellMs|openMs)\./, floor: 50, gate: true },
-  { pattern: /loopDelayP50Ms$/, floor: 2, gate: true },
-  { pattern: /loopDelayP99Ms$/, floor: 5, gate: true },
-  { pattern: /loopDelayMaxMs$/, floor: 20, gate: true },
-  { pattern: /gcPauseMs$/, floor: 10, gate: true },
-  { pattern: /gcCount$/, floor: 20, gate: true },
+  { pattern: /loopDelayP99Ms$/, floor: 3, gate: true },
+  { pattern: /loopDelayMaxMs$/, floor: 22, gate: true },
+  { pattern: /gcPauseMs$/, floor: 55, gate: true },
+  { pattern: /gcCount$/, floor: 6, gate: true },
   { pattern: /./, floor: 300, gate: true },
 ];
 
