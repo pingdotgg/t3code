@@ -219,6 +219,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         expect(yield* resolver.resolvePath(paddedCwd)).toBe(
           (yield* Path.Path).join(paddedCwd, "brand", "custom.svg"),
         );
+
+        const tokenListCwd = yield* makeTempDir;
+        yield* writeTextFile(
+          tokenListCwd,
+          "index.html",
+          `<link rel="apple-touch-icon" href="touch.svg"><link rel="icon's" href="touch.svg"><link rel="Icon\tshortcut" href="brand.svg">`,
+        );
+        yield* writeTextFile(tokenListCwd, "touch.svg", "<svg>touch</svg>");
+        yield* writeTextFile(tokenListCwd, "brand.svg", "<svg>brand</svg>");
+        expect(yield* resolver.resolvePath(tokenListCwd)).toBe(
+          (yield* Path.Path).join(tokenListCwd, "brand.svg"),
+        );
       }),
     );
 
@@ -248,7 +260,7 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
   head: () => ({
     links: [
       { rel: "stylesheet", href: "/app.css" },
-      { rel: "icon", href: "/brand/logo.svg" },
+      { rel: "icon shortcut", href: "/brand/logo.svg" },
     ],
   }),
 });`,
