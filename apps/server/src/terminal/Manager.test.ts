@@ -1866,6 +1866,8 @@ it.layer(
       });
 
       expect(yield* historyAfter("A\u001b]0;ti")).toBe("A\u001b]0;ti");
+      // A long string would push history out of the client's budget, so its payload is left out.
+      expect(yield* historyAfter("x".repeat(4_096))).toBe("A\u001b]");
       // Past the limit only the introducer is left to replay.
       expect(yield* historyAfter("x".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES))).toBe(
         "A\u001b\\\u001b]",

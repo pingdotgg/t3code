@@ -1406,11 +1406,17 @@ const OVERSIZED_SEQUENCE = "\u0018";
 // Stands in for the ESC of an oversized sequence, which ended any string history left open.
 const STRING_TERMINATOR = "\u001b\\";
 
+// Longer held text is cut to its introducer in a snapshot, so it cannot push history out of the
+// client's budget or add its size to every resync.
+const MAX_SNAPSHOT_SEQUENCE_LENGTH = 4_096;
+
 // History leaves out the sequence the terminal is still inside. A client that starts from a
 // snapshot needs it, or it prints the rest of the sequence as text.
 function unfinishedSequenceReplay(session: TerminalSessionState): string {
   const held = session.pendingHistoryControlSequence;
-  return held.startsWith(OVERSIZED_SEQUENCE) ? held.slice(1) : held;
+  if (held.startsWith(OVERSIZED_SEQUENCE)) return held.slice(1);
+  if (held.length <= MAX_SNAPSHOT_SEQUENCE_LENGTH) return held;
+  return held.slice(0, 2) + (/[\u001b\ud800-\udbff]$/.exec(held)?.[0] ?? "");
 }
 
 export function sanitizeTerminalHistoryChunk(
