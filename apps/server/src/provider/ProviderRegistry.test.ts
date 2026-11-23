@@ -245,7 +245,11 @@ const makeWorkspaceRescanHarness = Effect.gen(function* () {
   const nextScan = Effect.fnUntraced(function* (cwd: string) {
     const scan = yield* Queue.take(scans);
     assert.equal(scan.cwd, cwd);
-    return (name: string) => Deferred.succeed(scan.result, snapshot(name));
+    return (name: string, workspaceModels?: ProviderWorkspaceSnapshot["workspaceModels"]) =>
+      Deferred.succeed(scan.result, {
+        ...snapshot(name),
+        ...(workspaceModels ? { workspaceModels } : {}),
+      });
   });
   const refresh = (cwd: string, fresh = false) =>
     registry.refreshWorkspaceSnapshot({ instanceId, cwd, fresh });
@@ -2793,6 +2797,21 @@ it.layer(
         yield* Fiber.join(ordinary);
         const completeRescan = yield* h.nextScan("/workspace");
         yield* completeRescan("hook");
+        yield* h.drainRescans;
+        assert.isString(yield* h.rescannedAtOf);
+      }),
+    );
+
+    it.effect("stamps a rescan that changed only the directory's models", () =>
+      Effect.gen(function* () {
+        const h = yield* makeWorkspaceRescanHarness;
+        yield* h.seed("/barrier");
+        yield* h.seed("/workspace");
+        yield* Queue.offer(h.first.rescans, "/workspace");
+        const complete = yield* h.nextScan("/workspace");
+        yield* complete("initial", [
+          { slug: "vendor/live", name: "Live", isCustom: false, capabilities: null },
+        ]);
         yield* h.drainRescans;
         assert.isString(yield* h.rescannedAtOf);
       }),

@@ -111,12 +111,12 @@ export default mergeConfig(
             },
           },
         ],
-        // SEA bootstraps one entry and embeds the standalone extension worker as an asset.
+        // SEA exposes server workers as subcommands and embeds the extension worker separately.
         entry: packBootstrap
           ? ["src/bin.ts"]
           : packExecutable
             ? ["src/binMain.ts"]
-            : ["src/bin.ts", "src/claude-history-worker.ts"],
+            : ["src/bin.ts", "src/claude-history-worker.ts", "src/process-launcher.ts"],
         outDir: packBootstrap ? "dist-exe" : packExecutable ? cliAssetDir : "dist",
         sourcemap: !packExecutable,
         clean: true,
