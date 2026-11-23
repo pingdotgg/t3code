@@ -1468,6 +1468,26 @@ describe("HTML renders in the timeline", () => {
     expect(turn(send("running")).some((entry) => entry.kind === "sent-message")).toBe(false);
   });
 
+  it("shows a user command's output in place through the turn fold", () => {
+    const entries = turn({
+      ...base("render", 2),
+      type: "user_command",
+      command: "graph",
+      args: "--depth 2",
+      format: "html",
+      htmlRender,
+    });
+    expect(entries.find((entry) => entry.kind === "user-command")).toMatchObject({
+      id: "render",
+      runId,
+      command: "graph",
+      args: "--depth 2",
+      status: "completed",
+      htmlRender,
+    });
+    expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "user-command", "message"]);
+  });
+
   it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",

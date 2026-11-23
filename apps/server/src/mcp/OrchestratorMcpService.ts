@@ -1189,6 +1189,9 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
         : `Asked the user to link ${item.url ?? "an environment"}: ${item.linkStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
+    // A user command's args and output are the user's; agents never see them.
+    case "user_command":
+      return null;
     case "dynamic_tool":
       return jsonText({ toolName: item.toolName, input: item.input, output: item.output });
   }

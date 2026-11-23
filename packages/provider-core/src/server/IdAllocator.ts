@@ -46,6 +46,7 @@ export const IdAllocatorV2Kind = Schema.Literals([
   "provider_turn",
   "runtime_request",
   "turn_item",
+  "user_command_turn_item",
   "checkpoint_scope",
   "checkpoint",
   "context_handoff",
@@ -122,6 +123,9 @@ export interface IdAllocatorV2Allocate {
     readonly targetThreadId: ThreadId;
     readonly type: string;
   }) => Effect.Effect<ContextTransferId, IdAllocatorV2Error>;
+  readonly userCommandTurnItem: (input: {
+    readonly threadId: ThreadId;
+  }) => Effect.Effect<TurnItemId, IdAllocatorV2Error>;
   readonly plan: (input: {
     readonly threadId: ThreadId;
     readonly runId?: RunId;
@@ -438,6 +442,13 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
             input.targetThreadId,
           ],
           make: ContextTransferId.make,
+        })(input),
+      userCommandTurnItem: (input) =>
+        randomId<TurnItemId, typeof input>({
+          kind: "user_command_turn_item",
+          prefix: "turn-item",
+          parts: ["user-command", "thread", input.threadId],
+          make: TurnItemId.make,
         })(input),
       plan: (input) =>
         randomId<PlanId, typeof input>({

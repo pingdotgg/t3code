@@ -105,6 +105,36 @@ describe("mobile slash commands", () => {
     expect(build(false)).toEqual(["pcmd:clear"]);
     expect(build(true, false)).toEqual([]);
   });
+
+  it("offers a user command at the message start and inserts its name", () => {
+    const build = (atMessageStart: boolean) =>
+      buildComposerSlashCommandItems({
+        query: "gra",
+        atMessageStart,
+        hasThread: true,
+        userCommands: [
+          {
+            name: "graph",
+            description: "Graph",
+            argumentHint: "[depth]",
+            output: "html",
+            source: "user",
+          },
+        ],
+        selectedProviderStatus: null,
+      });
+    const [item] = build(true);
+    if (item?.type !== "user-command") throw new Error("Expected the user command");
+    expect(item.description).toBe("Graph [depth]");
+    expect(build(false)).toEqual([]);
+    expect(
+      resolveComposerCommandSelection({
+        draftMessage: "/gra",
+        trigger: { rangeStart: 0, rangeEnd: 4 },
+        item,
+      }),
+    ).toEqual({ text: "/graph ", cursor: 7 });
+  });
 });
 
 describe("mobile model mentions", () => {

@@ -745,3 +745,34 @@ describe("withMessageSenderNote", () => {
     expect(withMessageSenderNote(message, text)).toBe(expected);
   });
 });
+
+describe("user command items", () => {
+  it("round-trips through storage with its output", () => {
+    const stored = {
+      id: "item-1",
+      threadId: "thread-1",
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: "/graph",
+      startedAt: "2026-11-01T00:00:00.000Z",
+      completedAt: "2026-11-01T00:00:01.000Z",
+      updatedAt: "2026-11-01T00:00:01.000Z",
+      type: "user_command",
+      command: "graph",
+      args: "",
+      format: "html",
+      htmlRender: { attachmentId: "thread-1-graph.html", title: "/graph", height: 480 },
+    };
+    const item = decodeOrchestrationV2TurnItemJson(stored);
+    expect(item).toMatchObject({ type: "user_command", format: "html" });
+    expect(decodeOrchestrationV2TurnItemJson(encodeOrchestrationV2TurnItemJson(item))).toEqual(
+      item,
+    );
+  });
+});

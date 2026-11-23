@@ -18,6 +18,25 @@ describe("T3ProjectFileFromJson", () => {
     expect(decoded.iconPath).toBe("assets/logo.svg");
     expect(decoded.scripts?.[0]).toEqual({ name: "Dev", command: "pnpm dev", stopOnSettle: true });
   });
+
+  it("decodes slash commands and rejects names that cannot be typed", () => {
+    const decoded = decodeJson(`{
+      "commands": [
+        { "name": "graph", "description": "Graph", "run": ["~/bin/graph", "--html"], "output": "html" },
+      ],
+    }`);
+    expect(decoded.commands?.[0]).toMatchObject({ name: "graph", output: "html" });
+    expect(() =>
+      decodeJson(
+        `{ "commands": [{ "name": "two words", "description": "x", "run": ["a"], "output": "markdown" }] }`,
+      ),
+    ).toThrow();
+    expect(() =>
+      decodeJson(
+        `{ "commands": [{ "name": "ok", "description": "x", "run": [], "output": "markdown" }] }`,
+      ),
+    ).toThrow();
+  });
 });
 
 describe("parseT3ProjectFile", () => {

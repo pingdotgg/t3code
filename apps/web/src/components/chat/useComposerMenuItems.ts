@@ -18,6 +18,7 @@ import type {
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
+  UserCommandSummary,
 } from "@t3tools/contracts";
 import {
   composerPullRequestsFromLinks,
@@ -81,6 +82,7 @@ export function useComposerMenuItems({
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
   workspaceSkillsScanning,
+  userCommands,
   questionAttachmentTarget,
   modelMentions,
 }: {
@@ -101,6 +103,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
   readonly workspaceSkillsScanning: boolean;
+  readonly userCommands: ReadonlyArray<UserCommandSummary>;
   readonly questionAttachmentTarget: DraftId | null;
   readonly modelMentions: {
     readonly instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
@@ -319,6 +322,15 @@ export function useComposerMenuItems({
           skill.description ??
           (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : ""),
       }));
+      const userCommandItems = userCommands.map((command) => ({
+        id: `user-command:${command.name}`,
+        type: "user-command" as const,
+        command,
+        label: `/${command.name}`,
+        description: command.argumentHint
+          ? `${command.description} ${command.argumentHint}`
+          : command.description,
+      }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) =>
@@ -326,7 +338,12 @@ export function useComposerMenuItems({
           (item.command.name !== "clear" || !freshSessionAvailable),
       );
       const slashCommandItems = slashCommandItemsForPromptPosition(
-        [...builtInSlashCommandItems, ...visibleProviderSlashCommandItems, ...skillItems],
+        [
+          ...builtInSlashCommandItems,
+          ...userCommandItems,
+          ...visibleProviderSlashCommandItems,
+          ...skillItems,
+        ],
         composerTrigger.rangeStart === 0,
       );
       return searchSlashCommandItems(slashCommandItems, query);

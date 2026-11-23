@@ -150,6 +150,50 @@ export function SentMessageTimelineRow({
   );
 }
 
+/** What `/name args` printed, run by the server without an agent turn. */
+export function UserCommandTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "user-command" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="min-w-0 px-1 py-0.5">
+      <MessageAuthorHeading>{`/${row.command}`}</MessageAuthorHeading>
+      <p className="mb-1 truncate font-mono text-secondary-label text-xs">
+        {row.args ? `/${row.command} ${row.args}` : `/${row.command}`}
+      </p>
+      {row.markdown !== undefined ? (
+        <ChatMarkdown
+          text={row.markdown}
+          cwd={ctx.markdownCwd}
+          threadRef={ctx.threadRef ?? undefined}
+          lineBreaks={shouldPreserveAssistantLineBreaks(row.markdown)}
+          skills={ctx.skills}
+          headingLevelOffset={MESSAGE_HEADING_LEVEL}
+          onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+          onRunShellCommand={ctx.onRunShellCommand}
+          onImageExpand={ctx.onImageExpand}
+        />
+      ) : null}
+      {row.htmlRender !== undefined ? (
+        <HtmlRenderTimelineRow
+          row={{
+            kind: "html-render",
+            id: row.id,
+            createdAt: row.createdAt,
+            htmlRender: row.htmlRender,
+          }}
+        />
+      ) : null}
+      {row.error !== undefined ? (
+        <p className="whitespace-pre-wrap break-words text-destructive text-sm">{row.error}</p>
+      ) : null}
+    </div>
+  );
+}
+
 function AssistantForkButton({
   projectedItem,
 }: {

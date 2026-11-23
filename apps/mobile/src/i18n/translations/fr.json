@@ -5612,5 +5612,9 @@
   "856812e7e1fc445e": "Appels d’outils dans la discussion",
   "8d545d54c0a9e950": "Masque les commandes, modifications et recherches lancées par les agents. Masquer les réussis garde les échecs. Zen n’affiche que les réponses finales. Les approbations, questions et erreurs s’affichent toujours.",
   "99d51127f573296b": "Autre compte",
-  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}."
+  "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
+  "78ceb92a5b33a779": "Commande non exécutée",
+  "440210447ea2814b": "Vous n'avez pas l'autorisation d'exécuter des commandes ici.",
+  "50769d067d003ec9": "Impossible d'exécuter la commande.",
+  "bc84f52ae9af5493": "Envoyez d'abord un message ; les commandes s'exécutent dans un fil existant."
 }

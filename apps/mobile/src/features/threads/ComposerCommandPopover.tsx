@@ -9,6 +9,7 @@ import type {
   ScopedThreadRef,
   ServerProviderSkill,
   ServerProviderSlashCommand,
+  UserCommandSummary,
 } from "@t3tools/contracts";
 import type { ComposerTriggerKind } from "@t3tools/shared/composerTrigger";
 import { msg, useMessages } from "gt-react-native";
@@ -72,6 +73,13 @@ export type ComposerCommandItem =
     }
   | {
       readonly id: string;
+      readonly type: "user-command";
+      readonly command: UserCommandSummary;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
       readonly type: "skill";
       readonly skill: ServerProviderSkill;
       readonly label: string;
@@ -126,6 +134,7 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return pullRequestStatus(item.pullRequest).icon;
     case "slash-command":
     case "provider-slash-command":
+    case "user-command":
       return "terminal";
     case "skill":
       return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];

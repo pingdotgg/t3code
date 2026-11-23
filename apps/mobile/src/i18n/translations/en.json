@@ -5620,5 +5620,9 @@
   "856812e7e1fc445e": "Tool calls in chat",
   "8d545d54c0a9e950": "Hide the commands, edits, and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions, and errors always show.",
   "99d51127f573296b": "Another account",
-  "8ec2c57414669b79": "Connect a second {tracker} workspace or user."
+  "8ec2c57414669b79": "Connect a second {tracker} workspace or user.",
+  "78ceb92a5b33a779": "Command not run",
+  "440210447ea2814b": "You don't have permission to run commands here.",
+  "50769d067d003ec9": "Could not run the command.",
+  "bc84f52ae9af5493": "Send a message first; commands run in an existing thread."
 }

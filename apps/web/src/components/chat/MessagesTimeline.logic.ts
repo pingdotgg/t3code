@@ -90,7 +90,12 @@ export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.runId;
   }
-  if (entry.kind === "html-render" || entry.kind === "mcp-app" || entry.kind === "sent-message") {
+  if (
+    entry.kind === "html-render" ||
+    entry.kind === "mcp-app" ||
+    entry.kind === "sent-message" ||
+    entry.kind === "user-command"
+  ) {
     return entry.runId;
   }
   return entry.kind === "work" ? (entry.entry.runId ?? null) : null;
@@ -684,6 +689,17 @@ type MessagesTimelineRowContent =
       text: string;
     }
   | {
+      kind: "user-command";
+      id: string;
+      createdAt: string;
+      command: string;
+      args: string;
+      status: "completed" | "failed";
+      markdown: string | undefined;
+      htmlRender: HtmlRenderReference | undefined;
+      error: string | undefined;
+    }
+  | {
       kind: "mcp-app";
       id: string;
       createdAt: string;
@@ -867,6 +883,7 @@ function deriveSupersededAttemptFolds(
       entry.kind === "html-render" ||
       entry.kind === "mcp-app" ||
       entry.kind === "sent-message" ||
+      entry.kind === "user-command" ||
       timelineEntryIsPersistentResourceCard(entry) ||
       liveSubagentEntryIds.has(entry.id) ||
       (entry.kind === "work" && entry.entry.itemType === "system_notice")
@@ -2241,6 +2258,21 @@ export function deriveMessagesTimelineRows(
       continue;
     }
 
+    if (timelineEntry.kind === "user-command") {
+      nextRows.push({
+        kind: "user-command",
+        id: timelineEntry.id,
+        createdAt: timelineEntry.createdAt,
+        command: timelineEntry.command,
+        args: timelineEntry.args,
+        status: timelineEntry.status,
+        markdown: timelineEntry.markdown,
+        htmlRender: timelineEntry.htmlRender,
+        error: timelineEntry.error,
+      });
+      continue;
+    }
+
     if (timelineEntry.kind === "mcp-app") {
       nextRows.push({
         kind: "mcp-app",
@@ -2855,6 +2887,21 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
     case "sent-message": {
       const bs = b as typeof a;
       return a.createdAt === bs.createdAt && a.text === bs.text;
+    }
+
+    case "user-command": {
+      const bu = b as typeof a;
+      return (
+        a.createdAt === bu.createdAt &&
+        a.command === bu.command &&
+        a.args === bu.args &&
+        a.status === bu.status &&
+        a.markdown === bu.markdown &&
+        a.error === bu.error &&
+        (a.htmlRender === undefined || bu.htmlRender === undefined
+          ? a.htmlRender === bu.htmlRender
+          : htmlRenderReferencesEqual(a.htmlRender, bu.htmlRender))
+      );
     }
 
     case "mcp-app": {

@@ -12786,5 +12786,9 @@
   "99d51127f573296b": "Autre compte",
   "8ec2c57414669b79": "Connectez un second espace de travail ou utilisateur {tracker}.",
   "99963c0142e17f00": "Pour le nouveau compte {tracker}.",
-  "6d8e4ebc889bace9": "Ajouter un compte"
+  "6d8e4ebc889bace9": "Ajouter un compte",
+  "78ceb92a5b33a779": "Commande non exécutée",
+  "440210447ea2814b": "Vous n'avez pas l'autorisation d'exécuter des commandes ici.",
+  "bc84f52ae9af5493": "Envoyez d'abord un message ; les commandes s'exécutent dans un fil existant.",
+  "50769d067d003ec9": "Impossible d'exécuter la commande."
 }
