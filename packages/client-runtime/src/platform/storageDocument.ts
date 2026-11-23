@@ -23,6 +23,8 @@ export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
   credential: ConnectionCredential,
   provisionalPairingId: Schema.optionalKey(Schema.String),
+  /** Conn: the provisional pairing this credential was promoted from; its session may renew it. */
+  promotedPairingId: Schema.optionalKey(Schema.String),
 });
 export type StoredConnectionCredential = typeof StoredConnectionCredential.Type;
 
@@ -247,7 +249,7 @@ export function settleProvisionalPairingInCatalog(
         entry === target ? new BearerConnectionTarget(committedTarget) : entry,
       ),
       credentials: document.credentials.map((entry) =>
-        entry === credential ? committedCredential : entry,
+        entry === credential ? { ...committedCredential, promotedPairingId: installId } : entry,
       ),
     };
   }
@@ -280,13 +282,13 @@ export function putConnectionCredentialInCatalog(
   if (target === undefined && connectionId.startsWith("bearer:orbit-reservation:")) return document;
   const owner = target === undefined ? undefined : provisionalPairingId(target);
   const previous = document.credentials.find((entry) => entry.connectionId === connectionId);
-  // A session that outlived its pairing's promotion still renews as provisional.
+  // A session that outlived its pairing's promotion still renews as provisional. Only the
+  // credential promoted from that pairing takes it, never one saved over it since.
   const promoted =
     target !== undefined &&
     owner === undefined &&
     expectedProvisionalPairingId !== undefined &&
-    previous !== undefined &&
-    previous.provisionalPairingId === undefined;
+    previous?.promotedPairingId === expectedProvisionalPairingId;
   if (owner !== expectedProvisionalPairingId && !promoted) return document;
   if (owner !== undefined && previous !== undefined && previous.provisionalPairingId !== owner) {
     return document;
@@ -297,6 +299,7 @@ export function putConnectionCredentialInCatalog(
       connectionId,
       credential,
       ...(owner === undefined ? {} : { provisionalPairingId: owner }),
+      ...(promoted ? { promotedPairingId: expectedProvisionalPairingId } : {}),
     }),
   };
 }

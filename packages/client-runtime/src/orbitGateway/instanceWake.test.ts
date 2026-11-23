@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   createOrbitGatewayClient,
   type OrbitGatewayRequest,
   type OrbitGatewayResponse,
 } from "./client.ts";
+import { fakeOperationNotices } from "./fixtures/fakeOperationNotices.ts";
 import { createOrbitInstanceWaker } from "./instanceWake.ts";
 
 const op = (status: string, extra: Record<string, unknown> = {}) => ({
@@ -73,6 +74,33 @@ describe("createOrbitInstanceWaker", () => {
       { method: "GET", path: "/operations/501", root: true },
       { method: "GET", path: "/operations/501", root: true },
     ]);
+  });
+
+  it("waits on the wake's notices with the sequence it read, not on a timer", async () => {
+    const notices = fakeOperationNotices();
+    const { client } = gateway([
+      ok(op("pending", { sequence: 3 }), 202),
+      ok(op("running", { sequence: 5 })),
+      ok(op("succeeded", { sequence: 6 })),
+    ]);
+    const sleeps: number[] = [];
+    const live = createOrbitInstanceWaker({
+      now: () => 0,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return new Promise(() => {});
+      },
+      newKey: () => "conn-wake-test",
+    });
+    const woke = live.wake({ ...client, operationNotices: notices.operationNotices }, 41);
+    await vi.waitFor(() => expect(notices.waiting(501)).toBe(true));
+    notices.notify(501);
+    await vi.waitFor(() => expect(notices.readSequences(501)).toHaveLength(2));
+    notices.notify(501);
+    await expect(woke).resolves.toEqual({ kind: "awake" });
+    // A notice at or below these is one the reader has already read.
+    expect(notices.readSequences(501)).toEqual([3, 5]);
+    expect(notices.stopped).toEqual([501]);
   });
 
   it("shares one wake between two callers for the same Instance", async () => {

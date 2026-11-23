@@ -62,6 +62,11 @@ export interface OrbitFirstMessagePorts {
     /** Whether the clone's server offers a model's provider; without it every model counts. */
     readonly offers?: (selection: ModelSelection) => boolean;
   } | null>;
+  /**
+   * Resolves true once the clone's connection is `connected`, or false when it is not within the
+   * clone-readiness wait. A clone can show as ready from cache while its session reconnects.
+   */
+  readonly waitForConnection: (environmentId: string) => Promise<boolean>;
   /** Runs the launch; resolves the failure when the server did not take it. */
   readonly startTurn: (
     environmentId: string,
@@ -87,6 +92,9 @@ export async function sendOrbitFirstMessage(
   if (modelSelection === null) throw new Error("The clone's Conn Server offers no model.");
   if (fallBack) {
     ports.onModelFallback?.({ requestedModel: requested.model, usedModel: modelSelection.model });
+  }
+  if (!(await ports.waitForConnection(start.environmentId))) {
+    throw new Error("The clone's Conn Server did not connect.");
   }
   if (ports.stopped()) throw new Error("The thread start was stopped.");
   const result = await ports.startTurn(

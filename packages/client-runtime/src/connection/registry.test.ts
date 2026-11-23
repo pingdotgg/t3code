@@ -21,7 +21,6 @@ import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import { withTargetLabel } from "./serverLabel.ts";
@@ -1834,24 +1833,10 @@ describe("EnvironmentRegistry", () => {
   );
 
   it.effect(
-    "Conn: a clone server that reloads as its pairing is promoted is connected again, not blocked",
+    "Conn: a discard that finds the pairing replaced by another window starts a new session",
     () =>
       Effect.gen(function* () {
-        // The finalize reloads the server while Conn promotes its pairing: the session drops, and
-        // the reloading server refuses the credential twice before it reads it again.
-        let refusals = 0;
-        const harness = yield* makeHarness([], [], [], {
-          beforePrepareRoute: () =>
-            Effect.sync(() =>
-              refusals > 0 && refusals-- > 0
-                ? new ConnectionBlockedError({
-                    reason: "authentication",
-                    detail: "The environment credential is invalid.",
-                    hop: "server",
-                  })
-                : undefined,
-            ),
-        });
+        const harness = yield* makeHarness([]);
         yield* Effect.gen(function* () {
           const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
           yield* registry.register(PROVISIONAL_REGISTRATION);
@@ -1860,31 +1845,27 @@ describe("EnvironmentRegistry", () => {
             PROVISIONAL_TARGET.environmentId,
             (state) => state.phase === "connected",
           );
-          const [live] = yield* Ref.get(harness.sessions);
-
-          refusals = 2;
-          yield* Deferred.fail(
-            live!.closed,
-            new ConnectionTransientError({ reason: "transport", detail: "Server reloading." }),
-          );
-          yield* registry.settleProvisionalPairing(
-            PROVISIONAL_TARGET.environmentId,
-            "install-1",
-            true,
-          );
-
-          const reconnected = yield* Effect.forkChild(
-            awaitConnectionState(
-              registry,
-              PROVISIONAL_TARGET.environmentId,
-              (state) => state.phase === "connected" && state.generation === 2,
+          // Another window saved its own credential for this route before this one discards.
+          yield* Ref.update(harness.storedTargets, (current) =>
+            current.map((target) =>
+              Equal.equals(target, PROVISIONAL_TARGET) ? PROMOTED_TARGET : target,
             ),
           );
-          for (let step = 0; step < 20; step += 1) {
-            yield* TestClock.adjust("250 millis");
-          }
-          yield* Fiber.join(reconnected);
-          expect(refusals).toBe(0);
+
+          expect(
+            yield* registry.settleProvisionalPairing(
+              PROVISIONAL_TARGET.environmentId,
+              "install-1",
+              false,
+            ),
+          ).toBe(false);
+
+          yield* awaitConnectionState(
+            registry,
+            PROVISIONAL_TARGET.environmentId,
+            (state) => state.phase === "connected" && state.generation === 1,
+          );
+          expect(yield* Ref.get(harness.releasedSessions)).toBe(1);
           expect(yield* Ref.get(harness.sessions)).toHaveLength(2);
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),

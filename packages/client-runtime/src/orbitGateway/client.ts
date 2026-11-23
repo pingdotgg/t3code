@@ -563,6 +563,8 @@ export interface OrbitGatewayWakeOperation {
   readonly status: string;
   readonly errorCode: string | null;
   readonly pollAfterSeconds: number | null;
+  /** Absent on older Gateways. */
+  readonly sequence?: number;
 }
 
 export const SETTINGS_VERSION_CONFLICT = "conn.settings_version_conflict";
@@ -986,6 +988,7 @@ function wakeOperation(value: unknown, path: string): OrbitGatewayWakeOperation 
     status: data.status,
     errorCode: typeof data.error_code === "string" ? data.error_code : null,
     pollAfterSeconds: typeof data.poll_after_seconds === "number" ? data.poll_after_seconds : null,
+    ...(typeof data.sequence === "number" ? { sequence: data.sequence } : {}),
   };
 }
 

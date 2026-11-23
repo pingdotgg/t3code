@@ -126,6 +126,13 @@ describe("resolveRootUrl", () => {
         body: JSON.stringify({ socket_id: "123.456", channel_name: "private-orbit" }),
       })?.pathname,
     ).toBe("/api/v1/broadcasting/auth");
+    expect(
+      resolveRootUrl({
+        method: "POST",
+        path: "/broadcasting/auth",
+        body: JSON.stringify({ socket_id: "123.456", channel_name: "private-operation.16044" }),
+      })?.pathname,
+    ).toBe("/api/v1/broadcasting/auth");
   });
 
   it.each([
@@ -138,6 +145,16 @@ describe("resolveRootUrl", () => {
       path: "/broadcasting/auth",
       body: JSON.stringify({ socket_id: "1.2", channel_name: "private-admin" }),
     },
+    ...[
+      "private-operation.",
+      "private-operation.0",
+      "private-operation.1x",
+      "private-operation.*",
+    ].map((channel_name) => ({
+      method: "POST" as const,
+      path: "/broadcasting/auth",
+      body: JSON.stringify({ socket_id: "1.2", channel_name }),
+    })),
     {
       method: "POST",
       path: "/broadcasting/auth",

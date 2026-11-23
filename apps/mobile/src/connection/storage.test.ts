@@ -210,7 +210,11 @@ describe("mobile connection catalog storage", () => {
                 }),
               ],
               profiles,
-              credentials: credentials.map(({ provisionalPairingId: _owner, ...entry }) => entry),
+              // The promotion names its pairing, so only that session's late renewal is kept.
+              credentials: credentials.map(({ provisionalPairingId: _owner, ...entry }) => ({
+                ...entry,
+                promotedPairingId: "install",
+              })),
             }
           : EMPTY_CONNECTION_CATALOG_DOCUMENT;
         expect(result.promoted).toBe(promote);
@@ -321,7 +325,11 @@ describe("mobile connection catalog storage", () => {
         ]);
         expect(saved.profiles).toEqual([profile]);
         expect(saved.credentials).toEqual([
-          { connectionId: target.connectionId, credential: credential.credential },
+          {
+            connectionId: target.connectionId,
+            credential: credential.credential,
+            promotedPairingId: "install",
+          },
         ]);
       }),
   );

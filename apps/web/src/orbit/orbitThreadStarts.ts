@@ -18,6 +18,8 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectPairing } from "../connection/onboarding";
@@ -245,6 +247,13 @@ async function waitForClone(environmentId: string) {
 
 const firstMessagePorts: OrbitFirstMessagePorts = {
   waitForClone,
+  waitForConnection: (environmentId) =>
+    waitForAtomValue({
+      registry: appAtomRegistry,
+      atom: environmentCatalog.stateAtom(environmentId as EnvironmentId),
+      predicate: (result) => Option.getOrNull(AsyncResult.value(result))?.phase === "connected",
+      timeoutMs: CLONE_READY_TIMEOUT_MS,
+    }),
   startTurn: async (environmentId, input) => {
     const result = await runAtomCommand(
       appAtomRegistry,

@@ -124,6 +124,7 @@ function ports(
         projectId: ProjectId.make("workspace"),
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
       }),
+      waitForConnection: async () => true,
       startTurn: async (environmentId, input) => {
         launches.push(`${environmentId} ${input.threadId} ${input.message.text}`);
         return { ok: true };
