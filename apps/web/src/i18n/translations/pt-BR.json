@@ -2144,7 +2144,7 @@
   "cd80122422577239": "Publicar repositório",
   "c85db9ac99efa605": "Push e criar {term, select, mr {MR} cr {solicitação de alteração} other {PR}}",
   "dbccf81ad4a03f48": "Sincronizar ref",
-  "4350ab8128b18105": "Pull",
+  "4350ab8128b18105": "Fazer pull",
   "dca2ca8303bfc14e": "Fazer commit e push na ref padrão?",
   "e196fda632e279d0": "Esta ação vai fazer commit e push das alterações em \"{branch}\". Você pode continuar nesta ref ou criar uma ref de feature e executar a mesma ação nela.",
   "87e714255e8be7f2": "Fazer push na ref padrão?",
