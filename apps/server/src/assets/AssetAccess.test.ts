@@ -1,7 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - tests inject swaps at the native open boundary.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeFSP from "node:fs/promises";
 import {
   AssetAccessError,
@@ -11,9 +12,14 @@ import {
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
+import {
+  HTML_RENDER_VIEWPORT_QUERY_PARAM,
+  injectHtmlRenderViewportBridge,
+} from "@t3tools/shared/htmlRender";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import { describe, expect, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,7 +28,13 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClientRequest, HttpClientResponse, HttpServerResponse } from "effect/http";
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+  HttpRouter,
+  HttpServerResponse,
+} from "effect/http";
 import { vi } from "vite-plus/test";
 
 import * as AssetSigner from "./AssetSigner.ts";
@@ -34,7 +46,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "../project/T3ProjectFileLoader.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import { assetFileResponse } from "../http.ts";
+import { assetFileResponse, layerAssetRoute } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
@@ -1933,5 +1945,71 @@ describe("AssetAccess", () => {
         expect(encoded).not.toContain(url);
       }
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect(
+    "injects the viewport bridge into saved HTML renders via the signed asset route only on opt-in non-range inline requests",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const config = yield* ServerConfig.ServerConfig;
+        yield* fs.makeDirectory(config.attachmentsDir, { recursive: true });
+        const attachmentId = "thread-1-00000000-0000-4000-8000-000000000099-html";
+        const html =
+          '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src \'none\'"></head><body>legacy ☃</body></html>';
+        yield* fs.writeFileString(path.join(config.attachmentsDir, `${attachmentId}.html`), html);
+        const inline = yield* issueAssetUrl({
+          resource: { _tag: "attachment", attachmentId, disposition: "inline" },
+        });
+        const download = yield* issueAssetUrl({
+          resource: { _tag: "attachment", attachmentId, disposition: "attachment" },
+        });
+        const services = yield* Layer.build(
+          HttpRouter.serve(layerAssetRoute, { disableListenLog: true, disableLogger: true }).pipe(
+            Layer.provideMerge(NodeHttpServer.layerTest),
+          ),
+        );
+        const client = Context.get(services, HttpClient.HttpClient);
+        const expected = injectHtmlRenderViewportBridge(html);
+        expect(expected.indexOf("<script>")).toBeLessThan(
+          expected.indexOf('http-equiv="Content-Security-Policy"'),
+        );
+        const expectedLength = String(new TextEncoder().encode(expected).byteLength);
+        for (const method of ["GET", "HEAD"] as const) {
+          const res = yield* client.execute(
+            HttpClientRequest.make(method)(
+              `${inline.relativeUrl}?${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1`,
+            ),
+          );
+          expect(res.status).toBe(200);
+          expect(res.headers["content-length"]).toBe(expectedLength);
+          expect(res.headers["content-security-policy"]).toBe(
+            "sandbox allow-scripts allow-forms allow-popups allow-downloads",
+          );
+          expect(yield* res.text).toBe(method === "HEAD" ? "" : expected);
+        }
+        const plain = yield* client.execute(HttpClientRequest.get(inline.relativeUrl));
+        expect(yield* plain.text).toBe(html);
+        const ranged = yield* client.execute(
+          HttpClientRequest.get(`${inline.relativeUrl}?${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1`, {
+            headers: { range: "bytes=0-14" },
+          }),
+        );
+        expect(ranged.status).toBe(206);
+        expect(yield* ranged.text).toBe("<!doctype html>");
+        const dl = yield* client.execute(
+          HttpClientRequest.get(`${download.relativeUrl}?${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1`),
+        );
+        expect(yield* dl.text).toBe(html);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            layerTest,
+            Layer.succeed(BuiltInDrivers.SourceControlDrivers, []),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+          ),
+        ),
+      ),
   );
 });

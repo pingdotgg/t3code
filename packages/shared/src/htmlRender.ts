@@ -244,6 +244,53 @@ const SIZE_CHANGED_METHOD = "ui/notifications/size-changed";
 const SHORTCUTS_METHOD = "t3/notifications/shortcuts";
 const KEY_DOWN_METHOD = "t3/notifications/keydown";
 const OPEN_IMAGE_METHOD = "t3/notifications/open-image";
+const VIEWPORT_ZOOM_METHOD = "t3/notifications/viewport-zoom";
+const VIEWPORT_DELTA_METHOD = "t3/notifications/viewport-delta";
+
+/** Query param added by full-screen viewers so previously published HTML renders get the gesture bridge. */
+export const HTML_RENDER_VIEWPORT_QUERY_PARAM = "t3-viewport";
+export const HTML_RENDER_MAX_PAGE_BYTES = 25 * 1024 * 1024;
+
+export interface HtmlRenderViewportDelta {
+  readonly scale?: number | undefined;
+  readonly dx?: number | undefined;
+  readonly dy?: number | undefined;
+  readonly x?: number | undefined;
+  readonly y?: number | undefined;
+}
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+export function htmlRenderViewportZoomMessage(zoomed: boolean) {
+  return {
+    jsonrpc: "2.0",
+    method: VIEWPORT_ZOOM_METHOD,
+    params: { zoomed },
+  } as const;
+}
+
+export function readHtmlRenderViewportDelta(data: unknown): HtmlRenderViewportDelta | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0" || method !== VIEWPORT_DELTA_METHOD) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const p = params as Record<string, unknown>;
+  if (p.scale !== undefined && (!isFiniteNumber(p.scale) || p.scale <= 0 || p.scale > 100)) {
+    return undefined;
+  }
+  if (p.dx !== undefined && (!isFiniteNumber(p.dx) || Math.abs(p.dx) > 10_000)) return undefined;
+  if (p.dy !== undefined && (!isFiniteNumber(p.dy) || Math.abs(p.dy) > 10_000)) return undefined;
+  if (p.scale === undefined && p.dx === undefined && p.dy === undefined) return undefined;
+  const x = isFiniteNumber(p.x) && Math.abs(p.x) <= 100_000 ? p.x : undefined;
+  const y = isFiniteNumber(p.y) && Math.abs(p.y) <= 100_000 ? p.y : undefined;
+  return {
+    ...(p.scale !== undefined ? { scale: p.scale } : {}),
+    ...(p.dx !== undefined ? { dx: p.dx } : {}),
+    ...(p.dy !== undefined ? { dy: p.dy } : {}),
+    ...(x !== undefined && y !== undefined ? { x, y } : {}),
+  };
+}
 
 export function readHtmlRenderContentHeight(data: unknown): number | undefined {
   if (typeof data !== "object" || data === null) return undefined;
@@ -384,6 +431,11 @@ const CONTAIN_SCROLL_FRAGMENT_KEY = "t3-contain-scroll";
 /** Appended after the theme fragment for a frame whose page must not scroll the host. */
 export const HTML_RENDER_CONTAIN_SCROLL_FRAGMENT = `&${CONTAIN_SCROLL_FRAGMENT_KEY}`;
 
+const ZOOMABLE_FRAGMENT_KEY = "t3-zoomable";
+
+/** Appended after the theme fragment for full-screen viewers that handle zoom and pan gestures. */
+export const HTML_RENDER_ZOOMABLE_FRAGMENT = `&${ZOOMABLE_FRAGMENT_KEY}`;
+
 export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
   return {
     jsonrpc: "2.0",
@@ -412,9 +464,16 @@ function rootRule(theme: HtmlRenderTheme): string {
 // scroll-padding, clamped offsets), and stops there. A fixed target or ancestor leaves the viewport alone.
 const CONTAINED_SCROLL_INTO_VIEW = `Element.prototype.scrollIntoView=function(v){var o=v!==null&&(typeof v==="object"||typeof v==="function")?v:{block:v===undefined||v===null||v?"start":"end"},B=o.block||"start",I=o.inline||"nearest",H=o.behavior||"auto",m=function(z){return parseFloat(z)||0;},g=getComputedStyle(this),r=this.getBoundingClientRect(),t=r.top-m(g.scrollMarginTop),b=r.bottom+m(g.scrollMarginBottom),l=r.left-m(g.scrollMarginLeft),R=r.right+m(g.scrollMarginRight),x=0,y=0,e=this,f=g.position==="fixed",d=function(a,z,lo,hi,k){var L=z-a>hi-lo;return k==="start"?a-lo:k==="end"?z-hi:k==="center"?(a+z-lo-hi)/2:a<lo&&z>hi?0:a<lo?L?z-hi:a-lo:z>hi?L?a-lo:z-hi:0;},w=function(top,left,c,s,go){var p=function(n){return m(s["scrollPadding"+n]);},n=s.direction==="rtl"?c.clientWidth-c.scrollWidth:0,dy=d(t-y,b-y,top+p("Top"),top+c.clientHeight-p("Bottom"),B),dx=d(l-x,R-x,left+p("Left"),left+c.clientWidth-p("Right"),I);dy=Math.max(-c.scrollTop,Math.min(c.scrollHeight-c.clientHeight-c.scrollTop,dy));dx=Math.max(n-c.scrollLeft,Math.min(n+c.scrollWidth-c.clientWidth-c.scrollLeft,dx));if(dx||dy)go({left:dx,top:dy,behavior:H});x+=dx;y+=dy;},u=document.scrollingElement||document.documentElement;while(!f){e=e.parentElement||(e.getRootNode&&e.getRootNode().host);if(!e)break;if(e===u||e===document.documentElement)continue;var h=getComputedStyle(document.documentElement),s=getComputedStyle(e),c=e.getBoundingClientRect();if(e===document.body&&h.overflowX+h.overflowY==="visiblevisible")continue;if(/auto|scroll|hidden/.test(s.overflowX+s.overflowY))w(c.top+e.clientTop,c.left+e.clientLeft,e,s,e.scrollBy.bind(e));f=s.position==="fixed";}if(!f)w(0,0,u,getComputedStyle(u),window.scrollBy.bind(window));};`;
 
+// Installed only in full-screen opt-in frames so inline chat renders never register non-passive
+// wheel or touch listeners. Normalizes wheel/Safari/touch pinch and zoomed mouse drag to one
+// `{ scale?, dx?, dy?, x?, y? }` delta using screenX/screenY so parent CSS scale never feeds back.
+const HTML_RENDER_VIEWPORT_SCRIPT_BODY = `(function(){if(window.__t3vp||window.parent===window)return;window.__t3vp=1;var Z=0,T=0,P=null,G=1,D=null,S=0,Q=document.createElement("style"),post=function(p){window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(VIEWPORT_DELTA_METHOD)},params:p},"*");},clearDrag=function(){if(!D)return;try{document.documentElement.releasePointerCapture(D.id);}catch(x){}document.documentElement.classList.remove("t3-panning");D=null;};Q.textContent="html{touch-action:pan-x pan-y}html.t3-pannable{cursor:grab}html.t3-panning,html.t3-panning *{cursor:grabbing!important;user-select:none!important;-webkit-user-select:none!important}";(document.head||document.documentElement).appendChild(Q);window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(VIEWPORT_ZOOM_METHOD)}&&p){Z=p.zoomed===true?1:0;document.documentElement.classList.toggle("t3-pannable",!!Z);if(!Z)clearDrag();}});window.addEventListener("wheel",function(e){if(!e.ctrlKey||!e.deltaY)return;e.preventDefault();var d=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?window.innerHeight:1);post({scale:Math.exp(-d*0.01),x:e.clientX,y:e.clientY});},{passive:false});window.addEventListener("gesturestart",function(e){e.preventDefault();G=e.scale>0?e.scale:1;},{passive:false});window.addEventListener("gesturechange",function(e){e.preventDefault();var s=e.scale>0?e.scale:1;if(!T&&G>0&&s>0){var m={scale:s/G};if(typeof e.clientX==="number"&&typeof e.clientY==="number"){m.x=e.clientX;m.y=e.clientY;}post(m);}G=s;},{passive:false});window.addEventListener("gestureend",function(e){e.preventDefault();G=1;},{passive:false});var onTouch=function(e){T=e.touches.length;if(T===2){e.preventDefault();var a=e.touches[0],b=e.touches[1],d=Math.hypot(a.screenX-b.screenX,a.screenY-b.screenY),sx=(a.screenX+b.screenX)/2,sy=(a.screenY+b.screenY)/2;if(d>0){if(P)post({scale:d/P.d,dx:sx-P.sx,dy:sy-P.sy,x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2});P={d:d,sx:sx,sy:sy};}}else{P=null;}};window.addEventListener("touchstart",onTouch,{passive:false});window.addEventListener("touchmove",onTouch,{passive:false});window.addEventListener("touchend",onTouch,{passive:false});window.addEventListener("touchcancel",onTouch,{passive:false});var stopDrag=function(e){if(!D||e.pointerId!==D.id)return;if(D.m){S=1;setTimeout(function(){S=0;});}clearDrag();};window.addEventListener("pointerdown",function(e){if(!Z||D||e.pointerType!=="mouse"||(e.button!==0&&e.button!==1))return;if(e.button===0&&e.defaultPrevented)return;var t=e.composedPath()[0];if(e.button===0&&t&&t.closest&&t.closest("input,textarea,select,option,button,a[href],summary,label,[contenteditable]"))return;if(e.button===1)e.preventDefault();D={id:e.pointerId,b:e.button===1?4:1,sx:e.screenX,sy:e.screenY,lx:e.screenX,ly:e.screenY,m:0};});window.addEventListener("pointermove",function(e){if(!D||e.pointerId!==D.id)return;if((e.buttons&D.b)===0){clearDrag();return;}if(!D.m&&Math.hypot(e.screenX-D.sx,e.screenY-D.sy)>4){if(e.composedPath().some(function(t){return t&&t.hasPointerCapture&&t.hasPointerCapture(D.id);})){D=null;return;}D.m=1;document.documentElement.classList.add("t3-panning");try{var sel=window.getSelection&&window.getSelection();if(sel)sel.removeAllRanges();}catch(x){}try{document.documentElement.setPointerCapture(D.id);}catch(x){}}if(!D.m)return;var dx=e.screenX-D.lx,dy=e.screenY-D.ly;D.lx=e.screenX;D.ly=e.screenY;if(dx||dy)post({dx:dx,dy:dy});});window.addEventListener("pointerup",stopDrag);window.addEventListener("pointercancel",stopDrag);window.addEventListener("lostpointercapture",stopDrag);window.addEventListener("blur",clearDrag);window.addEventListener("click",function(e){if(S){S=0;e.preventDefault();e.stopImmediatePropagation();}},true);})();`;
+
+const HTML_RENDER_VIEWPORT_SCRIPT = `<script>${HTML_RENDER_VIEWPORT_SCRIPT_BODY}</script>`;
+
 // Apply overridable theme CSS before paint and strip the fragment before routing; framed navigation uses the client.
 // Forward shortcuts after page handlers; text fields retain their keys.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash);if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);document.addEventListener("click",function(e){var t=e.composedPath()[0],l=t&&t.closest?t.closest("label,a[href],button,input,select,textarea"):null,c=l&&l.tagName==="LABEL"?l.control:null;if(e.isTrusted&&c&&document.activeElement!==c)c.focus({preventScroll:true});},true);if(window.parent!==window){if(P){${CONTAINED_SCROLL_INTO_VIEW}}var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){var g=[],i=-1;if(e.defaultPrevented)return;Array.prototype.forEach.call(document.images,function(m){var v=m.currentSrc||m.src;if(!v||m.closest("a[href],button"))return;if(m===t)i=g.length;g.push({src:v,name:m.alt||m.title||""});});window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||"",images:g,index:i}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",l==="+"&&!e.shiftKey&&!e.altKey&&!/^Digit/.test(c)?"":C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("t3-theme"),n=0,P=/[#&]${CONTAIN_SCROLL_FRAGMENT_KEY}(?:&|$)/.test(location.hash),V=/[#&]${ZOOMABLE_FRAGMENT_KEY}(?:&|$)/.test(location.hash)||/[?&]${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1(?:&|$)/.test(location.search);if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"t3-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href,metaKey:e.metaKey,ctrlKey:e.ctrlKey}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);document.addEventListener("click",function(e){var t=e.composedPath()[0],l=t&&t.closest?t.closest("label,a[href],button,input,select,textarea"):null,c=l&&l.tagName==="LABEL"?l.control:null;if(e.isTrusted&&c&&document.activeElement!==c)c.focus({preventScroll:true});},true);if(window.parent!==window){if(P){${CONTAINED_SCROLL_INTO_VIEW}}var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);window.addEventListener("click",function(e){var t=e.composedPath()[0],u;if(!e.isTrusted||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||!t||t.tagName!=="IMG"||t.closest("a[href],button"))return;u=t.currentSrc||t.src;if(u)setTimeout(function(){var g=[],i=-1;if(e.defaultPrevented)return;Array.prototype.forEach.call(document.images,function(m){var v=m.currentSrc||m.src;if(!v||m.closest("a[href],button"))return;if(m===t)i=g.length;g.push({src:v,name:m.alt||m.title||""});});window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(OPEN_IMAGE_METHOD)},params:{src:u,name:t.alt||t.title||"",images:g,index:i}},"*");});});var K=[],B=[],C=${JSON.stringify(EVENT_CODE_SHORTCUT_KEYS)};window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(e.source===window.parent&&d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(SHORTCUTS_METHOD)}&&p&&Array.isArray(p.shortcuts)&&Array.isArray(p.blocked)){K=p.shortcuts;B=p.blocked;}});window.addEventListener("keydown",function(e){var t=e.composedPath()[0],c=e.code||"",l=e.key.toLowerCase(),x=/^[a-z]$/.test(l)?[l]:[l,/^Key[A-Z]$/.test(c)?c.slice(3).toLowerCase():"",l==="+"&&!e.shiftKey&&!e.altKey&&!/^Digit/.test(c)?"":C.hasOwnProperty(c)?C[c]:""],f,m=function(s){return s&&s.metaKey===e.metaKey&&s.ctrlKey===e.ctrlKey&&s.shiftKey===e.shiftKey&&s.altKey===e.altKey&&x.indexOf(s.key)>-1;};if(!e.isTrusted||e.isComposing||e.getModifierState("AltGraph")&&!/^[a-z0-9]$/i.test(e.key)||t&&(t.isContentEditable||/^(?:INPUT|TEXTAREA|SELECT)$/.test(t.tagName))||!K.some(m)||B.some(m))return;f=function(v){window.removeEventListener("keydown",f);if(v!==e||e.defaultPrevented)return;e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(KEY_DOWN_METHOD)},params:{key:e.key,code:e.code,metaKey:e.metaKey,ctrlKey:e.ctrlKey,shiftKey:e.shiftKey,altKey:e.altKey,repeat:e.repeat}},"*");};window.addEventListener("keydown",f);setTimeout(function(){window.removeEventListener("keydown",f);});},true);if(V){${HTML_RENDER_VIEWPORT_SCRIPT_BODY}}}})();`;
 
 function bootstrapMarkup(markup: string): string {
   const dark = htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark");
@@ -457,9 +516,7 @@ const blankNonMarkup = (html: string) => {
   return parts.join("");
 };
 
-export function injectHtmlRenderBootstrap(html: string): string {
-  const scan = blankNonMarkup(html);
-  const markup = bootstrapMarkup(scan);
+function insertInHead(html: string, scan: string, markup: string): string {
   const headOpen = /<head(?:\s(?:[^"'>]|"[^"]*"|'[^']*')*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;
@@ -476,6 +533,16 @@ export function injectHtmlRenderBootstrap(html: string): string {
     return `${html.slice(0, at)}<head>${markup}</head>${html.slice(at)}`;
   }
   return `<!doctype html><head>${markup}</head>${html}`;
+}
+
+export function injectHtmlRenderBootstrap(html: string): string {
+  const scan = blankNonMarkup(html);
+  return insertInHead(html, scan, bootstrapMarkup(scan));
+}
+
+/** Injects the full-screen viewport bridge at the start of `<head>` (ahead of any page CSP meta). */
+export function injectHtmlRenderViewportBridge(html: string): string {
+  return insertInHead(html, blankNonMarkup(html), HTML_RENDER_VIEWPORT_SCRIPT);
 }
 
 const FILE_PREVIEW_SCROLL_METHOD = "t3/notifications/file-preview-scroll";

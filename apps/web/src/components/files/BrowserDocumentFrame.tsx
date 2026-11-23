@@ -12,15 +12,20 @@ import {
   isFilePreviewScrollRestored,
   readFilePreviewScroll,
   type HtmlRenderShortcut,
+  type HtmlRenderViewportDelta,
   htmlRenderShortcutsMessage,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
+  HTML_RENDER_VIEWPORT_QUERY_PARAM,
+  HTML_RENDER_ZOOMABLE_FRAGMENT,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
+  htmlRenderViewportZoomMessage,
   htmlRenderResult,
   readHtmlRenderContentHeight,
   readHtmlRenderImageRequest,
   readHtmlRenderKeyDown,
   readHtmlRenderLinkRequest,
+  readHtmlRenderViewportDelta,
 } from "@t3tools/shared/htmlRender";
 import {
   isMacPlatform,
@@ -298,6 +303,8 @@ function FileDocument(props: {
   );
 }
 
+const VIEWPORT_QUERY_PATTERN = new RegExp(`[?&]${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1(?:&|$)`);
+
 /** Keep the initial URL while mounted; re-signing must not reload the page. */
 export function HtmlRenderDocument(props: {
   readonly src: string;
@@ -309,13 +316,21 @@ export function HtmlRenderDocument(props: {
   readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
+  /** Enables full-screen zoom/pan gesture bridging and requests the server bridge for saved renders. */
+  readonly zoomable?: boolean | undefined;
+  readonly zoomed?: boolean | undefined;
+  readonly onViewportDelta?: ((delta: HtmlRenderViewportDelta) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(
-    () =>
-      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
-  );
+  const [src] = useState(() => {
+    const base = props.src.split("#", 1)[0] ?? props.src;
+    const withQuery =
+      props.zoomable && !/^(?:blob|data):/i.test(base) && !VIEWPORT_QUERY_PATTERN.test(base)
+        ? `${base}${base.includes("?") ? "&" : "?"}${HTML_RENDER_VIEWPORT_QUERY_PARAM}=1`
+        : base;
+    return `${withQuery}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}${props.zoomable ? HTML_RENDER_ZOOMABLE_FRAGMENT : ""}`;
+  });
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
@@ -358,6 +373,13 @@ export function HtmlRenderDocument(props: {
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- posts allowed and blocked shortcuts to the sandboxed iframe's window
   useEffect(postShortcuts, [blocked, shortcuts]);
+  const zoomed = Boolean(props.zoomable && props.zoomed);
+  const postViewportZoom = () => {
+    if (!props.zoomable) return;
+    frameRef.current?.contentWindow?.postMessage(htmlRenderViewportZoomMessage(zoomed), "*");
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- notifies the zoomed iframe when mouse drag-pan is active
+  useEffect(postViewportZoom, [props.zoomable, zoomed]);
   // Pages can forge key/code pairs; reject pairs matching other bindings and require named keys to match the
   // shortcut.
   const isShortcut = useEffectEvent(
@@ -412,6 +434,13 @@ export function HtmlRenderDocument(props: {
       props.onContentHeight?.(height);
       return;
     }
+    if (props.onViewportDelta !== undefined) {
+      const delta = readHtmlRenderViewportDelta(event.data);
+      if (delta !== undefined) {
+        props.onViewportDelta(delta);
+        return;
+      }
+    }
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
@@ -460,6 +489,7 @@ export function HtmlRenderDocument(props: {
           // Covers a theme change that landed while the page was loading.
           postTheme();
           postShortcuts();
+          postViewportZoom();
         }}
         // Match the blank document's scheme to avoid dark-mode white flashes, then follow the app after load.
         className={cn("border-0 scheme-light", props.className)}

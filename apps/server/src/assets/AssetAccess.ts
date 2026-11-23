@@ -253,10 +253,13 @@ function decodeRelativePath(value: string): string | null {
   }
 }
 
-export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (filePath: string) {
+export const readMcpAppHtml = Effect.fn("AssetAccess.readMcpAppHtml")(function* (
+  filePath: string,
+  maxBytes = MCP_APP_MAX_HTML_BYTES,
+) {
   const fileSystem = yield* FileSystem.FileSystem;
-  // Allow space for stored CSP tags, but bound reads if the attachment grows after minting.
-  const limit = MCP_APP_MAX_HTML_BYTES + 128 * 1024;
+  // Allow space for stored CSP/bootstrap tags, but bound reads if the attachment grows after minting.
+  const limit = maxBytes + 128 * 1024;
   const chunks = yield* Stream.runCollect(fileSystem.stream(filePath, { bytesToRead: limit + 1 }));
   const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
   if (size > limit) return null;

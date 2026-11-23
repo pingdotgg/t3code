@@ -52,6 +52,9 @@ const OVERFLOW_MESSAGE_TYPE = "t3-html-render-overflow";
 
 const OVERFLOW_SCRIPT = `(function(){var last;function report(){var d=document.documentElement,b=document.body;var x=Math.max(d.scrollWidth,b?b.scrollWidth:0)>window.innerWidth+1,y=Math.max(d.scrollHeight,b?b.scrollHeight:0)>window.innerHeight+1,o=x+","+y;if(o===last)return;last=o;window.ReactNativeWebView.postMessage(JSON.stringify({type:${JSON.stringify(OVERFLOW_MESSAGE_TYPE)},x:x,y:y}));}report();if(window.ResizeObserver){var r=new ResizeObserver(report);r.observe(document.documentElement);if(document.body)r.observe(document.body);}window.addEventListener("resize",report);})();true;`;
 
+// Allow native pinch-to-zoom in full-screen even when a page's viewport meta locks scale.
+const FULL_SCREEN_ZOOM_SCRIPT = `(function(){var metas=document.querySelectorAll('meta[name="viewport" i]');for(var i=0;i<metas.length;i++){var m=metas[i],c=m.getAttribute("content")||"";if(/\\b(?:user-scalable|minimum-scale|maximum-scale)\\s*=/i.test(c)){var parts=c.split(/[,;]/).map(function(s){return s.trim();}).filter(function(s){return s&&!/^(?:user-scalable|minimum-scale|maximum-scale)\\s*=/i.test(s);});parts.push("user-scalable=yes","maximum-scale=5");m.setAttribute("content",parts.join(", "));}}})();true;`;
+
 type Overflow = { readonly x: boolean; readonly y: boolean };
 
 const NO_OVERFLOW: Overflow = { x: false, y: false };
@@ -130,6 +133,7 @@ export function HtmlRenderWebView(props: {
         allowsInlineMediaPlayback
         contentInsetAdjustmentBehavior={props.nested ? "never" : "automatic"}
         bounces={!props.nested}
+        directionalLockEnabled={props.nested}
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
@@ -163,7 +167,13 @@ export function HtmlRenderWebView(props: {
                 if (next !== null) setOverflow(next);
               },
             }
-          : {})}
+          : {
+              setBuiltInZoomControls: true,
+              setDisplayZoomControls: false,
+              injectedJavaScript: FULL_SCREEN_ZOOM_SCRIPT,
+              // iOS react-native-webview only installs injectedJavaScript when messaging is enabled.
+              onMessage: () => {},
+            })}
       />
       {loaded ? null : (
         <View pointerEvents="none" className="absolute inset-0 items-center justify-center">

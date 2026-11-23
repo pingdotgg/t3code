@@ -5,6 +5,7 @@ import { isNetworkPath } from "@t3tools/shared/path";
 import {
   clampHtmlRenderHeight,
   HTML_RENDER_COLUMN_WIDTH,
+  HTML_RENDER_MAX_PAGE_BYTES,
   HTML_RENDER_MAX_TITLE_LENGTH,
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
@@ -41,7 +42,7 @@ import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
 
 const MIB = 1024 * 1024;
 const MAX_IMAGE_BYTES = 10 * MIB;
-const MAX_PAGE_BYTES = 25 * MIB;
+const MAX_PAGE_BYTES = HTML_RENDER_MAX_PAGE_BYTES;
 const HTML_FILE_EXTENSION = /\.html?$/i;
 // Like the image check, judge the bytes: a renamed .env or key does not start like a page.
 const HTML_DOCUMENT_START = /^\s*<(?:!doctype\s+html|html)[\s>]/i;

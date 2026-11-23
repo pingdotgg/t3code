@@ -6,7 +6,12 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
-import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
+import {
+  FILE_PREVIEW_SCROLL_SCRIPT,
+  HTML_RENDER_MAX_PAGE_BYTES,
+  HTML_RENDER_VIEWPORT_QUERY_PARAM,
+  injectHtmlRenderViewportBridge,
+} from "@t3tools/shared/htmlRender";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
 import * as Context from "effect/Context";
@@ -169,6 +174,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app" | "file-preview";
+    readonly viewportBridge?: boolean;
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
@@ -207,6 +213,25 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
       const body = new Uint8Array(bytes.byteLength + script.byteLength);
       body.set(bytes);
       body.set(script, bytes.byteLength);
+      headers["Content-Length"] = String(body.byteLength);
+      return method === "HEAD"
+        ? HttpServerResponse.empty({ status: 200, headers })
+        : HttpServerResponse.uint8Array(body, { headers });
+    }
+  }
+  if (
+    asset.viewportBridge &&
+    !asset.download &&
+    asset.renderIntent === undefined &&
+    headers["Content-Type"] === "text/html; charset=utf-8" &&
+    rangeHeader === undefined
+  ) {
+    const bytes = yield* readMcpAppHtml(asset.path, HTML_RENDER_MAX_PAGE_BYTES);
+    // A page too large to buffer is served as is, without injecting the legacy bridge.
+    if (bytes !== null) {
+      const body = new TextEncoder().encode(
+        injectHtmlRenderViewportBridge(new TextDecoder().decode(bytes)),
+      );
       headers["Content-Length"] = String(body.byteLength);
       return method === "HEAD"
         ? HttpServerResponse.empty({ status: 200, headers })
@@ -490,8 +515,9 @@ export const layerAssetRoute = HttpRouter.add(
         ),
       );
     }
+    const viewportBridge = url.value.searchParams.get(HTML_RENDER_VIEWPORT_QUERY_PARAM) === "1";
     return yield* assetFileResponse(
-      asset,
+      viewportBridge ? { ...asset, viewportBridge: true } : asset,
       request.method === "GET" ? request.headers.range : undefined,
       request.headers["if-range"],
       request.method === "HEAD" ? "HEAD" : "GET",

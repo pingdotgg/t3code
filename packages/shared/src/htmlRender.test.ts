@@ -4,6 +4,7 @@ import {
   injectHtmlRenderBootstrap,
   readHtmlRenderImageRequest,
   readHtmlRenderLinkRequest,
+  readHtmlRenderViewportDelta,
 } from "./htmlRender.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
@@ -155,6 +156,34 @@ describe("readHtmlRenderImageRequest", () => {
     // An index that does not point at the clicked image falls back to that image alone.
     expect(request({ index: 0 })).toEqual({ images: [b], index: 0 });
     expect(request({ index: -1 })).toEqual({ images: [b], index: 0 });
+  });
+});
+
+describe("readHtmlRenderViewportDelta", () => {
+  const delta = (params: unknown) => ({
+    jsonrpc: "2.0",
+    method: "t3/notifications/viewport-delta",
+    params,
+  });
+
+  it("parses bounded zoom and pan deltas and rejects malformed or out-of-range payloads", () => {
+    expect(readHtmlRenderViewportDelta(delta({ scale: 1.5, x: 120, y: 80 }))).toEqual({
+      scale: 1.5,
+      x: 120,
+      y: 80,
+    });
+    expect(readHtmlRenderViewportDelta(delta({ scale: 1.2, dx: -25, dy: 14 }))).toEqual({
+      scale: 1.2,
+      dx: -25,
+      dy: 14,
+    });
+    expect(readHtmlRenderViewportDelta(delta({ dx: -25, dy: 14 }))).toEqual({ dx: -25, dy: 14 });
+    expect(readHtmlRenderViewportDelta(delta({}))).toBeUndefined();
+    expect(readHtmlRenderViewportDelta(delta({ scale: 0 }))).toBeUndefined();
+    expect(readHtmlRenderViewportDelta(delta({ scale: 101 }))).toBeUndefined();
+    expect(readHtmlRenderViewportDelta(delta({ scale: -1, dx: 10 }))).toBeUndefined();
+    expect(readHtmlRenderViewportDelta(delta({ dx: 20_000 }))).toBeUndefined();
+    expect(readHtmlRenderViewportDelta(delta({ dx: Number.NaN, dy: 1 }))).toBeUndefined();
   });
 });
 
