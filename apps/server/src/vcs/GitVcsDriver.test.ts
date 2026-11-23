@@ -369,6 +369,86 @@ it.effect.each(["interrupt", "timeout", "success"] as const)(
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect.each(["interrupt", "timeout"] as const)(
+  "checkpoint staging $0 removes the Git LFS temp files its clean filter wrote",
+  (stop) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const sandbox = yield* fs.makeTempDirectoryScoped({ prefix: "t3-lfs-checkpoint-" });
+      const cwd = path.join(sandbox, "repo");
+      yield* fs.makeDirectory(cwd);
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+      const lfsTmp = path.join(cwd, ".git/lfs/tmp");
+      yield* fs.makeDirectory(lfsTmp, { recursive: true });
+      const otherOperation = path.join(lfsTmp, "owned-by-another-git-lfs");
+      yield* fs.writeFileString(otherOperation, "another git-lfs process is hashing this");
+
+      const connected = Promise.withResolvers<void>();
+      const sockets = new Set<NodeNet.Socket>();
+      const server = yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NodeNet.createServer((socket) => {
+            sockets.add(socket);
+            connected.resolve();
+          }),
+        ),
+        (server) =>
+          Effect.sync(() => {
+            for (const socket of sockets) socket.destroy();
+            server.close();
+          }),
+      );
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            server.once("error", reject);
+            server.listen(0, "127.0.0.1", resolve);
+          }),
+      );
+      const address = server.address();
+      assert.isTrue(address !== null && typeof address !== "string");
+      if (address === null || typeof address === "string") return;
+      // Like git-lfs clean: copy the content into .git/lfs/tmp while hashing, and only
+      // move or remove that copy once hashing finishes. A killed filter strands it.
+      const filter = path.join(sandbox, "lfs-clean.cjs");
+      yield* fs.writeFileString(
+        filter,
+        [
+          "const fs = require('node:fs');",
+          "fs.mkdirSync('.git/lfs/tmp', { recursive: true });",
+          "fs.writeFileSync('.git/lfs/tmp/' + process.pid, Buffer.alloc(1024 * 1024));",
+          `const s = require('node:net').connect(${address.port}, '127.0.0.1');`,
+          "s.resume(); process.stdin.resume();",
+          "s.on('close', () => process.exit(0));",
+        ].join("\n"),
+      );
+      yield* git(["config", "filter.lfs.clean", `"${process.execPath}" "${filter}"`]);
+      yield* git(["config", "filter.lfs.required", "true"]);
+      yield* fs.writeFileString(path.join(cwd, ".gitattributes"), "*.npz filter=lfs\n");
+      yield* fs.writeFileString(path.join(cwd, "weights.npz"), "large untracked data\n");
+
+      const fiber = yield* driver.checkpoints
+        .captureCheckpoint({ cwd, checkpointRef })
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Effect.promise(() => connected.promise);
+      if (stop === "interrupt") yield* Fiber.interrupt(fiber);
+      else yield* TestClock.adjust("30 seconds");
+      const result = yield* Fiber.await(fiber);
+      if (stop === "interrupt")
+        assert.isTrue(Exit.isFailure(result) && Cause.hasInterruptsOnly(result.cause));
+      else assert.isTrue(Exit.isSuccess(result) && Exit.isFailure(result.value));
+
+      assert.deepEqual(yield* fs.readDirectory(lfsTmp), ["owned-by-another-git-lfs"]);
+      assert.strictEqual(
+        yield* fs.readFileString(otherOperation),
+        "another git-lfs process is hashing this",
+      );
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.each(["failure", "interrupt"] as const)(
   "checkpoint publication $0 preserves existing refs and permits retry",
   (stop) =>
