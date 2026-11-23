@@ -53,3 +53,33 @@ it.effect("serves a Git LFS file's object through glab, not the pointer a raw re
     ),
   );
 });
+
+it.effect("returns nothing when glab output was truncated past the media cap", () => {
+  const object = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return Effect.gen(function* () {
+    const fetchMedia = yield* GitLabMediaFetch.make;
+    const response = yield* fetchMedia({
+      url: "https://git.example.com/group/sub/project/-/raw/0123456789abcdef0123456789abcdef01234567/art/a%20b.png",
+      headers: {},
+      cwd: "/repo",
+    });
+    expect(response).toBeNull();
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      Layer.mock(GitLabCli.GitLabCli)({
+        execute: (input) =>
+          Effect.sync(() => {
+            input.onStdoutChunk?.(object);
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: true,
+              stderrTruncated: false,
+            };
+          }),
+      }),
+    ),
+  );
+});

@@ -14,6 +14,7 @@ export const make = Effect.gen(function* () {
     const file = URL.canParse(request.url) ? gitLabRawFile(new URL(request.url)) : null;
     if (file === null || request.cwd === undefined) return null;
     const chunks: Array<Uint8Array> = [];
+    let retainedBytes = 0;
     const result = yield* cli
       .execute({
         cwd: request.cwd,
@@ -26,10 +27,14 @@ export const make = Effect.gen(function* () {
           `projects/${encodeURIComponent(file.projectPath)}/repository/files/${encodeURIComponent(file.path)}/raw?ref=${file.sha}&lfs=true`,
         ],
         maxOutputBytes: MAX_MEDIA_BYTES,
-        onStdoutChunk: (chunk) => chunks.push(chunk),
+        onStdoutChunk: (chunk) => {
+          if (retainedBytes + chunk.byteLength > MAX_MEDIA_BYTES) return;
+          retainedBytes += chunk.byteLength;
+          chunks.push(chunk);
+        },
       })
       .pipe(Effect.orElseSucceed(() => null));
-    if (result === null) return null;
+    if (result === null || result.stdoutTruncated) return null;
     return HttpClientResponse.fromWeb(
       HttpClientRequest.get(request.url),
       new Response(Buffer.concat(chunks), { status: 200 }),
