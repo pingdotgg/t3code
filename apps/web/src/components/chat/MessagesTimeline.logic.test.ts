@@ -1247,6 +1247,57 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps the last prose reply outside the fold when the turn ends with an empty message", () => {
+    const runId = RunId.make("turn-1");
+    const message = (id: string, role: "user" | "assistant", text: string, at: string) => ({
+      id: `${id}-entry`,
+      kind: "message" as const,
+      createdAt: at,
+      message: {
+        id: MessageId.make(id),
+        role,
+        text,
+        runId: role === "user" ? null : runId,
+        createdAt: at,
+        updatedAt: at,
+        streaming: false,
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        message("user", "user", "Question", "2026-01-01T00:00:00Z"),
+        {
+          id: "work-entry",
+          kind: "work" as const,
+          createdAt: "2026-01-01T00:00:05Z",
+          entry: {
+            id: "work",
+            createdAt: "2026-01-01T00:00:05Z",
+            runId,
+            label: "Ran command",
+            tone: "tool" as const,
+          },
+        },
+        message("answer", "assistant", "## Full answer\n\nThe real reply.", "2026-01-01T00:00:30Z"),
+        message("final", "assistant", "", "2026-01-01T00:00:38Z"),
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+
+    expect(rows.map((row) => row.id)).toContain("answer-entry");
+    const shownEmptyReply = rows.find(
+      (row) =>
+        row.kind === "message" &&
+        row.message.role === "assistant" &&
+        row.message.text === "" &&
+        row.suppressEmptyResponse !== true,
+    );
+    expect(shownEmptyReply).toBeUndefined();
+  });
+
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");
     const timelineEntries = [
