@@ -1,5 +1,4 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
-import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { providerColors } from "./providerColors";
 
@@ -29,7 +28,7 @@ export const PROVIDER_LABEL: Record<UsageProviderKind, string> = {
   antigravity: "Antigravity",
   pi: "Pi",
   muse: "Muse Code",
-  vibe: getProviderClient("vibe")?.label ?? "vibe",
+  vibe: "Vibe",
 };
 
 export function useProviderColors(): Record<UsageProviderKind, string> {
