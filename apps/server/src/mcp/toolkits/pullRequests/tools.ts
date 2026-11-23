@@ -38,6 +38,7 @@ import {
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
 } from "../../../pullRequest/pullRequestTarget.ts";
 import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
@@ -181,6 +182,7 @@ export const PullRequestToolError = Schema.Union([
   PullRequestTargetIncompleteError,
   PullRequestHostRequiredError,
   PullRequestUrlUnavailableError,
+  PullRequestRepositoryInvalidError,
   PullRequestThreadRequiredError,
   PullRequestLinkFailedError,
   PullRequestUnlinkFailedError,
@@ -263,12 +265,16 @@ export const WatchPullRequestResult = Schema.Struct({
       description: "The PR already ended, so nothing was watched.",
     }),
   ),
+  checksState: Schema.optional(PullRequestChecksState),
   next: Schema.optional(Schema.String),
 });
 export type WatchPullRequestResult = typeof WatchPullRequestResult.Type;
 
 export const alreadyEndedWatchNext = (state: "merged" | "closed") =>
   `This PR is already ${state}, so there is nothing to watch. Report that and end your turn.`;
+
+export const CHECKS_ALREADY_PASSED_WATCH_NEXT =
+  "Checks already pass on this head, so no wake will come for them. Act on that now; the watch still wakes you on later changes.";
 
 export const ThreadPullRequestEntry = Schema.Struct({
   ...PullRequestIdentity,

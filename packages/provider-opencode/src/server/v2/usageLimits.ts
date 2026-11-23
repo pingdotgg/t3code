@@ -95,12 +95,8 @@ export const readServerUsageLimits = Effect.fn("OpenCode2Client.usageLimits")(fu
         ),
       });
     const body = yield* HttpClientResponse.schemaBodyJson(ResponseBody)(response);
-    if (body.data === null)
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "No OpenCode Console workspace is signed in.",
-      });
+    // OpenCode needs no Console workspace, so its absence is not worth a notice.
+    if (body.data === null) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const { go, budgets, workspace } = body.data;
     const usageURL = URL.parse(workspace.usageURL);
     const externalUsage =

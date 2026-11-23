@@ -47,6 +47,10 @@
       "types": "./src/contractLabels.ts",
       "default": "./src/contractLabels.ts"
     },
+    "./workflows": {
+      "types": "./src/workflows.ts",
+      "default": "./src/workflows.ts"
+    },
     "./locales": {
       "types": "./src/locales.ts",
       "default": "./src/locales.ts"
@@ -102,6 +106,10 @@
     "./secret-request": {
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
+    },
+    "./feedback-request": {
+      "types": "./src/feedbackRequest.ts",
+      "default": "./src/feedbackRequest.ts"
     },
     "./link-batch": {
       "types": "./src/linkBatch.ts",

@@ -49,11 +49,21 @@ export class PullRequestUrlUnavailableError extends Schema.TaggedError<PullReque
   }
 }
 
+export class PullRequestRepositoryInvalidError extends Schema.TaggedError<PullRequestRepositoryInvalidError>()(
+  "PullRequestRepositoryInvalidError",
+  {},
+) {
+  override get message(): string {
+    return "Pass repository as owner/repo, without the host.";
+  }
+}
+
 export type PullRequestTargetError =
   | PullRequestUrlInvalidError
   | PullRequestTargetIncompleteError
   | PullRequestHostRequiredError
-  | PullRequestUrlUnavailableError;
+  | PullRequestUrlUnavailableError
+  | PullRequestRepositoryInvalidError;
 
 export interface ResolvedTarget {
   readonly host: string;
@@ -104,17 +114,19 @@ export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(func
   const kind =
     sourceControlDefinitions.findByPublicHost(host)?.kind ??
     (recognizedKind === "gitcafe" ? recognizedKind : projectHost.kind);
+  const definition = kind === null ? null : sourceControlDefinitions.get(kind);
   const url =
-    kind === null
-      ? null
-      : sourceControlDefinitions.get(kind).changeRequestUrl({
-          host,
-          repository,
-          number: input.number,
-          remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
-        });
+    definition?.changeRequestUrl({
+      host,
+      repository,
+      number: input.number,
+      remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
+    }) ?? null;
   if (url === null) {
-    return yield* new PullRequestUrlUnavailableError({});
+    // A known forge returns no URL when the repository is not in its shape.
+    return yield* definition === null || definition.kind === "unknown"
+      ? new PullRequestUrlUnavailableError({})
+      : new PullRequestRepositoryInvalidError({});
   }
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
