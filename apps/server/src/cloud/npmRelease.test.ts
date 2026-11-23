@@ -131,6 +131,27 @@ it.effect.each([
   }),
 );
 
+it.effect("says a timed-out npm lookup timed out and retries it on the next request", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    const service = yield* makeService(() =>
+      ++calls === 1
+        ? Effect.fail(
+            new ProcessRunner.ProcessTimeoutError({
+              command: "npm",
+              argumentCount: 6,
+              timeoutMs: 15_000,
+            }),
+          )
+        : Effect.succeed(output(JSON.stringify({ version }))),
+    );
+    const first = yield* service.get({ spec: "nightly" }).pipe(Effect.result);
+    expect(Result.isFailure(first) && first.failure.message).toContain("timed out");
+    expect(yield* service.get({ spec: "nightly" })).toEqual({ version });
+    expect(calls).toBe(2);
+  }),
+);
+
 it.effect("falls back to public npm only when npm is not installed", () =>
   Effect.gen(function* () {
     const urls: string[] = [];
