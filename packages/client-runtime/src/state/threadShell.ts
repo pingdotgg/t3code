@@ -504,7 +504,7 @@ export function createEnvironmentThreadShellAtoms(input: {
       if (get(environmentThreadsAtom(environmentId)).some(asksParent)) return true;
     }
     return false;
-  });
+  }).pipe(Atom.withLabel("environment-has-child-thread-inputs"));
 
   // Child approvals and questions are hidden with their sidebar rows. Read their
   // shell summaries, without subscribing to every child transcript. A task
