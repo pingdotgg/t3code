@@ -371,6 +371,10 @@
       "types": "./src/managedPolicyFile.ts",
       "import": "./src/managedPolicyFile.ts"
     },
+    "./FeatureFlags": {
+      "types": "./src/FeatureFlags.ts",
+      "import": "./src/FeatureFlags.ts"
+    },
     "./HostProcess": {
       "types": "./src/HostProcess.ts",
       "import": "./src/HostProcess.ts"
@@ -463,6 +467,10 @@
       "types": "./src/orchestrationV2PendingBackgroundWork.ts",
       "import": "./src/orchestrationV2PendingBackgroundWork.ts"
     },
+    "./orchestrationV2ManualContinuation": {
+      "types": "./src/orchestrationV2ManualContinuation.ts",
+      "import": "./src/orchestrationV2ManualContinuation.ts"
+    },
     "./hostClassification": {
       "types": "./src/hostClassification.ts",
       "import": "./src/hostClassification.ts"
@@ -490,6 +498,10 @@
     "./codexAuthHandoff": {
       "types": "./src/codexAuthHandoff.ts",
       "import": "./src/codexAuthHandoff.ts"
+    },
+    "./oauthCallback": {
+      "types": "./src/oauthCallback.ts",
+      "import": "./src/oauthCallback.ts"
     },
     "./codexArtifactTemplates": {
       "types": "./src/codexArtifactTemplates.ts",

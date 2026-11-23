@@ -3,6 +3,7 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
+import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
 import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
@@ -368,4 +369,40 @@ export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: stri
   } catch {
     return url;
   }
+}
+
+let githubEmojiByAlias: ReadonlyMap<string, string> | undefined;
+const githubEmojiAlias = /:([a-z\d_+-]+)(?=:)/gu;
+
+/** GitHub's `:alias:` emoji in `text`; a colon closes one alias only, so `:tada:tada:` has one. */
+export function githubEmojiAliases(
+  text: string,
+): ReadonlyArray<{ readonly index: number; readonly text: string; readonly emoji: string }> {
+  githubEmojiByAlias ??= new Map(
+    GITHUB_EMOJI_ALIASES.trim()
+      .split("\n")
+      .map((line) => {
+        const space = line.indexOf(" ");
+        return [line.slice(0, space), line.slice(space + 1)] as const;
+      }),
+  );
+  const found: { index: number; text: string; emoji: string }[] = [];
+  let end = 0;
+  for (const match of text.matchAll(githubEmojiAlias)) {
+    const emoji = githubEmojiByAlias.get(match[1]!);
+    if (emoji === undefined || match.index < end) continue;
+    end = match.index + match[0].length + 1;
+    found.push({ index: match.index, text: `${match[0]}:`, emoji });
+  }
+  return found;
+}
+
+export function expandGithubEmojiAliases(text: string): string {
+  let expanded = "";
+  let start = 0;
+  for (const alias of githubEmojiAliases(text)) {
+    expanded += text.slice(start, alias.index) + alias.emoji;
+    start = alias.index + alias.text.length;
+  }
+  return start === 0 ? text : expanded + text.slice(start);
 }

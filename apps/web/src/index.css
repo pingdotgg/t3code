@@ -2487,10 +2487,14 @@ code {
   position: relative;
 }
 
-/* Tiptap's injected base CSS disables ligatures; match sent messages. */
+/* Tiptap's injected base CSS disables ligatures; match sent messages.
+   Chromium reshapes edited text from a reused prefix that assumes two
+   characters of context, so long contextual runs (Fira Code's dots) vanish.
+   Any non-zero word-spacing makes it reshape the whole run instead. */
 .composer-tiptap.ProseMirror {
   font-variant-ligatures: normal;
   font-feature-settings: normal;
+  word-spacing: 0.01px;
 }
 
 .composer-tiptap p {

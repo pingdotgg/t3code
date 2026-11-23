@@ -1269,7 +1269,7 @@ export function PullRequestsPage() {
         <PullRequestsUnavailableState
           error={listError}
           refreshing={listQuery.isPending}
-          onRetry={() => listQuery.refresh()}
+          onRetry={listQuery.retry}
         />
       ) : carriedToNothing ? (
         <PullRequestListGhost rows={7} />
@@ -1313,7 +1313,7 @@ export function PullRequestsPage() {
       {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{gt("{error} Showing the last pull requests loaded.", { error: listError })}</span>
-          <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
+          <Button size="xs" variant="outline" onClick={listQuery.retry}>
             <T>Retry</T>
           </Button>
         </div>

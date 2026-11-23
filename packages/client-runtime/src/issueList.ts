@@ -8,7 +8,6 @@ import type {
   IssueScopeRef,
   IssueTrackerSummary,
   SourceControlProviderKind,
-  ProjectId,
 } from "@t3tools/contracts";
 
 import { mergeIssueListPage } from "./state/issues.ts";
@@ -168,34 +167,30 @@ export function groupIssues(
 export function issueFilterScopes(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   projects: ReadonlyArray<EnvironmentProject>,
-  selectedProject?: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
   for (const [environmentId, page] of held) {
-    if (selectedProject && selectedProject.environmentId !== environmentId) continue;
     for (const project of projects) {
-      if (selectedProject && selectedProject.projectId !== project.id) continue;
       if (project.environmentId !== environmentId) continue;
-      const identity = project.repositoryIdentity;
-      const kind = identity?.provider as SourceControlProviderKind | undefined;
-      const scope = sourceControlClients.issueScope(identity);
-      if (!identity || !kind || scope === null) continue;
-      const host = sourceControlClients.changeRequestHost(identity, kind);
-      const tracker = page.answer.trackers.find(
-        (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
-      );
-      if (!tracker?.configured || tracker.capabilities === null) continue;
-      if (
-        scopes.some(
-          (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+      for (const { tracker: kind, host, scope } of sourceControlClients.issueBindings(
+        project.repositoryIdentity,
+      )) {
+        const tracker = page.answer.trackers.find(
+          (t) => String(t.tracker) === kind && t.host.toLowerCase() === host.toLowerCase(),
+        );
+        if (!tracker?.configured || tracker.capabilities === null) continue;
+        if (
+          scopes.some(
+            (s) => s.input.scope.toLowerCase() === scope.toLowerCase() && s.input.host === host,
+          )
         )
-      )
-        continue;
-      scopes.push({
-        environmentId,
-        input: { projectId: project.id, tracker: tracker.tracker, host, scope },
-      });
+          continue;
+        scopes.push({
+          environmentId,
+          input: { projectId: project.id, tracker: tracker.tracker, host, scope },
+        });
+      }
     }
     // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
     // matched or not. Older servers do not, so their rows stand in.
@@ -208,7 +203,6 @@ export function issueFilterScopes(
         scope,
       }));
     for (const input of covered) {
-      if (selectedProject && selectedProject.projectId !== input.projectId) continue;
       const host = input.host?.toLowerCase();
       const tracker = page.answer.trackers.find(
         (t) => t.tracker === input.tracker && t.host.toLowerCase() === host,

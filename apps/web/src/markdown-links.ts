@@ -4,8 +4,7 @@ import {
   inlineCodeFilePathCandidate,
   isRelativeFilePath,
   normalizeMarkdownLinkDestination,
-  parseMarkdownFileLink,
-  resolveMarkdownFileLinkTarget,
+  resolveMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { parseFileUrlHref, splitFilePathPosition } from "@t3tools/shared/fileLinks";
 
@@ -76,31 +75,25 @@ export function resolveMarkdownFileLinkMeta(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): MarkdownFileLinkMeta | null {
-  const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
-  if (!targetPath) return null;
-  const source = href ? parseMarkdownFileLink(href) : null;
-  return {
-    ...buildFileLinkMetaFromTarget(targetPath, cwd),
-    ...(source?.endLine !== undefined ? { endLine: source.endLine } : {}),
-    workspaceLookupPath:
-      source !== null &&
-      !isAbsolutePath(source.path) &&
-      baseDir !== undefined &&
-      workspaceRelativeFilePath(baseDir, cwd) === "."
-        ? source.path
-        : null,
-  };
-}
-
-function buildFileLinkMetaFromTarget(targetPath: string, cwd?: string) {
-  const { path, line, column } = splitFilePathPosition(targetPath);
+  const resolved = resolveMarkdownFileLink(href, cwd, baseDir);
+  if (!resolved) return null;
+  const {
+    sourcePath,
+    targetPath,
+    position: { path, ...lines },
+  } = resolved;
   return {
     filePath: path,
     targetPath,
     displayPath: formatWorkspaceRelativePath(targetPath, cwd),
     workspaceRelativePath: workspaceRelativeFilePath(path, cwd),
     basename: fileBasename(path),
-    ...(line !== undefined ? { line } : {}),
-    ...(column !== undefined ? { column } : {}),
+    ...lines,
+    workspaceLookupPath:
+      !isAbsolutePath(sourcePath) &&
+      baseDir !== undefined &&
+      workspaceRelativeFilePath(baseDir, cwd) === "."
+        ? sourcePath
+        : null,
   };
 }

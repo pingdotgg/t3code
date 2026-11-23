@@ -236,14 +236,38 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect("retries a release archive whose body fails after the host answered", () =>
+  it.effect.each([
+    { name: "body fails after the host answered", first: "body fails", honorsRange: true },
+    {
+      name: "body stalls and its resume ends early",
+      first: "body stalls",
+      honorsRange: true,
+      shortResume: true,
+    },
+    { name: "body stalls on a host that ignores Range", first: "body stalls", honorsRange: false },
+    { name: "response headers stall", first: "headers stall", honorsRange: true },
+    {
+      name: "whole body arrives and then stalls",
+      first: "body stalls",
+      honorsRange: true,
+      wholeArchive: true,
+    },
+  ] as const)("resumes a release archive download when its $name", (row) =>
     Effect.gen(function* () {
+      const { first, honorsRange } = row;
+      const shortResume = "shortResume" in row;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
       const checksums = yield* validChecksums;
-      let archiveRequests = 0;
+      const ranges: Array<string | undefined> = [];
+      const checksumRanges: Array<string | undefined> = [];
+      const progress: PinnedRuntimeProgress[] = [];
+      const checksumsRequested = yield* Deferred.make<void>();
       const archiveRequested = yield* Deferred.make<void>();
+      const shortResumeRequested = yield* Deferred.make<void>();
+      const total = archiveBytes.length;
+      const heldBytes = "wholeArchive" in row ? archiveBytes : archiveBytes.slice(0, 4);
       const install = yield* ensurePinnedRuntimeInstalled({
         baseDir,
         version,
@@ -252,21 +276,72 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         platform: "linux",
         arch: "x64",
         httpClient: HttpClient.make((request) => {
-          const isChecksums = request.url.endsWith("/SHA256SUMS");
+          if (request.url.endsWith("/SHA256SUMS")) {
+            checksumRanges.push(request.headers["range"]);
+            const response = HttpClientResponse.fromWeb(request, new Response(checksums));
+            if (checksumRanges.length > 1) return Effect.succeed(response);
+            Deferred.doneUnsafe(checksumsRequested, Effect.void);
+            // The checksums fail once after a prefix, which their retry must not resume from.
+            const failingBody = Stream.concat(
+              Stream.make(new TextEncoder().encode(checksums).slice(0, 8)),
+              Stream.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.DecodeError({ request, response }),
+                }),
+              ),
+            );
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: failingBody } }),
+              ),
+            );
+          }
+          const range = request.headers["range"];
+          ranges.push(range);
+          if (ranges.length > 1) {
+            const start = honorsRange ? Number(/^bytes=(\d+)-$/.exec(range ?? "")?.[1] ?? 0) : 0;
+            // A short resume stops one byte early; the next retry asks for that byte.
+            const end = shortResume && ranges.length === 2 ? total - 1 : total;
+            const response = HttpClientResponse.fromWeb(
+              request,
+              start >= total
+                ? new Response("", {
+                    status: 416,
+                    headers: { "content-range": `bytes */${total}` },
+                  })
+                : start > 0
+                  ? new Response(archiveBytes.slice(start, end), {
+                      status: 206,
+                      headers: { "content-range": `bytes ${start}-${end - 1}/${total}` },
+                    })
+                  : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+            );
+            if (end === total) return Effect.succeed(response);
+            Deferred.doneUnsafe(shortResumeRequested, Effect.void);
+            // An Effect stream keeps the body, and so the retry wait after it, on the test clock.
+            const body = Stream.make(archiveBytes.slice(start, end));
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: body } }),
+              ),
+            );
+          }
+          Deferred.doneUnsafe(archiveRequested, Effect.void);
+          if (first === "headers stall") return Effect.never;
           const response = HttpClientResponse.fromWeb(
             request,
-            new Response(isChecksums ? checksums : archiveBytes),
+            new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
           );
-          if (isChecksums || ++archiveRequests > 1) return Effect.succeed(response);
           const failingBody = Stream.concat(
-            Stream.make(archiveBytes.slice(0, 4)),
-            Stream.fail(
-              new HttpClientError.HttpClientError({
-                reason: new HttpClientError.DecodeError({ request, response }),
-              }),
-            ),
+            Stream.make(heldBytes),
+            first === "body stalls"
+              ? Stream.never
+              : Stream.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.DecodeError({ request, response }),
+                  }),
+                ),
           );
-          Deferred.doneUnsafe(archiveRequested, Effect.void);
           // TestClock follows the work a woken sleep starts, so one adjust reaches the retry wait.
           return Effect.sleep("1 second").pipe(
             Effect.as<HttpClientResponse.HttpClientResponse>(
@@ -276,12 +351,34 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         }),
         runner: extractingRunner(fs, path),
         validate: () => Effect.void,
+        onProgress: (event) => progress.push(event),
       }).pipe(Effect.forkScoped);
-      yield* Deferred.await(archiveRequested);
+      yield* Deferred.await(checksumsRequested);
       yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(archiveRequested);
+      // The one-minute stall bound, then the first two-second retry backoff.
+      yield* TestClock.adjust(Duration.seconds(first === "body fails" ? 3 : 63));
+      if (shortResume) {
+        yield* Deferred.await(shortResumeRequested);
+        // Its one-second delay, then the second, four-second backoff.
+        yield* TestClock.adjust(Duration.seconds(5));
+      }
       const paths = yield* Fiber.join(install);
+      assert.deepEqual(checksumRanges, [undefined, undefined]);
+      assert.deepEqual(ranges, [
+        undefined,
+        first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,
+        ...(shortResume ? [`bytes=${total - 1}-`] : []),
+      ]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
-      assert.equal(archiveRequests, 2);
+      assert.deepEqual(
+        progress.findLast((event) => event.stage === "download"),
+        {
+          stage: "download",
+          received: total,
+          total,
+        },
+      );
     }),
   );
 
