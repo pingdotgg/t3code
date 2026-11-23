@@ -53,6 +53,8 @@ interface DiffFileTreeProps {
   readonly onSelectFile: (path: string) => void;
   /** Host folder the diff paths belong to; copied paths use its separators. */
   readonly workspaceRoot: string | undefined;
+  /** The open thread's path for a row; Add to chat is offered only where it returns one. */
+  readonly mentionPath?: (path: string) => string | null;
   readonly selectedPath?: string | null;
   readonly revealRequestId?: number;
   readonly ariaLabel: string;
@@ -65,6 +67,7 @@ export function DiffFileTree({
   entries,
   onSelectFile,
   workspaceRoot,
+  mentionPath,
   selectedPath = null,
   revealRequestId = 0,
   ariaLabel,
@@ -122,14 +125,15 @@ export function DiffFileTree({
       const { position, source } = contextMenuAnchor.takeOver(context);
       void settlePromise(async () => {
         // A pull request opened outside a thread has no chat to add to.
-        const chatOpen = composerRef?.current != null;
+        const threadPath = composerRef?.current == null ? null : (mentionPath?.(row.path) ?? null);
         const clicked = await api.contextMenu.show(
-          [...fileTreeCopyMenuItems(), ...(chatOpen ? [addToChatMenuItem()] : [])],
+          [...fileTreeCopyMenuItems(), ...(threadPath === null ? [] : [addToChatMenuItem()])],
           position,
           source,
         );
-        if (clicked === "add-to-chat") addFileTreeRowToChat(composerRef, row.path);
-        else if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
+        if (clicked === "add-to-chat") {
+          if (threadPath !== null) addFileTreeRowToChat(composerRef, threadPath);
+        } else if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
       }).then((result) => {
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });

@@ -88,7 +88,7 @@ it("copies a folder's path and a file's name from the right-click menu without o
   expect(onSelectFile).not.toHaveBeenCalled();
 });
 
-it("adds a row to the open chat as a mention", async () => {
+it("adds a row to the open chat by the thread's path", async () => {
   const insertTextAtEnd = vi.fn(() => true);
   const composerRef = { current: { insertTextAtEnd } } as unknown as ComposerHandleRef;
   await using _screen = await render(
@@ -97,7 +97,9 @@ it("adds a row to the open chat as a mention", async () => {
         <DiffFileTree
           entries={[{ path: "apps/web/src/a.ts", status: "modified" }]}
           onSelectFile={() => {}}
-          workspaceRoot="/repo"
+          workspaceRoot="/repo/apps/web"
+          // The thread works in the repository's apps/web folder.
+          mentionPath={(path) => path.replace(/^apps\/web\//, "")}
           ariaLabel="Changed files"
         />
       </div>
@@ -109,7 +111,7 @@ it("adds a row to the open chat as a mention", async () => {
   rightClick(findTreeRow("apps/web/src/a.ts")!);
   await userEvent.click(page.getByRole("menuitem", { name: "Add to chat", exact: true }));
   await vi.waitFor(() =>
-    expect(insertTextAtEnd).toHaveBeenCalledWith("[a.ts](apps/web/src/a.ts) ", {
+    expect(insertTextAtEnd).toHaveBeenCalledWith("[a.ts](src/a.ts) ", {
       ensureLeadingBoundary: true,
     }),
   );

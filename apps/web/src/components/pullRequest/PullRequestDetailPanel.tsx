@@ -68,7 +68,7 @@ import { usePreparePullRequestThreadAction } from "~/state/sourceControlActions"
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
-import { useProjects, useServerConfigs } from "~/state/entities";
+import { useProject, useProjects, useQuietThreadShell, useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
@@ -81,6 +81,8 @@ import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
+import { resolveDiffPathForWorkspace } from "~/diffFileActions";
+import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
@@ -415,6 +417,22 @@ export function PullRequestDetailPanel({
       project.id === requestedReference.projectId && project.environmentId === environmentId,
   );
   const repositoryIdentity = project?.repositoryIdentity;
+  // Add to chat names a file from the folder of the thread this panel sits in.
+  const chatThread = useQuietThreadShell(context === "thread" ? threadRef : null);
+  const chatProject = useProject(
+    chatThread
+      ? { environmentId: chatThread.environmentId, projectId: chatThread.projectId }
+      : null,
+  );
+  const chatCwd = chatThread?.worktreePath ?? chatProject?.workspaceRoot ?? null;
+  const chatGitStatus = useEnvironmentQuery(
+    chatThread && chatCwd !== null
+      ? vcsEnvironment.status({ environmentId: chatThread.environmentId, input: { cwd: chatCwd } })
+      : null,
+  );
+  const chatRepositoryRoot =
+    chatGitStatus.data?.workingTree.rootPath ??
+    (chatThread?.worktreePath ? undefined : chatProject?.repositoryIdentity?.rootPath);
   const supportsThreadPullRequests = environmentConfigs.get(environmentId) !== undefined;
   const reference = internPullRequestReference(
     resolvePullRequestReference(requestedReference, repositoryIdentity, supportsThreadPullRequests),
@@ -993,6 +1011,25 @@ export function PullRequestDetailPanel({
   };
 
   const attachTarget = composerDraftTarget ?? null;
+  const pullRequestLink = detail
+    ? sourceControlClients.parseChangeRequestUrl(detail.url)?.link
+    : undefined;
+  // Only a thread checked out from this pull request's repository can name its files.
+  const threadMentionPath =
+    attachTarget !== null &&
+    chatThread?.environmentId === environmentId &&
+    chatProject !== null &&
+    chatCwd !== null &&
+    chatRepositoryRoot !== undefined &&
+    pullRequestLink !== undefined &&
+    findProjectForChangeRequest([chatProject], pullRequestLink) !== undefined
+      ? (path: string) =>
+          resolveDiffPathForWorkspace({
+            filePath: path,
+            workspaceRoot: chatCwd,
+            repositoryRoot: chatRepositoryRoot,
+          })
+      : undefined;
   const canPrepareWorktree = prepareThread.isAllowed && canOperateThread;
   const canFixFindings = attachTarget !== null || canPrepareWorktree;
   const handoffLabels = pullRequestHandoffLabels(attachTarget !== null, resolve);
@@ -2289,6 +2326,7 @@ export function PullRequestDetailPanel({
                   >
                     <PullRequestCodeTab
                       scrollerRef={scrollerRefs.code}
+                      {...(threadMentionPath ? { mentionPath: threadMentionPath } : {})}
                       onAddToAgentSelection={addSelectionToAgent}
                       environmentId={environmentId}
                       reference={reference}
