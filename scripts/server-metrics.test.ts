@@ -5,12 +5,14 @@ import {
   compareMetrics,
   competingBetween,
   activityRenewalMissed,
+  describeFailure,
   heapGrowth,
   loadWarnings,
   nextActivityReport,
   noiseReport,
   noisePairProblem,
   parsePsCpuTime,
+  profileMismatch,
   parseRunSelection,
   pathRewrites,
   pathSpellings,
@@ -344,6 +346,41 @@ describe("compareMetrics on the busy shell snapshot", () => {
     ["40 KB larger, past it", busyRun(190, 140), ["busy.shellKB"]],
   ])("%s", (_name, after, regressed) => {
     expect(compareMetrics(busyRun(190, 100), after).regressed).toEqual(regressed);
+  });
+});
+
+describe("describeFailure", () => {
+  it.each([
+    ["a plain error", new Error("boom"), "boom"],
+    [
+      "an RPC error wrapping the server's",
+      new Error("RpcClientError", { cause: new Error("Command x was already handled") }),
+      "RpcClientError: Command x was already handled",
+    ],
+    ["a tagged error with no message", { _tag: "TimeoutError" }, "TimeoutError"],
+    [
+      "a cause that repeats its wrapper",
+      new Error("lost: gone", { cause: new Error("gone") }),
+      "lost: gone",
+    ],
+    ["a string", "exit 1", "exit 1"],
+  ])("%s", (_name, error, expected) => {
+    expect(describeFailure(error)).toBe(expected);
+  });
+});
+
+describe("profileMismatch", () => {
+  const withProfile = (profile?: string): ServerMetrics => ({
+    meta: profile === undefined ? meta : { ...meta, profile },
+    runs: [],
+  });
+  it.each([
+    ["two full runs", withProfile("full"), withProfile("full"), false],
+    ["a file from before profiles, against a full run", withProfile(), withProfile("full"), false],
+    ["two quick runs", withProfile("quick"), withProfile("quick"), false],
+    ["a full run against a quick one", withProfile(), withProfile("quick"), true],
+  ])("%s", (_name, before, after, refused) => {
+    expect(profileMismatch(before, after) !== undefined).toBe(refused);
   });
 });
 

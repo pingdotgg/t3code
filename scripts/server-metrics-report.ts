@@ -325,6 +325,33 @@ export function noiseRule(metric: string, rules: ReadonlyArray<NoiseRule> = NOIS
   return rules.find((rule) => rule.pattern.test(metric)) ?? { floor: 0, gate: true };
 }
 
+/** An error and the errors it wraps as one line, outermost first, repeats left out. */
+export function describeFailure(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  for (let at = error; at !== undefined && at !== null && !seen.has(at);) {
+    seen.add(at);
+    if (typeof at !== "object") {
+      parts.push(String(at));
+      break;
+    }
+    const tag = "_tag" in at && typeof at._tag === "string" ? at._tag : undefined;
+    const message = "message" in at && typeof at.message === "string" ? at.message.trim() : "";
+    const text = message || tag || String(at);
+    if (!parts.some((part) => part.includes(text))) parts.push(text);
+    at = "cause" in at ? at.cause : undefined;
+  }
+  return parts.join(": ");
+}
+
+/** Why two files cannot be compared at all: a quick run measures shorter windows than a full one. */
+export function profileMismatch(before: ServerMetrics, after: ServerMetrics) {
+  const profile = (metrics: ServerMetrics) => metrics.meta.profile ?? "full";
+  return profile(before) === profile(after)
+    ? undefined
+    : `before is a ${profile(before)} run and after a ${profile(after)} one; compare quick runs only with quick runs`;
+}
+
 /** Throughput, where a drop is the regression. */
 export const higherIsBetter = (metric: string) => metric.endsWith("PerMin");
 
