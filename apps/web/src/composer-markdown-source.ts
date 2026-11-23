@@ -517,6 +517,7 @@ function markdownSourcePlugin(type: MarkType): Plugin<MarkdownSourceState> {
   });
 }
 
+/** Marks typed text, and keeps source `normalizeDetached` revealed out of undo, redo and edits. */
 const MarkdownSourceEditingExtension = Extension.create({
   name: "composer-markdown-source-editing",
   // Runs after input rules and undo grouping, which must see the original edit.
