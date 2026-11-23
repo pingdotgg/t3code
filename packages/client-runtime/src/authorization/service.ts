@@ -202,12 +202,13 @@ export const make = Effect.gen(function* () {
       readonly issued: Effect.Effect<IssuedDpopToken, ConnectionAttemptError>;
     }
   >();
-  const unspentBootstraps = new WeakMap<
-    ClientCapabilities.CloudSessionIdentity,
-    Map<
-      EnvironmentId,
-      { readonly thumbprint: string; readonly bootstrap: RelayEnvironmentConnectResponse }
-    >
+  const unspentBootstraps = new Map<
+    EnvironmentId,
+    {
+      readonly identity: ClientCapabilities.CloudSessionIdentity;
+      readonly thumbprint: string;
+      readonly bootstrap: RelayEnvironmentConnectResponse;
+    }
   >();
 
   // A route or host check hands its descriptor to the connect it leads to, once,
@@ -392,16 +393,12 @@ export const make = Effect.gen(function* () {
       identity: ClientCapabilities.CloudSessionIdentity,
     ) {
       yield* assertSession(identity);
-      let sessionBootstraps = unspentBootstraps.get(identity);
-      if (sessionBootstraps === undefined) {
-        sessionBootstraps = new Map();
-        unspentBootstraps.set(identity, sessionBootstraps);
-      }
-      const cached = sessionBootstraps.get(environmentId);
-      sessionBootstraps.delete(environmentId);
+      const cached = unspentBootstraps.get(environmentId);
+      unspentBootstraps.delete(environmentId);
       const now = yield* Clock.currentTimeMillis;
       const bootstrap =
-        cached?.thumbprint === thumbprint &&
+        cached?.identity === identity &&
+        cached.thumbprint === thumbprint &&
         Date.parse(cached.bootstrap.expiresAt) > now + DPOP_AUTHORIZATION_TIMEOUT_MS
           ? cached.bootstrap
           : yield* obtainBootstrap(environmentId, identity);
@@ -411,7 +408,7 @@ export const make = Effect.gen(function* () {
         Effect.tapError((error) =>
           Effect.sync(() => {
             if (error._tag === "ConnectionTransientError" && error.hop === "tunnel") {
-              sessionBootstraps.set(environmentId, { thumbprint, bootstrap });
+              unspentBootstraps.set(environmentId, { identity, thumbprint, bootstrap });
             }
           }),
         ),
