@@ -79,8 +79,12 @@ const ICON_SOURCE_FILES = [
 const HTML_LINK_RE = /<link\b[^<>]*>/gi;
 // `rel` is an unordered, whitespace-separated token list; any `icon` token marks an icon link.
 const ICON_REL_VALUE = String.raw`(?:"(?:[^"]*[\t\n\f\r ])?icon(?=[\t\n\f\r "])|'(?:[^']*[\t\n\f\r ])?icon(?=[\t\n\f\r ']))`;
-const HTML_ICON_REL_RE = new RegExp(String.raw`\brel=${ICON_REL_VALUE}`, "i");
-const HTML_ICON_HREF_RE = /\bhref=["']([^"'?]+)/i;
+const HTML_ICON_REL_RE = new RegExp(
+  String.raw`(?<![\w-])rel=(?:${ICON_REL_VALUE}|icon(?=[\t\n\f\r >]))`,
+  "i",
+);
+const HTML_ICON_HREF_RE =
+  /(?<![\w-])href=(?:["']([^"'?]+)|([^\t\n\f\r "'<=>`?{]+)(?=[\t\n\f\r >?]))/i;
 const ICON_REL_RE = new RegExp(String.raw`\brel\s*:\s*${ICON_REL_VALUE}`, "i");
 const ICON_HREF_RE = /\bhref\s*:\s*["']([^"'?]+)/i;
 
@@ -125,7 +129,8 @@ function extractIconHref(source: string): string | null {
   for (const [tag] of source.matchAll(HTML_LINK_RE)) {
     if (!HTML_ICON_REL_RE.test(tag)) continue;
     const hrefMatch = tag.match(HTML_ICON_HREF_RE);
-    if (hrefMatch?.[1]) return hrefMatch[1];
+    const href = hrefMatch?.[1] ?? hrefMatch?.[2];
+    if (href) return href;
   }
   for (const run of source.split("}")) {
     if (!ICON_REL_RE.test(run)) continue;
