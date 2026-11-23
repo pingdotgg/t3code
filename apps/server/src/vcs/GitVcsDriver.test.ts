@@ -167,6 +167,7 @@ it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
         args: ["-c", "alias.parent-pid=!awk '{print $4}' /proc/$PPID/stat", "parent-pid"],
       });
 
+      assert.match(result.stdout.trim(), /^[1-9]\d*$/);
       assert.notStrictEqual(Number(result.stdout.trim()), process.pid);
     }).pipe(
       Effect.provide(

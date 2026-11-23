@@ -301,6 +301,14 @@ describe("runProcess", () => {
 // The server's spawner stack, as server.ts builds it.
 const layerLaunched = ProcessRunner.layer.pipe(Layer.provide(ProcessLauncher.layerServer));
 
+// A command's $PPID, required to be the helper: signalling a fallback's parent would hit the test runner.
+const expectHelperPid = (stdout: string) => {
+  expect(stdout.trim()).toMatch(/^[1-9]\d*$/);
+  const pid = Number(stdout.trim());
+  expect(pid, "the command's parent process is the server process itself").not.toBe(process.pid);
+  return pid;
+};
+
 describe("ProcessRunner.layer", () => {
   // Forking the server for every git call stalls its event loop in proportion to its RSS.
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -310,11 +318,62 @@ describe("ProcessRunner.layer", () => {
         const runner = yield* ProcessRunner.ProcessRunner;
         const result = yield* runner.run({ command: "sh", args: ["-c", "echo $PPID"] });
 
-        expect(
-          Number(result.stdout.trim()),
-          "the command's parent process is the server process itself",
-        ).not.toBe(process.pid);
+        expectHelperPid(result.stdout);
       }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
+  );
+
+  // The helper's stdin and stdout are /dev/null, so inherited stdio must come from the server.
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "forks the server for a command that inherits its stdio",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const handle = yield* spawner.spawn(
+          ChildProcess.make("sh", ["-c", "echo $PPID >&2"], { stdin: "inherit" }),
+        );
+        const parent = yield* handle.stderr.pipe(Stream.decodeText(), Stream.mkString);
+
+        expect(Number(parent.trim())).toBe(process.pid);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(ProcessLauncher.layerServer.pipe(Layer.provideMerge(NodeServices.layer))),
+      ),
+  );
+
+  // Node throws some spawn errnos, such as ENOMEM, instead of emitting "error".
+  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+    "runs commands natively when starting the helper throws",
+    () =>
+      Effect.gen(function* () {
+        const childProcess: typeof NodeChildProcess = NodeModule.createRequire(import.meta.url)(
+          "node:child_process",
+        );
+        const spawn = childProcess.spawn;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            childProcess.spawn = ((...args: Parameters<typeof spawn>) => {
+              const launcherArgs = args[1];
+              if (
+                Array.isArray(launcherArgs) &&
+                launcherArgs.some((arg) => String(arg).includes("process-launcher"))
+              ) {
+                throw Object.assign(new Error("spawn ENOMEM"), { code: "ENOMEM" });
+              }
+              return spawn(...args);
+            }) as typeof spawn;
+            NodeModule.syncBuiltinESMExports();
+          }),
+          () =>
+            Effect.sync(() => {
+              childProcess.spawn = spawn;
+              NodeModule.syncBuiltinESMExports();
+            }),
+        );
+        const runner = Context.get(yield* Layer.build(layerLaunched), ProcessRunner.ProcessRunner);
+        const result = yield* runner.run({ command: "sh", args: ["-c", "echo $PPID"] });
+
+        expect(Number(result.stdout.trim())).toBe(process.pid);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   // Callers report a missing CLI from the NotFound reason.
@@ -337,21 +396,27 @@ describe("ProcessRunner.layer", () => {
     "kills descendants that ignore SIGTERM when a run is interrupted",
     () =>
       Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
         const runner = yield* ProcessRunner.ProcessRunner;
-        const leader = yield* Deferred.make<number>();
+        const started = yield* Deferred.make<number>();
         const run = yield* runner
           .run({
             command: "sh",
-            args: ["-c", `(trap "" TERM; echo $$; exec sleep 1000) & wait`],
+            args: ["-c", `(trap "" TERM; exec sleep 1000) & echo $!; wait`],
             onStdoutChunk: (chunk) =>
-              Deferred.doneUnsafe(leader, Exit.succeed(Number(new TextDecoder().decode(chunk)))),
+              Deferred.doneUnsafe(started, Exit.succeed(Number(new TextDecoder().decode(chunk)))),
           })
           .pipe(Effect.forkChild);
-        const pgid = yield* Deferred.await(leader);
+        const descendant = yield* Deferred.await(started);
         yield* Fiber.interrupt(run);
+        // A killed process stays a zombie until reaped, and a PID namespace's init may never reap it.
+        const state = yield* fs.readFileString(`/proc/${descendant}/stat`).pipe(
+          Effect.map((stat) => stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0]),
+          Effect.orElseSucceed(() => "gone"),
+        );
 
-        expect(() => process.kill(-pgid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
-      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provide(NodeServices.layer)))),
+        expect(["gone", "Z"]).toContain(state);
+      }).pipe(Effect.provide(layerLaunched.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
   it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
@@ -401,9 +466,9 @@ describe("ProcessRunner.layer", () => {
         expect(yield* handle.exitCode).toBe(0);
         const output = yield* handle.stdout.pipe(
           Stream.tap((chunk) => {
-            const [helper, fifo] = new TextDecoder().decode(chunk).trim().split(" ");
+            const [helper = "", fifo] = new TextDecoder().decode(chunk).trim().split(" ");
             if (fifo === undefined) return Effect.void;
-            process.kill(Number(helper), "SIGKILL");
+            process.kill(expectHelperPid(helper), "SIGKILL");
             return fs.writeFileString(fifo, "complete\n");
           }),
           Stream.decodeText(),
@@ -521,7 +586,7 @@ describe("ProcessRunner.layer", () => {
         const runner = yield* ProcessRunner.ProcessRunner;
         const parentPid = runner
           .run({ command: "sh", args: ["-c", "echo $PPID"] })
-          .pipe(Effect.map((result) => Number(result.stdout.trim())));
+          .pipe(Effect.map((result) => expectHelperPid(result.stdout)));
         const helper = yield* parentPid;
         process.kill(helper, "SIGSTOP");
         const error = yield* runner.run({ command: "true", args: [] }).pipe(Effect.flip);

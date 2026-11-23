@@ -46,10 +46,7 @@ class HostedChild
   constructor(launcher: Launcher, stdio: NodeChildProcess.SpawnOptions["stdio"]) {
     super();
     this.launcher = launcher;
-    const modes = typeof stdio === "string" || stdio === undefined ? Array(3).fill(stdio) : stdio;
-    this.pipes = modes.flatMap((mode, fd) =>
-      mode === undefined || mode === null || mode === "pipe" || mode === "overlapped" ? [fd] : [],
-    );
+    this.pipes = stdioModes(stdio).flatMap((mode, fd) => (isPipe(mode) ? [fd] : []));
   }
 
   kill(signal: NodeJS.Signals | number = "SIGTERM"): boolean {
@@ -97,6 +94,16 @@ class HostedChild
     });
   }
 }
+
+const stdioModes = (stdio: NodeChildProcess.SpawnOptions["stdio"]) =>
+  typeof stdio === "string" || stdio === undefined ? Array<typeof stdio>(3).fill(stdio) : stdio;
+
+const isPipe = (mode: unknown) =>
+  mode === undefined || mode === null || mode === "pipe" || mode === "overlapped";
+
+// The launcher's own stdin and stdout are /dev/null, so only pipes and "ignore" mean the same there.
+const isHostable = (stdio: NodeChildProcess.SpawnOptions["stdio"]) =>
+  stdioModes(stdio).every((mode) => isPipe(mode) || mode === "ignore");
 
 interface Launcher {
   readonly worker: NodeChildProcess.ChildProcess;
@@ -245,11 +252,18 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
     delete env.NODE_OPTIONS;
     // `node --watch` children would report their imports over the launcher's IPC channel.
     delete env.WATCH_REPORT_DEPENDENCIES;
-    const worker = NodeChildProcess.spawn(executablePath, args, {
-      cwd: "/",
-      env,
-      stdio: ["ignore", "ignore", "inherit", "ipc"],
-    });
+    let worker: NodeChildProcess.ChildProcess;
+    try {
+      worker = NodeChildProcess.spawn(executablePath, args, {
+        cwd: "/",
+        env,
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+      });
+    } catch {
+      // Node throws some errnos, such as ENOMEM, instead of emitting "error".
+      unavailable = true;
+      return undefined;
+    }
     const launcher: Launcher = {
       worker,
       children: new Map(),
@@ -276,7 +290,12 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
   ): NodeChildProcessSpawner.SpawnedChildProcess => {
     const launcher = current;
     // Lost or replaced between the readiness check and the spawn; rare enough to fork for.
-    if (launcher === undefined || launcher.closed || !Deferred.isDoneUnsafe(launcher.ready)) {
+    if (
+      launcher === undefined ||
+      launcher.closed ||
+      !Deferred.isDoneUnsafe(launcher.ready) ||
+      !isHostable(options.stdio)
+    ) {
       return NodeChildProcess.spawn(command, [...commandArgs], options);
     }
     const id = ++nextId;
@@ -321,18 +340,22 @@ export const make = Effect.fn("ProcessLauncher.make")(function* (
     ChildProcessSpawner.ChildProcessSpawner,
   );
 
+  const warnUnavailable = Effect.suspend(() => {
+    if (!unavailable || warned || shutDown) return Effect.void;
+    warned = true;
+    return Effect.logWarning("The process launcher did not start; commands fork the server.");
+  });
+
   const isReady = Effect.suspend(() => {
     const launcher = launch();
-    if (launcher === undefined) return Effect.succeed(false);
+    if (launcher === undefined) return Effect.as(warnUnavailable, false);
     return Deferred.await(launcher.ready).pipe(
       Effect.timeoutOption(READY_TIMEOUT),
       Effect.map(Option.getOrElse(() => false)),
       Effect.tap((ready) => {
         if (ready) return Effect.void;
         close(launcher);
-        if (!unavailable || warned || shutDown) return Effect.void;
-        warned = true;
-        return Effect.logWarning("The process launcher did not start; commands fork the server.");
+        return warnUnavailable;
       }),
     );
   });
