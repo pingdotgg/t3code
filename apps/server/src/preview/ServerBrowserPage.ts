@@ -963,9 +963,13 @@ const focusedTextField = async (page: Page, timeout: number) => {
 };
 
 // Serialized into the page's main world, so it must not reference module scope.
-const focusedValueOnlyInput = (target: FocusCandidate) => {
-  let element = target.getRootNode().activeElement;
-  while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement;
+const valueOnlyInput = (
+  target: FocusCandidate & {
+    closest(selector: string): { readonly control: FocusCandidate | null } | null;
+  },
+) => {
+  // As fill does, a target that is not a control stands for its label's control.
+  const element = target.tagName === "INPUT" ? target : target.closest("label")?.control;
   return (
     element?.tagName === "INPUT" &&
     ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(
@@ -1003,13 +1007,13 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
-    // fill follows a label to its control and leaves that control focused for the keys.
-    await locator.fill("", { timeout: remaining() });
-    // Pickers take a value such as 2026-01-31 only from fill; keys would enter their segments.
-    if (await locator.evaluate(focusedValueOnlyInput, undefined, { timeout: remaining() })) {
+    // Pickers and sliders take a value such as 2026-01-31 only from fill, and some reject an empty one.
+    if (await locator.evaluate(valueOnlyInput, undefined, { timeout: remaining() })) {
       await locator.fill(input.text, { timeout: remaining() });
       return;
     }
+    // fill follows a label to its control and leaves that control focused for the keys.
+    await locator.fill("", { timeout: remaining() });
     await typeKeys(page, input.text, timeoutMs, deadline);
     return;
   }
