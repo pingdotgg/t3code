@@ -149,7 +149,6 @@ export const museUsageReader: ProviderUsageReader<MuseSettings, MuseUsageReaderE
       environment,
       leafName: "sessions",
       filePattern: /^session\.jsonl$/,
-      fileProbeDepth: 0,
       exclude: sessionsDir === null ? [] : [sessionsDir],
     });
     return [

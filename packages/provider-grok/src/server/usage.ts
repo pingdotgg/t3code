@@ -227,7 +227,6 @@ export const grokUsageReader: ProviderUsageReader<GrokSettings, GrokUsageReaderE
       environment,
       leafName: "sessions",
       filePattern: /^updates\.jsonl$/,
-      fileProbeDepth: 0,
       exclude: [sessionsDir],
     });
     // Only updates.jsonl carries usage; skip large chat_history and events logs.

@@ -60,6 +60,24 @@ describe("discoverCliproxySessionDirs", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("enters dot-named provider homes", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cliproxy-home-" });
+      const leaf = path.join(home, ".cli-proxy-api", "accounts", "work", ".claude", "projects");
+      yield* writeFile(path, fs, path.join(leaf, "a.jsonl"));
+
+      const dirs = yield* discoverCliproxySessionDirs({
+        environment: {},
+        leafName: "projects",
+        filePattern: /\.jsonl$/,
+      }).pipe(Effect.provide(layer(home)));
+
+      expect(dirs).toEqual([leaf]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("skips leaf dirs without a matching file", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

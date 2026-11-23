@@ -144,12 +144,13 @@ export const piUsageReader: ProviderUsageReader<PiSettings, PiUsageReaderEnv> = 
     const launchDir =
       sessionDirArg === undefined ? undefined : expandHomePath(sessionDirArg, launchHome);
     const sessionsDir = resolvePiSessionsDir(environment, launchHome, path);
-    // A CLIProxyAPI-managed account can put its Pi home inside the proxy's data dir.
+    // A CLIProxyAPI-managed account can put its Pi home inside the proxy's data dir. Pi nests
+    // transcripts one level down in workspace dirs; the name guards keep the other providers'
+    // same-named "sessions" dirs (Codex rollouts, Grok updates, Muse session files) out.
     const cliproxyDirs = yield* discoverCliproxySessionDirs({
       environment,
       leafName: "sessions",
-      filePattern: /\.jsonl$/,
-      fileProbeDepth: 0,
+      filePattern: /^(?!rollout-|updates\.|session\.).*\.jsonl$/,
       exclude: [sessionsDir, ...(launchDir === undefined ? [] : [launchDir])],
     });
     // --session-dir moves only T3-launched sessions; terminal sessions stay in Pi's own directory.

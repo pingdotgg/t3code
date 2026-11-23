@@ -121,7 +121,7 @@ export const discoverCliproxySessionDirs = Effect.fn(
           }
           continue;
         }
-        if (name.startsWith(".") || name === "node_modules") continue;
+        if (name === "node_modules" || name === ".git") continue;
         if (depth < MAX_LEAF_DEPTH) stack.push({ dir: child, depth: depth + 1 });
       }
     }
