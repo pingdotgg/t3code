@@ -212,32 +212,6 @@ describe("acpPerTurnPromptUsage", () => {
         reasoningTokens: 3,
       },
     );
-    // Antigravity 1.5+: inputTokens excludes cached reads, while outputTokens already includes thinking.
-    assert.deepEqual(
-      acpPerTurnPromptUsage(
-        {
-          inputTokens: 2181,
-          outputTokens: 23,
-          totalTokens: 14323,
-          cachedReadTokens: 12119,
-          cachedWriteTokens: 0,
-          thoughtTokens: 19,
-        },
-        false,
-        "completed",
-        true,
-      ),
-      {
-        usageScope: "main_agent",
-        usageStatus: "complete",
-        hasSubagents: false,
-        inputTokens: 14300,
-        outputTokens: 23,
-        cachedInputTokens: 12119,
-        cacheCreationTokens: 0,
-        reasoningTokens: 19,
-      },
-    );
   });
 
   it("clamps subsets that exceed their parents and drops unset counters", () => {

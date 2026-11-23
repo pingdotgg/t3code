@@ -47,6 +47,7 @@ import {
   extractAntigravityUserInputQuestion,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
+  normalizeAntigravityPromptUsage,
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
@@ -191,7 +192,14 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(runtime.prompt(payload, promptOptions)),
+            Effect.map((response) =>
+              response.usage == null
+                ? response
+                : { ...response, usage: normalizeAntigravityPromptUsage(response.usage) },
+            ),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
@@ -300,7 +308,6 @@ export function makeAntigravityAcpAdapterFlavor(
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
     reportsPerTurnPromptUsage: true,
-    geminiPromptUsage: true,
     ...(profileDirectory === undefined
       ? {}
       : {

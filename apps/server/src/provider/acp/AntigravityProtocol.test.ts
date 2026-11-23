@@ -11,6 +11,7 @@ import {
   classifyAntigravitySubagentToolCall,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
+  normalizeAntigravityPromptUsage,
   normalizeAntigravitySessionUpdate,
   normalizeAntigravityToolCall,
   sanitizeAntigravityToolPayload,
@@ -731,5 +732,51 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+});
+
+describe("normalizeAntigravityPromptUsage", () => {
+  it("adds cache reads and writes to the uncached input and leaves other counters alone", () => {
+    expect(
+      normalizeAntigravityPromptUsage({
+        inputTokens: 2181,
+        outputTokens: 23,
+        totalTokens: 14323,
+        cachedReadTokens: 12119,
+        cachedWriteTokens: 0,
+        thoughtTokens: 19,
+      }),
+    ).toEqual({
+      inputTokens: 14300,
+      outputTokens: 23,
+      totalTokens: 14323,
+      cachedReadTokens: 12119,
+      cachedWriteTokens: 0,
+      thoughtTokens: 19,
+    });
+    expect(
+      normalizeAntigravityPromptUsage({
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 910,
+        cachedReadTokens: 500,
+        cachedWriteTokens: 300,
+      }).inputTokens,
+    ).toBe(900);
+  });
+
+  it("treats absent or null cache counters as zero", () => {
+    expect(
+      normalizeAntigravityPromptUsage({ inputTokens: 100, outputTokens: 10, totalTokens: 110 }),
+    ).toEqual({ inputTokens: 100, outputTokens: 10, totalTokens: 110 });
+    expect(
+      normalizeAntigravityPromptUsage({
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+        cachedReadTokens: null,
+        cachedWriteTokens: 40,
+      }).inputTokens,
+    ).toBe(140);
   });
 });

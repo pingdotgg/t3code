@@ -575,3 +575,13 @@ export function antigravitySubagentOutput(toolCall: AcpToolCallState): string | 
   const output = toolCall.data.rawOutput;
   return typeof output === "string" && output.trim() ? boundText(output.trim()) : undefined;
 }
+
+/** Antigravity 1.5+ reports inputTokens without the cached reads and writes. */
+export function normalizeAntigravityPromptUsage(
+  usage: EffectAcpSchema.Usage,
+): EffectAcpSchema.Usage {
+  return {
+    ...usage,
+    inputTokens: usage.inputTokens + (usage.cachedReadTokens ?? 0) + (usage.cachedWriteTokens ?? 0),
+  };
+}
