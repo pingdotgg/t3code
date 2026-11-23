@@ -101,7 +101,10 @@ export const threadNotFound = Effect.fn("OrchestratorMcpService.threadNotFound")
 });
 
 /** Over RPC `/logout` needs `providers:manage`, which no MCP caller holds. */
-export const refuseProviderSignOut = (text: string, attachments: ReadonlyArray<unknown> = []) =>
+export const refuseProviderSignOut = (
+  text: string,
+  attachments: ReadonlyArray<unknown> = [],
+): Effect.Effect<void, OrchestratorMcpFailure> =>
   attachments.length === 0 && isProviderSignOutPrompt({ text, attachments: [] })
     ? Effect.fail(
         new OrchestratorMcpFailure({

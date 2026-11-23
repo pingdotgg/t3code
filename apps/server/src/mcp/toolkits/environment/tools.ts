@@ -46,7 +46,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 const SettingsReadTool = Tool.make("t3_settings_read", {
   ...shared,
   description:
-    "List environment settings, or read `keys` with values and the JSON Schema `t3_settings_update` accepts. `access`: write = you may change it; user = only the user can.",
+    "List environment settings, or read `keys` with values and the JSON Schema `t3_settings_update` accepts. `access`: write = you may change it; user = only the user can; read = read-only.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     keys: Schema.optional(Schema.Array(Schema.String).check(Schema.isMaxLength(100))),
@@ -61,7 +61,7 @@ const SettingsReadTool = Tool.make("t3_settings_read", {
 const SettingsUpdateTool = Tool.make("t3_settings_update", {
   ...shared,
   description:
-    "Change environment settings whose access is write. Live full-access or default caller thread only. Omitted keys stay. Objects merge; arrays and `providerModelPreferences` replace.",
+    "Change environment settings whose access is write. Live full-access or default caller thread only. Omitted keys stay. For an object or array, send its whole new value.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     settings: Schema.Record(Schema.String, Schema.Json).annotate({

@@ -2,11 +2,13 @@ import {
   AuthSettingsWriteScope,
   ClientServerSettingsPatch,
   DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction,
   isManagedSettingPath,
   OrchestratorMcpFailure,
   requiredScopesForServerSettingsPatch,
   ServerSettings,
   type ServerSettingsError,
+  withIdleCompaction,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -30,9 +32,22 @@ import { EnvironmentToolkit } from "./tools.ts";
 const AgentSettingsPatch = Schema.Struct(
   Struct.pick(ClientServerSettingsPatch.fields, AGENT_WRITABLE_SETTING_KEYS),
 );
-const decodeAgentPatch = Schema.decodeUnknownEffect(AgentSettingsPatch);
+// The JSON codec, as `advertisedSchemaOf` describes it to the agent.
+const decodeAgentPatch = Schema.decodeUnknownEffect(Schema.toCodecJson(AgentSettingsPatch));
 const encodeSettings = Schema.encodeEffect(ServerSettings);
-const encodedDefaults = Schema.encodeSync(ServerSettings)(DEFAULT_SERVER_SETTINGS);
+// Normalized as every loaded settings file is, so an untouched setting never reads as changed.
+const defaults = withIdleCompaction(
+  DEFAULT_SERVER_SETTINGS,
+  globalIdleCompaction(DEFAULT_SERVER_SETTINGS),
+);
+const encodedDefaults = Schema.encodeSync(ServerSettings)(defaults);
+
+// Some keys are omitted from the encoded file when null.
+const jsonValue = (
+  settings: ServerSettings,
+  encoded: Record<string, Schema.Json | undefined>,
+  key: AgentSettingKey,
+) => encoded[key] ?? (settings[key] === null ? null : undefined);
 
 const access = Effect.gen(function* () {
   const context = yield* readCaller();
@@ -51,24 +66,33 @@ const invalid = (message: string) =>
 
 /** What a client would be shown: secrets redacted, in the JSON shape `t3_settings_update` takes. */
 const encodedForAgent = (settings: ServerSettings) =>
-  encodeSettings(Settings.redactServerSettingsForClient(settings, { secretReferences: true })).pipe(
-    Effect.mapError(unavailable),
-  ) as Effect.Effect<Record<string, Schema.Json | undefined>, OrchestratorMcpFailure>;
+  encodeSettings(
+    Settings.redactServerSettingsForClient(settings, { secretReferences: false }),
+  ).pipe(Effect.mapError(unavailable)) as Effect.Effect<
+    Record<string, Schema.Json | undefined>,
+    OrchestratorMcpFailure
+  >;
 
 const entries = (
   service: Settings.ServerSettingsService["Service"],
+  settings: ServerSettings,
   encoded: Record<string, Schema.Json | undefined>,
   keys: ReadonlyArray<AgentSettingKey>,
   withValues: boolean,
 ) =>
   keys.map((key) => {
-    const value = encoded[key];
+    const value = jsonValue(settings, encoded, key);
     return {
       key,
       access: AGENT_SETTING_ACCESS[key] as "write" | "user" | "read",
-      changed: JSON.stringify(value) !== JSON.stringify(encodedDefaults[key]),
+      changed:
+        JSON.stringify(value) !==
+        JSON.stringify(jsonValue(defaults, encodedDefaults as Record<string, Schema.Json>, key)),
       ...(isManagedSettingPath(service.managedPolicy, key) ? { locked: true } : {}),
-      ...(withValues && value !== undefined ? { value } : {}),
+      // Only the user acts on `user` values, so agents never need to see them.
+      ...(withValues && value !== undefined && AGENT_SETTING_ACCESS[key] !== "user"
+        ? { value }
+        : {}),
     };
   });
 
@@ -120,10 +144,10 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
       const encoded = yield* encodedForAgent(current);
       if (requested === undefined)
-        return { settings: entries(settings, encoded, LISTED_SETTING_KEYS, false) };
+        return { settings: entries(settings, current, encoded, LISTED_SETTING_KEYS, false) };
       const writable = AGENT_WRITABLE_SETTING_KEYS.filter((key) => requested.includes(key));
       return {
-        settings: entries(settings, encoded, requested, true),
+        settings: entries(settings, current, encoded, requested, true),
         ...(writable.length === 0
           ? {}
           : {
@@ -158,7 +182,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         const { settings } = yield* access;
         const next = yield* settings.updateSettings(patch).pipe(Effect.mapError(settingsFailure));
         const encoded = yield* encodedForAgent(next);
-        return { settings: entries(settings, encoded, keys as AgentSettingKey[], true) };
+        return { settings: entries(settings, next, encoded, keys as AgentSettingKey[], true) };
       });
       return yield* scope.thread === undefined
         ? update

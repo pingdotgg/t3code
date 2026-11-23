@@ -36,6 +36,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
@@ -79,6 +80,7 @@ const clientLaunchHarness = (input: {
     model: input.overrideModel === undefined ? modelSelection : null,
   };
   const layerDependencies = Layer.mergeAll(
+    ThreadCommandExecutor.layer,
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
       refreshWorkspaceSnapshot: () => Effect.succeed(input.providers ?? []),
@@ -1466,60 +1468,71 @@ it.effect("reading a project shows the default model and actions saved in Settin
   }),
 );
 
-it.effect("a project update saves its default model and actions where Settings reads them", () =>
-  Effect.gen(function* () {
-    const overrideModel = {
-      instanceId: ProviderInstanceId.make("claudeAgent"),
-      model: "claude-sonnet",
-    };
-    const scripts = [
-      { id: "lint", name: "Lint", command: "pnpm lint", icon: "lint", runOnWorktreeCreate: false },
-    ] satisfies ProjectScript[];
-    const harness = clientLaunchHarness({
-      runtimeModeCeiling: "full-access",
-      overrideModel,
-      launched: [],
-    });
-    const dependencies = Layer.merge(
-      harness.dependencies,
-      Layer.mock(Project.ProjectService)({
-        update: (input) =>
-          Effect.succeed({
-            id: input.projectId,
-            title: "Client target",
-            workspaceRoot: "/projects/client-target",
-            defaultModelSelection: null,
-            scripts: input.scripts ?? [],
-            createdAt: "2026-01-01T00:00:00.000Z",
-            updatedAt: "2026-01-01T00:00:00.000Z",
-            deletedAt: null,
-          }),
-      }),
-    );
-    yield* Effect.gen(function* () {
-      const toolkit = yield* ProjectToolkit;
-      const updated = yield* toolkit
-        .handle("t3_project_update", {
-          projectId: harness.projectId,
-          scripts,
-          defaultModelSelection: null,
-          autoPull: true,
-        })
-        .pipe(Stream.unwrap, Stream.runCollect);
-      expect(updated.at(-1)?.result).toMatchObject({ defaultModelSelection: null, scripts });
-      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
-      expect(settings.projectSettingsOverrides[harness.projectId]).toEqual({
-        defaultProjectScripts: scripts,
-        defaultAutoPull: true,
+it.effect(
+  "a project update saves its defaults where Settings reads them, and leaves actions alone",
+  () =>
+    Effect.gen(function* () {
+      const overrideModel = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet",
+      };
+      const harness = clientLaunchHarness({
+        runtimeModeCeiling: "full-access",
+        overrideModel,
+        launched: [],
       });
-    }).pipe(
-      Effect.provide(
-        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
-          Layer.provideMerge(dependencies),
+      const rowWrites: unknown[] = [];
+      const dependencies = Layer.merge(
+        harness.dependencies,
+        Layer.mock(Project.ProjectService)({
+          update: (input) =>
+            Effect.sync(() => rowWrites.push(input)).pipe(
+              Effect.as({
+                id: input.projectId,
+                title: "Client target",
+                workspaceRoot: "/projects/client-target",
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt: "2026-01-01T00:00:00.000Z",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+                deletedAt: null,
+              }),
+            ),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const toolkit = yield* ProjectToolkit;
+        const updated = yield* toolkit
+          .handle("t3_project_update", {
+            projectId: harness.projectId,
+            scripts: [
+              { id: "x", name: "X", command: "true", icon: "play", runOnWorktreeCreate: true },
+            ],
+            defaultModelSelection: null,
+            defaultThreadEnvMode: "worktree",
+            autoPull: true,
+          } as never)
+          .pipe(Stream.unwrap, Stream.runCollect);
+        expect(updated.at(-1)?.result).toMatchObject({
+          defaultModelSelection: null,
+          defaultThreadEnvMode: "worktree",
+          autoPull: true,
+          scripts: [],
+        });
+        const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+        expect(settings.projectSettingsOverrides[harness.projectId]).toEqual({
+          defaultThreadEnvMode: "worktree",
+          defaultAutoPull: true,
+        });
+        expect(rowWrites).toEqual([expect.not.objectContaining({ scripts: expect.anything() })]);
+      }).pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provideMerge(dependencies),
+          ),
         ),
-      ),
-    );
-  }),
+      );
+    }),
 );
 
 it.effect("a project update changes Settings and the project together or not at all", () =>
@@ -1563,7 +1576,7 @@ it.effect("a project update changes Settings and the project together or not at 
         Layer.mock(ServerSettings.ServerSettingsService)({
           managedPolicy: undefined,
           getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
-          updateSettings: () =>
+          updateProjectSettingsOverrides: () =>
             Effect.fail(
               new ServerSettingsError({
                 settingsPath: "settings.json",

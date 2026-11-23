@@ -1,7 +1,7 @@
 import type { ServerSettings } from "@t3tools/contracts";
 
 /**
- * `user`: only the user changes it (secrets, access, anything widening what agents may do).
+ * `user`: only the user changes it (secrets, access, widening what agents may do, text other models obey).
  * `read`: server-maintained, owned by another tool, or file-edit only.
  * `hidden`: legacy mirrors and derived values; their canonical key is listed instead.
  */
@@ -30,7 +30,7 @@ export const AGENT_SETTING_ACCESS = {
   speechPostProcessingModelSelection: "write",
   projectAgentBrowserAccessOverrides: "hidden",
   defaultAutoPull: "write",
-  defaultProjectScripts: "write",
+  defaultProjectScripts: "user",
   projectScriptOverrides: "hidden",
   projectAutoPullOverrides: "hidden",
   defaultModelSelection: "write",
@@ -39,7 +39,7 @@ export const AGENT_SETTING_ACCESS = {
   projectSettingsOverrides: "user",
   projectSettingsFolded: "hidden",
   enableAgentDeviceAccess: "user",
-  enableDeviceSupport: "write",
+  enableDeviceSupport: "user",
   deviceOnboardingCompleted: "write",
   deviceHosts: "user",
   easDeviceHosts: "user",
@@ -73,16 +73,16 @@ export const AGENT_SETTING_ACCESS = {
   addProjectBaseDirectory: "write",
   ghqCloneLayout: "write",
   textGenerationModelSelection: "write",
-  threadTitleInstructions: "write",
+  threadTitleInstructions: "user",
   branchNamingMode: "write",
   branchNamePrefix: "write",
-  branchNameInstructions: "write",
+  branchNameInstructions: "user",
   removeAgentCreditsOnMerge: "write",
   sourceControlWritingStyle: "write",
   sourceControlWriterModelSelection: "write",
-  reviewGuidesEnabled: "write",
+  reviewGuidesEnabled: "user",
   reviewGuideModelSelection: "write",
-  reviewGuideInstructions: "write",
+  reviewGuideInstructions: "user",
   pullRequestMergeMethod: "write",
   providerInstances: "user",
   observability: "user",
