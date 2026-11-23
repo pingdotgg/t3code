@@ -2,6 +2,7 @@ import { FileTree } from "@pierre/trees";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
+import { ComposerHandleContext, type ComposerHandleRef } from "~/composerHandleContext";
 import { dismissContextMenu } from "~/contextMenuFallback";
 
 import { render } from "../../../test/render";
@@ -74,11 +75,42 @@ it("copies a folder's path and a file's name from the right-click menu without o
   // Empty folders flatten into one "apps / web / src" row.
   await vi.waitFor(() => expect(findTreeRow("apps/web/src/")).not.toBeNull());
   rightClick(findTreeRow("apps/web/src/")!);
-  await userEvent.click(page.getByRole("menuitem", { name: "Copy path", exact: true }));
+  const copyPath = page.getByRole("menuitem", { name: "Copy path", exact: true });
+  await expect.element(copyPath).toBeVisible();
+  // No chat is open, so there is nothing to add the row to.
+  await expect.element(page.getByRole("menuitem", { name: "Add to chat" })).not.toBeInTheDocument();
+  await userEvent.click(copyPath);
   await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("apps/web/src"));
 
   rightClick(findTreeRow("apps/web/src/a.ts")!);
   await userEvent.click(page.getByRole("menuitem", { name: "Copy name", exact: true }));
   await vi.waitFor(() => expect(clipboard).toHaveBeenLastCalledWith("a.ts"));
   expect(onSelectFile).not.toHaveBeenCalled();
+});
+
+it("adds a row to the open chat as a mention", async () => {
+  const insertTextAtEnd = vi.fn(() => true);
+  const composerRef = { current: { insertTextAtEnd } } as unknown as ComposerHandleRef;
+  await using _screen = await render(
+    <ComposerHandleContext value={composerRef}>
+      <div className="flex h-[600px] flex-col">
+        <DiffFileTree
+          entries={[{ path: "apps/web/src/a.ts", status: "modified" }]}
+          onSelectFile={() => {}}
+          workspaceRoot="/repo"
+          ariaLabel="Changed files"
+        />
+      </div>
+    </ComposerHandleContext>,
+  );
+  using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+
+  await vi.waitFor(() => expect(findTreeRow("apps/web/src/a.ts")).not.toBeNull());
+  rightClick(findTreeRow("apps/web/src/a.ts")!);
+  await userEvent.click(page.getByRole("menuitem", { name: "Add to chat", exact: true }));
+  await vi.waitFor(() =>
+    expect(insertTextAtEnd).toHaveBeenCalledWith("[a.ts](apps/web/src/a.ts) ", {
+      ensureLeadingBoundary: true,
+    }),
+  );
 });

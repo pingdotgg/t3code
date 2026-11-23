@@ -2,11 +2,13 @@ import type { ContextMenuOpenContext } from "@pierre/trees";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import type { ContextMenuSource } from "@t3tools/contracts";
+import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { msg } from "gt-react";
 import { useRef } from "react";
 
 import { contextMenuSourceOf } from "~/contextMenuSource";
 import { toastManager } from "~/components/ui/toast";
+import type { ComposerHandleRef } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { m } from "~/i18n/messages";
 
@@ -79,6 +81,31 @@ export async function copyFileTreeRow(
       type: "error",
       title: action === "copy-name" ? m(msg("Failed to copy name")) : m(msg("Failed to copy path")),
       description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
+    });
+  }
+}
+
+export function addToChatMenuItem() {
+  return { id: "add-to-chat", label: m(msg("Add to chat")) } as const;
+}
+
+/** Mentions `path` at the end of the open chat's composer. */
+export function addFileTreeRowToChat(composerRef: ComposerHandleRef | null, path: string): void {
+  const composer = composerRef?.current;
+  if (!composer) {
+    toastManager.add({
+      type: "error",
+      title: m(msg("Unable to add to chat")),
+      description: m(msg("Open a chat for this project and try again.")),
+    });
+    return;
+  }
+  const mention = serializeComposerFileLink(path);
+  if (!composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true })) {
+    toastManager.add({
+      type: "error",
+      title: m(msg("Unable to add to chat")),
+      description: m(msg("The chat isn't ready to accept input right now.")),
     });
   }
 }

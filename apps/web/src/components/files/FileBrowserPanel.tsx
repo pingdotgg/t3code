@@ -36,6 +36,8 @@ import {
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import {
+  addFileTreeRowToChat,
+  addToChatMenuItem,
   copyFileTreeRow,
   fileTreeCopyMenuItems,
   isFileTreeCopyAction,
@@ -242,7 +244,7 @@ export default function FileBrowserPanel({
             ...fileMenuItems,
             ...fileTreeCopyMenuItems(),
             { id: "copy-mention", label: gt("Copy mention") },
-            { id: "add-to-chat", label: gt("Add to chat") },
+            addToChatMenuItem(),
           ],
           position,
           source,
@@ -272,25 +274,7 @@ export default function FileBrowserPanel({
           }
           return;
         }
-        if (clicked === "add-to-chat") {
-          const composer = composerRef?.current;
-          if (!composer) {
-            toastManager.add({
-              type: "error",
-              title: gt("Unable to add to chat"),
-              description: gt("Open a chat for this project and try again."),
-            });
-            return;
-          }
-          const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
-          if (!inserted) {
-            toastManager.add({
-              type: "error",
-              title: gt("Unable to add to chat"),
-              description: gt("The chat isn't ready to accept input right now."),
-            });
-          }
-        }
+        if (clicked === "add-to-chat") addFileTreeRowToChat(composerRef, panelPath(relativePath));
       }).then((result) => {
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });

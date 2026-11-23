@@ -11,6 +11,7 @@ import { T, useGT } from "gt-react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
@@ -27,6 +28,8 @@ import {
   subscribeOncePerTask,
 } from "../files/fileTreeExpansion";
 import {
+  addFileTreeRowToChat,
+  addToChatMenuItem,
   copyFileTreeRow,
   fileTreeCopyMenuItems,
   useTreeContextMenuAnchor,
@@ -107,6 +110,7 @@ export function DiffFileTree({
   });
 
   const contextMenuAnchor = useTreeContextMenuAnchor();
+  const composerRef = useComposerHandleContext();
   const showRowContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
       const api = readLocalApi();
@@ -117,8 +121,15 @@ export function DiffFileTree({
       const row = diffFileTreeRow(item.path, presented.selectionPath);
       const { position, source } = contextMenuAnchor.takeOver(context);
       void settlePromise(async () => {
-        const clicked = await api.contextMenu.show(fileTreeCopyMenuItems(), position, source);
-        if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
+        // A pull request opened outside a thread has no chat to add to.
+        const chatOpen = composerRef?.current != null;
+        const clicked = await api.contextMenu.show(
+          [...fileTreeCopyMenuItems(), ...(chatOpen ? [addToChatMenuItem()] : [])],
+          position,
+          source,
+        );
+        if (clicked === "add-to-chat") addFileTreeRowToChat(composerRef, row.path);
+        else if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
       }).then((result) => {
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
