@@ -26,6 +26,7 @@
 		A399F8620E541780A63B7B9B /* TimelineEntryViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7008F6E4031009E6DD67DF79 /* TimelineEntryViews.swift */; };
 		A48B0233539A33A746A0C0A0 /* NewThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3341300D754CB97F598B98C8 /* NewThreadView.swift */; };
 		AC0B78CBBD07A66FD1BF78D4 /* CoreStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5790483D75FB12EC9D5E8AA0 /* CoreStore.swift */; };
+		B41AE3C505014F8382E4184F /* PendingApprovalCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */; };
 		B41E2936191FBA2746C927FF /* DesignKit in Frameworks */ = {isa = PBXBuildFile; productRef = BB0B76904CFE59D702E68903 /* DesignKit */; };
 		B8E6DB9174EF25FDECBED71A /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1124C8596181165D405995EB /* KeychainStore.swift */; };
 		B8F6A10847DC5E66A913CBDF /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CE790160CB877B8F694F27DE /* CoreFoundation.framework */; };
@@ -66,6 +67,7 @@
 		953DAB675D1E26DF4D62D777 /* MarkdownView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownView.swift; sourceTree = "<group>"; };
 		9801FA3C8411705F36721B72 /* WorkspaceRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceRootView.swift; sourceTree = "<group>"; };
 		B282DA827183E073EF9A48C6 /* ConnSpikeUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnSpikeUITests.swift; sourceTree = "<group>"; };
+		C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingApprovalCard.swift; sourceTree = "<group>"; };
 		CE790160CB877B8F694F27DE /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = System/Library/Frameworks/CoreFoundation.framework; sourceTree = SDKROOT; };
 		DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingURLParser.swift; sourceTree = "<group>"; };
 		E08A1B9DE873B63FCAC345CB /* DesignKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = DesignKit; path = "../../../design-kit/DesignKit"; sourceTree = SOURCE_ROOT; };
@@ -166,6 +168,7 @@
 				3341300D754CB97F598B98C8 /* NewThreadView.swift */,
 				DDC6905040E6DA7BF655EC13 /* PairingURLParser.swift */,
 				6BEEC1EEE1A9677F008F2091 /* PairingView.swift */,
+				C9CA7C5134613DD1AAA8BC68 /* PendingApprovalCard.swift */,
 				45F2866A2B7B7C126E7F96F9 /* PushExplainerSheet.swift */,
 				293A0DC9F8A7EF5B24D84EC7 /* PushRegistration.swift */,
 				F7425B395B824B6191534A3E /* SettingsView.swift */,
@@ -297,6 +300,7 @@
 				A48B0233539A33A746A0C0A0 /* NewThreadView.swift in Sources */,
 				9955DFD2D19FE1A3E8D199B7 /* PairingURLParser.swift in Sources */,
 				3C02BE75CFA0F738CEEBD65B /* PairingView.swift in Sources */,
+				B41AE3C505014F8382E4184F /* PendingApprovalCard.swift in Sources */,
 				0874F035E86E2E56F5042390 /* PushExplainerSheet.swift in Sources */,
 				51DF3AD000F6B7995E0FCEA7 /* PushRegistration.swift in Sources */,
 				2CB7DF35B882E4F49849D0B6 /* SettingsView.swift in Sources */,

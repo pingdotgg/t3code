@@ -17,6 +17,7 @@ use conn_contract::{
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
     OrchestrationV2ThreadStreamItem as ThreadStreamItem, OrchestrationV2TurnItem as TurnItem,
     OrchestrationV2TurnItemApprovalRequest as ApprovalRequestItem,
+    OrchestrationV2TurnItemApprovalRequestFullAccessOverride as FullAccessOverride,
     OrchestrationV2TurnItemAssistantMessage as AssistantMessageItem,
     OrchestrationV2TurnItemCommandExecution as CommandExecutionItem,
     OrchestrationV2TurnItemCompaction as CompactionItem,
@@ -38,7 +39,8 @@ use conn_contract::{
     OrchestrationV2TurnItemUserInputRequest as UserInputRequestItem,
     OrchestrationV2TurnItemUserMessage as UserMessageItem,
     OrchestrationV2TurnItemWebSearch as WebSearchItem,
-    OrchestrationV2UserMessageInputIntent as UserMessageIntent, ProviderRequestKind,
+    OrchestrationV2UserMessageInputIntent as UserMessageIntent, ProviderApprovalOption,
+    ProviderRequestKind,
 };
 
 pub use conn_contract::{
@@ -341,6 +343,35 @@ pub struct PendingApproval {
     pub supports_feedback: bool,
 }
 
+/// What an approval asks beyond its timeline title: the approval item's request kind, prompt,
+/// reason, app, options and full-access override (Conn's `ThreadPendingApproval`, which the
+/// approval panel above the composer shows).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApprovalDetails {
+    pub request_kind: ProviderRequestKind,
+    pub prompt: Option<String>,
+    pub reason: Option<String>,
+    /// Set when the run has full access but the agent still asks.
+    pub full_access_override: Option<FullAccessOverride>,
+    pub app_name: Option<String>,
+    /// The provider's own choices; `None` means Conn's default three (allow once, allow for the
+    /// session, decline).
+    pub options: Option<Vec<ProviderApprovalOption>>,
+}
+
+impl ApprovalDetails {
+    fn from_item(item: &ApprovalRequestItem) -> Self {
+        Self {
+            request_kind: item.request_kind,
+            prompt: non_empty(item.prompt.clone()),
+            reason: non_empty(item.reason.clone()),
+            full_access_override: item.full_access_override,
+            app_name: non_empty(item.app_name.clone()),
+            options: item.options.clone(),
+        }
+    }
+}
+
 /// Where an assistant message or a question sits in its run (`assistantMessageIdsBeforeQuestion`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ItemPlace {
@@ -360,6 +391,8 @@ pub struct ThreadState {
     pub synchronized: bool,
     /// Server request id of each approval entry, by entry id, for `runtime-request.respond`.
     pub approval_requests: HashMap<String, String>,
+    /// What each approval entry asks, by entry id (see [`ThreadState::approval_details`]).
+    pub approval_details: HashMap<String, ApprovalDetails>,
     /// Runtime requests that are still `pending`, by server request id.
     pub pending_requests: HashMap<String, PendingRequest>,
     /// Per-entry run association and start/completion timestamps (Unix ms).
@@ -420,6 +453,13 @@ impl ThreadState {
                 })
             })
             .collect()
+    }
+
+    /// What approval entry `entry_id` asks: its request kind, prompt, reason, app, options and
+    /// full-access override.
+    #[must_use]
+    pub fn approval_details(&self, entry_id: &str) -> Option<&ApprovalDetails> {
+        self.approval_details.get(entry_id)
     }
 
     /// What the agent wrote just before it asked question `entry_id`: the markdown of the last
@@ -724,6 +764,7 @@ impl ThreadState {
         }
 
         self.approval_requests.clear();
+        self.approval_details.clear();
         self.pending_requests = projection
             .runtime_requests
             .iter()
@@ -762,6 +803,8 @@ impl ThreadState {
             if let ProjectionTurnItem::ApprovalRequest(i) = &item {
                 self.approval_requests
                     .insert(i.id.clone(), i.request_id.clone());
+                self.approval_details
+                    .insert(i.id.clone(), ApprovalDetails::from_item(i));
             }
             if let Some((id, timing)) = extract_projection_timing(&item) {
                 self.entry_timings.insert(id, timing);
@@ -834,9 +877,11 @@ impl ThreadState {
         for row in rows {
             let item = row.item;
             let approval_pair = match &item {
-                ProjectionTurnItem::ApprovalRequest(i) => {
-                    Some((i.id.clone(), i.request_id.clone()))
-                }
+                ProjectionTurnItem::ApprovalRequest(i) => Some((
+                    i.id.clone(),
+                    i.request_id.clone(),
+                    ApprovalDetails::from_item(i),
+                )),
                 _ => None,
             };
             let timing = extract_projection_timing(&item);
@@ -848,7 +893,8 @@ impl ThreadState {
             if existing_ids.contains(entry.id()) {
                 continue;
             }
-            if let Some((id, request_id)) = approval_pair {
+            if let Some((id, request_id, details)) = approval_pair {
+                self.approval_details.entry(id.clone()).or_insert(details);
                 self.approval_requests.entry(id).or_insert(request_id);
             }
             if let Some((id, entry_timing)) = timing {
@@ -1146,6 +1192,8 @@ impl ThreadState {
                 if let TurnItem::ApprovalRequest(i) = &ev.payload {
                     self.approval_requests
                         .insert(i.id.clone(), i.request_id.clone());
+                    self.approval_details
+                        .insert(i.id.clone(), ApprovalDetails::from_item(i));
                 }
                 let timing = extract_turn_item_timing(&ev.payload);
                 self.entry_timings.insert(item_id.clone(), timing);
@@ -2008,7 +2056,9 @@ fn map_thread_created(item: ThreadCreatedItem) -> Option<TimelineEntry> {
     })
 }
 
-fn request_kind_label(kind: ProviderRequestKind) -> &'static str {
+/// The request kind as the contract spells it (`command`, `file-change`, ...), which Conn shows
+/// when an approval names no app.
+pub fn request_kind_label(kind: ProviderRequestKind) -> &'static str {
     match kind {
         ProviderRequestKind::Command => "command",
         ProviderRequestKind::FileRead => "file-read",

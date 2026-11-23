@@ -2880,6 +2880,73 @@ public func FfiConverterTypeOrbitListener_lower(_ value: OrbitListener) -> UInt6
 
 
 /**
+ * One answer button on the approval card.
+ */
+public struct FfiApprovalOption: Equatable, Hashable {
+    public var decision: FfiApprovalDecision
+    public var label: String
+    /**
+     * Allow once is primary, decline is danger, the rest are secondary.
+     */
+    public var tone: FfiButtonTone
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(decision: FfiApprovalDecision, label: String, 
+        /**
+         * Allow once is primary, decline is danger, the rest are secondary.
+         */tone: FfiButtonTone) {
+        self.decision = decision
+        self.label = label
+        self.tone = tone
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiApprovalOption: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiApprovalOption: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiApprovalOption {
+        return
+            try FfiApprovalOption(
+                decision: FfiConverterTypeFfiApprovalDecision.read(from: &buf), 
+                label: FfiConverterString.read(from: &buf), 
+                tone: FfiConverterTypeFfiButtonTone.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiApprovalOption, into buf: inout [UInt8]) {
+        FfiConverterTypeFfiApprovalDecision.write(value.decision, into: &buf)
+        FfiConverterString.write(value.label, into: &buf)
+        FfiConverterTypeFfiButtonTone.write(value.tone, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApprovalOption_lift(_ buf: RustBuffer) throws -> FfiApprovalOption {
+    return try FfiConverterTypeFfiApprovalOption.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiApprovalOption_lower(_ value: FfiApprovalOption) -> RustBuffer {
+    return FfiConverterTypeFfiApprovalOption.lower(value)
+}
+
+
+/**
  * Attachment summary carried on user and queued user timeline entries.
  */
 public struct FfiAttachment: Equatable, Hashable {
@@ -4516,6 +4583,137 @@ public func FfiConverterTypeFfiOrbitWorkspace_lift(_ buf: RustBuffer) throws -> 
 #endif
 public func FfiConverterTypeFfiOrbitWorkspace_lower(_ value: FfiOrbitWorkspace) -> RustBuffer {
     return FfiConverterTypeFfiOrbitWorkspace.lower(value)
+}
+
+
+/**
+ * A pending approval as the card above the composer shows it.
+ */
+public struct FfiPendingApproval: Equatable, Hashable {
+    /**
+     * The approval's timeline entry.
+     */
+    public var entryId: String
+    /**
+     * Server request id to pass to [`crate::ConnCore::respond_approval`].
+     */
+    public var requestId: String
+    /**
+     * The app the agent asks about, or else the request kind (`command`, `file-change`, ...).
+     */
+    public var title: String
+    /**
+     * What the agent wants to do (the approval's prompt).
+     */
+    public var detail: String?
+    public var reason: String?
+    /**
+     * Why the agent asks although the run has full access. The card hides it behind
+     * "Why am I being asked this?".
+     */
+    public var fullAccessExplanation: String?
+    /**
+     * The first option warning, shown above the buttons.
+     */
+    public var warning: String?
+    public var options: [FfiApprovalOption]
+    /**
+     * The provider still waits for this answer. When it does not, the buttons are off and the
+     * card says the provider process is gone.
+     */
+    public var answerable: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The approval's timeline entry.
+         */entryId: String, 
+        /**
+         * Server request id to pass to [`crate::ConnCore::respond_approval`].
+         */requestId: String, 
+        /**
+         * The app the agent asks about, or else the request kind (`command`, `file-change`, ...).
+         */title: String, 
+        /**
+         * What the agent wants to do (the approval's prompt).
+         */detail: String?, reason: String?, 
+        /**
+         * Why the agent asks although the run has full access. The card hides it behind
+         * "Why am I being asked this?".
+         */fullAccessExplanation: String?, 
+        /**
+         * The first option warning, shown above the buttons.
+         */warning: String?, options: [FfiApprovalOption], 
+        /**
+         * The provider still waits for this answer. When it does not, the buttons are off and the
+         * card says the provider process is gone.
+         */answerable: Bool) {
+        self.entryId = entryId
+        self.requestId = requestId
+        self.title = title
+        self.detail = detail
+        self.reason = reason
+        self.fullAccessExplanation = fullAccessExplanation
+        self.warning = warning
+        self.options = options
+        self.answerable = answerable
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FfiPendingApproval: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiPendingApproval: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiPendingApproval {
+        return
+            try FfiPendingApproval(
+                entryId: FfiConverterString.read(from: &buf), 
+                requestId: FfiConverterString.read(from: &buf), 
+                title: FfiConverterString.read(from: &buf), 
+                detail: FfiConverterOptionString.read(from: &buf), 
+                reason: FfiConverterOptionString.read(from: &buf), 
+                fullAccessExplanation: FfiConverterOptionString.read(from: &buf), 
+                warning: FfiConverterOptionString.read(from: &buf), 
+                options: FfiConverterSequenceTypeFfiApprovalOption.read(from: &buf), 
+                answerable: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FfiPendingApproval, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.entryId, into: &buf)
+        FfiConverterString.write(value.requestId, into: &buf)
+        FfiConverterString.write(value.title, into: &buf)
+        FfiConverterOptionString.write(value.detail, into: &buf)
+        FfiConverterOptionString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.fullAccessExplanation, into: &buf)
+        FfiConverterOptionString.write(value.warning, into: &buf)
+        FfiConverterSequenceTypeFfiApprovalOption.write(value.options, into: &buf)
+        FfiConverterBool.write(value.answerable, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingApproval_lift(_ buf: RustBuffer) throws -> FfiPendingApproval {
+    return try FfiConverterTypeFfiPendingApproval.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiPendingApproval_lower(_ value: FfiPendingApproval) -> RustBuffer {
+    return FfiConverterTypeFfiPendingApproval.lower(value)
 }
 
 
@@ -6667,10 +6865,19 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
     public var activeRunId: String?
     public var queuedCount: UInt32
     public var synchronized: Bool
+    /**
+     * Approvals still waiting for an answer, in timeline order; the card above the composer
+     * shows the first (Conn mobile's `activePendingApproval`).
+     */
+    public var pendingApprovals: [FfiPendingApproval]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool) {
+    public init(threadId: String, title: String?, branch: String?, modelLabel: String?, entries: [FfiTimelineEntry], workGroups: [FfiWorkGroupTiming], working: Bool, activeRunId: String?, queuedCount: UInt32, synchronized: Bool, 
+        /**
+         * Approvals still waiting for an answer, in timeline order; the card above the composer
+         * shows the first (Conn mobile's `activePendingApproval`).
+         */pendingApprovals: [FfiPendingApproval]) {
         self.threadId = threadId
         self.title = title
         self.branch = branch
@@ -6681,6 +6888,7 @@ public struct FfiThreadSnapshot: Equatable, Hashable {
         self.activeRunId = activeRunId
         self.queuedCount = queuedCount
         self.synchronized = synchronized
+        self.pendingApprovals = pendingApprovals
     }
 
     
@@ -6708,7 +6916,8 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
                 working: FfiConverterBool.read(from: &buf), 
                 activeRunId: FfiConverterOptionString.read(from: &buf), 
                 queuedCount: FfiConverterUInt32.read(from: &buf), 
-                synchronized: FfiConverterBool.read(from: &buf)
+                synchronized: FfiConverterBool.read(from: &buf), 
+                pendingApprovals: FfiConverterSequenceTypeFfiPendingApproval.read(from: &buf)
         )
     }
 
@@ -6723,6 +6932,7 @@ public struct FfiConverterTypeFfiThreadSnapshot: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.activeRunId, into: &buf)
         FfiConverterUInt32.write(value.queuedCount, into: &buf)
         FfiConverterBool.write(value.synchronized, into: &buf)
+        FfiConverterSequenceTypeFfiPendingApproval.write(value.pendingApprovals, into: &buf)
     }
 }
 
@@ -7678,6 +7888,82 @@ public func FfiConverterTypeFfiAttentionKind_lift(_ buf: RustBuffer) throws -> F
 #endif
 public func FfiConverterTypeFfiAttentionKind_lower(_ value: FfiAttentionKind) -> RustBuffer {
     return FfiConverterTypeFfiAttentionKind.lower(value)
+}
+
+
+
+/**
+ * A full-width button's colours (mobile `Button` tones).
+ */
+
+public enum FfiButtonTone: Equatable, Hashable {
+    
+    case primary
+    case secondary
+    case danger
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FfiButtonTone: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFfiButtonTone: FfiConverterRustBuffer {
+    typealias SwiftType = FfiButtonTone
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FfiButtonTone {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .primary
+        
+        case 2: return .secondary
+        
+        case 3: return .danger
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FfiButtonTone, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .primary:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .secondary:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .danger:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiButtonTone_lift(_ buf: RustBuffer) throws -> FfiButtonTone {
+    return try FfiConverterTypeFfiButtonTone.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFfiButtonTone_lower(_ value: FfiButtonTone) -> RustBuffer {
+    return FfiConverterTypeFfiButtonTone.lower(value)
 }
 
 
@@ -11446,6 +11732,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeFfiApprovalOption: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiApprovalOption]
+
+    public static func write(_ value: [FfiApprovalOption], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiApprovalOption.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiApprovalOption] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiApprovalOption]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiApprovalOption.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeFfiAttachment: FfiConverterRustBuffer {
     typealias SwiftType = [FfiAttachment]
 
@@ -11713,6 +12024,31 @@ fileprivate struct FfiConverterSequenceTypeFfiOrbitWorkspace: FfiConverterRustBu
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeFfiOrbitWorkspace.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFfiPendingApproval: FfiConverterRustBuffer {
+    typealias SwiftType = [FfiPendingApproval]
+
+    public static func write(_ value: [FfiPendingApproval], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFfiPendingApproval.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [FfiPendingApproval] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [FfiPendingApproval]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFfiPendingApproval.read(from: &buf))
         }
         return seq
     }

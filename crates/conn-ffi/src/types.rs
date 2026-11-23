@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::approvals::FfiPendingApproval;
 use conn_client::{ClientError, ConnectionStatus, Credential, commands::format_client_error};
 use conn_contract::{
     ChatAttachment, OrchestrationV2AppThread, OrchestrationV2ProviderFailureClass,
@@ -474,6 +475,9 @@ pub struct FfiThreadSnapshot {
     pub active_run_id: Option<String>,
     pub queued_count: u32,
     pub synchronized: bool,
+    /// Approvals still waiting for an answer, in timeline order; the card above the composer
+    /// shows the first (Conn mobile's `activePendingApproval`).
+    pub pending_approvals: Vec<FfiPendingApproval>,
 }
 
 /// Categorized reason for an [`FfiError::Orbit`] failure (mirrors [`conn_orbit::OrbitErrorReason`]).
@@ -895,6 +899,7 @@ pub(crate) fn build_thread_snapshot(
         active_run_id: thread.active_run_id().map(str::to_owned),
         queued_count,
         synchronized: thread.synchronized,
+        pending_approvals: crate::approvals::pending_approvals(thread),
     }
 }
 

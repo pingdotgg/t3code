@@ -16,6 +16,9 @@ struct ThreadView: View {
     @State private var settled: Bool
     @State private var showingRename = false
     @State private var renameDraft = ""
+    /// The approval whose answer is on its way; its buttons stay off until the server answers.
+    @State private var respondingApprovalId: String?
+    @State private var viewHeight: CGFloat = 800
 
     init(
         store: CoreStore,
@@ -39,6 +42,26 @@ struct ThreadView: View {
     private var snapshot: FfiThreadSnapshot? {
         guard let current = store.openThread, current.threadId == threadId else { return nil }
         return current
+    }
+
+    /// An approval gives up height to the feed: at most 560pt, at least 160pt, and never more
+    /// than the screen leaves above the composer (`derivePendingUserInputMaxHeight`).
+    private var approvalMaxHeight: CGFloat {
+        min(560, max(160, viewHeight - 140))
+    }
+
+    private func respond(to approval: FfiPendingApproval, with decision: FfiApprovalDecision) {
+        respondingApprovalId = approval.requestId
+        Task {
+            await store.respondApproval(
+                threadId: threadId,
+                requestId: approval.requestId,
+                decision: decision
+            )
+            if respondingApprovalId == approval.requestId {
+                respondingApprovalId = nil
+            }
+        }
     }
 
     private var displayTitle: String {
@@ -149,6 +172,20 @@ struct ThreadView: View {
             }
             .kitComposerBar {
                 VStack(alignment: .leading, spacing: Kit.Space.xs) {
+                    // Conn mobile pins the first pending approval above the composer.
+                    if let approval = snapshot?.pendingApprovals.first {
+                        HeightCappedScroll(maxHeight: approvalMaxHeight) {
+                            PendingApprovalCard(
+                                approval: approval,
+                                responding: respondingApprovalId == approval.requestId
+                            ) { decision in
+                                respond(to: approval, with: decision)
+                            }
+                        }
+                        .id(approval.requestId)
+                        .padding(.bottom, 8)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    }
                     if let queued = snapshot?.queuedCount, queued > 0 {
                         KitBadge("\(queued) queued")
                             .accessibilityIdentifier("thread.queuedBadge")
@@ -212,6 +249,8 @@ struct ThreadView: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { viewHeight = $0 }
+        .animation(.easeOut(duration: 0.2), value: snapshot?.pendingApprovals.first?.requestId)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 1) {

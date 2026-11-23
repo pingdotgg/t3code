@@ -4,6 +4,7 @@
 //! Hand-written code in this crate stays free of `unsafe`; only the UniFFI proc-macro
 //! scaffolding generates FFI boundary code.
 
+mod approvals;
 mod coalesce;
 mod core;
 mod orbit;
@@ -13,6 +14,7 @@ mod types;
 
 uniffi::setup_scaffolding!();
 
+pub use crate::approvals::{FfiApprovalOption, FfiButtonTone, FfiPendingApproval};
 pub use crate::core::{ConnCore, CoreListener};
 pub use crate::orbit::{
     FfiAgentRole, FfiAgentState, FfiAttentionKind, FfiChangeTone, FfiConversationRef,

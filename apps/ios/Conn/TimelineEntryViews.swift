@@ -237,14 +237,10 @@ struct TimelineEntryRow: View {
         case let .tool(_, kind, title, detail, status, _, _, durationMs):
             ToolRow(kind: kind, title: title, detail: detail, status: status, durationMs: durationMs)
 
-        case let .approval(_, requestId, title, detail):
-            ApprovalCard(
-                threadId: threadId,
-                requestId: requestId,
-                title: title,
-                detail: detail,
-                store: store
-            )
+        case let .approval(_, _, title, detail):
+            // The pending approval itself sits above the composer (`PendingApprovalCard`); the
+            // feed keeps a work row for it, like Conn mobile's "Approval requested".
+            ToolRow(kind: "approval", title: title, detail: detail, status: .running, durationMs: nil)
 
         case let .userInputRequest(_, requestId, title, questions, _, pending, answers, dismissible, _):
             UserInputRequestCard(
@@ -362,77 +358,6 @@ struct ToolRow: View {
                         .textSelection(.enabled)
                 }
             }
-        }
-    }
-}
-
-private struct ApprovalCard: View {
-    let threadId: String
-    let requestId: String
-    let title: String
-    let detail: String?
-    @Bindable var store: CoreStore
-    @Environment(\.connTheme) private var theme
-    @State private var submitting = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Kit.Space.m) {
-            HStack(alignment: .top, spacing: Kit.Space.m) {
-                KitStatusIcon(.warning, size: 16, label: "Approval needed")
-                    .padding(.top, 2)
-                VStack(alignment: .leading, spacing: Kit.Space.xs) {
-                    Text(title)
-                        .font(.kitLabel.weight(.semibold))
-                        .foregroundStyle(theme.cardForeground)
-                    if let detail, !detail.isEmpty {
-                        Text(detail)
-                            .font(.kitMono)
-                            .foregroundStyle(theme.mutedForeground)
-                            .lineLimit(6)
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-
-            HStack(spacing: Kit.Space.s) {
-                Button("Allow") {
-                    respond(.accept)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(submitting)
-
-                Button("Session") {
-                    respond(.acceptForSession)
-                }
-                .buttonStyle(.bordered)
-                .disabled(submitting)
-
-                Spacer()
-
-                Button("Decline", role: .destructive) {
-                    respond(.decline)
-                }
-                .buttonStyle(.bordered)
-                .disabled(submitting)
-            }
-        }
-        .padding(Kit.Space.l)
-        .background(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .fill(theme.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: Kit.Radius.group, style: .continuous)
-                .strokeBorder(theme.warning.opacity(0.6), lineWidth: 1)
-        )
-        .accessibilityIdentifier("thread.approval.\(requestId)")
-    }
-
-    private func respond(_ decision: FfiApprovalDecision) {
-        submitting = true
-        Task {
-            await store.respondApproval(threadId: threadId, requestId: requestId, decision: decision)
-            submitting = false
         }
     }
 }
