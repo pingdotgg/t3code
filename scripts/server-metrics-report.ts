@@ -229,7 +229,8 @@ export interface NoiseRule {
 /** Shown, never counted: these A/A intervals were wider than half the metric (see `noise`). */
 const informational = (pattern: RegExp): NoiseRule => ({ pattern, floor: 0, gate: false });
 
-// Estimated from 5-round A/A runs on cups (16 cores, load 1 to 20) on 2026-11-23, rounded up.
+// Estimated from A/A runs on cups (16 cores, load 1 to 20) on 2026-11-23, with and without the
+// agent scope, rounded up and taking the larger of the two.
 // busy and soak had no A/A run and keep the earlier floors.
 export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   informational(/loopDelayP50Ms$/),
@@ -242,7 +243,7 @@ export const NOISE_RULES: ReadonlyArray<NoiseRule> = [
   { pattern: /^scaling\.heapMBPerThread$/, floor: 0.06, gate: true },
   { pattern: /^scaling\.rssMBPerThread$/, floor: 0.2, gate: true },
   { pattern: /^soak\./, floor: 20, gate: true },
-  { pattern: /^startup\.readyMs$/, floor: 450, gate: true },
+  { pattern: /^startup\.readyMs$/, floor: 600, gate: true },
   { pattern: /^firstWord\./, floor: 600, gate: true },
   { pattern: /^pipeline\.(toRequestMs|turnEndMs)\.median$/, floor: 300, gate: true },
   { pattern: /^pipeline\.(toRequestMs\.p90|msPerTurn)$/, floor: 600, gate: true },
