@@ -639,20 +639,22 @@ const make = Effect.gen(function* () {
     now: DateTime.Utc,
   ): Effect.fn.Return<PeerLinkSummary> {
     if (DateTime.isLessThanOrEqualTo(link.expiresAt, now)) return { ...link, status: "expired" };
-    // Listed as reachable only where resolve would still use it. Checked before
-    // the probe budget starts: `tailscale status` alone can take most of it.
-    const origins = (yield* Effect.forEach(
-      link.urls,
-      (url) => peerOrigin(url).pipe(Effect.option),
-      { concurrency: "unbounded" },
-    )).flatMap((origin) => (Option.isSome(origin) ? [origin.value] : []));
     // A race over no addresses never settles.
-    if (origins.length === 0) return { ...link, status: "unreachable" };
+    if (link.urls.length === 0) return { ...link, status: "unreachable" };
     const answered = yield* Effect.raceAll(
-      origins.map((origin) =>
-        answersAs(origin, link.environmentId).pipe(Effect.flatMap(Effect.fromOption)),
+      link.urls.map((url) =>
+        // Listed as reachable only where resolve would still use it. The probe
+        // budget starts after that check: `tailscale status` can take most of it.
+        peerOrigin(url).pipe(
+          Effect.flatMap((origin) =>
+            answersAs(origin, link.environmentId).pipe(
+              Effect.flatMap(Effect.fromOption),
+              Effect.timeout(LIST_PROBE_TIMEOUT),
+            ),
+          ),
+        ),
       ),
-    ).pipe(Effect.timeoutOption(LIST_PROBE_TIMEOUT), Effect.orElseSucceed(Option.none));
+    ).pipe(Effect.option);
     if (Option.isNone(answered)) return { ...link, status: "unreachable" };
     return { ...(yield* withLabel(link, answered.value.label)), status: "reachable" };
   });
