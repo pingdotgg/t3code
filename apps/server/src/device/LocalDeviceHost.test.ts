@@ -285,6 +285,68 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  // regression: #41190 a failed replacement can stop the old daemon and leave its file
+  it.effect("reports a stopped daemon a failed replacement left registered", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let health: Ref.Ref<boolean> | undefined;
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: "0.21.36",
+      };
+      const { host, stateDir, runs, daemonHealthy } = yield* agentFixture(
+        () => (health ? Ref.set(health, false) : Effect.void).pipe(Effect.as(processOutput(1))),
+        processOutput(0),
+        previous,
+      );
+      health = daemonHealthy;
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(runs.filter((run) => run.args.includes("devices"))).toHaveLength(1);
+      expect(error).toMatchObject({
+        _tag: "AgentDeviceStartError",
+        reason: "command_failed",
+        exitCode: 1,
+      });
+      expect(yield* fs.readFileString(path.join(stateDir, "daemon.json"))).toContain(
+        previous.token,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports a timeout when a timed-out replacement leaves a stopped daemon", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      let health: Ref.Ref<boolean> | undefined;
+      const previous = {
+        httpPort: 12345,
+        token: "previous-token",
+        pid: process.pid,
+        version: "0.21.36",
+      };
+      const { host, stateDir, daemonHealthy } = yield* agentFixture(
+        () =>
+          (health ? Ref.set(health, false) : Effect.void).pipe(
+            Effect.as(processOutput(0, "", "", true)),
+          ),
+        processOutput(0),
+        previous,
+      );
+      health = daemonHealthy;
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostTimeoutError",
+        timeoutMs: 30_000,
+      });
+      expect(yield* fs.readFileString(path.join(stateDir, "daemon.json"))).toContain(
+        previous.token,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the SDK a later shell environment selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

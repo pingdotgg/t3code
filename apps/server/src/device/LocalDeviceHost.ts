@@ -590,9 +590,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: file.token,
       entryPath: agentTool.entryPath,
     });
-    if (existing._tag === "Some") {
-      const alive = yield* HttpClient.withScope(httpClient)
-        .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
+    const daemonAnswersHealth = (httpPort: number) =>
+      HttpClient.withScope(httpClient)
+        .get(`http://127.0.0.1:${httpPort}/health`)
         .pipe(
           Effect.timeout(Duration.seconds(2)),
           Effect.flatMap((response) =>
@@ -601,6 +601,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.scoped,
           Effect.orElseSucceed(() => false),
         );
+    if (existing._tag === "Some") {
+      const alive = yield* daemonAnswersHealth(existing.value.httpPort);
       // A healthy daemon from another pin is not this client. Leave its registration so the
       // pinned CLI replaces it only when the daemon holds no work.
       const differentPin =
@@ -620,9 +622,16 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeoutBehavior: "timedOutResult",
       })
       .pipe(Effect.result);
-    // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
+    // A failed run can stop the previous daemon and leave its file. Keep that registration
+    // only while it still answers; a successful run has published the endpoint it reached.
     const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
+    if (started._tag === "Some") {
+      const runSucceeded =
+        runResult._tag === "Success" && !runResult.success.timedOut && runResult.success.code === 0;
+      if (runSucceeded || (yield* daemonAnswersHealth(started.value.httpPort))) {
+        return toEndpoint(started.value);
+      }
+    }
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
