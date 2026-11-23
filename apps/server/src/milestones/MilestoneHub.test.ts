@@ -21,6 +21,22 @@ const settled = (
   runId: RunId.make(`run:${id}`),
   outcome: "completed",
 });
+const workflowEnded = (id: string, workflowRunId: string): MilestoneEvent => ({
+  id: MilestoneId.make(id),
+  type: "workflow.run_ended",
+  occurredAt: "2026-11-20T00:00:00.000Z",
+  projectId: null,
+  threadId: null,
+  parentThreadId: null,
+  actor: { type: "system" },
+  isSubagentChild: false,
+  workflowRunId,
+  workflow: "review",
+  runTitle: "Review",
+  parentWorkflowRunId: null,
+  outcome: "completed",
+  detail: null,
+});
 const ids = (events: Iterable<MilestoneEvent>) => [...events].map((event) => event.id);
 
 it.effect("fans out to every subscriber, muting subagent children unless asked for", () =>
@@ -29,21 +45,31 @@ it.effect("fans out to every subscriber, muting subagent children unless asked f
     const muted = yield* hub.subscribe();
     const everything = yield* hub.subscribe({ includeSubagentChildren: true });
     const projectB = yield* hub.subscribe({ projectIds: [ProjectId.make("project:b")] });
+    const runR1 = yield* hub.subscribe({ workflowRunIds: ["r1"] });
 
     yield* hub.publish(settled("a"));
     yield* hub.publish(settled("child", { child: true }));
     // A repeat of an id is the same milestone.
     yield* hub.publish(settled("a"));
     yield* hub.publish(settled("b", { project: "project:b" }));
+    yield* hub.publish(workflowEnded("w0", "r0"));
+    yield* hub.publish(workflowEnded("w1", "r1"));
 
-    assert.deepStrictEqual(ids(yield* Stream.runCollect(Stream.take(muted, 2))), ["a", "b"]);
+    assert.deepStrictEqual(ids(yield* Stream.runCollect(Stream.take(muted, 4))), [
+      "a",
+      "b",
+      "w0",
+      "w1",
+    ]);
     assert.deepStrictEqual(ids(yield* Stream.runCollect(Stream.take(everything, 3))), [
       "a",
       "child",
       "b",
     ]);
+    // A workflow milestone has no project, and a thread milestone no workflow run.
     assert.deepStrictEqual(ids(yield* Stream.runCollect(Stream.take(projectB, 1))), ["b"]);
-    assert.deepStrictEqual(ids((yield* hub.recent()).events), ["a", "b"]);
+    assert.deepStrictEqual(ids(yield* Stream.runCollect(Stream.take(runR1, 1))), ["w1"]);
+    assert.deepStrictEqual(ids((yield* hub.recent()).events), ["a", "b", "w0", "w1"]);
   }).pipe(Effect.scoped, Effect.provide(MilestoneHub.layer)),
 );
 
