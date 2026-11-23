@@ -1419,10 +1419,10 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
 new file mode 100644
-index 0000000..0f5a6a2
+index 0000000..0308277
 --- /dev/null
 +++ b/dist/ai/internal/mcpWebhooks.js
-@@ -0,0 +1,440 @@
+@@ -0,0 +1,446 @@
 +import * as Clock from "../../Clock.js";
 +import * as Digest from "../../crypto/Digest.js";
 +import * as Mac from "../../crypto/Mac.js";
@@ -1735,8 +1735,10 @@ index 0000000..0f5a6a2
 +      )
 +    );
 +  });
-+  const refresh = Effect.fnUntraced(function* (subscription, secret, expiresAt, now) {
-+    yield* Deferred.await(subscription.accepted);
++  const refresh = Effect.fnUntraced(function* (request, subscription, secret, expiresAt, now) {
++    const opening = !Deferred.isDoneUnsafe(subscription.accepted);
++    const start = yield* Deferred.await(subscription.accepted);
++    if (subscriptions.get(subscription.id) !== subscription) return yield* subscribe(request);
 +    if (subscription.secret !== secret.text) {
 +      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS };
 +      subscription.secret = secret.text;
@@ -1746,6 +1748,7 @@ index 0000000..0f5a6a2
 +    const moved = subscription.deadlineMoved;
 +    subscription.deadlineMoved = Deferred.makeUnsafe();
 +    Deferred.doneUnsafe(moved, Effect.void);
++    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start };
 +    const truncated = subscription.gapUnacknowledged;
 +    subscription.gapUnacknowledged = false;
 +    return {
@@ -1770,7 +1773,7 @@ index 0000000..0f5a6a2
 +    const now = yield* Clock.currentTimeMillis;
 +    const expiresAt = now + grantTtl(request.ttlMs);
 +    const live = subscriptions.get(id);
-+    if (live !== void 0) return yield* refresh(live, secret, expiresAt, now);
++    if (live !== void 0) return yield* refresh(request, live, secret, expiresAt, now);
 +    let held = pending.get(principal) ?? 0;
 +    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++;
 +    if (held >= MAX_SUBSCRIPTIONS_PER_PRINCIPAL) {
@@ -1812,7 +1815,10 @@ index 0000000..0f5a6a2
 +    };
 +    yield* verify(subscription);
 +    const raced = subscriptions.get(id);
-+    if (raced !== void 0) return yield* refresh(raced, secret, expiresAt, now);
++    if (raced !== void 0) {
++      release();
++      return yield* refresh(request, raced, secret, expiresAt, now);
++    }
 +    release();
 +    subscriptions.set(id, subscription);
 +    const { accepted } = subscription;
@@ -3321,10 +3327,10 @@ index 9d4c96e..eb0590c 100644
      effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
 diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
 new file mode 100644
-index 0000000..3f362fe
+index 0000000..fb6114e
 --- /dev/null
 +++ b/src/ai/internal/mcpWebhooks.ts
-@@ -0,0 +1,664 @@
+@@ -0,0 +1,672 @@
 +/**
 + * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
 + * validation, subscription identity, Standard Webhooks signing, the endpoint
@@ -3845,14 +3851,18 @@ index 0000000..3f362fe
 +    )
 +  })
 +
-+  // Waits until the first subscribe's stream opened, so a same-key caller gets the same answer.
++  // A caller that joins while the first subscribe's stream is opening waits for it and gets
++  // where it started; one whose subscription went away meanwhile subscribes afresh.
 +  const refresh = Effect.fnUntraced(function*(
++    request: SubscribeRequest,
 +    subscription: Subscription,
 +    secret: { readonly text: string; readonly key: Mac.Key },
 +    expiresAt: number,
 +    now: number
-+  ) {
-+    yield* Deferred.await(subscription.accepted)
++  ): Effect.fn.Return<SubscribeResult, McpCore.EventFailure | McpCore.RequestRejected> {
++    const opening = !Deferred.isDoneUnsafe(subscription.accepted)
++    const start = yield* Deferred.await(subscription.accepted)
++    if (subscriptions.get(subscription.id) !== subscription) return yield* subscribe(request)
 +    if (subscription.secret !== secret.text) {
 +      subscription.previous = { key: subscription.key, until: now + ROTATION_GRACE_MS }
 +      subscription.secret = secret.text
@@ -3862,6 +3872,7 @@ index 0000000..3f362fe
 +    const moved = subscription.deadlineMoved
 +    subscription.deadlineMoved = Deferred.makeUnsafe()
 +    Deferred.doneUnsafe(moved, Effect.void)
++    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start }
 +    const truncated = subscription.gapUnacknowledged
 +    subscription.gapUnacknowledged = false
 +    return {
@@ -3887,7 +3898,7 @@ index 0000000..3f362fe
 +    const now = yield* Clock.currentTimeMillis
 +    const expiresAt = now + grantTtl(request.ttlMs)
 +    const live = subscriptions.get(id)
-+    if (live !== undefined) return yield* refresh(live, secret, expiresAt, now)
++    if (live !== undefined) return yield* refresh(request, live, secret, expiresAt, now)
 +    // The slot is taken before anything asynchronous, so concurrent subscribes cannot pass the cap.
 +    let held = pending.get(principal) ?? 0
 +    for (const subscription of subscriptions.values()) if (subscription.principal === principal) held++
@@ -3944,7 +3955,10 @@ index 0000000..3f362fe
 +    yield* verify(subscription)
 +    // A concurrent subscribe for the same key may have finished while this one verified.
 +    const raced = subscriptions.get(id)
-+    if (raced !== undefined) return yield* refresh(raced, secret, expiresAt, now)
++    if (raced !== undefined) {
++      release()
++      return yield* refresh(request, raced, secret, expiresAt, now)
++    }
 +    release()
 +    subscriptions.set(id, subscription)
 +    const { accepted } = subscription
