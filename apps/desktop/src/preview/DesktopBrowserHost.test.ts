@@ -1113,22 +1113,40 @@ describe("DesktopBrowserHost", () => {
           }),
         );
 
+      // No cross-site frame is attached yet.
       yield* move(1);
       yield* settle;
-      expect(debuggee.methods).toEqual(["DOM.getNodeForLocation"]);
-      // A lookup that finds no cross-site frame leaves the event on the page.
-      for (const method of ["DOM.describeNode", "Input.dispatchMouseEvent"]) {
-        debuggee.releaseFirst();
-        yield* settle;
-        expect(debuggee.methods.at(-1)).toBe(method);
-      }
+      expect(debuggee.methods).toEqual(["Input.dispatchMouseEvent"]);
+      debuggee.release();
+
+      debuggee.emit("Target.attachedToTarget", {
+        sessionId: "FRAME-SESSION",
+        targetInfo: { targetId: "FRAME", type: "iframe" },
+      });
+      yield* move(2);
+      yield* settle;
+      expect(debuggee.methods.at(-1)).toBe("Page.getLayoutMetrics");
+      // A lookup that fails leaves the event on the page.
+      debuggee.releaseFirst();
+      yield* settle;
+      expect(debuggee.methods.at(-1)).toBe("Input.dispatchMouseEvent");
       debuggee.release();
 
       host.setShown(key, true);
-      yield* move(2);
+      yield* move(3);
       yield* settle;
-      expect(debuggee.methods.at(-1)).toBe("Input.dispatchMouseEvent");
-      expect(debuggee.methods.filter((method) => method.startsWith("DOM."))).toHaveLength(2);
+      debuggee.release();
+      host.setShown(key, false);
+      debuggee.emit("Target.detachedFromTarget", { sessionId: "FRAME-SESSION" });
+      yield* move(4);
+      yield* settle;
+      expect(debuggee.methods.slice(-2)).toEqual([
+        "Input.dispatchMouseEvent",
+        "Input.dispatchMouseEvent",
+      ]);
+      expect(debuggee.methods.filter((method) => method === "Page.getLayoutMetrics")).toHaveLength(
+        1,
+      );
     }),
   );
 

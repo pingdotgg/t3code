@@ -158,13 +158,24 @@ export const routeMouseToFrame =
   async (params) => {
     let { x, y } = params;
     if (typeof x !== "number" || typeof y !== "number") return null;
+    // A wheel over a frame that cannot scroll would no longer reach the page behind it.
+    if (params["type"] === "mouseWheel" || frameSessions.size === 0) return null;
     let sessionId: string | undefined;
     for (let depth = 0; depth < MAX_FRAME_DEPTH; depth++) {
       try {
+        const { cssLayoutViewport: scroll } = (await debuggee.sendCommand(
+          "Page.getLayoutMetrics",
+          {},
+          sessionId,
+        )) as { readonly cssLayoutViewport: { readonly pageX: number; readonly pageY: number } };
+        // The lookup takes whole document pixels; the event and box model use the viewport.
         const { backendNodeId } = (await debuggee.sendCommand(
           "DOM.getNodeForLocation",
-          // Takes whole pixels only; the event keeps its exact point.
-          { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: true },
+          {
+            x: Math.round(x + scroll.pageX),
+            y: Math.round(y + scroll.pageY),
+            includeUserAgentShadowDOM: true,
+          },
           sessionId,
         )) as { readonly backendNodeId: number };
         const { node } = (await debuggee.sendCommand(
@@ -172,17 +183,24 @@ export const routeMouseToFrame =
           { backendNodeId },
           sessionId,
         )) as { readonly node: { readonly frameId?: string } };
-        // A cross-site frame's target id is its frame id; a same-site frame has no session.
+        // A cross-site frame's target id is its frame id; a same-site frame has no session,
+        // and a document's own root element names the frame it is already in.
         const frameSession =
           node.frameId === undefined ? undefined : frameSessions.get(node.frameId);
-        if (frameSession === undefined) break;
+        if (frameSession === undefined || frameSession === sessionId) break;
         const { model } = (await debuggee.sendCommand(
           "DOM.getBoxModel",
           { backendNodeId },
           sessionId,
         )) as { readonly model: { readonly content: ReadonlyArray<number> } };
-        x -= model.content[0] ?? 0;
-        y -= model.content[1] ?? 0;
+        const xs = model.content.filter((_, index) => index % 2 === 0);
+        const ys = model.content.filter((_, index) => index % 2 === 1);
+        const left = Math.min(...xs);
+        const top = Math.min(...ys);
+        // The frame owner's border and padding belong to the page.
+        if (x < left || x >= Math.max(...xs) || y < top || y >= Math.max(...ys)) break;
+        x -= left;
+        y -= top;
         sessionId = frameSession;
       } catch {
         break;
