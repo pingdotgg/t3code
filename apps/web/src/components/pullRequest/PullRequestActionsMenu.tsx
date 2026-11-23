@@ -24,6 +24,7 @@ import {
   MoreHorizontalIcon,
   RotateCcwIcon,
   ScrollTextIcon,
+  SquarePenIcon,
   Trash2Icon,
 } from "lucide-react";
 import { Branch, msg, T, useGT, useMessages } from "gt-react";
@@ -78,6 +79,7 @@ export function PullRequestActionsMenu({
   refreshFromHost,
   handoff,
   attachesToComposer,
+  createThread,
   askAboutPullRequest,
   explainPullRequest,
   canFixFindings,
@@ -131,6 +133,7 @@ export function PullRequestActionsMenu({
   refreshFromHost: () => Promise<void>;
   handoff: string | null;
   attachesToComposer: boolean;
+  createThread: (() => Promise<void>) | null;
   askAboutPullRequest: () => void;
   explainPullRequest: () => void;
   canFixFindings: boolean;
@@ -262,6 +265,13 @@ export function PullRequestActionsMenu({
           threadRef={linkThreadRef}
           onPickerOpenChange={onThreadPickerOpenChange}
         />
+        <MenuItem
+          disabled={handoff !== null || !createThread}
+          onClick={() => void createThread?.()}
+        >
+          <SquarePenIcon className="size-3.5" />
+          {gt("Create thread")}
+        </MenuItem>
         <MenuItem disabled={refreshing} onClick={() => void refreshFromHost()}>
           <RefreshIcon size="sm" refreshing={refreshing} />
           <T context="verb, menu item">Refresh</T>
