@@ -4,8 +4,6 @@ import type {
   GitStatusEntry,
 } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
-import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import * as Cause from "effect/Cause";
 import * as AsyncResult from "effect/reactivity/AsyncResult";
@@ -13,10 +11,8 @@ import { T, useGT } from "gt-react";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
-import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
-import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import {
@@ -30,8 +26,12 @@ import {
   setAllDirectoriesExpanded,
   subscribeOncePerTask,
 } from "../files/fileTreeExpansion";
+import {
+  copyFileTreeRow,
+  fileTreeCopyMenuItems,
+  useTreeContextMenuAnchor,
+} from "../files/fileTreeRowMenu";
 import { Button } from "../ui/button";
-import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   buildDiffFileTreeUpdates,
@@ -106,8 +106,7 @@ export function DiffFileTree({
     }
   });
 
-  // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
-  const contextMenuPointerRef = useRef<{ x: number; y: number; at: number } | null>(null);
+  const contextMenuAnchor = useTreeContextMenuAnchor();
   const showRowContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
       const api = readLocalApi();
@@ -116,36 +115,10 @@ export function DiffFileTree({
         return;
       }
       const row = diffFileTreeRow(item.path, presented.selectionPath);
-      const pointer = contextMenuPointerRef.current;
-      const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
-      const anchorRect = context.anchorElement.getBoundingClientRect();
-      const position = pointerIsFresh
-        ? { x: pointer.x, y: pointer.y }
-        : { x: anchorRect.left, y: anchorRect.bottom };
-      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
-      context.close({ restoreFocus: !pointerIsFresh });
+      const { position, source } = contextMenuAnchor.takeOver(context);
       void settlePromise(async () => {
-        const clicked = await api.contextMenu.show(
-          [
-            { id: "copy-name", label: gt("Copy name") },
-            { id: "copy-path", label: gt("Copy path") },
-          ],
-          position,
-        );
-        if (clicked === null) return;
-        try {
-          await writeTextToClipboard(
-            clicked === "copy-name"
-              ? row.name
-              : formatFilePathForClipboard(row.path, workspaceRoot),
-          );
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: clicked === "copy-name" ? gt("Failed to copy name") : gt("Failed to copy path"),
-            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
-          });
-        }
+        const clicked = await api.contextMenu.show(fileTreeCopyMenuItems(), position, source);
+        if (clicked !== null) await copyFileTreeRow(clicked, row, workspaceRoot);
       }).then((result) => {
         if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
       });
@@ -324,14 +297,7 @@ export function DiffFileTree({
             );
           if (clickedSelectedRow) onSelectFile(presented.selectionPath(path));
         }}
-        // Capture runs before the tree's shadow-internal row handler opens the menu.
-        onContextMenuCapture={(event) => {
-          contextMenuPointerRef.current = {
-            x: event.clientX,
-            y: event.clientY,
-            at: event.timeStamp,
-          };
-        }}
+        onContextMenuCapture={contextMenuAnchor.onContextMenuCapture}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
         onPointerOver={titleClippedPierreTreeRow}

@@ -1,12 +1,11 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m } from "~/i18n/messages";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -27,7 +26,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
-import { T3_PIERRE_ICONS } from "~/pierre-icons";
+import { basenameOfPath, T3_PIERRE_ICONS } from "~/pierre-icons";
 import {
   PIERRE_TREE_UNSAFE_CSS,
   pierreTreeStyle,
@@ -36,6 +35,12 @@ import {
 
 import { joinHostPath } from "./filePath";
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
+import {
+  copyFileTreeRow,
+  fileTreeCopyMenuItems,
+  isFileTreeCopyAction,
+  useTreeContextMenuAnchor,
+} from "./fileTreeRowMenu";
 import {
   areAllDirectoriesExpanded,
   coalesceReentrantCalls,
@@ -212,13 +217,7 @@ export default function FileBrowserPanel({
   // path update scrolls to it again until the user takes over the scroll position.
   const followedRevealRef = useRef<string | null>(null);
 
-  // Shadow-DOM row rects are unreliable; capture the composed contextmenu event's viewport position.
-  const contextMenuPointerRef = useRef<{
-    x: number;
-    y: number;
-    at: number;
-    source: ContextMenuSource;
-  } | null>(null);
+  const contextMenuAnchor = useTreeContextMenuAnchor();
 
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -229,12 +228,6 @@ export default function FileBrowserPanel({
       }
       const relativePath = item.path.replace(/\/$/, "");
       const mention = serializeComposerFileLink(panelPath(relativePath));
-      const pointer = contextMenuPointerRef.current;
-      const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
-      const anchorRect = context.anchorElement.getBoundingClientRect();
-      const position = pointerIsFresh
-        ? { x: pointer.x, y: pointer.y }
-        : { x: anchorRect.left, y: anchorRect.bottom };
       const fileTarget = {
         environmentId,
         filePath: relativePath,
@@ -242,17 +235,17 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
-      // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
-      context.close({ restoreFocus: !pointerIsFresh });
+      const { position, source } = contextMenuAnchor.takeOver(context);
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
+            ...fileTreeCopyMenuItems(),
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
           ],
           position,
-          pointerIsFresh ? pointer.source : undefined,
+          source,
         );
         if (clicked === null) return;
         // Open-with submenu ids are absent from the top-level item list.
@@ -260,6 +253,11 @@ export default function FileBrowserPanel({
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
           await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+          return;
+        }
+        if (isFileTreeCopyAction(clicked)) {
+          const row = { name: basenameOfPath(relativePath), path: panelPath(relativePath) };
+          await copyFileTreeRow(clicked, row, cwd);
           return;
         }
         if (clicked === "copy-mention") {
@@ -570,15 +568,7 @@ export default function FileBrowserPanel({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-file-browser-panel={`${environmentId}:${cwd}`}
-      // Capture runs before the tree's shadow-internal row handler opens the menu.
-      onContextMenuCapture={(event) => {
-        contextMenuPointerRef.current = {
-          x: event.clientX,
-          y: event.clientY,
-          at: event.timeStamp,
-          source: contextMenuSourceOf(event),
-        };
-      }}
+      onContextMenuCapture={contextMenuAnchor.onContextMenuCapture}
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}

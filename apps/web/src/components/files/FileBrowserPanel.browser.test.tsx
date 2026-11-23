@@ -131,6 +131,29 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect((row.getRootNode() as ShadowRoot).activeElement).toBe(row));
   });
 
+  it("copies a folder's path as the panel shows it", async () => {
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+        hostFolder
+      />,
+    );
+    using _menu = { [Symbol.dispose]: () => dismissContextMenu() };
+    using clipboard = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    findTreeRow("src/")!.dispatchEvent(
+      new MouseEvent("contextmenu", { bubbles: true, cancelable: true, composed: true, button: 2 }),
+    );
+    await userEvent.click(page.getByRole("menuitem", { name: "Copy path", exact: true }));
+    await vi.waitFor(() => expect(clipboard).toHaveBeenCalledWith("/repo/src"));
+  });
+
   it("dragging a file row carries a composer mention without opening it, and dragend releases it", async () => {
     const onOpenFile = vi.fn();
     await using _screen = await render(
