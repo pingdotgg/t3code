@@ -121,14 +121,24 @@ struct State {
     app_context: AppContextState,
 }
 
+/// Notes by key: text and the offer that sent it.
+type Notes = HashMap<String, (String, u64)>;
+/// A note an offer replaced: its key and what it held before, if anything.
+type Replaced = (String, Option<(String, u64)>);
+
 /// MCP app notes by native thread (T3's `deliveredAppContext` and `appContextOffered`).
 /// A turn's offer enters the history only when the turn completes; compaction, a
-/// conversation reset and a rollback drop the history's notes. Both maps hold only the
-/// thread's bounded app context entries.
+/// conversation reset and a rollback drop the history's notes. Each offer has an id until
+/// the SDK answers it: a refusal takes back that offer's notes wherever they went, even
+/// into a completed turn's history, unless a newer offer replaced them. The maps hold only
+/// the thread's bounded app context entries.
 #[derive(Default)]
 struct AppContextState {
-    delivered: Option<(String, HashMap<String, String>)>,
-    offered: Option<(String, HashMap<String, String>)>,
+    delivered: Option<(String, Notes)>,
+    offered: Option<(String, Notes)>,
+    /// Offers the SDK has not answered: the notes each replaced in `offered`.
+    pending: HashMap<u64, Vec<Replaced>>,
+    next_offer: u64,
 }
 
 impl AppContextState {
@@ -147,8 +157,64 @@ impl AppContextState {
             .map(|(_, seen)| seen);
         entries
             .iter()
-            .filter(|e| seen.and_then(|seen| seen.get(&e.key)) != Some(&e.text))
+            .filter(|e| seen.and_then(|seen| seen.get(&e.key)).map(|(t, _)| t) != Some(&e.text))
             .collect()
+    }
+
+    /// Records a message that carries notes as offered: a turn's first message starts the
+    /// turn's offer, a steer adds to it. Returns the offer's id for the SDK's answer.
+    fn offer(
+        &mut self,
+        native: String,
+        entries: &[conn_provider::AppContextEntry],
+        starts_turn: bool,
+    ) -> u64 {
+        self.next_offer += 1;
+        let id = self.next_offer;
+        if starts_turn || self.offered.as_ref().is_none_or(|(n, _)| *n != native) {
+            self.offered = Some((native, Notes::new()));
+        }
+        let mut replaced = Vec::new();
+        if let Some((_, notes)) = self.offered.as_mut() {
+            for entry in entries {
+                if notes.get(&entry.key).map(|(t, _)| t) != Some(&entry.text) {
+                    let prior = notes.insert(entry.key.clone(), (entry.text.clone(), id));
+                    replaced.push((entry.key.clone(), prior));
+                }
+            }
+        }
+        self.pending.insert(id, replaced);
+        id
+    }
+
+    /// The SDK took the message.
+    fn accepted(&mut self, offer: u64) {
+        self.pending.remove(&offer);
+    }
+
+    /// The SDK refused the message: its notes go back to what they were, in the turn's offer
+    /// and in a history a completed turn already wrote them to.
+    fn refused(&mut self, offer: u64) {
+        let Some(replaced) = self.pending.remove(&offer) else {
+            return;
+        };
+        for map in [self.offered.as_mut(), self.delivered.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            for (key, prior) in &replaced {
+                if map.1.get(key).is_some_and(|(_, id)| *id == offer) {
+                    match prior {
+                        Some(prior) => {
+                            map.1.insert(key.clone(), prior.clone());
+                        }
+                        None => {
+                            map.1.remove(key);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn turn_ended(&mut self, completed: bool) {
@@ -162,14 +228,8 @@ impl AppContextState {
     fn reset(&mut self) {
         self.delivered = None;
         self.offered = None;
+        self.pending.clear();
     }
-}
-
-fn offer_of(entries: &[conn_provider::AppContextEntry]) -> HashMap<String, String> {
-    entries
-        .iter()
-        .map(|e| (e.key.clone(), e.text.clone()))
-        .collect()
 }
 
 /// Prepends MCP app notes to the prompt as quoted app data (`withClaudeAppContext`). A slash
@@ -1405,7 +1465,7 @@ impl ClaudeSession {
         };
         self.inner.lock().turn_prompt_effort = effort.clone();
         let inner = &self.inner;
-        let (outs, query, uuid, content) = {
+        let (outs, query, uuid, content, offer) = {
             let mut state = inner.lock();
             let query = state
                 .live
@@ -1433,9 +1493,9 @@ impl ClaudeSession {
                 .unwrap_or_default();
             let unseen = state.app_context.unseen(&native, &input.app_context, false);
             let (content, offered) = with_app_context(content, &unseen);
-            // A refused start ends the turn, which drops this offer with it.
-            state.app_context.offered = offered.then(|| (native, offer_of(&input.app_context)));
-            (outs, query, uuid, content)
+            state.app_context.offered = None;
+            let offer = offered.then(|| state.app_context.offer(native, &input.app_context, true));
+            (outs, query, uuid, content, offer)
         };
         inner.deliver(Some(&query), outs).await;
         let offered = query
@@ -1445,12 +1505,20 @@ impl ClaudeSession {
             )
             .await;
         if offered.is_err() {
-            let outs = inner
-                .lock()
-                .mapper
-                .on_exit(false, "The Claude process stopped before the turn started.");
+            let outs = {
+                let mut state = inner.lock();
+                if let Some(offer) = offer {
+                    state.app_context.refused(offer);
+                }
+                state
+                    .mapper
+                    .on_exit(false, "The Claude process stopped before the turn started.")
+            };
             inner.deliver(None, outs).await;
             return Err(ProviderError::SessionStopped);
+        }
+        if let Some(offer) = offer {
+            inner.lock().app_context.accepted(offer);
         }
         Ok(())
     }
@@ -1957,7 +2025,7 @@ impl Session for ClaudeSession {
             let text = catalog::prompt_text(&input.message.text, effort.as_deref());
             let content = self.content(&text, &input.message.attachments).await;
             let uuid = SystemEnv.uuid();
-            let (query, outs, content, before) = {
+            let (query, outs, content, offer) = {
                 let mut state = self.inner.lock();
                 let query = state
                     .live
@@ -1979,16 +2047,10 @@ impl Session for ClaudeSession {
                 let unseen = state.app_context.unseen(&native, &input.app_context, true);
                 let (content, offered) = with_app_context(content, &unseen);
                 // Recorded as it goes out, so a turn that ends before the SDK answers still
-                // counts it; a refusal puts back what the turn had offered before.
-                let before = offered
-                    .then(|| {
-                        state
-                            .app_context
-                            .offered
-                            .replace((native, offer_of(&input.app_context)))
-                    })
-                    .map(|before| (before, state.mapper.active_turn_id().map(str::to_owned)));
-                (query, outs, content, before)
+                // counts it; a refusal takes it back.
+                let offer =
+                    offered.then(|| state.app_context.offer(native, &input.app_context, false));
+                (query, outs, content, offer)
             };
             self.inner.deliver(Some(&query), outs).await;
             let offered = query
@@ -2000,15 +2062,16 @@ impl Session for ClaudeSession {
             if offered.is_err() {
                 let outs = {
                     let mut state = self.inner.lock();
-                    if let Some((before, turn)) = before
-                        && state.mapper.active_turn_id() == turn.as_deref()
-                    {
-                        state.app_context.offered = before;
+                    if let Some(offer) = offer {
+                        state.app_context.refused(offer);
                     }
                     state.mapper.steer_failed(&uuid)
                 };
                 self.inner.deliver(None, outs).await;
                 return Err(ProviderError::SessionStopped);
+            }
+            if let Some(offer) = offer {
+                self.inner.lock().app_context.accepted(offer);
             }
             Ok(())
         })

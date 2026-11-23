@@ -33,6 +33,12 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     case "input":
       log("input");
       fs.appendFileSync(LOG + ".inputs", `${JSON.stringify(cmd.message)}\n`);
+      // The turn completes, then the SDK refuses the steer that raced it.
+      if (JSON.stringify(cmd.message).includes("refuse after done")) {
+        write({ch:"sdk",t:"msg",...sessions.get(cmd.sessionId),m:{type:"result",subtype:"success",is_error:false,result:"done",duration_ms:1,duration_api_ms:1,num_turns:1,total_cost_usd:0,usage:{},modelUsage:{},session_id:cmd.message.session_id}});
+        setTimeout(() => write({ ch: "reply", id: cmd.id, ok: false, error: { message: "the turn ended" } }), 100);
+        break;
+      }
       // A full prompt queue: the SDK refuses the message.
       if (JSON.stringify(cmd.message).includes("refuse me")) {
         write({ ch: "reply", id: cmd.id, ok: false, error: { message: "prompt queue is full" } });
@@ -991,6 +997,27 @@ async fn mcp_app_notes_reach_the_claude_prompt_until_a_turn_takes_them_in() {
         .unwrap();
     assert!(
         last_input().to_string().contains("PROJ-46"),
+        "{}",
+        last_input()
+    );
+
+    // Round-2 gate finding 6: the turn completes, then the SDK refuses a steer it raced. The
+    // refused note never reached Claude, so the next turn sends it.
+    assert!(
+        session
+            .steer_turn(steer("refuse after done", "Created Jira issue PROJ-47"))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        until(&mut events, is_terminal).await.last().unwrap()["status"],
+        "completed"
+    );
+    let mut next = with_note(5, "After the refusal?");
+    next.app_context[0].text = "Created Jira issue PROJ-47".into();
+    session.start_turn(next).await.unwrap();
+    assert!(
+        last_input().to_string().contains("PROJ-47"),
         "{}",
         last_input()
     );
