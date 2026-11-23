@@ -13,7 +13,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeDns from "node:dns";
-import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
 import { makeStaleWhileRevalidate } from "./staleWhileRevalidate.ts";
@@ -29,26 +28,34 @@ interface Tailnet {
   readonly ipv4Addresses: ReadonlyArray<string>;
 }
 
-// MagicDNS answers reverse lookups for tailnet addresses. Other VPNs also use the CGNAT
-// range, so an address without a MagicDNS name is not treated as a tailnet address.
-const lookupTailnetFromInterfaces = Effect.gen(function* () {
-  const address = Object.values(NodeOS.networkInterfaces())
-    .flatMap((addresses) => addresses ?? [])
-    .find(
-      (entry) =>
-        !entry.internal && entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
-    )?.address;
-  if (address === undefined) return null;
-  const magicDnsName = yield* Effect.promise(() =>
+// Other VPNs also use the CGNAT range, so only an address whose reverse lookup returns a
+// MagicDNS name (always under ts.net) is treated as this host's tailnet address.
+const lookupMagicDnsName = (address: string) =>
+  Effect.promise(() =>
     NodeDns.promises.lookupService(address, 0).then(
       ({ hostname }) => {
-        const name = hostname.trim().replace(/\.$/u, "");
-        return name.includes(".") && NodeNet.isIP(name) === 0 ? name : null;
+        const name = hostname.trim().replace(/\.$/u, "").toLowerCase();
+        return name.endsWith(".ts.net") ? name : null;
       },
       () => null,
     ),
   ).pipe(Effect.timeoutOption(TAILNET_NAME_LOOKUP_TIMEOUT), Effect.map(Option.getOrNull));
-  return magicDnsName === null ? null : { magicDnsName, ipv4Addresses: [address] };
+
+const lookupTailnetFromInterfaces = Effect.gen(function* () {
+  const candidates = Object.values(NodeOS.networkInterfaces())
+    .flatMap((addresses) => addresses ?? [])
+    .filter(
+      (entry) =>
+        !entry.internal && entry.family === "IPv4" && isTailscaleIpv4Address(entry.address),
+    )
+    .map((entry) => entry.address);
+  const names = yield* Effect.forEach(candidates, lookupMagicDnsName, { concurrency: "unbounded" });
+  const index = names.findIndex((name) => name !== null);
+  const magicDnsName = names[index];
+  const address = candidates[index];
+  return magicDnsName == null || address === undefined
+    ? null
+    : { magicDnsName, ipv4Addresses: [address] };
 });
 
 export class RemoteOpenTargets extends Context.Service<

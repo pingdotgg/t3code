@@ -28,6 +28,17 @@ const nodeDns: typeof NodeDns = requireBuiltin("node:dns");
 
 const useMacTailnet = () => {
   vi.spyOn(nodeOs, "networkInterfaces").mockReturnValue({
+    // Another VPN on the shared CGNAT range, listed before Tailscale.
+    utun3: [
+      {
+        address: "100.85.0.1",
+        netmask: "255.255.255.255",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "100.85.0.1/32",
+      },
+    ],
     utun4: [
       {
         address: "100.64.1.2",
@@ -206,10 +217,17 @@ describe("RemoteOpenTargets", () => {
 
   it.effect("with a macOS Tailscale app, resolves the tailnet host without the CLI", () =>
     Effect.gen(function* () {
-      const lookupService = useMacTailnet().mockResolvedValueOnce({
-        hostname: "renamed.tail1234.ts.net.",
-        service: "0",
-      });
+      const lookupService = useMacTailnet();
+      // The other VPN's resolver answers too, but not with a MagicDNS name.
+      const reverseNames = (tailnetName: string | null) =>
+        lookupService.mockImplementation((address) =>
+          address === "100.64.1.2" && tailnetName !== null
+            ? Promise.resolve({ hostname: tailnetName, service: "0" })
+            : address === "100.85.0.1"
+              ? Promise.resolve({ hostname: "gw.vpn.example.com", service: "0" })
+              : Promise.reject(Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" })),
+        );
+      reverseNames("renamed.tail1234.ts.net.");
       const spawned: Array<unknown> = [];
       const resolve = (sshd: {
         readonly ipv4: boolean;
@@ -230,14 +248,12 @@ describe("RemoteOpenTargets", () => {
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
       // No MagicDNS answer: a CGNAT address alone may belong to another VPN.
-      lookupService.mockRejectedValueOnce(
-        Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }),
-      );
+      reverseNames(null);
       expect(yield* resolve({ ipv4: true, ipv6: false })).toEqual([
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
       // sshd bound only to the tailnet address (ListenAddress).
-      lookupService.mockResolvedValueOnce({ hostname: "bb-1.tail1234.ts.net.", service: "0" });
+      reverseNames("bb-1.tail1234.ts.net.");
       expect(yield* resolve({ ipv4: false, ipv6: false, tailnet: true })).toEqual([
         { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
