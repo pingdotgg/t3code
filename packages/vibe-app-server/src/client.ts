@@ -26,6 +26,7 @@ const TokenUsage = Schema.Struct({
   inputTokens: Schema.optional(Schema.Number),
   outputTokens: Schema.optional(Schema.Number),
   cachedTokens: Schema.optional(Schema.Number),
+  cachedInputTokens: Schema.optional(Schema.Number),
 });
 
 const PublicSessionWorktree = Schema.Struct({
@@ -101,6 +102,11 @@ export const PageResult = Schema.Struct({
   nextCursor: Schema.optional(Schema.NullOr(Schema.String)),
   previousCursor: Schema.optional(Schema.NullOr(Schema.String)),
 });
+
+const SessionListResult = PageResult.mapFields((fields) => ({
+  ...fields,
+  items: Schema.Array(PublicSession),
+}));
 
 export const AccountBudgetView = Schema.Struct({
   usagePercentage: Schema.Number,
@@ -260,7 +266,7 @@ export class VibeAppServerClient extends Context.Service<
     }) => Effect.Effect<SessionStartResult, VibeError.VibeAppServerError>;
     readonly sessionList: (
       params?: unknown,
-    ) => Effect.Effect<typeof PageResult.Type, VibeError.VibeAppServerError>;
+    ) => Effect.Effect<typeof SessionListResult.Type, VibeError.VibeAppServerError>;
     readonly sessionDelete: (
       sessionId: string,
     ) => Effect.Effect<unknown, VibeError.VibeAppServerError>;
@@ -474,7 +480,7 @@ export const make = Effect.fn("@t3tools/vibe-app-server/VibeAppServerClient.make
       });
     }),
     sessionList: Effect.fn("VibeAppServerClient.sessionList")(function* (params) {
-      return yield* typed("session/list", PageResult, params ?? {});
+      return yield* typed("session/list", SessionListResult, params ?? {});
     }),
     sessionDelete: Effect.fn("VibeAppServerClient.sessionDelete")(function* (sessionId) {
       return yield* requestRaw("session/delete", { sessionId });

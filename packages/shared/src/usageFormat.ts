@@ -55,6 +55,7 @@ export function usageSourceMessages(
       source.status !== "partial" &&
       source.status !== "failed" &&
       source.fingerprint.provider !== "cursor" &&
+      source.fingerprint.provider !== "vibe" &&
       !(source.status === "missing" && source.malformedRecords > 0)
     ) {
       continue;

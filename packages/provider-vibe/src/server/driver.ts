@@ -32,6 +32,7 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { VIBE_PROVIDER } from "./appServerSupport.ts";
+import { vibeUsageReader, type VibeUsageEnv } from "./usage.ts";
 
 const decodeVibeSettings = Schema.decodeSync(VibeSettings);
 const DRIVER_KIND = VIBE_PROVIDER;
@@ -55,8 +56,9 @@ export type VibeDriverEnv =
   | Path.Path
   | ProviderHost.ProviderHost;
 
-export const VibeDriver: ProviderDriver<VibeSettings, VibeDriverEnv> = {
+export const VibeDriver: ProviderDriver<VibeSettings, VibeDriverEnv, VibeUsageEnv> = {
   driverKind: DRIVER_KIND,
+  usage: vibeUsageReader,
   metadata: {
     displayName: "Vibe",
     supportsMultipleInstances: true,

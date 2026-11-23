@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import { ForwardCompatibleArray, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** Bump for incompatible UsageSummary changes; skipped unknown array variants need no bump. */
-export const USAGE_CONTRACT_VERSION = 6 as const;
+export const USAGE_CONTRACT_VERSION = 7 as const;
 
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
@@ -16,6 +16,7 @@ export const UsageProviderKind = Schema.Literals([
   "antigravity",
   "pi",
   "muse",
+  "vibe",
 ]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 

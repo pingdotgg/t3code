@@ -1,6 +1,7 @@
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 
 import type { UsageMetric } from "./usageShortcuts";
 
@@ -9,6 +10,8 @@ type UsageProviderPresentation = {
   readonly color: string;
   readonly driverKind: ProviderDriverKind;
 };
+
+const vibe = ProviderDriverKind.make("vibe");
 
 export const PROVIDER_PRESENTATION = {
   codex: {
@@ -47,6 +50,7 @@ export const PROVIDER_PRESENTATION = {
     color: "#0866ff",
     driverKind: ProviderDriverKind.make("muse"),
   },
+  vibe: { label: getProviderClient(vibe)?.label ?? vibe, color: "#ff8205", driverKind: vibe },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
 
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];

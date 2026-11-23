@@ -1497,10 +1497,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
     const buildThreadSnapshot = Effect.fn("VibeAdapterV2.buildThreadSnapshot")(function* (
       providerThread: OrchestrationV2ProviderThread,
       historyEntries: ReadonlyArray<Record<string, unknown>>,
-      nativeTurns: ReadonlyArray<VibeAppServer.PublicTurn>,
-      persistedTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
     ) {
-      const nativeSessionId = providerThread.nativeThreadRef?.nativeId;
       const now = yield* DateTime.now;
       const messages: OrchestrationV2ConversationMessage[] = [];
       for (const entry of historyEntries) {
@@ -1529,64 +1526,8 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
           updatedAt: entryTime(entry, "updatedAt") ?? createdAt,
         });
       }
-      // Vibe 3.1.2 exposes authoritative state for the latest turn. Older statuses
-      // come from T3's observations when available; history supplies their order.
-      const latestTurns = new Map(nativeTurns.map((turn) => [turn.id, turn]));
-      const knownTurns = new Map(persistedTurns.map((turn) => [turn.id, turn]));
-      const historyTimes = new Map<
-        string,
-        { startedAt: DateTime.Utc | null; completedAt: DateTime.Utc | null }
-      >();
-      for (const entry of historyEntries) {
-        const id = str(entry["turnId"]);
-        if (!id) continue;
-        const previous = historyTimes.get(id);
-        historyTimes.set(id, {
-          startedAt: previous?.startedAt ?? entryTime(entry, "createdAt"),
-          completedAt: entryTime(entry, "updatedAt") ?? previous?.completedAt ?? null,
-        });
-      }
-      const providerTurns: OrchestrationV2ProviderTurn[] = retainedTurnIds(
-        historyEntries,
-        nativeTurns,
-      ).map((id, index) => {
-        const providerTurnId = idAllocator.derive.providerTurn({
-          driver: VIBE_PROVIDER,
-          nativeTurnId: id,
-        });
-        const observed =
-          (nativeSessionId === sessionIdOf() ? state.observedTurns.get(id) : undefined) ??
-          knownTurns.get(providerTurnId);
-        const latest = latestTurns.get(id);
-        const status = latest?.status;
-        const times = historyTimes.get(id);
-        return {
-          id: providerTurnId,
-          providerThreadId: providerThread.id,
-          nodeId: observed?.nodeId ?? providerThread.ownerNodeId ?? NodeId.make(`vibe-root-${id}`),
-          runAttemptId: observed?.runAttemptId ?? null,
-          nativeTurnRef: nativeRef(id),
-          ordinal: observed?.ordinal ?? state.turnOrdinals.get(id) ?? index + 1,
-          status:
-            status === "in_progress"
-              ? "running"
-              : status === "interrupted" ||
-                  status === "failed" ||
-                  status === "cancelled" ||
-                  status === "completed"
-                ? status
-                : (observed?.status ?? "completed"),
-          startedAt:
-            utcFromMillis(latest?.startedAt) ?? observed?.startedAt ?? times?.startedAt ?? null,
-          completedAt:
-            latest !== undefined
-              ? utcFromMillis(latest.completedAt)
-              : (observed?.completedAt ?? times?.completedAt ?? null),
-        };
-      });
       return {
         providerThread,
-        providerTurns,
         messages,
         runtimeRequests: [],
       } satisfies ProviderAdapter.ProviderAdapterV2ThreadSnapshot;
@@ -1603,15 +1544,7 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
         });
       }
       const historyEntries = yield* readAllHistoryEntries(nativeSessionId);
-      const { state: nativeState } = yield* connection.client
-        .sessionRead({ sessionId: nativeSessionId, history: null, turns: { limit: 1 } })
-        .pipe(Effect.mapError(protocolError));
-      return yield* buildThreadSnapshot(
-        snapshotInput.providerThread,
-        historyEntries,
-        nativeState.turns ?? [],
-        [],
-      );
+      return yield* buildThreadSnapshot(snapshotInput.providerThread, historyEntries);
     });
 
     const rollbackThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["rollbackThread"] =
@@ -1696,29 +1629,37 @@ export const makeVibeAdapterV2 = Effect.fn("makeVibeAdapterV2")(function* (
               );
         const nativeState = decodeNativeSessionState(asRecord(rewind)?.["state"]);
         const retainedHistory = historyEntries.slice(0, anchor);
-        const snapshot = yield* buildThreadSnapshot(
-          rollbackInput.providerThread,
-          retainedHistory,
-          Option.getOrUndefined(nativeState)?.turns ?? [],
-          rollbackInput.providerThreadTurns,
-        );
         if (nativeSessionId === sessionIdOf()) {
-          state.turnOrdinals.clear();
+          const retainedIds = retainedTurnIds(
+            retainedHistory,
+            Option.getOrUndefined(nativeState)?.turns ?? [],
+          );
+          const persistedOrdinals = new Map(
+            rollbackInput.providerThreadTurns.map((turn) => [
+              turn.nativeTurnRef?.nativeId,
+              turn.ordinal,
+            ]),
+          );
+          state.turnOrdinals = new Map(
+            retainedIds.map((id, index) => [
+              id,
+              state.observedTurns.get(id)?.ordinal ??
+                persistedOrdinals.get(id) ??
+                state.turnOrdinals.get(id) ??
+                index + 1,
+            ]),
+          );
           state.entries.clear();
           state.streamingEntries.clear();
           for (const entry of retainedHistory) {
             const id = str(entry["id"]);
             if (id) state.entries.set(id, entry);
           }
-          for (const turn of snapshot.providerTurns) {
-            const nativeTurnId = turn.nativeTurnRef?.nativeId;
-            if (nativeTurnId) state.turnOrdinals.set(nativeTurnId, turn.ordinal);
-          }
           for (const nativeTurnId of state.observedTurns.keys()) {
             if (!state.turnOrdinals.has(nativeTurnId)) state.observedTurns.delete(nativeTurnId);
           }
         }
-        return snapshot;
+        return yield* buildThreadSnapshot(rollbackInput.providerThread, retainedHistory);
       }, turnInputLock.withPermits(1));
 
     const forkThread: ProviderAdapter.ProviderAdapterV2SessionRuntime["forkThread"] = (forkInput) =>

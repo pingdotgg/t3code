@@ -7,11 +7,14 @@ import {
   MessageId,
   NodeId,
   ProjectId,
+  ProviderDriverKind,
   RunId,
   RunAttemptId,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
+  ProviderTurnId,
+  type OrchestrationV2ProviderTurn,
   ThreadId,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
@@ -39,6 +42,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { VibeSettings } from "../settings.ts";
 import { makeVibeAdapterV2 } from "./adapter.ts";
 import { withVibeAppServerClient } from "./appServerSupport.ts";
+import { readVibeUsage } from "./usage.ts";
 import { makeVibeTextGeneration } from "./textGeneration.ts";
 import { checkVibeProviderStatus } from "./status.ts";
 
@@ -214,7 +218,70 @@ const openFakeVibe = Effect.fn("openFakeVibe")(function* (
 const millis = (value: DateTime.Utc | null) =>
   value === null ? null : DateTime.toEpochMillis(value);
 
+function checkpointTurn(
+  providerThread: OrchestrationV2ProviderThread,
+  nativeId: string,
+  ordinal: number,
+): OrchestrationV2ProviderTurn {
+  return {
+    id: ProviderTurnId.make(nativeId),
+    providerThreadId: providerThread.id,
+    nodeId: NodeId.make("root"),
+    runAttemptId: null,
+    nativeTurnRef: { driver: ProviderDriverKind.make("vibe"), nativeId, strength: "strong" },
+    ordinal,
+    status: "completed",
+    startedAt: null,
+    completedAt: null,
+  };
+}
+
 describe("Vibe adapter against an in-memory app-server", () => {
+  it.effect("reads unique recent Vibe session totals and resolves model pins for pricing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { spawner } = yield* fakeVibeProcess((method, params) => {
+          if (method === "session/list") {
+            expect(params["includeArchived"]).toBe(true);
+            const session = {
+              id: "latest",
+              updatedAt: 2000,
+              tokenUsage: { inputTokens: 120, cachedInputTokens: 90, outputTokens: 15 },
+            };
+            return {
+              result:
+                params["cursor"] === null
+                  ? { items: [session], nextCursor: "older" }
+                  : {
+                      items: [session, { ...session, id: "older", updatedAt: 500 }],
+                      nextCursor: "outside-window",
+                    },
+            };
+          }
+          if (method === "session/read") {
+            expect(params["sessionId"]).toBe("latest");
+            return { result: { state: { session: { id: "latest", model: "mistral-large" } } } };
+          }
+          return undefined;
+        });
+        const { records, partial } = yield* withVibeAppServerClient(
+          { cwd: process.cwd() },
+          (client) => readVibeUsage(client, 1000),
+        ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+        expect(partial).toBe(false);
+        expect(records).toMatchObject([
+          {
+            provider: "vibe",
+            sessionId: "latest",
+            model: "mistral-large",
+            timestampMs: 2000,
+            totals: { uncachedInputTokens: 30, cachedInputTokens: 90, outputTokens: 15 },
+          },
+        ]);
+      }),
+    ),
+  );
+
   it.effect(
     "keeps unavailable account data unknown and reports missing credentials for installed providers",
     () =>
@@ -309,18 +376,17 @@ describe("Vibe adapter against an in-memory app-server", () => {
           }
           return undefined;
         }, resumed);
-        const snapshot = yield* restarted.runtime.readThreadSnapshot({ providerThread: resumed });
-        const restored = yield* restarted.runtime.rollbackThread({
+        const firstTurn = checkpointTurn(resumed, "t1", 1);
+        yield* restarted.runtime.rollbackThread({
           providerThread: resumed,
-          providerThreadTurns: snapshot.providerTurns,
+          providerThreadTurns: [firstTurn, checkpointTurn(resumed, "t2", 2)],
           target: {
             type: "provider_turn",
-            providerTurn: snapshot.providerTurns[0]!,
+            providerTurn: firstTurn,
             appRunOrdinal: 1,
             checkpointId: CheckpointId.make("restart-restore"),
           },
         });
-        expect(restored.providerTurns.map((turn) => turn.nativeTurnRef?.nativeId)).toEqual(["t1"]);
         expect(nativeMutations).toEqual(["session/resume", "session/rewind"]);
         const restoredNative = yield* restarted.runtime.readThreadSnapshot({
           providerThread: resumed,
@@ -1328,17 +1394,6 @@ describe("Vibe adapter against an in-memory app-server", () => {
           ["user", "second", 2000],
           ["agent", "two", 2100],
         ]);
-        expect(
-          snapshot.providerTurns.map((entry) => [
-            entry.nativeTurnRef?.nativeId,
-            entry.ordinal,
-            entry.status,
-          ]),
-        ).toEqual([
-          ["t1", 1, "completed"],
-          ["t2", 2, "interrupted"],
-        ]);
-
         const resume = {
           threadId,
           modelSelection,
@@ -1414,10 +1469,10 @@ describe("Vibe adapter against an in-memory app-server", () => {
           });
         }
 
-        const providerTurn = snapshot.providerTurns[0]!;
+        const providerTurn = checkpointTurn(providerThread, "t1", 1);
         const rewoundSnapshot = yield* runtime.rollbackThread({
           providerThread,
-          providerThreadTurns: snapshot.providerTurns,
+          providerThreadTurns: [providerTurn, checkpointTurn(providerThread, "t2", 2)],
           target: {
             type: "provider_turn",
             providerTurn,
@@ -1425,9 +1480,6 @@ describe("Vibe adapter against an in-memory app-server", () => {
             checkpointId: CheckpointId.make("rewind"),
           },
         });
-        expect(rewoundSnapshot.providerTurns.map((entry) => entry.nativeTurnRef?.nativeId)).toEqual(
-          ["t1"],
-        );
         expect(rewoundSnapshot.messages.map((entry) => entry.text)).toEqual(["first", "one"]);
         yield* notify("turn/started", { turn: { id: "t4" } });
         expect((yield* takeEvent("provider_turn.updated")).providerTurn.ordinal).toBe(2);

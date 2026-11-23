@@ -87,6 +87,14 @@ const fakeServer = (
             id: message.id,
             error: { code: "conflict", message: "no session" },
           });
+        case "session/list":
+          return yield* serverLine(input, {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              items: [{ id: "s1", tokenUsage: { inputTokens: 120, cachedInputTokens: 90 } }],
+            },
+          });
         default:
           yield* serverLine(input, {
             jsonrpc: "2.0",
@@ -120,6 +128,7 @@ describe("VibeAppServerClient over in-memory stdio", () => {
         const account = yield* client.accountRead("s1");
         expect(account.status).toBe("ready");
         expect(account.budget?.usagePercentage).toBe(12.5);
+        expect((yield* client.sessionList()).items[0]?.tokenUsage?.cachedInputTokens).toBe(90);
 
         // JSON-RPC error surfaces as a typed request error with method attached.
         const outcome = yield* Effect.result(client.sessionStop({ sessionId: "s1" }));
