@@ -46,6 +46,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true, searchCandidates: true },
   labels: true,
+  searchLabels: true,
   edit: { changeRequest: true, comment: true, maintainerEdits: true },
   withheldFileDiff: true,
 };
@@ -529,6 +530,7 @@ export const make = Effect.gen(function* () {
           host: input.host,
           repository: input.repository,
           number: input.number,
+          query: input.query,
         })
         .pipe(Effect.mapError(fail("listLabelCandidates"))),
 

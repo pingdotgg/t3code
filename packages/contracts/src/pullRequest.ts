@@ -311,6 +311,11 @@ export const PullRequestCapabilities = Schema.Struct({
   stacks: Schema.optional(Schema.Boolean),
   stackActions: Schema.optional(Schema.Boolean),
   labels: Schema.optional(Schema.Boolean),
+  /**
+   * Label candidates take a `query` the host matches past the first page. Absent, as from a
+   * server that predates it, means the client narrows the loaded page itself.
+   */
+  searchLabels: Schema.optional(Schema.Boolean),
   /** The host searches the repository's users, so composers can complete `@login`. */
   mentions: Schema.optional(Schema.Boolean),
   /** The sigils whose issue and change request references composers can complete. */
@@ -464,6 +469,13 @@ export const PullRequestReviewerCandidatesInput = Schema.Struct({
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
 });
 export type PullRequestReviewerCandidatesInput = typeof PullRequestReviewerCandidatesInput.Type;
+
+/** `query` asks the host for matches past the first page of candidates. */
+export const PullRequestLabelCandidatesInput = Schema.Struct({
+  ...PullRequestRef.fields,
+  query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(100))),
+});
+export type PullRequestLabelCandidatesInput = typeof PullRequestLabelCandidatesInput.Type;
 
 export const PullRequestRoutingIdentityInput = Schema.Struct({
   host: TrimmedNonEmptyString,

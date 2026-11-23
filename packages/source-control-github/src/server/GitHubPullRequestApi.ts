@@ -726,6 +726,7 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestLabelCandidateList, GitHubPullRequestApiError>;
 
     readonly listRepositoryLabels: (input: {
@@ -2565,7 +2566,7 @@ export const make = Effect.gen(function* () {
       const { owner, name } = parseRepositorySelector(input.repository);
       const operation = "listLabelCandidates";
       return client
-        .LabelCandidates({ owner, name, number: input.number })
+        .LabelCandidates({ owner, name, number: input.number, query: input.query ?? null })
         .pipe(
           graphql({ ...input, operation, allowReserve: true }),
           Effect.map(toLabelCandidates),

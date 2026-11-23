@@ -1081,6 +1081,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     execute: (input) => routedRequest(WS_METHODS.pullRequestsReviewerCandidates, input),
     staleTimeMs: 60_000,
   });
+  // As the reviewer search: the first page of labels cannot answer for the rest of them.
+  const labelSearch = createEnvironmentRpcQueryAtomFamily(runtime, {
+    label: "environment-data:pull-requests:label-search",
+    tag: WS_METHODS.pullRequestsLabelCandidates,
+    execute: (input) => routedRequest(WS_METHODS.pullRequestsLabelCandidates, input),
+    staleTimeMs: 60_000,
+  });
   const loadDiff = Effect.fn("PullRequests.loadDiff")(function* (input: PullRequestDiffInput) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const loader = yield* PullRequestDiffLoader.PullRequestDiffLoader;
@@ -1533,6 +1540,8 @@ export function createPullRequestEnvironmentAtoms<R, E>(
         }),
     }),
     labelCandidates,
+    /** The host's search for labels past the first page, keyed by what was typed. */
+    labelSearch,
     setLabels: showWhileInFlight(
       createEnvironmentRpcCommand(runtime, {
         label: "environment-data:pull-requests:set-labels",

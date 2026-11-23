@@ -51,6 +51,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   mentions: true,
   referenceSigils: [],
   labels: true,
+  // The labels endpoint pages by sort order only, with no text query, so a first page stays short.
+  searchLabels: false,
   // Forgejo's public API has no thread replies/resolution or draft conversion endpoint.
   review: {
     inlineComment: true,

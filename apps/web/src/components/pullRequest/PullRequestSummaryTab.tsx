@@ -977,6 +977,7 @@ export function PullRequestSummaryTab({
                     environmentId={environmentId}
                     reference={reference}
                     allowed={detail.viewerPermissions.labels !== false}
+                    searchable={detail.capabilities.searchLabels === true}
                   />
                 ) : null}
               </span>

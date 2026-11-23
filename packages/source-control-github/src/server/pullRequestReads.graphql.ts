@@ -1326,17 +1326,19 @@ export const LabelCandidates = GraphQL.query("LabelCandidates", {
     variables: [
       { name: "owner", body: "String!" },
       { name: "name", body: "String!" },
-      { name: "number", body: "Int!" }
+      { name: "number", body: "Int!" },
+      { name: "query", body: "String" }
     ],
     selections: [
-      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){labels(first:100 orderBy:{field:NAME direction:ASC}){pageInfo{hasNextPage}nodes{name color description}}pullRequest(number:$", "number", "){labels(first:100){nodes{name}}}}"] }
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){labels(first:100 query:$", "query", " orderBy:{field:NAME direction:ASC}){pageInfo{hasNextPage}nodes{name color description}}pullRequest(number:$", "number", "){labels(first:100){nodes{name}}}}"] }
     ],
     fragments: []
   },
   variables: {
     owner: Schema.String,
     name: Schema.String,
-    number: Shared.Int
+    number: Shared.Int,
+    query: Schema.optional(Schema.NullOr(Schema.String))
   },
   result: Schema.Struct({
     /** Lookup a given repository by the owner and repository name. */

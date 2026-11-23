@@ -547,6 +547,7 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly host?: string | undefined;
       readonly repository: string;
       readonly number: number;
+      readonly query?: string | undefined;
     }) => Effect.Effect<PullRequestLabelCandidateList, GitLabPullRequestCliError>;
 
     readonly setLabels: (input: {
@@ -2636,7 +2637,7 @@ export const make = Effect.gen(function* () {
 
     listLabelCandidates: Effect.fn("GitLabPullRequestCli.listLabelCandidates")(function* (input) {
       const [mergeRequest, project] = yield* Effect.all(
-        [mergeRequestDetail(input), projectLabels(input)],
+        [mergeRequestDetail(input), projectLabels({ ...input, search: input.query })],
         { concurrency: 2 },
       );
       const applied = new Set(mergeRequest.labels.map((label) => label.name));

@@ -643,6 +643,10 @@
       "types": "./src/pullRequestReviewers.ts",
       "default": "./src/pullRequestReviewers.ts"
     },
+    "./pull-request-labels": {
+      "types": "./src/pullRequestLabels.ts",
+      "default": "./src/pullRequestLabels.ts"
+    },
     "./issue-links": {
       "types": "./src/issueLinks.ts",
       "default": "./src/issueLinks.ts"
