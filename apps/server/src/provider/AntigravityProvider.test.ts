@@ -256,7 +256,7 @@ describe("Antigravity model catalog", () => {
     ]);
   });
 
-  it("offers each model the thinking levels it reported when selected", () => {
+  it("offers each model only the thinking levels it reported when selected", () => {
     const thinking = (currentValue: string) =>
       ({
         id: "thinking_level",
@@ -296,8 +296,7 @@ describe("Antigravity model catalog", () => {
     expect(thinkingOf("gemini")).toMatchObject({ id: "thinking_level", currentValue: "high" });
     expect(thinkingOf("claude")).toMatchObject({ id: "thinking_level", currentValue: "low" });
     expect(thinkingOf("plain")).toBeUndefined();
-    expect(thinkingOf("unseen")).toMatchObject({ id: "thinking_level" });
-    expect(thinkingOf("unseen")).not.toHaveProperty("currentValue");
+    expect(thinkingOf("unseen")).toBeUndefined();
   });
 
   it("keeps each model's probed thinking levels after a restart observes only the active model", () => {
