@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ChatFileAttachment,
@@ -16,17 +18,19 @@ import {
   type DraftId,
   composerFileMatchesReattachMarker,
   composerFileNeedsReattach,
+  composerTargetKey,
+  useComposerDraftStore,
 } from "../../composerDraftStore";
 import { type ComposerPromptEditorHandle } from "../ComposerPromptEditorTiptap";
+import type { PendingUserInputProgress } from "../../pendingUserInput";
+import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { type PendingUserInput } from "../../session-logic";
-import {
-  changeQuestionAttachmentPreparation,
-  useQuestionAttachmentPreparation,
-} from "../../questionAttachments";
+import { changeQuestionAttachmentPreparation } from "../../questionAttachments";
 import {
   classifyComposerAttachmentFile,
   composerFileAttachmentMimeType,
   composerImageSourceKey,
+  readComposerImageBytes,
   normalizeComposerImageFileMimeType,
   rememberComposerImageSource,
 } from "./composerAttachmentFiles";
@@ -48,10 +52,13 @@ import {
 import { requestConfirmDialog } from "~/confirmDialog";
 import { toastManager } from "../ui/toast";
 import { type RefObject, useRef } from "react";
+import { serializeComposerImages } from "./composerImagePersistence";
 import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  joinPreparedImagesToDraft,
+  movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
 
@@ -61,7 +68,7 @@ import {
  */
 export function useComposerAttachmentIntake(input: {
   readonly activeThreadId: ChatComposerProps["activeThreadId"];
-  readonly activePendingProgress: ChatComposerProps["activePendingProgress"];
+  readonly activePendingProgress: PendingUserInputProgress | null;
   readonly activePendingIsResponding: boolean;
   readonly pendingUserInputs: ReadonlyArray<PendingUserInput>;
   readonly supportsQuestionAttachments: boolean;
@@ -84,6 +91,7 @@ export function useComposerAttachmentIntake(input: {
   readonly insertAttachmentReferences: (
     references: ReadonlyArray<ComposerContextReference>,
     selection?: { start: number; end: number },
+    pendingInsertion?: ComposerAttachmentInsertion,
   ) => boolean;
 }) {
   const {
@@ -132,7 +140,7 @@ export function useComposerAttachmentIntake(input: {
     ) {
       toastManager.add({
         type: "error",
-        title: "This question cannot accept attachments.",
+        title: m(msg("This question cannot accept attachments.")),
       });
       return false;
     }
@@ -179,26 +187,35 @@ export function useComposerAttachmentIntake(input: {
         replacedReattachMarkerIds.add(matchingReattachMarker.id);
       }
       if (!matchingReattachMarker && reservedCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-        error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`;
+        error = m(
+          msg("You can attach up to {max} files per message.", {
+            max: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        );
         continue;
       }
       if (attachmentKind === "unsupported-image") {
-        error = `'${file.name}' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.`;
+        error = m(
+          msg(
+            "''{name}'' is not a supported image type. Attach GIF, HEIC, HEIF, JPEG, PNG, or WebP images.",
+            { name: file.name },
+          ),
+        );
         continue;
       }
       if (attachmentKind === "image") {
         acceptedImages.push(normalizeComposerImageFileMimeType(file));
       } else {
         if (fileStagingLimit === null) {
-          error = "This server does not support file attachments.";
+          error = m(msg("This server does not support file attachments."));
           continue;
         }
         if (file.size <= 0) {
-          error = `'${file.name}' is empty or could not be read.`;
+          error = m(msg("''{name}'' is empty or could not be read.", { name: file.name }));
           continue;
         }
         if (file.size > fileStagingLimit) {
-          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit);
+          error = fileAttachmentTooLargeMessage(file.name, fileStagingLimit, m);
           continue;
         }
         const attachmentFile =
@@ -234,10 +251,13 @@ export function useComposerAttachmentIntake(input: {
         const attached = storedFiles[0]!;
         toastManager.add({
           type: "info",
-          title: `Large paste attached as ${attached.name}`,
-          description: `${formatAttachmentSize(attached.sizeBytes)} · Use ${
-            isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V"
-          } to keep a large paste inline.`,
+          title: m(msg("Large paste attached as {name}", { name: attached.name })),
+          description: m(
+            msg("{size} · Use {shortcut} to keep a large paste inline.", {
+              size: formatAttachmentSize(attached.sizeBytes, m),
+              shortcut: isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V",
+            }),
+          ),
           data: { hideCopyButton: true },
         });
       }
@@ -265,9 +285,20 @@ export function useComposerAttachmentIntake(input: {
     const compressed: { id: string; file: File }[] = [];
     // Keyed by image so a failure whose tile was removed (even mid-compression) is not reported.
     const compressionErrors = new Map<string, string>();
-    for (const { id, file } of preparingImages) {
+    const pendingInsertion = imageAttachmentsGetChips
+      ? composerEditorRef.current?.captureAttachmentInsertion()
+      : undefined;
+    for (const image of preparingImages) {
+      const { id, file } = image;
+      const movedThread = movedPreparingImageThread(image);
       // Removed from the strip while an earlier image was compressing.
-      if (!isPreparingComposerImage(attachmentTargetKey, id)) continue;
+      if (
+        !isPreparingComposerImage(
+          movedThread ? composerTargetKey(movedThread) : attachmentTargetKey,
+          id,
+        )
+      )
+        continue;
       // A rejection must still reach the cleanup below: a leaked
       // placeholder would block sending from this draft for good.
       const result = await prepareImageForAttachment(
@@ -278,29 +309,25 @@ export function useComposerAttachmentIntake(input: {
         compressionErrors.set(
           id,
           result.reason === "unreadable"
-            ? `'${file.name}' could not be read as an image.`
-            : `'${file.name}' is too large to attach, even after compression.`,
+            ? m(msg("''{name}'' could not be read as an image.", { name: file.name }))
+            : m(
+                msg("''{name}'' is too large to attach, even after compression.", {
+                  name: file.name,
+                }),
+              ),
         );
         continue;
       }
       await inheritComposerImageThumbnail(file, result.file);
+      await readComposerImageBytes(result.file);
       rememberComposerImageSource(file, result.file);
       compressed.push({ id, file: result.file });
     }
-    const questionDiscarded =
-      questionAttachmentTarget !== null &&
-      !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget];
-    // Same tick as the draft insert below, so the strip swaps placeholders for
-    // real tiles in one render. A placeholder removed meanwhile stays removed.
-    const stillPreparingIds = removePreparingComposerImages(
-      attachmentTargetKey,
-      new Set(preparingImages.map((image) => image.id)),
-    );
-    if (questionAttachmentTarget)
-      changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
-    if (questionDiscarded) return false;
+    pendingInsertion?.dispose();
+    const movedThread = preparingImages.map(movedPreparingImageThread).find(Boolean);
+    const completionTargetKey = movedThread ? composerTargetKey(movedThread) : attachmentTargetKey;
     const nextImages: ComposerImageAttachment[] = compressed
-      .filter(({ id }) => stillPreparingIds.has(id))
+      .filter(({ id }) => isPreparingComposerImage(completionTargetKey, id))
       .map(({ id, file }) => ({
         type: "image",
         id,
@@ -310,38 +337,80 @@ export function useComposerAttachmentIntake(input: {
         previewUrl: URL.createObjectURL(file),
         file,
       }));
-    const storedImageIds = new Set(
-      nextImages.length === 1 && nextImages[0]
-        ? addComposerImage(nextImages[0])
-        : nextImages.length > 1
-          ? addComposerImagesToDraft(nextImages)
-          : [],
+    const unrestoredImageNames: string[] = [];
+    const draftStore = useComposerDraftStore.getState();
+    const storedImageIds = joinPreparedImagesToDraft(
+      () =>
+        new Set(
+          movedThread
+            ? draftStore.addImages(movedThread, nextImages, {
+                onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+              })
+            : nextImages.length === 1 && nextImages[0]
+              ? addComposerImage(nextImages[0])
+              : nextImages.length > 1
+                ? addComposerImagesToDraft(nextImages)
+                : [],
+        ),
     );
+    // Keep the placeholders until the draft decides whether the recovered images fit,
+    // so a held send can be cancelled before the last placeholder disappears.
+    const stillPreparingIds = removePreparingComposerImages(
+      completionTargetKey,
+      new Set(preparingImages.map((image) => image.id)),
+      { cancelSubmission: compressionErrors.size > 0 || unrestoredImageNames.length > 0 },
+    );
+    if (questionAttachmentTarget && !movedThread)
+      changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
     const storedImages = nextImages.filter((image) => storedImageIds.has(image.id));
     // The draft may be gone by now; revoking a URL the store already revoked is harmless.
     for (const image of nextImages) {
       if (!storedImageIds.has(image.id)) URL.revokeObjectURL(image.previewUrl);
     }
-    if (storedImages.length > 0 && imageAttachmentsGetChips) {
+    if (storedImages.length > 0 && imageAttachmentsGetChips && !movedThread) {
       insertedAny =
-        insertAttachmentReferences(storedImages.map(imageContextReference)) || insertedAny;
+        joinPreparedImagesToDraft(() =>
+          insertAttachmentReferences(
+            storedImages.map(imageContextReference),
+            undefined,
+            pendingInsertion,
+          ),
+        ) || insertedAny;
     }
     // Only failures are reported here. Success must not pass `null`: by
     // now other work (a failed send, an overlapping paste) may have set a
     // thread error this call knows nothing about, and clearing it would
     // swallow that message.
-    const compressionError = [...compressionErrors]
+    const completionErrors = [...compressionErrors]
       .filter(([id]) => stillPreparingIds.has(id))
       .map(([, message]) => message)
-      .at(-1);
-    if (compressionError !== undefined) {
-      setThreadError(threadId, compressionError);
+      .slice(-1);
+    if (unrestoredImageNames.length > 0) {
+      completionErrors.push(
+        m(
+          msg("{names} could not be restored: the composer is at its {limit}-attachment limit.", {
+            names: unrestoredImageNames.join(", "),
+            limit: PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          }),
+        ),
+      );
+    }
+    if (completionErrors.length > 0) {
+      setThreadError(threadId, completionErrors.join("\n"));
+    }
+    if (movedThread && storedImages.length > 0) {
+      const serialized = await serializeComposerImages(storedImages, []);
+      await draftStore.appendPersistedAttachments(movedThread, storedImages, serialized);
     }
     return insertedAny;
   };
 
   const removeComposerImage = (imageId: string) => {
-    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+    if (
+      removePreparingComposerImages(attachmentTargetKey, new Set([imageId]), {
+        cancelSubmission: true,
+      }).size > 0
+    ) {
       // Its compression finishes in the background and is dropped.
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
@@ -356,7 +425,18 @@ export function useComposerAttachmentIntake(input: {
       return;
     }
     const confirmation = requestConfirmDialog(
-      `Remove ${image?.name ?? "this image"} from the message?\nIt is referenced in your text; removing it also removes every reference.`,
+      image?.name != null
+        ? m(
+            msg(
+              "Remove {name} from the message?\nIt is referenced in your text; removing it also removes every reference.",
+              { name: image.name },
+            ),
+          )
+        : m(
+            msg(
+              "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
+            ),
+          ),
       { variant: "destructive" },
     );
     if (!confirmation) {
@@ -409,8 +489,8 @@ export function useComposerAttachmentIntake(input: {
       }
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large for this message",
-        description: "Remove some text or an attachment, then paste again.",
+        title: m(msg("Pasted text is too large for this message")),
+        description: m(msg("Remove some text or an attachment, then paste again.")),
         data: { hideCopyButton: true },
       });
       return true;
@@ -431,8 +511,8 @@ export function useComposerAttachmentIntake(input: {
       if (!wouldExceedInputLimit) return false;
       toastManager.add({
         type: "error",
-        title: "Pasted text is too large to attach",
-        description: "Reduce the clipboard contents or save a smaller excerpt as a file.",
+        title: m(msg("Pasted text is too large to attach")),
+        description: m(msg("Reduce the clipboard contents or save a smaller excerpt as a file.")),
         data: { hideCopyButton: true },
       });
       return true;

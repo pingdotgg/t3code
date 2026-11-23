@@ -30,6 +30,7 @@ import {
   markdownToFlat,
   pmToFlat,
   serializeEditorDoc,
+  serializedMarkdownOffset,
   serializeSelection,
   skillChipReplacements,
   stepCaretAcrossStyledEdge,
@@ -314,7 +315,7 @@ describe("composer rich text document model", () => {
     "- [ ] parent\n  - [ ] child\n  - [ ] sibling\n- [ ] uncle",
     "- [ ] empty task follows\n- [ ]",
     "- [ ] **bold** task with @README.md",
-    "para\n- [ ] task\npara",
+    "para\n- [ ] task\n\npara",
     "- [ ]No space stays literal",
     "-[ ] also literal",
     "@README.md explain this",
@@ -498,7 +499,7 @@ describe("composer rich text document model", () => {
     "- **bold** item with @README.md",
     "- [ ] task\n- bullet after",
     "- bullet\n- [x] task after",
-    "para\n- item\npara",
+    "para\n- item\n\npara",
     "\t- tab indented\n\t- again",
     "  - leading indent only",
     "- item\n\n- after a blank",
@@ -570,6 +571,15 @@ describe("composer rich text document model", () => {
       );
     });
 
+    it("reopens without an empty line between the quote and the comment", () => {
+      const { doc, map } = serialize(quote("quoted"), paragraph("Comment to it"));
+      const reopened = ProseMirrorNode.fromJSON(
+        schema,
+        buildDocJson(map.value, (name) => ({ label: name, description: null })),
+      );
+      expect(reopened.toJSON()).toEqual(doc.toJSON());
+    });
+
     it("settles on the blank line when a draft glued it to the quote", () => {
       const settled = "before\n> quoted\n\nafter";
       expect(roundTrip("before\n> quoted\nafter").value).toBe(settled);
@@ -598,6 +608,82 @@ describe("composer rich text document model", () => {
     });
   });
 
+  describe("a paragraph after a list", () => {
+    const skillLabelFor = (name: string) => ({ label: name, description: null });
+    it.each([
+      ["a numbered list", "1. a\n2. b\n3. c", 0],
+      ["a bullet list", "- a\n- b", 0],
+      ["a task list", "- [ ] a", 0],
+      ["a bullet list and an empty line", "- a", 1],
+    ])(
+      "is written after a blank line after %s, or Markdown folds it into the last item",
+      (_kind, list, emptyLines) => {
+        const listJson = buildDocJson(list, skillLabelFor);
+        const doc = ProseMirrorNode.fromJSON(schema, {
+          type: "doc",
+          content: [
+            ...listJson.content,
+            ...Array.from({ length: emptyLines }, () => ({ type: "paragraph" })),
+            { type: "paragraph", content: [{ type: "text", text: "d" }] },
+          ],
+        });
+        doc.check();
+        expect(doc.childCount).toBe(2 + emptyLines);
+        const { value } = serializeEditorDoc(doc);
+        expect(value).toBe(`${list}\n\n${"\n".repeat(emptyLines)}d`);
+        const reopened = ProseMirrorNode.fromJSON(schema, buildDocJson(value, skillLabelFor));
+        expect(reopened.toJSON()).toEqual(doc.toJSON());
+      },
+    );
+  });
+
+  describe("a dash rule after a paragraph", () => {
+    const paragraph = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+    const rule = (source: string) => ({ type: "horizontalRule", attrs: { source } });
+    const serialize = (...content: object[]) => {
+      const doc = ProseMirrorNode.fromJSON(schema, { type: "doc", content });
+      doc.check();
+      return { doc, map: serializeEditorDoc(doc) };
+    };
+
+    it("is written after a blank line, or Markdown reads the paragraph as a heading", () => {
+      const settled = "text\n\n---\nmore";
+      expect(roundTrip("text\n---\nmore").value).toBe(settled);
+      expect(roundTrip(settled).value).toBe(settled);
+    });
+
+    it("keeps every offset mapped through the blank line", () => {
+      const { doc, map } = serialize(paragraph("text"), rule("---"), paragraph("more"));
+      expect(map.value).toBe("text\n\n---\nmore");
+      for (let flat = 0; flat <= map.docLength; flat += 1) {
+        expect(markdownToFlat(map, flatToMarkdown(map, flat))).toBe(flat);
+      }
+      // The blank line is not a place to type: it clamps to the rule.
+      expect(flatToMarkdown(map, "text".length)).toBe("text".length);
+      expect(markdownToFlat(map, "text\n".length)).toBe("text".length + 1);
+      expect(flatToMarkdown(map, "text".length + 1)).toBe("text\n\n---".length);
+      expect(flatToPm(map, "text".length + 1)).toBe(doc.child(0).nodeSize + doc.child(1).nodeSize);
+    });
+  });
+
+  it.each([
+    ["text\n---\nmore", "text\n---\nm".length, "text\n\n---\nm".length],
+    ["before\n> quoted\nafter", "before\n> quoted\na".length, "before\n> quoted\n\na".length],
+    ["__x__\n---\nmore", "__x__\n---\nm".length, "**x**\n\n---\nm".length],
+    [
+      "*a*_b_\n> q\nx\n> q\nabcde",
+      "*a*_b_\n> q\nx\n> q\na".length,
+      "*a*_b_\n> q\nx\n> q\na".length,
+    ],
+    ["a\n---\n", "a".length, "a".length],
+  ])("restores a caret in the glued draft %j on the same character", (value, caret, settled) => {
+    const map = roundTrip(value);
+    const restore = (offset: number) =>
+      markdownToFlat(map, serializedMarkdownOffset(value, map.value, offset));
+    expect(restore(value.length)).toBe(map.docLength);
+    expect(restore(caret)).toBe(markdownToFlat(map, settled));
+  });
+
   it.each([
     "---",
     "***",
@@ -606,7 +692,8 @@ describe("composer rich text document model", () => {
     "* * *",
     "-----",
     "---   ",
-    "text\n---\nmore",
+    "text\n***\nmore",
+    "text\n- - -\nmore",
     "- item\n---\n- item two",
     "```\n---\n```",
     "--",
@@ -652,7 +739,7 @@ describe("composer rich text document model", () => {
 
   it.each([
     ["---", "---"],
-    ["a\n---", "a\n---"],
+    ["a\n---", "a\n\n---"],
     ["---\n", "---"],
   ])("gives the caret a line after the final rule of %j, written %j", (value, expected) => {
     const map = roundTrip(value);
@@ -954,7 +1041,7 @@ describe("pasting into a path query", () => {
   });
 
   it("parses markdown when the paste does not continue a path query", () => {
-    expect(boldText(paste("Open ", "src/__test__.tsx"))).toEqual(["test"]);
+    expect(boldText(paste("Open ", "__test__ now"))).toEqual(["test"]);
     expect(boldText(paste("Open @a ", "__b__"))).toEqual(["b"]);
     expect(boldText(paste("Open @", " __b__"))).toEqual(["b"]);
   });
