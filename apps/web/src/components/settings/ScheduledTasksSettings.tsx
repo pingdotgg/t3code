@@ -52,8 +52,9 @@ import {
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "../../i18n/messages";
 
-import { formatRelativeTime } from "../../timestampFormat";
+import { formatRelativeTime, resolveHour12 } from "../../timestampFormat";
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
+import { TimePicker } from "../ui/time-picker";
 import { getCustomModelOptionsByInstance, selectsPlanAgent } from "../../modelSelection";
 import { providerInstanceEntriesFor } from "../../providerInstances";
 import { usePrimaryCloudLinkState } from "../../cloud/cloudLinkState";
@@ -1471,6 +1472,7 @@ function ScheduledTaskEditorForm({
   const messages = useMessages();
   const locale = useLocale();
   const gt = useGT();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const { scope, connectedEnvironments } = useSettingsScope();
   const [environmentId, setEnvironmentId] = useState(initialEnvironmentId);
   const environment = useEnvironment(environmentId);
@@ -2262,20 +2264,19 @@ function ScheduledTaskEditorForm({
             ) : draft.scheduleMode === "fixed" ? (
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2">
-                  <Label htmlFor="scheduled-task-time">
+                  <Label id="scheduled-task-time-label">
                     <T>Run at</T>
                   </Label>
-                  <Input
-                    type="time"
+                  <TimePicker
                     id="scheduled-task-time"
+                    aria-labelledby="scheduled-task-time-label"
                     aria-describedby={
                       runAtZone === undefined ? undefined : "scheduled-task-time-zone"
                     }
-                    nativeInput
-                    className="w-32"
+                    hour12={resolveHour12(timestampFormat)}
                     value={draft.timeOfDay}
-                    onChange={(event) =>
-                      setDraft((current) => ({ ...current, timeOfDay: event.target.value }))
+                    onValueChange={(timeOfDay) =>
+                      setDraft((current) => ({ ...current, timeOfDay }))
                     }
                   />
                   {runAtZone === undefined ? null : (

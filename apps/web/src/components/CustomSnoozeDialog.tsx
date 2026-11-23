@@ -11,11 +11,12 @@ import {
 import { Button } from "./ui/button";
 import { CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
-import { weekStartsOn } from "../timestampFormat";
+import { resolveHour12, weekStartsOn } from "../timestampFormat";
+import { useClientSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useFormattingLocale } from "../i18n/I18nProvider";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
-import { Input } from "./ui/input";
+import { TimePicker } from "./ui/time-picker";
 import { Label } from "./ui/label";
 import { Toggle, ToggleGroup } from "./ui/toggle-group";
 import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
@@ -67,6 +68,7 @@ export function CustomSnoozeDialogHost() {
 function CustomSnoozeDialog() {
   const gt = useGT();
   const locale = useFormattingLocale();
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -174,21 +176,22 @@ function CustomSnoozeDialog() {
                         </PopoverPopup>
                       </Popover>
                     </div>
-                    <Label className="flex min-w-0 flex-col items-stretch" htmlFor={`${id}-time`}>
-                      <T context="time of day">Time</T>
-                      <Input
-                        nativeInput
+                    <div className="flex min-w-0 flex-col gap-2">
+                      <Label id={`${id}-time-label`}>
+                        <T context="time of day">Time</T>
+                      </Label>
+                      <TimePicker
                         id={`${id}-time`}
-                        className="h-9 sm:h-8"
-                        type="time"
-                        required
+                        aria-labelledby={`${id}-time-label`}
+                        className="w-full"
+                        hour12={resolveHour12(timestampFormat)}
                         value={time}
-                        onChange={(event) => {
-                          setTime(event.target.value);
+                        onValueChange={(nextTime) => {
+                          setTime(nextTime);
                           setError(null);
                         }}
                       />
-                    </Label>
+                    </div>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
