@@ -46,7 +46,8 @@ import {
   openCodeSkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
   openCodeProviderModels,
-  readSettledOpenCode2Catalog,
+  readLoadedOpenCode2Catalog,
+  type OpenCode2Model,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
@@ -450,6 +451,50 @@ export const OpenCodeDriver: ProviderDriver<
           );
         }).pipe(Effect.scoped),
       );
+    const listOpenCode2DirectoryCatalog = (cwd: string) =>
+      openCode2Server
+        .withConnection(({ client, events }) =>
+          Effect.gen(function* () {
+            const directory = pathService.resolve(cwd);
+            // OpenCode loads a folder as the project that contains it, so events can name that root.
+            const covers = (root: string | undefined) => {
+              if (root === undefined) return false;
+              const relative = pathService.relative(root, directory);
+              return (
+                relative === "" || (!relative.startsWith("..") && !pathService.isAbsolute(relative))
+              );
+            };
+            const updated = yield* Deferred.make<void>();
+            const stream = yield* events.pipe(Effect.option);
+            if (stream._tag === "Some") {
+              yield* stream.value.pipe(
+                Stream.runForEach((event) =>
+                  event.type === "model.updated" &&
+                  "location" in event &&
+                  covers(event.location?.directory)
+                    ? Deferred.succeed(updated, undefined)
+                    : Effect.void,
+                ),
+                Effect.ignore,
+                Effect.forkScoped,
+              );
+            }
+            return yield* readLoadedOpenCode2Catalog(
+              loadOpenCode2DirectoryCatalog(client, cwd),
+              Deferred.await(updated),
+              // Without events no load can be awaited, so settle the reads as before.
+              stream._tag === "None"
+                ? Effect.succeed(true)
+                : client.debug.location.list().pipe(
+                    Effect.map((loaded) => loaded.some((entry) => covers(entry.directory))),
+                    Effect.timeout("2 seconds"),
+                    Effect.orElseSucceed(() => true),
+                  ),
+              processEnv,
+            );
+          }).pipe(Effect.scoped),
+        )
+        .pipe(Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()));
     const serverOwner = yield* OpenCodeServerOwner.make({
       binaryPath: effectiveConfig.binaryPath,
       directory: host.paths.cwd,
@@ -713,12 +758,7 @@ export const OpenCodeDriver: ProviderDriver<
                     [
                       snapshot.getSnapshot,
                       // A project's opencode.jsonc can define its own providers.
-                      readSettledOpenCode2Catalog(
-                        openCode2Server.withConnection(({ client }) =>
-                          loadOpenCode2DirectoryCatalog(client, cwd),
-                        ),
-                        processEnv,
-                      ).pipe(
+                      listOpenCode2DirectoryCatalog(cwd).pipe(
                         Effect.map(
                           Option.map((catalog) =>
                             openCode2ProviderModels(effectiveConfig, catalog),

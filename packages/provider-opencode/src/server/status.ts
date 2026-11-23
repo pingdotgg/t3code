@@ -631,7 +631,7 @@ export const makeOpenCode2ModelLoader = <E>(
   });
 
 /** None when the reads fail or never agree, so a partial catalog never passes for a settled one. */
-export const readSettledOpenCode2Catalog = <E>(
+const readSettledOpenCode2Catalog = <E>(
   list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
   environment?: NodeJS.ProcessEnv,
 ) =>
@@ -641,6 +641,35 @@ export const readSettledOpenCode2Catalog = <E>(
     ),
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
+
+/**
+ * Reading a location the server has not loaded boots it, and its catalog grows (built-in providers
+ * first, configured ones later) until the location's `model.updated`. A partial step can outlast
+ * the settle interval, so a cold location waits for that event before settling; `updated` must
+ * listen before `read`.
+ */
+export const readLoadedOpenCode2Catalog = Effect.fn(
+  "OpencodeProviderStatus.readLoadedOpenCode2Catalog",
+)(function* <E>(
+  read: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  updated: Effect.Effect<void>,
+  loaded: Effect.Effect<boolean>,
+  environment?: NodeJS.ProcessEnv,
+) {
+  if (!(yield* loaded)) {
+    yield* Effect.ignore(read);
+    yield* updated.pipe(
+      Effect.timeoutOption(
+        resolveProviderProbeTimeoutMs(
+          "opencode",
+          OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS,
+          environment,
+        ),
+      ),
+    );
+  }
+  return yield* readSettledOpenCode2Catalog(read, environment);
+});
 
 export interface OpenCode2Workspace {
   readonly skills: ReadonlyArray<{

@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
@@ -27,6 +28,7 @@ import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
   makeOpenCode2ModelLoader,
+  readLoadedOpenCode2Catalog,
   type OpenCode2Model,
   type OpenCode2Workspace,
 } from "./status.ts";
@@ -1295,6 +1297,50 @@ it.effect("reads an already loaded OpenCode 2 directory once without waiting for
     );
     NodeAssert.deepEqual(workspace, scanned);
     NodeAssert.deepEqual(calls, ["read"]);
+  }),
+);
+
+it.effect("waits for model.updated before settling a cold OpenCode 2 location's catalog", () =>
+  Effect.gen(function* () {
+    const builtIn: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    const configured: ReadonlyArray<OpenCode2Model> = [
+      ...builtIn,
+      { providerID: "custom", id: "auto-fast", name: "Custom Auto Fast", variants: [] },
+    ];
+    let current = builtIn;
+    const calls: Array<string> = [];
+    const updated = yield* Deferred.make<void>();
+    const load = yield* readLoadedOpenCode2Catalog(
+      Effect.sync(() => (calls.push("read"), current)),
+      Deferred.await(updated),
+      Effect.sync(() => (calls.push("loaded"), false)),
+    ).pipe(Effect.forkChild);
+    // The built-in step outlasts two settle reads, which would agree on it.
+    yield* TestClock.adjust("2 seconds");
+    NodeAssert.deepEqual(calls, ["loaded", "read"]);
+    current = configured;
+    yield* Deferred.succeed(updated, undefined);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(load), Option.some(configured));
+  }),
+);
+
+it.effect("settles an already loaded OpenCode 2 location without waiting for model.updated", () =>
+  Effect.gen(function* () {
+    const catalog: ReadonlyArray<OpenCode2Model> = [
+      { providerID: "opencode", id: "big-pickle", name: "Big Pickle", variants: [] },
+    ];
+    let reads = 0;
+    const load = yield* readLoadedOpenCode2Catalog(
+      Effect.sync(() => (reads++, catalog)),
+      Effect.never,
+      Effect.succeed(true),
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(yield* Fiber.join(load), Option.some(catalog));
+    NodeAssert.equal(reads, 2);
   }),
 );
 
