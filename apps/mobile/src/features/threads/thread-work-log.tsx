@@ -1007,10 +1007,11 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
     ) : (
       <View>
         {errorRow}
-        <View className="ml-7 pb-1">
+        <View className="ml-7 mt-1.5 pb-1">
           <Button
             label={gt("Verify Google account")}
             size="compact"
+            tone="secondary"
             onPress={() => void tryOpenExternalUrl(verificationUrl, "provider-auth")}
           />
         </View>

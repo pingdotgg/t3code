@@ -3,10 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
-import {
-  GoogleAccountVerificationUrl,
-  type OrchestrationV2ProviderFailure,
-} from "@t3tools/contracts";
+import type { OrchestrationV2ProviderFailure } from "@t3tools/contracts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -29,29 +26,29 @@ const API_ERROR =
   /Error (\d{3}), Message: ((?:(?!, Status: |Error \d{3}, Message: ).)+), Status: ([A-Z_]+|\d{3}[^,\n]*)/s;
 // Antigravity 1.5 with a Google account writes "STATUS (code NNN): message".
 const STATUS_ERROR = /(?<![A-Z_])([A-Z_]+) \(code (\d{3})\): (\P{Cc}+)/u;
-// Newer Antigravity builds attach the pretty-printed HTTP body to the native error step.
-const HTTP_ERROR_BODY = /\n(\{\s*"error"\s*:[\s\S]*?\n\})/;
+// Newer Antigravity builds attach the HTTP JSON body (pretty-printed or compact) to the error step.
+const ERROR_JSON_START = /\{\s*"error"\s*:/g;
 const decodeVerificationError = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       error: Schema.Struct({
         code: Schema.Literal(403),
         status: Schema.Literal("PERMISSION_DENIED"),
-        details: Schema.Array(
-          Schema.Struct({
-            "@type": Schema.optionalKey(Schema.String),
-            domain: Schema.optionalKey(Schema.String),
-            reason: Schema.optionalKey(Schema.String),
-            metadata: Schema.optionalKey(
-              Schema.Struct({ validation_url: Schema.optionalKey(Schema.Unknown) }),
-            ),
-          }),
-        ),
+        details: Schema.Array(Schema.Unknown),
       }),
     }),
   ),
 );
-const decodeVerificationUrl = Schema.decodeUnknownOption(GoogleAccountVerificationUrl);
+const decodeVerificationErrorInfo = Schema.decodeUnknownOption(
+  Schema.Struct({
+    "@type": Schema.Literal("type.googleapis.com/google.rpc.ErrorInfo"),
+    domain: Schema.Literal("cloudcode-pa.googleapis.com"),
+    reason: Schema.Literal("VALIDATION_REQUIRED"),
+    metadata: Schema.optionalKey(
+      Schema.NullOr(Schema.Struct({ validation_url: Schema.optionalKey(Schema.Unknown) })),
+    ),
+  }),
+);
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
@@ -157,6 +154,48 @@ function statusError(text: string) {
   return match === null ? null : ([match[0], match[2], match[3], match[1]] as const);
 }
 
+function balancedJsonObject(text: string, start: number): string | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+function verificationErrorInfo(text: string) {
+  for (const match of text.matchAll(ERROR_JSON_START)) {
+    const json = balancedJsonObject(text, match.index);
+    if (json === undefined) continue;
+    const response = Option.getOrUndefined(decodeVerificationError(json));
+    if (response === undefined) continue;
+    for (const detail of response.error.details) {
+      const info = Option.getOrUndefined(decodeVerificationErrorInfo(detail));
+      if (info !== undefined) return info;
+    }
+  }
+  return undefined;
+}
+
 function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
@@ -201,26 +240,17 @@ function turnFailure(
       threadDisposition: "broken",
     };
   }
-  const response = Option.getOrUndefined(decodeVerificationError(HTTP_ERROR_BODY.exec(text)?.[1]));
-  const verification = response?.error.details.find(
-    (detail) =>
-      detail["@type"] === "type.googleapis.com/google.rpc.ErrorInfo" &&
-      detail.domain === "cloudcode-pa.googleapis.com" &&
-      detail.reason === "VALIDATION_REQUIRED",
-  );
+  const verification = verificationErrorInfo(text);
   if (verification !== undefined) {
-    const verificationUrl = Option.getOrUndefined(
-      decodeVerificationUrl(verification.metadata?.validation_url),
-    );
-    return reusable({
-      ...makeProviderFailure({
+    return reusable(
+      makeProviderFailure({
         class: "permission_error",
         message: "Verify your Google account, then retry this turn.",
         code: "VALIDATION_REQUIRED",
         retryable: false,
+        verificationUrl: verification.metadata?.validation_url,
       }),
-      ...(verificationUrl === undefined ? {} : { verificationUrl }),
-    });
+    );
   }
   if (apiError === null) {
     return reusable(

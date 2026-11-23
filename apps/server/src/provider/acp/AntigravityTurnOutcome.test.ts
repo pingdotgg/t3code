@@ -45,11 +45,14 @@ const BAD_GATEWAY_ERROR = Buffer.concat([
 ]);
 const VERIFICATION_URL =
   "https://accounts.google.com/v3/signin/continue?plt=fixture&flowName=GlifWebSignIn";
-const verificationError = (url: string | undefined) => {
+const CLASSIC_VERIFICATION_URL =
+  "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=fixture&flowName=GlifWebSignIn";
+const verificationError = (url: string | undefined, compact = false) => {
   const response = {
     error: {
       code: 403,
       details: [
+        { "@type": "type.googleapis.com/google.rpc.Help", links: [] },
         {
           "@type": "type.googleapis.com/google.rpc.ErrorInfo",
           domain: "cloudcode-pa.googleapis.com",
@@ -61,8 +64,9 @@ const verificationError = (url: string | undefined) => {
       status: "PERMISSION_DENIED",
     },
   };
+  const body = compact ? JSON.stringify(response) : JSON.stringify(response, null, 2);
   return errorPayload(
-    `Verification Required\u0012PERMISSION_DENIED (code 403): Verify your account to continue.\u001aHTTP 403 Forbidden\n\n${JSON.stringify(response, null, 2)}\n`,
+    `Verification Required\u0012PERMISSION_DENIED (code 403): Verify your account to continue.\u001aHTTP 403 Forbidden\n\n${body}\n`,
   );
 };
 // Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
@@ -258,22 +262,30 @@ describe("watchAntigravityPromptOutcome", () => {
         ]))?.failure.retryable,
         false,
       );
-      for (const url of [
-        VERIFICATION_URL,
-        undefined,
-        "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
-      ]) {
+      // Google account verification errors surface the verified continuation link on both
+      // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
+      for (const [url, compact, accepted] of [
+        [VERIFICATION_URL, false, true],
+        [CLASSIC_VERIFICATION_URL, true, true],
+        [undefined, false, false],
+        [
+          "https://accounts.google.com.example.invalid/v3/signin/continue?plt=fixture",
+          false,
+          false,
+        ],
+        ["https://accounts.google.com/v3/signin/continue?plt=fixture\u0007", false, false],
+      ] as const) {
         assert.deepEqual(
           yield* turn([
             [USER_INPUT, input],
-            [ERROR_MESSAGE, verificationError(url)],
+            [ERROR_MESSAGE, verificationError(url, compact)],
           ]),
           reusable({
             class: "permission_error",
             message: "Verify your Google account, then retry this turn.",
             code: "VALIDATION_REQUIRED",
             retryable: false,
-            ...(url === VERIFICATION_URL ? { verificationUrl: url } : {}),
+            ...(accepted && url !== undefined ? { verificationUrl: url } : {}),
           }),
         );
       }
