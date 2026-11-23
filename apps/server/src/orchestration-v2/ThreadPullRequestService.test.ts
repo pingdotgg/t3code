@@ -803,12 +803,21 @@ describe("ThreadPullRequestServiceV2 reads", () => {
   it.effect("startup backfill looks up a branch once for threads whose worktrees are gone", () =>
     Effect.gen(function* () {
       // Removed worktree folders all fall back to the project root, so they share one lookup.
-      const threads = ["a", "b", "c", "d"].map((suffix) => ({
+      const shared = ["a", "b", "c", "d"].map((suffix) => ({
         ...threadShell(`gone-worktree-${suffix}`),
         branch: "feature/shared",
         worktreePath: `/workspace/worktrees/gone-${suffix}`,
         settledAt: NOW,
       }));
+      // Every start repeats the backfill, so it reads only the most recently updated threads.
+      const older = Array.from({ length: 100 }, (_, index) => ({
+        ...threadShell(`old-${index}`),
+        branch: `t3/old-${index}`,
+        worktreePath: `/workspace/worktrees/old-${index}`,
+        settledAt: NOW,
+        updatedAt: DateTime.subtract(NOW, { minutes: index + 1 }),
+      }));
+      const threads = [...older.toReversed(), ...shared];
       const project: OrchestrationProjectShell = {
         id: threads[0]!.projectId,
         title: "Project",
@@ -882,7 +891,10 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         yield* Queue.take(sweeps);
         yield* service.drain;
 
-        expect(lookups).toEqual([{ cwd: project.workspaceRoot, branch: "feature/shared" }]);
+        expect(lookups.map((lookup) => lookup.branch).toSorted()).toEqual(
+          ["feature/shared", ...older.slice(0, 60).map((thread) => thread.branch)].toSorted(),
+        );
+        expect(lookups.every((lookup) => lookup.cwd === project.workspaceRoot)).toBe(true);
       }).pipe(Effect.provide(dependencies));
     }),
   );

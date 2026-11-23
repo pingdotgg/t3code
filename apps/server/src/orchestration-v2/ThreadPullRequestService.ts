@@ -110,6 +110,7 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const BACKFILL_THREADS = 64;
 const REPOSITORY_LOOKUP_CONCURRENCY = 4;
 
 interface RefreshRequest {
@@ -237,13 +238,23 @@ export const make = Effect.gen(function* () {
     const projects = new Map(projectShells.map((project) => [project.id, project]));
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
-      for (const thread of snapshotThreads) {
-        if (
+      // Nothing records a lookup that found no pull request, so every start repeats this.
+      // Only the most recently updated threads are read; older ones wait for their own events.
+      const candidates = snapshotThreads.filter(
+        (thread) =>
+          thread.archivedAt === null &&
+          thread.branch !== null &&
           (thread.settledOverride === "settled" || thread.settledAt !== null) &&
-          thread.branchPullRequest == null
-        ) {
-          pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
-        }
+          thread.branchPullRequest == null,
+      );
+      const recent = candidates
+        .toSorted(
+          (left, right) =>
+            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+        )
+        .slice(0, BACKFILL_THREADS);
+      for (const thread of recent) {
+        pendingBackfill.set(thread.id, BACKFILL_ATTEMPTS);
       }
     }
     const visibleThreadIds = new Set(
