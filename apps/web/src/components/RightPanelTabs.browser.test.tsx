@@ -254,31 +254,35 @@ describe("surface switching", () => {
         surfaces={[BROWSER_SURFACE, DIFF_SURFACE, FILES_SURFACE]}
       />,
     );
-    const activeTabTitle = () =>
-      screen.container.querySelector("[data-active-tab='true']")?.textContent;
+    const expectActiveTab = (title: string) =>
+      vi.waitFor(() => {
+        expect(screen.container.querySelector("[data-active-tab='true']")?.textContent).toBe(title);
+      });
 
-    expect(activeTabTitle()).toBe("Browser");
+    await expectActiveTab("Browser");
     await userEvent.keyboard("{Control>}{Tab}{/Control}");
-    expect(activeTabTitle()).toBe("Diff");
+    await expectActiveTab("Diff");
     await userEvent.keyboard("{Control>}{Tab}{/Control}");
-    expect(activeTabTitle()).toBe("Files");
+    await expectActiveTab("Files");
     await userEvent.keyboard("{Control>}{Tab}{/Control}");
-    expect(activeTabTitle()).toBe("Browser");
+    await expectActiveTab("Browser");
     await userEvent.keyboard("{Control>}{Shift>}{Tab}{/Shift}{/Control}");
-    expect(activeTabTitle()).toBe("Files");
+    await expectActiveTab("Files");
   });
 
   it("cycles when desktop forwards the chord from a focused browser page", async () => {
     await using screen = await render(
       <CyclingPanel active={BROWSER_SURFACE} surfaces={[BROWSER_SURFACE, DIFF_SURFACE]} />,
     );
-    const activeTabTitle = () =>
-      screen.container.querySelector("[data-active-tab='true']")?.textContent;
+    const expectActiveTab = (title: string) =>
+      vi.waitFor(() => {
+        expect(screen.container.querySelector("[data-active-tab='true']")?.textContent).toBe(title);
+      });
 
     await act(() => dispatchMenuAction("rightPanel.nextSurface"));
-    expect(activeTabTitle()).toBe("Diff");
+    await expectActiveTab("Diff");
     await act(() => dispatchMenuAction("rightPanel.previousSurface"));
-    expect(activeTabTitle()).toBe("Browser");
+    await expectActiveTab("Browser");
   });
 });
 
