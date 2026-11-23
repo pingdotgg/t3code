@@ -578,8 +578,15 @@ export function normalizeAntigravityToolCall(
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundCommandText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
+  const preTruncationInputHash =
+    typeof toolCall.data[ACP_MCP_INPUT_HASH_META_KEY] === "string"
+      ? toolCall.data[ACP_MCP_INPUT_HASH_META_KEY]
+      : undefined;
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
+  if (preTruncationInputHash !== undefined) {
+    data[ACP_MCP_INPUT_HASH_META_KEY] = preTruncationInputHash;
+  }
   // Antigravity adds `toolSummary` to ACP MCP inputs without forwarding it to T3's MCP server.
   const mcpIdentity = extractMcpToolCallIdentity(
     toolCall.title !== undefined && toolCall.data.title === undefined
