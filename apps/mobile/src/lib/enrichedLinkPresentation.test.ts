@@ -1,3 +1,5 @@
+import remarkParse from "remark-parse";
+import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
@@ -175,9 +177,32 @@ describe("Enriched link presentation", () => {
     const current = { environmentId, threadId: "here" as ThreadId };
     const markdown =
       "See [this thread](t3-thread://v2/env/here), [that one](t3-thread://v2/env/there) and <t3-thread://v1/here>.";
-    expect(
-      unlinkThreadLinks(markdown, environmentId, current, (_ref, label) => label ?? "Plan"),
-    ).toBe("See this thread, [that one](t3-thread://v2/env/there) and Plan.");
-    expect(unlinkThreadLinks(markdown, environmentId, null, () => "Plan")).toBe(markdown);
+    expect(unlinkThreadLinks(markdown, environmentId, current, () => undefined, "Thread")).toBe(
+      "See this thread, [that one](t3-thread://v2/env/there) and Thread.",
+    );
+    expect(unlinkThreadLinks(markdown, environmentId, null, () => "Plan", "Thread")).toBe(markdown);
+  });
+
+  it("writes the thread's title as literal text, not as Markdown", () => {
+    const environmentId = "env" as EnvironmentId;
+    const current = { environmentId, threadId: "here" as ThreadId };
+    const title = "[Docs](https://example.com) *now*";
+    const text = unlinkThreadLinks(
+      "See <t3-thread://v2/env/here>",
+      environmentId,
+      current,
+      () => title,
+      "Thread",
+    );
+    const tree = unified().use(remarkParse).parse(text);
+    type Node = { type: string; value?: string; children?: ReadonlyArray<Node> };
+    const nodes: Array<Node> = [];
+    const walk = (node: Node) => {
+      nodes.push(node);
+      node.children?.forEach(walk);
+    };
+    walk(tree as Node);
+    expect(nodes.map((node) => node.type)).toEqual(["root", "paragraph", "text"]);
+    expect(nodes[2]?.value).toBe(`See ${title}`);
   });
 });

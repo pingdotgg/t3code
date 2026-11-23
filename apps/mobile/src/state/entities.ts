@@ -259,14 +259,16 @@ export function useLiveThreadLinkLabels(
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  const unlinked = unlinkThreadLinks(markdown, environmentId, current, (ref, label) => {
-    const title = titles.get(threadKey(ref));
-    return (
-      (typeof title === "string" ? title.trim() : "") ||
-      label?.trim() ||
-      resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
-    );
-  });
+  const unlinked = unlinkThreadLinks(
+    markdown,
+    environmentId,
+    current,
+    (ref) => {
+      const title = titles.get(threadKey(ref));
+      return typeof title === "string" ? title : undefined;
+    },
+    resolve(msg("Thread", { $context: "fallback title of a linked thread" })),
+  );
   return relabelThreadLinks(
     unlinked,
     environmentId,

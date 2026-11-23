@@ -59,12 +59,22 @@ export function enrichedThreadLinkPresentation(
   };
 }
 
-/** Writes each link to `current` as its `label`, since opening it would stay on the same screen. */
+const markdownText = (text: string) =>
+  text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[!-/:-@[-`{-~]/g, "\\$&");
+
+/**
+ * Writes each link to `current` as text, since opening it would stay on the same screen. A title
+ * is escaped so it reads as written instead of becoming Markdown, such as another link.
+ */
 export function unlinkThreadLinks(
   markdown: string,
   messageEnvironmentId: EnvironmentId,
   current: ScopedThreadRef | null,
-  label: (ref: ScopedThreadRef, written: string | undefined) => string,
+  title: (ref: ScopedThreadRef) => string | undefined,
+  fallback: string,
 ): string {
   if (current === null) return markdown;
   return replaceThreadLinks(markdown, (link, written) => {
@@ -73,7 +83,8 @@ export function unlinkThreadLinks(
         candidate.environmentId === current.environmentId &&
         candidate.threadId === current.threadId,
     );
-    return ref && label(ref, written);
+    if (ref === undefined) return undefined;
+    return markdownText(title(ref) ?? "") || written?.trim() || markdownText(fallback);
   });
 }
 
