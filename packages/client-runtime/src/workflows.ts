@@ -263,28 +263,34 @@ function openQuestions(nodes: ReadonlyArray<WorkflowRunNode>): ReadonlyArray<Wor
 }
 
 /**
- * The kinds of the questions open in these runs, to filter them by: in the order the workflows
- * declare them, then any kind no registered workflow declares, then the questions of no kind.
- * Empty when no question has a kind, since there is then nothing to tell apart.
+ * The kinds of the open questions, in declared order, then undeclared kinds, then no kind.
+ * `sources` is one per environment, counted together. `picked` stays listed at zero, so a
+ * filter with nothing left can be undone. Empty when no question has a kind and none is picked.
  */
 export function workflowQuestionKinds(
-  workflows: ReadonlyArray<WorkflowSummary>,
-  nodes: ReadonlyArray<WorkflowRunNode>,
+  sources: ReadonlyArray<{
+    readonly workflows: ReadonlyArray<WorkflowSummary>;
+    readonly nodes: ReadonlyArray<WorkflowRunNode>;
+  }>,
+  picked: string | null = null,
 ): ReadonlyArray<WorkflowQuestionKind> {
   const counts = new Map<string, number>();
-  for (const question of openQuestions(nodes)) {
-    const kind = question.kind ?? WORKFLOW_OTHER_KIND;
-    counts.set(kind, (counts.get(kind) ?? 0) + 1);
-  }
-  const other = counts.get(WORKFLOW_OTHER_KIND);
-  counts.delete(WORKFLOW_OTHER_KIND);
-  if (counts.size === 0) return [];
   const labels = new Map<string, string>();
-  for (const workflow of workflows) {
-    for (const { kind, label } of workflow.asks ?? []) {
-      if (!labels.has(kind)) labels.set(kind, label);
+  for (const { workflows, nodes } of sources) {
+    for (const question of openQuestions(nodes)) {
+      const kind = question.kind ?? WORKFLOW_OTHER_KIND;
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    for (const workflow of workflows) {
+      for (const { kind, label } of workflow.asks ?? []) {
+        if (!labels.has(kind)) labels.set(kind, label);
+      }
     }
   }
+  if (picked !== null && !counts.has(picked)) counts.set(picked, 0);
+  const other = counts.get(WORKFLOW_OTHER_KIND);
+  counts.delete(WORKFLOW_OTHER_KIND);
+  if (counts.size === 0 && picked === null) return [];
   const order = [...new Set([...labels.keys(), ...counts.keys()])];
   return [
     ...order.flatMap((kind) => {

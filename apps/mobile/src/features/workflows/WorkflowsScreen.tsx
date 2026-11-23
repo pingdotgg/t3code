@@ -9,7 +9,6 @@ import {
   workflowRunNow,
   workflowRunState,
   type WorkflowListTab,
-  type WorkflowQuestionKind,
   type WorkflowRunNode,
   type WorkflowRunTone,
 } from "@t3tools/client-runtime/workflows";
@@ -142,7 +141,7 @@ function EnvironmentRuns(props: {
       )}
       {listed.length === 0 ? (
         <Text className="px-5 py-6 text-center text-sm text-foreground-muted">
-          {m(NOTHING[tab])}
+          {kind === null ? m(NOTHING[tab]) : gt("No questions of this kind wait on you.")}
         </Text>
       ) : (
         listed.map((node) => (
@@ -177,32 +176,18 @@ function EnvironmentRuns(props: {
 
 const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"];
 
-/** The kinds of question open across the environments, a kind two of them ask counted once. */
-function questionKindsAcross(
-  snapshots: ReadonlyArray<WorkflowRunsSnapshot>,
-): ReadonlyArray<WorkflowQuestionKind> {
-  const merged = new Map<string, WorkflowQuestionKind>();
-  for (const snapshot of snapshots) {
-    const needsYou = workflowRunLists(
+/** What waits on a person in each environment, as the kinds of question are counted from. */
+const needsYouSources = (snapshots: ReadonlyArray<WorkflowRunsSnapshot>) =>
+  snapshots.map((snapshot) => ({
+    workflows: snapshot.workflows,
+    nodes: workflowRunLists(
       groupWorkflowRuns(
         snapshot.workflows,
         listedWorkflowRuns(snapshot.runs, false).runs,
         snapshot.questions,
       ),
-    )["needs-you"];
-    for (const kind of workflowQuestionKinds(snapshot.workflows, needsYou)) {
-      const known = merged.get(kind.kind);
-      merged.set(
-        kind.kind,
-        known === undefined ? kind : { ...known, count: known.count + kind.count },
-      );
-    }
-  }
-  // The questions of no kind go last, whichever environment they were met in.
-  return [...merged.values()].sort(
-    (left, right) => Number(left.label === null) - Number(right.label === null),
-  );
-}
+    )["needs-you"],
+  }));
 
 /** The Workflows tab: what waits on you first, in every environment this device is connected to. */
 export function WorkflowsScreen() {
@@ -250,13 +235,15 @@ export function WorkflowsScreen() {
       ),
     ) ?? "all";
   const shown = tab ?? opening;
+  // The pick stays when its last question is answered: the rest must not appear in its place.
+  const kind =
+    shown === "needs-you" && AsyncResult.isSuccess(preferences)
+      ? (preferences.value.workflowQuestionKind ?? null)
+      : null;
   const kinds =
-    shown === "needs-you" ? questionKindsAcross(withRuns.map(({ snapshot }) => snapshot)) : [];
-  const pickedKind = AsyncResult.isSuccess(preferences)
-    ? preferences.value.workflowQuestionKind
-    : undefined;
-  // A kind picked earlier with nothing open now filters nothing, and is back when it has some.
-  const kind = kinds.find((candidate) => candidate.kind === pickedKind)?.kind ?? null;
+    shown === "needs-you"
+      ? workflowQuestionKinds(needsYouSources(withRuns.map(({ snapshot }) => snapshot)), kind)
+      : [];
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"

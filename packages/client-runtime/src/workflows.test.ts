@@ -271,7 +271,7 @@ describe("the list of runs", () => {
         ],
       ),
     )["needs-you"];
-    const kinds = workflowQuestionKinds(registered, needsYou);
+    const kinds = workflowQuestionKinds([{ workflows: registered, nodes: needsYou }]);
     expect(kinds).toEqual([
       { kind: "feature", label: "Feature wanted?", count: 1 },
       { kind: "intended", label: "Bug or intended?", count: 2 },
@@ -284,15 +284,39 @@ describe("the list of runs", () => {
     expect(asking("intended").toSorted()).toEqual(["a", "b"]);
     expect(asking("feature")).toEqual(["a"]);
     expect(asking(WORKFLOW_OTHER_KIND)).toEqual(["c"]);
+    const plain = {
+      workflows: [],
+      nodes: workflowRunLists(
+        groupWorkflowRuns([], [run("c", { status: "waiting" })], [asked("c")]),
+      )["needs-you"],
+    };
     // With no kind on any question there is nothing to tell apart, and no filter.
-    expect(
-      workflowQuestionKinds(
-        registered,
-        workflowRunLists(
-          groupWorkflowRuns(registered, [run("c", { status: "waiting" })], [asked("c")]),
-        )["needs-you"],
-      ),
-    ).toEqual([]);
+    expect(workflowQuestionKinds([plain])).toEqual([]);
+    // Another environment's kind is counted with it, so its questions are the other ones.
+    const typed = {
+      workflows: registered,
+      nodes: workflowRunLists(
+        groupWorkflowRuns(registered, [run("a", { status: "waiting" })], [asked("a", "feature")]),
+      )["needs-you"],
+    };
+    expect(workflowQuestionKinds([typed, plain])).toEqual([
+      { kind: "feature", label: "Feature wanted?", count: 1 },
+      { kind: WORKFLOW_OTHER_KIND, label: null, count: 1 },
+    ]);
+    // The kind picked stays once its last question is answered, where its workflow lists it.
+    expect(workflowQuestionKinds([typed, plain], "intended")).toEqual([
+      { kind: "feature", label: "Feature wanted?", count: 1 },
+      { kind: "intended", label: "Bug or intended?", count: 0 },
+      { kind: WORKFLOW_OTHER_KIND, label: null, count: 1 },
+    ]);
+    expect(workflowQuestionKinds([plain], "intended")).toEqual([
+      { kind: "intended", label: "intended", count: 0 },
+      { kind: WORKFLOW_OTHER_KIND, label: null, count: 1 },
+    ]);
+    expect(workflowQuestionKinds([typed], WORKFLOW_OTHER_KIND)).toEqual([
+      { kind: "feature", label: "Feature wanted?", count: 1 },
+      { kind: WORKFLOW_OTHER_KIND, label: null, count: 0 },
+    ]);
   });
 
   it("leaves out what a workflow skipped, but not a skipped step of another run", () => {

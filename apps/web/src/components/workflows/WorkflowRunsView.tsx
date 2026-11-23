@@ -223,15 +223,27 @@ export function WorkflowRunsView({
   const opening = defaultWorkflowListTab(groups);
   const holds = (candidate: WorkflowListTab) =>
     lists[candidate].some((node) => node.run.runId === currentRunId);
+  // Not while a kind is picked: answering its last question would move the list to every run.
+  const batching = opening === "needs-you" && pickedKind !== EVERY_KIND;
   const tab =
     pickedTab ??
-    (selectedRunId === null || holds(opening) ? opening : holds("running") ? "running" : "all");
+    (selectedRunId === null || holds(opening) || batching
+      ? opening
+      : holds("running")
+        ? "running"
+        : "all");
   const ofWorkflow = lists[tab].filter(
     (node) => section === null || workflowRunInvolves(node, section.name),
   );
-  const kinds = tab === "needs-you" ? workflowQuestionKinds(snapshot.workflows, ofWorkflow) : [];
-  // A kind picked earlier with nothing open now filters nothing, and is back when it has some.
-  const kind = kinds.some((candidate) => candidate.kind === pickedKind) ? pickedKind : EVERY_KIND;
+  // The pick stays when its last question is answered: the rest must not appear in its place.
+  const kind = tab === "needs-you" ? pickedKind : EVERY_KIND;
+  const kinds =
+    tab === "needs-you"
+      ? workflowQuestionKinds(
+          [{ workflows: snapshot.workflows, nodes: ofWorkflow }],
+          kind === EVERY_KIND ? null : kind,
+        )
+      : [];
   const kindLabel = (candidate: (typeof kinds)[number]) =>
     candidate.label ?? gt("Other", { $context: "workflow questions that have no kind" });
   const listed =
@@ -342,7 +354,11 @@ export function WorkflowRunsView({
             <nav aria-label={gt("Workflow runs")} className="p-2 pt-1">
               {listed.length === 0 ? (
                 <p className="px-2 py-6 text-center text-xs text-muted-foreground">
-                  {section?.neverRan ? gt("Has not run yet.") : m(NOTHING[tab])}
+                  {section?.neverRan
+                    ? gt("Has not run yet.")
+                    : kind === EVERY_KIND
+                      ? m(NOTHING[tab])
+                      : gt("No questions of this kind wait on you.")}
                 </p>
               ) : (
                 <ul className="space-y-0.5">

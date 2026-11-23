@@ -475,34 +475,36 @@ describe("WorkflowRunsView", () => {
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
 
-  it("narrows what needs you to one kind of question, with the rest under Other", async () => {
+  it("narrows what needs you to one kind of question, and stays there once it is answered", async () => {
     localStorage.removeItem("t3code:workflows:question-kind");
     const asked = (runId: string, kind?: string): WorkflowQuestion => ({
       ...question,
       runId,
       ...(kind === undefined ? {} : { kind }),
     });
+    const workflows = [
+      {
+        name: "release",
+        version: 1,
+        triggers: [],
+        asks: [
+          { kind: "feature", label: "Feature wanted?" },
+          { kind: "intended", label: "Bug or intended?" },
+        ],
+      },
+    ];
+    const waiting = [
+      run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
+      run({ runId: "plain", title: "Release 1.4", status: "waiting" }),
+    ];
     setup({
-      workflows: [
-        {
-          name: "release",
-          version: 1,
-          triggers: [],
-          asks: [
-            { kind: "feature", label: "Feature wanted?" },
-            { kind: "intended", label: "Bug or intended?" },
-          ],
-        },
-      ],
-      runs: [
-        run({ runId: "dark", title: "Dark mode", status: "waiting" }),
-        run({ runId: "sticky", title: "Sticky header", status: "waiting" }),
-        run({ runId: "plain", title: "Release 1.4", status: "waiting" }),
-      ],
+      workflows,
+      runs: [run({ runId: "dark", title: "Dark mode", status: "waiting" }), ...waiting],
       questions: [asked("dark", "feature"), asked("sticky", "intended"), asked("plain")],
     });
     await using _desktop = await desktop();
-    await using screen = await render(page());
+    // Opened by its link, as a run picked from the list is.
+    await using screen = await render(page("dark"));
 
     const runs = screen.getByRole("navigation", { name: "Workflow runs" });
     await expect
@@ -520,10 +522,25 @@ describe("WorkflowRunsView", () => {
       .element(runs.getByRole("button", { name: /Release 1\.4/ }))
       .not.toBeInTheDocument();
 
-    await screen.getByRole("combobox", { name: "Kind of question" }).click();
-    await screen.getByRole("option", { name: "Other 1" }).click();
-    await expect.element(runs.getByRole("button", { name: /Release 1\.4/ })).toBeVisible();
-    await expect.element(runs.getByRole("button", { name: /Dark mode/ })).not.toBeInTheDocument();
+    // Answering the last question of the kind keeps the filter: the other kinds stay out.
+    await screen.getByRole("button", { name: "Ship", exact: true }).click();
+    await vi.waitFor(() => expect(state.commands).toHaveLength(1));
+    setup({
+      workflows,
+      runs: [
+        run({ runId: "dark", title: "Dark mode", status: "completed", endedAt: at(6) }),
+        ...waiting,
+      ],
+      questions: [asked("sticky", "intended"), asked("plain")],
+    });
+    await screen.rerender(page("dark"));
+    await expect.element(runs).toMatchTextContent("No questions of this kind wait on you.");
+    await expect
+      .element(runs.getByRole("button", { name: /Sticky header/ }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("combobox", { name: "Kind of question" }))
+      .toMatchTextContent("Feature wanted? 0");
     localStorage.removeItem("t3code:workflows:question-kind");
   });
 });
