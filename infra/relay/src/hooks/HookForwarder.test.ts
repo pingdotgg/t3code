@@ -87,7 +87,9 @@ interface Harness {
     request: HttpClientRequest.HttpClientRequest,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError>;
   readonly links?: ReadonlyArray<typeof managedLink>;
+  readonly linksError?: EnvironmentLinks.EnvironmentLinkEnvironmentLookupPersistenceError;
   readonly allocation?: ManagedEndpointAllocations.ManagedEndpointAllocation | null;
+  readonly allocationError?: ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError;
   readonly allow?: (key: string) => boolean;
   readonly allowEndpoint?: (endpointKey: string) => boolean;
   readonly inboxCapacity?: number;
@@ -114,16 +116,19 @@ function makeHarness(options: Harness = {}) {
         Layer.succeed(RelayConfiguration.RelayConfiguration, settings),
         Layer.mock(EnvironmentLinks.EnvironmentLinks, {
           findActiveManagedForEnvironment: (input) =>
-            Effect.succeed(
-              (options.links ?? [managedLink]).filter(
-                (link) =>
-                  link.environmentId === input.environmentId &&
-                  (input.userId === undefined || link.userId === input.userId),
-              ),
-            ),
+            options.linksError
+              ? Effect.fail(options.linksError)
+              : Effect.succeed(
+                  (options.links ?? [managedLink]).filter(
+                    (link) =>
+                      link.environmentId === input.environmentId &&
+                      (input.userId === undefined || link.userId === input.userId),
+                  ),
+                ),
         }),
         Layer.mock(ManagedEndpointAllocations.ManagedEndpointAllocations, {
           getByTunnelName: (tunnelName) => {
+            if (options.allocationError) return Effect.fail(options.allocationError);
             const allocation =
               options.allocation === undefined ? readyAllocation : options.allocation;
             return Effect.succeed(allocation?.tunnelName === tunnelName ? allocation : null);
@@ -345,6 +350,42 @@ describe("HookForwarder", () => {
       const unreadyResponse = yield* unready.send(new Request(hookUrl(), { method: "POST" }));
       expect(unreadyResponse.status).toBe(404);
       expect(unready.sent).toHaveLength(0);
+    }),
+  );
+
+  it.effect("returns 503 without reading, forwarding, or holding when endpoint lookup fails", () =>
+    Effect.gen(function* () {
+      const holdLink = [{ ...managedLink, holdWebhooksWhileOffline: true }];
+      const cause = new Error("database down");
+      for (const harness of [
+        makeHarness({
+          links: holdLink,
+          allocationError: new ManagedEndpointAllocations.ManagedEndpointAllocationPersistenceError(
+            {
+              operation: "get-by-tunnel-name",
+              stage: "database-request",
+              userId: "",
+              environmentId: "",
+              cause,
+            },
+          ),
+        }),
+        makeHarness({
+          links: holdLink,
+          linksError: new EnvironmentLinks.EnvironmentLinkEnvironmentLookupPersistenceError({
+            environmentId,
+            cause,
+          }),
+        }),
+      ]) {
+        const request = new Request(hookUrl(), { method: "POST", body: "{}" });
+        const response = yield* harness.send(request);
+        expect(response.status).toBe(503);
+        expect(yield* readJson(response)).toEqual({ error: "database_unavailable" });
+        expect(request.bodyUsed).toBe(false);
+        expect(harness.sent).toHaveLength(0);
+        expect(harness.held).toHaveLength(0);
+      }
     }),
   );
 

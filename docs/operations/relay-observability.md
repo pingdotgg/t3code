@@ -66,11 +66,11 @@ to decide whether clock skew is confirmed or only one possible cause.
 ## Webhooks
 
 A public webhook request is one `relay.hooks.forward` span. Its `relay.hook.outcome` says what
-happened: `forwarded`, `held`, `rate_limited`, `inbox_full`, `not_found`, `payload_too_large`,
-`environment_unavailable`, or `environment_timeout`. `relay.hook.endpoint_key` identifies the
-managed endpoint, and with it the environment. On a forward, `relay.hook.upstream_status` or
-`relay.hook.upstream_error` records the environment's answer, and
-`relay.hook.upstream_outcome` what it did with the request (`accepted`, `duplicate`,
+happened: `forwarded`, `held`, `rate_limited`, `inbox_full`, `not_found`, `lookup_failed`,
+`payload_too_large`, `environment_unavailable`, or `environment_timeout`.
+`relay.hook.endpoint_key` identifies the managed endpoint, and with it the environment. On a
+forward, `relay.hook.upstream_status` or `relay.hook.upstream_error` records the environment's
+answer, and `relay.hook.upstream_outcome` what it did with the request (`accepted`, `duplicate`,
 `prompt_too_long`, `queue_full`, `rejected_signature`, `expired`, `disabled`, ...), from its
 `x-t3-hook-outcome` response header. A held request's delivery records the same on its
 `relay.inbox.deliver` span. The relay sends its own `traceparent` with each forward and drops any a

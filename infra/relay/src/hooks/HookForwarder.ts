@@ -285,14 +285,16 @@ const make = Effect.gen(function* () {
       return errorResponse(413, "payload_too_large");
     }
 
-    const endpoint = yield* heldHooks.resolveEndpoint(parsed.endpointKey).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("Failed to resolve hook endpoint", {
-          endpointKey: parsed.endpointKey,
-          errorTag: error._tag,
-        }).pipe(Effect.as(null)),
-      ),
-    );
+    const endpointResult = yield* heldHooks.resolveEndpoint(parsed.endpointKey).pipe(Effect.result);
+    if (Result.isFailure(endpointResult)) {
+      yield* Effect.logWarning("Failed to resolve hook endpoint", {
+        endpointKey: parsed.endpointKey,
+        errorTag: endpointResult.failure._tag,
+      });
+      yield* outcome("lookup_failed");
+      return errorResponse(503, "database_unavailable");
+    }
+    const endpoint = endpointResult.success;
     if (!endpoint) {
       yield* outcome("not_found");
       return hookNotFound();
