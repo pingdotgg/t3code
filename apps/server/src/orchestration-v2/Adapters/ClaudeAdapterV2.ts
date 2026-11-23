@@ -7279,7 +7279,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           runAttemptId: input.context.input.attemptId,
           nativeTurnRef: {
             driver: CLAUDE_PROVIDER,
-            nativeId: input.context.nativeMessageCursor ?? input.context.nativeTurnId,
+            nativeId:
+              input.context.nativeMessageCursor ??
+              // A started prompt is in Claude's transcript under its own uuid, even with no reply,
+              // unless Claude merged queued steers into it.
+              (input.context.promptStarted &&
+              input.context.steerUuids.size === 0 &&
+              input.context.input.resume !== true
+                ? input.context.promptUuid
+                : null) ??
+              input.context.nativeTurnId,
             strength: "weak",
           },
           ordinal: input.context.providerTurnOrdinal,
