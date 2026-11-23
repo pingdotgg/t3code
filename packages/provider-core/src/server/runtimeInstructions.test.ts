@@ -104,19 +104,24 @@ describe("buildRuntimeInstructions", () => {
     });
     assert.isTrue(listed.startsWith(`${single}\n\n<workspace_folders>\n`));
     const withFeedback = buildRuntimeInstructions({ harness: "Codex", agentFeedback: "auto" });
-    assert.isTrue(
-      buildRuntimeInstructions({
-        harness: "Codex",
-        agentFeedback: "auto",
-        runtimePolicy: {
-          ...base,
-          cwd: "/work/app",
-          workspace: {
-            folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
-            extraRoots: [],
-          },
+    const combined = buildRuntimeInstructions({
+      harness: "Codex",
+      agentFeedback: "auto",
+      vcsAgentHint: "Use jj for this workspace.",
+      runtimePolicy: {
+        ...base,
+        cwd: "/work/app",
+        workspace: {
+          folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
+          extraRoots: [],
         },
-      }).startsWith(`${withFeedback}\n\n<workspace_folders>\n`),
+      },
+    });
+    assert.isTrue(combined.startsWith(`${withFeedback}\n\n<workspace_folders>\n`));
+    assert.isTrue(
+      combined.endsWith(
+        "</workspace_folders>\n\n<vcs_context>Use jj for this workspace.</vcs_context>",
+      ),
     );
     assert.deepEqual(
       listed

@@ -1669,6 +1669,14 @@ describe("/usage-limits", () => {
       instanceId: ProviderInstanceId.make("codex-personal"),
       usageLimits: limits,
       auth: { status: "authenticated", email: "personal@example.com" },
+      usageLimitAccounts: [
+        {
+          id: "personal-extra",
+          driver: selected.driver,
+          email: "personal@example.com",
+          usageLimits: limits,
+        },
+      ],
     });
     const ids = (instance: ServerProvider, model: string | null) =>
       collectProviderUsageLimits(
