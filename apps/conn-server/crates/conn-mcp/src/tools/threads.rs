@@ -28,6 +28,23 @@ fn thread_id(args: &Args) -> &str {
     str_arg(args, "threadId").unwrap_or_default()
 }
 
+/// `threadId`, also in a thread chip's form: `t3-context://v1/thread/thread_<id>` names the
+/// thread `<id>` (`toKindScopedComposerContextId`). An id that is a thread here stays as given.
+async fn chip_thread_id(cx: &Cx<'_>, args: &Args) -> Result<String, ToolError> {
+    let id = thread_id(args);
+    let Some(bare) = id.strip_prefix("thread_").filter(|bare| !bare.is_empty()) else {
+        return Ok(id.to_owned());
+    };
+    match cx.projection(id).await {
+        Err(ToolError::Failure {
+            code: "thread_not_found",
+            ..
+        }) if cx.projection(bare).await.is_ok() => Ok(bare.to_owned()),
+        Ok(_) | Err(ToolError::Failure { .. }) => Ok(id.to_owned()),
+        Err(other) => Err(other),
+    }
+}
+
 /// The thread a tool acts on: `threadId`, or the caller's own thread.
 fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
     str_arg(args, "threadId")
@@ -112,7 +129,7 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
 }
 
 pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
+    let id = &chip_thread_id(cx, args).await?;
     let projection = cx.projection(id).await?;
     let view_name = str_arg(args, "view").unwrap_or("messages");
     let limit = u64_arg(args, "limit").map_or(DEFAULT_READ_LIMIT, |l| l.min(100) as usize);
@@ -586,8 +603,9 @@ pub(super) fn normalize_selection(mut selection: Value) -> Value {
 }
 
 pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let id = thread_id(args);
-    cx.writes_threads(&[str_arg(args, "threadId")]).await?;
+    let id = &chip_thread_id(cx, args).await?;
+    cx.writes_threads(&[str_arg(args, "threadId").map(|_| id.as_str())])
+        .await?;
     let projection = cx.projection(id).await?;
     let fresh = bool_arg(args, "freshContext") == Some(true);
     // A fresh send never joins a running turn, so it needs none to steer or restart.

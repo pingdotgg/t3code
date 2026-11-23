@@ -55,6 +55,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       }
       if (cmd.method === "initializationResult" && !HANG_INIT) reply(cmd.id, {});
       else if (cmd.method === "mcpServerStatus") reply(cmd.id, fs.existsSync(LOG + ".servers") ? JSON.parse(fs.readFileSync(LOG + ".servers","utf8")) : [{name:"weather",status:"connected",tools:[{name:"show",_meta:{ui:{resourceUri:"ui://weather"}},annotations:{readOnly:true}}]}]);
+      else if (cmd.method === "setMcpServers" && fs.existsSync(LOG + ".mcp")) reply(cmd.id, JSON.parse(fs.readFileSync(LOG + ".mcp","utf8")));
       else if (cmd.method === "listPermissionRules") reply(cmd.id, fs.existsSync(LOG + ".rules") ? JSON.parse(fs.readFileSync(LOG + ".rules","utf8")) : []);
       else if (cmd.method === "callMcpTool") reply(cmd.id, {content:[{type:"text",text:"sunny"}],_meta:{stub:true}});
       else if (cmd.method === "readMcpResource") reply(cmd.id, {contents:[{uri:cmd.args[1],mimeType:"text/html;profile=mcp-app",text:"<h1>Weather</h1>"}]});
@@ -845,4 +846,64 @@ async fn mcp_apps_require_each_streamed_capability_and_skip_subagent_sources() {
         session.close().await;
         helper.stop().await;
     }
+}
+
+/// Claude reports `conn` unavailable at registration (a session resumed before `/mcp` was
+/// ready): the session asks the SDK to reconnect it once, and not again on later turns.
+#[tokio::test(flavor = "current_thread")]
+async fn an_unavailable_conn_server_is_reconnected_once() {
+    if !node_available() {
+        eprintln!("skipped: no node");
+        return;
+    }
+    let scratch = Scratch::new("mcp-reconnect");
+    let (helper, log) = fake_host(&scratch.0, true);
+    std::fs::write(
+        log.with_extension("log.mcp"),
+        r#"{"added":["conn"],"removed":[],"errors":{"conn":"connection refused"}}"#,
+    )
+    .unwrap();
+    // Each turn ends, so the second one reuses the query.
+    std::fs::write(
+        log.with_extension("log.frames"),
+        r#"[{"type":"result","subtype":"success","is_error":false,"result":"ok","duration_ms":1,"duration_api_ms":1,"num_turns":1,"total_cost_usd":0,"usage":{},"modelUsage":{}}]"#,
+    )
+    .unwrap();
+    let (tx, mut events) = mpsc::channel(crate::session::EVENT_CAPACITY);
+    let session = ClaudeSession::open(
+        "provider-session-reconnect".into(),
+        "claudeAgent",
+        no_home_config(),
+        helper.clone(),
+        tx,
+        vec![conn_provider::McpServer {
+            device_tools: false,
+            name: crate::launch::T3_MCP_SERVER.into(),
+            url: "http://127.0.0.1:9/mcp".into(),
+            headers: vec![],
+        }],
+        Default::default(),
+    );
+    let cwd = scratch.cwd();
+    let thread = new_thread(&session, "full-access", &cwd).await;
+    for (n, text) in [(1, "one"), (2, "two")] {
+        session
+            .start_turn(turn(n, &thread, text, "full-access", &cwd))
+            .await
+            .unwrap();
+        until(&mut events, is_terminal).await;
+    }
+    let lines = std::fs::read_to_string(&log).unwrap();
+    assert_eq!(lines.matches("open ").count(), 1, "{lines}");
+    let calls: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .filter(|l| l.starts_with("call ") && l.contains("Mcp"))
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        calls,
+        ["call setMcpServers", "call reconnectMcpServer"],
+        "one registration, one reconnect, nothing on the reused query"
+    );
 }

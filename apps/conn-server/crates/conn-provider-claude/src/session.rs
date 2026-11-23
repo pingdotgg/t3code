@@ -392,6 +392,24 @@ impl Inner {
                 failed.join(", ")
             );
         }
+        // A Claude session loads its servers once: without `conn` the thread would keep no
+        // conn tools. One reconnect per registration, so a failure never loops.
+        if failed.iter().any(|name| name == T3_MCP_SERVER) {
+            let reconnected = self
+                .call(
+                    "reconnectMcpServer",
+                    json!([T3_MCP_SERVER]),
+                    MCP_REGISTRATION_TIMEOUT,
+                )
+                .await;
+            match reconnected {
+                Ok(_) => eprintln!("conn-provider-claude: MCP server {T3_MCP_SERVER} reconnected"),
+                Err(ProviderError::SessionStopped) => return Err(ProviderError::SessionStopped),
+                Err(_) => eprintln!(
+                    "conn-provider-claude: MCP server {T3_MCP_SERVER} is still unavailable"
+                ),
+            }
+        }
         if let Some(live) = &mut self.lock().live {
             live.mcp_servers = servers.to_vec();
         }

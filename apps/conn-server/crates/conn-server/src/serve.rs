@@ -325,6 +325,16 @@ pub async fn serve_with_instances(
         Ok(Err(error)) => or_exit(Err(error), "cannot import the T3 server's state"),
         Err(error) => or_exit(Err(error), "cannot import the T3 server's state"),
     }
+    // Bound before the engine opens: `/mcp`'s address goes into every provider session's
+    // `conn` entry, and a session started without it never gets the tools.
+    let listener = match tokio::net::TcpListener::bind(listen).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("conn-server: cannot listen on {listen}: {error}");
+            std::process::exit(1);
+        }
+    };
+    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     let mut config = EngineConfig::new(state_dir.join("engine.sqlite"));
     config.projects = projects;
     config.provider_set = Some(providers.clone());
@@ -333,6 +343,8 @@ pub async fn serve_with_instances(
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
     config.recover_runs = !inert;
+    // Recovered runs resume once `/mcp` has its service and address (below).
+    config.hold_recovery = true;
     // Attention events for iOS push: off unless asked for, and only where a sender exists
     // (`attention.rs`). A container server sends through its managed Gateway client.
     let attention = !inert && crate::attention::enabled_by_env();
@@ -411,8 +423,10 @@ pub async fn serve_with_instances(
     }
     deps.mcp = crate::routes::mcp::service(&deps);
     if let Some(mcp) = &deps.mcp {
+        mcp.set_listen_address(addr);
         let _ = host.mcp.set(mcp.clone());
     }
+    sqlite_engine.resume_recovered();
     let state = AppState {
         table: Arc::new(method_table(&deps)),
         auth: auth.clone(),
@@ -421,14 +435,6 @@ pub async fn serve_with_instances(
         deps,
     };
 
-    let listener = match tokio::net::TcpListener::bind(listen).await {
-        Ok(listener) => listener,
-        Err(error) => {
-            eprintln!("conn-server: cannot listen on {listen}: {error}");
-            std::process::exit(1);
-        }
-    };
-    let addr = or_exit(listener.local_addr(), "cannot read the listening address");
     crate::routes::preview_tunnel::serving_on(addr.port());
     let runtime = RuntimeState::new(&addr.ip().to_string(), addr.port(), conn_support::uuid_v4());
     // The write and its fsync run on a blocking thread, as all file work here does.
@@ -440,9 +446,6 @@ pub async fn serve_with_instances(
         Ok(Ok(())) => {}
         Ok(Err(error)) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
         Err(error) => eprintln!("conn-server: could not write server-runtime.json: {error}"),
-    }
-    if let Some(mcp) = &state.deps.mcp {
-        mcp.set_listen_address(addr);
     }
     println!("conn-server listening on http://{addr}");
     println!(

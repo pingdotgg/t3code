@@ -530,6 +530,15 @@ async fn swamp_drives_a_thread_from_outside() {
         rest["items"].as_array().unwrap().len() + 1,
         read["items"].as_array().unwrap().len()
     );
+    // A thread chip's id (`t3-context://v1/thread/thread_<id>`) names the same thread.
+    let chip = format!("thread_{thread}");
+    let by_chip = c
+        .ok(
+            "conn_thread_read",
+            json!({"threadId": chip, "view": "activity", "afterPosition": -1, "limit": 100}),
+        )
+        .await;
+    assert_eq!(by_chip["items"], read["items"]);
 
     let sent = c
         .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
@@ -539,6 +548,14 @@ async fn swamp_drives_a_thread_from_outside() {
         .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
         .await;
     assert_eq!(resent["runId"], sent["runId"]);
+    assert_eq!(sent["threadId"], thread.as_str());
+    let by_chip = c
+        .ok("conn_thread_send", json!({"threadId": chip, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
+        .await;
+    assert_eq!(
+        (by_chip["threadId"].as_str(), &by_chip["runId"]),
+        (Some(thread.as_str()), &sent["runId"])
+    );
     c.ok(
         "conn_thread_wait",
         json!({"threadId": thread, "runId": sent["runId"]}),

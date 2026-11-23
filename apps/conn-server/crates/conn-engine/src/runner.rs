@@ -137,6 +137,18 @@ impl LiveThread {
     }
 }
 
+/// A stored user message as every provider reads it: chips expanded into a context envelope,
+/// citations expanded (`ProviderTurnStartService`, `ProviderTurnControlService.steer`).
+fn provider_text(message: &Value) -> String {
+    let records = message["context"]["records"]
+        .as_array()
+        .map_or(&[][..], Vec::as_slice);
+    crate::composer_context::project_for_provider(
+        message["text"].as_str().unwrap_or_default(),
+        records,
+    )
+}
+
 /// What a turn start needs from the store.
 struct TurnContext {
     thread: Value,
@@ -953,10 +965,7 @@ impl Inner {
                 .await;
         }
 
-        let user_text = context.message["text"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
+        let user_text = provider_text(&context.message);
         let delivery = self
             .deliver_handoffs(
                 &live,
@@ -1431,6 +1440,26 @@ impl Inner {
                 eprintln!("conn-engine: could not reopen watched checks after a push: {e}");
             }
         }
+        let ended_at = i64::try_from(self.clock.now_millis()).unwrap_or(i64::MAX);
+        // The session's process is gone, and with it every native subagent it ran
+        // (`writeReleasedSubagentEvents`). A clean stop leaves them for the next start.
+        // Before the run ends, so its end does not fail their open items.
+        if !self.shutting_down() {
+            let tid = thread_id.clone();
+            let result = self
+                .write(move |tx| {
+                    crate::families::end_orphaned_native_subagents(
+                        tx,
+                        &tid,
+                        "interrupted",
+                        Some(ended_at),
+                    )
+                })
+                .await;
+            if let Err(e) = result {
+                eprintln!("conn-engine: could not end orphaned subagents: {e}");
+            }
+        }
         if !self.shutting_down()
             && let Some(active) = live.take_active()
         {
@@ -1844,7 +1873,7 @@ impl Inner {
                         scheduled_task_id: message["scheduledTaskId"].as_str().map(str::to_owned),
                         sender_thread_id: message["senderThreadId"].as_str().map(str::to_owned),
                         message_id: message_id.as_str().into(),
-                        text: message["text"].as_str().unwrap_or_default().to_owned(),
+                        text: provider_text(message),
                         attachments: from_json(message["attachments"].clone()).unwrap_or_default(),
                     },
                     model_selection: None,

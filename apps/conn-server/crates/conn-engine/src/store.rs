@@ -1008,6 +1008,22 @@ impl Store {
         keyed_rows(rows)
     }
 
+    /// Threads with a provider-native subagent still open: no process is left to end it.
+    pub(crate) fn threads_with_live_native_subagents(&self) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT thread_id FROM entities WHERE kind = 'subagents'
+                 AND json_extract(body, '$.origin') = 'provider_native'
+                 AND json_extract(body, '$.status') IN ('pending','running','waiting')",
+            )
+            .map_err(err)?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(err)?;
+        rows.collect::<Result<_, _>>().map_err(err)
+    }
+
     #[cfg(test)]
     pub(crate) fn event_count(&self, thread_id: &str) -> u64 {
         self.conn

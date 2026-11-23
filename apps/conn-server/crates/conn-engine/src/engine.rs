@@ -71,6 +71,9 @@ pub struct EngineConfig {
     /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
     /// workspace the original still owns.
     pub recover_runs: bool,
+    /// Hold the recovered runs until [`SqliteEngine::resume_recovered`]. The server sets it so
+    /// a resumed provider session gets its `/mcp` credential only once `/mcp` listens.
+    pub hold_recovery: bool,
     /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
     /// with it off, nothing is written. The server's sender drains them.
     pub attention: bool,
@@ -133,6 +136,7 @@ impl EngineConfig {
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
             recover_runs: true,
+            hold_recovery: false,
             attention: false,
         }
     }
@@ -140,6 +144,8 @@ impl EngineConfig {
 
 pub struct SqliteEngine {
     inner: Arc<Inner>,
+    /// Recovered runs' effects that wait for [`Self::resume_recovered`].
+    held_recovery: Mutex<Vec<Effect>>,
 }
 
 impl std::fmt::Debug for SqliteEngine {
@@ -278,8 +284,12 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        let (unfinished, pending_rollbacks) = if config.recover_runs {
-            (store.unfinished_runs()?, store.pending_rollbacks()?)
+        let (unfinished, pending_rollbacks, orphaned) = if config.recover_runs {
+            (
+                store.unfinished_runs()?,
+                store.pending_rollbacks()?,
+                store.threads_with_live_native_subagents()?,
+            )
         } else {
             Default::default()
         };
@@ -296,6 +306,10 @@ impl SqliteEngine {
         let mut effects = vec![];
         for pending in pending_rollbacks {
             effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
+        }
+        // No provider process survives a restart: open native subagents never report an end.
+        for thread_id in &orphaned {
+            crate::families::end_orphaned_native_subagents(&mut tx, thread_id, "cancelled", None)?;
         }
         for (thread_id, run) in unfinished
             .iter()
@@ -333,12 +347,17 @@ impl SqliteEngine {
                 effect_lanes: Mutex::new(HashMap::new()),
                 effect_seq: std::sync::atomic::AtomicU64::new(0),
             }),
+            held_recovery: Mutex::new(Vec::new()),
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
         if tokio::runtime::Handle::try_current().is_ok() {
-            effects
-                .into_iter()
-                .for_each(|e| engine.inner.spawn_effect(e));
+            if config.hold_recovery {
+                *crate::lock(&engine.held_recovery) = effects;
+            } else {
+                effects
+                    .into_iter()
+                    .for_each(|e| engine.inner.spawn_effect(e));
+            }
             if let Some(idle) = config.idle_session {
                 let inner = Arc::downgrade(&engine.inner);
                 tokio::spawn(async move {
@@ -355,6 +374,13 @@ impl SqliteEngine {
             eprintln!("conn-engine: no runtime, so restarted turns do not continue");
         }
         Ok(engine)
+    }
+
+    /// Starts the recovered runs that [`EngineConfig::hold_recovery`] held. Later calls do
+    /// nothing.
+    pub fn resume_recovered(&self) {
+        let held = std::mem::take(&mut *crate::lock(&self.held_recovery));
+        held.into_iter().for_each(|e| self.inner.spawn_effect(e));
     }
 
     /// Puts a completed run back to `waiting` with no checkpoint, as a kill between the
