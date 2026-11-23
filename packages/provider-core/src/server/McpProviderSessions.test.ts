@@ -156,22 +156,6 @@ describe("McpProviderSessions tool results", () => {
         yield* sessions.takeToolResult(threadId, "send_to_user", { message: "Late from turn 1" }),
         undefined,
       );
-
-      // Precomputed inputHash lets drivers that truncate oversized inputs match the full prompt.
-      const fullInput = { task: "a".repeat(9_000), role: "review" };
-      yield* sessions.recordToolResult(threadId, "delegate_task", fullInput, {
-        taskId: "task-long",
-      });
-      assert.deepEqual(
-        yield* sessions.takeToolResult(
-          threadId,
-          "delegate_task",
-          { task: "[truncated]", role: "review" },
-          undefined,
-          { inputHash: McpProviderSessions.hashToolInput(fullInput) },
-        ),
-        { taskId: "task-long" },
-      );
     }).pipe(Effect.provide(McpProviderSessions.layer)),
   );
 });

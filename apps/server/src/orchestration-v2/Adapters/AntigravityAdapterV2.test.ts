@@ -996,7 +996,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
   );
 
   it.effect(
-    "recovers T3 MCP tool results across omitted outputs, replays, errors, long inputs, and turn boundaries",
+    "recovers T3 MCP tool results across omitted outputs, replays, errors, and turn boundaries",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1017,7 +1017,6 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         const lateText = "Confirmed on a later completion.";
         const lateErrorText = "Late explicit error.";
         const unfinishedText = "Still running when turn ended.";
-        const longTask = "Review the audit diff. ".repeat(450);
         const adapter = yield* makeAntigravityAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
@@ -1191,21 +1190,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     yield* updateTool("send-bare-fail", "failed");
                     yield* updateTool("send-bare-fail-sibling", "completed");
 
-                    // Oversized (>8k) delegate_task input matches via pre-truncation digest, and
                     // preview_recording_stop recovers its recording id.
-                    yield* startTool("delegate-task", "delegate_task", {
-                      task: longTask,
-                      role: "review",
-                      toolSummary: "Delegate audit review",
-                    });
-                    yield* mcpSessions.recordToolResult(
-                      threadId,
-                      "delegate_task",
-                      { task: longTask, role: "review" },
-                      { taskId: "task-audit-1" },
-                    );
-                    yield* updateTool("delegate-task", "completed");
-
                     yield* startTool("recording-stop", "preview_recording_stop", {
                       toolSummary: "Stop preview recording",
                     });
@@ -1326,9 +1311,6 @@ describe("AntigravityAdapterV2 html_render pages", () => {
           sentMessageFromToolItem(toolIn(turn2Events, "turn2-leaked-check")!),
           undefined,
         );
-        assert.deepEqual(compactDynamicToolOutput(tool("delegate-task")?.output), {
-          taskId: "task-audit-1",
-        });
         assert.strictEqual(
           previewRecordingIdFromToolItem(tool("recording-stop")!),
           `${threadId}-rec-1`,

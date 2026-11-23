@@ -90,7 +90,6 @@ export class McpProviderSessions extends Context.Service<
       toolName: string,
       input: unknown,
       reported?: Record<string, unknown>,
-      options?: { readonly inputHash?: string | undefined },
     ) => Effect.Effect<Record<string, unknown> | undefined>;
     readonly clearToolResults: (threadId: ThreadId) => Effect.Effect<void>;
   }
@@ -150,9 +149,8 @@ const matchingToolResultIndex = (
   toolName: string,
   input: unknown,
   reported?: Record<string, unknown>,
-  inputHashOverride?: string,
 ): number => {
-  const inputHash = inputHashOverride ?? hashToolInput(input);
+  const inputHash = hashToolInput(input);
   if (reported !== undefined) {
     const reportedJson = stableStringify(reported);
     return kept.findIndex(
@@ -309,17 +307,11 @@ const make = Effect.gen(function* () {
       },
     ),
     takeToolResult: Effect.fn("McpProviderSessions.takeToolResult")(
-      function (threadId, toolName, input, reported, options) {
+      function (threadId, toolName, input, reported) {
         const canonicalTool = resolveT3McpToolId(toolName) ?? toolName;
         return Ref.modify(toolResultState, (state) => {
           const kept = state.entries.get(threadId) ?? [];
-          const index = matchingToolResultIndex(
-            kept,
-            canonicalTool,
-            input,
-            reported,
-            options?.inputHash,
-          );
+          const index = matchingToolResultIndex(kept, canonicalTool, input, reported);
           if (index === -1) {
             return [undefined, state];
           }

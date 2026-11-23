@@ -80,7 +80,6 @@ import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresen
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import {
-  ACP_MCP_INPUT_HASH_META_KEY,
   applyAcpAgentTerminalUpdate,
   MAX_AGENT_TERMINAL_OUTPUT_CHARS,
   acpContentBlockDisplayText,
@@ -4814,13 +4813,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
-            const inputHash =
-              typeof toolCall.data[ACP_MCP_INPUT_HASH_META_KEY] === "string"
-                ? toolCall.data[ACP_MCP_INPUT_HASH_META_KEY]
-                : undefined;
             const callInputKey =
               resolvedT3Tool !== null && !isHtmlRender
-                ? `${toolCall.toolCallId}\0${resolvedT3Tool}\0${inputHash ?? McpProviderSessions.hashToolInput(input)}`
+                ? `${toolCall.toolCallId}\0${resolvedT3Tool}\0${McpProviderSessions.hashToolInput(input)}`
                 : undefined;
             if (
               status === "completed" &&
@@ -4874,7 +4869,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     resolvedT3Tool,
                     input,
                     reportedError,
-                    { inputHash },
                   );
                   if (drained !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
@@ -4919,7 +4913,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     resolvedT3Tool,
                     input,
                     reportedOutput,
-                    { inputHash },
                   );
                   if (drained !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);
@@ -4939,7 +4932,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     resolvedT3Tool,
                     input,
                     undefined,
-                    { inputHash },
                   );
                   if (recoveredOutput !== undefined) {
                     context.drainedToolResultKeys.add(callInputKey);

@@ -17,11 +17,9 @@ import {
   makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
-  ACP_MCP_INPUT_HASH_META_KEY,
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
-import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
@@ -735,68 +733,37 @@ describe("Antigravity served reads", () => {
     });
   });
 
-  it("hashes T3 MCP inputs without toolSummary before truncation while keeping displayed rawInput intact", () => {
-    const longTask = "review ".repeat(1_500);
-    const normalized = normalizeAntigravitySessionUpdate({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call",
-        toolCallId: "call_t3_delegate",
-        title: "Run mcp_t3-code_delegate_task",
-        kind: "other",
-        status: "in_progress",
-        rawInput: { task: longTask, role: "review", toolSummary: "Delegate audit" },
-      },
-    });
-    expect(isSessionNotification(normalized)).toBe(true);
-    const parsed = parseToolUpdate(normalized);
-    const toolCall = normalizeAntigravityToolCall(parsed.toolCall);
-    expect(toolCall.data[ACP_MCP_INPUT_HASH_META_KEY]).toBe(
-      hashToolInput({ task: longTask, role: "review" }),
+  it("drops agy's toolSummary from T3 MCP call arguments only", () => {
+    const t3Call = normalizeAntigravityToolCall(
+      parseToolUpdate(
+        normalizeAntigravitySessionUpdate({
+          sessionId: "session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "call_t3_send",
+            title: "Run mcp_t3-code_send_to_user",
+            kind: "other",
+            status: "in_progress",
+            rawInput: { message: "Hello", toolSummary: "Send greeting" },
+          },
+        }),
+      ).toolCall,
     );
-    expect(toolCall.data.rawInput).toMatchObject({
-      role: "review",
-      toolSummary: "Delegate audit",
-    });
-    expect(
-      ((toolCall.data.rawInput as Record<string, unknown>).task as string).length,
-    ).toBeLessThan(longTask.length);
+    expect(t3Call.data.rawInput).toEqual({ message: "Hello" });
 
-    // Exhausting the 64k payload budget across multiple fields must still keep the pre-truncation digest.
-    const budgetExhaustingInput = Object.fromEntries(
-      Array.from({ length: 8 }, (_, index) => [`field${index}`, "x".repeat(9_000)]),
+    const foreignCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "call_other",
+          title: "Run mcp_other_send_to_user",
+          kind: "other",
+          status: "in_progress",
+          rawInput: { message: "Hello", toolSummary: "Send greeting" },
+        },
+      }).toolCall,
     );
-    const multiFieldNormalized = normalizeAntigravitySessionUpdate({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call",
-        toolCallId: "call_t3_multi_field",
-        title: "Run mcp_t3-code_delegate_task",
-        kind: "other",
-        status: "in_progress",
-        rawInput: { ...budgetExhaustingInput, toolSummary: "Delegate multi-field" },
-      },
-    });
-    expect(
-      normalizeAntigravityToolCall(parseToolUpdate(multiFieldNormalized).toolCall).data[
-        ACP_MCP_INPUT_HASH_META_KEY
-      ],
-    ).toBe(hashToolInput(budgetExhaustingInput));
-
-    const foreignEvent = parseToolUpdate({
-      sessionId: "session-1",
-      update: {
-        sessionUpdate: "tool_call",
-        toolCallId: "call_other",
-        title: "Run mcp_other_send_to_user",
-        kind: "other",
-        status: "in_progress",
-        rawInput: { message: "Hello", toolSummary: "Send greeting" },
-      },
-    });
-    expect(normalizeAntigravityToolCall(foreignEvent.toolCall).data.rawInput).toEqual({
-      message: "Hello",
-      toolSummary: "Send greeting",
-    });
+    expect(foreignCall.data.rawInput).toEqual({ message: "Hello", toolSummary: "Send greeting" });
   });
 });

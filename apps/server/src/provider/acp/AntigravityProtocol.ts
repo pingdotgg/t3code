@@ -12,11 +12,9 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import {
-  ACP_MCP_INPUT_HASH_META_KEY,
   extractMcpToolCallIdentity,
   type AcpToolCallState,
 } from "@t3tools/provider-acp/server/runtimeModel";
-import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
 
 import {
   ANTIGRAVITY_EDIT_DIFF_OMITTED,
@@ -397,55 +395,37 @@ function stripAntigravityToolSummary(value: unknown): unknown {
   return next;
 }
 
-function hasAntigravityToolSummary(value: Record<string, unknown>): boolean {
-  return (
-    "toolSummary" in value ||
-    (Predicate.isObject(value.Arguments) && "toolSummary" in value.Arguments)
-  );
-}
-
-function antigravityPreTruncationMcpInputHash(
+/**
+ * agy adds its own `toolSummary` to MCP call arguments. T3 records its MCP results under the
+ * arguments it received, so the summary is dropped before the shared adapter matches them.
+ * Untitled updates cannot be identified and are stripped too; titled non-T3 calls keep it.
+ */
+function withoutT3McpToolSummary(
   update: Extract<
     EffectAcpSchema.SessionNotification["update"],
     { readonly sessionUpdate: "tool_call" | "tool_call_update" }
   >,
-  sanitizedRawInput: unknown,
-): string | undefined {
-  if (
-    Predicate.isObject(update._meta) &&
-    typeof update._meta[ACP_MCP_INPUT_HASH_META_KEY] === "string"
-  ) {
-    return undefined;
+): unknown {
+  const rawInput = update.rawInput;
+  if (!Predicate.isObject(rawInput) || Array.isArray(rawInput)) return rawInput;
+  if (typeof update.title === "string") {
+    const identity = extractMcpToolCallIdentity({
+      toolCallId: update.toolCallId,
+      title: update.title,
+      data: {
+        title: update.title,
+        rawInput,
+        ...(Predicate.isObject(update._meta) ? { meta: update._meta } : {}),
+      },
+    });
+    if (
+      identity === undefined ||
+      resolveT3McpToolId(`${identity.server}.${identity.tool}`) === null
+    ) {
+      return rawInput;
+    }
   }
-  if (!Predicate.isObject(update.rawInput) || Array.isArray(update.rawInput)) return undefined;
-  if (Object.keys(update.rawInput).length === 0) return undefined;
-  const rawInputRecord = update.rawInput as Record<string, unknown>;
-  const identity = extractMcpToolCallIdentity({
-    toolCallId: update.toolCallId,
-    ...(typeof update.title === "string" ? { title: update.title } : {}),
-    data: {
-      ...(typeof update.title === "string" ? { title: update.title } : {}),
-      rawInput: rawInputRecord,
-      ...(Predicate.isObject(update._meta) ? { meta: update._meta } : {}),
-    },
-  });
-  const isT3McpCall =
-    identity !== undefined && resolveT3McpToolId(`${identity.server}.${identity.tool}`) !== null;
-  if (
-    !isT3McpCall &&
-    (update.title != null ||
-      (!hasTruncatedText(sanitizedRawInput) && !hasAntigravityToolSummary(rawInputRecord)))
-  ) {
-    return undefined;
-  }
-  const candidate =
-    identity?.input ??
-    (Predicate.isObject(rawInputRecord.Arguments)
-      ? rawInputRecord.Arguments
-      : Predicate.isObject(rawInputRecord.arguments)
-        ? rawInputRecord.arguments
-        : rawInputRecord);
-  return hashToolInput(stripAntigravityToolSummary(candidate));
+  return stripAntigravityToolSummary(rawInput);
 }
 
 export function normalizeAntigravitySessionUpdate(
@@ -462,32 +442,20 @@ export function normalizeAntigravitySessionUpdate(
     );
     return decoded === undefined ? [] : [decoded];
   });
-  const sanitizedRawInput =
-    update.rawInput !== undefined ? sanitizeAntigravityToolPayload(update.rawInput) : undefined;
-  const preTruncationInputHash = antigravityPreTruncationMcpInputHash(update, sanitizedRawInput);
   const meta = sanitizeAntigravityToolPayload(update._meta);
-  const nextMeta =
-    preTruncationInputHash === undefined
-      ? update._meta !== undefined
-        ? isJsonRecord(meta)
-          ? meta
-          : null
-        : undefined
-      : {
-          ...(isJsonRecord(meta) ? meta : {}),
-          [ACP_MCP_INPUT_HASH_META_KEY]: preTruncationInputHash,
-        };
   return {
     ...notification,
     update: {
       ...update,
       ...(typeof update.title === "string" ? { title: boundText(update.title) } : {}),
-      ...(update.rawInput !== undefined ? { rawInput: sanitizedRawInput } : {}),
+      ...(update.rawInput !== undefined
+        ? { rawInput: sanitizeAntigravityToolPayload(withoutT3McpToolSummary(update)) }
+        : {}),
       ...(update.rawOutput !== undefined
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
-      ...(nextMeta !== undefined ? { _meta: nextMeta } : {}),
+      ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
     },
   };
 }
@@ -589,15 +557,8 @@ export function normalizeAntigravityToolCall(
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundCommandText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
-  const preTruncationInputHash =
-    typeof toolCall.data[ACP_MCP_INPUT_HASH_META_KEY] === "string"
-      ? toolCall.data[ACP_MCP_INPUT_HASH_META_KEY]
-      : undefined;
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
-  if (preTruncationInputHash !== undefined) {
-    data[ACP_MCP_INPUT_HASH_META_KEY] = preTruncationInputHash;
-  }
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;
