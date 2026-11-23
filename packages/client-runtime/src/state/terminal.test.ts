@@ -6,7 +6,7 @@ import {
   type TerminalWriteInput,
   type TerminalCloseInput,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it } from "vite-plus/test";
 
@@ -104,15 +104,19 @@ function setup(
   const command = (name: string) => ({
     label: name,
     run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: CommandInput }) => {
-      const result = (async () => {
+      const settled = Promise.withResolvers<void>();
+      pending.push(settled.promise);
+      return Effect.promise(async () => {
         calls.push({ command: name, input: value.input });
         if (options.beforeCommand) await options.beforeCommand(name, value.input);
-        return name === "resize" && options.resizeFailure?.()
-          ? AsyncResult.failure(Cause.fail("resize rejected"))
-          : AsyncResult.success(undefined);
-      })();
-      pending.push(result);
-      return result;
+      }).pipe(
+        Effect.flatMap(() =>
+          name === "resize" && options.resizeFailure?.()
+            ? Effect.fail("resize rejected")
+            : Effect.void,
+        ),
+        Effect.ensuring(Effect.sync(settled.resolve)),
+      );
     },
   });
   const write = command("write");
