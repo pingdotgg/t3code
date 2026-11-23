@@ -5879,6 +5879,31 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  // regression: #41459 a 502 in the session log waited out the full 15-minute timeout
+  it.effect("fails a silent prompt once its session log records an upstream error", () =>
+    Effect.gen(function* () {
+      const badGateway = {
+        class: "provider_error",
+        message: "The model is currently unreachable.",
+        code: "502",
+        retryable: true,
+      } as const;
+      const harness = yield* makePromptInactivityHarness({
+        environment: () => ({ T3_ACP_HANG_PROMPT_FOREVER: "1" }),
+        watchPromptOutcome: () =>
+          Effect.succeed(() =>
+            Effect.succeed({ failure: badGateway, threadDisposition: "reusable" as const }),
+          ),
+      });
+      yield* harness.startTurn(1);
+      yield* TestClock.adjust("5 minutes");
+      assert.isFalse(yield* harness.nextTurnRejected(2));
+      const [failed] = yield* harness.terminals(1);
+      assert.equal(failed?.status, "failed");
+      assert.deepEqual(failed?.failure, badGateway);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("retires a silent prompt whose outcome check dies", () =>
     Effect.gen(function* () {
       const harness = yield* makePromptInactivityHarness({
