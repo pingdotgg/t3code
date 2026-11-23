@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   formatChatTimestampTooltip,
   formatDayAwareTimestamp,
+  formatRelativeElapsed,
   formatUpcomingTimestamp,
 } from "./timestampFormat";
 
@@ -30,6 +31,14 @@ it("localizes the day period while honoring the system clock and explicit 24-hou
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+it("returns neutral relative parts for non-finite elapsed input", () => {
+  expect(formatRelativeElapsed(Number.NaN)).toEqual({
+    value: "just now",
+    suffix: null,
+    label: "just now",
+  });
 });
 
 describe("timestamps in an explicit time zone", () => {
