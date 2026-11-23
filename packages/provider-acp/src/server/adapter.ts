@@ -11158,14 +11158,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeTransitionPermit
               .withPermit(
                 Effect.gen(function* () {
-                  const currentTurn = yield* Ref.get(activeTurn);
-                  if (currentTurn !== null) {
-                    return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                      driver,
-                      detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
-                    });
-                  }
+                  let blockedByGuard = false;
+                  const assertCanRollbackSession = Effect.gen(function* () {
+                    const currentTurn = yield* Ref.get(activeTurn);
+                    if (currentTurn !== null) {
+                      blockedByGuard = true;
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
+                      });
+                    }
+                    const pendingWork = canReportBackgroundWork
+                      ? yield* checkPendingBackgroundWork("session_replace")
+                      : false;
+                    if (pendingWork) {
+                      blockedByGuard = true;
+                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver,
+                        detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while background work is active`,
+                      });
+                    }
+                  });
+                  yield* assertCanRollbackSession;
                   yield* awaitRuntimeTeardown();
+                  const previousItemIdentityVersion = itemIdentityVersion;
+                  const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
                   itemIdentityVersion = 2;
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),
@@ -11174,7 +11191,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     rollbackInput.providerThread.appThreadId,
                     (candidate) =>
                       commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
-                  ).pipe(Effect.retry({ times: 1 }));
+                    assertCanRollbackSession,
+                  ).pipe(
+                    Effect.retry({ times: 1, while: () => !blockedByGuard }),
+                    Effect.tapError(() =>
+                      Effect.sync(() => {
+                        itemIdentityVersion = previousItemIdentityVersion;
+                        pendingTerminalEnvironment = previousPendingTerminalEnvironment;
+                      }),
+                    ),
+                  );
                   const now = yield* DateTime.now;
                   return {
                     providerThread: {

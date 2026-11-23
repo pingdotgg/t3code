@@ -1,8 +1,9 @@
 // @effect-diagnostics nodeBuiltinImport:off -- fixtures name transcript files by URL.
+import * as NodeFS from "node:fs";
 import * as NodeURL from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, it } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -883,6 +884,14 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         });
         expect(yield* hasPending("idle_release")).toBe(true);
 
+        // Corrupt read.json is treated as unknown for lifecycle checks while keeping pendingReply fail-closed.
+        yield* write(ROOT, ["messages", "read.json"], "{truncated");
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT }),
+        ).toBe(false);
+
         // Mark wake read, then verify a corrupt parent message neither masks a working swarm nor
         // reports "no work" on its own.
         yield* write(ROOT, ["messages", "read.json"], {
@@ -925,6 +934,57 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
             "corrupt.json",
           ),
         );
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Decoded non-waking final transcript step stays releasable; partial tail preserves unknown.
+        yield* write(
+          ROOT,
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" })}\n`,
+        );
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        yield* write(
+          ROOT,
+          ["logs", "transcript.jsonl"],
+          `${JSON.stringify({ step_index: 0, type: "PLANNER_RESPONSE", status: "DONE", content: "ok" })}\n{"type":"SYSTEM_MESSAGE"`,
+        );
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+        expect(
+          yield* readAntigravityPendingReply({ profileDirectory: profile, sessionId: ROOT }),
+        ).toBe(false);
+
+        yield* write(ROOT, ["logs", "transcript.jsonl"], "");
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
+        // Transient lstat I/O failure on messages/ is preserved conservatively instead of treated as empty.
+        const messagesDir = path.join(
+          profile,
+          "antigravity-acp",
+          "brain",
+          ROOT,
+          ".system_generated",
+          "messages",
+        );
+        const realLstat = NodeFS.promises.lstat.bind(NodeFS.promises);
+        const lstatSpy = vi.spyOn(NodeFS.promises, "lstat").mockImplementation((async (
+          targetPath,
+          options,
+        ) => {
+          if (String(targetPath) === messagesDir) {
+            throw Object.assign(new Error("EIO"), { code: "EIO" });
+          }
+          return realLstat(targetPath, options);
+        }) as typeof NodeFS.promises.lstat);
+        yield* Effect.gen(function* () {
+          expect(yield* hasPending("idle_release")).toBe(true);
+          expect(yield* hasPending("session_replace")).toBe(true);
+        }).pipe(Effect.ensuring(Effect.sync(() => lstatSpy.mockRestore())));
+
         expect(yield* hasPending("idle_release")).toBe(false);
         expect(yield* hasPending("session_replace")).toBe(false);
       }),

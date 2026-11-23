@@ -13,7 +13,12 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
-import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import {
+  antigravityManagedPath,
+  antigravityProfileRoot,
+  inspectAntigravityManagedPath,
+  inspectAntigravityProfileRoot,
+} from "./AntigravityProfilePaths.ts";
 import { boundAntigravityToolText, isCutAntigravityToolText } from "./AntigravityProtocol.ts";
 
 // Field numbers from the runtime's trajectory protos (exa.cortex_pb).
@@ -668,63 +673,105 @@ const decodeInboxPriorityMessage = Schema.decodeUnknownOption(
   ),
 );
 
-async function hasUnreadWakingInboxMessage(
+type BackgroundWorkCheckState = "yes" | "no" | "unknown";
+
+function nodeErrorCode(cause: unknown): string | undefined {
+  return typeof cause === "object" &&
+    cause !== null &&
+    "code" in cause &&
+    typeof cause.code === "string"
+    ? cause.code
+    : undefined;
+}
+
+async function inspectUnreadWakingInboxMessage(
   profileRoot: string,
   sessionId: string,
-): Promise<boolean> {
+): Promise<BackgroundWorkCheckState> {
   const directory = ["antigravity-acp", "brain", sessionId, ".system_generated", "messages"];
-  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
-  if (inbox === undefined) return false;
+  const inbox = await inspectAntigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox.status === "missing" || inbox.status === "invalid") return "no";
+  if (inbox.status === "error") return "unknown";
   const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
-  if (entries === undefined) return false;
+  if (entries === undefined) return "unknown";
   const messageNames = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
-  if (messageNames.length === 0 || messageNames.length > MAX_MESSAGE_FILES) return false;
+  if (messageNames.length === 0) return "no";
+  if (messageNames.length > MAX_MESSAGE_FILES) return "unknown";
   let readReceipts: Readonly<Record<string, boolean>> = {};
   if (entries.includes("read.json")) {
-    const receiptFile = await antigravityManagedPath(
+    const receiptFile = await inspectAntigravityManagedPath(
       profileRoot,
       [...directory, "read.json"],
       "file",
     );
-    if (receiptFile === undefined || receiptFile.info.size > MAX_STEP_BYTES) return false;
-    const rawReceipts = await NodeFSP.readFile(receiptFile.path, "utf8").catch(() => undefined);
-    if (rawReceipts === undefined) return false;
-    const decodedReceipts = decodeReadReceipts(rawReceipts);
-    if (Option.isNone(decodedReceipts)) return false;
-    readReceipts = decodedReceipts.value;
+    if (receiptFile.status !== "missing") {
+      if (receiptFile.status !== "ok" || receiptFile.info.size > MAX_STEP_BYTES) return "unknown";
+      const rawReceipts = await NodeFSP.readFile(receiptFile.path, "utf8").catch(() => undefined);
+      if (rawReceipts === undefined) return "unknown";
+      const decodedReceipts = decodeReadReceipts(rawReceipts);
+      if (Option.isNone(decodedReceipts)) return "unknown";
+      readReceipts = decodedReceipts.value;
+    }
   }
+  let unknown = false;
   for (const name of messageNames) {
     const fileId = name.slice(0, -5);
     if (readReceipts[fileId] === true) continue;
-    const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
-    if (file === undefined || file.info.size > MAX_STEP_BYTES) continue;
+    const file = await inspectAntigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file.status === "missing") continue;
+    if (file.status !== "ok" || file.info.size > MAX_STEP_BYTES) {
+      unknown = true;
+      continue;
+    }
     const raw = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
-    if (raw === undefined) continue;
+    if (raw === undefined) {
+      unknown = true;
+      continue;
+    }
     const decoded = decodeInboxPriorityMessage(raw);
-    if (Option.isNone(decoded)) continue;
+    if (Option.isNone(decoded)) {
+      unknown = true;
+      continue;
+    }
     if (decoded.value.id !== undefined && readReceipts[decoded.value.id] === true) continue;
-    if (decoded.value.priority === HIGH_PRIORITY_MESSAGE) return true;
+    if (decoded.value.priority === HIGH_PRIORITY_MESSAGE) return "yes";
   }
-  return false;
+  return unknown ? "unknown" : "no";
 }
 
-async function readLastTranscriptLine(
+async function inspectLastTranscriptLine(
   profileRoot: string,
   sessionId: string,
-): Promise<Schema.Schema.Type<typeof TranscriptLine> | undefined> {
-  const transcript = await antigravityManagedPath(
+): Promise<
+  | { readonly status: "absent" }
+  | { readonly status: "invalid" }
+  | { readonly status: "unknown" }
+  | { readonly status: "ok"; readonly line: Schema.Schema.Type<typeof TranscriptLine> }
+> {
+  const transcript = await inspectAntigravityManagedPath(
     profileRoot,
     ["antigravity-acp", "brain", sessionId, ".system_generated", "logs", "transcript.jsonl"],
     "file",
   );
-  if (transcript === undefined) return undefined;
-  const handle = await NodeFSP.open(
-    transcript.path,
-    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
-  );
+  if (transcript.status === "missing") return { status: "absent" };
+  if (transcript.status === "invalid") return { status: "invalid" };
+  if (transcript.status === "error") return { status: "unknown" };
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(
+      transcript.path,
+      NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+    );
+  } catch (cause) {
+    const code = nodeErrorCode(cause);
+    if (code === "ENOENT") return { status: "absent" };
+    if (code === "ELOOP") return { status: "invalid" };
+    return { status: "unknown" };
+  }
   try {
     const stat = await handle.stat();
-    if (!stat.isFile() || stat.size === 0) return undefined;
+    if (!stat.isFile()) return { status: "invalid" };
+    if (stat.size === 0) return { status: "absent" };
     for (const byteCap of [PENDING_REPLY_TAIL_BYTES, TRANSCRIPT_BYTE_CAP]) {
       const start = Math.max(0, stat.size - byteCap);
       const buffer = Buffer.alloc(stat.size - start);
@@ -734,18 +781,21 @@ async function readLastTranscriptLine(
         end -= 1;
       }
       if (end === 0) {
-        if (start === 0) return undefined;
+        if (start === 0) return { status: "absent" };
         continue;
       }
       const trimmed = buffer.subarray(0, end);
       const lastNewline = trimmed.lastIndexOf(0x0a);
       if (lastNewline === -1 && start > 0) continue;
       const line = trimmed.toString("utf8", lastNewline + 1);
-      return Option.getOrUndefined(decodeTranscriptLine(line));
+      const decoded = decodeTranscriptLine(line);
+      return Option.isSome(decoded) ? { status: "ok", line: decoded.value } : { status: "unknown" };
     }
-    return undefined;
+    return { status: "unknown" };
+  } catch {
+    return { status: "unknown" };
   } finally {
-    await handle.close();
+    await handle.close().catch(() => undefined);
   }
 }
 
@@ -806,8 +856,11 @@ async function readMessageSummaries(
   conversationId: string,
 ): Promise<InboxMessagesResult> {
   const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
-  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
-  if (inbox === undefined) return { messages: [], incomplete: false };
+  const inbox = await inspectAntigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox.status === "missing" || inbox.status === "invalid") {
+    return { messages: [], incomplete: false };
+  }
+  if (inbox.status === "error") return { messages: [], incomplete: true };
   const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
   if (entries === undefined) return { messages: [], incomplete: true };
   const names = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
@@ -815,8 +868,9 @@ async function readMessageSummaries(
   const messages: Array<InboxMessageSummary> = [];
   let incomplete = false;
   for (const name of names) {
-    const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
-    if (file === undefined || file.info.size > MAX_STEP_BYTES) {
+    const file = await inspectAntigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file.status === "missing") continue;
+    if (file.status !== "ok" || file.info.size > MAX_STEP_BYTES) {
       incomplete = true;
       continue;
     }
@@ -839,17 +893,19 @@ async function readMessageSummaries(
   return { messages, incomplete };
 }
 
-async function hasUnansweredWakingTranscriptStep(
+async function inspectUnansweredWakingTranscriptStep(
   profileRoot: string,
   sessionId: string,
-): Promise<boolean> {
-  const lastStep = await readLastTranscriptLine(profileRoot, sessionId);
-  if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
-  return (
-    lastStep.content === undefined ||
-    lastStep.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
-    !lastStep.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
-  );
+): Promise<BackgroundWorkCheckState> {
+  const lastStep = await inspectLastTranscriptLine(profileRoot, sessionId);
+  if (lastStep.status === "absent" || lastStep.status === "invalid") return "no";
+  if (lastStep.status === "unknown") return "unknown";
+  if (lastStep.line.type !== "SYSTEM_MESSAGE") return "no";
+  return lastStep.line.content === undefined ||
+    lastStep.line.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
+    !lastStep.line.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
+    ? "yes"
+    : "no";
 }
 
 /**
@@ -863,8 +919,10 @@ export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingRepl
     const read = async (): Promise<boolean> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
       if (profileRoot === undefined) return false;
-      if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-      return hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId);
+      if ((await inspectUnreadWakingInboxMessage(profileRoot, input.sessionId)) === "yes") {
+        return true;
+      }
+      return (await inspectUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) === "yes";
     };
     return yield* Effect.tryPromise({
       try: read,
@@ -888,15 +946,20 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
 }) {
   if (!NATIVE_ID.test(input.sessionId)) return false;
   const read = async (): Promise<boolean> => {
-    const profileRoot = await antigravityProfileRoot(input.profileDirectory);
-    if (profileRoot === undefined) return false;
+    const profileRootResult = await inspectAntigravityProfileRoot(input.profileDirectory);
+    if (profileRootResult.status === "missing") return false;
+    if (profileRootResult.status === "error") return true;
+    const profileRoot = profileRootResult.path;
     let unknownState = false;
-    if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-    try {
-      if (await hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) return true;
-    } catch {
-      unknownState = true;
-    }
+    const inboxWakeState = await inspectUnreadWakingInboxMessage(profileRoot, input.sessionId);
+    if (inboxWakeState === "yes") return true;
+    if (inboxWakeState === "unknown") unknownState = true;
+    const transcriptState = await inspectUnansweredWakingTranscriptStep(
+      profileRoot,
+      input.sessionId,
+    );
+    if (transcriptState === "yes") return true;
+    if (transcriptState === "unknown") unknownState = true;
 
     const parentInbox = await readMessageSummaries(profileRoot, input.sessionId);
     if (parentInbox.incomplete) {
@@ -920,11 +983,15 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
       }
     }
 
-    const swarmFile = await antigravityManagedPath(
+    const swarmLookup = await inspectAntigravityManagedPath(
       profileRoot,
       ["antigravity-acp", "brain", input.sessionId, ".system_generated", "swarm", "members.json"],
       "file",
     );
+    if (swarmLookup.status === "error") {
+      unknownState = true;
+    }
+    const swarmFile = swarmLookup.status === "ok" ? swarmLookup : undefined;
     const rawSwarm =
       swarmFile !== undefined && swarmFile.info.size <= MAX_STEP_BYTES
         ? await NodeFSP.readFile(swarmFile.path, "utf8").catch(() => undefined)
@@ -984,12 +1051,14 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
       }
     }
 
-    const subagentsDir = await antigravityManagedPath(
+    const subagentsLookup = await inspectAntigravityManagedPath(
       profileRoot,
       ["antigravity-acp", "brain", input.sessionId, ".system_generated", "subagents"],
       "directory",
     );
-    if (subagentsDir !== undefined) {
+    if (subagentsLookup.status === "error") {
+      unknownState = true;
+    } else if (subagentsLookup.status === "ok") {
       const childIds = await listDetachedChildIds(profileRoot, input.sessionId);
       if (childIds === undefined) {
         unknownState = true;

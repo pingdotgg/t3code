@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   ChatFileAttachment,
+  CheckpointId,
   MessageId,
   NodeId,
   ProjectId,
@@ -3275,12 +3276,12 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
         if (!rootSessionId) {
           throw new Error("Expected Antigravity initial thread to have a nativeId");
         }
-        const writeSwarm = (members: Record<string, unknown>) => {
+        const writeSwarm = (members: Record<string, unknown>, targetSessionId = rootSessionId) => {
           const swarmFile = path.join(
             profile,
             "antigravity-acp",
             "brain",
-            rootSessionId,
+            targetSessionId,
             ".system_generated",
             "swarm",
             "members.json",
@@ -3295,7 +3296,7 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
         assert.isDefined(session.hasPendingBackgroundWork);
         assert.isFalse(yield* session.hasPendingBackgroundWork!);
 
-        // Working worker blocks both idle release and forceNewNativeThread replacement.
+        // Working worker blocks idle release, forceNewNativeThread replacement, and rollbackThread.
         yield* writeSwarm({
           worker: {
             conversation_id: "11111111-1111-1111-1111-111111111111",
@@ -3314,9 +3315,25 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
           (blockedError.cause as ProviderAdapter.ProviderAdapterProtocolError).detail,
           "Cannot replace ACP session",
         );
+        const blockedRollbackError = yield* session
+          .rollbackThread({
+            providerThread: initialThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("cp-0"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(blockedRollbackError.cause, ProviderAdapter.ProviderAdapterProtocolError);
+        assert.include(
+          (blockedRollbackError.cause as ProviderAdapter.ProviderAdapterProtocolError).detail,
+          "Cannot roll back ACP provider thread",
+        );
         assert.equal(spawnCount, 1);
 
-        // Waiting worker (wake_mode: "mentions") still pins idle release, but allows session replacement.
+        // Waiting worker (wake_mode: "mentions") still pins idle release, but allows session replacement and rollback.
         yield* writeSwarm({
           worker: {
             conversation_id: "11111111-1111-1111-1111-111111111111",
@@ -3338,22 +3355,52 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
         assert.equal(spawnCount, 2);
         assert.equal(replacedThread.nativeThreadRef?.nativeId, "mock-session-1");
 
-        // Once the new session has no active swarm / old worker is killed, pending work is false.
-        yield* writeSwarm({
-          worker: {
-            conversation_id: "11111111-1111-1111-1111-111111111111",
-            role: "worker",
-            phase: "KILLED",
-            wake_mode: "mentions",
-            killed: true,
+        yield* writeSwarm(
+          {
+            worker: {
+              conversation_id: "11111111-1111-1111-1111-111111111111",
+              role: "worker",
+              phase: "RUNNING",
+              wake_mode: "mentions",
+              last_read_seq: 2,
+              last_nudged_seq: 2,
+              killed: false,
+            },
           },
+          "mock-session-1",
+        );
+        assert.isTrue(yield* session.hasPendingBackgroundWork!);
+        const rolledBack = yield* session.rollbackThread({
+          providerThread: replacedThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("cp-0"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [],
         });
+        assert.equal(spawnCount, 3);
+        assert.equal(rolledBack.providerThread.nativeThreadRef?.nativeId, "mock-session-1");
+
+        // Once the active worker is killed, pending work is false.
+        yield* writeSwarm(
+          {
+            worker: {
+              conversation_id: "11111111-1111-1111-1111-111111111111",
+              role: "worker",
+              phase: "KILLED",
+              wake_mode: "mentions",
+              killed: true,
+            },
+          },
+          "mock-session-1",
+        );
         assert.isFalse(yield* session.hasPendingBackgroundWork!);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
   it.live(
-    "aborts forceNewNativeThread replacement at commit when active background work starts during startup",
+    "aborts forceNewNativeThread and rollbackThread replacement at commit when active background work starts during startup",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -3373,7 +3420,7 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
         let spawnCount = 0;
         let rootSessionId: string | undefined;
         let initialScopeFinalized = false;
-        let replacementScopeFinalized = false;
+        const finalizedReplacementSpawns: Array<number> = [];
         type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
 
         const writeSwarmWorker = (targetSessionId: string) => {
@@ -3421,7 +3468,7 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
                   if (currentSpawn === 1) {
                     initialScopeFinalized = true;
                   } else {
-                    replacementScopeFinalized = true;
+                    finalizedReplacementSpawns.push(currentSpawn);
                   }
                 }),
               );
@@ -3438,7 +3485,7 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
                   },
                 },
               }).pipe(Effect.provideService(SecureRandom.SecureRandom, crypto));
-              return currentSpawn === 2
+              return currentSpawn === 2 || currentSpawn === 3
                 ? ({
                     ...runtime,
                     start: () =>
@@ -3488,7 +3535,42 @@ describe("AntigravityAdapterV2 teardown and native background work", () => {
           "Cannot replace ACP session",
         );
         assert.equal(spawnCount, 2);
-        assert.isTrue(replacementScopeFinalized);
+        assert.include(finalizedReplacementSpawns, 2);
+        assert.isFalse(initialScopeFinalized);
+        assert.isTrue(yield* session.hasPendingBackgroundWork!);
+
+        // Clear swarm so rollback pre-check passes, then race active work into rollback replacement startup.
+        yield* fileSystem.remove(
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            rootSessionId!,
+            ".system_generated",
+            "swarm",
+          ),
+          { recursive: true },
+        );
+        assert.isFalse(yield* session.hasPendingBackgroundWork!);
+
+        const abortedRollbackError = yield* session
+          .rollbackThread({
+            providerThread: initialThread,
+            target: {
+              type: "thread_start",
+              checkpointId: CheckpointId.make("cp-0"),
+              appRunOrdinal: 0,
+            },
+            providerThreadTurns: [],
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(abortedRollbackError.cause, ProviderAdapter.ProviderAdapterProtocolError);
+        assert.include(
+          (abortedRollbackError.cause as ProviderAdapter.ProviderAdapterProtocolError).detail,
+          "Cannot roll back ACP provider thread",
+        );
+        assert.equal(spawnCount, 3);
+        assert.include(finalizedReplacementSpawns, 3);
         assert.isFalse(initialScopeFinalized);
         assert.isTrue(yield* session.hasPendingBackgroundWork!);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
