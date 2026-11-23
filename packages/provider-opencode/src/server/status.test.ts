@@ -1436,3 +1436,23 @@ it.effect("rescans a directory whose catalog changes after its scan settled", ()
     NodeAssert.deepEqual(rescans, ["/unsettled", "/project", "/unsettled"]);
   }),
 );
+
+it.effect("reads later changes after a catalog read that never answered", () =>
+  Effect.gen(function* () {
+    const live = [model("live-only")];
+    let answering = false;
+    const read = Effect.suspend(() => (answering ? Effect.succeed(live) : Effect.never));
+    const events = yield* Queue.unbounded<{ readonly type: string }>();
+    const watch = yield* makeOpenCode2CatalogWatch();
+    const seen: Array<ReadonlyArray<OpenCode2Model> | undefined> = [];
+    yield* Stream.runForEach(watch.changes, (catalog) =>
+      Effect.sync(() => seen.push(catalog)),
+    ).pipe(Effect.forkScoped);
+    yield* watch.follow("server", Effect.succeed(Stream.fromQueue(events)), read);
+    yield* TestClock.adjust("31 seconds");
+    answering = true;
+    yield* Queue.offer(events, { type: "model.updated" });
+    yield* TestClock.adjust("1 second");
+    NodeAssert.deepEqual(seen.at(-1), live);
+  }),
+);

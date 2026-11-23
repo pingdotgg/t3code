@@ -688,6 +688,8 @@ export const makeOpenCode2CatalogWatch = Effect.fn(
       }),
       // A stopped server fails every read; that must not discard the catalog it had listed.
       Effect.retry({ times: 3, schedule: Schedule.spaced("1 second") }),
+      // Nothing else bounds this read, and one that hangs would hold every later change.
+      Effect.timeout("30 seconds"),
       Effect.ignore,
     );
   return {
