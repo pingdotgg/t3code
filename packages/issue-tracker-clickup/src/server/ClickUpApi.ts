@@ -61,6 +61,7 @@ const ClickUpTask = Schema.Struct({
   tags: Schema.Array(ClickUpTag),
   list: Schema.Struct({ id: Schema.String }),
   permission_level: OptionalString,
+  team_id: OptionalString,
   description: OptionalString,
   markdown_description: OptionalString,
 });

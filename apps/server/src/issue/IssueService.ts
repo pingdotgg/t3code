@@ -324,53 +324,84 @@ const make = Effect.gen(function* () {
    * that reports each issue's scope (`issueScope`) is asked, so a link naming none, or a client
    * naming the wrong one, cannot misplace a write; another project bound to that scope serves it.
    */
-  const requireProject = (
+  const requireProject = Effect.fn("IssueService.requireProject")(function* (
     ref: IssueScopeRef & { readonly key?: string | undefined },
-  ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> =>
-    listProjects({ projectId: ref.projectId }).pipe(
-      Effect.flatMap(({ supported }) => {
-        const host = ref.host?.trim().toLowerCase();
-        const onHost = supported.filter(
-          (candidate) =>
-            candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
-        );
-        const place = (scope: string) => {
-          const own = onHost.find(
-            (candidate) => candidate.scope.toLowerCase() === scope.toLowerCase(),
-          );
-          const served = own ?? onHost[0];
-          return served === undefined ? null : { ...served, scope, writable: own !== undefined };
-        };
-        const placed = place(ref.scope.trim());
-        if (placed === null) {
-          return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
-        }
-        const { issueScope } = placed.api;
-        if (ref.key === undefined || issueScope === undefined) return Effect.succeed(placed);
-        return issueScope({
-          cwd: placed.project.workspaceRoot,
-          host: placed.host,
-          scope: placed.scope,
-          key: ref.key,
-        }).pipe(
-          Effect.mapError(toIssueError("scope")),
-          Effect.flatMap((scope) => {
-            const here = place(scope) ?? placed;
-            if (here.writable) return Effect.succeed(here);
-            return listProjects({ host: placed.host }).pipe(
-              Effect.map(({ supported: everywhere }) => {
-                const bound = everywhere.find(
-                  (candidate) =>
-                    candidate.tracker === ref.tracker &&
-                    candidate.scope.toLowerCase() === scope.toLowerCase(),
-                );
-                return bound === undefined ? here : { ...bound, writable: true };
-              }),
-            );
-          }),
-        );
-      }),
+  ) {
+    const { supported } = yield* listProjects({ projectId: ref.projectId });
+    const host = ref.host?.trim().toLowerCase();
+    const onHost = supported.filter(
+      (candidate) =>
+        candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
     );
+    const place = (scope: string) => {
+      const own = onHost.find((candidate) => candidate.scope.toLowerCase() === scope.toLowerCase());
+      const served = own ?? onHost[0];
+      return served === undefined ? null : { ...served, scope, writable: own !== undefined };
+    };
+    const placed = place(ref.scope.trim());
+    if (placed === null) {
+      return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    const key = ref.key;
+    if (key === undefined || placed.api.issueScope === undefined) return placed;
+    const scopeOf = (lender: SupportedProject) => {
+      const read = lender.api.issueScope;
+      return (
+        read === undefined
+          ? Effect.fail<IssueError>(
+              new IssueOperationError({
+                operation: "scope",
+                reason: "not-found",
+                detail: "This tracker cannot place the issue.",
+              }),
+            )
+          : read({
+              cwd: lender.project.workspaceRoot,
+              host: lender.host,
+              scope: placed.scope,
+              key,
+            }).pipe(Effect.mapError(toIssueError("scope")))
+      ).pipe(Effect.result);
+    };
+
+    const first = yield* scopeOf(placed);
+    if (first._tag === "Success") {
+      const here = place(first.success) ?? placed;
+      if (here.writable) return here;
+    } else if (!isNotFound(first.failure)) {
+      return yield* first.failure;
+    }
+    // This project's account may not see the task, or does not bind its scope: another account
+    // or project on the same tracker may, and the one that binds the scope serves it.
+    const { supported: everywhere } = yield* listProjects({ host: placed.host });
+    const sameTracker = everywhere.filter((candidate) => candidate.tracker === ref.tracker);
+    let found: { readonly lender: SupportedProject; readonly scope: string } | undefined =
+      first._tag === "Success" ? { lender: placed, scope: first.success } : undefined;
+    const tried = new Set([placed.accountId]);
+    for (const candidate of sameTracker) {
+      if (found !== undefined) break;
+      if (tried.has(candidate.accountId)) continue;
+      tried.add(candidate.accountId);
+      const read = yield* scopeOf(candidate);
+      if (read._tag === "Success") found = { lender: candidate, scope: read.success };
+      else if (!isNotFound(read.failure)) return yield* read.failure;
+    }
+    if (found === undefined) {
+      return yield* first._tag === "Failure"
+        ? first.failure
+        : new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    const { lender, scope } = found;
+    const matches = (candidate: SupportedProject) =>
+      candidate.scope.toLowerCase() === scope.toLowerCase();
+    const bound =
+      sameTracker.find(
+        (candidate) => matches(candidate) && candidate.accountId === lender.accountId,
+      ) ?? sameTracker.find(matches);
+    return bound === undefined
+      ? { ...lender, scope, writable: false }
+      : { ...bound, writable: true };
+  });
 
   const requireWritable = (
     ref: IssueScopeRef & { readonly key?: string | undefined },
@@ -777,8 +808,9 @@ const make = Effect.gen(function* () {
       });
     }
     // A key-only reference to a tracker that places its own issues takes the issue's scope, so
-    // a thread link names the same scope as one made from a URL or the issue list.
-    const placed =
+    // a thread link names the same scope as one made from a URL or the issue list, even when
+    // another project binds it; reads and writes are placed again on the way in.
+    const placedScope =
       named === undefined && select?.key !== undefined && own.api.issueScope !== undefined
         ? yield* own.api
             .issueScope({
@@ -787,20 +819,10 @@ const make = Effect.gen(function* () {
               scope: own.scope,
               key: select.key,
             })
-            .pipe(
-              Effect.map((scope) =>
-                supported.find(
-                  (candidate) =>
-                    candidate.tracker === own.tracker &&
-                    candidate.scope.toLowerCase() === scope.toLowerCase(),
-                ),
-              ),
-              // Only a hint: the read or write that follows reports a missing issue itself.
-              Effect.orElseSucceed(() => undefined),
-            )
+            // Only a hint: the read or write that follows reports a missing issue itself.
+            .pipe(Effect.orElseSucceed(() => undefined))
         : undefined;
-    const scoped = placed ?? own;
-    return { projectId, tracker: scoped.tracker, host: scoped.host, scope: scoped.scope };
+    return { projectId, tracker: own.tracker, host: own.host, scope: placedScope ?? own.scope };
   });
 
   /** A host whose hostname does not name it, such as GitHub Enterprise Server, is vouched for by a project on it. */

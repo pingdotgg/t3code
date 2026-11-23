@@ -830,6 +830,44 @@ describe("IssueService with a standalone tracker", () => {
     }),
   );
 
+  it.effect("asks another account when the opening project's account cannot see the issue", () =>
+    Effect.gen(function* () {
+      const second = IssueTrackerAccountId.make("second");
+      const tracker: StandaloneIssueTrackerApi = {
+        ...fakeStandaloneTracker({
+          // Only the second account's workspace has the task.
+          issueScope: () =>
+            Effect.flatMap(IssueTrackerAccount, (account) =>
+              account === second
+                ? Effect.succeed("901")
+                : Effect.fail(
+                    new IssueTrackerError({
+                      tracker: LINEAR,
+                      operation: "issueScope",
+                      reason: "not-found",
+                      detail: "No such task.",
+                    }),
+                  ),
+            ),
+        }),
+      };
+      const service = yield* makeService({
+        projects: [project({ id: "web" }), project({ id: "api" })],
+        trackers: [tracker],
+        bindings: {
+          web: { tracker: LINEAR, scope: "900" },
+          api: { tracker: LINEAR, accountId: second, scope: "901" },
+        },
+      });
+      const ref = { projectId: "web" as ProjectId, tracker: LINEAR, host: "linear.app" };
+      expect(yield* service.detail({ ...ref, scope: "task", key: "xyz" })).toMatchObject({
+        projectId: "api",
+        scope: "901",
+        writable: true,
+      });
+    }),
+  );
+
   it.effect("names a key-only reference by the scope the tracker places it in", () =>
     Effect.gen(function* () {
       const service = yield* makeService({

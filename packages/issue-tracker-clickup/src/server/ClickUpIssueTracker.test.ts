@@ -508,6 +508,26 @@ describe("ClickUpIssueTracker", () => {
     }),
   );
 
+  it.effect("offers only the list's own workspace when the token reaches two", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeClickUp({
+        "GET /list/900": () => LIST,
+        "GET /list/900/member": () => ({ members: [] }),
+        "GET /space/77/tag": () => ({ tags: [] }),
+        "GET /team": () => ({
+          teams: [
+            { id: "1", name: "Other", members: [{ user: user(11, "alex") }] },
+            { id: "2", name: "Acme", members: [{ user: user(22, "alex") }] },
+          ],
+        }),
+        "GET /team/1/space": () => ({ spaces: [{ id: "55", name: "Elsewhere" }] }),
+        "GET /team/2/space": () => ({ spaces: [{ id: "77", name: "Product" }] }),
+      });
+      const candidates = yield* (yield* tracker).listCandidates(target);
+      expect(candidates.assignees.map((candidate) => candidate.id)).toEqual(["22"]);
+    }),
+  );
+
   it.effect("places a task by the list it is in", () =>
     Effect.gen(function* () {
       const { tracker } = fakeClickUp({

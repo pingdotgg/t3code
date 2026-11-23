@@ -264,22 +264,57 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
         .request({ operation, method: "GET", path: "/team", decode: Responses.teams, token })
         .pipe(Effect.map((data) => data.teams));
 
+    /** The workspace a space sits in, which ClickUp's list and space reads do not name. */
+    const workspaceOfSpace = new Map<string, string>();
+    const owningWorkspace = Effect.fn("ClickUpIssueTracker.owningWorkspace")(function* (
+      operation: string,
+      listId: string,
+      teams: ReadonlyArray<{ readonly id: string }>,
+    ) {
+      const [only, ...more] = teams;
+      if (only !== undefined && more.length === 0) return only.id;
+      const { space } = yield* getList(operation, listId);
+      const known = workspaceOfSpace.get(space.id);
+      if (known !== undefined) return known;
+      for (const team of teams) {
+        const { spaces } = yield* clickup.request({
+          operation,
+          method: "GET",
+          path: `/team/${encodeURIComponent(team.id)}/space`,
+          decode: Responses.spaces,
+        });
+        if (spaces.some((candidate) => candidate.id === space.id)) {
+          workspaceOfSpace.set(space.id, team.id);
+          return team.id;
+        }
+      }
+      return undefined;
+    });
+
     /**
-     * Whom a list's tasks can be given to: its own members, then the workspace's, since list
+     * Whom a list's tasks can be given to: its own members, then its workspace's, since list
      * members leave out people who reach the list only through its space or workspace.
      */
-    const assignable = (operation: string, listId: string) =>
-      Effect.all([listMembers(operation, listId), workspaces(operation)], { concurrency: 2 }).pipe(
-        Effect.map(([members, teams]) => {
-          const everyone = [
-            ...members,
-            ...teams.flatMap((team) => (team.members ?? []).map((member) => member.user)),
-          ];
-          const byId = new Map<number, ClickUpApi.ClickUpUser>();
-          for (const user of everyone) if (!byId.has(user.id)) byId.set(user.id, user);
-          return [...byId.values()];
-        }),
+    const assignable = Effect.fn("ClickUpIssueTracker.assignable")(function* (
+      operation: string,
+      listId: string,
+      workspaceId?: string | null,
+    ) {
+      const [members, teams] = yield* Effect.all(
+        [listMembers(operation, listId), workspaces(operation)],
+        { concurrency: 2 },
       );
+      const owner = workspaceId ?? (yield* owningWorkspace(operation, listId, teams));
+      const everyone = [
+        ...members,
+        ...teams
+          .filter((team) => team.id === owner)
+          .flatMap((team) => (team.members ?? []).map((member) => member.user)),
+      ];
+      const byId = new Map<number, ClickUpApi.ClickUpUser>();
+      for (const user of everyone) if (!byId.has(user.id)) byId.set(user.id, user);
+      return [...byId.values()];
+    });
 
     /** Tag names as the space spells them, refusing one the space does not have. */
     const tagNames = (operation: string, spaceId: string, names: ReadonlyArray<string>) =>
@@ -303,14 +338,15 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
 
     /**
      * Ids, logins or emails to ClickUp user ids. An id passes as-is and ClickUp decides who may be
-     * assigned; a name is looked up among the current assignees, then the list's members, which
-     * leave out people with access only through the space.
+     * assigned; a name is looked up among the current assignees, then the list's and its
+     * workspace's members.
      */
     const memberIds = Effect.fn("ClickUpIssueTracker.memberIds")(function* (
       operation: string,
       listId: string,
       assignees: ReadonlyArray<string>,
       current: ReadonlyArray<ClickUpApi.ClickUpUser> = [],
+      workspaceId?: string | null,
     ) {
       const find = (people: ReadonlyArray<ClickUpApi.ClickUpUser>, wanted: string) => {
         const value = wanted.trim().toLowerCase();
@@ -320,7 +356,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
       };
       const known = assignees.map((wanted) => find(current, wanted));
       if (known.every((id) => id !== undefined)) return known;
-      const members = yield* assignable(operation, listId);
+      const members = yield* assignable(operation, listId, workspaceId);
       return yield* Effect.forEach(assignees, (wanted, index) => {
         const id = known[index] ?? find(members, wanted);
         return id === undefined
@@ -631,7 +667,13 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, ClickUpApi.Cl
         const assignees =
           input.assignees === undefined
             ? undefined
-            : yield* memberIds("update", task.list.id, input.assignees, task.assignees);
+            : yield* memberIds(
+                "update",
+                task.list.id,
+                input.assignees,
+                task.assignees,
+                task.team_id,
+              );
         const wantedTags =
           input.labels === undefined
             ? undefined

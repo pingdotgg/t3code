@@ -108,6 +108,14 @@ function IssueReactionBar({
   );
 }
 
+/**
+ * Where the server placed the issue, for scope reads: a ClickUp link names no list until the task
+ * is read. Writes keep the opened reference, so they refresh the detail this panel shows.
+ */
+function placedScope(reference: IssueRef, detail: IssueDetail): IssueRef {
+  return { ...reference, projectId: detail.projectId, scope: detail.scope };
+}
+
 function IssueLabelPicker({
   environmentId,
   reference,
@@ -128,7 +136,9 @@ function IssueLabelPicker({
   const current = issuePicksFor(picks, detail, open);
   const draft = current.draft;
   const candidatesQuery = useEnvironmentQuery(
-    open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
+    open
+      ? issueEnvironment.candidates({ environmentId, input: placedScope(reference, detail) })
+      : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const applied = new Set(detail.labels.map((label) => label.name));
@@ -245,7 +255,9 @@ function IssueAssigneePicker({
   const current = issuePicksFor(picks, detail, open);
   const draft = current.draft;
   const candidatesQuery = useEnvironmentQuery(
-    open ? issueEnvironment.candidates({ environmentId, input: reference }) : null,
+    open
+      ? issueEnvironment.candidates({ environmentId, input: placedScope(reference, detail) })
+      : null,
   );
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
   const needle = query.toLowerCase();
@@ -477,8 +489,6 @@ export function IssueDetailPanel({
   const tracker = issueTrackerPresentation(detail.tracker);
   const currentState = issueStatePresentation(detail.state);
 
-  // Where the server placed the issue: a ClickUp link names no list until the task is read.
-  const placed = { ...reference, projectId: detail.projectId, scope: detail.scope };
   const host = reference.host === undefined ? {} : { host: reference.host };
   const openEventSource = (source: IssueEventReference) => {
     if (source.kind === "pull-request") {
@@ -629,7 +639,7 @@ export function IssueDetailPanel({
             <IssueThreadLinks
               key={`${environmentId}:${detail.url}`}
               environmentId={environmentId}
-              reference={{ ...placed, host: reference.host ?? detail.host }}
+              reference={{ ...placedScope(reference, detail), host: reference.host ?? detail.host }}
               issue={detail}
               threadRef={threadRef}
             />
@@ -748,7 +758,7 @@ export function IssueDetailPanel({
                 {detail.capabilities.labels ? (
                   <IssueLabelPicker
                     environmentId={environmentId}
-                    reference={placed}
+                    reference={reference}
                     detail={detail}
                     allowed={canLabel}
                     disabledReason={
@@ -772,7 +782,7 @@ export function IssueDetailPanel({
                 {detail.capabilities.assignees ? (
                   <IssueAssigneePicker
                     environmentId={environmentId}
-                    reference={placed}
+                    reference={reference}
                     detail={detail}
                     allowed={canAssign}
                     disabledReason={
