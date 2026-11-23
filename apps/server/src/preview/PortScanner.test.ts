@@ -685,7 +685,7 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
         layerNoProc,
         Layer.succeed(ProcessRunner.ProcessRunner, {
           run: (input) => {
-            if (input.command === "tasklist.exe") {
+            if (input.command === String.raw`C:\Windows\System32\tasklist.exe`) {
               return Effect.succeed(
                 processOutput('"node.exe","1234","Console","1","50,000 K"\r\n'),
               );
