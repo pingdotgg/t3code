@@ -975,31 +975,48 @@ const focusedValueOnlyInput = (target: FocusCandidate) => {
 };
 
 // Keys reach pages that build their value from keydown. Line breaks stay text: Enter would submit the form.
-const typeKeys = async (page: Page, text: string) => {
+const typeKeys = async (page: Page, text: string, timeoutMs: number, deadline: number) => {
+  let typed = 0;
   for (const [index, part] of text.split(/([\r\n]+)/u).entries()) {
-    if (index % 2 === 1) await page.keyboard.insertText(part);
-    else if (part !== "") await page.keyboard.type(part);
+    // Keys cost about a millisecond each, so long text is sent in pieces that stop at the deadline.
+    const pieces = index % 2 === 1 ? [part] : (part.match(/[^]{1,64}/gu) ?? []);
+    for (const piece of pieces) {
+      if (Date.now() >= deadline) {
+        const reason = `Typing stopped after ${typed} of ${text.length} characters, which the field now holds. Type the rest in another call or raise timeoutMs.`;
+        throw new ServerBrowserOperationError({
+          tag: "PreviewAutomationTimeoutError",
+          message: reason,
+          detail: { timeoutMs, reason },
+        });
+      }
+      if (index % 2 === 1) await page.keyboard.insertText(piece);
+      else await page.keyboard.type(piece);
+      typed += piece.length;
+    }
   }
 };
 
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  // One deadline across steps keeps the reply inside the broker's grace; Playwright reads 0 as none.
+  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
   if (locator !== null && input.clear) {
     // fill follows a label to its control and leaves that control focused for the keys.
-    await locator.fill("", { timeout });
+    await locator.fill("", { timeout: remaining() });
     // Pickers take a value such as 2026-01-31 only from fill; keys would enter their segments.
-    if (await locator.evaluate(focusedValueOnlyInput, undefined, { timeout })) {
-      await locator.fill(input.text, { timeout });
+    if (await locator.evaluate(focusedValueOnlyInput, undefined, { timeout: remaining() })) {
+      await locator.fill(input.text, { timeout: remaining() });
       return;
     }
-    await typeKeys(page, input.text);
+    await typeKeys(page, input.text, timeoutMs, deadline);
     return;
   }
   const focused =
     locator === null
-      ? await focusedTextField(page, timeout)
-      : await locator.evaluate(focusTextTarget, undefined, { timeout });
+      ? await focusedTextField(page, remaining())
+      : await locator.evaluate(focusTextTarget, undefined, { timeout: remaining() });
   if (focused !== true) {
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationTargetNotEditableError",
@@ -1010,7 +1027,7 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.press("Delete");
   }
-  await typeKeys(page, input.text);
+  await typeKeys(page, input.text, timeoutMs, deadline);
 };
 
 export const hover = async (
