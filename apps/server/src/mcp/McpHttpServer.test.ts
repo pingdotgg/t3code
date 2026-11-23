@@ -687,8 +687,11 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
     yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
 
     for (const invalidTarget of ["{model:", '{"model":42}']) {
-      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
-      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+      const rejected = yield* callTool("delegate_task", { task, target: invalidTarget });
+      expect(rejected.isError).toBe(true);
+      expect(rejected.content).toEqual([
+        { type: "text", text: expect.stringContaining('at ["target"]') },
+      ]);
     }
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual({
@@ -705,16 +708,25 @@ it.effect("decodes a JSON-stringified delegate target as the same object", () =>
 it.effect("rejects arguments a tool does not declare instead of dropping them", () => {
   const calls: Array<unknown> = [];
   return Effect.gen(function* () {
-    const launch = yield* Effect.flip(
-      callTool("t3_thread_launch", { title: "Repro", scratch: true, prompt: "say hi" }),
-    );
-    const wait = yield* Effect.flip(
-      callTool("t3_thread_wait", { threadId: "thread-excess-arguments", timeout: 5_000 }),
-    );
+    const launch = yield* callTool("t3_thread_launch", {
+      title: "Repro",
+      scratch: true,
+      prompt: "say hi",
+    });
+    const wait = yield* callTool("t3_thread_wait", {
+      threadId: "thread-excess-arguments",
+      timeout: 5_000,
+    });
 
     expect(calls).toEqual([]);
-    expect(launch.message).toContain('Unknown argument "prompt"');
-    expect(wait.message).toContain('Unknown argument "timeout"');
+    expect(launch.isError).toBe(true);
+    expect(launch.content).toEqual([
+      { type: "text", text: expect.stringContaining('Unknown argument "prompt"') },
+    ]);
+    expect(wait.isError).toBe(true);
+    expect(wait.content).toEqual([
+      { type: "text", text: expect.stringContaining('Unknown argument "timeout"') },
+    ]);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
@@ -773,9 +785,12 @@ it.effect.each(["limit", "runLimit", "maxCharsPerItem"])(
       const rejected = yield* callTool("t3_thread_read", {
         threadId: "thread-below-minimum",
         [field]: 0,
-      }).pipe(Effect.flip);
+      });
 
-      expect(String(rejected)).toContain("greater than or equal to 1");
+      expect(rejected.isError).toBe(true);
+      expect(rejected.content).toEqual([
+        { type: "text", text: expect.stringContaining("greater than or equal to 1") },
+      ]);
       expect(calls).toEqual([]);
     }).pipe(Effect.provide(layerRecordingTools(calls)));
   },
