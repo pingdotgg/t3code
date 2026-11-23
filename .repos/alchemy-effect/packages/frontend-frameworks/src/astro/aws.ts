@@ -29,11 +29,7 @@
 import type { AstroInlineConfig, AstroIntegration } from "astro";
 import * as Effect from "effect/Effect";
 import { runBuildChild } from "../core/BuildChild.ts";
-import {
-  DeployTargetError,
-  makeDeployTarget,
-  type ServerEntryChunk,
-} from "../core/index.ts";
+import { DeployTargetError, makeDeployTarget, type ServerEntryChunk } from "../core/index.ts";
 import { make } from "./Astro.ts";
 import type { AstroTarget, AstroTargetBuildContext } from "./Target.ts";
 
@@ -42,8 +38,7 @@ import type { AstroTarget, AstroTargetBuildContext } from "./Target.ts";
  * the module the adapter pins as `serverEntrypoint`. It exports the Lambda
  * `handler` (streaming by default).
  */
-export const SERVER_ENTRYPOINT =
-  "@alchemy.run/frontend-frameworks/astro/entrypoints/aws-server";
+export const SERVER_ENTRYPOINT = "@alchemy.run/frontend-frameworks/astro/entrypoints/aws-server";
 
 /** AWS-specific target configuration. */
 export interface AstroAwsConfig {
@@ -72,9 +67,7 @@ export interface DistilledAwsOptions {
    * assets-only (no Lambda).
    * @internal
    */
-  readonly onBuildOutput?:
-    | ((buildOutput: "static" | "server") => void)
-    | undefined;
+  readonly onBuildOutput?: ((buildOutput: "static" | "server") => void) | undefined;
   /**
    * Reports the resolved server-entry file name (`config.build.serverEntry`,
    * `entry.mjs` by default) so the entry chunk can be pinned as
@@ -90,9 +83,7 @@ export interface DistilledAwsOptions {
  * itself as the adapter at `astro:config:done`, where it also rejects a
  * user-declared adapter with an actionable error.
  */
-export const distilledAws = (
-  options: DistilledAwsOptions = {},
-): AstroIntegration => {
+export const distilledAws = (options: DistilledAwsOptions = {}): AstroIntegration => {
   // Whether WE satisfied `config.adapter`. The user's astro.config.* loads
   // natively and this integration is injected via `integrations`, but
   // astro's build refuses server output unless `config.adapter` is set — so
@@ -164,9 +155,7 @@ export const distilledAws = (
           build.rolldownOptions ||= {};
           build.rolldownOptions.external = ["sharp", /^@aws-sdk\//];
           viteConfig.define = {
-            __ALCHEMY_ASTRO_AWS_STREAMING__: JSON.stringify(
-              options.streaming ?? true,
-            ),
+            __ALCHEMY_ASTRO_AWS_STREAMING__: JSON.stringify(options.streaming ?? true),
             ...viteConfig.define,
           };
         }
@@ -220,11 +209,7 @@ const makeAwsAdapterTarget = (config: AstroAwsConfig = {}): AstroAwsTarget => {
     // for prerendering is dropped from the output and the client directory
     // carries all prerendered HTML, `404.html` included.
     finish: (output) =>
-      Effect.succeed(
-        buildOutput === "static"
-          ? { ...output, serverModules: undefined }
-          : output,
-      ),
+      Effect.succeed(buildOutput === "static" ? { ...output, serverModules: undefined } : output),
   });
 };
 
@@ -271,6 +256,7 @@ export const target = (config: AstroAwsConfig = {}): AstroAwsTarget => ({
     runBuildChild({
       module: import.meta.url,
       rootDir: context.root,
+      env: context.env,
       framework: "astro",
       config: {
         rootDir: context.root,

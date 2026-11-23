@@ -1,5 +1,6 @@
 import { useLayoutEffect } from "react";
 import type { RunId } from "@t3tools/contracts";
+import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import type { TimelineEntry } from "../../session-logic";
 import {
   timelineTurnFoldRunIdsByEntryId,
@@ -13,6 +14,7 @@ import { readThreadFindPosition } from "./threadFindPosition";
 /** Hands thread find how to read the find position of this timeline's viewport. */
 export function useThreadFindPositionReader({
   threadKey,
+  navigate,
   timelineViewportElement,
   findFoldRunIds,
   timelineEntries,
@@ -20,10 +22,12 @@ export function useThreadFindPositionReader({
   runningRunId,
   isWorking,
   runlessWorkActive,
+  toolCallVisibility,
   rows,
   contentInsetEndAdjustment,
 }: {
   readonly threadKey: string;
+  readonly navigate: () => void;
   readonly timelineViewportElement: HTMLDivElement | null;
   readonly findFoldRunIds: ReadonlyMap<string, RunId> | null;
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
@@ -31,10 +35,12 @@ export function useThreadFindPositionReader({
   readonly runningRunId: RunId | null;
   readonly isWorking: boolean;
   readonly runlessWorkActive: boolean;
+  readonly toolCallVisibility: ToolCallVisibility;
   readonly rows: MessagesTimelineRow[];
   readonly contentInsetEndAdjustment: number;
 }) {
   // Layout effect so a find opened right after a thread switch reads this viewport.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches the timeline viewport's position reader to the thread find registry
   useLayoutEffect(() => {
     if (!timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
@@ -46,6 +52,7 @@ export function useThreadFindPositionReader({
           runningRunId,
           isWorking,
           runlessWorkActive,
+          toolCallVisibility,
         });
       const entryById = new Map(timelineEntries.map((entry) => [entry.id, entry]));
       return readThreadFindPosition(
@@ -83,11 +90,12 @@ export function useThreadFindPositionReader({
         contentInsetEndAdjustment,
       );
     };
-    return attachThreadFindTimeline({ threadKey, readPosition: read });
+    return attachThreadFindTimeline({ threadKey, readPosition: read, navigate });
   }, [
     contentInsetEndAdjustment,
     findFoldRunIds,
     isWorking,
+    navigate,
     threadKey,
     latestRun,
     rows,
@@ -95,5 +103,6 @@ export function useThreadFindPositionReader({
     runningRunId,
     timelineEntries,
     timelineViewportElement,
+    toolCallVisibility,
   ]);
 }

@@ -1,11 +1,18 @@
+import "@t3tools/client-runtime/assembly-highlighting";
 import {
   getSharedHighlighter,
+  setCustomExtension,
   type DiffsHighlighter,
   type HighlighterTypes,
   type SupportedLanguages,
 } from "@pierre/diffs";
 
-import { resolveDiffThemeName } from "./diffRendering";
+import { DIFF_THEME_NAMES } from "./diffRendering";
+
+// Highlights has no lexer for these dialects, so they use their base language's.
+setCustomExtension("luau", "lua");
+setCustomExtension("xsl", "xml");
+setCustomExtension("xslt", "xml");
 
 /**
  * Highlights' hand-written WASM lexers tokenize large files 10-40x faster than
@@ -21,7 +28,8 @@ export function getSyntaxHighlighterPromise(language: string): Promise<DiffsHigh
   if (cached) return cached;
 
   const promise = getSharedHighlighter({
-    themes: [resolveDiffThemeName("dark"), resolveDiffThemeName("light")],
+    // Both palettes, so switching appearance never needs a new highlighter.
+    themes: Object.values(DIFF_THEME_NAMES),
     langs: [language as SupportedLanguages],
     preferredHighlighter: PREFERRED_HIGHLIGHTER,
   }).catch((error) => {

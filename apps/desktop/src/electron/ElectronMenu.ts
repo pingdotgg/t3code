@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ContextMenuItem, ContextMenuSource } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,6 +17,7 @@ export interface ElectronMenuContextInput {
   readonly window: Electron.BrowserWindow;
   readonly items: readonly ContextMenuItem[];
   readonly position: Option.Option<ElectronMenuPosition>;
+  readonly source: Option.Option<ContextMenuSource>;
 }
 
 export interface ElectronMenuTemplateInput {
@@ -75,7 +76,10 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
 
     const normalizedItem: ContextMenuItem = {
       id: sourceItem.id,
-      label: sourceItem.label,
+      label:
+        typeof sourceItem.detail === "string" && sourceItem.detail.length > 0
+          ? `${sourceItem.label} (${sourceItem.detail})`
+          : sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
@@ -164,7 +168,8 @@ export const make = Effect.gen(function* () {
       }
 
       const itemOption: Electron.MenuItemConstructorOptions = {
-        label: item.label,
+        // Electron reads a single & as a mnemonic marker and drops it.
+        label: item.label.replaceAll("&", "&&"),
         enabled: !item.disabled,
         ...(typeof item.checked === "boolean" ? { type: "checkbox", checked: item.checked } : {}),
       };
@@ -187,8 +192,8 @@ export const make = Effect.gen(function* () {
   };
 
   return ElectronMenu.of({
-    setApplicationMenu: (template) =>
-      Effect.try({
+    setApplicationMenu: Effect.fn("ElectronMenu.setApplicationMenu")(function (template) {
+      return Effect.try({
         try: () => {
           Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
         },
@@ -200,9 +205,10 @@ export const make = Effect.gen(function* () {
             itemCount: template.length,
             cause,
           }),
-      }).pipe(Effect.orDie),
-    popupTemplate: (input) =>
-      input.template.length === 0
+      }).pipe(Effect.orDie);
+    }),
+    popupTemplate: Effect.fn("ElectronMenu.popupTemplate")(function (input) {
+      return input.template.length === 0
         ? Effect.void
         : Effect.try({
             try: () =>
@@ -218,9 +224,10 @@ export const make = Effect.gen(function* () {
                 itemCount: input.template.length,
                 cause,
               }),
-          }).pipe(Effect.orDie),
-    showContextMenu: (input) =>
-      Effect.callback<Option.Option<string>>((resume) => {
+          }).pipe(Effect.orDie);
+    }),
+    showContextMenu: Effect.fn("ElectronMenu.showContextMenu")(function (input) {
+      return Effect.callback<Option.Option<string>>((resume) => {
         const normalizedItems = normalizeContextMenuItems(input.items);
         if (normalizedItems.length === 0) {
           resume(Effect.succeedNone);
@@ -254,7 +261,11 @@ export const make = Effect.gen(function* () {
               callback: () => complete(Option.none()),
             }),
           });
-          menu.popup(popupOptions);
+          menu.popup(
+            Option.isSome(input.source)
+              ? { ...popupOptions, sourceType: input.source.value }
+              : popupOptions,
+          );
         } catch (cause) {
           if (completed) {
             return;
@@ -272,7 +283,8 @@ export const make = Effect.gen(function* () {
             ),
           );
         }
-      }),
+      });
+    }),
   });
 });
 

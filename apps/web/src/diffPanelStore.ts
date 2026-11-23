@@ -1,14 +1,32 @@
+import type { ThreadStructureVisibleTurnItem } from "@t3tools/client-runtime/state/shell";
+import { turnItemDetailRevision } from "@t3tools/client-runtime/work-log/item-detail";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { RunId, ScopedThreadRef } from "@t3tools/contracts";
+import type { RunId, ScopedThreadRef, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "./lib/storage";
 
+export interface ToolCallDiffTarget {
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  readonly revision: string;
+}
+
 export type DiffPanelSelection =
+  | ({ kind: "tool-call" } & ToolCallDiffTarget)
   | { kind: "branch"; baseRef: string | null }
   | { kind: "unstaged" }
-  | { kind: "turn"; turnId: RunId; filePath: string | null; revealRequestId: number };
+  | { kind: "commit"; sha: string; baseRef: string | null }
+  | {
+      kind: "turn";
+      turnId: RunId;
+      /** From the thread's folder, so a tracked repository's file carries that repository's folder. */
+      filePath: string | null;
+      revealRequestId: number;
+      /** A turn diff section key to narrow to; absent shows every repository. */
+      repository?: string;
+    };
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
@@ -17,7 +35,10 @@ interface DiffPanelStoreState {
   branchBaseRefByThreadKey: Record<string, string | null>;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
+  selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
   selectTurn: (ref: ScopedThreadRef, turnId: RunId, filePath?: string) => void;
+  selectTurnRepository: (ref: ScopedThreadRef, turnId: RunId, repository: string | null) => void;
+  selectCommit: (ref: ScopedThreadRef, sha: string) => void;
   reconcileTurnSelection: (ref: ScopedThreadRef, availableTurnIds: ReadonlyArray<RunId>) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -25,6 +46,16 @@ interface DiffPanelStoreState {
 function normalizeBaseRef(baseRef: string | null): string | null {
   const normalized = baseRef?.trim();
   return normalized ? normalized : null;
+}
+
+function branchBaseRef(
+  state: Pick<DiffPanelStoreState, "byThreadKey" | "branchBaseRefByThreadKey">,
+  threadKey: string,
+): string | null {
+  const previous = state.byThreadKey[threadKey];
+  return previous?.kind === "branch" || previous?.kind === "commit"
+    ? previous.baseRef
+    : (state.branchBaseRefByThreadKey[threadKey] ?? null);
 }
 
 export const useDiffPanelStore = create<DiffPanelStoreState>()(
@@ -36,10 +67,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
-          const previousBaseRef =
-            previous?.kind === "branch"
-              ? previous.baseRef
-              : (state.branchBaseRefByThreadKey[threadKey] ?? null);
+          const previousBaseRef = branchBaseRef(state, threadKey);
           return {
             byThreadKey: {
               ...state.byThreadKey,
@@ -49,7 +77,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
                   : { kind: "unstaged" },
             },
             branchBaseRefByThreadKey:
-              previous?.kind === "branch"
+              previous?.kind === "branch" || previous?.kind === "commit"
                 ? { ...state.branchBaseRefByThreadKey, [threadKey]: previous.baseRef }
                 : state.branchBaseRefByThreadKey,
           };
@@ -69,7 +97,38 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
             },
           };
         }),
+      selectToolCall: (ref, target) =>
+        set((state) => ({
+          byThreadKey: {
+            ...state.byThreadKey,
+            [scopedThreadKey(ref)]: { kind: "tool-call", ...target },
+          },
+        })),
       selectTurn: (ref, turnId, filePath) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const previous = state.byThreadKey[threadKey];
+          // Git reports paths with their edge whitespace; only a blank one means no file.
+          const requestedPath = filePath !== undefined && filePath.trim() !== "" ? filePath : null;
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: {
+                kind: "turn",
+                turnId,
+                filePath: requestedPath,
+                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                // A requested file may sit outside the repository the view was narrowed to.
+                ...(requestedPath === null &&
+                previous?.kind === "turn" &&
+                previous.repository !== undefined
+                  ? { repository: previous.repository }
+                  : {}),
+              },
+            },
+          };
+        }),
+      selectTurnRepository: (ref, turnId, repository) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           const previous = state.byThreadKey[threadKey];
@@ -79,10 +138,23 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
               [threadKey]: {
                 kind: "turn",
                 turnId,
-                filePath: filePath?.trim() || null,
-                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId + 1 : 1,
+                filePath: null,
+                revealRequestId: previous?.kind === "turn" ? previous.revealRequestId : 0,
+                ...(repository === null ? {} : { repository }),
               },
             },
+          };
+        }),
+      selectCommit: (ref, sha) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const baseRef = branchBaseRef(state, threadKey);
+          return {
+            byThreadKey: {
+              ...state.byThreadKey,
+              [threadKey]: { kind: "commit", sha, baseRef },
+            },
+            branchBaseRefByThreadKey: { ...state.branchBaseRefByThreadKey, [threadKey]: baseRef },
           };
         }),
       reconcileTurnSelection: (ref, availableTurnIds) =>
@@ -137,9 +209,13 @@ interface DiffPanelSessionStoreState {
     defaults: ReadonlySet<string>,
     update: (current: ReadonlySet<string>) => ReadonlySet<string>,
   ) => void;
+  // Null follows the diffIgnoreWhitespace setting until the panel toggle is used.
+  ignoreWhitespace: boolean | null;
+  setIgnoreWhitespace: (ignoreWhitespace: boolean) => void;
 }
 
-// Session-only so folds survive right-panel switches without changing reload defaults.
+// Session-only so folds and the whitespace toggle survive right-panel switches without
+// changing reload defaults.
 export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((set) => ({
   collapsedFileKeysByScopeKey: {},
   updateCollapsedFileKeys: (scopeKey, defaults, update) =>
@@ -151,6 +227,8 @@ export const useDiffPanelSessionStore = create<DiffPanelSessionStoreState>()((se
         collapsedFileKeysByScopeKey: { ...state.collapsedFileKeysByScopeKey, [scopeKey]: next },
       };
     }),
+  ignoreWhitespace: null,
+  setIgnoreWhitespace: (ignoreWhitespace) => set({ ignoreWhitespace }),
 }));
 
 export function selectThreadDiffPanelSelection(
@@ -159,4 +237,23 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function selectThreadBranchBaseRef(
+  state: Pick<DiffPanelStoreState, "byThreadKey" | "branchBaseRefByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): string | null {
+  return ref ? branchBaseRef(state, scopedThreadKey(ref)) : null;
+}
+
+export function resolveToolCallDiffTarget(
+  target: ToolCallDiffTarget,
+  items: ReadonlyArray<ThreadStructureVisibleTurnItem>,
+): ToolCallDiffTarget {
+  const row = items.find(
+    (row) => row.sourceThreadId === target.threadId && row.sourceItemId === target.itemId,
+  );
+  if (row?.item.type !== "file_change") return target;
+  const revision = turnItemDetailRevision(row.item);
+  return revision === target.revision ? target : { ...target, revision };
 }

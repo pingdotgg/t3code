@@ -4,6 +4,8 @@ import type { ThreadFindMatch } from "./threadFind";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
+const FIND_SCROLL_VIEWPORT_SELECTOR =
+  'pre, .chat-markdown-table-container [data-slot="scroll-area-viewport"]';
 
 type FindEntries = readonly { readonly id: string }[];
 
@@ -124,13 +126,20 @@ function revealThreadFindMatch(
     return;
   }
 
-  const codeScroller = range.startContainer.parentElement?.closest("pre");
-  if (codeScroller) {
+  for (
+    let horizontalViewport = range.startContainer.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    );
+    horizontalViewport;
+    horizontalViewport = horizontalViewport.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    )
+  ) {
     const rect = range.getBoundingClientRect();
-    const viewport = codeScroller.getBoundingClientRect();
-    if (rect.left < viewport.left) codeScroller.scrollLeft += rect.left - viewport.left - 16;
+    const viewport = horizontalViewport.getBoundingClientRect();
+    if (rect.left < viewport.left) horizontalViewport.scrollLeft += rect.left - viewport.left - 16;
     else if (rect.right > viewport.right)
-      codeScroller.scrollLeft += rect.right - viewport.right + 16;
+      horizontalViewport.scrollLeft += rect.right - viewport.right + 16;
   }
   const rect = range.getBoundingClientRect();
   const viewport = container?.getBoundingClientRect();
@@ -226,6 +235,7 @@ export function useThreadFindNavigation({
   // scroll time; the viewport ref callback in MessagesTimeline cannot read
   // them without a latest-ref mirror, and capturing them would re-attach the
   // viewport (observers, citation dismissal) on every streamed entry.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- attaches a scroll listener to the timeline container to track the active match position
   useEffect(() => {
     if (!container) return;
     const onScroll = () => {
@@ -250,6 +260,7 @@ export function useThreadFindNavigation({
     key: null,
     pages: new Set(),
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- requests earlier history pages until the active match's entry is loaded
   useEffect(() => {
     if (requestedPagesRef.current.key !== matchKey)
       requestedPagesRef.current = { key: matchKey, pages: new Set() };
@@ -282,6 +293,7 @@ export function useThreadFindNavigation({
   // Positioning also depends on the list: a loaded page or a shifted row must
   // retry the jump for the same selection. Declared after the highlight
   // effects so it reuses the range they just resolved.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the list to the active match after commit when rows or the loaded page change
   useEffect(() => {
     reveal(stateRef.current.activeRange, {
       matchKey,

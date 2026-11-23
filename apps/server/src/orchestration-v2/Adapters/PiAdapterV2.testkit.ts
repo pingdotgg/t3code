@@ -1,7 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   ProviderReplayEntry,
-  type ProviderInstanceEnvironment,
+  ProviderInstanceId,
+  type ResolvedProviderInstanceEnvironment,
   type ProviderReplayTranscript,
   type ProviderReplayEntry as ProviderReplayEntryType,
 } from "@t3tools/contracts";
@@ -112,7 +113,7 @@ function replayValueMatches(expected: unknown, actual: unknown): boolean {
   return Object.is(expected, actual);
 }
 
-const ADAPTER_REQUEST_ID = /^t3-\d+$/u;
+const ADAPTER_REQUEST_ID = /^t3-(?:prompt-)?\d+$/u;
 
 function adapterRequestId(frame: unknown): string | undefined {
   const id = isRecord(frame) ? frame.id : undefined;
@@ -122,7 +123,10 @@ function adapterRequestId(frame: unknown): string | undefined {
 /** Rebind adapter request ids without pinning counters; provider ids that responses must echo stay exact. */
 function withRequestId(expected: unknown, actual: unknown): unknown {
   const actualId = adapterRequestId(actual);
-  return isRecord(expected) && adapterRequestId(expected) !== undefined && actualId !== undefined
+  return isRecord(expected) &&
+    actualId !== undefined &&
+    (adapterRequestId(expected) !== undefined ||
+      (expected.type === "prompt" && expected.id === undefined))
     ? { ...expected, id: actualId }
     : expected;
 }
@@ -362,19 +366,21 @@ export function layer<E, R>(input: {
   readonly spawner: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner, E, R>;
   readonly binaryPath: string;
   readonly launchArgs: string;
-  readonly environment?: ProviderInstanceEnvironment;
+  readonly environment?: ResolvedProviderInstanceEnvironment;
 }) {
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [PiAdapterV2Driver],
-    configMap: {
-      [PI_PROVIDER]: {
-        driver: PI_PROVIDER,
-        enabled: true,
-        config: { binaryPath: input.binaryPath, launchArgs: input.launchArgs },
-        ...(input.environment === undefined ? {} : { environment: input.environment }),
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    PiAdapterV2Driver.create({
+      instanceId: ProviderInstanceId.make(PI_PROVIDER),
+      environment: input.environment ?? [],
+      displayName: undefined,
+      enabled: true,
+      config: {
+        ...PiAdapterV2Driver.defaultConfig(),
+        binaryPath: input.binaryPath,
+        launchArgs: input.launchArgs,
       },
-    },
-  }).pipe(
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(input.spawner),
     Layer.provide(
       Layer.mergeAll(

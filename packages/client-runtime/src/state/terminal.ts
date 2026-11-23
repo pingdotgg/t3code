@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   type EnvironmentId,
   type TerminalAttachInput,
   type TerminalCloseInput,
@@ -10,7 +11,6 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -18,8 +18,8 @@ import {
   type AtomCommand,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
-  createEnvironmentRpcSubscriptionAtomFamily,
   createEnvironmentSubscriptionAtomFamily,
+  isAtomCommandInterrupted,
   runAtomCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -32,6 +32,11 @@ import {
   type TerminalBufferState,
 } from "./terminalSession.ts";
 import { terminalOutputText } from "./terminalOutput.ts";
+
+interface TerminalMetadataFeed {
+  readonly terminals: ReadonlyArray<TerminalSummary>;
+  readonly snapshotId: string | symbol;
+}
 
 export function createTerminalEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -53,6 +58,24 @@ export function createTerminalEnvironmentAtoms<R, E>(
     readonly input: { readonly threadId: string; readonly terminalId?: string | undefined };
   }) => JSON.stringify([environmentId, input.threadId, input.terminalId ?? null]);
   const lifecycleConcurrency = { mode: "serial" as const, key: terminalThreadKey };
+  const metadataFeed = createEnvironmentSubscriptionAtomFamily(runtime, {
+    label: "environment-data:terminal:metadata",
+    subscribe: (_input: null) =>
+      subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
+        Stream.scan(
+          (): TerminalMetadataFeed => ({ terminals: [], snapshotId: Symbol() }),
+          (feed, event): TerminalMetadataFeed => ({
+            terminals: applyTerminalMetadataStreamEvent(feed.terminals, event),
+            snapshotId: event.type === "snapshot" ? (event.managerId ?? Symbol()) : feed.snapshotId,
+          }),
+        ),
+        // The scan seed is not an authoritative empty server snapshot.
+        Stream.drop(1),
+      ),
+  });
+  const terminalMetadataSummaries = Atom.family((feed: ReturnType<typeof metadataFeed>) =>
+    Atom.mapResult(feed, ({ terminals }) => terminals),
+  );
   const atoms = {
     observe: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:observe",
@@ -65,11 +88,17 @@ export function createTerminalEnvironmentAtoms<R, E>(
     }),
     attach: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:terminal:attach",
+      // The server sizes the PTY to every attached viewer, so a closed view must detach now.
+      idleTtlMs: 0,
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.terminalAttach>) => {
         // Retry an unanswered first attach unchanged so it can still open the shell.
         let replied = false;
         return subscribeDynamic(WS_METHODS.terminalAttach, () =>
-          Effect.sync(() => (replied ? { ...input, resume: true } : input)),
+          Effect.sync(() => ({
+            ...input,
+            ...(replied ? { resume: true } : {}),
+            maxHistoryBytes: DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
+          })),
         ).pipe(
           Stream.onFirst(() =>
             Effect.sync(() => {
@@ -80,19 +109,9 @@ export function createTerminalEnvironmentAtoms<R, E>(
         );
       },
     }),
-    events: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:events",
-      tag: WS_METHODS.subscribeTerminalEvents,
-    }),
-    metadata: createEnvironmentSubscriptionAtomFamily(runtime, {
-      label: "environment-data:terminal:metadata",
-      subscribe: (_input: null) =>
-        subscribe(WS_METHODS.subscribeTerminalMetadata, {}).pipe(
-          Stream.scan((): ReadonlyArray<TerminalSummary> => [], applyTerminalMetadataStreamEvent),
-          // The scan seed is not an authoritative empty server snapshot.
-          Stream.drop(1),
-        ),
-    }),
+    metadataFeed,
+    metadata: (target: { readonly environmentId: EnvironmentId; readonly input: null }) =>
+      terminalMetadataSummaries(metadataFeed(target)),
     open: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:open",
       tag: WS_METHODS.terminalOpen,
@@ -112,12 +131,6 @@ export function createTerminalEnvironmentAtoms<R, E>(
     clear: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:clear",
       tag: WS_METHODS.terminalClear,
-      scheduler: lifecycleScheduler,
-      concurrency: lifecycleConcurrency,
-    }),
-    restart: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:terminal:restart",
-      tag: WS_METHODS.terminalRestart,
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
@@ -233,7 +246,7 @@ export interface TerminalSessionOptions {
     readonly terminalId: string;
   };
   readonly gridSize: TerminalGridSize;
-  /** Written once, as soon as the first attachment snapshot lands. */
+  /** Written once, after the first attachment snapshot lands and the shell has the measured grid. */
   readonly initialInput?: string | undefined;
   /** Read right before every command, so revoking operate stops them at once. */
   readonly canOperate: () => boolean;
@@ -259,7 +272,7 @@ export interface TerminalSession {
  * Owns one shown terminal's lifecycle: it reopens an ended shell on an explicit
  * visit, closes and reports a shell that exits while attached, replays the
  * measured grid whenever the server starts a new output generation, and writes
- * the launch's initial input once.
+ * the launch's initial input once that grid has reached the shell.
  */
 export function createTerminalSession(
   atoms: TerminalSessionAtoms,
@@ -268,18 +281,53 @@ export function createTerminalSession(
   const { environmentId, threadId, terminalId } = options.target;
   let lifecycle = INITIAL_TERMINAL_LIFECYCLE;
   let gridSize = options.gridSize;
+  // The seeded grid is a cache or default guess; launch input waits for the surface's own measurement.
+  let gridMeasured = false;
   let generation: number | null = null;
   let liveLifecycleVersion: number | null = null;
   let initialInputPending = Boolean(options.initialInput);
   let lastStatus: TerminalBufferState["status"] | null = null;
   let loggedFirstOutput = false;
-  let resizeRegistry: AtomRegistry.AtomRegistry | null = null;
+  let commandRegistry: AtomRegistry.AtomRegistry | null = null;
+  // Only a successful resize of the current measured grid may release initial input.
+  let shellResized: ReturnType<typeof runAtomCommand> | null = null;
 
-  const sendResize = () => {
-    if (generation === null || resizeRegistry === null || !options.canOperate()) return;
-    void runAtomCommand(resizeRegistry, atoms.resize, {
+  const sendResize = (retry = false) => {
+    const registry = commandRegistry;
+    if (generation === null || registry === null || !options.canOperate()) return;
+    const resized = runAtomCommand(registry, atoms.resize, {
       environmentId,
       input: { threadId, terminalId, cols: gridSize.cols, rows: gridSize.rows },
+    });
+    shellResized = resized;
+    void resized.then((result) => {
+      // Only a new grid or generation sends again, so retry a failure once, unless a newer
+      // resize already replaced this one.
+      if (
+        !retry &&
+        resized === shellResized &&
+        result._tag === "Failure" &&
+        !isAtomCommandInterrupted(result)
+      ) {
+        sendResize(true);
+        return;
+      }
+      const data = options.initialInput;
+      if (
+        result._tag !== "Success" ||
+        resized !== shellResized ||
+        !gridMeasured ||
+        generation === null ||
+        !initialInputPending ||
+        !data ||
+        !options.canOperate()
+      )
+        return;
+      initialInputPending = false;
+      void runAtomCommand(registry, atoms.write, {
+        environmentId,
+        input: { threadId, terminalId, data },
+      });
     });
   };
 
@@ -333,8 +381,8 @@ export function createTerminalSession(
     input: TerminalAttachInput,
     result: AsyncResult.AsyncResult<TerminalBufferState, unknown>,
   ) => {
-    resizeRegistry = registry;
-    const buffer = Option.getOrElse(AsyncResult.value(result), () => EMPTY_TERMINAL_BUFFER_STATE);
+    commandRegistry = registry;
+    const buffer = AsyncResult.getOrElse(result, () => EMPTY_TERMINAL_BUFFER_STATE);
     const status = result._tag === "Failure" ? "error" : buffer.status;
     if (status !== lastStatus) {
       lastStatus = status;
@@ -364,15 +412,8 @@ export function createTerminalSession(
       buffer.version > 0 && status === "running" ? buffer.output.generation : null;
     if (nextGeneration !== generation) {
       generation = nextGeneration;
+      shellResized = null;
       sendResize();
-    }
-
-    if (initialInputPending && buffer.version > 0 && options.initialInput && options.canOperate()) {
-      initialInputPending = false;
-      void runAtomCommand(registry, atoms.write, {
-        environmentId,
-        input: { threadId, terminalId, data: options.initialInput },
-      });
     }
 
     apply({ type: "status", status, version: buffer.version }, registry, input);
@@ -398,6 +439,7 @@ export function createTerminalSession(
       const registry = get.registry;
       get.addFinalizer(() => {
         generation = null;
+        shellResized = null;
         lastStatus = null;
         setLive(null);
         lifecycle = transitionTerminalLifecycle(lifecycle, {
@@ -421,7 +463,8 @@ export function createTerminalSession(
       return attached;
     },
     reportGridSize: (size) => {
-      if (size.cols === gridSize.cols && size.rows === gridSize.rows) return;
+      if (gridMeasured && size.cols === gridSize.cols && size.rows === gridSize.rows) return;
+      gridMeasured = true;
       gridSize = size;
       sendResize();
     },

@@ -1,4 +1,4 @@
-import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
+import { type CheckpointRef } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,12 +10,30 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** The checkpoint this one follows, so a turn that switched branches starts where it landed. */
+  readonly previousCheckpointRef?: CheckpointRef;
+  /** Folders below `cwd` (relative, `/`-separated) that have their own checkpoints. */
+  readonly excludePaths?: ReadonlyArray<string>;
+}
+
+export interface CaptureHeadCheckpointInput {
+  readonly cwd: string;
+  readonly checkpointRef: CheckpointRef;
+  /** A commit `resolveCleanHead` returned for this folder. */
+  readonly head: string;
+  /**
+   * When the folder was seen clean, in epoch seconds, if that was earlier than now. Commits made
+   * after a checkpoint count as the turn's own work, so a late snapshot must not postdate them.
+   */
+  readonly seenAt?: number;
 }
 
 export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Folders below `cwd` the restore leaves as they are, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface DiffCheckpointsInput {
@@ -29,6 +47,8 @@ export interface DiffCheckpointsInput {
   readonly maxOutputBytes?: number;
   /** Limits the diff to these exact paths. An empty list yields an empty diff. */
   readonly filePaths?: ReadonlyArray<string>;
+  /** Folders below `cwd` left out of the diff, as in a capture. */
+  readonly excludePaths?: ReadonlyArray<string>;
 }
 
 export interface ListAuthoredPathsInput {
@@ -49,6 +69,17 @@ export class CheckpointStore extends Context.Service<
 
     readonly captureCheckpoint: (
       input: CaptureCheckpointInput,
+    ) => Effect.Effect<void, CheckpointStoreError>;
+
+    /**
+     * HEAD's commit when the folder matches it exactly: nothing staged, modified or untracked.
+     * Null otherwise. One status, where a capture stages the whole worktree.
+     */
+    readonly resolveCleanHead: (cwd: string) => Effect.Effect<string | null, CheckpointStoreError>;
+
+    /** Snapshots a folder that was clean at `head` from that commit, without reading its files. */
+    readonly captureHeadCheckpoint: (
+      input: CaptureHeadCheckpointInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
 
     readonly hasCheckpointRef: (
@@ -79,73 +110,82 @@ export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const resolveCheckpoints = Effect.fn("CheckpointStore.resolveCheckpoints")(function* (
-    operation: string,
     cwd: string,
   ) {
     const handle = yield* vcsRegistry.resolve({ cwd });
-    if (!handle.driver.checkpoints) {
-      return yield* new VcsUnsupportedOperationError({
-        operation,
-        kind: handle.kind,
-        detail: `${handle.kind} driver does not implement checkpoint operations.`,
-      });
-    }
     return handle.driver.checkpoints satisfies VcsCheckpointOps;
   });
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
-    vcsRegistry
-      .detect({ cwd, requestedKind: "git" })
-      .pipe(Effect.map((repository) => repository !== null));
+  // The registry reads an unreadable repository as none; ask Git again so that fails here.
+  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
+    "CheckpointStore.isGitRepository",
+  )(function* (cwd) {
+    if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
+    const git = yield* vcsRegistry.get("git");
+    return (yield* git.detectRepository(cwd)) !== null;
+  });
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.captureCheckpoint(input);
+  });
+
+  const resolveCleanHead: CheckpointStore["Service"]["resolveCleanHead"] = Effect.fn(
+    "CheckpointStore.resolveCleanHead",
+  )(function* (cwd) {
+    const checkpoints = yield* resolveCheckpoints(cwd);
+    return yield* checkpoints.resolveCleanHead(cwd);
+  });
+
+  const captureHeadCheckpoint: CheckpointStore["Service"]["captureHeadCheckpoint"] = Effect.fn(
+    "CheckpointStore.captureHeadCheckpoint",
+  )(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
+    return yield* checkpoints.captureHeadCheckpoint(input);
   });
 
   const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(
     "hasCheckpointRef",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.hasCheckpointRef", input.cwd);
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.hasCheckpointRef(input);
   });
 
   const restoreCheckpoint: CheckpointStore["Service"]["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.restoreCheckpoint", input.cwd);
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.restoreCheckpoint(input);
   });
 
   const diffCheckpoints: CheckpointStore["Service"]["diffCheckpoints"] = Effect.fn(
     "diffCheckpoints",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.diffCheckpoints", input.cwd);
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.diffCheckpoints(input);
   });
 
   const listAuthoredPaths: CheckpointStore["Service"]["listAuthoredPaths"] = Effect.fn(
     "listAuthoredPaths",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.listAuthoredPaths", input.cwd);
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.listAuthoredPaths(input);
   });
 
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints(
-      "CheckpointStore.deleteCheckpointRefs",
-      input.cwd,
-    );
+    const checkpoints = yield* resolveCheckpoints(input.cwd);
     return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
+    resolveCleanHead,
+    captureHeadCheckpoint,
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,

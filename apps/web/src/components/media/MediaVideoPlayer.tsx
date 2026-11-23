@@ -1,8 +1,10 @@
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useGT } from "gt-react";
+import { useState, type CSSProperties } from "react";
 
+import { observeIntersection } from "../../lib/observeIntersection";
 import { cn } from "../../lib/utils";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { Button } from "../ui/button";
@@ -13,6 +15,7 @@ interface MediaVideoPlayerProps {
   readonly src: string | null;
   readonly label: string;
   readonly sourceFailed?: boolean | undefined;
+  readonly unavailableDetail?: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
@@ -31,6 +34,7 @@ export function MediaVideoPlayer({
   src: latestSrc,
   label,
   sourceFailed = false,
+  unavailableDetail,
   originalUrl,
   revision = null,
   preload = "visible",
@@ -44,13 +48,12 @@ export function MediaVideoPlayer({
   onRetry,
   actionsSource,
 }: MediaVideoPlayerProps) {
-  // Use state so effects rebind when retry or failure remounts the video.
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const gt = useGT();
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
     revision: string | null;
   } | null>(null);
-  const [playingVideo, setPlayingVideo] = useState<HTMLVideoElement | null>(null);
+  const [playing, setPlaying] = useState(false);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
@@ -65,33 +68,15 @@ export function MediaVideoPlayer({
     playbackSource !== null &&
     playbackSource.revision !== revision &&
     (latestSrc !== null || sourceFailed) &&
-    (video === null || playingVideo !== video)
+    !playing
   ) {
     setPlaybackSource(
       revision !== null && latestSrc !== null ? { src: latestSrc, revision } : null,
     );
   }
 
-  useEffect(() => {
-    if (!video || preload === "metadata" || preloaded) return;
-    let active = true;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!active || !entries.some((entry) => entry.isIntersecting)) return;
-        setPreloadedSrc(src);
-        observer.disconnect();
-      },
-      { rootMargin: "200px" },
-    );
-    observer.observe(video);
-    return () => {
-      active = false;
-      observer.disconnect();
-    };
-  }, [video, src, preload, preloaded]);
-
-  useEffect(() => {
-    if (!video) return;
+  // Retry and failure remount the element, so its listeners live and die with it.
+  const attachVideo = (video: HTMLVideoElement) => {
     const pauseWhenHidden = () => {
       // Native fullscreen can hide the inline page while this video is still visible.
       const fullscreen =
@@ -107,8 +92,22 @@ export function MediaVideoPlayer({
       document.removeEventListener("fullscreenchange", pauseWhenHidden);
       video.removeEventListener("webkitendfullscreen", pauseWhenHidden);
       video.pause();
+      // A detached element's pause event never reaches onPause.
+      setPlaying(false);
     };
-  }, [video]);
+  };
+
+  // On the wrapper, not the video: re-running the video's ref callback would pause playback.
+  const observePreload = (player: HTMLSpanElement) => {
+    if (src === null || failed || preload === "metadata" || preloaded) return;
+    return observeIntersection(
+      player,
+      (entry) => {
+        if (entry.isIntersecting) setPreloadedSrc(src);
+      },
+      { rootMargin: "200px" },
+    );
+  };
 
   const retry = async () => {
     if (retrying) return;
@@ -128,6 +127,7 @@ export function MediaVideoPlayer({
 
   const player = (
     <span
+      ref={observePreload}
       className={cn("relative inline-block align-middle", className)}
       style={style}
       data-markdown-copy={copyMarkdown}
@@ -136,13 +136,13 @@ export function MediaVideoPlayer({
         <span
           role="alert"
           className={cn(
-            "flex aspect-video max-h-full min-h-28 w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
+            "flex aspect-video max-h-full w-full flex-col items-center justify-center gap-3 rounded-lg border border-border/40 bg-muted/40 p-4 text-center text-sm text-muted-foreground",
             stateClassName,
           )}
         >
-          <span className="inline-flex items-center gap-1.5">
+          <span data-thread-find-ignore className="inline-flex items-center gap-1.5">
             <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
-            Video unavailable{label ? ` · ${label}` : ""}
+            {[gt("Video unavailable"), label, unavailableDetail].filter(Boolean).join(" · ")}
           </span>
           <span className="flex flex-wrap items-center justify-center gap-2">
             {latestSrc !== null || onRetry ? (
@@ -153,7 +153,7 @@ export function MediaVideoPlayer({
                 onClick={() => void retry()}
               >
                 <RotateCwIcon />
-                {retrying ? "Retrying…" : "Retry video"}
+                {retrying ? gt("Retrying…") : gt("Retry video")}
               </Button>
             ) : null}
             <OpenMediaLink originalUrl={originalUrl} src={latestSrc ?? src} fileName={label} />
@@ -162,9 +162,9 @@ export function MediaVideoPlayer({
       ) : src !== null && !failed ? (
         <video
           key={loadAttempt}
-          ref={setVideo}
+          ref={attachVideo}
           src={src}
-          aria-label={label || "Video preview"}
+          aria-label={label || gt("Video preview")}
           aria-hidden={onOpen ? true : undefined}
           autoPlay={onOpen ? false : autoPlay}
           controls={!onOpen}
@@ -181,14 +181,14 @@ export function MediaVideoPlayer({
             prepareVideoFirstFrame(event.currentTarget);
             if (sourceRevision !== null) setPlaybackSource({ src, revision: sourceRevision });
           }}
-          onPlay={(event) => {
-            setPlayingVideo(event.currentTarget);
+          onPlay={() => {
+            setPlaying(true);
             setPlaybackSource({ src, revision: sourceRevision });
           }}
-          onPause={() => setPlayingVideo(null)}
-          onEnded={() => setPlayingVideo(null)}
+          onPause={() => setPlaying(false)}
+          onEnded={() => setPlaying(false)}
           onError={() => {
-            setPlayingVideo(null);
+            setPlaying(false);
             setPlaybackSource(null);
             if (latestSrc === null || src === latestSrc) setFailedSrc(src);
           }}
@@ -196,7 +196,7 @@ export function MediaVideoPlayer({
       ) : (
         <span
           role="status"
-          aria-label={failed ? "Video preview unavailable" : "Loading video"}
+          aria-label={failed ? gt("Video preview unavailable") : gt("Loading video")}
           className={cn("block aspect-video w-full rounded-lg bg-muted/60", stateClassName)}
           style={style}
         />
@@ -204,7 +204,7 @@ export function MediaVideoPlayer({
       {onOpen ? (
         <button
           type="button"
-          aria-label={label ? `Play ${label}` : "Play video"}
+          aria-label={label ? gt("Play {name}", { name: label }) : gt("Play video")}
           onClick={onOpen}
           className="absolute inset-0 flex cursor-pointer items-center justify-center rounded-lg focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
         >

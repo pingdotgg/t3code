@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react-native";
 import { memo, useMemo, useState } from "react";
 import { getFiletypeFromFileName } from "@pierre/diffs/utils/getFiletypeFromFileName";
 import { ScrollView, StyleSheet, Text as NativeText, View, type ColorValue } from "react-native";
@@ -12,8 +13,10 @@ import { resolveNativeReviewDiffView } from "../diffs/nativeReviewDiffSurface";
 import {
   buildNativeReviewDiffData,
   buildNativeReviewSnippetRows,
+  buildReviewCommentPatch,
   createNativeReviewDiffTheme,
   NATIVE_REVIEW_DIFF_CONTENT_WIDTH,
+  reviewCommentDiffText,
 } from "./nativeReviewDiffAdapter";
 import { buildReviewParsedDiff } from "./reviewModel";
 import { REVIEW_MONO_FONT_FAMILY } from "./reviewDiffRendering";
@@ -32,17 +35,14 @@ export interface ReviewCommentColors {
 export function useReviewCommentColors(): ReviewCommentColors {
   const theme = useUniwindTheme();
 
-  return useMemo(
-    () => ({
-      background: theme["--color-card"],
-      border: theme["--color-border"],
-      mutedBackground: theme["--color-subtle"],
-      text: theme["--color-foreground"],
-      mutedText: theme["--color-foreground-muted"],
-      codeBackground: theme["--color-md-code-bg"],
-    }),
-    [theme],
-  );
+  return {
+    background: theme["--color-card"],
+    border: theme["--color-border"],
+    mutedBackground: theme["--color-subtle"],
+    text: theme["--color-foreground"],
+    mutedText: theme["--color-foreground-muted"],
+    codeBackground: theme["--color-md-code-bg"],
+  };
 }
 
 export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
@@ -50,14 +50,15 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
   readonly colors: ReviewCommentColors;
 }) {
   const { codeSurface, nativeReviewDiffStyle } = useAppearanceCodeSurface();
+  const messages = useMessages();
   const markdownStyles = useMarkdownPreviewStyles();
   const { themeAppearance: appearanceScheme, themeId } = useAppearancePreferences();
   const appTheme = useUniwindTheme();
   const [NativeReviewDiffView] = useState(() => resolveNativeReviewDiffView());
   const patch = useMemo(() => buildReviewCommentPatch(props.comment), [props.comment]);
   const parsedDiff = useMemo(
-    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`),
-    [patch, props.comment.id],
+    () => buildReviewParsedDiff(patch, `thread-review-comment:${props.comment.id}`, messages),
+    [patch, props.comment.id, messages],
   );
   const nativeReviewDiffData = useMemo(() => buildNativeReviewDiffData(parsedDiff), [parsedDiff]);
   const compactNativeRows = useMemo(() => {
@@ -89,7 +90,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     theme: appearanceScheme,
   });
   const snippetTokens = useMarkdownCodeHighlight({
-    code: props.comment.diff.trim(),
+    code: reviewCommentDiffText(props.comment.diff),
     language: props.comment.fenceLanguage ?? language,
     enabled: compactNativeRows.length === 0,
     theme: appearanceScheme,
@@ -113,10 +114,7 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
     () => JSON.stringify(nativeReviewDiffTheme),
     [nativeReviewDiffTheme],
   );
-  const nativeStyleJson = useMemo(
-    () => JSON.stringify({ ...nativeReviewDiffStyle, wordWrap: false }),
-    [nativeReviewDiffStyle],
-  );
+  const nativeStyleJson = JSON.stringify({ ...nativeReviewDiffStyle, wordWrap: false });
   const nativeDiffHeight = useMemo(
     () =>
       Math.min(
@@ -219,49 +217,31 @@ export const ReviewCommentCard = memo(function ReviewCommentCard(props: {
             }}
           >
             {snippetTokens
-              ? snippetTokens.map((line, lineIndex) => (
-                  <NativeText key={lineIndex}>
-                    {lineIndex > 0 ? "\n" : ""}
-                    {line.map((token, tokenIndex) => (
-                      <NativeText
-                        key={tokenIndex}
-                        style={{
-                          color: token.color ?? props.colors.text,
-                          fontStyle: (token.fontStyle ?? 0) & 1 ? "italic" : "normal",
-                          fontWeight: (token.fontStyle ?? 0) & 2 ? "700" : "400",
-                        }}
-                      >
-                        {token.content}
-                      </NativeText>
-                    ))}
-                  </NativeText>
-                ))
-              : props.comment.diff.trim()}
+              ? snippetTokens.map(
+                  (line, lineIndex) => (
+                    /* oxlint-disable react/no-array-index-key -- Highlight tokens are stateless positions within this immutable snippet. */ <NativeText
+                      key={lineIndex}
+                    >
+                      {lineIndex > 0 ? "\n" : ""}
+                      {line.map((token, tokenIndex) => (
+                        <NativeText
+                          key={tokenIndex}
+                          style={{
+                            color: token.color ?? props.colors.text,
+                            fontStyle: (token.fontStyle ?? 0) & 1 ? "italic" : "normal",
+                            fontWeight: (token.fontStyle ?? 0) & 2 ? "700" : "400",
+                          }}
+                        >
+                          {token.content}
+                        </NativeText>
+                      ))}
+                    </NativeText>
+                  ) /* oxlint-enable react/no-array-index-key */,
+                )
+              : reviewCommentDiffText(props.comment.diff)}
           </NativeText>
         </ScrollView>
       ) : null}
     </View>
   );
 });
-
-function buildReviewCommentPatch(comment: ReviewInlineComment): string {
-  if ((comment.fenceLanguage ?? "diff") !== "diff") {
-    return "";
-  }
-  const diff = comment.diff.trim();
-  if (!diff) {
-    return "";
-  }
-
-  if (diff.startsWith("diff --git ")) {
-    return diff;
-  }
-
-  const normalizedPath = comment.filePath.replaceAll("\\", "/");
-  return [
-    `diff --git a/${normalizedPath} b/${normalizedPath}`,
-    `--- a/${normalizedPath}`,
-    `+++ b/${normalizedPath}`,
-    diff,
-  ].join("\n");
-}

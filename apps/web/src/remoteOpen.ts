@@ -9,12 +9,13 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useState } from "react";
 
+import { browserClientOs, type BrowserIdentity } from "~/connection/clientMetadata";
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
 import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
+import { hostEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -54,9 +55,10 @@ export function resolveRemoteOpenState(input: {
   readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
+  readonly hostEnvironmentId: string | null;
 }): RemoteOpenState {
   const { target } = input;
-  if (target === null) {
+  if (target === null || target.environmentId === input.hostEnvironmentId) {
     return LOCAL_EXEC;
   }
   if (target._tag === "PrimaryConnectionTarget") {
@@ -121,6 +123,7 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
           profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
+        hostEnvironmentId: get(hostEnvironmentIdAtom),
       }),
       isResolved: true,
     };
@@ -147,41 +150,27 @@ export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteO
 
 const REMOTE_FALLBACK_EDITORS: ReadonlyArray<EditorId> = ["vscode"];
 
-let cachedProbedEditors: ReadonlyArray<EditorId> | null = null;
+// Phone and tablet browsers have no desktop editor to receive a vscode:// remote link.
+export function remoteFallbackEditors(identity: BrowserIdentity): ReadonlyArray<EditorId> {
+  const os = browserClientOs(identity);
+  return os === "iOS" || os === "Android" ? [] : REMOTE_FALLBACK_EDITORS;
+}
+
+// Probed once per page: installed editors rarely change, and the probe spawns processes.
+const remoteCapableEditorsAtom = Atom.make((get): ReadonlyArray<EditorId> => {
+  const probe = window.desktopBridge?.probeRemoteEditors;
+  probe?.().then(
+    (ids) => {
+      const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
+      if (remoteCapable.length > 0) get.setSelf(remoteCapable);
+    },
+    () => undefined,
+  );
+  return remoteFallbackEditors(navigator);
+}).pipe(Atom.keepAlive, Atom.withLabel("remote-capable-editors"));
 
 export function useRemoteCapableEditors(): ReadonlyArray<EditorId> {
-  const [editors, setEditors] = useState<ReadonlyArray<EditorId>>(
-    () => cachedProbedEditors ?? REMOTE_FALLBACK_EDITORS,
-  );
-
-  useEffect(() => {
-    if (cachedProbedEditors !== null) {
-      return;
-    }
-    const probe = window.desktopBridge?.probeRemoteEditors;
-    if (probe === undefined) {
-      cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      return;
-    }
-    let cancelled = false;
-    probe().then(
-      (ids) => {
-        const remoteCapable = ids.filter((id) => REMOTE_CAPABLE_EDITOR_IDS.includes(id));
-        cachedProbedEditors = remoteCapable.length > 0 ? remoteCapable : REMOTE_FALLBACK_EDITORS;
-        if (!cancelled) {
-          setEditors(cachedProbedEditors);
-        }
-      },
-      () => {
-        cachedProbedEditors = REMOTE_FALLBACK_EDITORS;
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return editors;
+  return useAtomValue(remoteCapableEditorsAtom);
 }
 
 /** Resolves false when the desktop refuses the URL, including unsupported editor schemes. */

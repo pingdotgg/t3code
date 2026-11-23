@@ -1,11 +1,5 @@
-import { classifyChangedFile } from "@t3tools/shared/changedFileKind";
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import type { ReviewParsedDiff } from "../review/reviewModel";
-
-/** Test support such as fixtures and snapshots is hidden along with the tests. */
-export function isPullRequestTestFile(path: string): boolean {
-  const kind = classifyChangedFile(path);
-  return kind === "tests" || kind === "mocks";
-}
 
 export function filterPullRequestTestFiles(
   parsed: ReviewParsedDiff,
@@ -14,7 +8,7 @@ export function filterPullRequestTestFiles(
 ): ReviewParsedDiff {
   if (!hideTestFiles || parsed.kind !== "files") return parsed;
   const files = parsed.files.filter(
-    (file) => file.path === includePath || !isPullRequestTestFile(file.path),
+    (file) => file.path === includePath || !isTestChangedFile(file.path),
   );
   if (files.length === parsed.files.length) return parsed;
   return {
@@ -24,4 +18,18 @@ export function filterPullRequestTestFiles(
     additions: files.reduce((total, file) => total + file.additions, 0),
     deletions: files.reduce((total, file) => total + file.deletions, 0),
   };
+}
+
+/** Patches to load around `index` (or from the top): the next three files the review will show. */
+export function shownPatchIndices(
+  files: ReadonlyArray<{ readonly path: string }>,
+  hideTestFiles: boolean,
+  index: number | null,
+): ReadonlyArray<number> {
+  const shown = files.flatMap((file, position) =>
+    hideTestFiles && isTestChangedFile(file.path) ? [] : [position],
+  );
+  if (index === null) return shown.slice(0, 3);
+  const position = shown.indexOf(index);
+  return position < 0 ? [index] : shown.slice(position, position + 3);
 }

@@ -26,6 +26,7 @@ import { ProjectionStoreV2, type ProjectionCheckpointRollbackContext } from "./P
 import * as ProjectStore from "./ProjectStore.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 
 it.effect.each([
   "nested",
@@ -64,6 +65,7 @@ it.effect.each([
       id: otherId,
       projectId,
       deletedAt: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: otherId },
       worktreePath:
         owner === "ancestor" || owner === "conversation"
           ? parent
@@ -78,6 +80,7 @@ it.effect.each([
         worktreePath: cwd,
         activeProviderThreadId: providerThreadId,
         modelSelection: { instanceId, model: "test" },
+        deletedAt: null,
       },
       providerThread,
       providerSession: undefined,
@@ -98,6 +101,7 @@ it.effect.each([
           ServerSettings.layerTest(),
           ThreadCommandExecutor.layer,
           IdAllocator.layer,
+          layerNoTaskFolders,
           Layer.mock(GitWorkflowService.GitWorkflowService)({}),
           Layer.mock(ProjectStore.ProjectStoreV2)({
             get: () => Effect.succeedSome({ workspaceRoot: parent } as never),
@@ -140,6 +144,7 @@ it.effect.each([
               }),
           }),
           Layer.mock(CheckpointServiceV2)({
+            discardRepositorySnapshots: () => Effect.void,
             restore: () =>
               Effect.gen(function* () {
                 calls.push("files");
@@ -190,6 +195,7 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
     const isolated = yield* isCheckpointRestoreIsolated(
       { id: ThreadId.make("restore-removed"), worktreePath },
       { cwd: worktreePath },
+      null,
       {
         fileSystem,
         path,
@@ -200,5 +206,251 @@ it.effect("lets rollback recreate a worktree storage cleanup removed", () =>
       },
     );
     assert.isTrue(isolated);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("counts a task folder's repository worktrees as part of what a restore changes", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fileSystem.realPath(
+      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-v2-restore-task-folder-" }),
+    );
+    // The worktrees directory is reached through a symlink; the other thread holds the real path.
+    const real = path.join(parent, "real", "task");
+    const named = path.join(parent, "linked", "task");
+    yield* fileSystem.makeDirectory(path.join(real, "shop"), { recursive: true });
+    yield* fileSystem.makeDirectory(path.join(real, "web"));
+    yield* fileSystem.symlink(path.join(parent, "real"), path.join(parent, "linked"));
+    const worktreePath = path.join(named, "shop");
+    const other = {
+      id: ThreadId.make("restore-task-folder-other"),
+      projectId: ProjectId.make("restore-project"),
+      deletedAt: null,
+      worktreePath: path.join(real, "web"),
+      activeRunId: null,
+      lineage: {},
+    };
+    const isolated = (repositories: ReadonlyArray<string>) =>
+      isCheckpointRestoreIsolated(
+        { id: ThreadId.make("restore-task-folder"), worktreePath },
+        { cwd: path.join(real, "shop") },
+        {
+          repositories: repositories.map((folder) => ({
+            repositoryPath: "/tracked/web",
+            worktreePath: folder,
+            name: "web",
+          })),
+        },
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [other], archivedThreads: [] }),
+            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+
+    assert.isTrue(yield* isolated([]));
+    assert.isFalse(yield* isolated([path.join(named, "web")]));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { sideChat: "answering questions", running: false, toolItems: 0, isolated: true },
+  { sideChat: "running", running: true, toolItems: 0, isolated: false },
+  { sideChat: "after running tools", running: false, toolItems: 1, isolated: false },
+] as const)(
+  "a side chat $sideChat shares the parent's worktree: $isolated",
+  ({ running, toolItems, isolated }) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const worktreePath = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-v2-restore-side-chat-",
+      });
+      const parentId = ThreadId.make("restore-side-chat-parent");
+      const sideChat = {
+        id: ThreadId.make("restore-side-chat"),
+        projectId: ProjectId.make("restore-project"),
+        deletedAt: null,
+        worktreePath,
+        activeRunId: running ? "side-chat-run" : null,
+        lineage: {
+          parentThreadId: parentId,
+          relationshipToParent: "fork",
+          rootThreadId: parentId,
+          sideChat: true,
+        },
+      };
+      const result = yield* isCheckpointRestoreIsolated(
+        { id: parentId, worktreePath },
+        { cwd: worktreePath },
+        null,
+        {
+          fileSystem,
+          path,
+          projections: {
+            getShellSnapshot: () => Effect.succeed({ threads: [sideChat], archivedThreads: [] }),
+            getThreadRecords: () =>
+              Effect.succeed({
+                turnItems: Array.from({ length: toolItems }, () => ({ type: "command_execution" })),
+              }),
+            getCheckpointContext: () => Effect.succeed({ checkpointScopes: [] }),
+            getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+          } as never,
+          projects: {} as never,
+        },
+      );
+      assert.equal(result, isolated);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect.each([
+  { name: "completed child", isolated: true },
+  { name: "completed native child", isolated: true },
+  { name: "native child with running tool", isolated: false },
+  { name: "native child with provider background task", isolated: false },
+  { name: "native child with parent background task", isolated: false },
+  { name: "native child with another provider parent task", isolated: true },
+  { name: "native child grandchild with root background task", isolated: false },
+  { name: "missing task record", isolated: false },
+  { name: "task belongs to another child", isolated: false },
+  { name: "completed child with pending task", isolated: false },
+  { name: "grandchild through fork", isolated: false },
+  { name: "completed grandchild", isolated: true },
+  { name: "unrelated child", isolated: false },
+  { name: "running child", isolated: false },
+  { name: "held queue", isolated: false },
+  { name: "failed child", isolated: false },
+  { name: "cyclic ancestry", isolated: false },
+] as const)("parent file restore with $name: $isolated", ({ name, isolated }) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const worktreePath = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-restore-child-" });
+    const parentId = ThreadId.make("restore-parent");
+    const childId = ThreadId.make("restore-child");
+    const ancestorId = ThreadId.make("restore-ancestor");
+    const child = {
+      id: childId,
+      projectId: ProjectId.make("restore-project"),
+      deletedAt: null,
+      worktreePath,
+      activeRunId: name === "running child" ? "child-run" : null,
+      activityRunStatus: null,
+      latestRunId: name.includes("native child") ? null : "child-run",
+      creationSource: name.includes("native child") ? "provider" : "user",
+      forkedFrom: { type: "node", nodeId: "child-task" },
+      status: name.includes("native child")
+        ? "idle"
+        : name === "running child"
+          ? "running"
+          : name === "failed child"
+            ? "failed"
+            : "completed",
+      pendingRuntimeRequest: null,
+      pendingBackgroundTasks: [],
+      lineage: {
+        parentThreadId:
+          name === "completed grandchild" ||
+          name === "native child grandchild with root background task" ||
+          name === "grandchild through fork" ||
+          name === "cyclic ancestry"
+            ? ancestorId
+            : name === "unrelated child"
+              ? ThreadId.make("another-parent")
+              : parentId,
+        relationshipToParent: "subagent",
+        rootThreadId: parentId,
+      },
+    };
+    const ancestor = {
+      ...child,
+      id: ancestorId,
+      forkedFrom: { type: "node", nodeId: "ancestor-task" },
+      lineage: {
+        ...child.lineage,
+        relationshipToParent: name === "grandchild through fork" ? "fork" : "subagent",
+        parentThreadId: name === "cyclic ancestry" ? childId : parentId,
+      },
+    };
+    const children =
+      name === "completed grandchild" ||
+      name === "native child grandchild with root background task" ||
+      name === "grandchild through fork" ||
+      name === "cyclic ancestry"
+        ? [child, ancestor]
+        : [child];
+    const projections = {
+      getShellSnapshot: () =>
+        Effect.succeed({
+          threads: children,
+          archivedThreads: [],
+        }),
+      getCheckpointContext: () =>
+        Effect.succeed({
+          checkpointScopes: [],
+          runs: name === "held queue" ? [{ status: "queued" }] : [],
+        }),
+      getThreadProviderContext: () => Effect.succeed({ providerSessions: [] }),
+      getThreadRecords: (
+        _threadId: unknown,
+        _fields: readonly string[],
+        filter: { subagentIds?: string[]; turnItemStatuses?: string[] } = {},
+      ) =>
+        Effect.succeed({
+          providerThreads:
+            _threadId === parentId &&
+            (name.includes("parent") ||
+              name === "native child grandchild with root background task") &&
+            name.includes("native child")
+              ? [
+                  {
+                    providerInstanceId:
+                      name === "native child with another provider parent task"
+                        ? "other-provider"
+                        : "claude",
+                    status: "idle",
+                    pendingBackgroundTasks: [{ taskId: "background", kind: "command" }],
+                  },
+                ]
+              : name === "native child with provider background task"
+                ? [{ status: "idle", pendingBackgroundTasks: [{ taskId: "background" }] }]
+                : [],
+          turnItems:
+            filter.turnItemStatuses !== undefined && name === "native child with running tool"
+              ? [{ type: "command_execution", status: "running" }]
+              : [],
+          subagents:
+            name === "missing task record"
+              ? []
+              : [
+                  {
+                    id: filter.subagentIds?.[0],
+                    providerInstanceId: "claude",
+                    nativeTaskRef: { nativeId: "native-task" },
+                    childThreadId:
+                      name === "task belongs to another child"
+                        ? "another-child"
+                        : filter.subagentIds?.[0] === "ancestor-task"
+                          ? ancestorId
+                          : childId,
+                    origin: name.includes("native child") ? "provider_native" : "app_owned",
+                    status: name === "completed child with pending task" ? "running" : "completed",
+                  },
+                ],
+        }),
+    };
+    const result = yield* isCheckpointRestoreIsolated(
+      { id: parentId, worktreePath },
+      { cwd: worktreePath },
+      null,
+      { fileSystem, path, projections: projections as never, projects: {} as never },
+    );
+    assert.equal(result, isolated);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

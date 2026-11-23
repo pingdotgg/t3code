@@ -7,12 +7,15 @@ import {
 } from "@t3tools/contracts";
 import { resolveWorktreeT3Home } from "@t3tools/shared/devHome";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { formatHostForUrl, isWildcardHost } from "@t3tools/shared/hostClassification";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
+import { buildPairingAppLink } from "@t3tools/shared/remote";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import {
   buildTailscaleHttpsBaseUrl,
   DEFAULT_TAILSCALE_SERVE_PORT,
   ensureTailscaleServe,
+  readTailscaleServeRootHolder,
   readTailscaleStatus,
 } from "@t3tools/tailscale";
 import * as Config from "effect/Config";
@@ -29,6 +32,8 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
@@ -37,14 +42,13 @@ import {
 } from "../serverRuntimeState.ts";
 import {
   buildPairingUrl,
-  formatHostForUrl,
   isLoopbackHost,
-  isWildcardHost,
   renderTerminalQrCode,
   resolveHeadlessConnectionString,
 } from "../startupAccess.ts";
 import { authScopesFlag } from "./authScopes.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
+import { hostShellWord, resolveHostCliCommand } from "./invocation.ts";
 
 const WELL_KNOWN_ENVIRONMENT_PATH = "/.well-known/t3/environment";
 const PAIR_PROBE_TIMEOUT = Duration.millis(2_500);
@@ -62,6 +66,8 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
   {
     checkedStatePaths: Schema.Array(Schema.String),
     inLinkedWorktree: Schema.Boolean,
+    serveCommand: Schema.String,
+    connectCommand: Schema.String,
   },
 ) {
   override get message(): string {
@@ -71,19 +77,23 @@ export class NoRunningServerError extends Schema.TaggedError<NoRunningServerErro
       ...(this.inLinkedWorktree
         ? ["In a linked worktree, pass --base-dir to pair with a server outside it."]
         : []),
-      "Start one with `npx t3 serve`, or connect this machine with T3 Connect: `npx t3 connect`.",
+      `Start one with \`${this.serveCommand}\`, or connect this machine with T3 Connect: \`${this.connectCommand}\`.`,
     ].join("\n");
   }
 }
 
 export class IncompatibleServerProtocolError extends Schema.TaggedError<IncompatibleServerProtocolError>()(
   "IncompatibleServerProtocolError",
-  { serverVersion: Schema.String, serverProtocolVersion: Schema.Number },
+  {
+    serverVersion: Schema.String,
+    serverProtocolVersion: Schema.Number,
+    pairCommand: Schema.String,
+  },
 ) {
   override get message(): string {
     return [
       `The running T3 Code server (${this.serverVersion}) speaks orchestration protocol ${String(this.serverProtocolVersion)}, but this CLI speaks protocol ${String(ORCHESTRATION_PROTOCOL_VERSION)}.`,
-      `Pair with the matching CLI instead: \`npx t3@${this.serverVersion} pair\`.`,
+      `Pair with the matching CLI instead: \`${this.pairCommand}\`.`,
     ].join("\n");
   }
 }
@@ -133,6 +143,24 @@ export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServe
   }
 }
 
+export class TailscaleOperatorRequiredError extends Schema.TaggedError<TailscaleOperatorRequiredError>()(
+  "TailscaleOperatorRequiredError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Tailscale refused the Serve config because this user is not its operator. Run `sudo tailscale set --operator=$USER` once, then run this command again.";
+  }
+}
+
+export class TailscaleServeTargetRefusedError extends Schema.TaggedError<TailscaleServeTargetRefusedError>()(
+  "TailscaleServeTargetRefusedError",
+  { localHost: Schema.String },
+) {
+  override get message(): string {
+    return `This Tailscale install can only proxy to localhost, and the server listens on ${this.localHost}. Restart it with \`--host 127.0.0.1\` or \`--host 0.0.0.0\`, then run this command again.`;
+  }
+}
+
 export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
   "ServePortOccupiedError",
   { servePort: Schema.Number },
@@ -142,10 +170,14 @@ export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupied
   }
 }
 
-const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
+const resolveDirectPairingBaseUrl = (
+  state: PersistedServerRuntimeState,
+  platform: NodeJS.Platform,
+): string =>
   state.devUrl ??
   resolveHeadlessConnectionString(state.host, state.port, {
     privateNetworkOnly: state.privateNetworkOnly,
+    platform,
   });
 
 export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
@@ -193,6 +225,7 @@ const formatPairOutput = (input: {
     renderTerminalQrCode(input.pairingUrl),
     "",
     `Pairing URL: ${input.pairingUrl}`,
+    `App link: ${buildPairingAppLink(input.pairingUrl)}`,
     `Token: ${input.token}`,
     `Expires: ${DateTime.formatIso(input.expiresAt)}`,
     ...input.notes.flatMap((note) => ["", `Note: ${note}`]),
@@ -241,7 +274,8 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
 ) {
   const bases: Array<string> = [];
   let inLinkedWorktree = false;
-  if (explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0) {
+  const hasExplicitBaseDir = explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0;
+  if (hasExplicitBaseDir) {
     bases.push(yield* resolveBaseDir(explicitBaseDir));
   } else {
     // Same precedence as dev-runner: inside a linked worktree only its own
@@ -288,7 +322,13 @@ const discoverPairTarget = Effect.fn("pair.discoverPairTarget")(function* (
       } satisfies DiscoveredPairTarget;
     }
   }
-  return yield* new NoRunningServerError({ checkedStatePaths, inLinkedWorktree });
+  const baseDirArgs = hasExplicitBaseDir ? ["--base-dir", explicitBaseDir] : [];
+  return yield* new NoRunningServerError({
+    checkedStatePaths,
+    inLinkedWorktree,
+    serveCommand: (yield* resolveHostCliCommand("serve", baseDirArgs)).command,
+    connectCommand: (yield* resolveHostCliCommand("connect", baseDirArgs)).command,
+  });
 });
 
 /** Use the discovered state directory, independent of ambient config variables. */
@@ -392,17 +432,36 @@ const resolveTailscalePairingBase = Effect.fn("pair.resolveTailscalePairingBase"
     if (isDevServerNotProxiableError(localTarget)) {
       return yield* localTarget;
     }
+    // The probe above fails whenever this host cannot reach its own MagicDNS name, so the Serve
+    // config, not the probe, decides whether the port is free.
+    const platform = yield* HostProcess.Platform;
+    const holder = yield* readTailscaleServeRootHolder(input.servePort, {
+      host: (localTarget.localHost ?? "127.0.0.1").replace(/^\[|\]$/gu, ""),
+      port: localTarget.localPort,
+    }).pipe(Effect.mapError((cause) => new TailscaleUnavailableError({ cause })));
+    if (holder === "other") {
+      return yield* new ServePortOccupiedError({ servePort: input.servePort });
+    }
     yield* ensureTailscaleServe({
       localPort: localTarget.localPort,
       servePort: input.servePort,
       ...(localTarget.localHost !== undefined ? { localHost: localTarget.localHost } : {}),
     }).pipe(
-      Effect.mapError(
-        (cause) => new TailscaleServeFailedError({ servePort: input.servePort, cause }),
-      ),
+      Effect.mapError((cause) => {
+        const diagnostic =
+          cause._tag === "TailscaleCommandExitError" ? cause.stderrDiagnostic : undefined;
+        if (diagnostic === "unsupported-target" && localTarget.localHost !== undefined) {
+          return new TailscaleServeTargetRefusedError({ localHost: localTarget.localHost });
+        }
+        // Only Linux tailscaled has an operator; elsewhere a denial needs another fix.
+        if (diagnostic === "permission-denied" && platform === "linux") {
+          return new TailscaleOperatorRequiredError({ cause });
+        }
+        return new TailscaleServeFailedError({ servePort: input.servePort, cause });
+      }),
     );
     notes.push(
-      `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} off\`.`,
+      `Tailscale Serve now maps ${baseUrl} to this server and persists across restarts. Remove it with \`tailscale serve --https=${String(input.servePort)} --set-path=/ off\`.`,
     );
 
     const probed = yield* awaitEnvironmentDescriptor(baseUrl);
@@ -485,21 +544,36 @@ export const pairCommand = Command.make("pair", {
       const cliLogLevel = yield* GlobalFlag.LogLevel;
       const logLevel = Option.getOrElse(cliLogLevel, () => "Warn" as const);
 
-      const target = yield* discoverPairTarget(Option.getOrUndefined(flags.baseDir));
+      const explicitBaseDir = Option.getOrUndefined(flags.baseDir);
+      const target = yield* discoverPairTarget(explicitBaseDir);
       // Each protocol keeps auth in its own database, so a token minted here
       // for another protocol's server would never be accepted by it. Refuse
       // before any local layer opens (and migrates) that database.
       const serverProtocolVersion = target.descriptor.orchestrationProtocolVersion ?? 1;
       if (serverProtocolVersion !== ORCHESTRATION_PROTOCOL_VERSION) {
+        const platform = yield* HostProcess.Platform;
+        const baseDirArgs =
+          explicitBaseDir !== undefined && explicitBaseDir.trim().length > 0
+            ? ` --base-dir ${hostShellWord(platform, explicitBaseDir)}`
+            : "";
         return yield* new IncompatibleServerProtocolError({
           serverVersion: target.descriptor.serverVersion,
           serverProtocolVersion,
+          pairCommand: `npx t3@${target.descriptor.serverVersion} pair${baseDirArgs}`,
         });
       }
 
       const notes: Array<string> = [];
       let pairingBaseUrl: string;
       if (flags.tailscale) {
+        // Serve stays on after this command exits, so refuse before turning it on.
+        const policy = yield* ManagedPolicy.ManagedPolicy.pipe(Effect.provide(ManagedPolicy.layer));
+        if (!ManagedLimits.allowsRemoteClients(policy)) {
+          return yield* ManagedLimits.refuseRemoteClients(
+            policy,
+            "so Tailscale Serve cannot be turned on",
+          );
+        }
         const resolved = yield* resolveTailscalePairingBase({
           target,
           servePort: flags.tailscaleServePort,
@@ -507,10 +581,10 @@ export const pairCommand = Command.make("pair", {
         pairingBaseUrl = resolved.baseUrl;
         notes.push(...resolved.notes);
       } else {
-        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state);
+        pairingBaseUrl = resolveDirectPairingBaseUrl(target.state, yield* HostProcess.Platform);
         if (isLoopbackHost(new URL(pairingBaseUrl).hostname)) {
           notes.push(
-            "This URL is only reachable from this machine. Re-run with --tailscale, or restart the server with a reachable --host.",
+            "This URL is only reachable from this machine. To reach it from your other devices, run `t3 up`, or re-run with --tailscale.",
           );
         } else if (target.state.privateNetworkOnly) {
           notes.push(

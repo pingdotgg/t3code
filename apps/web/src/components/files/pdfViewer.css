@@ -1,0 +1,52 @@
+/* TextLayer geometry follows PDF.js' text layer contract (Apache-2.0). */
+[data-pdf-text-layer] {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  text-align: initial;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+[data-pdf-text-layer][data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+[data-pdf-text-layer][data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+[data-pdf-text-layer][data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+[data-pdf-text-layer] :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+}
+[data-pdf-text-layer] > :not(.markedContent),
+[data-pdf-text-layer] .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+[data-pdf-text-layer] .markedContent {
+  display: contents;
+}
+[data-pdf-text-layer] ::selection {
+  background: #4a90e266;
+}
+[data-pdf-text-layer] .pdf-find-match {
+  background: #ffc80066;
+}

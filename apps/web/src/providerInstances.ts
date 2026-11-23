@@ -1,3 +1,4 @@
+import { pipe } from "effect/Function";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -42,22 +43,42 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-export type ProviderCatalogAvailability = "loading" | "ready" | "unavailable" | "unconfigured";
-
-/** Initial null config is still loading; treating it as empty would strand recoverable threads. */
-export function resolveProviderCatalogAvailability(input: {
-  readonly catalogLoaded: boolean;
-  readonly entries: ReadonlyArray<ProviderInstanceEntry>;
-  readonly selectedEntry: ProviderInstanceEntry | undefined;
-}): ProviderCatalogAvailability {
-  if (!input.catalogLoaded) return "loading";
-  if (input.selectedEntry !== undefined) return "ready";
-  return input.entries.length === 0 ? "unconfigured" : "unavailable";
+/** Status dots share one corner per user, so a badge on one row can't move only that row's dot. */
+export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>): boolean {
+  return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
 }
 
-/** Disabled instances may retain ready status until reconciliation. */
+/**
+ * Disabled instances may retain ready status until reconciliation. A warning still offers
+ * the models of sub-providers that report no problem of their own.
+ */
+function isProviderInstanceHealthy(entry: ProviderInstanceEntry): boolean {
+  if (!entry.enabled || !entry.isAvailable) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning") return false;
+  const usable = new Set(
+    entry.snapshot.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [subProvider.name] : [],
+    ),
+  );
+  return entry.models.some(
+    (model) => model.subProvider !== undefined && usable.has(model.subProvider),
+  );
+}
+
+/** Also true after a check that only failed or ran late: an earlier check's models stay offered. */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  if (isProviderInstanceHealthy(entry)) return true;
+  const { subProviders, auth, modelsRetained } = entry.snapshot;
+  if (!entry.enabled || !entry.isAvailable || subProviders !== undefined) return false;
+  if (modelsRetained === true) return true;
+  // The sign-in was confirmed, so the warning is about something else, such as a late catalog.
+  return (
+    entry.status === "warning" &&
+    entry.installed &&
+    auth.status === "authenticated" &&
+    entry.models.length > 0
+  );
 }
 
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
@@ -105,16 +126,21 @@ export function deriveProviderEntriesByEnvironment(
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
-    // The snapshot includes instances enabled by any project; machine settings alone do not.
-    const entries = settings
-      ? derived.map((entry) => applyProviderInstanceBranding(entry, settings))
-      : derived;
+    const entries = settings ? brandProviderInstanceEntries(derived, settings) : derived;
     byEnvironment.set(
       environmentId,
       new Map(entries.map((entry) => [entry.instanceId as string, entry] as const)),
     );
   }
   return byEnvironment;
+}
+
+// The snapshot includes instances enabled by any project; machine settings alone do not.
+export function brandProviderInstanceEntries(
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return entries.map((entry) => applyProviderInstanceBranding(entry, settings));
 }
 
 /** projectId applies project overrides; explicit null uses machine settings. */
@@ -160,7 +186,20 @@ function applyProviderInstanceBranding(
   };
 }
 
-export function sortProviderInstanceEntries(
+/** Picker order: each driver's default instance first, then its custom instances. */
+export function providerInstanceEntriesFor(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  projectId: ProjectId | null,
+): ReadonlyArray<ProviderInstanceEntry> {
+  return pipe(
+    deriveProviderInstanceEntries(providers),
+    (entries) => applyProviderInstanceSettings(entries, settings, projectId),
+    sortProviderInstanceEntries,
+  );
+}
+
+function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
 ): ReadonlyArray<ProviderInstanceEntry> {
   const byKind = new Map<ProviderDriverKind, ProviderInstanceEntry[]>();
@@ -216,7 +255,7 @@ export function resolveSelectableProviderInstanceEntry(
     }
   }
   return (
-    entries.find(isProviderInstancePickerReady) ??
+    entries.find(isProviderInstanceHealthy) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
   );
 }
@@ -238,4 +277,20 @@ export function resolveDefaultProviderModelSelection(
   if (selection?.instanceId === instanceId) return selection;
   const model = getDefaultProviderInstanceModel(providers, instanceId);
   return model ? { instanceId, model } : null;
+}
+
+export function resolveProjectDefaultProviderModelSelection(
+  providers: ReadonlyArray<ServerProvider>,
+  settings: ServerSettings,
+  projectId: ProjectId | null,
+): ModelSelection | null {
+  const entries = providerInstanceEntriesFor(providers, settings, projectId);
+  // Matches resolveComposerProviderSelection: the first driver group wins before any other.
+  const entry =
+    resolveSelectableProviderInstanceEntry(
+      entries.filter((candidate) => candidate.driverKind === entries[0]?.driverKind),
+      undefined,
+    ) ?? resolveSelectableProviderInstanceEntry(entries, undefined);
+  const model = entry ? getDefaultProviderInstanceModel(providers, entry.instanceId) : undefined;
+  return entry && model ? { instanceId: entry.instanceId, model } : null;
 }

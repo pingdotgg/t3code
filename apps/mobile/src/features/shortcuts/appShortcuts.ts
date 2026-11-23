@@ -1,12 +1,14 @@
 import type { Action } from "expo-quick-actions";
+import { msg } from "gt-react-native";
 import type { NavigationState } from "@react-navigation/native";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 
+import { m } from "../../i18n/messages";
 import type { RecentThreadShortcut } from "../../persistence/imperative";
 
-export const MAX_RECENT_THREAD_SHORTCUTS = 3;
+const MAX_RECENT_THREAD_SHORTCUTS = 3;
 
-export const NEW_TASK_SHORTCUT_ID = "new-task";
+const NEW_TASK_SHORTCUT_ID = "new-task";
 const NEW_TASK_SHORTCUT_HREF = "/new";
 
 const SHORTCUT_ICON = "shortcut_icon";
@@ -56,7 +58,9 @@ export function activeThreadRef(state: NavigationState): ScopedThreadRef | null 
 
 function threadShortcutLabel(thread: RecentThreadShortcut): string {
   const title = thread.title.trim();
-  return title.length > 0 ? title : "Thread";
+  return title.length > 0
+    ? title
+    : m(msg("Thread", { $context: "fallback name for an untitled thread" }));
 }
 
 /** Launcher shortcuts survive updates; allowlist destinations so malformed or stale paths cannot navigate. */
@@ -92,7 +96,7 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
   return [
     {
       id: NEW_TASK_SHORTCUT_ID,
-      title: "New task",
+      title: m(msg("New task")),
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },

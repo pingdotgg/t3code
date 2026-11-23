@@ -1,5 +1,5 @@
-import { useNavigation } from "@react-navigation/native";
-import { useEffect, useMemo } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback } from "react";
 
 import { useProjects } from "../../state/entities";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
@@ -13,11 +13,11 @@ export function usePullRequestEnvironmentFallback(params: PullRequestEnvironment
   const projects = useProjects();
   const isReady = useConnectionsReady();
   const environments = useWorkspaceEnvironments();
-  const fallback = useMemo(
-    () => (isReady ? pullRequestFallbackEnvironment(params, projects, environments) : null),
-    [params, projects, environments, isReady],
+  const fallback = isReady ? pullRequestFallbackEnvironment(params, projects, environments) : null;
+  // Only while focused: a screen kept as a placeholder throws on any navigation action.
+  useFocusEffect(
+    useCallback(() => {
+      if (fallback) navigation.setParams(fallback);
+    }, [fallback, navigation]),
   );
-  useEffect(() => {
-    if (fallback) navigation.setParams(fallback);
-  }, [fallback, navigation]);
 }

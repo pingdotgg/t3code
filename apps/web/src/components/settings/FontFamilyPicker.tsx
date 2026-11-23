@@ -1,7 +1,13 @@
+import { useLegendListRef } from "~/hooks/useLegendListRef";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { T, useGT } from "gt-react";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { isMonospaceFamily, queryInstalledFontFamilies } from "../../appearanceFonts";
+import {
+  displayFontFamily,
+  isMonospaceFamily,
+  queryInstalledFontFamilies,
+} from "../../appearanceFonts";
 import {
   Combobox,
   ComboboxEmpty,
@@ -93,16 +99,24 @@ export function FontFamilyPicker({
   initialOpen?: boolean;
   onSelect: (family: string) => void;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Base UI needs an initial closed commit; mounting open loses exit transitionend and leaves the popup
   // stuck.
   const [openAfterMount] = useState(initialOpen);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opens the Base UI popup after its first closed commit so the entrance transition is recorded
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- Base UI needs one closed commit first to record the popup's entrance style.
     if (openAfterMount) setOpen(true);
   }, [openAfterMount]);
   const listRef = useRef<LegendListRef | null>(null);
+  const [listHeight, setListHeight] = useState(288);
+  const handleMetricsChange = () => {
+    const metrics = listRef.current?.getState();
+    if (metrics) setListHeight(Math.min(metrics.contentLength, 288));
+  };
+  const scrollRef = useLegendListRef(listRef, handleMetricsChange);
   const enumeration = useFontEnumeration();
 
   const handleOpenChange = (nextOpen: boolean) => {
@@ -132,8 +146,10 @@ export function FontFamilyPicker({
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: `"${value}" isn't monospace`,
-          description: "Code and terminal need a fixed-width font, so the current font was kept.",
+          title: gt('"{font}" isn\'t monospace', { font: value }),
+          description: gt(
+            "Code and terminal need a fixed-width font, so the current font was kept.",
+          ),
         }),
       );
       return;
@@ -147,11 +163,15 @@ export function FontFamilyPicker({
     return (
       <ComboboxItem hideIndicator index={index} key={item} value={item}>
         <div className="flex w-full min-w-0 items-center justify-between gap-2">
-          <span className="min-w-0 truncate" style={{ fontFamily: family }}>
+          <span className="min-w-0 truncate" style={{ fontFamily: displayFontFamily(family) }}>
             {family}
           </span>
           <span className="flex shrink-0 items-center gap-1.5">
-            {isDefault ? <span className="text-3xs text-muted-foreground/60">default</span> : null}
+            {isDefault ? (
+              <span className="text-3xs text-muted-foreground/60">
+                {gt("default", { $context: "marks the default font" })}
+              </span>
+            ) : null}
             {item === selectedValue ? (
               <CheckIcon className="size-3.5 text-muted-foreground" />
             ) : null}
@@ -160,6 +180,8 @@ export function FontFamilyPicker({
       </ComboboxItem>
     );
   };
+
+  const extraData = { items, selectedValue, defaultFamily };
 
   return (
     <Combobox
@@ -183,25 +205,34 @@ export function FontFamilyPicker({
       </ComboboxTrigger>
       <ComboboxPopup align="end" className="flex w-72 flex-col">
         <ComboboxSearchInput
-          placeholder="Search fonts…"
+          placeholder={gt("Search fonts…")}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <ComboboxEmpty>No fonts found.</ComboboxEmpty>
-          <div className="relative min-h-0 max-h-72 w-full flex-1 overflow-hidden">
-            <ComboboxListVirtualized>
+          <ComboboxEmpty>
+            <T>No fonts found.</T>
+          </ComboboxEmpty>
+          {/* Short windows cap the popup; every level down to the list must shrink or rows are clipped unreachably. */}
+          <div className="relative flex min-h-0 max-h-72 w-full flex-1 flex-col overflow-hidden">
+            <ComboboxListVirtualized className="flex min-h-0 flex-col">
               <LegendList<string>
-                ref={listRef}
+                ref={scrollRef}
                 data={items}
+                dataKey={query}
+                initialScrollOffset={0}
                 // Base UI selects virtualized rows by index; rerender surviving items when filtering changes
                 // their indices.
-                extraData={items}
+                extraData={extraData}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
                 estimatedItemSize={30}
                 drawDistance={360}
-                style={{ height: Math.min(items.length * 30, 288) }}
+                onScroll={handleMetricsChange}
+                onLayout={handleMetricsChange}
+                onReady={handleMetricsChange}
+                className="min-h-0"
+                style={{ height: listHeight }}
               />
             </ComboboxListVirtualized>
           </div>

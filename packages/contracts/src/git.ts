@@ -111,6 +111,13 @@ export const VcsStatusInput = Schema.Struct({
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 
+export const VcsBranchStatus = Schema.Struct({
+  refName: Schema.NullOr(Schema.String),
+  /** Absent from older servers, where a removed checkout looks like a detached HEAD. */
+  isRepo: Schema.optional(Schema.Boolean),
+});
+export type VcsBranchStatus = typeof VcsBranchStatus.Type;
+
 export const VcsStatusSubscriptionInput = Schema.Struct({
   ...VcsStatusInput.fields,
   /** Passive observers receive cached remote status without retaining its refresh loop. */
@@ -263,6 +270,13 @@ export const VcsStatusResult = Schema.Struct({
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
 
+export const VcsRefreshStatusResult = Schema.Struct({
+  ...VcsStatusResult.fields,
+  // Digest of the repository's refs after the refresh; absent when they could not be read.
+  refsDigest: Schema.optional(TrimmedNonEmptyString),
+});
+export type VcsRefreshStatusResult = typeof VcsRefreshStatusResult.Type;
+
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     local: VcsStatusLocalResult,
@@ -354,11 +368,13 @@ export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
+  "config_locked",
   "host_key_unverified",
   "not_a_repository",
   "path_already_exists",
   "push_rejected_by_remote",
   "push_rejected_non_fast_forward",
+  "ref_name_conflict",
   "ref_not_found",
   "remote_unreachable",
   "tag_would_be_clobbered",

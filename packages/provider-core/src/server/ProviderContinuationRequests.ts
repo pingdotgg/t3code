@@ -30,6 +30,8 @@ export interface ProviderContinuationRequest {
     effect: Effect.Effect<A, E, R>,
   ) => Effect.Effect<Option.Option<A>, E, R>;
   readonly clearIfCurrent?: () => Effect.Effect<void>;
+  /** Called when the run this request dispatched ends without starting, such as a cancelled queued run. */
+  readonly onRunEndedWithoutStarting?: () => Effect.Effect<void>;
 }
 
 /** The default drops requests; share the live layer with the worker that drains them. */
@@ -45,8 +47,11 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const queue = yield* Queue.unbounded<ProviderContinuationRequest>();
     return {
-      offer: (request: ProviderContinuationRequest) =>
-        Queue.offer(queue, request).pipe(Effect.asVoid),
+      offer: Effect.fn("ProviderContinuationRequests.offer")(function (
+        request: ProviderContinuationRequest,
+      ) {
+        return Queue.offer(queue, request).pipe(Effect.asVoid);
+      }),
       take: Queue.take(queue),
     };
   }),

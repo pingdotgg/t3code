@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { assert, it } from "@effect/vitest";
@@ -20,6 +21,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { runMigrations } from "../persistence/Migrations.ts";
 import * as ProjectEnrichmentService from "../project/ProjectEnrichmentService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -27,6 +29,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
+import { layerNoTaskFolders } from "./ProviderTurnStartService.testkit.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 
 const projectId = ProjectId.make("project:upgrade");
@@ -116,7 +119,7 @@ const unusedEnrichment = {
 
 const layerRuntime = (dbPath: string) => {
   const layerPlatform = Layer.merge(
-    NodeServices.layer,
+    Layer.mergeAll(NodeServices.layer, NodeCrypto.layer),
     Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
       resolveLink: () => Effect.die("unused"),
     }),
@@ -155,10 +158,10 @@ const layerRuntime = (dbPath: string) => {
     Layer.provide(layerCheckpointStore),
     Layer.provide(layerServerConfig),
     Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ModelManifest.layerTest),
     Layer.provide(
       Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        getInstance: () => Effect.succeed(undefined),
+        getInstance: () => Effect.undefined,
         listInstances: Effect.succeed([]),
         listUnavailable: Effect.succeed([]),
         streamChanges: Stream.empty,
@@ -170,6 +173,7 @@ const layerRuntime = (dbPath: string) => {
         pruneWorktrees: () => Effect.void,
       }),
     ),
+    Layer.provide(layerNoTaskFolders),
     Layer.provide(layerPlatform),
   );
 };
@@ -190,5 +194,5 @@ it.live("keeps project settings through the V2 migrations and the first V2 boot"
         assert.equal(project._tag, "Some");
       }).pipe(Effect.provide(layerRuntime(dbPath)));
     }),
-  ).pipe(Effect.provide(NodeServices.layer)),
+  ).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );

@@ -6,12 +6,14 @@ import {
   ThreadId,
   type PullRequestLinkedThreadsResult,
   type RepositoryIdentity,
+  type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   findPromptLinkProjects,
+  findPromptLinkPullRequestThread,
   pickPromptLinkPullRequestThread,
   resolvePromptLinkModelSelection,
 } from "./promptLinks.ts";
@@ -38,6 +40,49 @@ describe("findPromptLinkProjects", () => {
     expect(ids("pingdotgg", "t3code")).toEqual(["recent", "older"]);
     expect(ids("me", "t3code")).toEqual(["fork"]);
     expect(ids("gitlab", "x")).toEqual([]);
+  });
+
+  it("matches a checkout of the repository's GitCafe mirror", () => {
+    const projects = [
+      { id: "gitcafe", repositoryIdentity: identity("git.cafe/pingdotgg/t3code") },
+      { id: "staging", repositoryIdentity: identity("staging.git.cafe/pingdotgg/t3code") },
+      { id: "gitlab", repositoryIdentity: identity("gitlab.com/pingdotgg/t3code") },
+    ];
+    expect(
+      findPromptLinkProjects(projects, { owner: "pingdotgg", name: "t3code" }).map(
+        (project) => project.id,
+      ),
+    ).toEqual(["gitcafe", "staging"]);
+  });
+});
+
+describe("findPromptLinkPullRequestThread", () => {
+  it("takes the newest linked thread, never a side chat that inherited the link", () => {
+    const link: ThreadPullRequestLink = {
+      host: "github.com",
+      repository: "acme/web",
+      number: 7,
+      url: "https://github.com/acme/web/pull/7",
+      source: "manual",
+      linkedAt: "2026-01-01T00:00:00.000Z",
+      snapshot: null,
+      stack: null,
+    };
+    const thread = (id: string, updatedAt: string, sideChat?: boolean) => ({
+      id,
+      updatedAt,
+      pullRequests: [link],
+      ...(sideChat === undefined ? {} : { lineage: { sideChat } }),
+    });
+    const found = findPromptLinkPullRequestThread(
+      [
+        thread("old", "2026-01-01T00:00:00.000Z"),
+        thread("parent", "2026-01-02T00:00:00.000Z", false),
+        thread("side-chat", "2026-01-03T00:00:00.000Z", true),
+      ],
+      { owner: "acme", name: "web", number: 7 },
+    );
+    expect(found?.id).toBe("parent");
   });
 });
 

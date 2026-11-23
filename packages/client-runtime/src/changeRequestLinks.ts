@@ -45,20 +45,15 @@ export function findProjectOnChangeRequestHost<Project extends ChangeRequestProj
   );
 }
 
-export interface ChangeRequestLinkCapabilities {
-  readonly pullRequests?: boolean | undefined;
-  readonly threadPullRequests?: boolean | undefined;
-}
-
 /**
  * Where every client opens a change request link in the app, or null for the browser. A link
- * opened into a pull request view may borrow any project on its host when the server reads
- * change requests by host, so a mirror's or a sibling repository's link still opens in the app.
+ * opened into a pull request view may borrow any project on its host, so a mirror's or a
+ * sibling repository's link still opens in the app.
  */
 export function resolveChangeRequestLinkTarget<Project extends ChangeRequestProject>({
   url,
   projects,
-  capabilities,
+  configLoaded,
   environmentId,
   projectId,
   primaryEnvironmentId,
@@ -66,7 +61,7 @@ export function resolveChangeRequestLinkTarget<Project extends ChangeRequestProj
 }: {
   url: string;
   projects: ReadonlyArray<Project>;
-  capabilities: (environmentId: EnvironmentId) => ChangeRequestLinkCapabilities | undefined;
+  configLoaded: (environmentId: EnvironmentId) => boolean;
   /** The link's own environment; without one, any environment that reads change requests. */
   environmentId?: EnvironmentId | undefined;
   /** The project the link came from, tried first. */
@@ -84,7 +79,7 @@ export function resolveChangeRequestLinkTarget<Project extends ChangeRequestProj
   // Matching remotes do not make project ids usable outside the link's environment.
   const candidates = (
     environmentId === undefined
-      ? projects.filter((project) => capabilities(project.environmentId)?.pullRequests === true)
+      ? projects.filter((project) => configLoaded(project.environmentId))
       : projects.filter((project) => project.environmentId === environmentId)
   ).sort(
     (left, right) =>
@@ -94,30 +89,14 @@ export function resolveChangeRequestLinkTarget<Project extends ChangeRequestProj
   );
   const project =
     findProjectForChangeRequest(candidates, link) ??
-    (lendHostProject
-      ? findProjectOnChangeRequestHost(
-          candidates.filter(
-            (candidate) => capabilities(candidate.environmentId)?.threadPullRequests === true,
-          ),
-          link,
-        )
-      : undefined);
-  if (project === undefined) return null;
-  const projectCapabilities = capabilities(project.environmentId);
-  if (projectCapabilities?.pullRequests !== true) return null;
-  return projectCapabilities.threadPullRequests === true
-    ? {
-        project,
-        repository: link.repository,
-        number: link.number,
-        host: link.authority ?? link.host,
-      }
-    : {
-        project,
-        repository:
-          sourceControlClients.repositorySelector(project.repositoryIdentity) ?? link.repository,
-        number: link.number,
-      };
+    (lendHostProject ? findProjectOnChangeRequestHost(candidates, link) : undefined);
+  if (project === undefined || !configLoaded(project.environmentId)) return null;
+  return {
+    project,
+    repository: link.repository,
+    number: link.number,
+    host: link.authority ?? link.host,
+  };
 }
 
 export function resolvePullRequestPreviewTarget({
@@ -170,4 +149,22 @@ export function projectChangeRequestUrl(
     remoteUrl: identity.locator.remoteUrl.trim(),
     ...(ownRepository && identity.webUrl !== undefined ? { webUrl: identity.webUrl } : {}),
   });
+}
+
+export function projectCommitUrl(
+  identity: RepositoryIdentity | null | undefined,
+  sha: string,
+): string | null {
+  if (identity?.provider === undefined) return null;
+  const [host, ...path] = identity.canonicalKey.split("/");
+  if (!host) return null;
+  return (
+    sourceControlClients.get(identity.provider).commitUrl?.({
+      host,
+      repository: path.join("/"),
+      sha,
+      remoteUrl: identity.locator.remoteUrl.trim(),
+      ...(identity.webUrl !== undefined ? { webUrl: identity.webUrl } : {}),
+    }) ?? null
+  );
 }

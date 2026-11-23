@@ -68,10 +68,15 @@ const www = yield* Railway.CustomDomain("Www", {
 });
 ```
 
-Yield `Www` in the Stack. Point DNS at
-`www.verificationDnsHost` / `www.verificationToken`. `www.url` is
-`https://www.example.com`. `verified` flips once Railway sees the
+Yield `Www` in the Stack. Publish the records in `www.dnsRecords`
+(the `CNAME` and the verification `TXT`) with your DNS host. `www.url`
+is `https://www.example.com`. `verified` flips once Railway sees the
 record.
+
+`Railway.Website.*` composites can publish those records for you: pass
+`domain: { name: "www.example.com", dns: Cloudflare.DNS.Adapter() }` (or
+`AWS.Route53.Adapter()`, `Hetzner.DNS.Adapter()`). See
+[DNS Adapters](/infrastructure-as-code/dns-adapters).
 
 `targetPort` is optional and updates in place. Changing `domain`,
 `service`, or `environment` replaces the CustomDomain.

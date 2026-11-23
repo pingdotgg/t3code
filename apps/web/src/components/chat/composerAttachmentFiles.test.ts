@@ -13,12 +13,13 @@ import {
   composerFileAttachmentMimeType,
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
+  imagesToAttachBesidePastedText,
   normalizeComposerImageFileMimeType,
   shouldHandleComposerAttachmentPaste,
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
-  it("attaches SVG as a file and rejects other unsupported images", () => {
+  it("keeps previewable images providers cannot accept on the file path", () => {
     expect(classifyComposerAttachmentFile({ name: "diagram.svg", type: "image/svg+xml" })).toBe(
       "file",
     );
@@ -26,12 +27,14 @@ describe("composer attachment files", () => {
     expect(
       classifyComposerAttachmentFile({ name: "diagram.svg", type: "application/octet-stream" }),
     ).toBe("file");
-    expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe(
-      "unsupported-image",
-    );
+    expect(classifyComposerAttachmentFile({ name: "photo.tiff", type: "image/tiff" })).toBe("file");
     expect(classifyComposerAttachmentFile({ name: "report.pdf", type: "application/pdf" })).toBe(
       "file",
     );
+    expect(classifyComposerAttachmentFile({ name: "picture.bmp", type: "image/bmp" })).toBe("file");
+    expect(
+      classifyComposerAttachmentFile({ name: "layers.psd", type: "image/vnd.adobe.photoshop" }),
+    ).toBe("unsupported-image");
   });
 
   it("keeps DNG originals on the file path without changing their bytes", async () => {
@@ -96,7 +99,7 @@ describe("composer attachment files", () => {
       "image",
       "image",
       "image",
-      "unsupported-image",
+      "file",
       "unsupported-image",
     ]);
   });
@@ -112,20 +115,46 @@ describe("composer attachment files", () => {
     ).toBe(false);
   });
 
-  it("claims SVG and unsupported image pastes even when text is present", () => {
-    const images = [
-      new File(["svg"], "diagram.svg", { type: "image/svg+xml" }),
-      new File(["tiff"], "photo.tiff", { type: "image/tiff" }),
-    ];
+  it("claims SVG pastes even when text is present", () => {
+    const image = new File(["svg"], "diagram.svg", { type: "image/svg+xml" });
+    expect(
+      shouldHandleComposerAttachmentPaste({ files: [image], plainText: "Image caption" }),
+    ).toBe(true);
+  });
 
-    for (const image of images) {
-      expect(
-        shouldHandleComposerAttachmentPaste({
-          files: [image],
-          plainText: "Image caption",
-        }),
-      ).toBe(true);
-    }
+  it("leaves a Word image-and-text clipboard to the text path, with or without Paste as Text", () => {
+    const image = new File(["png"], "image.png", { type: "image/png" });
+    const input = { files: [image], plainText: "Hello from Word", bypassAutoAttachment: true };
+    expect(shouldHandleComposerAttachmentPaste(input)).toBe(false);
+    // A plain paste of the same Word clipboard keeps the text too.
+    expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
+      false,
+    );
+    // Firefox's Copy Image adds the image URL as text and only an <img> as HTML; the image attaches.
+    expect(
+      shouldHandleComposerAttachmentPaste({
+        files: [image],
+        plainText: "https://example.com/image.png",
+        htmlIsOnlyImage: true,
+      }),
+    ).toBe(true);
+    // Finder adds a copied file's name as text.
+    expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
+      true,
+    );
+    // A QQ or WeChat message has its text beside an <img> in the HTML: the image attaches too.
+    const message = { files: [image], plainText: "Look at this", htmlHasImageAndText: true };
+    expect(shouldHandleComposerAttachmentPaste(message)).toBe(false);
+    expect(imagesToAttachBesidePastedText(message)).toEqual([image]);
+    expect(imagesToAttachBesidePastedText({ ...message, htmlHasImageAndText: false })).toEqual([]);
+    expect(imagesToAttachBesidePastedText({ ...message, bypassAutoAttachment: true })).toEqual([]);
+  });
+
+  it("preserves text when the clipboard also includes generic image files", () => {
+    const image = new File(["tiff"], "photo.tiff", { type: "image/tiff" });
+    expect(
+      shouldHandleComposerAttachmentPaste({ files: [image], plainText: "Image caption" }),
+    ).toBe(false);
   });
 
   it("uses the hard local limit while server config is unknown", () => {

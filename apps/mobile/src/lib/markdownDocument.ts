@@ -1,9 +1,17 @@
 import type { Root, RootContent } from "mdast";
-import { unified } from "unified";
+import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
+import {
+  absoluteFilePathMatches,
+  inlineCodeFilePathCandidate,
+  parseMarkdownFileLink,
+} from "@t3tools/shared/markdownLinks";
+import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
-const parser = unified().use(remarkParse).use(remarkGfm);
+const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
 
 interface MarkdownEdit {
@@ -32,7 +40,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
   return String.fromCodePoint(codePoint);
 }
 
-function decodeHtmlEntities(value: string): string {
+export function decodeHtmlEntities(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
@@ -123,7 +131,7 @@ function anchorMarkdown(tags: readonly string[]): AnchorState {
   return { pending: replacements, open: 0 };
 }
 
-function markdownHtmlTags(content: string): RegExpExecArray[] {
+export function markdownHtmlTags(content: string): RegExpExecArray[] {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
   const tags = [...content.matchAll(HTML_TAG)];
@@ -161,8 +169,10 @@ function markdownHtmlTags(content: string): RegExpExecArray[] {
       }
     }
     if (closingIndex === -1) {
-      if (fenced) codeRanges.push({ start: opening.index, end: content.length });
-      continue;
+      if (!fenced) continue;
+      // An unclosed fence runs to the end of the content, so no later opener matters.
+      codeRanges.push({ start: opening.index, end: content.length });
+      break;
     }
     const closing = delimiters[closingIndex]!;
     codeRanges.push({ start: opening.index, end: closing.index + closing[0].length });
@@ -221,12 +231,13 @@ function htmlTagMarkdown(
     const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
     return `![${alt}](${markdownDestination(src)})`;
   }
+  // A raw newline would end the table row; both parsers decode this reference to one inside the cell.
+  const cellBreak = "&#10;";
   // A blank line inside an open link label would end the paragraph before its "]".
-  const blockBreak = anchors.open === 0 ? "\n\n" : " ";
+  const blockBreak = anchors.open > 0 ? " " : options.inTableCell ? cellBreak : "\n\n";
   if (/^<summary\b/i.test(tag)) return `${blockBreak}**`;
   if (/^<\/summary\s*>/i.test(tag)) return `**${blockBreak}`;
-  // A line break would end the table row, so a cell keeps its content on one line.
-  if (/^<br\b/i.test(tag)) return options.inTableCell ? " " : "  \n";
+  if (/^<br\b/i.test(tag)) return options.inTableCell ? cellBreak : "  \n";
   if (/^<\/?(?:p|div|details)\b/i.test(tag)) return blockBreak;
   return "";
 }
@@ -275,13 +286,51 @@ export function markdownWithHtml(markdown: string): string {
     }
   };
   visit(parser.parse(markdown), false, false);
-  for (const edit of edits.reverse())
-    markdown = markdown.slice(0, edit.start) + edit.content + markdown.slice(edit.end);
-  return markdown;
+  return applyMarkdownEdits(markdown, edits);
+}
+
+/** Reference definitions as authored, one line each, so a Windows destination keeps its backslashes. */
+export function markdownReferenceDefinitions(markdown: string): string[] {
+  if (!markdown.includes("]:")) return [];
+  // Flattened as the renderer does it: a raw HTML block hides the definitions inside it.
+  const flattened = markdownWithHtml(markdown);
+  const definitions: string[] = [];
+  const visit = (node: MarkdownNode, quotes: number) => {
+    if (node.type === "definition") {
+      // A wrapped definition drops its indent and the enclosing quotes' markers, not a literal ">".
+      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "g");
+      definitions.push(
+        flattened.slice(node.position?.start.offset, node.position?.end.offset).replace(wrap, " "),
+      );
+    }
+    if (!("children" in node)) return;
+    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
+  };
+  visit(parser.parse(flattened), 0);
+  return definitions;
+}
+
+/**
+ * A reply split into folds and cards renders each fragment as its own document, so each one
+ * carries the reply's definitions. The first definition of a label wins, so the fragment's own
+ * lead: the renderer then prefers them by its own label matching, with none reimplemented here.
+ */
+export function withReferenceDefinitions(
+  fragment: string,
+  replyDefinitions: ReadonlyArray<string>,
+): string {
+  if (replyDefinitions.length === 0 || !fragment.includes("[")) return fragment;
+  const definitions = new Set([...markdownReferenceDefinitions(fragment), ...replyDefinitions]);
+  return `${[...definitions].join("\n")}\n\n${fragment}`;
 }
 
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
+
+// The native regex stops at whitespace; the shared classifier decides paths with spaces.
+function isInlineCodeFileLink(code: string, fileLink: RegExp): boolean {
+  return fileLink.test(code) || (/\s/.test(code) && inlineCodeFilePathCandidate(code) !== null);
+}
 
 export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
   return transformNativeMarkdown(markdown, fileLink, false);
@@ -296,13 +345,14 @@ function transformNativeMarkdown(
   let linkFiles = false;
   if (fileLink) {
     for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
+      if (isInlineCodeFileLink(code!.trim(), fileLink)) {
         linkFiles = true;
         break;
       }
     }
   }
-  if (!linkFiles && !breakTables) return markdown;
+  const linkProseFiles = fileLink !== undefined && absoluteFilePathMatches(markdown).length > 0;
+  if (!linkFiles && !linkProseFiles && !breakTables) return markdown;
   const edits: MarkdownEdit[] = [];
   const fileEdits: MarkdownEdit[] = [];
   let rewritesPipe = false;
@@ -314,7 +364,9 @@ function transformNativeMarkdown(
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink?.test(node.value) &&
+        fileLink !== undefined &&
+        isInlineCodeFileLink(node.value, fileLink) &&
+        parseMarkdownFileLink(node.value) !== null &&
         !/[<>]/.test(node.value)
       ) {
         const edit = {
@@ -325,6 +377,25 @@ function transformNativeMarkdown(
         edits.push(edit);
         fileEdits.push(edit);
         if (node.value.includes("|")) rewritesPipe = true;
+      }
+    } else if (
+      linkProseFiles &&
+      node.type === "text" &&
+      node.position?.start.offset !== undefined
+    ) {
+      const start = node.position.start.offset;
+      const raw = markdown.slice(start, node.position.end.offset);
+      for (const { index, path } of absoluteFilePathMatches(raw)) {
+        // Source offsets stay valid for paths whose own text needs no Markdown decoding.
+        if (raw !== node.value && /[\\&]/.test(path)) continue;
+        const escaped = path.replace(/[\\[\]&]/g, "\\$&");
+        const edit = {
+          start: start + index,
+          end: start + index + path.length,
+          content: `[${escaped}](<${escaped}>)`,
+        };
+        edits.push(edit);
+        fileEdits.push(edit);
       }
     } else if (node.type !== "link" && node.type !== "linkReference" && "children" in node)
       node.children.forEach((child, index) => {
@@ -382,13 +453,62 @@ export function markdownWithTableBreaks(markdown: string): string {
   return transformNativeMarkdown(markdown, undefined, true);
 }
 
+// `>` covers a destination continued on a blockquote line.
+const WINDOWS_DESTINATION = /\](?:\(|:)[\s>]*<?(?:[A-Za-z]:[\\/]|\\\\)/;
+
+interface DestinationToken {
+  readonly start: { readonly offset: number };
+  readonly end: { readonly offset: number };
+}
+
+/**
+ * Markdown reads `C:\work\.t3` as `C:\work.t3`. Web keeps authored Windows destinations
+ * literally (see `remarkKeepWindowsPaths` in shared), so escape their backslashes to give
+ * both parsers here the same path. `\&` stays an escape, as `markdownWithHtml` emits it.
+ * Expects authored Markdown: already escaped output would be escaped twice.
+ */
+function markdownWithWindowsPathDestinations(markdown: string): string {
+  // Skips the extra parse for the common message that has no Windows destination.
+  if (!WINDOWS_DESTINATION.test(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  function record(
+    this: { resume(): string; sliceSerialize(token: DestinationToken): string },
+    token: DestinationToken,
+  ) {
+    this.resume();
+    const authored = this.sliceSerialize(token);
+    if (!isWindowsAbsolutePath(authored) || !authored.includes("\\") || /[<>]/.test(authored))
+      return;
+    const start = token.start.offset;
+    const end = token.end.offset;
+    const escaped = authored.replace(/\\(?!&)/g, "\\\\");
+    // A bare destination ends at an unescaped `)`, so wrap it to keep `\)` inside.
+    const angled = markdown[start - 1] === "<";
+    edits.push({ start, end, content: angled ? escaped : `<${escaped}>` });
+  }
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(function (this: Processor) {
+      (this.data().fromMarkdownExtensions ??= []).push({
+        exit: { resourceDestinationString: record, definitionDestinationString: record },
+      });
+    })
+    .parse(markdown);
+  return applyMarkdownEdits(markdown, edits);
+}
+
+// HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
+export function markdownForNativeParsing(markdown: string): string {
+  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+}
+
 export function parseMarkdownDocument(markdown: string): Root {
-  return parser.parse(markdownWithHtml(markdown));
+  return parser.parse(markdownForNativeParsing(markdown));
 }
 
 export function markdownForNativeRendering(markdown: string, fileLink: RegExp): string {
-  // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
-  return transformNativeMarkdown(markdownWithHtml(markdown), fileLink, true);
+  return transformNativeMarkdown(markdownForNativeParsing(markdown), fileLink, true);
 }
 
 /** Native media slots only cover standalone images; nested file embeds must become links. */
@@ -442,4 +562,65 @@ export function markdownWithFileEmbeds(
   }
   parts.push(markdown.slice(offset));
   return { markdown: parts.join(""), fileHrefs };
+}
+
+const DIRECTION_MARK = { ltr: "‎", rtl: "‏" } as const;
+
+function proseText(node: MarkdownNode): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "inlineCode" || node.type === "code") return " ";
+  if (!("children" in node)) return "";
+  const text = node.children.map(proseText).join("");
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? ` ${text} `
+    : text;
+}
+
+// The native renderer scans inline code too when it picks a paragraph's direction.
+function renderedText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (!("children" in node)) return "";
+  return node.children.map(renderedText).join("");
+}
+
+// A mark inside `[label]` or `<url>` would break the reference or autolink.
+function firstLeafOffset(node: MarkdownNode): number | undefined {
+  if (
+    !("children" in node) ||
+    node.children.length === 0 ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return node.position?.start.offset;
+  }
+  return firstLeafOffset(node.children[0]!);
+}
+
+/**
+ * The native renderer gives each paragraph the direction of its first letter, so an Arabic
+ * line that opens with an English name renders left to right. Like the web's
+ * `rehypeTextDirection`, each top-level block follows the majority of its words, and a
+ * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
+ */
+export function markdownWithTextDirection(markdown: string): string {
+  if (!hasRightToLeftLetter(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (block.type === "code" || block.type === "html") continue;
+    const direction = textDirection(proseText(block));
+    if (!direction) continue;
+    const mark = (node: MarkdownNode) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offset = firstLeafOffset(node);
+        const first = renderedText(node).match(/\p{L}/u)?.[0];
+        if (offset !== undefined && first && textDirection(first) !== direction) {
+          edits.push({ start: offset, end: offset, content: DIRECTION_MARK[direction] });
+        }
+        return;
+      }
+      if ("children" in node) node.children.forEach(mark);
+    };
+    mark(block);
+  }
+  return applyMarkdownEdits(markdown, edits);
 }

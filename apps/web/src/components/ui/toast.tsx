@@ -1,6 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 
 import { Toast } from "@base-ui/react/toast";
+import { msg, useGT } from "gt-react";
 import {
   useEffect,
   useState,
@@ -10,12 +11,20 @@ import {
   type ReactNode,
 } from "react";
 import { type ScopedThreadRef, type ThreadId } from "@t3tools/contracts";
-import { CircleAlertIcon, CircleCheckIcon, InfoIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { Check, ChevronDown, ChevronUp, Copy } from "lucide";
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  InfoIcon,
+  TriangleAlertIcon,
+  XIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CopyIcon,
+} from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button, buttonVariants } from "~/components/ui/button";
-import { MorphIcon } from "~/components/MorphIcon";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import {
@@ -62,8 +71,40 @@ export type ThreadToastData = {
     | "secondary";
 };
 
-const toastManager = Toast.createToastManager<ThreadToastData>();
-const anchoredToastManager = Toast.createToastManager<ThreadToastData>();
+type BaseToastManager = ReturnType<typeof Toast.createToastManager<ThreadToastData>>;
+type ToastManagerListener = Parameters<BaseToastManager[" subscribe"]>[0];
+type ToastManagerEvent = Parameters<ToastManagerListener>[0];
+
+/**
+ * base-ui's manager drops events while no provider is subscribed. App services raise toasts
+ * from before the first render (and while the root error view replaces the providers), so hold
+ * those until a provider listens.
+ */
+function createBufferedToastManager(): BaseToastManager {
+  const manager = Toast.createToastManager<ThreadToastData>();
+  const listeners = new Set<ToastManagerListener>();
+  const pending: ToastManagerEvent[] = [];
+  manager[" subscribe"]((event) => {
+    if (listeners.size === 0) {
+      pending.push(event);
+      return;
+    }
+    for (const listener of listeners) listener(event);
+  });
+  return {
+    ...manager,
+    " subscribe"(listener) {
+      listeners.add(listener);
+      for (const event of pending.splice(0)) listener(event);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
+const toastManager = createBufferedToastManager();
+const anchoredToastManager = createBufferedToastManager();
 type ToastId = ReturnType<typeof toastManager.add>;
 const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 
@@ -103,8 +144,15 @@ function handleToastDismissClick(
 }
 
 function CopyErrorButton({ text }: { text: string }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "error-message" });
-  const label = isCopied ? "Copied error" : "Copy error";
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: {
+      target: "error-message",
+      unavailableMessage: msg("Clipboard API is unavailable while copying error-message."),
+      failureMessage: msg("Failed to copy error-message to the clipboard."),
+    },
+  });
+  const gt = useGT();
+  const label = isCopied ? gt("Copied error") : gt("Copy error");
 
   return (
     <Tooltip>
@@ -119,10 +167,7 @@ function CopyErrorButton({ text }: { text: string }) {
           />
         }
       >
-        <MorphIcon
-          className={cn("size-3", isCopied && "text-success")}
-          icon={isCopied ? Check : Copy}
-        />
+        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup side="top">{label}</TooltipPopup>
     </Tooltip>
@@ -140,8 +185,9 @@ function ToastExpandableSection({
   labels: { expand?: string; collapse?: string };
 }) {
   const [open, setOpen] = useState(false);
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const gt = useGT();
+  const expandLabel = labels.expand ?? gt("Show details");
+  const collapseLabel = labels.collapse ?? gt("Hide details");
 
   return (
     <div className="min-w-0">
@@ -151,11 +197,11 @@ function ToastExpandableSection({
         onClick={() => setOpen((prev) => !prev)}
         type="button"
       >
-        <MorphIcon
-          className="size-3.5 shrink-0 opacity-80"
-          icon={open ? ChevronUp : ChevronDown}
-          strokeWidth={2.25}
-        />
+        {open ? (
+          <ChevronUpIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+        ) : (
+          <ChevronDownIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+        )}
         {open ? collapseLabel : expandLabel}
       </button>
       {open ? <div className={toastExpandablePanelClassName}>{children}</div> : null}
@@ -175,6 +221,7 @@ function ToastDescriptionAndExpandable({
   const expandableContent = toastData?.expandableContent;
   const labels = toastData?.expandableLabels ?? {};
   const descriptionTrigger = toastData?.expandableDescriptionTrigger ?? false;
+  const gt = useGT();
   const descriptionClassName = cn(
     "min-w-0 select-text wrap-break-word text-muted-foreground",
     errorDescriptionClampClass(toastType, toastDescription),
@@ -194,8 +241,8 @@ function ToastDescriptionAndExpandable({
     );
   }
 
-  const expandLabel = labels.expand ?? "Show details";
-  const collapseLabel = labels.collapse ?? "Hide details";
+  const expandLabel = labels.expand ?? gt("Show details");
+  const collapseLabel = labels.collapse ?? gt("Hide details");
 
   const toggle = () => setOpen((v) => !v);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -235,12 +282,19 @@ function ToastDescriptionAndExpandable({
               data-slot="toast-description"
             />
           </div>
-          <MorphIcon
-            aria-hidden
-            className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
-            icon={open ? ChevronUp : ChevronDown}
-            strokeWidth={2.25}
-          />
+          {open ? (
+            <ChevronUpIcon
+              aria-hidden
+              className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
+              strokeWidth={2.25}
+            />
+          ) : (
+            <ChevronDownIcon
+              aria-hidden
+              className="size-3.5 h-lh shrink-0 text-muted-foreground opacity-80"
+              strokeWidth={2.25}
+            />
+          )}
         </TooltipTrigger>
         <TooltipPopup side="top">{open ? collapseLabel : expandLabel}</TooltipPopup>
       </Tooltip>
@@ -437,6 +491,7 @@ function ThreadToastVisibleAutoDismiss({
   toastId: ToastId;
   dismissAfterVisibleMs: number | undefined;
 }) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- dismiss timer that pauses on visibilitychange, focus and blur so it only counts visible time
   useEffect(() => {
     if (!dismissAfterVisibleMs || dismissAfterVisibleMs <= 0) return;
     if (typeof window === "undefined" || typeof document === "undefined") return;
@@ -520,12 +575,14 @@ function ToastProvider({ children, position = "top-right", ...props }: ToastProv
 function Toasts({ position }: { position: ToastPosition }) {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
+  const gt = useGT();
   const isTop = position.startsWith("top");
   const visibleToasts = toasts.filter((toast) =>
     shouldRenderThreadScopedToast(toast.data, activeThreadRef),
   );
   const visibleToastLayout = buildVisibleToastLayout(visibleToasts);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes the module-level remaining-time map of toasts the manager has dropped
   useEffect(() => {
     const activeToastIds = new Set(toasts.map((toast) => toast.id));
     for (const toastId of threadToastVisibleTimeoutRemainingMs.keys()) {
@@ -538,6 +595,7 @@ function Toasts({ position }: { position: ToastPosition }) {
   return (
     <Toast.Portal data-slot="toast-portal">
       <Toast.Viewport
+        aria-label={gt("Notifications", { $context: "screen reader name of the toast area" })}
         className={cn(
           "fixed z-100 mx-auto flex w-[calc(100%-var(--toast-inset)*2)] max-w-90 [--toast-header-offset:var(--workspace-topbar-height)] [--toast-inset:--spacing(4)] sm:[--toast-inset:--spacing(8)]",
           "data-[position*=top]:top-[calc(var(--toast-inset)+var(--toast-header-offset))]",
@@ -626,7 +684,7 @@ function Toasts({ position }: { position: ToastPosition }) {
               />
               <div className={toastCornerDismissClass}>
                 <button
-                  aria-label="Dismiss notification"
+                  aria-label={gt("Dismiss notification")}
                   className={toastCornerOrbClass}
                   data-slot="toast-close"
                   onClick={() =>
@@ -677,10 +735,16 @@ function AnchoredToastProvider({ children, ...props }: Toast.Provider.Props) {
 function AnchoredToasts() {
   const { toasts } = Toast.useToastManager<ThreadToastData>();
   const activeThreadRef = useActiveThreadRefFromRoute();
+  const gt = useGT();
 
   return (
     <Toast.Portal data-slot="toast-portal-anchored">
-      <Toast.Viewport className="outline-none" data-slot="toast-viewport-anchored">
+      <Toast.Viewport
+        aria-label={undefined}
+        className="outline-none"
+        data-slot="toast-viewport-anchored"
+        role={undefined}
+      >
         {toasts
           .filter((toast) => shouldRenderThreadScopedToast(toast.data, activeThreadRef))
           .map((toast) => {
@@ -717,7 +781,7 @@ function AnchoredToasts() {
                     <>
                       <div className={toastCornerDismissClass}>
                         <button
-                          aria-label="Dismiss notification"
+                          aria-label={gt("Dismiss notification")}
                           className={toastCornerOrbClass}
                           data-slot="toast-close"
                           onClick={() =>

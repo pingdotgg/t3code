@@ -1,15 +1,18 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import { useLocale, useMessages } from "gt-react-native";
 import {
   createContext,
   useContext,
   useMemo,
+  useRef,
   useState,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from "react";
 
+import type { MessageResolver } from "../../i18n/messages";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
@@ -22,7 +25,10 @@ export type SettingsTarget = EnvironmentPresentation & {
 // Several mounted Settings components read the scope at once (the list, its header, a page and
 // its editor), so share the derived lists across them for the same inputs.
 const targetsCache = new WeakMap<readonly EnvironmentPresentation[], readonly SettingsTarget[]>();
-const groupsCache = new WeakMap<object, Map<string, ReturnType<typeof buildProjectGroups>>>();
+const groupsCache = new WeakMap<
+  object,
+  Map<string, Map<string, ReturnType<typeof buildProjectGroups>>>
+>();
 
 function connectedSettingsTargets(environments: readonly EnvironmentPresentation[]) {
   let targets = targetsCache.get(environments);
@@ -39,15 +45,22 @@ function connectedSettingsTargets(environments: readonly EnvironmentPresentation
 function settingsProjectGroups(
   projects: Parameters<typeof buildProjectGroups>[0]["projects"],
   groupingMode: Parameters<typeof buildProjectGroups>[0]["settings"]["sidebarProjectGroupingMode"],
+  resolve: MessageResolver,
+  locale: string,
 ) {
-  let byMode = groupsCache.get(projects);
-  if (!byMode) groupsCache.set(projects, (byMode = new Map()));
+  let byLocale = groupsCache.get(projects);
+  if (!byLocale) groupsCache.set(projects, (byLocale = new Map()));
+  let byMode = byLocale.get(locale);
+  if (!byMode) byLocale.set(locale, (byMode = new Map()));
   let groups = byMode.get(groupingMode);
   if (!groups) {
-    groups = buildProjectGroups({
-      projects,
-      settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
-    });
+    groups = buildProjectGroups(
+      {
+        projects,
+        settings: { sidebarProjectGroupingMode: groupingMode, sidebarProjectGroupingOverrides: {} },
+      },
+      resolve,
+    );
     byMode.set(groupingMode, groups);
   }
   return groups;
@@ -57,7 +70,9 @@ interface SettingsEnvironmentSelection {
   readonly selectedIds: ReadonlySet<EnvironmentId> | null;
   readonly selectedProjectKey: string | null;
   readonly setSelectedIds: Dispatch<SetStateAction<ReadonlySet<EnvironmentId> | null>>;
-  readonly setSelectedProjectKey: Dispatch<SetStateAction<string | null>>;
+  readonly selectProject: (projectKey: string | null) => void;
+  /** The selection as of now, for async work that outlives the render it started in. */
+  readonly getSelectedProjectKey: () => string | null;
 }
 
 const SettingsEnvironmentSelectionContext = createContext<SettingsEnvironmentSelection | null>(
@@ -76,14 +91,26 @@ export function SettingsEnvironmentFilterProvider(props: {
 }) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId> | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
+  // Written only by selectProject, so it can keep a key that the close reset below cleared.
+  // Its one reader, a project removal that finishes after Settings closed, then clears an
+  // already empty selection, which is harmless.
+  const currentProjectKey = useRef<string | null>(null);
   if (!props.open && (selectedIds !== null || selectedProjectKey !== null)) {
     setSelectedIds(null);
     setSelectedProjectKey(null);
   }
-  const value = useMemo(
-    () => ({ selectedIds, selectedProjectKey, setSelectedIds, setSelectedProjectKey }),
-    [selectedIds, selectedProjectKey],
-  );
+  const selectProject = (projectKey: string | null) => {
+    currentProjectKey.current = projectKey;
+    setSelectedProjectKey(projectKey);
+  };
+  const getSelectedProjectKey = () => currentProjectKey.current;
+  const value = {
+    selectedIds,
+    selectedProjectKey,
+    setSelectedIds,
+    selectProject,
+    getSelectedProjectKey,
+  };
   return (
     <SettingsEnvironmentSelectionContext value={value}>
       {props.children}
@@ -94,12 +121,15 @@ export function SettingsEnvironmentFilterProvider(props: {
 export function useSettingsEnvironmentFilter() {
   const selection = useContext(SettingsEnvironmentSelectionContext);
   if (selection === null) throw new Error("Settings environment filter provider is missing.");
-  const { selectedIds, selectedProjectKey, setSelectedIds, setSelectedProjectKey } = selection;
+  const { selectedIds, selectedProjectKey, setSelectedIds, selectProject, getSelectedProjectKey } =
+    selection;
   const { environments } = useEnvironments();
   const projects = useProjects();
   const groupingSettings = useMobileProjectGroupingSettings();
   const groupingMode = groupingSettings.sidebarProjectGroupingMode;
-  const projectGroups = settingsProjectGroups(projects, groupingMode);
+  const messages = useMessages();
+  const locale = useLocale();
+  const projectGroups = settingsProjectGroups(projects, groupingMode, messages, locale);
   const availableTargets = connectedSettingsTargets(environments);
   const selectedTargets = useMemo(
     () =>
@@ -125,14 +155,16 @@ export function useSettingsEnvironmentFilter() {
       projectGroups,
       selectableProjectGroups,
       selectedProjectKey,
-      selectProject: setSelectedProjectKey,
+      selectProject,
+      getSelectedProjectKey,
       selectAll: () => setSelectedIds(null),
       toggleEnvironment: (environmentId: EnvironmentId) =>
         setSelectedIds((current) =>
-          toggleSettingsEnvironment(current, availableTargets, environmentId),
+          toggleSettingsEnvironment(current, availableTargets, environmentId, environments),
         ),
     }),
     [
+      environments,
       availableTargets,
       selectedTargets,
       selectedIds,
@@ -140,7 +172,8 @@ export function useSettingsEnvironmentFilter() {
       selectableProjectGroups,
       selectedProjectKey,
       setSelectedIds,
-      setSelectedProjectKey,
+      selectProject,
+      getSelectedProjectKey,
     ],
   );
 }

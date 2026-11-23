@@ -1,7 +1,10 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
+import { msg, useGT } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   formatFilePathForClipboard,
   type MediaActionId,
@@ -13,17 +16,22 @@ import {
   type SessionGrantInput,
 } from "@t3tools/contracts";
 import { normalizeNativeMarkdownUrl } from "../lib/markdownLinks";
-import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
+import * as Haptics from "expo-haptics";
 import { useEffect, useRef, useState } from "react";
 
 import { useRefreshAssetUrl } from "./assets";
 import { appAtomRegistry } from "./atom-registry";
 import { useEnvironmentQuery } from "./query";
 import { environmentSession } from "./session";
-import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
+import {
+  downloadAndShareAttachment,
+  downloadAttachmentForPreview,
+  shareLocalAttachment,
+} from "../lib/attachmentDownload";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
+import { canSaveImageToLibrary, saveImageToLibrary } from "../lib/saveImageToLibrary";
 
 function allowsHostMedia(session: SessionGrantInput | null) {
   return session === null || sessionGrantsScope(session, AuthFilesystemReadScope);
@@ -32,11 +40,16 @@ function allowsHostMedia(session: SessionGrantInput | null) {
 function canReadHostMedia(environmentId: EnvironmentId | null): boolean {
   if (environmentId === null) return true;
   const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
-  return result._tag !== "Failure" && allowsHostMedia(Option.getOrNull(AsyncResult.value(result)));
+  return result._tag !== "Failure" && allowsHostMedia(AsyncResult.getOrElse(result, () => null));
 }
 
-export function useMediaActions(source: MediaActionsSource | undefined, onOpenFile?: () => void) {
+export function useMediaActions(
+  source: MediaActionsSource | undefined,
+  onOpenFile?: () => void,
+  options?: { readonly getSaveImageSignal: () => AbortSignal },
+) {
   const navigation = useNavigation();
+  const gt = useGT();
   const hostEnvironmentId =
     source &&
     "resource" in source &&
@@ -54,51 +67,90 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     source && "resource" in source ? source.resource : null,
   );
   const controller = useRef<AbortController | null>(null);
-  const [sharing, setSharing] = useState(false);
+  const [busy, setBusy] = useState<"share" | "save-image" | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels page-owned work and stops updating busy state on unmount
   useEffect(() => () => controller.current?.abort(), []);
 
-  const share = () => {
+  const run = (
+    kind: "share" | "save-image",
+    task: (source: MediaActionsSource, signal: AbortSignal) => Promise<void>,
+  ) => {
     if (!source || controller.current || !canReadHostMedia(hostEnvironmentId)) return;
     const request = new AbortController();
     controller.current = request;
-    setSharing(true);
-    return (async () => {
-      if ("attachment" in source) {
-        const preview = await loadLocalAttachmentPreview(source.attachment, request.signal);
-        if (!preview) return;
-        const shared = await settlePromise(() =>
-          preview.share(request.signal, source.sourceIdentifier),
-        );
-        preview.dispose();
-        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
-        return;
-      }
-      const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
-      if (request.signal.aborted || !canReadHostMedia(hostEnvironmentId)) return;
-      if (uri === null) throw new Error("The file could not be loaded. Reconnect and try again.");
-      const input = {
-        attachment: { name: source.name, mimeType: source.mimeType },
-        signal: request.signal,
-        sourceIdentifier: source.sourceIdentifier,
-      };
-      if (/^(file|content):/i.test(uri)) await shareLocalAttachment({ ...input, uri });
-      else await downloadAndShareAttachment({ ...input, url: uri });
-    })()
+    setBusy(kind);
+    const signal = kind === "save-image" && options ? options.getSaveImageSignal() : request.signal;
+    return task(source, signal)
       .catch((error: unknown) => {
-        if (!request.signal.aborted) {
+        if (!signal.aborted) {
           Dialog.alert(
-            "Could not share file",
-            error instanceof Error ? error.message : "Try again.",
+            kind === "share" ? m(msg("Could not share file")) : m(msg("Could not save image")),
+            errorDisplayMessage(error, m) ?? m(msg("Try again.")),
           );
         }
       })
       .finally(() => {
         if (controller.current === request) {
           controller.current = null;
-          if (!request.signal.aborted) setSharing(false);
+          if (!request.signal.aborted) setBusy(null);
         }
       });
   };
+
+  const hostUri = async (source: MediaActionsSource, signal: AbortSignal) => {
+    const uri = "uri" in source ? normalizeNativeMarkdownUrl(source.uri) : await refresh();
+    if (signal.aborted || !canReadHostMedia(hostEnvironmentId)) return null;
+    if (uri === null) {
+      throw new Error(m(msg("The file could not be loaded. Reconnect and try again.")));
+    }
+    return uri;
+  };
+
+  const share = () =>
+    run("share", async (source, signal) => {
+      if ("attachment" in source) {
+        const preview = await loadLocalAttachmentPreview(source.attachment, signal);
+        if (!preview) return;
+        const shared = await settlePromise(() => preview.share(signal, source.sourceIdentifier));
+        preview.dispose();
+        if (AsyncResult.isFailure(shared)) throw squashAtomCommandFailure(shared);
+        return;
+      }
+      const uri = await hostUri(source, signal);
+      if (uri === null) return;
+      const input = {
+        attachment: { name: source.name, mimeType: source.mimeType },
+        signal,
+        sourceIdentifier: source.sourceIdentifier,
+      };
+      if (/^(file|content):/i.test(uri)) await shareLocalAttachment({ ...input, uri });
+      else await downloadAndShareAttachment({ ...input, url: uri });
+    });
+
+  const localImageFile = async (source: MediaActionsSource, signal: AbortSignal) => {
+    if ("attachment" in source) return loadLocalAttachmentPreview(source.attachment, signal);
+    const uri = await hostUri(source, signal);
+    if (uri === null) return null;
+    if (/^(file|content):/i.test(uri)) return { uri, dispose: () => {} };
+    return downloadAttachmentForPreview({
+      url: uri,
+      attachment: { name: source.name, mimeType: source.mimeType },
+      signal,
+    });
+  };
+
+  const saveImage = () =>
+    run("save-image", async (source, signal) => {
+      const file = await localImageFile(source, signal);
+      if (!file) return;
+      const saved = signal.aborted
+        ? null
+        : await settlePromise(() => saveImageToLibrary(file.uri, source.mimeType, source.name));
+      file.dispose();
+      if (saved === null) return;
+      if (AsyncResult.isFailure(saved)) throw squashAtomCommandFailure(saved);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    });
 
   const reference = source?.reference;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
@@ -110,7 +162,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-full-path" as const,
-                  title: "Copy full path",
+                  title: gt("Copy full path"),
                   run: () => copyTextWithHaptic(formatFilePathForClipboard(reference.path)),
                 },
               ]
@@ -119,7 +171,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-relative-path" as const,
-                  title: "Copy relative path",
+                  title: gt("Copy relative path"),
                   run: () =>
                     copyTextWithHaptic(formatFilePathForClipboard(relativePath, reference.path)),
                 },
@@ -129,7 +181,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "copy-url" as const,
-                  title: "Copy URL",
+                  title: gt("Copy URL"),
                   run: () => copyTextWithHaptic(reference.url),
                 },
               ]
@@ -138,7 +190,7 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
             ? [
                 {
                   id: "open-file" as const,
-                  title: "Open in file viewer",
+                  title: gt("Open in file viewer"),
                   disabled: !canReadMedia,
                   run: () => {
                     if (!canReadHostMedia(hostEnvironmentId)) return;
@@ -152,18 +204,33 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
                 },
               ]
             : []),
+          ...(canSaveImageToLibrary(source.mimeType)
+            ? [
+                {
+                  id: "save-image" as const,
+                  title: busy === "save-image" ? gt("Saving image…") : gt("Save image"),
+                  run: saveImage,
+                  disabled: busy !== null || !canReadMedia,
+                },
+              ]
+            : []),
           {
             id: "save" as const,
-            title: sharing ? "Opening share sheet…" : "Save or share",
+            title:
+              busy === "share"
+                ? gt("Opening share sheet…")
+                : canSaveImageToLibrary(source.mimeType)
+                  ? gt("Share", { $context: "verb, opens the system share sheet" })
+                  : gt("Save or share"),
             run: share,
-            disabled: sharing || !canReadMedia,
+            disabled: busy !== null || !canReadMedia,
           },
         ]
       : [];
   return {
     title: reference?.kind === "file" ? reference.path : reference?.url,
     actions,
-    sharing,
+    sharing: busy === "share",
     share,
   };
 }

@@ -35,6 +35,17 @@ export const orchestrationEffectQueueWait = Metric.timer("t3_orchestration_effec
     "Time from an orchestration effect's temporal availability until claim, including same-thread blocking.",
 });
 
+// A failed batch (transport errors and 408/429/500/502/503/504 after 3 retries) is dropped with
+// every push for the next 60 s, logged only at Debug. Incremental exports it as a monotonic counter.
+export const otlpExportAttemptFailuresTotal = Metric.counter(
+  "t3_otlp_export_attempt_failures_total",
+  {
+    description:
+      "Failed OTLP export attempts by signal and reason. Retries count too, so a dropped batch counts up to four.",
+    incremental: true,
+  },
+);
+
 export const providerSessionsTotal = Metric.counter("t3_provider_sessions_total", {
   description: "Total provider session lifecycle operations.",
 });
@@ -93,10 +104,6 @@ export const gitCommandDuration = Metric.timer("t3_git_command_duration", {
 
 export const terminalSessionsTotal = Metric.counter("t3_terminal_sessions_total", {
   description: "Total terminal sessions started.",
-});
-
-export const terminalRestartsTotal = Metric.counter("t3_terminal_restarts_total", {
-  description: "Total terminal restart requests handled.",
 });
 
 export const webhookDeliveriesTotal = Metric.counter("t3_webhook_deliveries_total", {

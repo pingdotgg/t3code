@@ -33,7 +33,7 @@ describe("project thread title", () => {
     },
   ])("titles a $type-only message without changing its data", ({ text, title, ...attachment }) => {
     const uploadedAttachments = [{ ...attachment, id: "prepared-attachment", sizeBytes: 3 }];
-    const wire = serializeComposerMessageForServer(text, undefined, true);
+    const wire = serializeComposerMessageForServer(text, undefined);
     const spec = {
       projectId: ProjectId.make("project"),
       projectCwd: "/workspace",
@@ -68,5 +68,34 @@ describe("project thread title", () => {
     expect(relaunched.titleSeed).toBe(title);
     expect(relaunched.message.text).toBe(wire.text);
     expect(relaunched.message.attachments).toEqual(uploadedAttachments);
+  });
+
+  it("starts a worktree of a plain project folder from each repository's default branch", () => {
+    const input = buildProjectThreadStartTurnInput({
+      projectId: ProjectId.make("project"),
+      projectCwd: "/workspace",
+      threadId: "thread",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-09-04T00:00:00Z",
+      text: "Fix the build",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "worktree",
+      branch: null,
+      worktreePath: null,
+      startFromOrigin: false,
+      worktreeRepositories: ["/workspace/api"],
+      worktreeBranchName: "t3/new",
+    });
+
+    expect(input.bootstrap.prepareWorktree).toEqual({
+      projectCwd: "/workspace",
+      baseBranch: "HEAD",
+      branch: "t3/new",
+      repositories: [{ path: "/workspace/api" }],
+    });
   });
 });

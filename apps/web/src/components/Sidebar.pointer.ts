@@ -1,12 +1,6 @@
-import { useLayoutEffect, type PointerEvent as ReactPointerEvent } from "react";
+import { type PointerEvent as ReactPointerEvent } from "react";
 import { type SensorProps } from "@dnd-kit/core";
 import { getOwnerDocument, getWindow } from "@dnd-kit/utilities";
-
-// Search unmounts the drag context while its owning Sidebar remains mounted.
-export function SidebarDragLifecycle({ onUnmount }: { onUnmount: () => void }) {
-  useLayoutEffect(() => onUnmount, [onUnmount]);
-  return null;
-}
 
 type Options = {
   distance: number;
@@ -65,9 +59,11 @@ export class SidebarPointerSensor {
   private move = (event: PointerEvent) => {
     if (this.phase === "finished" || event.pointerId !== this.pointer.pointerId) return;
     const coordinates = { x: event.clientX, y: event.clientY };
-    // Desktop may report buttons=0 before pointerup; drop active context drags before cancelling sort.
+    // Desktop may report buttons=0 before pointerup: a pending press is released like pointerup so its
+    // click lands; an active drag drops context before cancelling sort.
     if ((event.buttons & 1) === 0) {
-      if (this.phase === "dragging") this.props.options.onDrop?.(coordinates);
+      if (this.phase === "pending") return this.finish(false);
+      this.props.options.onDrop?.(coordinates);
       return this.cancel();
     }
     if (this.phase === "pending") {

@@ -1,4 +1,4 @@
-import * as Axiom from "alchemy/Axiom";
+import * as Axiom from "@alchemy.run/axiom";
 import * as Output from "alchemy/Output";
 import * as Effect from "effect/Effect";
 import { cacheName } from "./resources.ts";

@@ -1,4 +1,5 @@
 import type { NativeStackHeaderItem } from "@react-navigation/native-stack";
+import { NavigationContext } from "@react-navigation/native";
 import { act, createContext, startTransition, Suspense, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
@@ -20,7 +21,7 @@ const harness = vi.hoisted(() => ({
 // Navigation, the header renders again only when the options are no longer shallowly equal.
 vi.mock("@react-navigation/native", async () => {
   // vi.mock factories run before the file's imports.
-  const { createContext } = await vi.importActual<typeof import("react")>("react");
+  const { createContext, use } = await vi.importActual<typeof import("react")>("react");
   const navigation = {
     setOptions(options: HeaderOptions) {
       harness.setOptionsCalls += 1;
@@ -39,15 +40,23 @@ vi.mock("@react-navigation/native", async () => {
         [];
     },
   };
+  const navigationContext = createContext<typeof navigation | undefined>(navigation);
   return {
     // Outside a workspace tab slot the header writes to the route's navigation.
     NavigationRouteContext: createContext(undefined),
-    useNavigation: () => navigation,
+    NavigationContext: navigationContext,
+    useNavigation: () =>
+      use(navigationContext) ?? {
+        setOptions() {
+          throw new Error("Cannot call setOptions outside a screen");
+        },
+      },
     useRoute: () => ({ key: "file", name: "ThreadFile", params: harness.params }),
   };
 });
 
 import { NativeHeaderToolbar } from "./NativeHeaderToolbar";
+import { NativeStackScreenOptions } from "./StackHeader";
 
 let root: Root | null = null;
 
@@ -95,6 +104,19 @@ afterEach(() => {
   harness.renderedItems = [];
   harness.setOptionsCalls = 0;
   vi.unstubAllGlobals();
+});
+
+it("does not configure a native screen from an embedded pane", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  root = createRoot(document.createElement("div"));
+  act(() =>
+    root!.render(
+      <NavigationContext value={undefined}>
+        <NativeStackScreenOptions options={{ headerShown: false }} />
+      </NavigationContext>,
+    ),
+  );
+  expect(harness.setOptionsCalls).toBe(0);
 });
 
 it.each(["left", "right", "bottom"] as const)(

@@ -19,13 +19,12 @@ const projects = [
   project("forgejo", "forgejo.test/org/repo", "forgejo", "http://forgejo.test:3000/org/repo.git"),
 ];
 
-const hostReads = () => ({ pullRequests: true, threadPullRequests: true });
 const nativePullRequestDestination = (
   url: string,
   linkContext: typeof context | null,
   linkProjects: typeof projects,
-  capabilities: Parameters<typeof destination>[3] = hostReads,
-) => destination(url, linkContext, linkProjects, capabilities);
+  configLoaded: Parameters<typeof destination>[3] = () => true,
+) => destination(url, linkContext, linkProjects, configLoaded);
 
 describe("native PR entry points", () => {
   it("keeps a thread link in its own environment and handles renamed host path shapes", () => {
@@ -35,7 +34,13 @@ describe("native PR entry points", () => {
         context,
         projects,
       ),
-    ).toEqual({ ...context, host: "github.com", repository: "org/repo", number: 12 });
+    ).toEqual({
+      ...context,
+      host: "github.com",
+      repository: "org/repo",
+      number: 12,
+      navigationUrl: "https://github.com/org/repo/pull/12/files#diff",
+    });
     expect(
       nativePullRequestDestination(
         "https://git.example/group/sub/repo/-/merge_requests/9",
@@ -57,18 +62,7 @@ describe("native PR entry points", () => {
 
   it("leaves links to the external opener when the environment cannot show them", () => {
     const url = "https://github.com/org/repo/pull/12";
-    expect(nativePullRequestDestination(url, context, projects, () => undefined)).toBeNull();
-    expect(
-      nativePullRequestDestination(
-        "https://github.com/someone/else/pull/12",
-        context,
-        projects,
-        () => ({
-          pullRequests: true,
-          threadPullRequests: false,
-        }),
-      ),
-    ).toBeNull();
+    expect(nativePullRequestDestination(url, context, projects, () => false)).toBeNull();
   });
 
   it("leaves issues, unknown sites, and unscoped links to the external opener", () => {
