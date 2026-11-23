@@ -382,6 +382,17 @@ it.effect("rejects a mismatched Mcp-Name, an unknown event and a bad webhook cal
       name: "thread.needs_input",
     });
     expect(((yield* wrongName.json) as JsonRpcResponse).error?.code).toBe(-32020);
+    // Arguments are checked before the endpoint hears anything.
+    const badArguments = yield* call(
+      "events/subscribe",
+      subscribeParams({ arguments: { projectIds: "project:a" } }),
+    ).pipe(Effect.forkChild);
+    expect(
+      yield* Effect.raceFirst(
+        Effect.map(Fiber.join(badArguments), (response) => ({ answered: response.error })),
+        Effect.map(Queue.take(deliveries), (delivery) => ({ posted: delivery.body })),
+      ),
+    ).toMatchObject({ answered: { code: -32602 } });
     const unnamed = yield* post("events/subscribe", subscribeParams(), { name: null }).pipe(
       Effect.flatMap((response) => response.json),
       Effect.forkChild,
@@ -404,6 +415,9 @@ it.effect("rejects a mismatched Mcp-Name, an unknown event and a bad webhook cal
     expect(yield* subscribe(valid, hostToken)).toMatchObject({ code: -32024 });
     expect(yield* subscribe(valid, threadToken)).toMatchObject({ code: -32023 });
     expect(yield* subscribe({ ...valid, secret: "whsec_c2hvcnQ=" })).toMatchObject({
+      code: -32602,
+    });
+    expect(yield* subscribe({ ...valid, secret: { toString: 1 } })).toMatchObject({
       code: -32602,
     });
     // Plain http and private addresses are refused unless allowlisted.
@@ -468,18 +482,13 @@ it.effect("ends an open stream when the client's session is revoked", () =>
     expect(yield* Queue.take(live)).toMatchObject({ method: "notifications/events/active" });
 
     yield* revoke;
-    // The stream may say why before it closes, depending on which notices the revocation first.
-    const rest: Array<{ readonly method: string; readonly params: Record<string, any> }> = [];
-    while (true) {
-      const next = yield* Effect.exit(Queue.take(live));
-      if (next._tag === "Failure") break;
-      rest.push(next.value);
-    }
-    for (const message of rest) {
-      expect(message).toMatchObject({
-        method: "notifications/events/terminated",
-        params: { error: { code: -32024 } },
-      });
+    // It says why, then closes.
+    expect(yield* Queue.take(live)).toMatchObject({
+      method: "notifications/events/terminated",
+      params: { error: { code: -32024 } },
+    });
+    while ((yield* Effect.exit(Queue.take(live)))._tag === "Success") {
+      // The request's own response follows the notice.
     }
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
@@ -639,14 +648,34 @@ it.effect("reports a gap the endpoint never took on the next refresh", () =>
     yield* hub.publish(settled("c"));
     const next = yield* Queue.take(deliveries);
     expect(next.body.data.id).toBe("c");
-    const refresh = call("events/subscribe", subscribeParams(filter)).pipe(
-      Effect.map(({ result }) => result!),
-    );
-    const refreshed = yield* refresh;
+    const refresh = (cursor: string) =>
+      call("events/subscribe", subscribeParams({ ...filter, cursor })).pipe(
+        Effect.map(({ result }) => result!),
+      );
+    // Until the client shows a cursor from past the gap, as if each answer were lost.
+    const refreshed = yield* refresh(first.body.cursor);
     expect(refreshed.truncated).toBe(true);
     expect(refreshed.cursor).not.toBe(first.body.cursor);
-    expect((yield* refresh).truncated).toBe(false);
+    expect((yield* refresh(first.body.cursor)).truncated).toBe(true);
+    expect((yield* refresh(refreshed.cursor)).truncated).toBe(false);
     yield* answer(next, 200);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("gives each subscription to one URL its own delivery id for an event", () =>
+  Effect.gen(function* () {
+    const hub = yield* MilestoneHub.MilestoneHub;
+    const { call, deliveries, answer, subscribe, subscribeParams } = yield* serve;
+    yield* subscribe();
+    yield* call("events/subscribe", subscribeParams({ arguments: { projectIds: ["project:a"] } }));
+    yield* hub.publish(settled("a"));
+    const both = [yield* Queue.take(deliveries), yield* Queue.take(deliveries)];
+    for (const delivery of both) {
+      expect(delivery.body.data.id).toBe("a");
+      expect(delivery.headers["webhook-id"]).toBe(delivery.body.eventId);
+      yield* answer(delivery, 200);
+    }
+    expect(both[0]!.headers["webhook-id"]).not.toBe(both[1]!.headers["webhook-id"]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );
 

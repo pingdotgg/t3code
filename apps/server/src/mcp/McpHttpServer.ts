@@ -297,14 +297,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   const sessions = yield* Effect.serviceOption(SessionStore.SessionStore);
-  // Auth runs once per request, so a response that streams on, such as `events/stream`, ends
-  // when the outside client's session is revoked or expires.
+  // Auth runs once per request, so a response that streams on ends when the outside client's
+  // session is revoked or expires. `events/stream` ends itself first with
+  // `notifications/events/terminated`, which cutting the body here would lose.
   const endWithSession = (
     response: HttpServerResponse.HttpServerResponse,
+    request: HttpServerRequest.HttpServerRequest,
     client: McpInvocationContext.McpClientCaller | undefined,
   ) => {
     const body = response.body;
     if (client === undefined || Option.isNone(sessions) || body._tag !== "Stream") return response;
+    if (request.headers["mcp-method"] === "events/stream") return response;
     const invalidated = sessions.value
       .awaitInvalidation(AuthSessionId.make(client.sessionId))
       .pipe(Effect.ignore);
@@ -390,7 +393,7 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     return yield* httpEffect.pipe(
       Effect.provideService(McpInvocationContext.McpInvocationContext, admitted),
       Effect.map(normalizeMcpHttpResponse),
-      Effect.map((response) => endWithSession(response, admitted.client)),
+      Effect.map((response) => endWithSession(response, request, admitted.client)),
       Effect.map((response) =>
         linkExpiresAt === undefined
           ? response

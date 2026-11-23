@@ -677,7 +677,7 @@ index fe6f18e..c67169e 100644
   * Registers an MCP prompt from an Effect program.
   *
 diff --git a/dist/ai/McpServer.js b/dist/ai/McpServer.js
-index 4bf6bca..bd651b7 100644
+index 4bf6bca..5ad258e 100644
 --- a/dist/ai/McpServer.js
 +++ b/dist/ai/McpServer.js
 @@ -16,6 +16,8 @@ import * as Cause from "../Cause.js";
@@ -715,7 +715,7 @@ index 4bf6bca..bd651b7 100644
    }
  };
  const isHidden = error => error instanceof Hidden;
-@@ -2637,6 +2644,153 @@ export const registerSkill = /*#__PURE__*/Effect.fnUntraced(function* (options)
+@@ -2637,6 +2644,155 @@ export const registerSkill = /*#__PURE__*/Effect.fnUntraced(function* (options)
   * @since 4.1.1
   */
  export const skill = options => Layer.effectDiscard(registerSkill(options));
@@ -779,6 +779,7 @@ index 4bf6bca..bd651b7 100644
 +    isVisible: isEnabled(annotations),
 +    visible: visible("events/list", name),
 +    webhooks,
++    decodeArguments: argumentsOf,
 +    poll: poll === undefined ? undefined : (request, invocation) => invoke(Effect.gen(function* () {
 +      const result = yield* poll(yield* argumentsOf(request.arguments), {
 +        cursor: request.cursor,
@@ -794,7 +795,8 @@ index 4bf6bca..bd651b7 100644
 +      };
 +    }), invocation, { method: "events/poll", target: name, payload: request }),
 +    stream: stream === undefined ? undefined : (request, invocation, deliver) => invoke(Effect.scoped(Effect.gen(function* () {
-+      const subscription = yield* stream(yield* argumentsOf(request.arguments), {
++      const args = request.decoded !== undefined ? request.decoded.value : yield* argumentsOf(request.arguments);
++      const subscription = yield* stream(args, {
 +        cursor: request.cursor,
 +        maxAgeMs: request.maxAgeMs
 +      });
@@ -1208,7 +1210,7 @@ index 0000000..d875046
 +    }
 +}, Effect.scoped);
 diff --git a/dist/ai/internal/mcpProtocol/v2026_07_28.js b/dist/ai/internal/mcpProtocol/v2026_07_28.js
-index af1ceed..301dde5 100644
+index af1ceed..ea29279 100644
 --- a/dist/ai/internal/mcpProtocol/v2026_07_28.js
 +++ b/dist/ai/internal/mcpProtocol/v2026_07_28.js
 @@ -17,6 +17,7 @@ import * as Schema from "../../../Schema.js";
@@ -1274,12 +1276,12 @@ index af1ceed..301dde5 100644
 +      return yield* McpEvents.unsupportedDelivery("webhook");
 +    }
 +    yield* validateEventHeaders(registration, args);
-+    return { invocation, stream, webhooks };
++    return { invocation, stream, webhooks, decodeArguments: registration.decodeArguments };
 +  });
    const requireSkills = method => McpSkills.requireSkills(core, method).pipe(Effect.catch(error => failWithHttpStatus(404, error)));
    const getInvocation = PublicMcpSchema.McpRequestContext.useSync(McpProtocol.invocationFromRequestContext);
    const getInputInvocation = Effect.fnUntraced(function* (request) {
-@@ -592,6 +620,96 @@ export const makeHandlers = (core, _lifecycle, context) => {
+@@ -592,6 +620,97 @@ export const makeHandlers = (core, _lifecycle, context) => {
        }, context.serverInfo);
        return yield* decodeReadResourceDirectoryResult(result);
      }, Effect.mapError(projectError)),
@@ -1349,7 +1351,7 @@ index af1ceed..301dde5 100644
 +      });
 +    }, Effect.mapError(projectError)),
 +    "events/subscribe": Effect.fnUntraced(function* (request) {
-+      const { invocation, stream, webhooks } = yield* webhookRegistration("events/subscribe", request.name, request.arguments);
++      const { decodeArguments, invocation, stream, webhooks } = yield* webhookRegistration("events/subscribe", request.name, request.arguments);
 +      const args = request.arguments ?? {};
 +      const cursor = request.cursor ?? null;
 +      const subscribed = yield* webhooks.subscribe({
@@ -1358,7 +1360,8 @@ index af1ceed..301dde5 100644
 +        delivery: request.delivery,
 +        cursor,
 +        ttlMs: request.ttlMs,
-+        open: deliver => stream({ arguments: args, cursor, maxAgeMs: request.maxAgeMs }, invocation, deliver)
++        decode: decodeArguments(args),
++        open: (decoded, deliver) => stream({ arguments: args, decoded: { value: decoded }, cursor, maxAgeMs: request.maxAgeMs }, invocation, deliver)
 +      });
 +      const result = yield* projectCompleteResult(omitUndefined({ ...subscribed }), context.serverInfo);
 +      return yield* decodeSubscribeEventsResult(result);
@@ -1376,7 +1379,7 @@ index af1ceed..301dde5 100644
      "notifications/cancelled": Effect.fnUntraced(function* (_request) {
        return yield* Effect.void;
      })
-@@ -613,10 +731,10 @@ const runtime = {
+@@ -613,10 +732,10 @@ const runtime = {
  export const protocol = /*#__PURE__*/McpProtocol.make({
    protocolVersion: McpSchema.protocolVersion,
    runtime,
@@ -1435,10 +1438,10 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpWebhooks.js b/dist/ai/internal/mcpWebhooks.js
 new file mode 100644
-index 0000000..6bff946
+index 0000000..4e2871a
 --- /dev/null
 +++ b/dist/ai/internal/mcpWebhooks.js
-@@ -0,0 +1,447 @@
+@@ -0,0 +1,456 @@
 +import * as Clock from "../../Clock.js";
 +import * as Digest from "../../crypto/Digest.js";
 +import * as Mac from "../../crypto/Mac.js";
@@ -1505,7 +1508,7 @@ index 0000000..6bff946
 +  if (typeof value !== "string" || !value.startsWith(SECRET_PREFIX)) return fail;
 +  const bytes = Base64.decode(value.slice(SECRET_PREFIX.length));
 +  if (Result.isFailure(bytes) || bytes.success.length < 24 || bytes.success.length > 64) return fail;
-+  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie);
++  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie, Effect.map((key) => ({ text: value, key })));
 +};
 +const statusCategory = (status) => status >= 500 ? "http_5xx" : "http_4xx";
 +const transportCategory = (error) => {
@@ -1578,7 +1581,18 @@ index 0000000..6bff946
 +    Effect.map((hex) => `sub_${hex.slice(0, 32)}`)
 +  );
 +  const messageId = (prefix) => Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`);
-+  const eventWebhookId = (eventId) => /^[A-Za-z0-9_-]+$/.test(eventId) ? Effect.succeed(eventId) : messageId("msg");
++  const deliveryId = (subscription, eventId) => Effect.map(
++    digest.digest(Digest.sha256, encoder.encode(`${subscription.id}\0${eventId}`)),
++    (hash) => `evt_${Base64Url.encode(hash).slice(0, 22)}`
++  );
++  const MAX_CURSORS_SINCE_GAP = 1024;
++  const advance = (subscription, cursor) => {
++    subscription.watermark = cursor;
++    const since = subscription.cursorsSinceGap;
++    if (since === void 0) return;
++    since.add(cursor);
++    if (since.size > MAX_CURSORS_SINCE_GAP) since.delete(since.values().next().value);
++  };
 +  const sign = (keys, webhookId, timestamp, body) => Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
 +    Effect.orDie,
 +    Effect.map((tags) => tags.map((tag) => `v1,${Base64.encode(tag)}`).join(" "))
@@ -1648,30 +1662,25 @@ index 0000000..6bff946
 +  const run = (subscription, name, events) => events.items.pipe(
 +    Stream.runForEach((item) => {
 +      switch (item._tag) {
-+        case "Event": {
-+          const body = JSON.stringify({
-+            eventId: item.eventId,
-+            name,
-+            timestamp: item.timestamp,
-+            data: item.data,
-+            cursor: item.cursor,
-+            ...item._meta === void 0 ? {} : { _meta: item._meta }
-+          });
-+          return Effect.flatMap(eventWebhookId(item.eventId), (webhookId) => deliver(subscription, body, webhookId)).pipe(
-+            Effect.andThen(Effect.sync(() => {
-+              subscription.watermark = item.cursor;
-+            }))
-+          );
-+        }
++        case "Event":
++          return Effect.flatMap(deliveryId(subscription, item.eventId), (webhookId) => {
++            const body = JSON.stringify({
++              eventId: webhookId,
++              name,
++              timestamp: item.timestamp,
++              data: item.data,
++              cursor: item.cursor,
++              ...item._meta === void 0 ? {} : { _meta: item._meta }
++            });
++            return deliver(subscription, body, webhookId);
++          }).pipe(Effect.andThen(Effect.sync(() => advance(subscription, item.cursor))));
 +        case "Position":
-+          return Effect.sync(() => {
-+            subscription.watermark = item.cursor;
-+          });
++          return Effect.sync(() => advance(subscription, item.cursor));
 +        case "Gap":
 +          return control(subscription, "gap", { cursor: item.cursor }).pipe(
 +            Effect.map((delivered) => {
-+              if (!delivered) subscription.gapUnacknowledged = true;
-+              subscription.watermark = item.cursor;
++              if (!delivered) subscription.cursorsSinceGap = /* @__PURE__ */ new Set();
++              advance(subscription, item.cursor);
 +            })
 +          );
 +        case "Error":
@@ -1766,8 +1775,9 @@ index 0000000..6bff946
 +    subscription.deadlineMoved = Deferred.makeUnsafe();
 +    Deferred.doneUnsafe(moved, Effect.void);
 +    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start };
-+    const truncated = subscription.gapUnacknowledged;
-+    subscription.gapUnacknowledged = false;
++    const since = subscription.cursorsSinceGap;
++    if (since !== void 0 && since.has(request.cursor)) subscription.cursorsSinceGap = void 0;
++    const truncated = subscription.cursorsSinceGap !== void 0;
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
@@ -1785,7 +1795,7 @@ index 0000000..6bff946
 +    const mode = request.delivery.mode;
 +    if (mode !== void 0 && mode !== "webhook") return yield* invalid("delivery.mode must be 'webhook'");
 +    const url = yield* parseUrl(request.delivery.url, guard);
-+    const secret = { text: String(request.delivery.secret), key: yield* parseSecret(request.delivery.secret) };
++    const secret = yield* parseSecret(request.delivery.secret);
 +    const id = yield* subscriptionId(principal, url, request.name, request.arguments);
 +    const now = yield* Clock.currentTimeMillis;
 +    const expiresAt = now + grantTtl(request.ttlMs);
@@ -1828,8 +1838,9 @@ index 0000000..6bff946
 +      fiber: void 0,
 +      deadlineMoved: Deferred.makeUnsafe(),
 +      accepted: Deferred.makeUnsafe(),
-+      gapUnacknowledged: false
++      cursorsSinceGap: void 0
 +    };
++    const decoded = yield* request.decode;
 +    yield* verify(subscription);
 +    const raced = subscriptions.get(id);
 +    if (raced !== void 0) {
@@ -1840,6 +1851,7 @@ index 0000000..6bff946
 +    subscriptions.set(id, subscription);
 +    const { accepted } = subscription;
 +    const lifetime = request.open(
++      decoded,
 +      (events) => Effect.suspend(() => {
 +        subscription.watermark = events.cursor;
 +        return Deferred.succeed(accepted, { cursor: events.cursor, truncated: events.truncated });
@@ -2101,7 +2113,7 @@ index ba6c830..1e58fb9 100644
  // Prompts
  // =============================================================================
 diff --git a/src/ai/McpServer.ts b/src/ai/McpServer.ts
-index 4c2e191..b88d210 100644
+index 4c2e191..bedd064 100644
 --- a/src/ai/McpServer.ts
 +++ b/src/ai/McpServer.ts
 @@ -16,6 +16,8 @@ import * as Cause from "../Cause.ts"
@@ -2174,7 +2186,7 @@ index 4c2e191..b88d210 100644
    }
  }
  
-@@ -4134,6 +4153,400 @@ export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause
+@@ -4134,6 +4153,404 @@ export const registerSkill: (options: SkillOptions) => Effect.Effect<void, Cause
  export const skill = (options: SkillOptions): Layer.Layer<never, Cause.IllegalArgumentError, McpServer> =>
    Layer.effectDiscard(registerSkill(options))
  
@@ -2393,6 +2405,7 @@ index 4c2e191..b88d210 100644
 +      isVisible: isEnabled(annotations),
 +      visible: visible("events/list", name),
 +      webhooks,
++      decodeArguments: argumentsOf,
 +      poll: poll === undefined ? undefined : (request, invocation) =>
 +        invoke(
 +          Effect.gen(function*() {
@@ -2415,7 +2428,10 @@ index 4c2e191..b88d210 100644
 +      stream: stream === undefined ? undefined : (request, invocation, deliver) =>
 +        invoke(
 +          Effect.scoped(Effect.gen(function*() {
-+            const subscription = yield* stream(yield* argumentsOf(request.arguments), {
++            const args = request.decoded !== undefined
++              ? request.decoded.value
++              : yield* argumentsOf(request.arguments)
++            const subscription = yield* stream(args, {
 +              cursor: request.cursor,
 +              maxAgeMs: request.maxAgeMs
 +            })
@@ -2576,7 +2592,7 @@ index 4c2e191..b88d210 100644
   * Registers an MCP prompt from an Effect program.
   *
 diff --git a/src/ai/internal/mcpCore.ts b/src/ai/internal/mcpCore.ts
-index 643982d..c997395 100644
+index 643982d..d705160 100644
 --- a/src/ai/internal/mcpCore.ts
 +++ b/src/ai/internal/mcpCore.ts
 @@ -8,6 +8,8 @@ import * as Data from "../../Data.ts"
@@ -2588,7 +2604,7 @@ index 643982d..c997395 100644
  
  /**
   * @internal
-@@ -330,6 +332,120 @@ export interface SkillRegistration {
+@@ -330,6 +332,123 @@ export interface SkillRegistration {
    readonly directory: (uri: string) => ReadonlyArray<DirectoryChild> | undefined
  }
  
@@ -2642,6 +2658,8 @@ index 643982d..c997395 100644
 + */
 +export interface EventStreamRequest {
 +  readonly arguments: Readonly<Record<string, unknown>>
++  // Set when the arguments were already decoded, as a webhook subscribe does first.
++  readonly decoded?: { readonly value: unknown } | undefined
 +  readonly cursor: string | null
 +  readonly maxAgeMs?: number | undefined
 +}
@@ -2680,6 +2698,7 @@ index 643982d..c997395 100644
 +  readonly visible?: Visible | undefined
 +  // Set when webhook delivery is offered, which runs `stream`.
 +  readonly webhooks?: McpWebhooks.Webhooks | undefined
++  readonly decodeArguments: (args: unknown) => Effect.Effect<unknown, EventFailure>
 +  readonly poll?:
 +    | ((
 +      request: EventPollRequest,
@@ -2709,7 +2728,7 @@ index 643982d..c997395 100644
  /**
   * @internal
   */
-@@ -507,11 +623,13 @@ export interface McpCore {
+@@ -507,11 +626,13 @@ export interface McpCore {
    readonly prompts: Prompts
    readonly completions: Completions
    readonly skills: Skills
@@ -2723,7 +2742,7 @@ index 643982d..c997395 100644
    }>
  }
  
-@@ -523,6 +641,12 @@ export interface McpCore {
+@@ -523,6 +644,12 @@ export interface McpCore {
   */
  export type Visible = (invocation: McpInvocation) => Effect.Effect<boolean, RequestRejected>
  
@@ -2736,7 +2755,7 @@ index 643982d..c997395 100644
  // Whether one skill directory contains the other, or both are the same.
  const skillsOverlap = (a: string, b: string): boolean => {
    const rootA = a.slice(0, -"/SKILL.md".length)
-@@ -539,6 +663,7 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
+@@ -539,6 +666,7 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
    const resourceTemplateRegistrations: Array<ResourceTemplateRegistration> = []
    const promptRegistrations = new Map<string, PromptRegistration>()
    const skillRegistrations = new Map<string, SkillRegistration>()
@@ -2744,7 +2763,7 @@ index 643982d..c997395 100644
    const skillFiles = new Set<string>()
    const completionRegistrations = new Map<
      string,
-@@ -717,12 +842,28 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
+@@ -717,12 +845,28 @@ export const make: Effect.Effect<McpCore> = Effect.sync(() => {
      })
    }
  
@@ -3109,7 +3128,7 @@ index 5393651..f40915b 100644
  }
  
 diff --git a/src/ai/internal/mcpProtocol/v2026_07_28.ts b/src/ai/internal/mcpProtocol/v2026_07_28.ts
-index a701ec8..55829ea 100644
+index a701ec8..8e4b36a 100644
 --- a/src/ai/internal/mcpProtocol/v2026_07_28.ts
 +++ b/src/ai/internal/mcpProtocol/v2026_07_28.ts
 @@ -22,6 +22,7 @@ import type * as Types from "../../../Types.ts"
@@ -3186,12 +3205,12 @@ index a701ec8..55829ea 100644
 +      return yield* McpEvents.unsupportedDelivery("webhook")
 +    }
 +    yield* validateEventHeaders(registration, args)
-+    return { invocation, stream, webhooks }
++    return { invocation, stream, webhooks, decodeArguments: registration.decodeArguments }
 +  })
    const requireSkills = (method: string) =>
      McpSkills.requireSkills(core, method).pipe(
        Effect.catch((error) => failWithHttpStatus(404, error))
-@@ -728,6 +767,115 @@ export const makeHandlers = (
+@@ -728,6 +767,121 @@ export const makeHandlers = (
        const result = yield* projectCompleteResult({ ...cacheHint("skills"), resources }, context.serverInfo)
        return yield* decodeReadResourceDirectoryResult(result)
      }, Effect.mapError(projectError)),
@@ -3274,7 +3293,7 @@ index a701ec8..55829ea 100644
 +      })
 +    }, Effect.mapError(projectError)),
 +    "events/subscribe": Effect.fnUntraced(function*(request: typeof McpEvents.SubscribeEvents.payloadSchema.Type) {
-+      const { invocation, stream, webhooks } = yield* webhookRegistration(
++      const { decodeArguments, invocation, stream, webhooks } = yield* webhookRegistration(
 +        "events/subscribe",
 +        request.name,
 +        request.arguments
@@ -3287,7 +3306,13 @@ index a701ec8..55829ea 100644
 +        delivery: request.delivery,
 +        cursor,
 +        ttlMs: request.ttlMs,
-+        open: (deliver) => stream({ arguments: args, cursor, maxAgeMs: request.maxAgeMs }, invocation, deliver)
++        decode: decodeArguments(args),
++        open: (decoded, deliver) =>
++          stream(
++            { arguments: args, decoded: { value: decoded }, cursor, maxAgeMs: request.maxAgeMs },
++            invocation,
++            deliver
++          )
 +      })
 +      const result = yield* projectCompleteResult(omitUndefined({ ...subscribed }), context.serverInfo)
 +      return yield* decodeSubscribeEventsResult(result)
@@ -3307,7 +3332,7 @@ index a701ec8..55829ea 100644
      "notifications/cancelled": Effect.fnUntraced(function*(
        _request: typeof McpSchema.CancelledNotification.payloadSchema.Type
      ) {
-@@ -751,10 +899,10 @@ const runtime = {
+@@ -751,10 +905,10 @@ const runtime = {
  export const protocol = McpProtocol.make({
    protocolVersion: McpSchema.protocolVersion,
    runtime,
@@ -3363,10 +3388,10 @@ index 9d4c96e..0afe3ed 100644
      effectLogLevel: (clientId, headers, fallback) => stateful?.effectLogLevel(clientId, headers, fallback) ?? fallback,
 diff --git a/src/ai/internal/mcpWebhooks.ts b/src/ai/internal/mcpWebhooks.ts
 new file mode 100644
-index 0000000..a499d8b
+index 0000000..5b53d08
 --- /dev/null
 +++ b/src/ai/internal/mcpWebhooks.ts
-@@ -0,0 +1,678 @@
+@@ -0,0 +1,692 @@
 +/**
 + * Webhook delivery for the Events extension (SEP-3415): `events/subscribe`
 + * validation, subscription identity, Standard Webhooks signing, the endpoint
@@ -3461,8 +3486,11 @@ index 0000000..a499d8b
 +  readonly delivery: Readonly<Record<string, unknown>>
 +  readonly cursor: string | null
 +  readonly ttlMs?: number | null | undefined
++  // The event's argument decoder, run before the endpoint is contacted.
++  readonly decode: Effect.Effect<unknown, McpCore.EventFailure>
 +  // Runs the event's stream for the subscription's lifetime, as push delivery does.
 +  readonly open: (
++    decoded: unknown,
 +    deliver: (subscription: McpCore.EventSubscription) => Effect.Effect<void>
 +  ) => Effect.Effect<void, McpCore.EventFailure | McpCore.RequestRejected>
 +}
@@ -3522,8 +3550,9 @@ index 0000000..a499d8b
 +    { readonly cursor: string | null; readonly truncated: boolean },
 +    McpCore.EventFailure | McpCore.RequestRejected
 +  >
-+  // A gap whose envelope the endpoint never took, reported on the next refresh.
-+  gapUnacknowledged: boolean
++  // After a gap whose envelope the endpoint never took: the cursors handed out since, any of
++  // which a refresh presents to say it saw past the gap. Until then every refresh is truncated.
++  cursorsSinceGap: Set<string | null> | undefined
 +}
 +
 +type Outcome =
@@ -3586,7 +3615,7 @@ index 0000000..a499d8b
 +  if (typeof value !== "string" || !value.startsWith(SECRET_PREFIX)) return fail
 +  const bytes = Base64.decode(value.slice(SECRET_PREFIX.length))
 +  if (Result.isFailure(bytes) || bytes.success.length < 24 || bytes.success.length > 64) return fail
-+  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie)
++  return Mac.key(Mac.hmacSha256, bytes.success).pipe(Effect.orDie, Effect.map((key) => ({ text: value, key })))
 +}
 +
 +const statusCategory = (status: number): FailureCategory => (status >= 500 ? "http_5xx" : "http_4xx")
@@ -3686,10 +3715,22 @@ index 0000000..a499d8b
 +    Effect.map(random.randomBytes(18), (bytes) => `${prefix}_${Base64Url.encode(bytes)}`)
 +
 +  // Bridge for clients predating SEP-3415 (ChatGPT, @ai-sdk/mcp); drop per #41158.
-+  // They require an event's webhook-id to be its eventId, which the spec says not to derive
-+  // it from. An eventId outside the webhook-id charset still gets a random id.
-+  const eventWebhookId = (eventId: string) =>
-+    /^[A-Za-z0-9_-]+$/.test(eventId) ? Effect.succeed(eventId) : messageId("msg")
++  // They require an event's webhook-id to equal its eventId. Both become this id, derived per
++  // subscription so two subscriptions to one URL never share it; poll and push keep the eventId.
++  const deliveryId = (subscription: Subscription, eventId: string) =>
++    Effect.map(
++      digest.digest(Digest.sha256, encoder.encode(`${subscription.id}\0${eventId}`)),
++      (hash) => `evt_${Base64Url.encode(hash).slice(0, 22)}`
++    )
++
++  const MAX_CURSORS_SINCE_GAP = 1_024
++  const advance = (subscription: Subscription, cursor: string | null) => {
++    subscription.watermark = cursor
++    const since = subscription.cursorsSinceGap
++    if (since === undefined) return
++    since.add(cursor)
++    if (since.size > MAX_CURSORS_SINCE_GAP) since.delete(since.values().next().value!)
++  }
 +
 +  const sign = (keys: ReadonlyArray<Mac.Key>, webhookId: string, timestamp: number, body: string) =>
 +    Effect.forEach(keys, (key) => mac.sign(key, encoder.encode(`${webhookId}.${timestamp}.${body}`))).pipe(
@@ -3782,30 +3823,25 @@ index 0000000..a499d8b
 +    events.items.pipe(
 +      Stream.runForEach((item): Effect.Effect<void> => {
 +        switch (item._tag) {
-+          case "Event": {
-+            const body = JSON.stringify({
-+              eventId: item.eventId,
-+              name,
-+              timestamp: item.timestamp,
-+              data: item.data,
-+              cursor: item.cursor,
-+              ...(item._meta === undefined ? {} : { _meta: item._meta })
-+            })
-+            return Effect.flatMap(eventWebhookId(item.eventId), (webhookId) => deliver(subscription, body, webhookId)).pipe(
-+              Effect.andThen(Effect.sync(() => {
-+                subscription.watermark = item.cursor
-+              }))
-+            )
-+          }
++          case "Event":
++            return Effect.flatMap(deliveryId(subscription, item.eventId), (webhookId) => {
++              const body = JSON.stringify({
++                eventId: webhookId,
++                name,
++                timestamp: item.timestamp,
++                data: item.data,
++                cursor: item.cursor,
++                ...(item._meta === undefined ? {} : { _meta: item._meta })
++              })
++              return deliver(subscription, body, webhookId)
++            }).pipe(Effect.andThen(Effect.sync(() => advance(subscription, item.cursor))))
 +          case "Position":
-+            return Effect.sync(() => {
-+              subscription.watermark = item.cursor
-+            })
++            return Effect.sync(() => advance(subscription, item.cursor))
 +          case "Gap":
 +            return control(subscription, "gap", { cursor: item.cursor }).pipe(
 +              Effect.map((delivered) => {
-+                if (!delivered) subscription.gapUnacknowledged = true
-+                subscription.watermark = item.cursor
++                if (!delivered) subscription.cursorsSinceGap = new Set()
++                advance(subscription, item.cursor)
 +              })
 +            )
 +          case "Error":
@@ -3915,8 +3951,10 @@ index 0000000..a499d8b
 +    subscription.deadlineMoved = Deferred.makeUnsafe()
 +    Deferred.doneUnsafe(moved, Effect.void)
 +    if (opening) return { id: subscription.id, refreshBefore: iso(expiresAt), ...start }
-+    const truncated = subscription.gapUnacknowledged
-+    subscription.gapUnacknowledged = false
++    // Kept until the client shows a cursor from past the gap, so a lost response hides nothing.
++    const since = subscription.cursorsSinceGap
++    if (since !== undefined && since.has(request.cursor)) subscription.cursorsSinceGap = undefined
++    const truncated = subscription.cursorsSinceGap !== undefined
 +    return {
 +      id: subscription.id,
 +      refreshBefore: iso(expiresAt),
@@ -3935,7 +3973,7 @@ index 0000000..a499d8b
 +    const mode = request.delivery.mode
 +    if (mode !== undefined && mode !== "webhook") return yield* invalid("delivery.mode must be 'webhook'")
 +    const url = yield* parseUrl(request.delivery.url, guard)
-+    const secret = { text: String(request.delivery.secret), key: yield* parseSecret(request.delivery.secret) }
++    const secret = yield* parseSecret(request.delivery.secret)
 +    const id = yield* subscriptionId(principal, url, request.name, request.arguments)
 +    const now = yield* Clock.currentTimeMillis
 +    const expiresAt = now + grantTtl(request.ttlMs)
@@ -3992,8 +4030,9 @@ index 0000000..a499d8b
 +      fiber: undefined,
 +      deadlineMoved: Deferred.makeUnsafe(),
 +      accepted: Deferred.makeUnsafe(),
-+      gapUnacknowledged: false
++      cursorsSinceGap: undefined
 +    }
++    const decoded = yield* request.decode
 +    yield* verify(subscription)
 +    // A concurrent subscribe for the same key may have finished while this one verified.
 +    const raced = subscriptions.get(id)
@@ -4004,7 +4043,7 @@ index 0000000..a499d8b
 +    release()
 +    subscriptions.set(id, subscription)
 +    const { accepted } = subscription
-+    const lifetime = request.open((events) =>
++    const lifetime = request.open(decoded, (events) =>
 +      Effect.suspend(() => {
 +        subscription.watermark = events.cursor
 +        return Deferred.succeed(accepted, { cursor: events.cursor, truncated: events.truncated })
