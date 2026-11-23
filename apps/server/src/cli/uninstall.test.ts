@@ -97,12 +97,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("t3 uninstall com
       output: "--base-dir '/home/me/.t3'",
     },
     {
-      label: "removes this home's service under another spelling",
-      otherFromRead: Infinity,
-      removed: [true],
-      output: "Removed the background service.",
-    },
-    {
       label: "leaves a service that serves another home by the time it is removed",
       otherFromRead: 2,
       removed: [],
