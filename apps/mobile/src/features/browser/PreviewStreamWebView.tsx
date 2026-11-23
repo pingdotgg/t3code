@@ -482,7 +482,7 @@ function PreviewStreamDocumentView({
       {!compact && selectMenu && control?.controller === "you" ? (
         <Sheet
           key={selectMenu.id}
-          title="Choose an option"
+          title={gt("Choose an option")}
           onClose={() =>
             setSelectMenu((current) => (current?.id === selectMenu.id ? null : current))
           }
