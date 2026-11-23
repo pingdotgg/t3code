@@ -827,22 +827,20 @@ const findOnPath = Effect.fnUntraced(function* (
   const listings = platform === "win32" ? yield* PathDirectoryListings : undefined;
   const matches: string[] = [];
   for (const pathEntry of pathEntries) {
-    const directory = cwd === undefined || cwd === null ? pathEntry : path.resolve(cwd, pathEntry);
-    // Without a readable cwd a relative entry has no stable directory, so it skips the listing cache.
-    const uncached = cwd === null && !NodePath.posix.isAbsolute(pathEntry);
-    let listing = listings && !uncached ? yield* Cache.get(listings, directory) : undefined;
-    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(directory))) {
-      yield* Cache.invalidate(listings, directory);
-      listing = yield* Cache.get(listings, directory);
+    let listing = listings && (yield* Cache.get(listings, pathEntry));
+    if (listings && listing?.names && listing.modified !== (yield* directoryMtime(pathEntry))) {
+      yield* Cache.invalidate(listings, pathEntry);
+      listing = yield* Cache.get(listings, pathEntry);
     }
     for (const candidate of commandCandidates) {
       if (isAbsentFromListing(listing?.names, candidate)) continue;
-      const candidatePath = path.join(pathEntry, candidate);
-      // Probe where the listing looked, even if the process changes directory meanwhile.
-      const probePath = typeof cwd === "string" ? path.join(directory, candidate) : candidatePath;
-      if (yield* isExecutableFile(probePath, platform, windowsPathExtensions)) {
-        const match =
-          anchorsCwd && pathEntry === "." ? path.join(directory, candidate) : candidatePath;
+      // Probe what is returned: other relative entries stay relative, since the cached cwd
+      // spelling goes stale when the directory is renamed.
+      const match =
+        anchorsCwd && pathEntry === "."
+          ? path.join(cwd, candidate)
+          : path.join(pathEntry, candidate);
+      if (yield* isExecutableFile(match, platform, windowsPathExtensions)) {
         matches.push(match);
         if (isLast(match)) return matches;
         break;

@@ -1041,6 +1041,59 @@ console.log(JSON.stringify({ ...result, cached: cache.size }));
         expect(JSON.parse(stdout)).toEqual({ effect: inListed, git: xcodeGit, cached: 0 });
       }),
   );
+
+  // Node caches process.cwd(), so after a rename it names a path that no longer exists.
+  const resolveAfterRename = `
+import { createRequire } from "node:module";
+import * as NodeFS from "node:fs";
+const [shellPath, command, cwd, renamed] = process.argv.slice(1);
+const requireFromShell = createRequire(shellPath);
+const Effect = await import(requireFromShell.resolve("effect/Effect"));
+const { layer } = await import(requireFromShell.resolve("@effect/platform-node/NodeServices"));
+const HostProcess = await import(shellPath.replace(/shell\\.ts$/, "HostProcess.ts"));
+const Shell = await import(shellPath);
+process.chdir(cwd);
+process.cwd();
+NodeFS.renameSync(cwd, renamed);
+const resolved = await Effect.runPromise(
+  Shell.resolveCommandPath(command, { env: { PATH: "bin" } }).pipe(
+    Effect.provideService(HostProcess.Platform, process.platform),
+    Effect.provideService(Shell.CommandResolutionCache, new Map()),
+    Effect.provide(layer),
+  ),
+);
+console.log(JSON.stringify(resolved));
+`;
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves a relative PATH entry after the working directory is renamed",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-renamed-cwd-" });
+        const cwd = path.join(parent, "before");
+        const command = "t3-renamed-cwd-cli";
+        yield* fs.makeDirectory(path.join(cwd, "bin"), { recursive: true });
+        yield* fs.writeFileString(path.join(cwd, "bin", command), "#!/bin/sh\n", { mode: 0o755 });
+
+        const stdout = NodeChildProcess.execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            resolveAfterRename,
+            path.join(import.meta.dirname, "shell.ts"),
+            command,
+            cwd,
+            path.join(parent, "after"),
+          ],
+          { cwd: parent, encoding: "utf8", env: {} },
+        );
+
+        expect(JSON.parse(stdout)).toBe(path.join("bin", command));
+      }),
+  );
 });
 
 describe("runsGitWithoutConsole", () => {
