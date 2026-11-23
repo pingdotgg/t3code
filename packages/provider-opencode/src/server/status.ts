@@ -642,6 +642,29 @@ export const readSettledOpenCode2Catalog = <E>(
     Effect.orElseSucceed(() => Option.none<ReadonlyArray<OpenCode2Model>>()),
   );
 
+/**
+ * A location OpenCode has not loaded lists its built-in providers first and its configured ones by
+ * its `model.updated`. That step can outlast the settle interval, so the catalog stays unread until
+ * `loaded`, which must listen before `list` boots the location.
+ */
+export const readColdOpenCode2Catalog = <E>(
+  list: Effect.Effect<ReadonlyArray<OpenCode2Model>, E>,
+  loaded: Effect.Effect<void>,
+  environment?: NodeJS.ProcessEnv,
+) =>
+  Effect.ignore(list).pipe(
+    Effect.andThen(loaded),
+    Effect.timeoutOption(
+      resolveProviderProbeTimeoutMs("opencode", OPENCODE_2_CATALOG_SETTLE_TIMEOUT_MS, environment),
+    ),
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(Option.none<ReadonlyArray<OpenCode2Model>>()),
+        onSome: () => readSettledOpenCode2Catalog(list, environment),
+      }),
+    ),
+  );
+
 export interface OpenCode2Workspace {
   readonly skills: ReadonlyArray<{
     readonly id: string;

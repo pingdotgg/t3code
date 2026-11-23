@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,6 +47,7 @@ import {
   openCodeSkillsToServerProviderSkills,
   openCodeCommandsToServerProviderSlashCommands,
   openCodeProviderModels,
+  readColdOpenCode2Catalog,
   readSettledOpenCode2Catalog,
 } from "./status.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -84,6 +86,8 @@ import {
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
+// A cold location's plugins can take about a minute to activate before its providers load.
+const OPENCODE_2_COLD_LOAD_DEADLINE = "2 minutes";
 
 // A loopback server runs on this environment, but can outlive its CLI installation.
 // Its reported version may therefore differ from the installed executable after an update.
@@ -450,6 +454,80 @@ export const OpenCodeDriver: ProviderDriver<
           );
         }).pipe(Effect.scoped),
       );
+    const driverScope = yield* Effect.scope;
+    const openCode2Loads = new Map<
+      string,
+      { readonly cold: Deferred.Deferred<boolean>; readonly loaded: Deferred.Deferred<void> }
+    >();
+    /**
+     * Some while `directory` still awaits the `model.updated` that ends its first load. OpenCode
+     * lists a location as loaded from its first read on, so the wait outlives the call that found
+     * it cold, and callers ask before any read of their own.
+     */
+    const openCode2ColdLoad = (directory: string) =>
+      Effect.suspend(() => {
+        const known = openCode2Loads.get(directory);
+        if (known) return Effect.succeed(known);
+        const load = { cold: Deferred.makeUnsafe<boolean>(), loaded: Deferred.makeUnsafe<void>() };
+        openCode2Loads.set(directory, load);
+        return openCode2Server
+          .withConnection(({ client, events }) =>
+            Effect.gen(function* () {
+              // Without events or the location list no load can be awaited: settle as before.
+              const updated = yield* Effect.gen(function* () {
+                const stream = yield* events;
+                const first = yield* stream.pipe(
+                  Stream.filter(
+                    (event) =>
+                      event.type === "model.updated" &&
+                      "location" in event &&
+                      event.location?.directory === directory,
+                  ),
+                  Stream.runHead,
+                  Effect.forkScoped,
+                );
+                const listed = yield* client.debug.location.list();
+                return listed.some((entry) => entry.directory === directory) ? undefined : first;
+              }).pipe(Effect.timeout("2 seconds"));
+              if (updated === undefined) return;
+              yield* Deferred.succeed(load.cold, true);
+              const event = yield* Fiber.join(updated).pipe(
+                Effect.timeoutOption(OPENCODE_2_COLD_LOAD_DEADLINE),
+              );
+              if (Option.isSome(Option.flatten(event))) {
+                yield* Deferred.succeed(load.loaded, undefined);
+              }
+            }).pipe(Effect.scoped),
+          )
+          .pipe(
+            Effect.ignore,
+            Effect.ensuring(
+              Effect.suspend(() => {
+                openCode2Loads.delete(directory);
+                return Deferred.succeed(load.cold, false);
+              }),
+            ),
+            Effect.forkIn(driverScope),
+            Effect.as(load),
+          );
+      }).pipe(
+        Effect.flatMap(({ cold, loaded }) =>
+          Effect.map(Deferred.await(cold), (isCold) =>
+            isCold ? Option.some(loaded) : Option.none(),
+          ),
+        ),
+      );
+    const readOpenCode2DirectoryCatalog = (
+      cwd: string,
+      cold: Option.Option<Deferred.Deferred<void>>,
+    ) => {
+      const list = openCode2Server.withConnection(({ client }) =>
+        loadOpenCode2DirectoryCatalog(client, cwd),
+      );
+      return Option.isSome(cold)
+        ? readColdOpenCode2Catalog(list, Deferred.await(cold.value), processEnv)
+        : readSettledOpenCode2Catalog(list, processEnv);
+    };
     const serverOwner = yield* OpenCodeServerOwner.make({
       binaryPath: effectiveConfig.binaryPath,
       directory: host.paths.cwd,
@@ -709,49 +787,48 @@ export const OpenCodeDriver: ProviderDriver<
               ),
               Effect.flatMap((probed) =>
                 byOpenCodeRuntime(Effect.succeed(probed), {
-                  v2: Effect.all(
-                    [
-                      snapshot.getSnapshot,
-                      // A project's opencode.jsonc can define its own providers.
-                      readSettledOpenCode2Catalog(
-                        openCode2Server.withConnection(({ client }) =>
-                          loadOpenCode2DirectoryCatalog(client, cwd),
-                        ),
-                        processEnv,
-                      ).pipe(
-                        Effect.map(
-                          Option.map((catalog) =>
-                            openCode2ProviderModels(effectiveConfig, catalog),
+                  v2: openCode2ColdLoad(pathService.resolve(cwd)).pipe(
+                    Effect.flatMap((cold) =>
+                      Effect.all(
+                        [
+                          snapshot.getSnapshot,
+                          // A project's opencode.jsonc can define its own providers.
+                          readOpenCode2DirectoryCatalog(cwd, cold).pipe(
+                            Effect.map(
+                              Option.map((catalog) =>
+                                openCode2ProviderModels(effectiveConfig, catalog),
+                              ),
+                            ),
                           ),
-                        ),
+                          listOpenCode2Workspace(cwd).pipe(
+                            // Leaves room for the reads around the scan wait, which uses the same override.
+                            Effect.timeout(
+                              2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
+                            ),
+                            Effect.mapError(
+                              (cause) =>
+                                new ProviderDriverError({
+                                  driver: DRIVER_KIND,
+                                  instanceId,
+                                  detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
+                                  cause,
+                                }),
+                            ),
+                          ),
+                        ],
+                        { concurrency: "unbounded" },
+                      ).pipe(
+                        Effect.map(([machineSnapshot, cwdModels, { skills, commands }]) => ({
+                          ...machineSnapshot,
+                          ...workspaceModelsFor(machineSnapshot.models, cwdModels),
+                          skills: openCode2SkillsToServerProviderSkills(skills),
+                          slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
+                          // A finished scan lists at least the built-ins. None means it
+                          // timed out, so the registry decides from the provider's health.
+                          slashCommandsPending: commands.length > 0 ? false : undefined,
+                        })),
                       ),
-                      listOpenCode2Workspace(cwd).pipe(
-                        // Leaves room for the reads around the scan wait, which uses the same override.
-                        Effect.timeout(
-                          2 * resolveProviderProbeTimeoutMs("opencode", 10_000, processEnv),
-                        ),
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderDriverError({
-                              driver: DRIVER_KIND,
-                              instanceId,
-                              detail: `Failed to list OpenCode commands and skills for '${cwd}'`,
-                              cause,
-                            }),
-                        ),
-                      ),
-                    ],
-                    { concurrency: "unbounded" },
-                  ).pipe(
-                    Effect.map(([machineSnapshot, cwdModels, { skills, commands }]) => ({
-                      ...machineSnapshot,
-                      ...workspaceModelsFor(machineSnapshot.models, cwdModels),
-                      skills: openCode2SkillsToServerProviderSkills(skills),
-                      slashCommands: openCode2CommandsToServerProviderSlashCommands(commands),
-                      // A finished scan lists at least the built-ins. None means it
-                      // timed out, so the registry decides from the provider's health.
-                      slashCommandsPending: commands.length > 0 ? false : undefined,
-                    })),
+                    ),
                   ),
                   v1: Effect.all([
                     snapshot.getSnapshot,
