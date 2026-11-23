@@ -33,6 +33,12 @@ vi.mock("../state/server", async (original) => {
   );
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(jumpBindings) };
 });
+// These tests cover project threads, which chat mode hides.
+vi.mock("../kompas/state", async (original) => ({
+  ...(await original<typeof import("../kompas/state")>()),
+  useChatMode: () => false,
+}));
+
 vi.mock("../hooks/useHandleNewThread", async (original) => {
   const actual = await original<typeof import("../hooks/useHandleNewThread")>();
   return {

@@ -153,13 +153,13 @@ describe("desktop update button state", () => {
 
 describe("desktop update UI helpers", () => {
   it.each(["owner/repo/extra", "owner#notes/repo", "owner/repo?tab=notes"])(
-    "falls back to upstream for an invalid configured repository: %s",
+    "falls back to this fork for an invalid configured repository: %s",
     (repository) => {
       expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
-        "https://github.com/pingdotgg/t3code/releases",
+        "https://github.com/slawk0/t3code/releases",
       );
       expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
-        "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
+        "https://github.com/slawk0/t3code/releases/tag/v1.2.3",
       );
     },
   );
