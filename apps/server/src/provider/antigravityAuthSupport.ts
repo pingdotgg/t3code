@@ -280,6 +280,13 @@ const antigravityUserConfigFiles = [
   ["config", "skills.json"],
 ] as const;
 
+const isErrorWithCode = (cause: unknown, ...codes: ReadonlyArray<string>): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  typeof cause.code === "string" &&
+  codes.includes(cause.code);
+
 /** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
 const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
   readonly profileDirectory: string;
@@ -322,15 +329,25 @@ const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(functio
         Effect.catchReason("PlatformError", "NotFound", () => Effect.undefined),
         // An empty folder is the harness's placeholder from a launch without the link.
         // rmdir refuses a non-empty folder, so content added meanwhile is never deleted.
-        Effect.catch((error) =>
-          Effect.tryPromise({
+        Effect.catch((error) => {
+          if (!isErrorWithCode(error.cause, "EINVAL")) {
+            return Effect.fail(error);
+          }
+          if (type === "file") {
+            return Effect.succeed(target);
+          }
+          return Effect.tryPromise({
             try: () => NodeFSP.rmdir(link),
-            catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
+            catch: (cause) => cause,
           }).pipe(
             Effect.as(undefined),
-            Effect.mapError(() => error),
-          ),
-        ),
+            Effect.catch((cause) =>
+              isErrorWithCode(cause, "ENOTEMPTY", "EEXIST", "ENOTDIR")
+                ? Effect.succeed(target)
+                : Effect.fail(error),
+            ),
+          );
+        }),
       );
       if (existing === target) return;
       if (existing !== undefined) {

@@ -1666,6 +1666,11 @@ export function createServerEnvironmentAtoms<R, E>(
     // long enough that switching windows or re-rendering does not rescan. With
     // nothing to show yet, the server's last scan answers first, then a plain
     // read, then a read that waits for slow sources.
+    marginStats: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:margin-stats",
+      tag: WS_METHODS.serverGetMarginStats,
+      staleTimeMs: 30_000,
+    }),
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,

@@ -78,6 +78,7 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { UsageLimitsSection } from "./UsageLimits";
+import { MarginStatsSection } from "./MarginStatsSection";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { SpeedPremium, UsageModelDialog } from "./UsageModelDialog";
@@ -1083,6 +1084,14 @@ function UsageOverview({
           </div>
         )}
       </section>
+      {selectedEnvironments
+        .filter((environment) => environment.canReadDiagnostics)
+        .map((environment) => (
+          <MarginStatsSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+          />
+        ))}
     </div>
   );
 }
