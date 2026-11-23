@@ -64,8 +64,6 @@ fn settle_undo_command(
             }
             commands::snooze_thread(thread_id, snoozed_until)
         }
-        SettleUndoStep::Unsnooze => commands::unsnooze_thread(thread_id),
-        SettleUndoStep::Unarchive => commands::archive_thread(thread_id, false),
     })
 }
 
@@ -1177,20 +1175,14 @@ impl ConnApp {
         self.offer_thread_undo(thread_id.to_owned(), ThreadUndoKind::Settle, plan, cx);
     }
 
-    /// An unpin, snooze or archive the server took (`unpinThread`, `snoozeThread`,
-    /// `archiveThread`), as their actions offer them.
-    pub(crate) fn offer_placement_undo_for_test(
+    /// An unpin the server took (`unpinThread`), as the action offers it.
+    pub(crate) fn offer_unpin_undo_for_test(
         &mut self,
         thread_id: &str,
-        kind: &str,
         cx: &mut Context<'_, Self>,
     ) {
-        let (kind, plan) = match kind {
-            "unpin" => (ThreadUndoKind::Pin, conn_state::plan_unpin_undo(None)),
-            "snooze" => (ThreadUndoKind::Snooze, conn_state::plan_snooze_undo()),
-            _ => (ThreadUndoKind::Archive, conn_state::plan_archive_undo()),
-        };
-        self.offer_thread_undo(thread_id.to_owned(), kind, plan, cx);
+        let plan = conn_state::plan_unpin_undo(None);
+        self.offer_thread_undo(thread_id.to_owned(), ThreadUndoKind::Pin, plan, cx);
     }
 
     pub(crate) fn settled_shelf_open_for_test(&self) -> bool {

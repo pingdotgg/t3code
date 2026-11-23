@@ -2671,55 +2671,40 @@ fn holding_command_numbers_the_rows_after_a_beat(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn the_unpin_snooze_and_archive_notices_stack_by_kind_and_undo_names_what_failed(
-    cx: &mut TestAppContext,
-) {
+fn the_unpin_and_settle_notices_stack_by_kind_and_undo_names_what_failed(cx: &mut TestAppContext) {
     let (window, app) = mount_kitchen_sink(cx);
-    let offer = |cx: &mut TestAppContext, thread: &str, kind: &str| {
+    for thread in ["thread-failed", "thread-waiting"] {
         cx.update(|cx| {
-            app.update(cx, |app, cx| {
-                app.offer_placement_undo_for_test(thread, kind, cx);
-            });
+            app.update(cx, |app, cx| app.offer_unpin_undo_for_test(thread, cx));
         });
         render_twice(cx, window);
-    };
-    offer(cx, "thread-failed", "unpin");
-    offer(cx, "thread-waiting", "unpin");
+    }
     assert!(
         labelled(cx, window, "Unpinned 2 threads, ⌘Z to undo"),
         "unpins stack in one notice"
     );
     assert!(labelled(cx, window, "Undo unpin"));
 
-    offer(cx, "thread-failed", "snooze");
-    assert!(labelled(cx, window, "Snoozed 1 thread, ⌘Z to undo"));
-    offer(cx, "thread-failed", "archive");
-    assert!(
-        labelled(cx, window, "Archived 1 thread, ⌘Z to undo"),
-        "a different kind starts its own notice"
-    );
-
-    // Pinning a thread ends what an older unpin, settle or snooze would restore (`sendPin`).
     cx.update(|cx| {
         app.update(cx, |app, cx| {
-            app.pin_thread("thread-failed".to_owned(), true, cx);
+            app.offer_settle_undo_for_test("thread-waiting", cx)
         });
     });
     render_twice(cx, window);
     assert!(
-        labelled(cx, window, "Archived 1 thread, ⌘Z to undo"),
-        "an archive is not undone by a pin"
+        labelled(cx, window, "Settled 1 thread, ⌘Z to undo"),
+        "a different kind starts its own notice"
     );
 
     // With no server to take the commands, each undo says what failed.
     press(cx, window, "cmd-z");
-    assert!(labelled(cx, window, "Failed to undo archive."));
+    assert!(labelled(cx, window, "Failed to undo settle."));
     for _ in 0..4 {
         cx.executor().advance_clock(Duration::from_secs(6));
         cx.run_until_parked();
     }
     render_twice(cx, window);
-    assert!(!labelled(cx, window, "Failed to undo archive."));
+    assert!(!labelled(cx, window, "Failed to undo settle."));
 }
 
 #[gpui_kit::test]

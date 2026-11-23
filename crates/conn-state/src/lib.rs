@@ -67,8 +67,8 @@ pub use crate::discard_undo::{
     DISCARD_UNDO_SECS, DiscardNotice, DiscardUndo, SettleUndoStep, SettledThreadFacts,
     UNDO_FAILED_NEW_CONTENT, UNDO_FAILED_SETTLE, UNDO_SHORTCUT_LABEL, UndoAction,
     UndoShortcutScene, discard_short_summary, discard_summary, is_modifier_key, is_undo_key,
-    notice_short_summary, notice_summary, notice_undone_summary, plan_archive_undo,
-    plan_settle_undo, plan_snooze_undo, plan_unpin_undo, undo_button_label, undo_failure_text,
+    notice_short_summary, notice_summary, notice_undone_summary, plan_settle_undo,
+    plan_unpin_undo, undo_button_label, undo_failure_text,
     undo_label, undo_shortcut_applies, undone_summary,
 };
 pub use crate::drafts::{

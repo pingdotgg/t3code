@@ -91,8 +91,6 @@ enum ThreadUndoKind {
     Settle,
     /// An unpin.
     Pin,
-    Snooze,
-    Archive,
 }
 
 impl ThreadUndoKind {
@@ -101,8 +99,6 @@ impl ThreadUndoKind {
         match self {
             Self::Settle => conn_state::UndoAction::Settled,
             Self::Pin => conn_state::UndoAction::Unpinned,
-            Self::Snooze => conn_state::UndoAction::Snoozed,
-            Self::Archive => conn_state::UndoAction::Archived,
         }
     }
 }
@@ -119,8 +115,7 @@ enum ForwardNavigation {
 enum UndoEntry {
     /// A discarded draft or thread input.
     Draft(DiscardedDraft),
-    /// A settled, unpinned, snoozed or archived thread, and the commands that put it back as it
-    /// was.
+    /// A settled or unpinned thread, and the commands that put it back as it was.
     Thread {
         thread_id: String,
         kind: ThreadUndoKind,
@@ -3951,9 +3946,9 @@ impl ConnApp {
             conn_state::plan_settle_undo(self.shell.find_thread(&thread_id).map(settle_facts))
         });
         if settled {
-            // Settling supersedes an older unpin or snooze undo, which the server would read as
-            // a promotion that un-settles.
-            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin, ThreadUndoKind::Snooze]);
+            // Settling supersedes an older unpin undo, which the server would read as a promotion
+            // that un-settles.
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin]);
         } else {
             self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Settle]);
         }
@@ -4058,16 +4053,9 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         if pinned {
-            // Pinning clears a snooze and un-settles, so an older unpin, settle or snooze undo
-            // would fight this pin (`sendPin` invalidates them).
-            self.forget_thread_undo(
-                &thread_id,
-                &[
-                    ThreadUndoKind::Pin,
-                    ThreadUndoKind::Settle,
-                    ThreadUndoKind::Snooze,
-                ],
-            );
+            // Pinning un-settles, so an older unpin or settle undo would fight this pin
+            // (`sendPin` invalidates them).
+            self.forget_thread_undo(&thread_id, &[ThreadUndoKind::Pin, ThreadUndoKind::Settle]);
             self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, true), cx);
             return;
         }
@@ -4372,12 +4360,7 @@ impl ConnApp {
         // Deleting ends every undo that restores the thread's place (`expireThreadUndos`).
         self.forget_thread_undo(
             thread_id,
-            &[
-                ThreadUndoKind::Settle,
-                ThreadUndoKind::Snooze,
-                ThreadUndoKind::Pin,
-                ThreadUndoKind::Archive,
-            ],
+            &[ThreadUndoKind::Settle, ThreadUndoKind::Pin],
         );
         // The thread's unsent input goes with it (`clearComposerDraftForThread`).
         let deleted = thread_id.to_owned();

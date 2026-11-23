@@ -18,23 +18,17 @@ pub enum UndoAction {
     Discarded,
     /// A thread was moved to the Settled shelf.
     Settled,
-    /// A thread was snoozed.
-    Snoozed,
     /// A thread was unpinned.
     Unpinned,
-    /// A thread was archived.
-    Archived,
 }
 
 impl UndoAction {
-    /// The word in the notice (`Discarded`, `Settled`, `Snoozed`, `Unpinned`, `Archived`).
+    /// The word in the notice (`Discarded`, `Settled`, `Unpinned`).
     fn past(self) -> &'static str {
         match self {
             Self::Discarded => "Discarded",
             Self::Settled => "Settled",
-            Self::Snoozed => "Snoozed",
             Self::Unpinned => "Unpinned",
-            Self::Archived => "Archived",
         }
     }
 
@@ -53,9 +47,7 @@ impl UndoAction {
         match self {
             Self::Discarded => "discard",
             Self::Settled => "settle",
-            Self::Snoozed => "snooze",
             Self::Unpinned => "unpin",
-            Self::Archived => "archive",
         }
     }
 }
@@ -252,9 +244,7 @@ pub fn undo_failure_text(action: UndoAction) -> &'static str {
     match action {
         UndoAction::Discarded => UNDO_FAILED_NEW_CONTENT,
         UndoAction::Settled => UNDO_FAILED_SETTLE,
-        UndoAction::Snoozed => "Failed to wake thread.",
         UndoAction::Unpinned => "Failed to undo unpin.",
-        UndoAction::Archived => "Failed to undo archive.",
     }
 }
 
@@ -310,14 +300,10 @@ pub struct SettledThreadFacts<'a> {
     pub snoozed_until: Option<&'a str>,
 }
 
-/// One command of an undone settle, unpin, snooze or archive, run in order, each only when the
-/// one before succeeded (`ThreadUndoStep`).
+/// One command of an undone settle or unpin, run in order, each only when the one before
+/// succeeded (`ThreadUndoStep`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettleUndoStep {
-    /// `thread.unsnooze`, the undo of a snooze.
-    Unsnooze,
-    /// `thread.unarchive`, the undo of an archive.
-    Unarchive,
     /// `thread.unsettle`. `restore_unsettled_at` puts the Active anchor back instead of moving
     /// the thread to the top: `None` leaves it to the server, `Some(None)` clears it.
     Unsettle {
@@ -327,8 +313,8 @@ pub enum SettleUndoStep {
     Pin { order_key: Option<String> },
     /// `thread.active.reorder`, to the manual place it had.
     ReorderActive { order_key: String },
-    /// `thread.snooze`, until the time it had. The caller skips it once that time has passed:
-    /// the server refuses a wake time in the past.
+    /// `thread.snooze`, until the time another client had set. The caller skips it once that
+    /// time has passed: the server refuses a wake time in the past.
     Snooze { snoozed_until: String },
 }
 
@@ -377,60 +363,26 @@ pub fn plan_unpin_undo(thread: Option<SettledThreadFacts<'_>>) -> Vec<SettleUndo
     steps
 }
 
-/// The commands that wake a snoozed thread again (`planThreadUndo("snooze")`).
-#[must_use]
-pub fn plan_snooze_undo() -> Vec<SettleUndoStep> {
-    vec![SettleUndoStep::Unsnooze]
-}
-
-/// The commands that bring an archived thread back (`unarchiveThread`).
-#[must_use]
-pub fn plan_archive_undo() -> Vec<SettleUndoStep> {
-    vec![SettleUndoStep::Unarchive]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn unpin_snooze_and_archive_notices_read_like_conns() {
+    fn unpin_notices_read_like_conns() {
         let notice = |action, count| DiscardNotice { action, count };
         assert_eq!(
             notice_summary(notice(UndoAction::Unpinned, 1)),
             "Unpinned 1 thread"
         );
         assert_eq!(
-            notice_summary(notice(UndoAction::Snoozed, 2)),
-            "Snoozed 2 threads"
-        );
-        assert_eq!(
-            notice_summary(notice(UndoAction::Archived, 3)),
-            "Archived 3 threads"
-        );
-        assert_eq!(
             notice_short_summary(notice(UndoAction::Unpinned, 1)),
             "Unpinned,"
-        );
-        assert_eq!(
-            notice_short_summary(notice(UndoAction::Archived, 2)),
-            "Archived 2,"
-        );
-        assert_eq!(
-            notice_undone_summary(notice(UndoAction::Snoozed, 1)),
-            "Undid snooze of 1 thread"
         );
         assert_eq!(
             notice_undone_summary(notice(UndoAction::Unpinned, 2)),
             "Undid unpin of 2 threads"
         );
-        assert_eq!(
-            notice_undone_summary(notice(UndoAction::Archived, 1)),
-            "Undid archive of 1 thread"
-        );
         assert_eq!(undo_button_label(UndoAction::Unpinned), "Undo unpin");
-        assert_eq!(undo_button_label(UndoAction::Archived), "Undo archive");
-        assert_eq!(undo_button_label(UndoAction::Snoozed), "Undo snooze");
     }
 
     #[test]
@@ -442,14 +394,6 @@ mod tests {
         assert_eq!(
             undo_failure_text(UndoAction::Unpinned),
             "Failed to undo unpin."
-        );
-        assert_eq!(
-            undo_failure_text(UndoAction::Archived),
-            "Failed to undo archive."
-        );
-        assert_eq!(
-            undo_failure_text(UndoAction::Snoozed),
-            "Failed to wake thread."
         );
         assert_eq!(
             undo_failure_text(UndoAction::Discarded),
@@ -482,8 +426,6 @@ mod tests {
             ],
             "pinning clears a snooze, so it is restored after the pin"
         );
-        assert_eq!(plan_snooze_undo(), vec![SettleUndoStep::Unsnooze]);
-        assert_eq!(plan_archive_undo(), vec![SettleUndoStep::Unarchive]);
     }
 
     fn discarded(count: usize) -> DiscardNotice {

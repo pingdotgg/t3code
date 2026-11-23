@@ -637,43 +637,6 @@ pub fn snooze_thread(
     }))
 }
 
-/// `thread.unsnooze`: wake a snoozed thread (the undo of a snooze).
-///
-/// # Errors
-///
-/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
-/// [`OrchestrationV2Command`].
-pub fn unsnooze_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
-    conn_contract::from_json(json!({
-        "type": "thread.unsnooze",
-        "commandId": new_id("cmd"),
-        "threadId": thread_id,
-        "reason": "user",
-    }))
-}
-
-/// `thread.archive` / `thread.unarchive`: move a thread out of or back into the lists.
-///
-/// # Errors
-///
-/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
-/// [`OrchestrationV2Command`].
-pub fn archive_thread(
-    thread_id: &str,
-    archived: bool,
-) -> Result<OrchestrationV2Command, serde_json::Error> {
-    let kind = if archived {
-        "thread.archive"
-    } else {
-        "thread.unarchive"
-    };
-    conn_contract::from_json(json!({
-        "type": kind,
-        "commandId": new_id("cmd"),
-        "threadId": thread_id,
-    }))
-}
-
 /// `thread.metadata.update`: rename `thread_id` to `title`.
 ///
 /// # Errors
@@ -923,11 +886,6 @@ mod tests {
         assert!(
             snooze_thread("t1", "2026-01-03T00:00:00Z").is_ok(),
             "thread.snooze decodes"
-        );
-        assert!(unsnooze_thread("t1").is_ok(), "thread.unsnooze decodes");
-        assert!(
-            archive_thread("t1", true).is_ok() && archive_thread("t1", false).is_ok(),
-            "thread.archive and thread.unarchive decode"
         );
         assert!(
             settle_thread("t1", false).is_ok(),
