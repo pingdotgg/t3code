@@ -49,11 +49,21 @@ export class PullRequestUrlUnavailableError extends Schema.TaggedError<PullReque
   }
 }
 
+export class PullRequestRepositoryInvalidError extends Schema.TaggedError<PullRequestRepositoryInvalidError>()(
+  "PullRequestRepositoryInvalidError",
+  { pathHint: Schema.String },
+) {
+  override get message(): string {
+    return `Pass repository as ${this.pathHint}, without the host, or pass url.`;
+  }
+}
+
 export type PullRequestTargetError =
   | PullRequestUrlInvalidError
   | PullRequestTargetIncompleteError
   | PullRequestHostRequiredError
-  | PullRequestUrlUnavailableError;
+  | PullRequestUrlUnavailableError
+  | PullRequestRepositoryInvalidError;
 
 export interface ResolvedTarget {
   readonly host: string;
@@ -104,17 +114,20 @@ export const resolveTarget = Effect.fn("PullRequestsToolkit.resolveTarget")(func
   const kind =
     sourceControlDefinitions.findByPublicHost(host)?.kind ??
     (recognizedKind === "gitcafe" ? recognizedKind : projectHost.kind);
-  const url =
-    kind === null
-      ? null
-      : sourceControlDefinitions.get(kind).changeRequestUrl({
-          host,
-          repository,
-          number: input.number,
-          remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
-        });
-  if (url === null) {
+  const definition = kind === null ? null : sourceControlDefinitions.get(kind);
+  if (definition === null || definition.kind === "unknown") {
     return yield* new PullRequestUrlUnavailableError({});
+  }
+  const url = definition.changeRequestUrl({
+    host,
+    repository,
+    number: input.number,
+    remoteUrl: project?.repositoryIdentity?.locator.remoteUrl,
+  });
+  if (url === null) {
+    return yield* new PullRequestRepositoryInvalidError({
+      pathHint: definition.repositoryPathHint,
+    });
   }
   return {
     ...normalizeThreadPullRequestKey({ host, repository, number: input.number, url }),
