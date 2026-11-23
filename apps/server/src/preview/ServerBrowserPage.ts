@@ -962,8 +962,10 @@ const focusedTextField = async (page: Page, timeout: number) => {
   );
 };
 
-// Inputs that read keystrokes segment by segment; only fill sets their value as written.
-const FILL_ONLY_INPUT_TYPES = ["date", "time", "datetime-local", "month", "week"];
+// Inputs whose value only fill sets as written; fill also rejects "" for color and range.
+const FILL_ONLY_INPUT_TYPES = ["date", "time", "datetime-local", "month", "week", "color", "range"];
+// Key events cost a few CDP calls per character; longer text is inserted to stay within timeouts.
+const MAX_KEYED_TEXT_LENGTH = 500;
 
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -994,6 +996,10 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   }
   // Pages that build their value from keydown never see insertText, but keyboard.type
   // would press Enter or Tab for control characters, so those stay literal text.
+  if (input.text.length > MAX_KEYED_TEXT_LENGTH) {
+    await page.keyboard.insertText(input.text);
+    return;
+  }
   for (const [run] of input.text.matchAll(/[\n\r\t]+|[^\n\r\t]+/g)) {
     if (/^[\n\r\t]/.test(run)) await page.keyboard.insertText(run);
     else await page.keyboard.type(run);

@@ -434,6 +434,12 @@ describe("server browser element refs", () => {
     expect(await page.locator("#t").getAttribute("data-sent")).toBeNull();
     await ServerBrowserPage.type(page, { locator: "#d", text: "2024-03-15", clear: true });
     expect(await page.locator("#d").inputValue()).toBe("2024-03-15");
+
+    await page.setContent(`<input id="c" type="color"><input id="r" type="range">`);
+    await ServerBrowserPage.type(page, { locator: "#c", text: "#ff0000", clear: true });
+    expect(await page.locator("#c").inputValue()).toBe("#ff0000");
+    await ServerBrowserPage.type(page, { locator: "#r", text: "30", clear: true });
+    expect(await page.locator("#r").inputValue()).toBe("30");
   });
 
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
