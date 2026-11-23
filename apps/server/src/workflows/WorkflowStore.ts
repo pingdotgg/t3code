@@ -349,6 +349,10 @@ export class WorkflowStore extends Context.Service<
       readonly workflow?: string | undefined;
       readonly status?: WorkflowRunStatus | undefined;
       readonly keyPrefix?: string | undefined;
+      /** Runs that gave themselves this tag. */
+      readonly tag?: string | undefined;
+      /** Runs with a question of this kind open. */
+      readonly kind?: string | undefined;
     }) => Effect.Effect<ReadonlyArray<RunRow>>;
     readonly triggerNext: (triggerId: string) => Effect.Effect<string | undefined>;
     readonly triggerSet: (triggerId: string, nextAt: string) => Effect.Effect<void>;
@@ -1006,6 +1010,15 @@ export const make = Effect.gen(function* () {
           AND (${filter.status ?? null} IS NULL OR status = ${filter.status ?? null})
           AND (${prefix} IS NULL OR (
             idempotency_key >= ${prefix} AND idempotency_key < ${`${prefix ?? ""}\u{10FFFF}`}
+          ))
+          AND (${filter.tag ?? null} IS NULL OR EXISTS (
+            SELECT 1 FROM json_each(workflow_runs.tags_json) WHERE value = ${filter.tag ?? null}
+          ))
+          AND (${filter.kind ?? null} IS NULL OR EXISTS (
+            SELECT 1 FROM workflow_waits w
+            WHERE w.run_id = workflow_runs.run_id AND w.request_json IS NOT NULL
+              AND w.signalled_at IS NULL
+              AND json_extract(w.request_json, '$.kind') = ${filter.kind ?? null}
           ))
         ORDER BY started_at DESC, rowid DESC LIMIT 500
       `.pipe(Effect.orDie);

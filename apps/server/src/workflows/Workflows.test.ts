@@ -384,6 +384,32 @@ const sorter = workflow(
     }),
 );
 
+/** Finds the sorter's runs by tag or by the kind of question they have open, from a step. */
+const finder = workflow(
+  "finder",
+  {
+    version: 1,
+    payload: Schema.Struct({
+      tag: Schema.optional(Schema.String),
+      kind: Schema.optional(Schema.String),
+    }),
+    returns: Schema.Array(Schema.String),
+  },
+  (payload) =>
+    step(
+      "find",
+      { returns: Schema.Array(Schema.String), ...once },
+      Effect.map(
+        runs({
+          workflow: sorter,
+          ...(payload.tag === undefined ? {} : { tag: payload.tag }),
+          ...(payload.kind === undefined ? {} : { kind: payload.kind }),
+        }),
+        (found) => found.map((run) => `${run.key} ${run.tags.join(",")}`),
+      ),
+    ),
+);
+
 /** Waits at a gate with others, until whoever keeps it lets everyone through. */
 const gate = workflow(
   "gate",
@@ -736,6 +762,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
     ...definitions(counts, failures, latch),
     fix,
     sorter,
+    finder,
     ...triggered,
     ...family,
     ...control,
@@ -1869,6 +1896,18 @@ it.effect(
           const paused = yield* workflows.waitFor(typo.runId, status("paused"));
           assert.include(paused.detail, `kind "feture", which workflow sorter does not declare`);
           assert.include(paused.detail, `It declares "feature", "intended".`);
+
+          const find = Effect.fn(function* (key: string, filter: { tag?: string; kind?: string }) {
+            const run = yield* workflows.start("finder", filter, { idempotencyKey: key });
+            return (yield* workflows.waitFor(run.runId, status("completed"))).result;
+          });
+          // Both tagged; only the first has its feature question open.
+          assert.deepStrictEqual(yield* find("by-tag", { tag: "backlog" }), [
+            "s2 pr,backlog",
+            "s1 pr,backlog",
+          ]);
+          assert.deepStrictEqual(yield* find("by-other-tag", { tag: "nope" }), []);
+          assert.deepStrictEqual(yield* find("by-kind", { kind: "feature" }), ["s1 pr,backlog"]);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

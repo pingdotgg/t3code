@@ -57,6 +57,7 @@ export interface RunSummary {
   readonly title: string;
   readonly status: WorkflowRunStatus;
   readonly detail: string | null;
+  readonly tags: ReadonlyArray<string>;
   readonly startedAt: string;
   readonly endedAt: string | null;
 }
@@ -64,6 +65,8 @@ export interface RunFilter {
   readonly workflow?: string | undefined;
   readonly status?: WorkflowRunStatus | undefined;
   readonly keyPrefix?: string | undefined;
+  readonly tag?: string | undefined;
+  readonly kind?: string | undefined;
 }
 
 /** Signals from the step that is running. Its signals are numbered, so a retry sends the same ones. */
@@ -440,19 +443,24 @@ export const cancel = (runId: string, reason: string) =>
   Effect.flatMap(Runs, (runs) => runs.cancel(runId, reason));
 
 /**
- * Find runs: of one workflow, in one status, or started with a key that begins with `keyPrefix`.
+ * Find runs: of one workflow, in one status, started with a key that begins with `keyPrefix`,
+ * tagged `tag`, or with a question of `kind` open.
  * Newest first, 500 at most. Inside `step` or `onEnd` only: the answer changes over time.
  */
 export const runs = (filter?: {
   readonly workflow?: WorkflowName;
   readonly status?: WorkflowRunStatus;
   readonly keyPrefix?: string;
+  readonly tag?: string;
+  readonly kind?: string;
 }) =>
   Effect.flatMap(Runs, (all) => {
-    checkOptions("runs", filter, ["workflow", "status", "keyPrefix"]);
+    checkOptions("runs", filter, ["workflow", "status", "keyPrefix", "tag", "kind"]);
     return all.list({
       workflow: filter?.workflow === undefined ? undefined : nameOf(filter.workflow),
       status: filter?.status,
       keyPrefix: filter?.keyPrefix,
+      tag: filter?.tag,
+      kind: filter?.kind,
     });
   });

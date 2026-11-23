@@ -1,8 +1,10 @@
 import { type EnvironmentId, type WorkflowRunReference } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { WorkflowIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
+import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -101,7 +103,12 @@ export function WorkflowRunsView({
   const live = useEnvironmentQuery(serverEnvironment.workflowsLive({ environmentId, input: {} }));
   const [pickedTab, setPickedTab] = useState<WorkflowListTab | null>(null);
   const [workflow, setWorkflow] = useState(EVERY_WORKFLOW);
-  const [pickedKind, setPickedKind] = useState(EVERY_KIND);
+  // Kept per environment: a kind is something its workflows declare.
+  const [pickedKind, setPickedKind] = useLocalStorage(
+    `t3code:workflows-question-kind:${environmentId}`,
+    EVERY_KIND,
+    Schema.String,
+  );
   const gt = useGT();
   const m = useMessages();
   const [showSkipped, setShowSkipped] = useState(false);

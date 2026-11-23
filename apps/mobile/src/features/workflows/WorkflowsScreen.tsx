@@ -3,6 +3,8 @@ import {
   groupWorkflowRuns,
   listedWorkflowRuns,
   workflowChip,
+  workflowKindCounts,
+  workflowRunAsksKind,
   workflowRunLists,
   workflowRunNow,
   workflowRunState,
@@ -26,6 +28,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
+import { ListFilterMenu } from "../layout/workspace/ListFilterMenu";
 import { useEnvironments } from "../../state/environments";
 import { formatEnvironmentQueryError } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -113,6 +116,8 @@ function EnvironmentRuns(props: {
   readonly label: string | null;
   readonly snapshot: WorkflowRunsSnapshot;
   readonly tab: WorkflowListTab;
+  /** Only runs asking this kind of question; undefined for every run. */
+  readonly kind: string | null | undefined;
 }) {
   const navigation = useNavigation();
   const gt = useGT();
@@ -122,7 +127,7 @@ function EnvironmentRuns(props: {
   const visible = listedWorkflowRuns(snapshot.runs, showSkipped);
   const listed = workflowRunLists(
     groupWorkflowRuns(snapshot.workflows, visible.runs, snapshot.questions),
-  )[tab];
+  )[tab].filter((node) => props.kind === undefined || workflowRunAsksKind(node, props.kind));
   return (
     <View>
       {props.label === null ? null : (
@@ -165,12 +170,24 @@ function EnvironmentRuns(props: {
   );
 }
 
+const EVERY_KIND = "every";
+const kindId = (kind: string | null) => (kind === null ? "other" : `kind:${kind}`);
+const needsYou = (snapshot: WorkflowRunsSnapshot) =>
+  workflowRunLists(
+    groupWorkflowRuns(
+      snapshot.workflows,
+      listedWorkflowRuns(snapshot.runs, false).runs,
+      snapshot.questions,
+    ),
+  )["needs-you"];
+
 const TAB_ORDER: ReadonlyArray<WorkflowListTab> = ["needs-you", "running", "all"];
 
 /** The Workflows tab: what waits on you first, in every environment this device is connected to. */
 export function WorkflowsScreen() {
   const { environments, isReady } = useEnvironments();
   const [tab, setTab] = useState<WorkflowListTab | null>(null);
+  const [pickedKind, setPickedKind] = useState(EVERY_KIND);
   const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
@@ -211,6 +228,17 @@ export function WorkflowsScreen() {
       ),
     ) ?? "all";
   const shown = tab ?? opening;
+  const kinds =
+    shown === "needs-you"
+      ? workflowKindCounts(
+          withRuns.flatMap(({ snapshot }) => snapshot.workflows),
+          withRuns.flatMap(({ snapshot }) => needsYou(snapshot)),
+        )
+      : [];
+  const showKinds = kinds.some((entry) => entry.kind !== null);
+  // A kind with nothing left to answer shows everything, not an empty list.
+  const kind = showKinds ? kinds.find((entry) => kindId(entry.kind) === pickedKind) : undefined;
+  const otherLabel = gt("Other", { $context: "questions a workflow asked without a kind" });
   return (
     <ScreenScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -248,6 +276,33 @@ export function WorkflowsScreen() {
               role="tab"
             />
           </View>
+          {showKinds ? (
+            <View className="flex-row px-5 pb-2">
+              <ListFilterMenu
+                label={
+                  kind === undefined ? gt("Every kind of question") : (kind.label ?? otherLabel)
+                }
+                active={kind !== undefined}
+                accessibilityLabel={gt("Kind of question", {
+                  $context: "picker that filters waiting runs by the kind of question they ask",
+                })}
+                actions={[
+                  {
+                    id: EVERY_KIND,
+                    title: gt("Every kind of question"),
+                    state: kind === undefined ? "on" : "off",
+                  },
+                  ...kinds.map((entry) => ({
+                    id: kindId(entry.kind),
+                    title: entry.label ?? otherLabel,
+                    subtitle: String(entry.count),
+                    state: kind?.kind === entry.kind ? ("on" as const) : ("off" as const),
+                  })),
+                ]}
+                onSelect={setPickedKind}
+              />
+            </View>
+          ) : null}
           {withRuns.map(({ environment, snapshot }) => (
             <EnvironmentRuns
               key={environment.environmentId}
@@ -255,6 +310,7 @@ export function WorkflowsScreen() {
               label={environments.length > 1 ? environment.label : null}
               snapshot={snapshot}
               tab={shown}
+              kind={kind?.kind}
             />
           ))}
         </>

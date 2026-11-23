@@ -956,6 +956,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         title: row.title,
         status: row.status,
         detail: row.detail,
+        tags: WorkflowStore.jsonValue(row.tags_json) as ReadonlyArray<string>,
         startedAt: row.started_at,
         endedAt: row.ended_at,
       }));
