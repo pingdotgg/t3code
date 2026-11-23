@@ -1044,6 +1044,7 @@ function WebhookDeliveriesDialog({
                 </p>
               ) : null}
               <DeliveryBlock
+                dir="auto"
                 title={
                   selected.pendingWindow ? gt("Scheduled run") : gt("Prompt sent to the agent")
                 }
@@ -1068,7 +1069,10 @@ function WebhookDeliveriesDialog({
               {selected.query ? (
                 <DeliveryBlock title={gt("Query")}>{selected.query}</DeliveryBlock>
               ) : null}
-              <DeliveryBlock title={selected.bodyTruncated ? gt("Body (truncated)") : gt("Body")}>
+              <DeliveryBlock
+                dir={selected.body ? "ltr" : "auto"}
+                title={selected.bodyTruncated ? gt("Body (truncated)") : gt("Body")}
+              >
                 {selected.body || gt("(empty)")}
               </DeliveryBlock>
             </div>
@@ -1141,12 +1145,20 @@ function WebhookDeliveriesDialog({
   );
 }
 
-function DeliveryBlock({ title, children }: { title: string; children: ReactNode }) {
+function DeliveryBlock({
+  title,
+  dir = "ltr",
+  children,
+}: {
+  title: string;
+  dir?: "ltr" | "rtl" | "auto";
+  children: ReactNode;
+}) {
   return (
     <div className="space-y-1">
       <Label>{title}</Label>
       <pre
-        dir="ltr"
+        dir={dir}
         className="max-h-64 overflow-auto rounded-md bg-muted p-2 text-xs whitespace-pre-wrap break-all"
       >
         {children}

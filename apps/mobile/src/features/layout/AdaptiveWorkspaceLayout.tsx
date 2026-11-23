@@ -352,9 +352,13 @@ function AdaptiveWorkspaceLayoutContent(
     setWindowHinge(nextWindow);
   };
   const layout = useMemo(() => {
+    const leadingHinge =
+      hinge && I18nManager.isRTL
+        ? { x: viewportWidth - hinge.x - hinge.width, width: hinge.width }
+        : hinge;
     const aligned = alignListPaneToHinge({
       layout: baseLayout,
-      hinge,
+      hinge: leadingHinge,
       viewportWidth,
       leadingWidth: navigationRailWidth,
     });

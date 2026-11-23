@@ -36,11 +36,8 @@ function AutocompleteInput({
       )}
       <AutocompletePrimitive.Input
         className={cn(
-          startAddon &&
-            "data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=autocomplete-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=autocomplete-input]:ps-[calc(--spacing(8)-1px)]",
-          sizeValue === "sm"
-            ? "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-6.5"
-            : "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:*:data-[slot=autocomplete-input]:pe-7",
+          startAddon && "data-[size=sm]:ps-5 ps-5.5 sm:data-[size=sm]:ps-4.5 sm:ps-5",
+          "has-[+[data-slot=autocomplete-trigger],+[data-slot=autocomplete-clear]]:pe-4.5",
           className,
         )}
         data-slot="autocomplete-input"

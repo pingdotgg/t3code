@@ -15,9 +15,11 @@ export function WorkspacePageHeader({
   return (
     <header
       className={cn(
-        "flex h-[var(--workspace-topbar-height)]! min-h-[var(--workspace-topbar-height)]! max-h-[var(--workspace-topbar-height)]! shrink-0 items-center gap-3 ps-(--workspace-gutter-start) pe-(--workspace-gutter-end) [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left,padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
+        "flex h-[var(--workspace-topbar-height)]! min-h-[var(--workspace-topbar-height)]! max-h-[var(--workspace-topbar-height)]! shrink-0 items-center gap-3 ps-(--workspace-gutter-start) [[data-panel-animations=true]_&]:motion-safe:transition-[padding-left,padding-right] [[data-panel-animations=true]_&]:motion-safe:duration-(--panel-animation-duration) [[data-panel-animations=true]_&]:motion-safe:ease-out",
         electron && "drag-region",
-        reserveNativeControls && "wco:pr-(--workspace-native-controls-inset)",
+        reserveNativeControls
+          ? "pe-(--workspace-page-header-end-inset) wco:pr-(--workspace-native-controls-inset)"
+          : "pe-(--workspace-gutter-end)",
         COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
         className,
       )}

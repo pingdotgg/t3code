@@ -3099,9 +3099,9 @@ function OpenCommandPaletteDialog(props: {
       inputProps={{
         dir: isBrowsing || addProjectCloneFlow?.step === "repository" ? "ltr" : undefined,
         className: hasHighlightedNewProjectItem
-          ? "*:data-[slot=autocomplete-input]:pe-38!"
+          ? "pe-35!"
           : addProjectCloneFlow?.step === "repository" || newProjectFlow !== null
-            ? "*:data-[slot=autocomplete-input]:pe-32!"
+            ? "pe-29!"
             : isBrowsing
               ? browseInputEndPaddingClass({
                   willCreateProjectPath,
