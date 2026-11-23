@@ -1959,9 +1959,11 @@ describe("ClaudeAdapterV2 MCP elicitation acceptance", () => {
 const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(function* (
   binaryPath: string,
   environment: ResolvedProviderInstanceEnvironment = [],
+  afterBuild: () => void = () => {},
 ) {
   const executablePaths: Array<string | undefined> = [];
   const taskToolEnvironment: Array<string | undefined> = [];
+  const proxyEnvironment: Array<string | undefined> = [];
   const adapter = yield* ClaudeAdapterV2.createClaudeAdapterV2(
     {
       instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
@@ -1983,6 +1985,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
         Effect.sync(() => {
           executablePaths.push(input.options.pathToClaudeCodeExecutable);
           taskToolEnvironment.push(input.options.env?.CLAUDE_CODE_ENABLE_TODO_TOOLS);
+          proxyEnvironment.push(input.options.env?.HTTPS_PROXY);
           return {
             messages: Stream.never,
             offer: () => Effect.void,
@@ -2009,6 +2012,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
       assertComplete: Effect.void,
     }),
   );
+  afterBuild();
   const threadId = ThreadId.make("thread-claude-binary-path");
   const runtime = yield* adapter.openSession({
     threadId,
@@ -2031,7 +2035,7 @@ const captureSdkExecutablePaths = Effect.fn("captureSdkExecutablePaths")(functio
       attachments: [],
     }),
   );
-  return { executablePaths, taskToolEnvironment };
+  return { executablePaths, taskToolEnvironment, proxyEnvironment };
 });
 
 describe("ClaudeAdapterV2 executable path", () => {
@@ -2047,6 +2051,32 @@ describe("ClaudeAdapterV2 executable path", () => {
         );
 
         assert.deepEqual(executablePaths, [packageExe]);
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          ProviderInstallationGate.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 host environment", () => {
+  it.effect("gives a session the proxy desktop shell discovery delivered after the build", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const host: NodeJS.ProcessEnv = { ...process.env };
+        delete host.HTTPS_PROXY;
+        const { proxyEnvironment } = yield* captureSdkExecutablePaths(process.execPath, [], () => {
+          host.HTTPS_PROXY = "http://proxy.corp:8080";
+        }).pipe(Effect.provideService(HostProcess.Environment, host));
+
+        assert.deepEqual(proxyEnvironment, ["http://proxy.corp:8080"]);
       }),
     ).pipe(
       Effect.provide(

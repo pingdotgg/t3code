@@ -103,7 +103,8 @@ function claudeErrorResult(stdout: string): string | undefined {
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
-  environment?: NodeJS.ProcessEnv,
+  /** A function is called per request, for an environment that changes after startup. */
+  environment?: NodeJS.ProcessEnv | (() => NodeJS.ProcessEnv),
   modelCatalog: Effect.Effect<ClaudeModelCatalog> = Effect.succeed(BUNDLED_CLAUDE_MODEL_CATALOG),
   routeModelCatalog: (
     catalog: ClaudeModelCatalog,
@@ -114,7 +115,12 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const serverConfig = yield* ServerConfig.ServerConfig;
-  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const resolveEnvironment = Effect.suspend(() =>
+    makeClaudeEnvironment(
+      claudeSettings,
+      typeof environment === "function" ? environment() : environment,
+    ),
+  ).pipe(Effect.provideService(Path.Path, path));
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
@@ -287,6 +293,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       const streamJson = withImages && imageStdin !== undefined;
       const stdin = streamJson ? imageStdin : prompt;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
+      const claudeEnvironment = yield* resolveEnvironment;
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
         [

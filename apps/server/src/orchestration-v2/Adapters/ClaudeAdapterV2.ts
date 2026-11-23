@@ -193,6 +193,7 @@ import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { withHostEnvironmentChanges } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -15292,11 +15293,8 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const installationGate = yield* ProviderInstallationGate.ProviderInstallationGate;
-    const baseEnvironment = yield* mergeClaudeProcessEnvironment(
-      config,
-      environment,
-      hostEnvironment,
-    );
+    const hostAtBuild = { ...hostEnvironment };
+    const baseEnvironment = yield* mergeClaudeProcessEnvironment(config, environment, hostAtBuild);
     const claudeEnvironment = yield* makeClaudeEnvironment(config, baseEnvironment);
     const path = yield* Path.Path;
     const random = yield* SecureRandom.SecureRandom;
@@ -15307,7 +15305,10 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     return yield* makeClaudeAdapterV2({
       instanceId,
       settings: { ...config, enabled, binaryPath },
-      environment: claudeEnvironment,
+      // Read at each use, so sessions get what desktop shell discovery delivered after this ran.
+      get environment() {
+        return withHostEnvironmentChanges(hostEnvironment, hostAtBuild, claudeEnvironment);
+      },
       attachmentsDir: serverConfig.attachmentsDir,
       fileSystem,
       path,

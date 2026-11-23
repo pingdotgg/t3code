@@ -31,3 +31,22 @@ export const mergeProviderInstanceEnvironment = Effect.fn(function* (
   }
   return next;
 });
+
+/**
+ * `derived` was built from `base`, a copy of `host` taken at that moment. Returns `derived` plus
+ * what the host changed since, except where `derived` set its own value: desktop shell discovery
+ * patches the host environment after drivers are built.
+ */
+export function withHostEnvironmentChanges(
+  host: NodeJS.ProcessEnv,
+  base: NodeJS.ProcessEnv,
+  derived: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const next = { ...derived };
+  for (const name of new Set([...Object.keys(base), ...Object.keys(host)])) {
+    if (host[name] === base[name] || derived[name] !== base[name]) continue;
+    if (host[name] === undefined) delete next[name];
+    else next[name] = host[name];
+  }
+  return next;
+}

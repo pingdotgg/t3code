@@ -5,7 +5,10 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
-import { mergeProviderInstanceEnvironment } from "./instanceEnvironment.ts";
+import {
+  mergeProviderInstanceEnvironment,
+  withHostEnvironmentChanges,
+} from "./instanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
   it.effect.each([
@@ -112,4 +115,38 @@ describe("mergeProviderInstanceEnvironment", () => {
       });
     }),
   );
+});
+
+describe("withHostEnvironmentChanges", () => {
+  it("follows the host except where the derived environment set its own value", () => {
+    const host: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      HOME: "/home/ada",
+      REMOVED: "old",
+      DROPPED: "host",
+      NO_PROXY: "host",
+    };
+    const base = { ...host };
+    const derived: NodeJS.ProcessEnv = {
+      PATH: "/usr/bin",
+      HOME: "/home/ada",
+      REMOVED: "old",
+      NO_PROXY: "instance",
+      ADDED: "derived",
+    };
+
+    host.PATH = "/opt/homebrew/bin:/usr/bin";
+    host.HTTPS_PROXY = "http://proxy.corp:8080";
+    host.NO_PROXY = "discovered";
+    host.DROPPED = "changed";
+    delete host.REMOVED;
+
+    expect(withHostEnvironmentChanges(host, base, derived)).toEqual({
+      PATH: "/opt/homebrew/bin:/usr/bin",
+      HOME: "/home/ada",
+      HTTPS_PROXY: "http://proxy.corp:8080",
+      NO_PROXY: "instance",
+      ADDED: "derived",
+    });
+  });
 });

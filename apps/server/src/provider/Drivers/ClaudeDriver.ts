@@ -18,6 +18,7 @@ import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGenerat
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as ServerConfig from "../../config.ts";
+import { withHostEnvironmentChanges } from "@t3tools/provider-core/server/instanceEnvironment";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -121,7 +122,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const modelCatalog = catalogService
       .current(DRIVER_KIND)
       .pipe(Effect.map(resolveClaudeModelCatalog));
-    const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, process.env);
+    const hostAtBuild = { ...process.env };
+    const processEnv = yield* mergeClaudeProcessEnvironment(config, environment, hostAtBuild);
+    // Launches read this, so they get what desktop shell discovery delivered after the driver was built.
+    const currentProcessEnv = () =>
+      withHostEnvironmentChanges(process.env, hostAtBuild, processEnv);
     const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER_KIND,
       instanceId,
@@ -133,7 +138,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     } satisfies ClaudeSettings;
     const resolveMaintenance = yield* makeClaudeMaintenanceResolution({
       binaryPath: effectiveConfig.binaryPath,
-      env: processEnv,
+      get env() {
+        return currentProcessEnv();
+      },
     }).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -205,7 +212,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     );
     const textGeneration = yield* makeClaudeTextGeneration(
       effectiveConfig,
-      processEnv,
+      currentProcessEnv,
       modelCatalog,
       modelRoutes.route,
     );
@@ -216,7 +223,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const lastGoodCapabilities = yield* Ref.make<ClaudeCapabilitiesProbe | undefined>(undefined);
     const capabilitiesProbeCache = yield* Cache.makeWith(
       () =>
-        probeClaudeCapabilities(effectiveConfig, processEnv, stateDir).pipe(
+        probeClaudeCapabilities(effectiveConfig, currentProcessEnv(), stateDir).pipe(
           Effect.flatMap((capabilities) =>
             ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath).pipe(
               Effect.map((workspaceId) => ({
@@ -280,7 +287,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             checkClaudeProviderStatus(
               effectiveConfig,
               () => resolveCapabilities,
-              processEnv,
+              currentProcessEnv(),
               stateDir,
               catalog,
               scopedLimitNames,
@@ -433,7 +440,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       snapshotForCwd: (cwd: string) =>
         snapshot.getSnapshot.pipe(
           Effect.flatMap((machineSnapshot) =>
-            probeClaudeWorkspaceSnapshot(effectiveConfig, machineSnapshot, cwd, processEnv),
+            probeClaudeWorkspaceSnapshot(
+              effectiveConfig,
+              machineSnapshot,
+              cwd,
+              currentProcessEnv(),
+            ),
           ),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),

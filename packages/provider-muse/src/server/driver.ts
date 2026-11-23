@@ -33,7 +33,10 @@ import {
   type ProviderDriver,
   type ProviderInstance,
 } from "@t3tools/provider-core/server/driver";
-import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import {
+  mergeProviderInstanceEnvironment,
+  withHostEnvironmentChanges,
+} from "@t3tools/provider-core/server/instanceEnvironment";
 import {
   makeCachedProviderMaintenanceResolution,
   resolveProviderMaintenanceCapabilitiesEffect,
@@ -87,21 +90,14 @@ export const MuseDriver: ProviderDriver<
     const { cwd } = host.paths;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const hostEnvironment = yield* HostProcess.Environment;
-    const windows = (yield* HostProcess.Platform) === "win32";
-    const instanceEnvironment = yield* mergeProviderInstanceEnvironment(environment, {});
-    const instanceNames = new Set(Object.keys(instanceEnvironment));
-    // Read per launch: desktop shell discovery fills the host environment after drivers are built.
+    const hostAtBuild = { ...hostEnvironment };
     // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-    const processEnvironment = (): NodeJS.ProcessEnv => {
-      const inherited = makeMuseEnvironment(hostEnvironment);
-      // Windows reads names without regard to case; the instance value replaces any spelling.
-      if (windows) {
-        for (const name of Object.keys(inherited)) {
-          if (instanceNames.has(name.toUpperCase())) delete inherited[name];
-        }
-      }
-      return { ...inherited, ...instanceEnvironment };
-    };
+    const builtEnvironment = yield* mergeProviderInstanceEnvironment(
+      environment,
+      makeMuseEnvironment(hostAtBuild),
+    );
+    const processEnvironment = () =>
+      withHostEnvironmentChanges(hostEnvironment, hostAtBuild, builtEnvironment);
     const effectiveConfig = {
       ...config,
       enabled,
