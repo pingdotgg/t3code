@@ -491,7 +491,7 @@ it("restores bounded history across append compaction, clears and split Unicode"
 
 it("stops holding a control sequence that outgrows its limit", () => {
   const stringLimit = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
-  const csiLimit = 4_096;
+  const csiLimit = 65_536;
   // No final byte for a CSI and no terminator for a string.
   const digits = "0123456789 123\r\n".repeat(64);
   // History gets one ST where a sequence is dropped.

@@ -1397,9 +1397,9 @@ const NEXT_HISTORY_SEQUENCE_START = new RegExp(HISTORY_SEQUENCE_START.source, "g
 // Clients keep this much output and drop a sequence their cut goes through, so none of them
 // could replay a longer string whole.
 const MAX_HELD_STRING_LENGTH = DEFAULT_MAX_TERMINAL_BUFFER_BYTES;
-// A real CSI is short, because it carries no payload and libghostty runs one only when it has
-// at most 24 parameters. Each chunk rescans the held text, so this also bounds that work.
-const MAX_HELD_CSI_LENGTH = 4_096;
+// A CSI carries no payload, but zero-padded parameters still make a setter long. Each chunk
+// rescans the held CSI, so this bounds that work.
+const MAX_HELD_CSI_LENGTH = 65_536;
 // The ESC and four intermediates. libghostty ignores every intermediate past the fourth, so a
 // held escape sequence cut to this replays the same.
 const MAX_HELD_ESCAPE_LENGTH = 5;
