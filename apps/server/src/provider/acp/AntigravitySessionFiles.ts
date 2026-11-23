@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import { protoEntries, protoFields } from "./AntigravityChildWork.ts";
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
+import { lastStepIndex } from "./AntigravityTurnOutcome.ts";
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
 const decodeSessionMetadata = Schema.decodeEffect(
@@ -214,14 +215,27 @@ const EXECUTOR_LAST_STEP = 3;
 const TRANSCRIPT_CHUNK_BYTES = 100 * 1024;
 const TRANSCRIPT_STEP_INDEX = /^\{"step_index":(\d+)/;
 
+const REWIND_FAILURES = {
+  invalidSessionId: "its id is not a native session id",
+  notStored: "it is not stored",
+  keepsNoTurns: "it holds none of the kept turns",
+  databaseFailed: "its database failed",
+  brainFailed: "its brain files failed",
+} as const;
+
 class AntigravitySessionRewindError extends Schema.TaggedError<AntigravitySessionRewindError>()(
   "AntigravitySessionRewindError",
-  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  {
+    reason: Schema.Literals(Object.keys(REWIND_FAILURES) as Array<keyof typeof REWIND_FAILURES>),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
-    return `Could not rewind the Antigravity session: ${this.detail}`;
+    return `Could not rewind the Antigravity session: ${REWIND_FAILURES[this.reason]}`;
   }
 }
+
+const isRewindError = Schema.is(AntigravitySessionRewindError);
 
 const field = (bytes: Uint8Array, number: number) =>
   protoEntries(bytes).find(([entry]) => entry === number)?.[1];
@@ -239,8 +253,11 @@ const indexedBlobs = (rows: ReadonlyArray<Record<string, NodeSqlite.SQLOutputVal
     typeof idx === "number" && data instanceof Uint8Array ? [{ idx, data }] : [],
   );
 
-/** Deletes the steps from `cut` on, with the model calls and runs that produced them. */
-function cutTrajectory(databasePath: string, before: number): number | undefined {
+/**
+ * Deletes the steps from the first prompt at or after `before` on, with the model calls and runs
+ * that produced them, and returns where the kept steps end.
+ */
+function cutTrajectory(databasePath: string, before: number): number {
   const database = new NodeSqlite.DatabaseSync(databasePath);
   try {
     database.exec("PRAGMA busy_timeout = 5000");
@@ -252,23 +269,26 @@ function cutTrajectory(databasePath: string, before: number): number | undefined
           .all(USER_INPUT_STEP_TYPE),
       );
       const cut = prompts.find((prompt) => createdAtMillis(prompt.data) >= before);
-      if (cut === undefined) {
-        database.exec("COMMIT");
-        return undefined;
+      if (cut !== undefined) {
+        if (cut === prompts[0]) throw new AntigravitySessionRewindError({ reason: "keepsNoTurns" });
+        const generation = varintField(field(cut.data, STEP_COORDINATES), COORDINATE_GENERATION);
+        database.prepare("DELETE FROM steps WHERE idx >= ?").run(cut.idx);
+        database.prepare("DELETE FROM gen_metadata WHERE idx >= ?").run(generation);
+        const runs = indexedBlobs(
+          database.prepare("SELECT idx, data FROM executor_metadata").all(),
+        );
+        const dropRun = database.prepare("DELETE FROM executor_metadata WHERE idx = ?");
+        for (const run of runs) {
+          if (varintField(run.data, EXECUTOR_LAST_STEP) >= cut.idx) dropRun.run(run.idx);
+        }
+        // As the runtime's own rewind does: later steps start a new trajectory.
+        database
+          .prepare("UPDATE trajectory_meta SET trajectory_id = ?")
+          .run(NodeCrypto.randomUUID());
       }
-      if (cut === prompts[0]) throw new Error("the session holds none of the kept turns");
-      const generation = varintField(field(cut.data, STEP_COORDINATES), COORDINATE_GENERATION);
-      database.prepare("DELETE FROM steps WHERE idx >= ?").run(cut.idx);
-      database.prepare("DELETE FROM gen_metadata WHERE idx >= ?").run(generation);
-      const runs = indexedBlobs(database.prepare("SELECT idx, data FROM executor_metadata").all());
-      const dropRun = database.prepare("DELETE FROM executor_metadata WHERE idx = ?");
-      for (const run of runs) {
-        if (varintField(run.data, EXECUTOR_LAST_STEP) >= cut.idx) dropRun.run(run.idx);
-      }
-      // As the runtime's own rewind does: later steps start a new trajectory.
-      database.prepare("UPDATE trajectory_meta SET trajectory_id = ?").run(NodeCrypto.randomUUID());
+      const end = lastStepIndex(database) + 1;
       database.exec("COMMIT");
-      return cut.idx;
+      return end;
     } catch (cause) {
       database.exec("ROLLBACK");
       throw cause;
@@ -323,9 +343,9 @@ export const rewindAntigravitySession = Effect.fn("rewindAntigravitySession")(fu
   readonly before: DateTime.Utc;
 }) {
   const { sessionId } = input;
-  const fail = (detail: string, cause?: unknown) =>
-    new AntigravitySessionRewindError({ detail, ...(cause === undefined ? {} : { cause }) });
-  if (!isNativeSessionId(sessionId)) return yield* fail(`${sessionId} is not a native session id`);
+  if (!isNativeSessionId(sessionId)) {
+    return yield* new AntigravitySessionRewindError({ reason: "invalidSessionId" });
+  }
   const profileRoot = yield* Effect.promise(() => antigravityProfileRoot(input.profileDirectory));
   const located = (segments: ReadonlyArray<string>, kind: "file" | "directory") =>
     profileRoot === undefined
@@ -334,12 +354,22 @@ export const rewindAntigravitySession = Effect.fn("rewindAntigravitySession")(fu
           antigravityManagedPath(profileRoot, ["antigravity-acp", ...segments], kind),
         );
   const database = yield* located(["conversations", `${sessionId}.db`], "file");
-  if (database === undefined) return yield* fail(`session ${sessionId} is not stored`);
-  const cut = yield* Effect.try({
+  if (database === undefined) {
+    return yield* new AntigravitySessionRewindError({ reason: "notStored" });
+  }
+  const end = yield* Effect.try({
     try: () => cutTrajectory(database.path, DateTime.toEpochMillis(input.before)),
-    catch: (cause) => fail(cause instanceof Error ? cause.message : "its database failed", cause),
+    catch: (cause) =>
+      isRewindError(cause)
+        ? cause
+        : new AntigravitySessionRewindError({ reason: "databaseFailed", cause }),
   });
-  if (cut === undefined) return;
   const brain = yield* located(["brain", sessionId], "directory");
-  if (brain !== undefined) yield* cutBrain(brain.path, cut);
+  if (brain !== undefined) {
+    yield* cutBrain(brain.path, end).pipe(
+      Effect.mapError(
+        (cause) => new AntigravitySessionRewindError({ reason: "brainFailed", cause }),
+      ),
+    );
+  }
 });

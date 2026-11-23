@@ -83,7 +83,7 @@ const readSteps = <A>(file: string, read: (database: NodeSqlite.DatabaseSync) =>
     catch: sessionLogError,
   });
 
-const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
+export const lastStepIndex = (database: NodeSqlite.DatabaseSync) => {
   const index = database.prepare("SELECT max(idx) AS idx FROM steps").get()?.idx;
   return typeof index === "number" ? index : -1;
 };

@@ -429,4 +429,32 @@ it.layer(NodeServices.layer)("rewindAntigravitySession", (it) => {
         expect(fixture.read()).toEqual(before);
       }),
   );
+
+  it.effect("cuts the brain files on a retry after their cleanup failed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeRewindFixture();
+      const log = path.join(fixture.generated, "logs", "transcript.jsonl");
+      const transcript = yield* fs.readFileString(log);
+      const rewind = rewindAntigravitySession({
+        profileDirectory: fixture.profileDirectory,
+        sessionId: SESSION_ID,
+        before: DateTime.makeUnsafe(2500_000),
+      });
+
+      yield* fs.remove(log);
+      yield* fs.makeDirectory(log);
+      const failed = yield* Effect.flip(rewind);
+      expect(failed.message).toContain("its brain files failed");
+      expect(fixture.read().steps).toEqual([0, 1, 2, 3, 4]);
+
+      yield* fs.remove(log, { recursive: true });
+      yield* fs.writeFileString(log, transcript);
+      yield* rewind;
+      expect(yield* fs.readFileString(log)).toBe(
+        [0, 1, 2, 3, 4].map((idx) => `{"step_index":${idx},"type":"STEP"}\n`).join(""),
+      );
+    }),
+  );
 });
