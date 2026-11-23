@@ -282,7 +282,11 @@ pub struct ProvisionedWorktree {
 pub enum ThreadClose {
     Archived,
     Deleted,
+    /// A settlement: the thread was not settled before.
     Settled,
+    /// A settle of a thread that already was, which keeps its `settledAt`: its terminals close
+    /// again, but the settlement's one-time cleanup (the settle script) does not run again.
+    SettledAgain,
 }
 
 /// Asks a small model for a thread title (`generateTitle`, `regenerateTitle`). The engine

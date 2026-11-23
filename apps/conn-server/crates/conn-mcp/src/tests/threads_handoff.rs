@@ -911,10 +911,11 @@ async fn handoff_reports_the_committed_continuation_when_the_caller_ends_during_
 }
 
 /// T3 `cleanUpSettledThread` (`ThreadSettlementService.ts:700`): a settled thread's own
-/// worktree runs the project's `runOnSettle` script once per settlement, in a fresh
-/// `settle-` terminal; a delegate that shares its parent's checkout runs nothing.
+/// worktree runs the project's `runOnSettle` script in a fresh `settle-` terminal; a delegate
+/// that shares its parent's checkout runs nothing. The host's settle effect, and its
+/// once-per-settlement rule, are proven in `conn-server`'s `host.rs`.
 #[tokio::test(flavor = "current_thread")]
-async fn a_settled_worktree_thread_runs_its_settle_script_once() {
+async fn a_settled_worktree_thread_runs_its_settle_script_in_its_own_checkout() {
     let mut f = fixture("settle-script");
     let shell = f.dir.join("shell");
     conn_support::test_util::executable(
@@ -1002,9 +1003,6 @@ async fn a_settled_worktree_thread_runs_its_settle_script_once() {
         }
     }
     assert!(text.contains("SETTLE-done"), "{text}");
-    // The same settlement again (a repeated settle keeps `settledAt`) runs nothing.
-    dispatch(&f, settle(&thread, 2)).await;
-    assert_eq!(f.service.run_settle_script(&thread).await, None);
     let runs_file = path.join("settle-runs.txt");
     let runs = tokio::task::spawn_blocking(move || std::fs::read_to_string(runs_file).unwrap())
         .await
