@@ -270,6 +270,20 @@ describe("applyAntigravityAcpModelSelection", () => {
     }),
   );
 
+  it.effect("skips setModel when the resumed session already reports the requested model", () =>
+    Effect.gen(function* () {
+      const { runtime, selections } = makeModelRuntime();
+      const model = yield* applyAntigravityAcpModelSelection({
+        runtime,
+        model: "gemini-default",
+        mapError: (cause) => cause,
+      });
+
+      expect(model).toBe("gemini-default");
+      expect(selections).toEqual([]);
+    }),
+  );
+
   it.effect("passes a model ID saved on runtime 1.3 to the agent as its 1.4 family", () =>
     Effect.gen(function* () {
       // The cold-resume model has no thinking option, so the level is unknown locally.

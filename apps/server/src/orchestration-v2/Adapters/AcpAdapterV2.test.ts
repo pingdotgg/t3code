@@ -2718,6 +2718,255 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live(
+    "persists delivered ACP instructions across session reconnect and skips redundant config writes on resume",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+        const instanceId = ProviderInstanceId.make("acp-test-reconnect-cache-hygiene");
+        const threadId = ThreadId.make("thread-acp-reconnect-cache-hygiene");
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-acp-reconnect-cache-hygiene"),
+          threadId,
+          providerSessionId: "mcp-session-acp-reconnect-cache-hygiene",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer reconnect-cache-hygiene-token",
+          browserToolsAvailable: false,
+        });
+        type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let latestSessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              protocolEvents,
+              environment: { T3_ACP_ENABLE_RESUME: "1" },
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    latestSessionUpdate = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              }),
+            }),
+          },
+          selfInvocation,
+        });
+        const policy = (interactionMode: "default" | "plan") =>
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode,
+            cwd: process.cwd(),
+          });
+        const defaultPolicy = policy("default");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const now = yield* DateTime.now;
+
+        const drainPrompt = Effect.fnUntraced(function* () {
+          const methods: Array<string> = [];
+          while (true) {
+            const event = yield* Queue.take(protocolEvents);
+            if (event.direction !== "outgoing") continue;
+            const method = rawProtocolMethod(event);
+            if (method === undefined) continue;
+            methods.push(method);
+            if (method === "session/prompt") {
+              const promptBlocks = rawProtocolPromptTextBlocks(event);
+              return {
+                methods,
+                prompt: promptBlocks.map((block) => block.text).join("\n"),
+                textBlockCount: promptBlocks.length,
+              };
+            }
+          }
+        });
+
+        const runtime1 = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-1"),
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        const initialThread = yield* runtime1.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        yield* runtime1.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: initialThread,
+            instanceId,
+            runtimePolicy: defaultPolicy,
+            now,
+            ordinal: 0,
+            messageText: "Initial turn.",
+            modelSelection,
+          }),
+        );
+        let persistedThread = initialThread;
+        yield* runtime1.events.pipe(
+          Stream.tap((event) =>
+            Effect.sync(() => {
+              if (event.type === "provider_thread.updated") {
+                persistedThread = event.providerThread;
+              }
+            }),
+          ),
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const firstPrompt = yield* drainPrompt();
+        assert.include(firstPrompt.prompt, "<t3_code_instructions>");
+        assert.include(firstPrompt.prompt, "<runtime_info>");
+        assert.deepInclude(persistedThread.nativeMetadata?.acpDeliveredInstructions, {
+          interactionMode: "default",
+          hasT3Mcp: true,
+          hasDeviceTools: false,
+        });
+        assert.isString(
+          persistedThread.nativeMetadata?.acpDeliveredInstructions?.runtimeInstructionsDigest,
+        );
+
+        const persistedSessionId = persistedThread.nativeThreadRef?.nativeId;
+        if (typeof persistedSessionId !== "string") {
+          assert.fail("Expected persisted native session id");
+        }
+        // Simulate an idle disconnect / process restart and resume the persisted thread.
+        const runtime2 = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-2"),
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+          initialNativeThreadId: persistedSessionId,
+        });
+        const resumedThread = yield* runtime2.resumeThread({
+          providerThread: persistedThread,
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        yield* runtime2.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: resumedThread,
+            instanceId,
+            runtimePolicy: defaultPolicy,
+            now,
+            ordinal: 1,
+            messageText: "Resumed turn with unchanged state.",
+            modelSelection,
+          }),
+        );
+        yield* runtime2.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const resumedPrompt = yield* drainPrompt();
+        assert.equal(resumedPrompt.prompt, "Resumed turn with unchanged state.");
+        assert.equal(resumedPrompt.textBlockCount, 1);
+        assert.notInclude(resumedPrompt.methods, "session/set_config_option");
+
+        // Changing interaction mode after reconnect still delivers the new mode instructions.
+        const planPolicy = policy("plan");
+        yield* runtime2.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: resumedThread,
+            instanceId,
+            runtimePolicy: planPolicy,
+            now,
+            ordinal: 2,
+            messageText: "Switch to plan after resume.",
+            modelSelection,
+          }),
+        );
+        yield* runtime2.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const planPrompt = yield* drainPrompt();
+        assert.include(planPrompt.prompt, "T3 Code interaction mode: Plan");
+
+        // Idle compaction right after resumeThread (before any turn) clears persisted delivery
+        // metadata so a subsequent reconnect re-injects instructions.
+        const runtime3 = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-3"),
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+          initialNativeThreadId: persistedSessionId,
+        });
+        yield* runtime3.resumeThread({
+          providerThread: persistedThread,
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        assert.isDefined(latestSessionUpdate);
+        const compactedEventFiber = yield* runtime3.events.pipe(
+          Stream.filter((event) => event.type === "provider_thread.updated"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* latestSessionUpdate({
+          sessionId: persistedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: "compact-idle-after-resume",
+            status: "completed",
+          },
+        });
+        const compactedEvent = yield* Fiber.join(compactedEventFiber);
+        if (
+          Option.isNone(compactedEvent) ||
+          compactedEvent.value.type !== "provider_thread.updated"
+        ) {
+          assert.fail("Expected provider_thread.updated clearing acpDeliveredInstructions");
+        }
+        assert.isNull(compactedEvent.value.providerThread.nativeMetadata?.acpDeliveredInstructions);
+
+        // Reconnecting with that cleared metadata re-injects instructions.
+        const runtime4 = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-4"),
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+          initialNativeThreadId: persistedSessionId,
+        });
+        const compactedThread = yield* runtime4.resumeThread({
+          providerThread: compactedEvent.value.providerThread,
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        yield* runtime4.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread: compactedThread,
+            instanceId,
+            runtimePolicy: defaultPolicy,
+            now,
+            ordinal: 3,
+            messageText: "Turn after compaction reconnect.",
+            modelSelection,
+          }),
+        );
+        yield* runtime4.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        const compactedPrompt = yield* drainPrompt();
+        assert.include(compactedPrompt.prompt, "<t3_code_instructions>");
+        assert.include(compactedPrompt.prompt, "<runtime_info>");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live.each(["cancelled", "refusal", "error"] as const)(
     "reinjects ACP instructions after protocol compaction, during reinjection, prompt preparation, or while idle (%s)",
     (stopReason) =>
