@@ -182,7 +182,7 @@ interface ApplicationEventRow {
 const decodeV2EventJson = Schema.decodeUnknownEffect(OrchestrationV2DomainEventJson);
 const encodeV2EventJson = Schema.encodeEffect(OrchestrationV2DomainEventJson);
 const decodeV2StoredEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
-// Rows carry an event decodeV2EventJson already validated; revalidating it nearly doubled replay cost.
+// decodeV2EventJson already validated the event; decoding it again here is the hot cost in replay.
 const decodeV2StoredEventHeader = Schema.decodeUnknownEffect(
   OrchestrationV2StoredEvent.mapFields(({ event: _event, ...fields }) => fields),
 );
