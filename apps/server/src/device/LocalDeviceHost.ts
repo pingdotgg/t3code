@@ -590,7 +590,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       token: file.token,
       entryPath: agentTool.entryPath,
     });
-    if (existing._tag === "Some") {
+    // Another pin's daemon answers /health but rejects this client's RPC protocol.
+    const isOtherVersion = (file: typeof AgentDeviceDaemonFile.Type) =>
+      file.version !== undefined && file.version !== AGENT_DEVICE_VERSION;
+    if (existing._tag === "Some" && isOtherVersion(existing.value)) {
+      yield* stopAgentDeviceDaemon;
+    } else if (existing._tag === "Some") {
       const alive = yield* HttpClient.withScope(httpClient)
         .get(`http://127.0.0.1:${existing.value.httpPort}/health`)
         .pipe(
@@ -616,7 +621,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       .pipe(Effect.result);
     // Discovery may fail after startup; accept a published endpoint or preserve the CLI failure.
     const started = yield* readDaemonFile().pipe(Effect.option);
-    if (started._tag === "Some") return toEndpoint(started.value);
+    if (started._tag === "Some" && !isOtherVersion(started.value)) return toEndpoint(started.value);
     if (runResult._tag === "Failure") {
       return yield* new DeviceHost.DeviceHostError({
         hostId,
@@ -641,7 +646,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
             : "daemon_registration_unproven"
           : details?.reason === "daemon_retirement_unconfirmed"
             ? "daemon_retirement_unconfirmed"
-            : "command_failed";
+            : details?.reason === "daemon-busy"
+              ? "daemon_busy"
+              : "command_failed";
       return yield* new DeviceHost.AgentDeviceStartError({
         hostId,
         stateDir,

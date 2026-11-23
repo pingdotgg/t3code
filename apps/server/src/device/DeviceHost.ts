@@ -42,6 +42,7 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
       "daemon_lock_not_directory",
       "daemon_registration_unproven",
       "daemon_retirement_unconfirmed",
+      "daemon_busy",
       "command_failed",
     ]),
     cause: Schema.Defect(),
@@ -56,11 +57,15 @@ export class AgentDeviceStartError extends Schema.TaggedError<AgentDeviceStartEr
           ? "Daemon registration ownership could not be verified."
           : this.reason === "daemon_retirement_unconfirmed"
             ? "Daemon replacement could not be confirmed."
-            : "The AgentDevice startup command failed.";
+            : this.reason === "daemon_busy"
+              ? "An agent tools daemon from another version still has active sessions or requests, so it was not replaced."
+              : "The AgentDevice startup command failed.";
     const recovery =
       this.reason === "command_failed"
         ? `Inspect daemon diagnostics in ${this.stateDir}.`
-        : `Inspect daemon.lock and daemon diagnostics in ${this.stateDir}. Stop older clients and daemons with their original CLI before manually repairing retained state.`;
+        : this.reason === "daemon_busy"
+          ? `Close those sessions and retry, or stop that daemon with its original CLI: agent-device daemon stop --state-dir ${this.stateDir}.`
+          : `Inspect daemon.lock and daemon diagnostics in ${this.stateDir}. Stop older clients and daemons with their original CLI before manually repairing retained state.`;
     return `Agent tools failed to start${exit}. ${detail} ${recovery}`;
   }
 }

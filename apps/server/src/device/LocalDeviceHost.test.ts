@@ -221,6 +221,27 @@ describe("AgentDevice startup", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("says active sessions block replacing a daemon on another agent-device version", () =>
+    Effect.gen(function* () {
+      const result = processOutput(
+        1,
+        JSON.stringify({
+          success: false,
+          error: { message: "busy", details: { reason: "daemon-busy" } },
+        }),
+      );
+      const { host, stateDir } = yield* agentFixture(
+        () => Effect.succeed(result),
+        processOutput(0),
+        { httpPort: 12345, token: "previous-token", pid: process.pid, version: "0.0.1" },
+      );
+      const error = yield* host.ensureAgentReady(() => Effect.void).pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "AgentDeviceStartError", reason: "daemon_busy" });
+      expect(error.message).toContain("active sessions");
+      expect(error.message).toContain(stateDir);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("uses the SDK a later shell environment selects", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
