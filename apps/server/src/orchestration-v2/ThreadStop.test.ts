@@ -2241,3 +2241,52 @@ it.effect.each([
       }).pipe(Effect.provide(layerLive));
     }),
 );
+
+it.effect(
+  "parent Stop writes no interrupt request onto a delegated child whose run already completed",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const parentThreadId = ThreadId.make("thread:stop-finished-children");
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const childThreadIds = [
+        yield* delegate(parentThreadId, "finished child a"),
+        yield* delegate(parentThreadId, "finished child b"),
+      ];
+      const now = yield* DateTime.now;
+      for (const childThreadId of childThreadIds) {
+        const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+        yield* projections.apply({
+          id: EventId.make(`event:${childThreadId}:completed`),
+          type: "run.updated",
+          threadId: childThreadId,
+          runId: childRun.id,
+          occurredAt: now,
+          payload: { ...childRun, status: "completed", completedAt: now },
+        });
+      }
+
+      const stopCommandId = CommandId.make("stop-finished-children");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: stopCommandId,
+        threadId: parentThreadId,
+      });
+      yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+
+      for (const childThreadId of childThreadIds) {
+        const child = yield* orchestrator.getThreadProjection(childThreadId);
+        assert.deepEqual(
+          child.runs.map((run) => run.status),
+          ["completed"],
+        );
+        assert.deepEqual(
+          child.turnItems.filter((item) => item.type === "run_interrupt_request"),
+          [],
+        );
+      }
+    }).pipe(Effect.provide(layerTest)),
+);
