@@ -1671,7 +1671,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     );
 
     it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
-      "skips directories and non-executable files in earlier PATH entries, but stops on ELOOP",
+      "skips directories and non-executable files in earlier PATH entries, but defers on ELOOP or a missing interpreter",
       () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -1702,6 +1702,21 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
             Effect.provideService(HostProcess.Platform, "darwin"),
           );
           expect(skipped).toBe(validTool);
+
+          // A script whose interpreter is missing fails posix_spawn with ENOENT, after which native
+          // PATH lookup continues to validTool, so resolution defers instead of pinning it.
+          const staleEntry = path.join(root, "stale");
+          yield* fs.makeDirectory(staleEntry);
+          const staleTool = path.join(staleEntry, "mytool");
+          yield* fs.writeFileString(staleTool, "#!/missing/interpreter\nexit 0\n");
+          yield* fs.chmod(staleTool, 0o755);
+          const deferredOnStale = yield* resolveSpawnCommand("mytool", [], {
+            env: { PATH: `${staleEntry}:${validEntry}` },
+          }).pipe(
+            Effect.map((r) => r.command),
+            Effect.provideService(HostProcess.Platform, "darwin"),
+          );
+          expect(deferredOnStale).toBe("mytool");
 
           // Symlink loop (ELOOP) stops the scan and defers to native spawn instead of skipping to validTool.
           const loopA = path.join(loopEntry, "loop-a");

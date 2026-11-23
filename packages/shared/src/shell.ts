@@ -1079,6 +1079,33 @@ function hasRelativePosixPathEntryBefore(
   return false;
 }
 
+// posix_spawn fails a script with ENOENT when its interpreter is missing, and native PATH lookup then
+// moves on to later entries, so such a candidate defers to native spawn.
+async function hasLaunchableInterpreter(candidate: string): Promise<boolean> {
+  let header: string;
+  try {
+    const handle = await NodeFS.promises.open(candidate, "r");
+    try {
+      const { buffer, bytesRead } = await handle.read(Buffer.alloc(512), 0, 512, 0);
+      header = buffer.toString("latin1", 0, bytesRead);
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return true;
+  }
+  if (!header.startsWith("#!")) return true;
+  const interpreter = /^#![ \t]*([^ \t\r\n]+)/.exec(header)?.[1];
+  if (interpreter === undefined || !interpreter.startsWith("/")) return false;
+  try {
+    if (!(await NodeFS.promises.stat(interpreter)).isFile()) return false;
+    await NodeFS.promises.access(interpreter, NodeFS.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Scan macOS PATH entries literally so the kernel resolves `..` after symlinks as native spawn does.
 // Only continue past ENOENT/ENOTDIR/EACCES; other errors (such as ELOOP or EIO) defer to native spawn.
 async function resolveMacosPathExecutable(
@@ -1111,14 +1138,15 @@ const resolveMacosBareCommand = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv,
   resolveExecutable: SpawnExecutableResolver,
 ): Effect.fn.Return<string | undefined> {
-  if (resolveExecutable === resolveSpawnExecutableWithNode) {
-    return yield* Effect.promise(() => resolveMacosPathExecutable(command, env));
-  }
-  const found = yield* Effect.promise(async () => resolveExecutable(command, "darwin", env));
+  const found =
+    resolveExecutable === resolveSpawnExecutableWithNode
+      ? yield* Effect.promise(() => resolveMacosPathExecutable(command, env))
+      : yield* Effect.promise(async () => resolveExecutable(command, "darwin", env));
   if (
     found === undefined ||
     !NodePath.posix.isAbsolute(found) ||
-    hasRelativePosixPathEntryBefore(env.PATH, found)
+    hasRelativePosixPathEntryBefore(env.PATH, found) ||
+    !(yield* Effect.promise(() => hasLaunchableInterpreter(found)))
   ) {
     return undefined;
   }
