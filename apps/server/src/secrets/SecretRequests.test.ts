@@ -26,6 +26,7 @@ import * as Tracer from "effect/Tracer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -76,7 +77,7 @@ const withService = <A, E>(
   }) => Effect.Effect<A, E>,
   options: {
     readonly threadId?: ThreadId;
-    readonly delivery?: "file";
+    readonly delivery?: "file" | "browser";
     readonly fields?: ReadonlyArray<{ readonly name: string; readonly label: string }>;
     readonly directory?: string;
     readonly runStatus?: string;
@@ -216,6 +217,59 @@ it.effect("a saved answer becomes a one-use ref, and the thread only learns it w
       const again = yield* service.consume({ ref, projectId }).pipe(Effect.flip);
       assert.include(again.message, "already used");
     }),
+  ),
+);
+
+it.effect("a browser answer stays in memory, never in the store, and can be taken once", () =>
+  withService(
+    ({ service, stored, dispatched }) =>
+      Effect.gen(function* () {
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "hunter2-password" },
+        });
+        assert.include(dispatched[0] as object, { secretStatus: "saved", delivery: "browser" });
+        assert.notInclude(JSON.stringify(dispatched), "hunter2-password");
+        assert.isFalse(valuesOf(stored).some((value) => value.includes("hunter2-password")));
+        assert.isTrue(Option.isNone(yield* service.savedRef({ threadId, turnItemId })));
+
+        const taken = yield* service.takeBrowserValue({ threadId, turnItemId });
+        assert.equal(Redacted.value(Option.getOrThrow(taken)), "hunter2-password");
+        assert.notInclude(String(Option.getOrThrow(taken)), "hunter2-password");
+        assert.isTrue(Option.isNone(yield* service.takeBrowserValue({ threadId, turnItemId })));
+      }),
+    { delivery: "browser" },
+  ),
+);
+
+it.effect("a browser value no fill took within a minute is gone", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        yield* service.answer({
+          threadId,
+          turnItemId,
+          answer: { type: "save", secret: "hunter2-password" },
+        });
+        yield* TestClock.adjust(SecretRequests.BROWSER_VALUE_TTL_MS + 1);
+        assert.isTrue(Option.isNone(yield* service.takeBrowserValue({ threadId, turnItemId })));
+      }),
+    { delivery: "browser" },
+  ),
+);
+
+it.effect("a browser answer to a card that closed first is dropped", () =>
+  withService(
+    ({ service }) =>
+      Effect.gen(function* () {
+        const error = yield* service
+          .answer({ threadId, turnItemId, answer: { type: "save", secret: "hunter2-password" } })
+          .pipe(Effect.flip);
+        assert.equal(error.reason, "agent_stopped");
+        assert.isTrue(Option.isNone(yield* service.takeBrowserValue({ threadId, turnItemId })));
+      }),
+    { delivery: "browser", closedFirst: true },
   ),
 );
 

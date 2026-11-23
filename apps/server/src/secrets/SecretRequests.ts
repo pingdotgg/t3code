@@ -1,7 +1,6 @@
 // Answers stay in the secret store behind one-use refs; orchestration records only request status.
-// Consuming tools keep values out of transcripts, projections, clients and model context.
-// A `file` request instead moves its value to an owner-only file for the agent's own shell.
-// A secret the user pasted in chat goes straight to such a file, with no card.
+// A `file` request (or a value pasted in chat) moves to an owner-only file for the agent's shell.
+// A `browser` request never touches disk: it waits in memory, at most a minute, for its one fill.
 import {
   CommandId,
   SecretRef,
@@ -23,6 +22,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Redacted from "effect/Redacted";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -35,6 +35,8 @@ const SECRET_REF_PREFIX = "secret-ref:";
 const storeName = (ref: SecretRef) => `secret-request-${ref.slice(SECRET_REF_PREFIX.length)}`;
 const REF_PATTERN = /^secret-ref:[0-9a-f]{32}$/;
 const SECRET_REF_TTL_MS = 24 * 60 * 60 * 1000;
+/** The waiting fill polls every half second, so a value left this long has no taker. */
+export const BROWSER_VALUE_TTL_MS = 60 * 1000;
 const STORE_NAME_PATTERN = /^(secret-request-[0-9a-f]{32})\.bin$/;
 const FILE_NAME_PATTERN = /^[0-9a-f]{32}(\.partial)?$/;
 
@@ -97,6 +99,14 @@ export class SecretRequests extends Context.Service<
       readonly requestKey: string;
       readonly value: string;
     }) => Effect.Effect<string, SecretRequestError>;
+    /**
+     * Takes a saved `browser` request's value out of memory. It can be taken once, within
+     * `BROWSER_VALUE_TTL_MS` of the answer; after that, or a second time, there is none.
+     */
+    readonly takeBrowserValue: (input: {
+      readonly threadId: ThreadId;
+      readonly turnItemId: string;
+    }) => Effect.Effect<Option.Option<Redacted.Redacted<string>>>;
   }
 >()("t3/secrets/SecretRequests") {}
 
@@ -133,9 +143,23 @@ const make = Effect.gen(function* () {
       );
   const removeAnswered = (threadId: ThreadId, item: SecretRequestItem) =>
     Effect.forEach(fieldNames(item), (field) =>
-      refFor(threadId, item.id, field).pipe(Effect.flatMap((ref) => removeLogged(storeName(ref)))),
+      refFor(threadId, item.id, field).pipe(Effect.flatMap((ref) => {
+        browserValues.delete(storeName(ref));
+        return removeLogged(storeName(ref));
+      })),
     );
 
+  // Keyed like the store, so the same card can never hold both a stored and a memory value.
+  const browserValues = new Map<
+    string,
+    { readonly value: Redacted.Redacted<string>; readonly savedAt: number }
+  >();
+  const dropExpiredBrowserValues = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    for (const [name, entry] of browserValues) {
+      if (now - entry.savedAt > BROWSER_VALUE_TTL_MS) browserValues.delete(name);
+    }
+  });
   const readReference = Effect.fn("SecretRequests.readReference")(function* (
     reference: SecretReference,
   ) {
@@ -192,6 +216,10 @@ const make = Effect.gen(function* () {
       // Cleared when interrupted too, or a retry would keep these values beside its own.
       yield* Effect.forEach(values, ([field, value]) =>
         Effect.gen(function* () {
+          if (item.delivery === "browser") {
+            browserValues.set(storeName(yield* refFor(input.threadId, item.id, field)), { value: Redacted.make(value), savedAt });
+            return;
+          }
           const encoded = yield* encodeStored({
             projectId: records.thread.projectId,
             value,
@@ -443,8 +471,32 @@ const make = Effect.gen(function* () {
     Effect.repeat(Schedule.spaced("1 hour")),
     Effect.forkScoped,
   );
+  // A browser value whose fill never came (the call ended first) must not wait for the hourly sweep.
+  yield* dropExpiredBrowserValues.pipe(
+    Effect.delay("15 seconds"),
+    Effect.repeat(Schedule.spaced("15 seconds")),
+    Effect.forkScoped,
+  );
 
-  return SecretRequests.of({ answer, savedRef, consume, saveToFile, savePasted });
+  const takeBrowserValue: SecretRequests["Service"]["takeBrowserValue"] = Effect.fn(
+    "SecretRequests.takeBrowserValue",
+  )(function* (input) {
+    const name = storeName(yield* refFor(input.threadId, input.turnItemId));
+    const entry = browserValues.get(name);
+    browserValues.delete(name);
+    if (entry === undefined) return Option.none();
+    const expired = (yield* Clock.currentTimeMillis) - entry.savedAt > BROWSER_VALUE_TTL_MS;
+    return expired ? Option.none() : Option.some(entry.value);
+  });
+
+  return SecretRequests.of({
+    answer,
+    savedRef,
+    consume,
+    saveToFile,
+    savePasted,
+    takeBrowserValue,
+  });
 });
 
 export const layer = Layer.effect(SecretRequests, make);

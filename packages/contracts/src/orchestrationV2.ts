@@ -1831,8 +1831,12 @@ export const OrchestrationV2SecretRequestStatus = Schema.Literals([
 ]);
 export type OrchestrationV2SecretRequestStatus = typeof OrchestrationV2SecretRequestStatus.Type;
 
-/** `file`: the value goes to an owner-only file the agent's shell commands can read. */
-export const OrchestrationV2SecretRequestDelivery = Schema.Literal("file");
+/**
+ * `file`: the value goes to an owner-only file the agent's shell commands can read.
+ * `browser`: the value stays in server memory until it is typed into one preview page field,
+ * then is dropped; it is never stored or returned to the agent.
+ */
+export const OrchestrationV2SecretRequestDelivery = Schema.Literals(["file", "browser"]);
 
 /** One input of a multi-value card. `secret: false` shows what the user types, such as an email. */
 export const OrchestrationV2SecretRequestField = Schema.Struct({
