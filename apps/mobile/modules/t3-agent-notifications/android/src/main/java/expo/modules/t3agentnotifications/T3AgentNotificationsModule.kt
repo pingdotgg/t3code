@@ -3,11 +3,16 @@ package expo.modules.t3agentnotifications
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
 class T3AgentNotificationsModule : Module() {
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private val backgroundIdle = Runnable { sendEvent("onBackgroundIdle", mapOf<String, Any?>()) }
+
   override fun definition() = ModuleDefinition {
     Name("T3AgentNotifications")
 
@@ -26,14 +31,26 @@ class T3AgentNotificationsModule : Module() {
       appContext.reactContext?.let { AgentNotifications.clear(it) }
     }
 
-    Events("onUnifiedPushState")
+    Events("onUnifiedPushState", "onBackgroundIdle")
+
+    // React Native stops JS timers while the activity is paused, so the delay that closes
+    // server connections in the background has to run here.
+    OnActivityEntersBackground {
+      mainHandler.removeCallbacks(backgroundIdle)
+      mainHandler.postDelayed(backgroundIdle, BACKGROUND_IDLE_AFTER_MS)
+    }
+
+    OnActivityEntersForeground { mainHandler.removeCallbacks(backgroundIdle) }
 
     OnCreate {
       AgentUnifiedPush.onChange =
         { sendEvent("onUnifiedPushState", mapOf<String, Any?>()) }
     }
 
-    OnDestroy { AgentUnifiedPush.onChange = null }
+    OnDestroy {
+      AgentUnifiedPush.onChange = null
+      mainHandler.removeCallbacks(backgroundIdle)
+    }
 
     Function("unifiedPushState") {
       appContext.reactContext?.let { AgentUnifiedPush.state(it) }
@@ -75,3 +92,6 @@ class T3AgentNotificationsModule : Module() {
     }
   }
 }
+
+// Long enough that a quick trip to another app keeps the live session.
+private const val BACKGROUND_IDLE_AFTER_MS = 30_000L

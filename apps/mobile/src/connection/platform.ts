@@ -17,17 +17,14 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
-import { AppState, Platform } from "react-native";
+import { AppState } from "react-native";
 
 import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import {
-  MOBILE_SUSPEND_CONNECTIONS_AFTER_MS,
-  type MobileApplicationWakeup,
-  mobileApplicationActiveWakeup,
-} from "./app-state-wakeups";
+import { subscribeAndroidBackgroundIdle } from "../features/agent-awareness/androidNotifications";
+import { type MobileApplicationWakeup, mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import * as EnvironmentOwnedDataCleanup from "./environment-owned-data-cleanup";
 import * as ConnectionStorage from "./storage";
 
@@ -124,32 +121,19 @@ const layerWakeups = Wakeups.layer({
           Effect.gen(function* () {
             const nowMs = yield* Clock.currentTimeMillis;
             let backgroundedAtMs = AppState.currentState === "background" ? nowMs : null;
-            let suspendTimer: ReturnType<typeof setTimeout> | undefined;
-            const cancelSuspend = () => {
-              clearTimeout(suspendTimer);
-              suspendTimer = undefined;
-            };
-            // Android never freezes a process whose sockets keep pinging; push notifications
+            // Android never freezes a process whose sockets keep streaming; push notifications
             // reach the app while it sleeps, so connections close until it is opened again.
-            const scheduleSuspend = () => {
-              if (Platform.OS !== "android") return;
-              cancelSuspend();
-              suspendTimer = setTimeout(() => {
-                suspendTimer = undefined;
-                if (AppState.currentState === "background") {
-                  Queue.offerUnsafe(queue, "application-suspended");
-                }
-              }, MOBILE_SUSPEND_CONNECTIONS_AFTER_MS);
-            };
-            if (backgroundedAtMs !== null) scheduleSuspend();
+            const removeIdleListener = subscribeAndroidBackgroundIdle(() => {
+              if (AppState.currentState === "background") {
+                Queue.offerUnsafe(queue, "application-suspended");
+              }
+            });
             const subscription = AppState.addEventListener("change", (state) => {
               if (state === "background") {
                 backgroundedAtMs = Date.now();
-                scheduleSuspend();
                 return;
               }
               if (state === "active") {
-                cancelSuspend();
                 Queue.offerUnsafe(
                   queue,
                   mobileApplicationActiveWakeup(backgroundedAtMs, Date.now()),
@@ -159,7 +143,7 @@ const layerWakeups = Wakeups.layer({
             });
             return {
               remove: () => {
-                cancelSuspend();
+                removeIdleListener();
                 subscription.remove();
               },
             };
