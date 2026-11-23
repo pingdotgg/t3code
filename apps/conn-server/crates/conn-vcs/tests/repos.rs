@@ -95,6 +95,42 @@ async fn local_status_counts_tracked_untracked_and_branch_changes() {
     assert!(!gone.is_repo);
 }
 
+/// T3's `reports net file counts from the empty tree`: before the first commit, a staged line
+/// replaced in the work tree counts once (+1/-0), as the commit sheet sums it; after the
+/// commit, the edit is +1/-1.
+#[tokio::test]
+async fn unborn_head_counts_net_changes_from_the_empty_tree() {
+    let dir = TempDir::new("unborn");
+    git(dir.path(), &["init", "-qb", "main"]);
+    write(dir.path(), "initial.ts", "first\n");
+    git(dir.path(), &["add", "initial.ts"]);
+    write(dir.path(), "initial.ts", "revised\n");
+    let counts = |local: &conn_contract::VcsStatusLocalResult| {
+        let files: Vec<_> = local
+            .working_tree
+            .files
+            .iter()
+            .map(|f| (f.path.clone(), f.insertions, f.deletions))
+            .collect();
+        (
+            files,
+            local.working_tree.insertions,
+            local.working_tree.deletions,
+        )
+    };
+    let before = status::local_status(dir.path()).await.unwrap();
+    assert_eq!(
+        counts(&before),
+        (vec![("initial.ts".to_owned(), 1, 0)], 1, 0)
+    );
+    git(dir.path(), &["commit", "-qm", "first"]);
+    let after = status::local_status(dir.path()).await.unwrap();
+    assert_eq!(
+        counts(&after),
+        (vec![("initial.ts".to_owned(), 1, 1)], 1, 1)
+    );
+}
+
 #[tokio::test]
 async fn remote_status_reads_divergence_after_fetch() {
     let fx = Fixture::new("remote");
