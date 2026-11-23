@@ -264,6 +264,35 @@ impl TaskRunner for EngineRunner {
             }
         })
     }
+
+    fn is_non_git_project(&self, project_id: String) -> BoxFuture<'_, bool> {
+        Box::pin(async move {
+            let Ok(projects) = self.engine.projects_snapshot().await else {
+                return false;
+            };
+            let Some(root) = projects
+                .iter()
+                .find(|p| p["id"] == project_id.as_str() && p["deletedAt"].is_null())
+                .and_then(|p| p["workspaceRoot"].as_str())
+                .map(str::to_owned)
+            else {
+                return false;
+            };
+            let scratch = self
+                .engine
+                .call("projects.isScratchRoot", json!({"workspaceRoot": root}))
+                .await;
+            if matches!(scratch, Ok(Value::Bool(true))) {
+                return true;
+            }
+            // Only Git's "not a git repository" counts; a folder Git cannot read keeps its
+            // own error at launch.
+            matches!(
+                conn_vcs::checkpoint::is_repository(std::path::Path::new(&root)).await,
+                Ok(false)
+            )
+        })
+    }
 }
 
 #[cfg(test)]

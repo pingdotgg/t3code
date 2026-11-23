@@ -579,6 +579,7 @@ async fn provision_creates_a_worktree_and_runs_the_setup_script() {
             command: command.into(),
         }),
         worktrees_dir: fx.root.path().join("worktrees"),
+        missing_base: setup::MissingBase::Fail,
     };
     let done = setup::provision(
         &setups,
@@ -720,6 +721,7 @@ async fn setup_scripts_leave_no_processes_behind() {
             command: command.into(),
         }),
         worktrees_dir: fx.root.path().join("worktrees"),
+        missing_base: setup::MissingBase::Fail,
     };
     let pids_dir = fx.root.path().join("pids");
     std::fs::create_dir_all(&pids_dir).unwrap();
@@ -976,4 +978,97 @@ async fn commit_preparation_truncates_large_diffs_and_does_not_run_textconv() {
     assert!(context.patch.len() <= 49_000 + "\n\n[truncated]".len());
     assert!(context.patch.ends_with("\n\n[truncated]"));
     assert!(context.patch.contains("+a line of text"));
+}
+
+/// T3's ThreadLaunchService cases for a recorded base (`worktreeFallbackBase`): a saved
+/// strategy whose base names no commit starts from the remote's default branch, then the
+/// checked-out branch. A base someone names now still fails.
+#[tokio::test]
+async fn a_saved_base_that_names_no_commit_falls_back_as_t3() {
+    use conn_vcs::setup::{self, MissingBase, ProvisionError, ProvisionRequest, WorktreeSetups};
+
+    let fx = Fixture::new("missing-base");
+    let setups = WorktreeSetups::new();
+    let request = |thread: &str, base: &str, missing_base| ProvisionRequest {
+        thread_id: thread.into(),
+        project_root: fx.work.clone(),
+        base_ref: base.into(),
+        branch: Some(format!("task-{thread}")),
+        start_from_origin: true,
+        setup_script: None,
+        worktrees_dir: fx.root.path().join("worktrees"),
+        missing_base,
+    };
+    let remote_head = git(&fx.work, &["rev-parse", "origin/main"])
+        .trim()
+        .to_owned();
+    git(&fx.work, &["checkout", "-q", "--detach"]);
+    git(
+        &fx.work,
+        &["commit", "-q", "--allow-empty", "-m", "local only"],
+    );
+    let local_head = git(&fx.work, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    // "re-bases a stored base that no longer exists on the remote default branch"
+    let made = setup::provision(
+        &setups,
+        request("gone", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), remote_head);
+    assert_eq!(
+        setups.get("gone").unwrap().base_ref.as_deref(),
+        Some("refs/remotes/origin/main")
+    );
+
+    // The same base named in a new launch is refused, and nothing is left behind.
+    let refused = setup::provision(
+        &setups,
+        request("asked", "obsolete-base", MissingBase::Fail),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(refused, ProvisionError::Failed(_)), "{refused}");
+    assert!(git(&fx.work, &["branch", "--list", "task-asked"]).is_empty());
+
+    // A base that resolves is kept, a local branch and a `:/` commit search alike.
+    git(&fx.work, &["branch", "kept"]);
+    for (thread, base) in [("kept", "kept"), ("search", ":/local only")] {
+        let made = setup::provision(&setups, request(thread, base, MissingBase::FallBack))
+            .await
+            .unwrap();
+        assert_eq!(
+            git(&made.path, &["rev-parse", "HEAD"]).trim(),
+            local_head,
+            "{base}"
+        );
+    }
+
+    // "skips a stale tracking ref when the remote reports the base branch is gone": the
+    // remote's HEAD names a deleted branch whose tracking ref stayed behind.
+    git(
+        &fx.work,
+        &["update-ref", "refs/remotes/origin/gone", &remote_head],
+    );
+    git(
+        &fx.work,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/gone",
+        ],
+    );
+    git(&fx.work, &["checkout", "-q", "-b", "beta"]);
+    let made = setup::provision(
+        &setups,
+        request("stale", "obsolete-base", MissingBase::FallBack),
+    )
+    .await
+    .unwrap();
+    assert_eq!(git(&made.path, &["rev-parse", "HEAD"]).trim(), local_head);
+    assert_eq!(
+        setups.get("stale").unwrap().base_ref.as_deref(),
+        Some("beta")
+    );
 }

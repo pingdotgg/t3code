@@ -200,6 +200,7 @@ impl EngineHost for Host {
                     start_from_origin: request.start_from_origin,
                     setup_script: None,
                     worktrees_dir: self.worktrees_dir(),
+                    missing_base: request.missing_base,
                 },
             )
             .await

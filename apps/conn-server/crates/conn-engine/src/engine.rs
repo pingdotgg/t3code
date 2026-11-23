@@ -13,6 +13,7 @@ use conn_contract::{
     ThreadStreamItem, from_json, to_json,
 };
 use conn_provider::Provider;
+use conn_vcs::setup::MissingBase;
 use serde_json::{Value, json};
 use tokio::sync::{oneshot, watch};
 
@@ -680,6 +681,7 @@ impl Inner {
                 base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
                 branch: strategy["branch"].as_str().map(str::to_owned),
                 start_from_origin: strategy["startFromOrigin"] == true,
+                missing_base: MissingBase::Fail,
             })
             .await
             .map_err(DispatchError::Rejected)?;
@@ -1125,12 +1127,20 @@ impl Inner {
             .map_err(|e| (e, true))?
             .ok_or_else(|| ("The project does not exist.".to_owned(), false))?;
         let strategy = &input["workspaceStrategy"];
+        // A scheduled task's run launches its saved strategy, which can outlive its base
+        // (T3 checks only interactive launches before provisioning: `checkWorktreeBase`).
+        let missing_base = if input["initialMessage"]["scheduledTaskId"].is_string() {
+            MissingBase::FallBack
+        } else {
+            MissingBase::Fail
+        };
         host.provision_worktree(crate::WorktreeRequest {
             thread_id: thread_id.to_owned(),
             project_root: root,
             base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
             branch: strategy["branch"].as_str().map(str::to_owned),
             start_from_origin: strategy["startFromOrigin"] == true,
+            missing_base,
         })
         .await
         .map_err(|e| (e, false))

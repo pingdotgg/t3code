@@ -30,6 +30,7 @@ type SendFn = Box<dyn Fn(SendRequest) -> BoxFuture<'static, Result<(), SendError
 type Shell = Box<dyn Fn(String) -> Option<ThreadShell> + Send + Sync>;
 type Queued = Box<dyn Fn(String, String) -> bool + Send + Sync>;
 type Outcome = Box<dyn Fn(String, String) -> BoxFuture<'static, Option<String>> + Send + Sync>;
+type NonGit = Box<dyn Fn(String) -> bool + Send + Sync>;
 
 /// `Layer.mock(ThreadLaunchService)` and `Layer.mock(ThreadManagementService)`: each part
 /// answers as the test scripts it; an unscripted call fails as an unimplemented mock does.
@@ -39,6 +40,7 @@ pub(super) struct Fake {
     pub(super) shell: Shell,
     pub(super) queued: Queued,
     pub(super) outcome: Outcome,
+    pub(super) non_git: NonGit,
 }
 
 impl std::fmt::Debug for Fake {
@@ -55,6 +57,7 @@ impl Default for Fake {
             shell: Box::new(|_| None),
             queued: Box::new(|_, _| false),
             outcome: Box::new(|_, _| Box::pin(async { None })),
+            non_git: Box::new(|_| false),
         }
     }
 }
@@ -83,6 +86,10 @@ impl TaskRunner for Fake {
     }
     fn run_outcome(&self, thread: String, message: String) -> BoxFuture<'_, Option<String>> {
         (self.outcome)(thread, message)
+    }
+    fn is_non_git_project(&self, project: String) -> BoxFuture<'_, bool> {
+        let non_git = (self.non_git)(project);
+        Box::pin(async move { non_git })
     }
 }
 
@@ -1695,4 +1702,63 @@ mod clock_jumps {
             Some("2026-07-02T09:00:00.000Z")
         );
     }
+}
+
+/// `upsert`: "A folder that is not a Git repository, Scratch included, cannot hold a
+/// worktree." A run applies the same rule to a task saved while its folder had Git.
+#[tokio::test(start_paused = true)]
+async fn a_worktree_task_in_a_folder_without_git_runs_in_the_folder() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let env = Env::new("non-git", "2026-11-01T07:59:00.000Z");
+    let non_git = Arc::new(AtomicBool::new(false));
+    let launched = Arc::new(StdMutex::new(Vec::new()));
+    let fake = Fake {
+        launch: Box::new({
+            let launched = launched.clone();
+            move |request| {
+                launched
+                    .lock()
+                    .unwrap()
+                    .push(request.workspace_strategy["type"].clone());
+                Box::pin(async { Ok("thread:run".to_owned()) })
+            }
+        }),
+        non_git: Box::new({
+            let non_git = non_git.clone();
+            move |project| {
+                assert_eq!(project, "project-interval-duration");
+                non_git.load(Ordering::SeqCst)
+            }
+        }),
+        ..Fake::default()
+    };
+    let service = env.start(fake, "UTC", false).await;
+    let worktree = json!({"type": "worktree", "baseRef": "main"});
+    let saved =
+        |id: &str| json!({"commandId": id, "workspaceStrategy": worktree, "enabled": false});
+    let in_git = upsert(&service, saved("in-git")).await;
+    assert_eq!(to_json(&in_git.workspace_strategy)["type"], "worktree");
+
+    non_git.store(true, Ordering::SeqCst);
+    let plain = upsert(&service, saved("plain")).await;
+    assert_eq!(to_json(&plain.workspace_strategy), json!({"type": "root"}));
+    for task in [&plain, &in_git] {
+        let run = service.run_now(&task.id).await.expect("run");
+        assert_eq!(
+            run.task.last_run_status,
+            ScheduledTaskRunStatus::Succeeded,
+            "{}",
+            task.id
+        );
+        assert_eq!(run.thread_id.as_deref(), Some("thread:run"));
+    }
+    assert_eq!(*launched.lock().unwrap(), [json!("root"), json!("root")]);
+    let stored = tasks(&service).await;
+    let kept = stored.iter().find(|t| t.id == in_git.id).unwrap();
+    assert_eq!(
+        to_json(&kept.workspace_strategy)["type"],
+        "worktree",
+        "a run does not rewrite the saved task"
+    );
 }

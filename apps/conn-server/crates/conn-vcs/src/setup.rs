@@ -315,6 +315,18 @@ pub struct ProvisionRequest {
     pub start_from_origin: bool,
     pub setup_script: Option<SetupScript>,
     pub worktrees_dir: PathBuf,
+    pub missing_base: MissingBase,
+}
+
+/// What provisioning does when `base_ref` names no commit.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MissingBase {
+    /// Git refuses it and the launch fails: someone named this base just now.
+    #[default]
+    Fail,
+    /// A saved strategy (a scheduled task's) outlived its base: start from the remote's
+    /// default branch, else the checked-out commit (`worktreeFallbackBase`).
+    FallBack,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -400,17 +412,34 @@ async fn provision_stages(
     let branch = request.branch.clone().unwrap_or_else(temporary_branch_name);
 
     let mut start = request.base_ref.clone();
+    let mut base_name = request.base_ref.clone();
+    let mut fetched = false;
     if request.start_from_origin {
         setups.stage_status(thread, StageId::Fetch, StageStatus::Running, None);
         match cancellable(cancel, fetch_base(root, &request.base_ref)).await? {
             Some((sha, _)) => {
                 start = sha;
+                fetched = true;
                 setups.stage_status(thread, StageId::Fetch, StageStatus::Done, None);
             }
             None => setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None),
         }
     } else {
         setups.stage_status(thread, StageId::Fetch, StageStatus::Skipped, None);
+    }
+    if request.missing_base == MissingBase::FallBack && !fetched {
+        let fallback = cancellable(cancel, async {
+            // A failed lookup keeps the recorded base, so Git names what is missing.
+            Ok(fallback_base(root, &start, request.start_from_origin)
+                .await
+                .unwrap_or(None))
+        })
+        .await?;
+        if let Some((fallback_start, fallback_name)) = fallback {
+            start = fallback_start;
+            base_name = fallback_name;
+            setups.update(thread, |s| s.base_ref = Some(base_name.clone()));
+        }
     }
 
     setups.stage_status(thread, StageId::Checkout, StageStatus::Running, None);
@@ -420,7 +449,7 @@ async fn provision_stages(
             cwd: root.to_owned(),
             ref_name: start.clone(),
             new_ref_name: Some(branch.clone()),
-            base_ref_name: Some(request.base_ref.clone()),
+            base_ref_name: Some(base_name),
             worktrees_dir: request.worktrees_dir.clone(),
         }),
     )
@@ -512,6 +541,53 @@ async fn provision_stages(
         branch,
         base_ref: start,
     })
+}
+
+/// `worktreeFallbackBase`, for a recorded `base` that names no commit: the remote's default
+/// branch, fetched first, then the checked-out branch, then HEAD, as `(start, base name)`.
+/// `None` when `base` still resolves or nothing does.
+async fn fallback_base(
+    root: &Path,
+    base: &str,
+    start_from_origin: bool,
+) -> VcsResult<Option<(String, String)>> {
+    // `:/text` is a commit search, not a ref; `git worktree add` reads `-` as `@{-1}`.
+    let probe = if base == "-" { "@{-1}" } else { base };
+    if base.starts_with(':') || repo::resolve_commit(root, probe).await?.is_some() {
+        return Ok(None);
+    }
+    let remote = if start_from_origin {
+        base_remote(root, base).await?.map(|(remote, _)| remote)
+    } else {
+        None
+    };
+    let remote = match remote {
+        Some(remote) => Some(remote),
+        None => repo::primary_remote(root).await?,
+    };
+    if let Some(remote) = remote
+        && let Some(default) = repo::remote_default_branch(root, &remote).await?
+    {
+        match fetch_remote_branch(root, &remote, &default).await {
+            Ok(Some((sha, remote_ref))) => {
+                return Ok(Some((sha, format!("refs/remotes/{remote_ref}"))));
+            }
+            // A completed fetch that found no branch: the tracking ref is stale.
+            Ok(None) => {}
+            Err(_) => {
+                let tracking = format!("refs/remotes/{remote}/{default}");
+                if repo::resolve_commit(root, &tracking).await?.is_some() {
+                    return Ok(Some((tracking.clone(), tracking)));
+                }
+            }
+        }
+    }
+    if let Some(branch) = repo::current_branch(root).await? {
+        return Ok(Some((branch.clone(), branch)));
+    }
+    Ok(repo::has_head_commit(root)
+        .await?
+        .then(|| ("HEAD".to_owned(), "HEAD".to_owned())))
 }
 
 /// `(remote, branch)` to fetch for `base_ref`: its upstream when it is a local branch, else

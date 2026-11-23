@@ -270,6 +270,7 @@ pub struct WorktreeRequest {
     pub base_ref: String,
     pub branch: Option<String>,
     pub start_from_origin: bool,
+    pub missing_base: conn_vcs::setup::MissingBase,
 }
 
 #[derive(Clone, Debug, PartialEq)]
