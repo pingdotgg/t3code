@@ -412,7 +412,7 @@ export const make = Effect.gen(function* () {
           const seen = activity;
           yield* Effect.sleep(SHELL_QUIET_FALLBACK);
           if (activity !== seen) continue;
-          if (!busy) return "ready" as const;
+          if (!busy) return "quiet" as const;
           yield* input.onStartupPrompt;
         }
       });
@@ -603,7 +603,12 @@ export const make = Effect.gen(function* () {
           : terminalManager.write({
               threadId: input.threadId,
               terminalId,
-              data: projectScriptTerminalInput(commandLine),
+              // macOS zsh garbles long typed-ahead multiline input; a live line editor takes it as one paste.
+              data: projectScriptTerminalInput(
+                shell === "ready" && completionShell === "posix" && commandLine.includes("\r")
+                  ? `\x1b[200~${commandLine.replaceAll("\r", "\n")}\x1b[201~`
+                  : commandLine,
+              ),
             }),
       ),
       Effect.catchCause((cause) =>

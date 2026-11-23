@@ -717,6 +717,45 @@ describe("RelayClient", () => {
       );
     });
 
+    it.effect.skipIf(windowsHost)(
+      "finds a PATH binary through an empty entry by its absolute path",
+      () =>
+        run((baseDir) =>
+          Effect.gen(function* () {
+            const cwd = `${baseDir}/work`;
+            const inCwd = `${cwd}/cloudflared`;
+            yield* writeExecutable(inCwd);
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
+            const resolveWith = (searchPath: string) => {
+              const env = { PATH: searchPath };
+              return manager.resolve.pipe(
+                Effect.provideService(
+                  ConfigProvider.ConfigProvider,
+                  ConfigProvider.fromEnv({ env }),
+                ),
+                Effect.provideService(HostProcess.Environment, env),
+                Effect.provideService(HostProcess.WorkingDirectory, cwd),
+              );
+            };
+            const found = {
+              status: "available",
+              executablePath: inCwd,
+              source: "path",
+              version: RelayClient.CLOUDFLARED_VERSION,
+            };
+
+            expect(yield* resolveWith(`:${baseDir}/missing`)).toEqual(found);
+            expect(yield* resolveWith(`${baseDir}/missing:`)).toEqual(found);
+            const missing = { status: "missing", version: RelayClient.CLOUDFLARED_VERSION };
+            // An empty PATH searches nothing, not even the working directory.
+            expect(yield* resolveWith("")).toEqual(missing);
+            // A whitespace entry is not an empty one.
+            expect(yield* resolveWith(` :${baseDir}/missing`)).toEqual(missing);
+            expect(yield* resolveWith(`${baseDir}/missing: `)).toEqual(missing);
+          }),
+        ),
+    );
+
     it.effect.skipIf(windowsHost)("reports an outdated override as missing", () => {
       const versions: Record<string, string> = {};
       return run(

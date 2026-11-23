@@ -6,8 +6,8 @@ uses, the server also sends hashed account identifiers: your T3 Connect account,
 Claude accounts when you are signed in, and a random identifier for each device that connects. The endpoint keeps a copy of each
 event and forwards events to PostHog. Events include the provider, model, reasoning effort,
 permission mode, turn and request results, duration, release channel, and token counts when
-available. Child-agent token counts are reported separately from the main agent's. Model names
-are sent only when they appear in a provider's public model list.
+available. Child-agent token counts are reported separately from the main agent's. Events include
+the model ID the provider used, including custom models and models served by a custom endpoint.
 
 Product events do not include prompts, responses, file contents, authentication tokens, conversation IDs,
 raw provider events, or child-agent output. The one exception is [agent feedback](#agent-feedback),
@@ -52,8 +52,8 @@ Before anything is saved, T3 Code removes file paths (when text mentions one, th
 goes with it), your user name, machine name, project title, branch, and git remote, and anything
 that looks like a key, token, email address, or URL with a password. It cannot recognise your code
 or a name written in a sentence, so only include the conversation when it holds nothing you would
-not send. Reports from agents also name the provider, and the model when it is from the provider's
-public model list. No thread IDs or project IDs are sent.
+not send. Reports from agents also name the provider and the model. No thread IDs or project IDs
+are sent.
 
 Reports are saved on your machine first, and a declined one is not saved at all; its card keeps
 only what you would have sent without the conversation. When product usage

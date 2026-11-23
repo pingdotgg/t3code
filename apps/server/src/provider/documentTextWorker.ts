@@ -115,6 +115,13 @@ function xml(source: string, extension: string): XmlNode {
     if (odf && (node.name === "p" || node.name === "h")) collapseOdfWhitespace(node);
     if (
       (extension === ".docx" && node.name === "del") ||
+      (extension === ".docx" &&
+        node.name === "r" &&
+        children(node)
+          .flatMap((child) => (child.name === "rPr" ? children(child) : []))
+          .some(
+            (prop) => prop.name === "vanish" && ["true", "1", "on"].includes(prop.attrs.val ?? "1"),
+          )) ||
       (odf && node.name === "annotation" && parent.name !== "semantics") ||
       (extension === ".odp" &&
         node.name === "page-thumbnail" &&
@@ -141,6 +148,20 @@ function xml(source: string, extension: string): XmlNode {
 
 const children = (node: XmlNode | undefined) =>
   node?.children.filter((child): child is XmlNode => typeof child !== "string") ?? [];
+
+function slideRelationshipId(slide: XmlNode, inheritedAttributes: XmlNode["attrs"]) {
+  for (const [name, value] of Object.entries(slide.attrs)) {
+    if (!name.endsWith(":id")) continue;
+    const binding = `xmlns:${name.slice(0, -3)}`;
+    const namespace = slide.attrs[binding] ?? inheritedAttributes[binding];
+    if (
+      namespace === "http://schemas.openxmlformats.org/officeDocument/2006/relationships" ||
+      namespace === "http://purl.oclc.org/ooxml/officeDocument/relationships"
+    )
+      return value;
+  }
+  return slide.attrs["r:id"] ?? slide.attrs.id;
+}
 
 function retainCompatibilityFallback(parent: XmlNode, fallback: XmlNode): boolean {
   // Markup-compatibility fallbacks repeat their mc:Choice content, e.g. Word text boxes.
@@ -442,6 +463,7 @@ function* notebook(source: string): Generator<string, void> {
 
 // Per-byte decoding only supports the single-byte \fcharset values.
 const FONT_CODE_PAGES = new Map([
+  [0, "windows-1252"],
   [77, "macintosh"],
   [161, "windows-1253"],
   [162, "windows-1254"],
@@ -454,6 +476,18 @@ const FONT_CODE_PAGES = new Map([
   [238, "windows-1250"],
 ]);
 
+// Per-byte decoding only supports single-byte code pages.
+const singleByteCodePage = (value: number) =>
+  value === 0
+    ? "windows-1252"
+    : value === 866
+      ? "ibm866"
+      : value === 10000
+        ? "macintosh"
+        : value === 874 || (value >= 1250 && value <= 1258)
+          ? `windows-${value}`
+          : undefined;
+
 function* rtf(source: string): Generator<string, void> {
   if (!source.startsWith("{\\rtf")) throw new Error("Invalid RTF document");
   let state = {
@@ -463,10 +497,12 @@ function* rtf(source: string): Generator<string, void> {
     uc: 1,
     font: 0,
     fontTable: false,
+    fontFile: false,
     decoder: new TextDecoder("windows-1252"),
   };
   const stack: Array<typeof state> = [];
-  // A font's \fcharset, not the document code page, encodes the bytes written in that font.
+  // A font's \cpg, else its \fcharset, not the document code page, encodes the bytes written in
+  // that font. A \cpg inside \fontfile encodes the font's file name instead.
   const fonts = new Map<number, typeof state.decoder>();
   let defaultFont = 0;
   const decoder = () => fonts.get(state.font) ?? state.decoder;
@@ -540,12 +576,16 @@ function* rtf(source: string): Generator<string, void> {
         )
           state.skip = true;
         if (control === "fonttbl") state.fontTable = true;
+        else if (control === "fontfile") state.fontFile = true;
         else if (control === "deff") state.font = defaultFont = value;
         else if (control === "f") {
           state.font = value;
           if (state.fontTable) fonts.delete(value);
         } else if (control === "fcharset" && state.fontTable) {
           const codePage = FONT_CODE_PAGES.get(value);
+          if (codePage) fonts.set(state.font, new TextDecoder(codePage));
+        } else if (control === "cpg" && state.fontTable && !state.fontFile) {
+          const codePage = singleByteCodePage(value);
           if (codePage) fonts.set(state.font, new TextDecoder(codePage));
         }
         if (control === "deleted") state.deleted = value !== 0;
@@ -558,10 +598,9 @@ function* rtf(source: string): Generator<string, void> {
         if (control === "mac" || (control === "ansicpg" && value === 10000))
           state.decoder = new TextDecoder("macintosh");
         else if (control === "ansicpg") {
-          // Per-byte decoding only supports single-byte Windows code pages.
-          if (value !== 874 && (value < 1250 || value > 1258))
-            throw new Error("Unsupported RTF code page");
-          state.decoder = new TextDecoder(`windows-${value}`, { fatal: true });
+          const label = singleByteCodePage(value);
+          if (!label) throw new Error("Unsupported RTF code page");
+          state.decoder = new TextDecoder(label, { fatal: true });
         } else if (control === "uc") {
           if (!Number.isSafeInteger(value) || value < 0)
             throw new Error("Invalid RTF fallback count");
@@ -599,12 +638,19 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
   else if (extension === ".rtf") yield* rtf((await NodeFSP.readFile(path)).toString("latin1"));
   else {
     const files = await archive(path);
+    // OPC part names compare case-insensitively for ASCII letters; exact names win.
+    const foldAscii = (name: string) => name.replaceAll(/[A-Z]/gu, (char) => char.toLowerCase());
+    const folded = new Map<string, string>();
+    for (const name of files.keys())
+      if (!folded.has(foldAscii(name))) folded.set(foldAscii(name), name);
+    const part = (name: string) => (files.has(name) ? name : (folded.get(foldAscii(name)) ?? name));
+    const has = (name: string) => files.has(part(name));
     const notes: string[] = [];
     const skip = (name: string) =>
       notes.push(`\n[Skipped document part: ${name} (missing or invalid XML).]\n`);
     const read = (name: string): XmlNode => {
       try {
-        const data = files.get(name);
+        const data = files.get(part(name));
         if (!data) throw new Error("Missing document part");
         return xml(data, extension);
       } catch (error) {
@@ -617,18 +663,18 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       new Map(
         [...all(read(name), "Relationship")]
           .filter((rel) => rel.attrs.TargetMode !== "External")
-          .map((rel) => [rel.attrs.Id, rel.attrs.Target]),
+          .map((rel) => [rel.attrs.Id, rel.attrs]),
       );
     if (extension === ".docx") {
       // The package relationship names the main part; Word for the web saves word/document2.xml.
-      const target = files.has("_rels/.rels")
+      const target = has("_rels/.rels")
         ? [...all(read("_rels/.rels"), "Relationship")].find(
             (rel) =>
               rel.attrs.Type?.endsWith("/officeDocument") && rel.attrs.TargetMode !== "External",
           )?.attrs.Target
         : undefined;
       const main = target && NodePath.posix.normalize(target).replace(/^\//, "");
-      yield* paragraphs(read(main && files.has(main) ? main : "word/document.xml"));
+      yield* paragraphs(read(main && has(main) ? main : "word/document.xml"));
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");
       if (extension === ".odt") yield* paragraphs(content);
@@ -655,12 +701,19 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       }
     } else if (extension === ".xlsx") {
       const workbook = read("xl/workbook.xml");
+      const rels = relations("xl/_rels/workbook.xml.rels");
+      const workbookRelations = [...rels.values()];
+      const workbookPartPath = (part: string) => {
+        const target = workbookRelations.find((rel) => rel.Type?.endsWith(`/${part}`))?.Target;
+        return target ? NodePath.posix.resolve("/xl", target).slice(1) : `xl/${part}.xml`;
+      };
       const dateSystem = ["1", "true"].includes(
         all(workbook, "workbookPr").next().value?.attrs.date1904 ?? "",
       )
         ? "1904"
         : "1900";
-      const styles = files.has("xl/styles.xml") ? read("xl/styles.xml") : undefined;
+      const stylesPath = workbookPartPath("styles");
+      const styles = has(stylesPath) ? read(stylesPath) : undefined;
       const customFormats = new Map(
         styles
           ? [...all(styles, "numFmt")].map((node) => [node.attrs.numFmtId, node.attrs.formatCode])
@@ -668,14 +721,12 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       );
       const cellFormats = styles ? all(styles, "cellXfs").next().value : undefined;
       const formats = cellFormats ? children(cellFormats) : [];
-      const strings = files.has("xl/sharedStrings.xml")
-        ? [...all(read("xl/sharedStrings.xml"), "si")]
-        : [];
+      const sharedPath = workbookPartPath("sharedStrings");
+      const strings = has(sharedPath) ? [...all(read(sharedPath), "si")] : [];
       const populatedStrings = strings.map(hasCellText);
-      const rels = relations("xl/_rels/workbook.xml.rels");
       for (const sheet of all(workbook, "sheet")) {
         yield `\n## Sheet: ${sheet.attrs.name}\n`;
-        const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id);
+        const target = rels.get(sheet.attrs["r:id"] ?? sheet.attrs.id)?.Target;
         if (!target) {
           skip(`sheet relationship ${sheet.attrs.name}`);
           continue;
@@ -747,10 +798,11 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
       const rels = relations("ppt/_rels/presentation.xml.rels");
       const [presentation] = children(read("ppt/presentation.xml"));
       const slideList = children(presentation).find((node) => node.name === "sldIdLst");
+      const inheritedAttributes = { ...presentation?.attrs, ...slideList?.attrs };
       let index = 0;
       for (const slide of children(slideList).filter((node) => node.name === "sldId")) {
         yield `\n\n## Slide ${++index}\n`;
-        const target = rels.get(slide.attrs["r:id"] ?? slide.attrs.id);
+        const target = rels.get(slideRelationshipId(slide, inheritedAttributes))?.Target;
         if (!target) {
           skip(`slide relationship ${index}`);
           continue;
@@ -764,7 +816,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
           "_rels",
           `${NodePath.posix.basename(name)}.rels`,
         );
-        if (!files.has(slideRels)) continue;
+        if (!has(slideRels)) continue;
         for (const rel of all(read(slideRels), "Relationship")) {
           const target = rel.attrs.Target;
           if (
