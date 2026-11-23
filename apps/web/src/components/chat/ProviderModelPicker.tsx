@@ -136,6 +136,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
+  const lastQuotaRefreshAtRef = useRef<number>(0);
   const refreshModelCatalog = useEffectEvent(() => {
     const environmentId = props.environmentId;
     if (environmentId === null) return;
@@ -143,6 +144,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     const config = registry.get(serverEnvironment.configValueAtom(environmentId));
     if (config?.environment.capabilities.modelCatalogRefresh !== true) return;
     void refreshProviders({ environmentId, input: { modelCatalogOnly: true } });
+    const now = Date.now();
+    if (now - lastQuotaRefreshAtRef.current >= 15_000) {
+      lastQuotaRefreshAtRef.current = now;
+      void refreshProviders({ environmentId, input: { usageLimitsOnly: true } });
+    }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server for newly released models on every open; a parent, a keybinding or the palette can open the picker, so no one handler sees them all
   useEffect(() => {

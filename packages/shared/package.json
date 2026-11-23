@@ -63,6 +63,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./modelVendorQuota": {
+      "types": "./src/modelVendorQuota.ts",
+      "import": "./src/modelVendorQuota.ts"
+    },
     "./advertisedEndpoint": {
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"

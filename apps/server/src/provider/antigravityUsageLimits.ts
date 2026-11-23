@@ -468,11 +468,28 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       return [...windows.values()];
     });
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+    // When a summary returns Gemini buckets without any Claude/3p bucket, also query
+    // `fetchAvailableModels` so Antigravity's Claude (Opus) / GPT quota is still surfaced.
+    const hasThirdPartySummary = summary.some(
+      (window) => window.id.startsWith("3p-") || window.id.startsWith("claude-"),
+    );
+    const modelFallback =
+      summary.length === 0 || !hasThirdPartySummary
+        ? yield* fetchWindows("fetchAvailableModels", (response) =>
+            decodeModels(response).pipe(Effect.map(modelWindows)),
+          )
+        : [];
+    const windows =
+      summary.length === 0
+        ? modelFallback
+        : [
+            ...summary,
+            ...modelFallback.filter(
+              (window) =>
+                (window.id.startsWith("claude-") || window.id.startsWith("gpt-")) &&
+                !summary.some((existing) => existing.id === window.id),
+            ),
+          ];
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,

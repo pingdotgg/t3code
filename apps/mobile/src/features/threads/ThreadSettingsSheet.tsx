@@ -18,6 +18,7 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
+  ServerProvider,
   ServerSettings,
   ThreadId,
 } from "@t3tools/contracts";
@@ -28,6 +29,8 @@ import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
 } from "@t3tools/shared/model";
+import { classifyModelVendor, type ModelVendorId } from "@t3tools/shared/modelVendorQuota";
+import { ThreadSettingsVendorQuotaHeader } from "./ThreadSettingsVendorQuotaHeader";
 import {
   useNavigation,
   useRoute,
@@ -334,6 +337,7 @@ type ThreadSettingsSessionValue = {
   readonly pendingModel: ModelOption | null;
   readonly favoritesOnly: boolean;
   readonly providerFilter: string | null;
+  readonly vendorFilter: ModelVendorId | null;
   readonly searchQuery: string;
   readonly showLegacy: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
@@ -343,6 +347,7 @@ type ThreadSettingsSessionValue = {
   readonly pressModel: (option: ModelOption) => void;
   readonly setFavoritesOnly: (favoritesOnly: boolean) => void;
   readonly setProviderFilter: (providerKey: string | null) => void;
+  readonly setVendorFilter: (vendor: ModelVendorId | null) => void;
   readonly setSearchQuery: (query: string) => void;
   readonly setShowLegacy: (showLegacy: boolean) => void;
   readonly toggleProvider: (providerKey: string) => void;
@@ -510,6 +515,7 @@ function ThreadSettingsSessionProvider(
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [vendorFilter, setVendorFilter] = useState<ModelVendorId | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -658,6 +664,7 @@ function ThreadSettingsSessionProvider(
     pendingModel,
     favoritesOnly,
     providerFilter,
+    vendorFilter,
     searchQuery,
     showLegacy: showLegacyToggle,
     applyOptionChange,
@@ -667,6 +674,7 @@ function ThreadSettingsSessionProvider(
     pressModel,
     setFavoritesOnly,
     setProviderFilter,
+    setVendorFilter,
     setSearchQuery,
     setShowLegacy: setShowLegacyToggle,
     toggleProvider,
@@ -719,6 +727,10 @@ type ThreadSettingsProviderCatalog = {
 };
 
 type ThreadSettingsCatalogItem =
+  | {
+      readonly kind: "vendorQuota";
+      readonly key: "vendor-quota";
+    }
   | {
       readonly kind: "provider";
       readonly key: string;
@@ -893,7 +905,7 @@ function buildThreadSettingsCatalogItems(
       return [];
     }
     const driver = group.models[0]?.providerDriver ?? group.providerKey;
-    const visibleModels = visibleCatalogModels({
+    const allVisibleModels = visibleCatalogModels({
       models: group.models,
       providerLabel: group.providerLabel,
       query: session.searchQuery,
@@ -902,6 +914,18 @@ function buildThreadSettingsCatalogItems(
       showLegacy: session.manageHidden || session.showLegacy,
       isDisplayed: session.isDisplayed,
     });
+    const visibleModels =
+      session.vendorFilter === null
+        ? allVisibleModels
+        : allVisibleModels.filter(
+            (option) =>
+              classifyModelVendor({
+                slug: option.selection.model,
+                name: option.label,
+                driverKind: option.providerDriver as ServerProvider["driver"],
+                subProvider: option.subtitle,
+              }) === session.vendorFilter,
+          );
     const updateRequiredNotice =
       group.updateRequired && !session.favoritesOnly
         ? formatProviderUpdateRequiredNotice(
@@ -919,6 +943,7 @@ function buildThreadSettingsCatalogItems(
     const isNarrowed =
       session.favoritesOnly ||
       session.providerFilter !== null ||
+      session.vendorFilter !== null ||
       session.searchQuery.trim().length > 0;
     const collapsible = !isNarrowed;
     const collapsed = providerSectionIsCollapsed({
@@ -1069,6 +1094,8 @@ function ThreadSettingsMainContent(props: {
   });
   const refreshProviderCatalog = createProviderCatalogRefreshRunner(refreshProvidersCommand);
   const registry = use(RegistryContext);
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const envConfig = session.environmentId ? configs.get(session.environmentId) : undefined;
   const refreshModelCatalog = useEffectEvent(() => {
     const environmentId = session.environmentId;
     if (!environmentId) return;
@@ -1076,6 +1103,7 @@ function ThreadSettingsMainContent(props: {
     const config = registry.get(environmentServerConfigsAtom).get(environmentId);
     if (config?.environment.capabilities.modelCatalogRefresh !== true) return;
     void refreshProvidersCommand({ environmentId, input: { modelCatalogOnly: true } });
+    void refreshProvidersCommand({ environmentId, input: { usageLimitsOnly: true } });
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server for newly released models when the model list opens
   useEffect(() => {
@@ -1114,8 +1142,10 @@ function ThreadSettingsMainContent(props: {
   const hasActiveCatalogFilter =
     session.favoritesOnly ||
     session.providerFilter !== null ||
+    session.vendorFilter !== null ||
     session.searchQuery.trim().length > 0;
   const listItems = [
+    { kind: "vendorQuota", key: "vendor-quota" } as const,
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
     { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
@@ -1123,7 +1153,16 @@ function ThreadSettingsMainContent(props: {
     const item = itemProps.item;
     let content: ReactNode;
 
-    if (item.kind === "provider") {
+    if (item.kind === "vendorQuota") {
+      content = (
+        <ThreadSettingsVendorQuotaHeader
+          vendorFilter={session.vendorFilter}
+          onSelectVendor={session.setVendorFilter}
+          providers={envConfig?.providers ?? []}
+          sources={envConfig?.usageLimitSources ?? []}
+        />
+      );
+    } else if (item.kind === "provider") {
       content = <ThreadSettingsProviderListHeader provider={item.provider} />;
     } else if (item.kind === "subProvider") {
       content = <ThreadSettingsSubProviderListHeader item={item} />;

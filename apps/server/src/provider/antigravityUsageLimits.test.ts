@@ -774,6 +774,48 @@ describe("Antigravity subscription limits", () => {
     ).toBe(value);
   });
 
+  it.effect(
+    "supplements Claude/Opus quota from fetchAvailableModels when summary omits 3p buckets",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const { probe } = yield* fixture({
+          summary: {
+            groups: [
+              {
+                displayName: "Gemini Models",
+                buckets: [
+                  {
+                    bucketId: "gemini-5h",
+                    window: "5h",
+                    remainingFraction: 0.9,
+                    resetTime: "2026-10-09T16:00:00Z",
+                  },
+                ],
+              },
+            ],
+          },
+          models: {
+            models: {
+              "claude-opus-4-6": {
+                modelProvider: "MODEL_PROVIDER_ANTHROPIC",
+                quotaInfo: {
+                  remainingFraction: 0.4,
+                  resetTime: "2026-10-09T15:00:00Z",
+                },
+              },
+            },
+          },
+        });
+        const limits = yield* probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows.map((window) => window.id)).toEqual(["gemini-5h", "claude-quota"]);
+        expect(limits.windows[1]?.usedPercent).toBeCloseTo(60, 5);
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
       for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {

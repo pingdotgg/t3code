@@ -2542,6 +2542,13 @@ export const layerWsRpc = (
               yield* providerRegistry.refreshModelCatalog;
               return { providers: [] };
             }
+            if (input.usageLimitsOnly === true) {
+              yield* Effect.all([usageLimitSources.refresh, providerRegistry.refreshUsageLimits], {
+                concurrency: "unbounded",
+                discard: true,
+              });
+              return { providers: [] };
+            }
             if (input.refreshModels) {
               yield* providerRegistry.invalidateModelCaches({
                 instanceId: input.instanceId,

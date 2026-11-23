@@ -1,8 +1,17 @@
 import { Toolbar } from "@base-ui/react/toolbar";
 import { type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  MODEL_VENDOR_IDS,
+  modelVendorDisplayName,
+  modelVendorTabId,
+  type ModelVendorId,
+  type ModelVendorTabId,
+  type VendorQuotaSummary,
+} from "@t3tools/shared/modelVendorQuota";
 import { memo, useLayoutEffect, useRef, useState } from "react";
-import { msg, T, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { StarIcon } from "lucide-react";
+import { VendorBrandIcon } from "./ModelPickerQuotaPanel";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -47,21 +56,28 @@ function describeUnavailableInstance(
 const PICKER_TOOLTIP_SIDE = "left" as const;
 const PICKER_TOOLTIP_SIDE_OFFSET = 8;
 
+export type ModelPickerSidebarSelection = ProviderInstanceId | "favorites" | ModelVendorTabId;
+
 export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
-  selectedInstanceId: ProviderInstanceId | "favorites";
-  onSelectInstance: (instanceId: ProviderInstanceId | "favorites") => void;
+  selectedInstanceId: ModelPickerSidebarSelection;
+  onSelectInstance: (instanceId: ModelPickerSidebarSelection) => void;
   onFocusSearch: () => void;
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   showFavorites?: boolean;
+  showVendorTabs?: boolean;
+  vendorQuotas?: Readonly<Record<ModelVendorId, VendorQuotaSummary>>;
+  disabledVendorTabs?: ReadonlySet<ModelVendorTabId>;
   disabledInstanceIds?: ReadonlySet<ProviderInstanceId>;
   selectableUnavailableInstanceIds?: ReadonlySet<ProviderInstanceId>;
   getDisabledInstanceTooltip?: (entry: ProviderInstanceEntry) => string;
 }) {
+  const gt = useGT();
   const m = useMessages();
-  const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
+  const handleSelect = (instanceId: ModelPickerSidebarSelection) => {
     props.onSelectInstance(instanceId);
   };
   const showFavorites = props.showFavorites ?? true;
+  const showVendorTabs = props.showVendorTabs ?? true;
   const [hoveredInstanceId, setHoveredInstanceId] = useState<ProviderInstanceId | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement>(null);
   const [selectedIndicatorTop, setSelectedIndicatorTop] = useState<number | null>(null);
@@ -139,6 +155,90 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 </Tooltip>
               </div>
               <div className="border-b border-border/70" aria-hidden="true" />
+            </>
+          ) : null}
+
+          {showVendorTabs ? (
+            <>
+              {MODEL_VENDOR_IDS.map((vendor) => {
+                const tabId = modelVendorTabId(vendor);
+                const isDisabled = props.disabledVendorTabs?.has(tabId) ?? false;
+                const isSelected = props.selectedInstanceId === tabId;
+                const quota = props.vendorQuotas?.[vendor];
+                const minRemaining = quota?.minRemainingPercent ?? null;
+                const displayName = modelVendorDisplayName(vendor);
+                const vendorTitle =
+                  vendor === "claude" && quota?.viaAntigravityOnly
+                    ? gt("{vendor} (Antigravity)", { vendor: displayName })
+                    : vendor === "gemini"
+                      ? gt("Gemini (Antigravity)")
+                      : displayName;
+                const tooltip =
+                  minRemaining !== null
+                    ? gt("{vendor} · {remaining}% left", {
+                        vendor: vendorTitle,
+                        remaining: minRemaining,
+                      })
+                    : vendorTitle;
+                const dotColor =
+                  minRemaining !== null && minRemaining <= 10
+                    ? "bg-destructive"
+                    : minRemaining !== null && minRemaining <= 20
+                      ? "bg-warning"
+                      : null;
+
+                const button = (
+                  <Toolbar.Button
+                    className={cn(
+                      "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded-md transition-colors hover:bg-foreground/10 focus-visible:bg-foreground/10 focus-visible:outline-none",
+                      isDisabled && "opacity-50 cursor-not-allowed hover:bg-transparent",
+                    )}
+                    onClick={() => !isDisabled && handleSelect(tabId)}
+                    disabled={isDisabled}
+                    focusableWhenDisabled={!isDisabled}
+                    aria-pressed={isSelected}
+                    type="button"
+                    aria-label={tooltip}
+                  >
+                    <VendorBrandIcon vendor={vendor} className="size-5" />
+                    {dotColor ? (
+                      <span
+                        aria-hidden="true"
+                        className={cn(
+                          "pointer-events-none absolute right-1 bottom-1 size-1.5 rounded-full ring-1 ring-background",
+                          dotColor,
+                        )}
+                      />
+                    ) : null}
+                  </Toolbar.Button>
+                );
+
+                return (
+                  <div key={tabId} className="relative w-full" data-model-picker-provider={tabId}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          isDisabled ? (
+                            <span className="relative block w-full">{button}</span>
+                          ) : (
+                            button
+                          )
+                        }
+                      />
+                      <TooltipPopup
+                        side={PICKER_TOOLTIP_SIDE}
+                        sideOffset={PICKER_TOOLTIP_SIDE_OFFSET}
+                        align="center"
+                      >
+                        {tooltip}
+                      </TooltipPopup>
+                    </Tooltip>
+                  </div>
+                );
+              })}
+              {props.instanceEntries.length > 0 ? (
+                <div className="border-b border-border/70" aria-hidden="true" />
+              ) : null}
             </>
           ) : null}
 

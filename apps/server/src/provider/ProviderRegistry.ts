@@ -113,6 +113,12 @@ export class ProviderRegistry extends Context.Service<
      */
     readonly refreshModelCatalog: Effect.Effect<void>;
 
+    /**
+     * Lightweight usage-limit refresh across all enabled provider instances without
+     * rerunning full CLI installation or model catalog discovery.
+     */
+    readonly refreshUsageLimits: Effect.Effect<void>;
+
     readonly getProviderMaintenanceCapabilitiesForInstance: (
       instanceId: ProviderInstanceId,
       provider: ProviderDriverKind,
@@ -1338,6 +1344,18 @@ export const layer = Layer.effect(
       }
     });
 
+    const refreshUsageLimits = Effect.fn("ProviderRegistry.refreshUsageLimits")(function* () {
+      const instances = yield* instanceRegistry.listInstances;
+      yield* Effect.forEach(
+        instances,
+        (instance) =>
+          instance.snapshot.refreshUsage
+            ? instance.snapshot.refreshUsage.pipe(Effect.ignoreCause({ log: true }))
+            : Effect.void,
+        { concurrency: "unbounded", discard: true },
+      );
+    });
+
     return {
       getProviders: Ref.get(providersRef),
       refresh: (provider?: ProviderDriverKind) =>
@@ -1353,6 +1371,10 @@ export const layer = Layer.effect(
       refreshAfterUpdate,
       invalidateModelCaches,
       refreshModelCatalog: refreshModelCatalog().pipe(
+        Effect.catchCause(recoverRefreshFailure),
+        Effect.asVoid,
+      ),
+      refreshUsageLimits: refreshUsageLimits().pipe(
         Effect.catchCause(recoverRefreshFailure),
         Effect.asVoid,
       ),

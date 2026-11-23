@@ -18,6 +18,7 @@ import {
   type RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -769,6 +770,9 @@ export const layer: Layer.Layer<
           ),
       );
 
+    const POST_TURN_USAGE_REFRESH_THROTTLE_MS = 10_000;
+    const lastUsageRefreshAtByInstance = new Map<ProviderInstanceId, number>();
+
     return ProviderEventIngestorV2.of({
       normalize,
       ingestNormalized:
@@ -820,15 +824,23 @@ export const layer: Layer.Layer<
             effect.pipe(
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
+                  if (storedEvents.length === 0 || input.event.type !== "turn.terminal") return;
+                  const isUsageLimitFailure =
+                    input.event.status === "failed" && input.event.failure.class === "usage_limit";
+                  const isCompletedTurn = input.event.status === "completed";
+                  if (!isUsageLimitFailure && !isCompletedTurn) return;
+                  const now = yield* Clock.currentTimeMillis;
+                  const lastRefreshAt = lastUsageRefreshAtByInstance.get(input.providerInstanceId);
                   if (
-                    storedEvents.length === 0 ||
-                    input.event.type !== "turn.terminal" ||
-                    input.event.status !== "failed" ||
-                    input.event.failure.class !== "usage_limit"
-                  )
+                    !isUsageLimitFailure &&
+                    lastRefreshAt !== undefined &&
+                    now - lastRefreshAt < POST_TURN_USAGE_REFRESH_THROTTLE_MS
+                  ) {
                     return;
+                  }
                   const instance = yield* instances.getInstance(input.providerInstanceId);
                   if (!instance?.snapshot.refreshUsage) return;
+                  lastUsageRefreshAtByInstance.set(input.providerInstanceId, now);
                   yield* instance.snapshot.refreshUsage.pipe(
                     Effect.ignoreCause({ log: true }),
                     Effect.forkIn(scope, { startImmediately: true }),

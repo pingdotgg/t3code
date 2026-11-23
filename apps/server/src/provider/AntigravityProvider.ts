@@ -566,7 +566,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   });
 
   return {
-    snapshot: { ...managed, getSnapshot },
+    snapshot: { ...managed, getSnapshot, refreshUsage: refreshUsage() },
     onSessionStarted,
     onConfigOptionsUpdated,
     onAvailableCommands,
