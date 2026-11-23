@@ -8187,6 +8187,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: ThreadId | null,
             candidate: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) {
+            itemIdentityVersion = 2;
             rememberTerminalEnvironment(candidate.sessionId, yield* readMcpContext(threadId));
             yield* Ref.set(runtimeRestartRequired, false);
             yield* Ref.set(activeSessionId, candidate.sessionId);
@@ -10432,9 +10433,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     });
                     yield* assertCanReplaceSession;
                     yield* awaitRuntimeTeardown();
-                    const previousItemIdentityVersion = itemIdentityVersion;
                     const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
-                    itemIdentityVersion = 2;
                     prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
                     yield* startReplacementAcpRuntime(
                       threadInput.threadId,
@@ -10443,7 +10442,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ).pipe(
                       Effect.tapError(() =>
                         Effect.sync(() => {
-                          itemIdentityVersion = previousItemIdentityVersion;
                           pendingTerminalEnvironment = previousPendingTerminalEnvironment;
                         }),
                       ),
@@ -11181,9 +11179,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   });
                   yield* assertCanRollbackSession;
                   yield* awaitRuntimeTeardown();
-                  const previousItemIdentityVersion = itemIdentityVersion;
                   const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
-                  itemIdentityVersion = 2;
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),
                   );
@@ -11196,7 +11192,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     Effect.retry({ times: 1, while: () => !blockedByGuard }),
                     Effect.tapError(() =>
                       Effect.sync(() => {
-                        itemIdentityVersion = previousItemIdentityVersion;
                         pendingTerminalEnvironment = previousPendingTerminalEnvironment;
                       }),
                     ),
