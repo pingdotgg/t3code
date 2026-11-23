@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -33,6 +34,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { Argument, Command, Flag } from "effect/cli";
 import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2ThreadStreamItem,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
@@ -77,6 +81,7 @@ import {
   type FirstWord,
   type MachineState,
   type Measured,
+  type WorkingPoint,
   type ProfileSummary,
   type Window,
 } from "./server-metrics-report.ts";
@@ -84,8 +89,12 @@ import {
 const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const MODEL = "claude-haiku-4-5";
 const SLOW_MARKER = "[[stream-slowly]]";
+/** A prompt holding this streams a reply that ends in a Write tool call, then a short answer. */
+const EDIT_MARKER = "[[edit-files]]";
 /** Sequential turns in the pipeline scenario. */
 const PIPELINE_TURNS = 50;
+/** Threads working at once in each window of the working scenario. */
+const WORKING_THREADS = [5, 10, 20];
 /** Clients that drop and reconnect at once in the clients scenario. */
 const STORM_CLIENTS = 20;
 /** Event-loop delay sampling interval; each sample wakes the loop once. */
@@ -128,6 +137,8 @@ interface ApiRequest {
   readonly agent: boolean;
   readonly stream: boolean;
   readonly marker: string | undefined;
+  /** The request carries a tool result, so it is a turn's follow-up rather than its start. */
+  readonly toolResult: boolean;
   /** When the reply's last event was produced; streamed replies only. */
   endedAt?: number;
 }
@@ -136,7 +147,25 @@ const MessagesRequest = Schema.Struct({
   stream: Schema.optional(Schema.Boolean),
   model: Schema.optional(Schema.String),
   tools: Schema.optional(Schema.Array(Schema.Unknown)),
+  messages: Schema.optional(
+    Schema.Array(Schema.Struct({ role: Schema.String, content: Schema.Unknown })),
+  ),
 });
+
+/** Whether the newest message hands back a tool's result. */
+const endsInToolResult = (messages: typeof MessagesRequest.Type.messages) => {
+  const content = messages?.at(-1)?.content;
+  return (
+    Array.isArray(content) &&
+    content.some(
+      (block: unknown) =>
+        typeof block === "object" &&
+        block !== null &&
+        "type" in block &&
+        block.type === "tool_result",
+    )
+  );
+};
 
 /** Streams a canned reply to every Messages request; a prompt holding SLOW_MARKER streams slowly. */
 const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(function* () {
@@ -157,7 +186,9 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
       Effect.orElseSucceed((): typeof MessagesRequest.Type => ({})),
     );
     const streamed = body.stream === true;
+    const toolResult = endsInToolResult(body.messages);
     const entry: ApiRequest = {
+      toolResult,
       at: yield* nowMs,
       stream: streamed,
       // Title and branch-name jobs carry only their structured-output tool; the agent carries many.
@@ -183,10 +214,13 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
     const event = (name: string, data: object) =>
       `event: ${name}\ndata: ${encodeJson({ type: name, ...data })}\n\n`;
     const slow = raw.includes(SLOW_MARKER);
-    const words = slow ? 2_000 : 40;
+    // An editing turn streams a longer first reply, then writes a file in the agent's directory.
+    const cwd = /Primary working directory: ([^\\"\n]+)/.exec(raw)?.[1]?.trim();
+    const edit = entry.agent && raw.includes(EDIT_MARKER) && !toolResult && cwd !== undefined;
+    const words = slow ? 2_000 : edit ? 150 : 40;
     const deltas = Stream.range(0, words - 1).pipe(
       Stream.mapEffect((word) =>
-        Effect.sleep(Duration.millis(slow ? 50 : 5)).pipe(
+        Effect.sleep(Duration.millis(slow ? 50 : edit ? 10 : 5)).pipe(
           Effect.as(
             event("content_block_delta", {
               index: 0,
@@ -196,6 +230,43 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
         ),
       ),
     );
+    const toolCall = edit
+      ? Stream.make(
+          event("content_block_stop", { index: 0 }),
+          event("content_block_start", {
+            index: 1,
+            content_block: {
+              type: "tool_use",
+              id: `toolu_bench_${requests.length}`,
+              name: "Write",
+              input: {},
+            },
+          }),
+          event("content_block_delta", {
+            index: 1,
+            delta: {
+              type: "input_json_delta",
+              partial_json: encodeJson({
+                file_path: `${cwd}/bench/${entry.marker ?? `turn-${requests.length}`}.md`,
+                content: Array.from({ length: 40 }, (_, line) => `line ${line} of ${id}`).join(
+                  "\n",
+                ),
+              }),
+            },
+          }),
+          event("content_block_stop", { index: 1 }),
+          event("message_delta", {
+            delta: { stop_reason: "tool_use", stop_sequence: null },
+            usage: { output_tokens: words },
+          }),
+        )
+      : Stream.make(
+          event("content_block_stop", { index: 0 }),
+          event("message_delta", {
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: words },
+          }),
+        );
     const events = Stream.make(
       event("message_start", {
         message: {
@@ -212,15 +283,7 @@ const serveFakeAnthropic = Effect.fn("serverMetrics.serveFakeAnthropic")(functio
       event("content_block_start", { index: 0, content_block: { type: "text", text: "" } }),
     ).pipe(
       Stream.concat(deltas),
-      Stream.concat(
-        Stream.make(
-          event("content_block_stop", { index: 0 }),
-          event("message_delta", {
-            delta: { stop_reason: "end_turn", stop_sequence: null },
-            usage: { output_tokens: words },
-          }),
-        ),
-      ),
+      Stream.concat(toolCall),
       // Stamped as the last event is produced, so it is set before any client can see the end.
       Stream.concat(
         Stream.fromEffect(
@@ -1128,6 +1191,11 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   server: Server,
   token: string,
   threadIds: ReadonlyArray<string>,
+  /** Sees every item a thread subscription delivers, the snapshot included. */
+  onThreadItem: (
+    threadId: string,
+    item: OrchestrationV2ThreadStreamItem,
+  ) => Effect.Effect<void> = () => Effect.void,
 ) {
   const http = yield* HttpClient.HttpClient;
   // Headers alone do not finish a request; the deadline covers the body too.
@@ -1162,6 +1230,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
   const ready = Effect.fn("serverMetrics.subscription")(function* <A, E, R>(
     stream: Stream.Stream<A, E, R>,
     isReady: (item: A) => boolean,
+    onItem: (item: A) => Effect.Effect<void> = () => Effect.void,
   ) {
     const synchronized = yield* Deferred.make<void, MetricsError>();
     const lose = (message: string) =>
@@ -1170,7 +1239,9 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
       );
     yield* stream.pipe(
       Stream.runForEach((item) =>
-        isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void,
+        onItem(item).pipe(
+          Effect.andThen(isReady(item) ? Deferred.succeed(synchronized, undefined) : Effect.void),
+        ),
       ),
       Effect.andThen(lose("a subscription ended")),
       Effect.catchCause(() => lose("a subscription failed")),
@@ -1244,6 +1315,7 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
           acceptDedupedBodies: true,
         }),
         synchronized,
+        (item) => onThreadItem(threadId, item),
       ),
     )),
   ];
@@ -1254,6 +1326,19 @@ const attachClient = Effect.fn("serverMetrics.attachClient")(function* (
     }),
   );
   return {
+    /** Sends a message the way the composer does, starting a turn at once. */
+    send: (threadId: string, messageId: string, text: string) =>
+      client["orchestration.dispatchCommand"]({
+        type: "message.dispatch",
+        commandId: CommandId.make(messageId),
+        threadId: ThreadId.make(threadId),
+        messageId: MessageId.make(messageId),
+        text,
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      }),
     /** Fails if any of this client's subscriptions or reports was lost since it attached. */
     healthy: Effect.flatMap(Ref.get(lost), (message) =>
       message === undefined ? Effect.void : Effect.fail(new MetricsError({ message })),
@@ -1308,6 +1393,126 @@ const pipelineTurns = Effect.fn("serverMetrics.pipelineTurns")(function* (
   };
 });
 
+const TERMINAL_RUN = new Set(["completed", "failed", "interrupted", "cancelled", "rolled_back"]);
+
+/** Threads that each answered once in a worktree of their own, by id. */
+const openWorktreeThreads = Effect.fn("serverMetrics.openWorktreeThreads")(function* (
+  server: Server,
+  count: number,
+) {
+  const answers = yield* Effect.forEach(
+    Array.from({ length: count }, (_, index) => index),
+    (index) => server.threadStart(`Say hello ${index}.`, ["--wait", "--worktree", "main"]),
+    { concurrency: 5 },
+  );
+  const ids = answers.map((answer) => /^Thread (\S+)$/m.exec(answer.stderr)?.[1]);
+  const failed = answers.find((answer, index) => answer.exitCode !== 0 || !ids[index]);
+  if (failed) {
+    return yield* new MetricsError({
+      message: `a worktree thread failed to start: ${failed.stderr.trim() || failed.stdout.trim()}`,
+    });
+  }
+  return ids.filter((id) => id !== undefined);
+});
+
+/**
+ * Every given thread runs editing turns back to back, all at once, sent and watched by one client
+ * subscribed to all of them, as the web client is. Each turn streams a reply, writes a file in the
+ * thread's worktree through the agent's Write tool, and ends in a checkpoint of that change. The
+ * window is measured while every thread is working; turns finished inside it are timed.
+ */
+const workingWindow = Effect.fn("serverMetrics.workingWindow")(function* (
+  environment: Environment,
+  server: Server,
+  token: string,
+  threadIds: ReadonlyArray<string>,
+  timing: { readonly warmupSeconds: number; readonly windowSeconds: number },
+  /** The first turn's marker number; each window needs its own range, as ids never repeat. */
+  firstMarker: number,
+) {
+  // One pending turn per thread: its message id and when the run's end reached the client.
+  const pending = new Map<string, { messageId: string; done: Deferred.Deferred<string> }>();
+  const client = yield* attachClient(server, token, threadIds, (threadId, item) => {
+    if (item.kind !== "event" || item.event.type !== "run.updated") return Effect.void;
+    const run = item.event.payload;
+    const turn = pending.get(threadId);
+    if (!turn || run.userMessageId !== turn.messageId || !TERMINAL_RUN.has(run.status)) {
+      return Effect.void;
+    }
+    return Deferred.succeed(turn.done, run.status).pipe(Effect.asVoid);
+  });
+  const turns: Array<{ endedAt: number; toRequest: number; turnEnd: number; turnMs: number }> = [];
+  let stopping = false;
+  let sequence = 0;
+  const work = Effect.fn("serverMetrics.workingThread")(function* (threadId: string) {
+    while (!stopping) {
+      const marker = `bench-run-${firstMarker + sequence++}`;
+      const messageId = `bench-message-${marker}`;
+      const done = yield* Deferred.make<string>();
+      pending.set(threadId, { messageId, done });
+      const sentAt = yield* nowMs;
+      yield* client.send(threadId, messageId, `Edit a file. ${EDIT_MARKER} ${marker}`);
+      const status = yield* Deferred.await(done).pipe(
+        Effect.timeoutOrElse({
+          duration: Duration.seconds(120),
+          orElse: () => new MetricsError({ message: `turn ${marker} never ended` }),
+        }),
+      );
+      const endedAt = yield* nowMs;
+      if (status !== "completed") {
+        return yield* new MetricsError({ message: `turn ${marker} ended ${status}` });
+      }
+      const forTurn = environment.requests.filter(
+        (request) => request.agent && request.marker === marker && request.at >= sentAt,
+      );
+      const first = forTurn.find((request) => !request.toolResult);
+      const last = forTurn.findLast((request) => request.toolResult);
+      if (first === undefined || last?.endedAt === undefined) {
+        return yield* new MetricsError({
+          message: `turn ${marker} never called its Write tool; is the Claude CLI's tool set unchanged?`,
+        });
+      }
+      turns.push({
+        endedAt,
+        toRequest: first.at - sentAt,
+        turnEnd: endedAt - last.endedAt,
+        turnMs: endedAt - sentAt,
+      });
+    }
+  });
+  const workers = yield* Effect.forEach(threadIds, (threadId) => Effect.forkScoped(work(threadId)));
+  // A failed turn ends the window at once instead of thinning it.
+  const failed = Effect.forEach(workers, Fiber.join, {
+    concurrency: "unbounded",
+    discard: true,
+  }).pipe(Effect.andThen(Effect.never));
+  return yield* Effect.raceFirst(
+    Effect.gen(function* () {
+      yield* Effect.sleep(Duration.seconds(timing.warmupSeconds));
+      const from = yield* nowMs;
+      const window = yield* server.measure(timing.windowSeconds);
+      const to = yield* nowMs;
+      // Every thread finishes the turn it is on, so the next window starts from idle threads.
+      stopping = true;
+      yield* Effect.forEach(workers, Fiber.join, { discard: true });
+      yield* client.healthy;
+      const inside = turns.filter((turn) => turn.endedAt >= from && turn.endedAt <= to);
+      if (inside.length === 0) {
+        return yield* new MetricsError({ message: "no turn finished inside the window" });
+      }
+      const point: WorkingPoint = {
+        ...window,
+        turnsPerMin: round((inside.length / (to - from)) * 60_000),
+        toRequestMs: spread(inside.map((turn) => turn.toRequest)),
+        turnEndMs: spread(inside.map((turn) => turn.turnEnd)),
+        turnMs: spread(inside.map((turn) => turn.turnMs)),
+      };
+      return point;
+    }),
+    failed,
+  );
+}, Effect.scoped);
+
 const SCENARIOS = [
   "startup",
   "rest",
@@ -1316,6 +1521,7 @@ const SCENARIOS = [
   "streaming",
   "clients",
   "pipeline",
+  "working",
   "busy",
 ] as const;
 /** Scenarios that read the developer's real database, so they run only when named. */
@@ -1490,6 +1696,35 @@ const runOnce = Effect.fn("serverMetrics.runOnce")(function* (options: RunOption
             loopDelayP99Ms: round(loop.p99),
             loopDelayMaxMs: round(loop.max),
           },
+        };
+      }),
+    );
+  }
+  if (wanted("working")) {
+    yield* withServer("working", (server) =>
+      Effect.gen(function* () {
+        const token = yield* server.issueToken;
+        const counts = WORKING_THREADS;
+        const threads = yield* openWorktreeThreads(server, Math.max(...counts));
+        const active: Record<string, WorkingPoint> = {};
+        for (const [index, count] of counts.entries()) {
+          active[`${count}`] = yield* workingWindow(
+            environment,
+            server,
+            token,
+            threads.slice(0, count),
+            { warmupSeconds: 10, windowSeconds: 30 },
+            30_000 + index * 10_000,
+          );
+        }
+        const fit = (pick: (point: WorkingPoint) => number) =>
+          round(slope(counts.map((count) => [count, pick(active[`${count}`]!)] as const)), 3);
+        measured.working = {
+          active,
+          heapMBPerThread: fit((point) => point.heapAfterGcMB),
+          rssMBPerThread: fit((point) => point.rssMB),
+          cpuPctPerThread: fit((point) => point.cpuPct),
+          loopDelayP99MsPerThread: fit((point) => point.loopDelayP99Ms ?? 0),
         };
       }),
     );
