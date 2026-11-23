@@ -219,8 +219,9 @@ it("offers no git controls in a No project thread, but shows its linked pull req
 it("shows Current checkout where no worktree can come from, even when New worktree is the default", async () => {
   using fixture = setup({ workspaceRoot: SCRATCH_ROOT, folder: SCRATCH_ROOT });
   await using _screen = await render(<Panel fixture={fixture} draftEnvMode="worktree" />);
-  await expect.element(page.getByLabelText("Run context: Current checkout")).toBeVisible();
-  await expect.element(page.getByRole("button", { name: /Run context/ })).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Run context: Current checkout" }).click();
+  await expect.element(page.getByText(SCRATCH_ROOT)).toBeVisible();
+  await expect.element(page.getByText("New worktree")).not.toBeInTheDocument();
 });
 
 it("offers only machines where no worktree can come from and several machines exist", async () => {
