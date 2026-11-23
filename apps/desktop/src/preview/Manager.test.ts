@@ -32,6 +32,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
 import * as PreviewManager from "./Manager.ts";
+import { sendPageCommand } from "./GuestInput.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 
 describe("fitPictureInPictureContentSize", () => {
@@ -2647,6 +2648,18 @@ describe("PreviewManager", () => {
         const unprompted = navigation(threadLink);
         willNavigate?.(unprompted);
         expect(unprompted.preventDefault).toHaveBeenCalled();
+        expect(yield* Queue.size(openLinks)).toBe(0);
+
+        // Nor can an agent driving the page: its input is not the user's.
+        yield* Effect.promise(() =>
+          sendPageCommand(
+            contents,
+            { sendCommand: async () => click() } as unknown as Electron.Debugger,
+            "Input.dispatchMouseEvent",
+            { type: "mousePressed", x: 1, y: 1 },
+          ),
+        );
+        willNavigate?.(navigation(threadLink));
         expect(yield* Queue.size(openLinks)).toBe(0);
 
         click();

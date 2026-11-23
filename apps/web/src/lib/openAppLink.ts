@@ -49,9 +49,8 @@ const threadLinkLookup: ThreadLinkLookup = {
       environments: identities(),
     }).get(environmentId);
   },
+  loaded: (ref) => readThreadShell(ref) !== null,
   existing: async (environmentId, threadIds) => {
-    const loaded = threadIds.filter((threadId) => readThreadShell({ environmentId, threadId }));
-    if (loaded.length > 0) return new Set(loaded);
     const metadata = await readQuery(
       orchestrationEnvironment.threadLinkMetadata({ environmentId, input: { threadIds } }),
     );

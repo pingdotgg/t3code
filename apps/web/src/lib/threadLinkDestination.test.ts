@@ -10,6 +10,7 @@ const link = (href: string) => parseThreadLinkHref(href)!;
 const lookup = (input: Partial<ThreadLinkLookup> = {}): ThreadLinkLookup => ({
   own: () => undefined,
   linkedLabel: async () => undefined,
+  loaded: () => false,
   existing: async () => new Set(),
   ...input,
 });
@@ -46,5 +47,19 @@ describe("resolveThreadLinkDestination", () => {
     expect(
       await resolveThreadLinkDestination(escaped, here, existing(["provider%3A1", "provider:1"])),
     ).toMatchObject({ ref: { threadId: "provider%3A1" } });
+    // The client loads no archived thread, so a loaded sibling does not settle it.
+    expect(
+      await resolveThreadLinkDestination(escaped, here, {
+        ...existing(["provider%3A1"]),
+        loaded: (ref) => ref.threadId === "provider:1",
+      }),
+    ).toMatchObject({ ref: { threadId: "provider%3A1" } });
+    // Nor does an unloaded spelling hide the loaded one when the environment cannot say.
+    expect(
+      await resolveThreadLinkDestination(escaped, here, {
+        ...existing([]),
+        loaded: (ref) => ref.threadId === "provider:1",
+      }),
+    ).toMatchObject({ ref: { threadId: "provider:1" } });
   });
 });

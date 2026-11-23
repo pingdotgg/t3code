@@ -73,6 +73,7 @@ import {
   PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL,
 } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { isAgentInput } from "./GuestInput.ts";
 import * as PreviewPasskeys from "./Passkeys.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
@@ -1290,7 +1291,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
     let activatedAt = Number.NEGATIVE_INFINITY;
     const inputReceived = (_event: Electron.Event, input: Electron.InputEvent) => {
-      if (USER_ACTIVATION_INPUTS.has(input.type)) activatedAt = clock.currentTimeMillisUnsafe();
+      if (!USER_ACTIVATION_INPUTS.has(input.type) || isAgentInput(wc)) return;
+      activatedAt = clock.currentTimeMillisUnsafe();
     };
     // Opening a thread changes the user's chat, so the page needs their input, as for a popup.
     const openThreadLink = (url: string) => {

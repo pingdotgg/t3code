@@ -167,6 +167,12 @@ const sendPointerCommand = async (
   }
 };
 
+const agentInputs = new WeakMap<Electron.WebContents, number>();
+
+/** Whether input reaching the guest now is an agent's; it gives the page no activation of the user's. */
+export const isAgentInput = (webContents: Electron.WebContents): boolean =>
+  (agentInputs.get(webContents) ?? 0) > 0;
+
 /** Sends one command to the guest's page, keeping reloads and input inside it. */
 export const sendPageCommand = async (
   webContents: Electron.WebContents,
@@ -174,6 +180,24 @@ export const sendPageCommand = async (
   method: string,
   params: Record<string, unknown>,
   sessionId?: string,
+): Promise<unknown> => {
+  if (!method.startsWith("Input.")) {
+    return dispatchPageCommand(webContents, debuggee, method, params, sessionId);
+  }
+  agentInputs.set(webContents, (agentInputs.get(webContents) ?? 0) + 1);
+  try {
+    return await dispatchPageCommand(webContents, debuggee, method, params, sessionId);
+  } finally {
+    agentInputs.set(webContents, agentInputs.get(webContents)! - 1);
+  }
+};
+
+const dispatchPageCommand = async (
+  webContents: Electron.WebContents,
+  debuggee: Electron.Debugger,
+  method: string,
+  params: Record<string, unknown>,
+  sessionId: string | undefined,
 ): Promise<unknown> => {
   if (method === "Input.dispatchMouseEvent" || method === "Input.dispatchTouchEvent") {
     return sendPointerCommand(webContents, debuggee, method, params, sessionId);

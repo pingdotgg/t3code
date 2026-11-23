@@ -11,7 +11,9 @@ export interface ThreadLinkLookup {
     viaEnvironmentId: EnvironmentId,
     environmentId: EnvironmentId,
   ) => Promise<string | undefined>;
-  /** Which of `threadIds` exist in `environmentId`. */
+  /** Whether this client has the thread loaded; it loads no archived thread. */
+  readonly loaded: (ref: ScopedThreadRef) => boolean;
+  /** Which of `threadIds` exist in `environmentId`, asked of the environment. */
   readonly existing: (
     environmentId: EnvironmentId,
     threadIds: ReadonlyArray<ThreadId>,
@@ -42,11 +44,12 @@ export async function resolveThreadLinkDestination(
     linked: label !== undefined,
   });
   if (open === "linked" && label !== undefined) return { kind: "linked", ref: written, label };
-  if (candidates.length === 1) return { kind: "direct", ref: written };
+  if (candidates.length === 1 || lookup.loaded(written)) return { kind: "direct", ref: written };
   // A thread id can hold percent escapes of its own; the spelling as written wins when both exist.
   const existing = await lookup.existing(
     written.environmentId,
     candidates.map((ref) => ref.threadId),
   );
-  return { kind: "direct", ref: candidates.find((ref) => existing.has(ref.threadId)) ?? written };
+  const found = candidates.find((ref) => existing.has(ref.threadId) || lookup.loaded(ref));
+  return { kind: "direct", ref: found ?? written };
 }
