@@ -881,13 +881,8 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
             { PATH, cwd: empty, cacheGroup: `local-first-${entry}`, expected: xcodeGit },
           ];
         });
-        // A match from an absolute entry launches that file, even when PATH also has a relative entry.
-        gitEntries.push({
-          PATH: `.:${cwd}`,
-          cwd: empty,
-          cacheGroup: "absolute",
-          expected: path.join(cwd, "git"),
-        });
+        // A match from an absolute entry stays bare `git`, even when PATH also has a relative entry.
+        gitEntries.push({ PATH: `.:${cwd}`, cwd: empty, cacheGroup: "absolute", expected: "git" });
         const stdout = NodeChildProcess.execFileSync(
           process.execPath,
           [
@@ -1043,8 +1038,7 @@ console.log(JSON.stringify({ ...result, cached: cache.size }));
           { cwd: parent, encoding: "utf8", env: {} },
         );
 
-        // Only the Xcode location is cached; it does not depend on the cwd, and PATH is rescanned per spawn.
-        expect(JSON.parse(stdout)).toEqual({ effect: inListed, git: xcodeGit, cached: 1 });
+        expect(JSON.parse(stdout)).toEqual({ effect: inListed, git: xcodeGit, cached: 0 });
       }),
   );
 
@@ -1727,7 +1721,7 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     );
 
     it.effect.runIf(HostProcess.Platform.defaultValue() !== "win32")(
-      "uses uppercase PATH, defaults to /usr/bin:/bin when unset, and walks past missing relative entries",
+      "uses uppercase PATH, defaults to /usr/bin:/bin when unset, and defers on empty or relative entries",
       () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -1745,10 +1739,13 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
               Effect.provideService(HostProcess.Platform, "darwin"),
             );
 
-          // An explicitly empty PATH defers to native lookup; empty or relative entries that miss are skipped.
+          // Empty or relative entries are searched from the child's cwd, so they defer to native lookup.
           expect(yield* resolveWithEnv("mytool", { PATH: "" })).toBe("mytool");
-          expect(yield* resolveWithEnv("mytool", { PATH: `:${bin}` })).toBe(tool);
-          expect(yield* resolveWithEnv("mytool", { PATH: `rel/bin:${bin}/` })).toBe(tool);
+          expect(yield* resolveWithEnv("mytool", { PATH: `:${bin}` })).toBe("mytool");
+          expect(yield* resolveWithEnv("mytool", { PATH: `rel/bin:${bin}` })).toBe("mytool");
+
+          // Empty or relative entries after a match do not change it.
+          expect(yield* resolveWithEnv("mytool", { PATH: `${bin}/:.` })).toBe(`${bin}/mytool`);
 
           // Lowercase Path is ignored on macOS; unset PATH falls back to /usr/bin:/bin.
           expect(yield* resolveWithEnv("mytool", { Path: bin })).toBe("mytool");

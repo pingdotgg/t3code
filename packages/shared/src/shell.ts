@@ -1065,32 +1065,34 @@ async function isMacosGitShim(candidate: string): Promise<boolean> {
   }
 }
 
-// Walk macOS PATH entries literally so the kernel resolves `..` after symlinks as native spawn does.
-// An empty component is the cwd, anchored as the default resolver does. A match in a relative
-// entry defers to native spawn, which searches it from the child's cwd. Only ENOENT/ENOTDIR/EACCES
-// continue the walk; other errors (such as ELOOP or EIO) defer to native spawn.
+// An empty or relative POSIX PATH entry depends on the child's cwd, which resolveSpawnCommand does not take.
+function hasRelativePosixPathEntryBefore(
+  pathValue: string | undefined,
+  resolvedPath: string,
+): boolean {
+  if (pathValue === undefined) return false;
+  const resolvedDir = NodePath.posix.resolve(NodePath.posix.dirname(resolvedPath));
+  for (const entry of pathValue.split(POSIX_PATH_DELIMITER)) {
+    if (entry.length === 0 || !entry.startsWith("/")) return true;
+    if (NodePath.posix.resolve(entry) === resolvedDir) return false;
+  }
+  return false;
+}
+
+// Scan macOS PATH entries literally so the kernel resolves `..` after symlinks as native spawn does.
+// Only continue past ENOENT/ENOTDIR/EACCES; other errors (such as ELOOP or EIO) defer to native spawn.
 async function resolveMacosPathExecutable(
   command: string,
   env: NodeJS.ProcessEnv,
 ): Promise<string | undefined> {
   const pathValue = env.PATH ?? POSIX_DEFAULT_PATH;
-  if (pathValue === "") return undefined;
   for (const entry of pathValue.split(POSIX_PATH_DELIMITER)) {
-    let directory = entry;
-    if (entry === "") {
-      try {
-        directory = process.cwd();
-      } catch {
-        continue;
-      }
-    }
-    const candidate = directory.endsWith("/")
-      ? `${directory}${command}`
-      : `${directory}/${command}`;
+    if (entry.length === 0 || !entry.startsWith("/")) return undefined;
+    const candidate = entry.endsWith("/") ? `${entry}${command}` : `${entry}/${command}`;
     try {
       if (!(await NodeFS.promises.stat(candidate)).isFile()) continue;
       await NodeFS.promises.access(candidate, NodeFS.constants.X_OK);
-      return NodePath.posix.isAbsolute(candidate) ? candidate : undefined;
+      return candidate;
     } catch (error) {
       if (!isPosixPathScanContinueError(error)) return undefined;
     }
@@ -1113,33 +1115,46 @@ const resolveMacosBareCommand = Effect.fnUntraced(function* (
     return yield* Effect.promise(() => resolveMacosPathExecutable(command, env));
   }
   const found = yield* Effect.promise(async () => resolveExecutable(command, "darwin", env));
-  return found !== undefined && NodePath.posix.isAbsolute(found) ? found : undefined;
+  if (
+    found === undefined ||
+    !NodePath.posix.isAbsolute(found) ||
+    hasRelativePosixPathEntryBefore(env.PATH, found)
+  ) {
+    return undefined;
+  }
+  return found;
 });
 
 /**
  * Skip the xcrun shim's per-spawn lookup only when git resolves to /usr/bin/git.
- * User-selected git on PATH still wins, children keep PATH, and lookup failures fall back to gitOnPath.
+ * User-selected git on PATH still wins and children keep PATH. When the PATH walk defers to native
+ * spawn, git falls back to the default resolver's lookup.
  */
 const resolveMacosGit = Effect.fnUntraced(function* (
   env: NodeJS.ProcessEnv,
   resolveExecutable: SpawnExecutableResolver,
 ) {
   const gitOnPath = yield* resolveMacosBareCommand("git", env, resolveExecutable);
-  if (gitOnPath === undefined || !(yield* Effect.promise(() => isMacosGitShim(gitOnPath)))) {
-    return gitOnPath ?? "git";
-  }
+  const isShim =
+    gitOnPath !== undefined && (yield* Effect.promise(() => isMacosGitShim(gitOnPath)));
+  if (gitOnPath !== undefined && !isShim) return gitOnPath;
+  const fallback = isShim ? gitOnPath : "git";
 
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
+  const pathValue = resolvePathEnvironmentVariable(env);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  // Read after the clock, so the lookup below starts in the directory the key names.
+  const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
     String(spawnResolverCacheId(resolveExecutable)),
     String(spawnResolverCacheId(locateXcodeGit)),
-    env.PATH ?? POSIX_DEFAULT_PATH,
+    pathValue,
     env.DEVELOPER_DIR ?? "",
+    ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
+  const cached = cwd === null ? undefined : cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
     const cachedPath = cached.resolvedPath;
@@ -1148,17 +1163,27 @@ const resolveMacosGit = Effect.fnUntraced(function* (
       (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
         undefined
     ) {
-      return cachedPath ?? gitOnPath;
+      return cachedPath ?? fallback;
     }
   }
-  const located = locateXcodeGit(env);
+  const pathGit = isShim
+    ? MACOS_GIT_SHIM
+    : yield* Effect.promise(async () => resolveExecutable("git", "darwin", env));
+  const located = pathGit === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
     located !== undefined &&
     (yield* Effect.promise(async () => resolveExecutable(located, "darwin", env))) !== undefined
       ? located
-      : null;
-  cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
-  return realGit ?? gitOnPath;
+      : // A match anchored to the cwd came through an empty PATH entry, which a child would search
+        // again from its own cwd; launch the file that was checked instead of bare `git`.
+        typeof cwd === "string" && pathGit === NodePath.posix.join(cwd, "git")
+        ? pathGit
+        : null;
+  // The lookups above await and the cwd can move meanwhile; cache only what the key's cwd found.
+  if (cwd !== null && pathSearchCwd(pathValue, "darwin") === cwd) {
+    cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
+  }
+  return realGit ?? fallback;
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
