@@ -2436,6 +2436,28 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+  "GitVcsDriver keeps whitespace at the end of repository paths",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parent = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-edge-space-repo-" });
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      // The newline name takes the per-path fallback; the others take the one-spawn answer.
+      for (const name of ["repo ", "repo\r", "multi\nline "]) {
+        const cwd = path.join(parent, name);
+        const gitDir = path.join(parent, `${name.replace("\n", "")} metadata\u00a0`);
+        yield* fileSystem.makeDirectory(cwd);
+        yield* runGit(cwd, ["init", `--separate-git-dir=${gitDir}`]);
+
+        const repository = yield* driver.detectRepository(cwd);
+        assert.strictEqual(repository?.rootPath, yield* fileSystem.realPath(cwd));
+        assert.strictEqual(repository?.metadataPath, yield* fileSystem.realPath(gitDir));
+      }
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "GitVcsDriver still fails detection when git exists but cannot be spawned",
   () =>
     Effect.gen(function* () {
