@@ -1059,7 +1059,8 @@ fn queued_run_cancel(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: QueuedRun = decode(command)?;
     queued_run(tx, &c)?;
     finish_run(tx, &c.thread_id, &c.run_id, "cancelled", None)?;
-    Ok(vec![])
+    // A follow-up whose queued run is cancelled before it starts ends cancelled.
+    Ok(crate::families::finalize_tasks(tx, &c.thread_id)?)
 }
 
 #[derive(Deserialize)]

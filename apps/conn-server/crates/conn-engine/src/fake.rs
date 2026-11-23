@@ -81,6 +81,9 @@ pub struct FakeProvider {
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
+    /// Ends the `background-task` scripts' `bg-1`: the roster reports it gone, as Claude's does
+    /// when a background command exits.
+    pub finish_background: Arc<tokio::sync::Notify>,
     /// Set by [`Self::with_process_exit`]: a notify ends every open session's event stream,
     /// as a provider process that exits on its own (systemd's SIGTERM reaches it too).
     process_exit: Option<Arc<tokio::sync::Notify>>,
@@ -124,6 +127,7 @@ impl FakeProvider {
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
+            finish_background: Arc::default(),
             #[cfg(test)]
             late_start_entered: Arc::default(),
             #[cfg(test)]
@@ -224,6 +228,7 @@ struct FakeSession {
     roster: Arc<Mutex<Vec<(String, bool)>>>,
     /// The running turn ignores Stop.
     stuck: Arc<AtomicBool>,
+    finish_background: Arc<tokio::sync::Notify>,
     mcp_servers: Arc<Mutex<Vec<McpServer>>>,
     closed: Arc<AtomicUsize>,
     applied_selections: Arc<Mutex<Vec<Value>>>,
@@ -336,6 +341,7 @@ impl Provider for FakeProvider {
                     background_wait: self.background_wait,
                     roster: Arc::default(),
                     stuck: Arc::new(AtomicBool::new(false)),
+                    finish_background: self.finish_background.clone(),
                     mcp_servers: self.mcp_servers.clone(),
                     closed: self.closed.clone(),
                     applied_selections: self.applied_selections.clone(),
@@ -412,24 +418,34 @@ async fn emit(tx: &mpsc::Sender<ProviderEvent>, events: impl IntoIterator<Item =
     }
 }
 
+/// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
+/// marked, as Claude's `emitRosterUpdate`.
+fn roster_event(
+    roster: &Mutex<Vec<(String, bool)>>,
+    instance: &str,
+    mut provider_thread: Value,
+) -> ProviderEvent {
+    let tasks: Vec<Value> = crate::lock(roster)
+        .iter()
+        .map(|(id, awaited)| {
+            let mut task = json!({"taskId": id, "kind": "command",
+                "description": "sleep 600", "providerInstanceId": instance});
+            if *awaited {
+                task["awaited"] = json!(true);
+            }
+            task
+        })
+        .collect();
+    provider_thread["pendingBackgroundTasks"] = json!(tasks);
+    provider_thread["updatedAt"] = json!(now_iso());
+    event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+}
+
 impl FakeSession {
     /// `provider_thread.updated` with the roster on `pendingBackgroundTasks`, awaited tasks
     /// marked, as Claude's `emitRosterUpdate`.
-    fn roster_update(&self, mut provider_thread: Value) -> ProviderEvent {
-        let tasks: Vec<Value> = crate::lock(&self.roster)
-            .iter()
-            .map(|(id, awaited)| {
-                let mut task = json!({"taskId": id, "kind": "command",
-                    "description": "sleep 600", "providerInstanceId": self.instance});
-                if *awaited {
-                    task["awaited"] = json!(true);
-                }
-                task
-            })
-            .collect();
-        provider_thread["pendingBackgroundTasks"] = json!(tasks);
-        provider_thread["updatedAt"] = json!(now_iso());
-        event(json!({"type": "provider_thread.updated", "providerThread": provider_thread}))
+    fn roster_update(&self, provider_thread: Value) -> ProviderEvent {
+        roster_event(&self.roster, &self.instance, provider_thread)
     }
 
     /// The run of a `continuation.requested` message: shows `continued` and ends the work.
@@ -725,7 +741,17 @@ impl Session for FakeSession {
                 "background-task" | "background-task-hang" => {
                     self.background.store(true, Ordering::SeqCst);
                     *crate::lock(&self.roster) = vec![("bg-1".to_owned(), false)];
-                    started.push(self.roster_update(conn_contract::to_json(&input.provider_thread)));
+                    let provider_thread = conn_contract::to_json(&input.provider_thread);
+                    started.push(self.roster_update(provider_thread.clone()));
+                    // `bg-1` exits when the test says so: the roster reports it gone.
+                    let (roster, events, finish) =
+                        (self.roster.clone(), self.events.clone(), self.finish_background.clone());
+                    let instance = self.instance.clone();
+                    tokio::spawn(async move {
+                        finish.notified().await;
+                        crate::lock(&roster).retain(|(id, _)| id != "bg-1");
+                        let _ = events.send(roster_event(&roster, &instance, provider_thread)).await;
+                    });
                     if text == "background-task" {
                         started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "started bg-1", false));
                         started.push(provider_turn(&turn, "completed"));

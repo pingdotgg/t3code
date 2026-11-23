@@ -287,33 +287,49 @@ async fn wait_for_task(
     task_id: &str,
     deadline: tokio::time::Instant,
 ) -> Result<bool, ToolError> {
-    let input = conn_contract::from_json(json!({"threadId": parent})).map_err(super::internal)?;
-    let mut stream = cx.engine().subscribe_thread(input).await.map_err(|_| {
-        fail(
-            "thread_not_found",
-            format!("Thread {parent} is no longer available."),
-        )
-    })?;
+    let subscribe = |thread: String| async move {
+        let input =
+            conn_contract::from_json(json!({"threadId": thread})).map_err(super::internal)?;
+        cx.engine().subscribe_thread(input).await.map_err(|_| {
+            fail(
+                "thread_not_found",
+                format!("Thread {thread} is no longer available."),
+            )
+        })
+    };
+    // `waitForTask` (`OrchestratorMcpService.ts:2090`): both threads are followed from before the
+    // first read, so the task's row settling and a question or approval in the child both end it.
+    let mut parent_events = subscribe(parent.to_owned()).await?;
+    let first = read_task(cx, parent, task_id, false, Acknowledge::Never).await?;
+    let child = first["childThreadId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let mut child_events = subscribe(child).await?;
+    let mut read = first;
     loop {
-        let read = read_task(cx, parent, task_id, false, Acknowledge::Never).await?;
         if read.get("next").is_none() {
             return Ok(false);
         }
-        // The task's row changes when its work settles; anything else is read again cheaply.
         loop {
-            match tokio::time::timeout_at(deadline, stream.recv()).await {
-                Err(_) => return Ok(true),
-                Ok(None | Some(Err(_))) => return Ok(false),
-                Ok(Some(Ok(item))) => {
-                    let item = conn_contract::to_json(&item);
-                    if item["event"]["type"] == "subagent.updated"
-                        && item["event"]["payload"]["id"] == task_id
-                    {
-                        break;
-                    }
-                }
+            let item = tokio::select! {
+                item = parent_events.recv() => item,
+                item = child_events.recv() => item,
+                () = tokio::time::sleep_until(deadline) => return Ok(true),
+            };
+            let item = match item {
+                None | Some(Err(_)) => return Ok(false),
+                Some(Ok(item)) => conn_contract::to_json(&item),
+            };
+            let kind = item["event"]["type"].as_str().unwrap_or_default();
+            if (kind == "subagent.updated" && item["event"]["payload"]["id"] == task_id)
+                || kind.starts_with("runtime-request.")
+                || kind.starts_with("run.")
+            {
+                break;
             }
         }
+        read = read_task(cx, parent, task_id, false, Acknowledge::Never).await?;
     }
 }
 
@@ -412,15 +428,60 @@ pub(super) async fn cancel(cx: &Cx<'_>, args: &Args) -> ToolResult {
     if TERMINAL.contains(&current["status"].as_str().unwrap_or_default()) {
         return Ok(json!({"taskId": task_id, "status": current["status"]}));
     }
+    let child_id = current["childThreadId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let child = cx.projection(&child_id).await?;
+    // The task's own queued turns (`OrchestratorMcpService.ts:2947`): Stop keeps the queue for
+    // Resume, so cancelling the task removes them.
+    let queued: Vec<String> = child["runs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|run| {
+            run["status"] == "queued"
+                && (run["delegatedTaskId"] == task_id || run["id"] == current["childRunId"])
+        })
+        .filter_map(|run| run["id"].as_str().map(str::to_owned))
+        .collect();
+    if current["workState"] != "waiting_for_children"
+        && view::active_run(&child).is_none()
+        && queued.is_empty()
+    {
+        return Err(fail(
+            "task_not_cancellable",
+            format!("Delegated task {task_id} has no interruptible child run."),
+        ));
+    }
     let key = Cx::request_key(args);
-    let reason = str_arg(args, "reason").unwrap_or("Cancelled by its parent agent.");
+    // Its result no longer wakes the parent; disposed first, so the cancelled end stays quiet.
     cx.dispatch(json!({
-        "type": "thread.stop",
-        "commandId": cx.stable_id("command", "task-cancel", &key),
-        "threadId": current["childThreadId"],
-        "reason": reason,
+        "type": "delegated_task.completion-delivery.dispose",
+        "commandId": cx.stable_id("command", "cancel-task-completion-delivery", &key),
+        "parentThreadId": caller.thread_id,
+        "taskId": task_id,
     }))
     .await?;
+    let reason = str_arg(args, "reason").unwrap_or("Cancelled by its parent agent.");
+    if view::active_run(&child).is_some() {
+        cx.dispatch(json!({
+            "type": "thread.stop",
+            "commandId": cx.stable_id("command", "task-cancel", &key),
+            "threadId": child_id,
+            "reason": reason,
+        }))
+        .await?;
+    }
+    for run in queued {
+        cx.dispatch(json!({
+            "type": "queued-run.cancel",
+            "commandId": cx.stable_id("command", &format!("cancel-task-queued-run:{run}"), &key),
+            "threadId": child_id,
+            "runId": run,
+        }))
+        .await?;
+    }
     Ok(json!({"taskId": task_id, "status": "cancel_requested"}))
 }
 
@@ -510,11 +571,17 @@ async fn read_task(
     };
     let terminal = TERMINAL.contains(&status);
     let terminal_run = runs.iter().rev().find(|run| !view::is_live(run)).copied();
+    // `readTask`: the task's published result first (`OrchestratorMcpService.ts:1819`); a later
+    // untagged run in the same child never replaces it.
     let summary = terminal
         .then(|| {
-            terminal_run
-                .and_then(|r| view::run_result_text(&child, r["id"].as_str()?))
-                .or_else(|| row["result"].as_str().map(str::to_owned))
+            row["result"]
+                .as_str()
+                .filter(|_| published)
+                .map(str::to_owned)
+                .or_else(|| {
+                    terminal_run.and_then(|r| view::run_result_text(&child, r["id"].as_str()?))
+                })
         })
         .flatten();
     let requests: Vec<&Value> = child["runtimeRequests"]

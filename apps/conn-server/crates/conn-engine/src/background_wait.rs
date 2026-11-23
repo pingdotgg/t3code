@@ -251,9 +251,11 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn marks_and_clears_awaited_tasks_on_the_live_session() {
         let (engine, provider, _dir) = open("bg-wait", FakeProvider::new("claudeAgent"));
-        // The shell row's `derivePendingBackgroundWork` keeps `awaited`.
+        // The shell row's `derivePendingBackgroundWork` keeps `awaited`, and the task keeps the
+        // run it first appeared under (`attributePendingBackgroundTasks`).
         let task = |awaited: bool| {
-            let mut task = json!({"taskId": "bg-1", "kind": "command", "description": "sleep 600"});
+            let mut task = json!({"taskId": "bg-1", "kind": "command", "description": "sleep 600",
+                                  "runId": "run:t1:1"});
             if awaited {
                 task["awaited"] = json!(true);
             }

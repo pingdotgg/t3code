@@ -265,7 +265,7 @@ fn background_holds_completion(task: &Value) -> bool {
 /// is published to its parent once its work settled: no run of it is active, and no subagent
 /// or background work its runs started still holds a result (`delegatedTaskProgress`,
 /// `delegatedTaskAwaitsWork`). A task with a cancelled run does not wait for children.
-fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec<Effect>> {
+pub(crate) fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec<Effect>> {
     let mut effects = vec![];
     let Some(child) = tx.thread(child_id)? else {
         return Ok(effects);
@@ -314,18 +314,22 @@ fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec<Effect>> {
             !TERMINAL.contains(&run["status"].as_str().unwrap_or_default())
                 && !(run["status"] == "queued" && run["queueHeld"] == true)
         });
-        let Some(result_run) = owned
-            .iter()
-            .filter(|run| {
-                TERMINAL.contains(&run["status"].as_str().unwrap_or_default())
-                    && (!run["startedAt"].is_null() || run["ordinal"] == 1)
-            })
-            .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
-            .map(|run| (*run).clone())
-        else {
+        let result_run = if is_original {
+            owned
+                .iter()
+                .filter(|run| {
+                    TERMINAL.contains(&run["status"].as_str().unwrap_or_default())
+                        && (!run["startedAt"].is_null() || run["ordinal"] == 1)
+                })
+                .max_by_key(|run| run["ordinal"].as_u64().unwrap_or(0))
+                .map(|run| (*run).clone())
+        } else {
+            follow_up_result_run(&owned)
+        };
+        let Some(result_run) = result_run else {
             continue;
         };
-        if active {
+        if active || !TERMINAL.contains(&result_run["status"].as_str().unwrap_or_default()) {
             continue;
         }
         let cancelled = row["cancelledRunId"].is_string();
@@ -348,6 +352,66 @@ fn finalize_tasks(tx: &mut Tx<'_>, child_id: &str) -> StoreResult<Vec<Effect>> {
         effects.extend(publish(tx, &parent_id, child_id, row, &result_run)?);
     }
     Ok(effects)
+}
+
+/// `delegatedTaskResultRun` (`RestartBackgroundNote.ts:262`): a follow-up's latest run,
+/// passing over queued work it no longer waits on. A follow-up whose only run was cancelled
+/// before it started reports that run, so it ends cancelled.
+fn follow_up_result_run(runs: &[&Value]) -> Option<Value> {
+    let mut runs: Vec<&Value> = runs.to_vec();
+    runs.sort_by_key(|run| std::cmp::Reverse(run["ordinal"].as_u64().unwrap_or(0)));
+    let cancelled_before_start = |run: &Value| {
+        run["status"] == "cancelled"
+            && run["startedAt"].is_null()
+            && run["restartContinuationOfRunId"].is_null()
+    };
+    let awaited: Vec<&Value> = runs
+        .iter()
+        .copied()
+        .filter(|run| {
+            !cancelled_before_start(run) && !(run["status"] == "queued" && run["queueHeld"] == true)
+        })
+        .collect();
+    awaited
+        .iter()
+        .find(|run| {
+            matches!(
+                run["status"].as_str(),
+                Some("preparing" | "starting" | "running" | "waiting")
+            )
+        })
+        .or_else(|| awaited.iter().find(|run| run["status"] == "queued"))
+        .or_else(|| awaited.first())
+        .or_else(|| runs.first())
+        .map(|run| (*run).clone())
+}
+
+/// `settlesChildWork` (`Orchestrator.ts:16088`): before `draft` is written, whether it ends
+/// work a delegated child's task may wait on: a subagent that stops, or a roster from which a
+/// task that held completion is gone.
+pub(crate) fn settles_child_work(tx: &Tx<'_>, draft: &Draft) -> StoreResult<bool> {
+    let payload = &draft.payload;
+    match draft.event_type {
+        "subagent.updated" => Ok(!work_active(payload)),
+        "provider-thread.updated" => {
+            let holding = |thread: &Value| -> Vec<String> {
+                thread["pendingBackgroundTasks"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|task| background_holds_completion(task))
+                    .filter_map(|task| task["taskId"].as_str().map(str::to_owned))
+                    .collect()
+            };
+            let id = payload["id"].as_str().unwrap_or_default();
+            let Some(previous) = tx.entity(&draft.thread_id, "providerThreads", id)? else {
+                return Ok(false);
+            };
+            let now = holding(payload);
+            Ok(holding(&previous).iter().any(|task| !now.contains(task)))
+        }
+        _ => Ok(false),
+    }
 }
 
 /// Copies a settled task's status and result to the parent's row, node and item, and wakes
@@ -381,12 +445,12 @@ fn publish(
     let node_id = row["id"].as_str().unwrap_or_default().to_owned();
     let parent_run = row["runId"].as_str().map(str::to_owned);
     // The parent may have read the result already (`task_status`, a blocking wait).
-    let state = if cancelled {
-        "disposed"
-    } else if row["completionDelivery"]["state"] == "acknowledged" {
-        "acknowledged"
-    } else {
-        "pending"
+    let state = match row["completionDelivery"]["state"].as_str() {
+        _ if cancelled => "disposed",
+        // Its parent already read it, or cancelled it (`task_cancel` disposes first).
+        Some("acknowledged") => "acknowledged",
+        Some("disposed") => "disposed",
+        _ => "pending",
     };
     row["completionDelivery"] = json!({"state": state, "observedByRunId": row["completionDelivery"]["observedByRunId"].clone()});
     let draft = |event_type, payload| {
@@ -604,7 +668,10 @@ fn deliver(tx: &mut Tx<'_>, thread_id: &str, settled: bool) -> StoreResult<Vec<E
         .entities(thread_id, "subagents")?
         .into_iter()
         .filter(|row| {
-            row["origin"] == "app_owned" && row["completionDelivery"]["state"] == "pending"
+            row["origin"] == "app_owned"
+                && row["completionDelivery"]["state"] == "pending"
+                // A running follow-up's delivery waits for its result (`Orchestrator.ts:2113`).
+                && TERMINAL.contains(&row["status"].as_str().unwrap_or_default())
         })
         .filter(|row| !busy || row["completionWake"] == "always")
         .collect();

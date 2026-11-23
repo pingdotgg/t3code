@@ -1613,20 +1613,39 @@ impl Inner {
         }
     }
 
-    async fn commit(&self, drafts: Vec<Draft>) {
+    async fn commit(self: &Arc<Self>, drafts: Vec<Draft>) {
         if drafts.is_empty() {
             return;
         }
-        if let Err(e) = self
+        let inner = self.clone();
+        let written = self
             .write(move |tx| {
+                let mut settled = Vec::new();
                 for draft in drafts {
+                    if crate::families::settles_child_work(tx, &draft)?
+                        && !settled.contains(&draft.thread_id)
+                    {
+                        settled.push(draft.thread_id.clone());
+                    }
                     tx.append(draft)?;
                 }
-                Ok(())
+                // `Orchestrator.ts:16085`: work a child's task waited on ended with no run update,
+                // so its end is where the task can settle.
+                let mut effects = Vec::new();
+                for thread_id in settled {
+                    effects.extend(crate::families::finalize_tasks(tx, &thread_id)?);
+                }
+                Ok(effects
+                    .into_iter()
+                    .map(|effect| inner.reserve_effect(effect))
+                    .collect::<Vec<_>>())
             })
-            .await
-        {
-            eprintln!("conn-engine: could not record provider events: {e}");
+            .await;
+        match written {
+            Ok(reserved) => reserved
+                .into_iter()
+                .for_each(crate::engine::ReservedEffect::start),
+            Err(e) => eprintln!("conn-engine: could not record provider events: {e}"),
         }
     }
 

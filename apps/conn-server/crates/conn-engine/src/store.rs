@@ -1134,6 +1134,48 @@ impl Tx<'_> {
     }
 
     /// Appends one domain event and applies it to the projection. Returns its sequence.
+    /// `attributePendingBackgroundTasks` (`ProjectionStore.ts:915`): adapters resend whole
+    /// rosters without runs, so a task keeps the run it first appeared under: the event's run,
+    /// else the thread's active run.
+    fn attribute_background_tasks(
+        &self,
+        thread_id: &str,
+        payload: &mut Value,
+        run_id: Option<&str>,
+    ) -> StoreResult<()> {
+        let Some(tasks) = payload["pendingBackgroundTasks"].as_array() else {
+            return Ok(());
+        };
+        if tasks.iter().all(|task| task["runId"].is_string()) {
+            return Ok(());
+        }
+        let id = payload["id"].as_str().unwrap_or_default().to_owned();
+        let previous = self.entity(thread_id, "providerThreads", &id)?;
+        let known: Vec<(Value, Value)> = previous
+            .as_ref()
+            .and_then(|thread| thread["pendingBackgroundTasks"].as_array().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|task| (task["taskId"].clone(), task["runId"].clone()))
+            .collect();
+        let current = match run_id {
+            Some(run) => Some(Value::String(run.to_owned())),
+            None => crate::commands::active_run(self, thread_id)?.map(|run| run["id"].clone()),
+        };
+        if let Some(tasks) = payload["pendingBackgroundTasks"].as_array_mut() {
+            for task in tasks.iter_mut().filter(|task| !task["runId"].is_string()) {
+                let owner = match known.iter().find(|(id, _)| *id == task["taskId"]) {
+                    Some((_, owner)) => Some(owner.clone()).filter(Value::is_string),
+                    None => current.clone(),
+                };
+                if let Some(owner) = owner {
+                    task["runId"] = owner;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn append(&mut self, draft: Draft) -> StoreResult<u64> {
         let seq = self.alloc();
         let Draft {
@@ -1144,6 +1186,9 @@ impl Tx<'_> {
             node_id,
             command_id,
         } = draft;
+        if event_type == "provider-thread.updated" {
+            self.attribute_background_tasks(&thread_id, &mut payload, run_id.as_deref())?;
+        }
         let collection = collection_of(event_type);
         let mut inserted = false;
         let mut keeps_activity = false;
