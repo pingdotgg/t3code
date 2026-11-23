@@ -19,6 +19,7 @@ import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Alert } from "../ui/alert";
 import { Button, InlineButton } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { StatusDot } from "../ui/status-dot";
@@ -289,12 +290,9 @@ export function SourceControlAppSignInSettings({
       ) : null}
 
       {state.status === "failed" && !signedIn ? (
-        <p
-          role="alert"
-          className="border-t border-destructive/20 bg-destructive/5 px-3 py-2 text-meta text-destructive"
-        >
+        <Alert variant="error" density="strip" edge="top">
           {state.message}
-        </p>
+        </Alert>
       ) : null}
     </div>
   );

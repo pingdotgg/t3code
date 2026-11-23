@@ -1549,6 +1549,35 @@ function FeedbackSection() {
           </Alert>
         ))}
       </Specimen>
+      <Specimen
+        label="Strip alerts (inside a card)"
+        source='<Alert variant density="strip" edge>'
+        stack
+      >
+        <div className="w-full max-w-lg overflow-clip rounded-card surface-card">
+          <CardSection>
+            <div className="text-label text-foreground">Diff panel</div>
+            <p className="text-meta text-muted-foreground">
+              Full-width tinted strips sit flush inside cards and panels with no outer radius.
+            </p>
+          </CardSection>
+          {(["warning", "error", "info"] as const).map((variant) => (
+            <Alert key={variant} variant={variant} density="strip" edge="top">
+              {variant === "info" ? <BellIcon /> : <TriangleAlertIcon />}
+              {variant === "warning"
+                ? "Diff too large to display."
+                : variant === "error"
+                  ? "Could not reach the device host."
+                  : "Showing tracked changes only."}
+              <AlertAction>
+                <Button size="xs" variant="secondary">
+                  Retry
+                </Button>
+              </AlertAction>
+            </Alert>
+          ))}
+        </div>
+      </Specimen>
       <Specimen label="Toasts" source="toastManager.add({ type })">
         {(["success", "error", "info", "warning", "loading"] as const).map((type) => (
           <Button
