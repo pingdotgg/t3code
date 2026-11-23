@@ -415,7 +415,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
-    history: session.history.value(),
+    history: session.history.value() + unfinishedSequenceReplay(session),
     exitCode: session.exitCode,
     exitSignal: session.exitSignal,
     label: terminalWireLabel(session),
@@ -1405,6 +1405,13 @@ const MAX_HELD_ESCAPE_LENGTH = 5;
 const OVERSIZED_SEQUENCE = "\u0018";
 // Stands in for the ESC of an oversized sequence, which ended any string history left open.
 const STRING_TERMINATOR = "\u001b\\";
+
+// History leaves out the sequence the terminal is still inside. A client that starts from a
+// snapshot needs it, or it prints the rest of the sequence as text.
+function unfinishedSequenceReplay(session: TerminalSessionState): string {
+  const held = session.pendingHistoryControlSequence;
+  return held.startsWith(OVERSIZED_SEQUENCE) ? held.slice(1) : held;
+}
 
 export function sanitizeTerminalHistoryChunk(
   pendingControlSequence: string,

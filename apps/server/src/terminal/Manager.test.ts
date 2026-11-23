@@ -1849,6 +1849,37 @@ it.layer(
     }),
   );
 
+  it.effect("starts a snapshot inside the sequence the terminal has not finished", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0]!;
+      const outputs = yield* Queue.unbounded<void>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        event.type === "output" ? Queue.offer(outputs, undefined).pipe(Effect.asVoid) : Effect.void,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const historyAfter = Effect.fnUntraced(function* (data: string) {
+        process.emitData(data);
+        yield* Queue.take(outputs);
+        return (yield* manager.open(openInput())).history;
+      });
+
+      expect(yield* historyAfter("A\u001b]0;ti")).toBe("A\u001b]0;ti");
+      // Past the limit only the introducer is left to replay.
+      expect(yield* historyAfter("x".repeat(DEFAULT_MAX_TERMINAL_BUFFER_BYTES))).toBe(
+        "A\u001b\\\u001b]",
+      );
+      expect(yield* historyAfter("\u0007B")).toBe("A\u001b\\B");
+
+      // Saved history has no live output to finish the sequence.
+      process.emitData("\u001b]0;open");
+      yield* Queue.take(outputs);
+      yield* manager.close({ threadId: "thread-1" });
+      expect(yield* readFileString(yield* historyLogPath(logsDir))).toBe("A\u001b\\B");
+    }),
+  );
+
   it.effect("preserves large chunked OSC 52 and DCS strings across reopen", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter, logsDir } = yield* createManager();
