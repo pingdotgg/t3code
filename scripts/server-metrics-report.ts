@@ -368,14 +368,14 @@ const ceilSignificant = (value: number) => {
   return round(Math.ceil(value / step) * step, 6);
 };
 
-/** A swing past this share of a metric's median makes it informational. */
+/** An A/A interval wider than this share of a metric's median makes it informational. */
 export const NOISY_SHARE = 0.5;
 
 export interface NoiseRow {
   readonly metric: string;
   readonly median: number;
-  /** Half the pooled range: how far one run lands from the middle. */
-  readonly halfRange: number;
+  /** The widest half-width of an A/A pair's 95% interval of the median difference. */
+  readonly halfWidth: number;
   /** The largest |median(A) - median(B)| over the A/A pairs. */
   readonly aaDifference: number;
   readonly floor: number;
@@ -385,25 +385,25 @@ export interface NoiseRow {
 }
 
 /**
- * Run-to-run spread of every metric over A/A pairs (one commit against itself), and an estimated
- * floor: the widest half range of a pair's pooled runs or A/A median difference these runs
- * showed. A later A/A run can still land outside it; more pairs make it a better estimate.
+ * Each metric's A/A spread as `compare` sees it: the 95% interval of the median difference. The
+ * estimated floor (half the widest half-width, or the A/A median difference if larger) is how far
+ * an A/A interval must miss zero to flag. It is an estimate, not a bound.
  */
 export function noiseReport(
   pairs: ReadonlyArray<readonly [ServerMetrics, ServerMetrics]>,
   rules: ReadonlyArray<NoiseRule> = NOISE_RULES,
 ) {
-  const found = new Map<string, { medians: number[]; halfRange: number; aaDifference: number }>();
+  const found = new Map<string, { medians: number[]; halfWidth: number; aaDifference: number }>();
   for (const [before, after] of pairs) {
     const a = collect(before);
     const b = collect(after);
     for (const [metric, x] of a) {
       const y = b.get(metric);
       if (!y || !isMetric(metric) || !sameWakeupMethod(metric, a, b)) continue;
-      const pooled = [...x, ...y];
-      const entry = found.get(metric) ?? { medians: [], halfRange: 0, aaDifference: 0 };
-      entry.medians.push(median(pooled));
-      entry.halfRange = Math.max(entry.halfRange, (Math.max(...pooled) - Math.min(...pooled)) / 2);
+      const [low, high] = bootstrapMedianDifference(x, y);
+      const entry = found.get(metric) ?? { medians: [], halfWidth: 0, aaDifference: 0 };
+      entry.medians.push(median([...x, ...y]));
+      entry.halfWidth = Math.max(entry.halfWidth, (high - low) / 2);
       entry.aaDifference = Math.max(entry.aaDifference, Math.abs(median(y) - median(x)));
       found.set(metric, entry);
     }
@@ -411,24 +411,23 @@ export function noiseReport(
   const rows: NoiseRow[] = [...found].map(([metric, entry]) => {
     const middle = median(entry.medians);
     const rule = noiseRule(metric, rules);
-    const suggestedFloor = ceilSignificant(Math.max(entry.halfRange, entry.aaDifference));
     return {
       metric,
       median: round(middle, 2),
-      halfRange: round(entry.halfRange, 2),
+      halfWidth: round(entry.halfWidth, 2),
       aaDifference: round(entry.aaDifference, 2),
       floor: rule.floor,
-      suggestedFloor,
+      suggestedFloor: ceilSignificant(Math.max(entry.halfWidth / 2, entry.aaDifference)),
       gate: rule.gate,
-      suggestedGate: entry.halfRange <= Math.abs(middle) * NOISY_SHARE,
+      suggestedGate: entry.halfWidth <= Math.abs(middle) * NOISY_SHARE,
     };
   });
   const lines = [
-    "| metric | median | ± half range | A/A diff | floor | estimated floor | gated | suggest gating |",
+    "| metric | median | ± A/A interval | A/A diff | floor | estimated floor | gated | suggest gating |",
     "| :-- | --: | --: | --: | --: | --: | :-: | :-: |",
     ...rows.map(
       (row) =>
-        `| ${row.metric} | ${row.median} | ${row.halfRange} | ${row.aaDifference} | ${row.floor} | ${row.suggestedFloor}${row.suggestedFloor > row.floor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} | ${row.suggestedGate ? "yes" : "no"} |`,
+        `| ${row.metric} | ${row.median} | ${row.halfWidth} | ${row.aaDifference} | ${row.floor} | ${row.suggestedFloor}${row.suggestedFloor > row.floor ? " ⚠" : ""} | ${row.gate ? "yes" : "no"} | ${row.suggestedGate ? "yes" : "no"} |`,
     ),
   ];
   return { rows, table: lines.join("\n") };

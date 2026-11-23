@@ -219,13 +219,13 @@ describe("loadWarnings", () => {
 
 describe("noiseReport", () => {
   it.each([
-    // Pooled 2 to 3.1: half range 0.55; medians 2.2 and 2.3.
-    ["the pooled swing", cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3), 0.55, 0.1, 0.55],
-    // Pooled 2 to 3.25: half range 0.625; medians 2 and 3.25 differ by more.
-    ["the A/A median difference", cpuRuns(2, 2), cpuRuns(3.25, 3.25), 0.63, 1.25, 1.3],
-  ])("estimates a floor from %s, rounded up", (_name, a, b, halfRange, aaDifference, floor) => {
+    // Resampled medians differ by -0.3 to 1.1: half-width 0.7, so the floor is 0.35.
+    ["the A/A interval", cpuRuns(2, 2.2, 2.4), cpuRuns(2.1, 3.1, 2.3), 0.7, 0.1, 0.35],
+    // Constant sides: no interval, and medians 2 and 3.25 differ by 1.25.
+    ["the A/A median difference", cpuRuns(2, 2), cpuRuns(3.25, 3.25), 0, 1.25, 1.3],
+  ])("estimates a floor from %s, rounded up", (_name, a, b, halfWidth, aaDifference, floor) => {
     const [row] = noiseReport([[a, b]]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
-    expect(row).toMatchObject({ halfRange, aaDifference, suggestedFloor: floor });
+    expect(row).toMatchObject({ halfWidth, aaDifference, suggestedFloor: floor });
   });
 
   it("leaves out wakeups counted with the delay sampler on one side only", () => {
@@ -240,11 +240,11 @@ describe("noiseReport", () => {
     expect(metrics).toContain("quiet.cpuPct");
   });
 
-  it("takes the widest pair, and calls a metric noisy past half its median", () => {
+  it("takes the widest pair, and calls a metric noisy when its interval passes half its median", () => {
     const quiet = [cpuRuns(2, 2.1), cpuRuns(2, 2.1)] as const;
     const wild = [cpuRuns(1, 4), cpuRuns(2, 2)] as const;
     const [row] = noiseReport([quiet, wild]).rows.filter(({ metric }) => metric === "quiet.cpuPct");
-    expect(row?.halfRange).toBe(1.5);
+    expect(row?.halfWidth).toBe(1.5);
     expect(row?.suggestedGate).toBe(false);
   });
 
