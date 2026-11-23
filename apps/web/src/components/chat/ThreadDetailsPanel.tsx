@@ -222,6 +222,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         autoEnvironmentLabel={props.autoEnvironmentLabel}
                         onAutoEnvironment={props.onAutoEnvironment}
                         {...branchToolbarProps}
+                        // Workspace modes follow the composer's rule, not this folder's own status.
                         showGitControls={props.offersWorkspaceModes}
                       />
                     ) : null}
