@@ -1246,24 +1246,31 @@ const make = Effect.gen(function* () {
     }
     // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
     // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
-    const isMainNavigation = (request: {
+    const isMainFrameNavigation = (request: {
       isNavigationRequest(): boolean;
-      url(): string;
       frame(): unknown;
     }) => {
       try {
-        // Chromium aborts an app link's request and keeps the page.
-        return (
-          request.isNavigationRequest() &&
-          appLinkUrl(request.url()) === null &&
-          request.frame() === page.mainFrame()
-        );
+        return request.isNavigationRequest() && request.frame() === page.mainFrame();
       } catch {
         return false;
       }
     };
+    // Chromium aborts an app link's request and keeps the page, so it is no navigation.
+    const isMainNavigation = (request: {
+      isNavigationRequest(): boolean;
+      url(): string;
+      frame(): unknown;
+    }) => appLinkUrl(request.url()) === null && isMainFrameNavigation(request);
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
+      if (appLinkUrl(request.url()) !== null && isMainFrameNavigation(request)) {
+        // A redirect into an app link ends the navigation that led there.
+        const redirectedFrom = request.redirectedFrom();
+        const generation = redirectedFrom && navigationGenerations.get(redirectedFrom);
+        if (generation) settleAbortedNavigation(tab, generation, request.url(), undefined);
+        return;
+      }
       if (!isMainNavigation(request)) return;
       // Playwright can deliver the first request after Stop has already settled its navigation.
       const stoppedInitialRequest =
