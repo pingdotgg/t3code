@@ -988,7 +988,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         assert.isBelow(result.fileCount, WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT);
         assert.deepStrictEqual(secondAsar, firstAsar);
 
-        for (let index = result.fileCount; index < 82; index += 1) {
+        for (let index = result.fileCount; index < 107; index += 1) {
           yield* fs.writeFileString(
             path.join(fixture.packagedAppDir, `runtime-${String(index)}.dat`),
             "runtime",
@@ -1000,7 +1000,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           targetArch: "x64",
           appVersion: WINDOWS_PAYLOAD_FIXTURE_VERSION,
         });
-        assert.equal(currentPayload.fileCount, 82);
+        assert.equal(currentPayload.fileCount, 107);
       }),
     ).pipe(Effect.provideService(HostProcess.Platform, "linux")),
   );
