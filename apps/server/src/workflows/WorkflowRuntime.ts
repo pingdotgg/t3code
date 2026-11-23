@@ -617,15 +617,16 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       ? versions.toSorted((left, right) => right.version - left.version)[0]
       : versions.find((definition) => definition.version === version);
   };
+  // Only a workflow's newest version has hooks, as the engine serves them.
   const hooked = (id: string) => (definitions: Definitions) =>
-    started(
-      definitions.find((definition) =>
-        definition.triggers.some(
+    definitions
+      .map((definition) => started(definition.name)(definitions))
+      .find((newest) =>
+        newest?.triggers.some(
           (trigger) =>
-            trigger.kind === "webhook" && Workflows.hookId(definition.name, trigger.name) === id,
+            trigger.kind === "webhook" && Workflows.hookId(newest.name, trigger.name) === id,
         ),
-      )?.name,
-    )(definitions);
+      );
   // A watcher outlives the engine it began on: each reload hands it the next one's stream.
   const followed = <A>(pick: (service: Workflows.Workflows["Service"]) => Stream.Stream<A>) =>
     SubscriptionRef.changes(state).pipe(

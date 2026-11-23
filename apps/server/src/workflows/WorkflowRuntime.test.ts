@@ -320,7 +320,7 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
     const closing = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let builds = 0;
-    const { runtime } = yield* setup(
+    const { at, fileSystem, runtime } = yield* setup(
       (real) => ({ ...real, watch: () => Stream.never }),
       () =>
         Layer.effect(
@@ -332,21 +332,43 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
                 Deferred.succeed(closing, undefined).pipe(Effect.andThen(Deferred.await(release))),
               );
             }
-            return { ...Workflows.disabled, start: () => Effect.succeed({ runId: `${built}` }) };
+            const run = { runId: `${built}` };
+            return {
+              ...Workflows.disabled,
+              start: () => Effect.succeed(run),
+              deliver: () => Effect.succeedSome(run),
+            };
           }),
         ),
     );
+    // Only the newest version has hooks: quick@1's hook is not served until quick@2 has it too.
+    const quick = (hooked: string) =>
+      `T3.workflow("quick", { version: 1, payload: T3.WebhookRequest, triggers: [T3.webhook("in")] }, () => Effect.void);
+T3.workflow("quick", { version: 2, payload: T3.WebhookRequest${hooked} }, () => Effect.void);
+`;
+    yield* fileSystem.writeFileString(at("quick.ts"), quick(""));
 
     yield* Effect.gen(function* () {
       const workflows = yield* Workflows.Workflows;
       const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+      // Both files are taken by the one reload the save makes.
+      yield* fileSystem.writeFileString(at("hold.ts"), hold.replace("version: 1", "version: 2"));
       const saving = yield* Effect.forkChild(
-        definitions.save("hold.ts", hold.replace("version: 1", "version: 2")),
+        definitions.save("quick.ts", quick(', triggers: [T3.webhook("in")]')),
       );
       yield* Deferred.await(closing);
       // hold@1 is going away: the old engine must not take a run that nothing would execute.
       const starting = yield* Effect.forkChild(
         workflows.start("hold", {}, { idempotencyKey: "k", version: 1 }),
+        { startImmediately: true },
+      );
+      // Nor answer for a hook only the next engine serves.
+      const delivering = yield* Effect.forkChild(
+        workflows.deliver({
+          hookId: Workflows.hookId("quick", "in"),
+          token: "t",
+          request: { method: "POST", headers: {}, query: "", body: "" },
+        }),
         { startImmediately: true },
       );
 
@@ -365,6 +387,7 @@ it.effect("reads and deliveries answer while a reload waits on the old engine's 
       assert.isTrue(Option.isSome(answered));
       yield* Fiber.join(saving);
       assert.strictEqual((yield* Fiber.join(starting)).runId, "1");
+      assert.deepStrictEqual(yield* Fiber.join(delivering), Option.some({ runId: "1" }));
     }).pipe(Effect.provide(runtime), Effect.scoped);
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
