@@ -4,6 +4,7 @@ import {
   compareMetrics,
   heapGrowth,
   parsePsCpuTime,
+  parseRunSelection,
   slope,
   type ServerMetrics,
 } from "./server-metrics-report.ts";
@@ -98,10 +99,60 @@ describe("parsePsCpuTime", () => {
     ["1:02.50", 62.5],
     ["1:00:00.00", 3600],
     ["2-01:00:00", 2 * 86_400 + 3600],
+    ["1-02:03", Number.NaN],
     ["::", Number.NaN],
     ["", Number.NaN],
     ["1:2:3:4", Number.NaN],
   ])("%s", (text, seconds) => {
     expect(parsePsCpuTime(text)).toBe(seconds);
+  });
+});
+
+describe("parseRunSelection", () => {
+  const scenarios = ["rest", "quiet", "streaming"];
+  it.each([
+    [
+      "the default thread counts",
+      { only: "", threads: "0,5,10,20", soak: 0 },
+      { only: [], threads: [0, 5, 10, 20] },
+    ],
+    [
+      "descending thread counts",
+      { only: "", threads: "5,20,10", soak: 0 },
+      { error: "--threads takes ascending counts such as 0,5,10,20" },
+    ],
+    [
+      "an empty thread count",
+      { only: "", threads: "0,,10", soak: 0 },
+      { error: "--threads takes ascending counts such as 0,5,10,20" },
+    ],
+    [
+      "named scenarios",
+      { only: "rest,quiet", threads: "0", soak: 0 },
+      { only: ["rest", "quiet"], threads: [0] },
+    ],
+    [
+      "an unknown scenario",
+      { only: "rest,idle", threads: "0", soak: 0 },
+      { error: "unknown scenario: idle" },
+    ],
+    ["a soak alone", { only: "", threads: "0", soak: 10 }, { only: ["none"], threads: [0] }],
+    [
+      "a soak with scenarios",
+      { only: "rest", threads: "0", soak: 10 },
+      { only: ["rest"], threads: [0] },
+    ],
+    [
+      "a negative soak",
+      { only: "", threads: "0", soak: -1 },
+      { error: "--soak takes minutes, 0 for none" },
+    ],
+    [
+      "an infinite soak",
+      { only: "", threads: "0", soak: Number.POSITIVE_INFINITY },
+      { error: "--soak takes minutes, 0 for none" },
+    ],
+  ])("%s", (_name, input, expected) => {
+    expect(parseRunSelection({ ...input, scenarios })).toEqual(expected);
   });
 });

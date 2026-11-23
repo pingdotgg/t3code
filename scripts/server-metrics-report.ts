@@ -67,10 +67,40 @@ export const round = (value: number, digits = 1) => Math.round(value * 10 ** dig
 
 /** `ps -o time=` CPU time, `[[dd-]hh:]mm:ss[.ss]`, in seconds; NaN for anything else. */
 export function parsePsCpuTime(text: string) {
-  const match = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim());
+  const match = /^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+(?:\.\d+)?)$/.exec(text.trim());
   if (match === null) return Number.NaN;
   const [, days = "0", hours = "0", minutes = "0", seconds = "0"] = match;
   return ((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds);
+}
+
+/**
+ * `--only`, `--threads` and `--soak` as run options. Thread counts must ascend because threads stay
+ * open, so a lower count after a higher one would mislabel its window. A soak alone runs nothing else.
+ */
+export function parseRunSelection(input: {
+  readonly only: string;
+  readonly threads: string;
+  readonly soak: number;
+  readonly scenarios: ReadonlyArray<string>;
+}):
+  | { readonly only: ReadonlyArray<string>; readonly threads: ReadonlyArray<number> }
+  | { readonly error: string } {
+  const only = input.only.split(",").filter(Boolean);
+  const unknown = only.filter((name) => !input.scenarios.includes(name));
+  if (unknown.length > 0) return { error: `unknown scenario: ${unknown.join(", ")}` };
+  const threads = input.threads
+    .split(",")
+    .map((count) => (count.trim() === "" ? Number.NaN : Number(count)));
+  if (
+    threads.some(
+      (count, index) => !Number.isInteger(count) || count < 0 || count < (threads[index - 1] ?? 0),
+    )
+  ) {
+    return { error: "--threads takes ascending counts such as 0,5,10,20" };
+  }
+  if (!Number.isInteger(input.soak) || input.soak < 0)
+    return { error: "--soak takes minutes, 0 for none" };
+  return { only: input.soak > 0 && only.length === 0 ? ["none"] : only, threads };
 }
 
 export function spread(values: ReadonlyArray<number>) {

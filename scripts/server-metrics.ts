@@ -45,6 +45,7 @@ import {
   slope,
   spread,
   parsePsCpuTime,
+  parseRunSelection,
   summarizeProfiles,
   type FirstWord,
   type Measured,
@@ -535,7 +536,9 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     });
   const added = yield* cli(["project", "add", project]);
   if (added.exitCode !== 0) {
-    return yield* new MetricsError({ message: `project add failed: ${added.stderr}` });
+    return yield* new MetricsError({
+      message: `project add failed: ${added.stderr.trim() || added.stdout.trim()}`,
+    });
   }
 
   // Spawning PowerShell for each sample costs a few hundred ms of the machine's CPU.
@@ -544,21 +547,32 @@ const startServer = Effect.fn("serverMetrics.startServer")(function* (
     // Each counter is divided by the time between its own two reads; a CIM probe can take seconds.
     // Windows reports no context switches through getrusage, so wakeups are unknown there.
     const countSwitches = platform === "win32" ? Effect.succeed(null) : devtools.contextSwitches;
-    const switchesStart = yield* nowMs;
-    const firstSwitches = yield* countSwitches;
-    const start = yield* nowMs;
-    const first = yield* sample(pid);
+    // A probe can take seconds (CIM on Windows), so each read is timed at its midpoint.
+    const timed = Effect.fn("serverMetrics.timedRead")(function* <A, E, R>(
+      read: Effect.Effect<A, E, R>,
+    ) {
+      const before = yield* nowMs;
+      const value = yield* read;
+      return { value, at: (before + (yield* nowMs)) / 2 };
+    });
+    const firstSwitches = yield* timed(countSwitches);
+    const firstSample = yield* timed(sample(pid));
+    const first = firstSample.value;
+    const start = firstSample.at;
     let rssPeak = first.rss;
     while ((yield* nowMs) - start < seconds * 1_000) {
       yield* Effect.sleep(sampleEvery);
       rssPeak = Math.max(rssPeak, (yield* sample(pid)).rss);
     }
-    const last = yield* sample(pid);
-    const cpuElapsed = ((yield* nowMs) - start) / 1_000;
-    const lastSwitches = yield* countSwitches;
-    const switchesElapsed = ((yield* nowMs) - switchesStart) / 1_000;
+    const lastSample = yield* timed(sample(pid));
+    const last = lastSample.value;
+    const cpuElapsed = (lastSample.at - start) / 1_000;
+    const lastSwitches = yield* timed(countSwitches);
+    const switchesElapsed = (lastSwitches.at - firstSwitches.at) / 1_000;
     const switches =
-      firstSwitches === null || lastSwitches === null ? null : lastSwitches - firstSwitches;
+      firstSwitches.value === null || lastSwitches.value === null
+        ? null
+        : lastSwitches.value - firstSwitches.value;
     const heap = yield* devtools.heapAfterGc;
     const window: Window = {
       cpuPct: round(((last.cpuSeconds - first.cpuSeconds) / cpuElapsed) * 100),
@@ -946,6 +960,7 @@ const runFlags = {
     Flag.optional,
   ),
   soak: Flag.Int("soak").pipe(
+    Flag.withSchema(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     Flag.withDescription(
       "Minutes of soak: 10 threads, a short turn every 30 s; heap and RSS slopes per hour and the constructors that grew. Runs alone unless --only names more.",
     ),
@@ -966,33 +981,20 @@ const toRunOptions = Effect.fn("serverMetrics.toRunOptions")(function* (
   profileDir: string | undefined,
 ) {
   const path = yield* Path.Path;
-  const only = Option.getOrElse(flags.only, () => "")
-    .split(",")
-    .filter(Boolean);
-  const unknown = only.filter((name) => !(SCENARIOS as ReadonlyArray<string>).includes(name));
-  if (unknown.length) {
-    return yield* new MetricsError({ message: `unknown scenario: ${unknown.join(", ")}` });
-  }
-  const threads = flags.threads.split(",").map(Number);
-  // Threads stay open, so a lower count after a higher one would mislabel its window.
-  if (
-    threads.some(
-      (count, index) => !Number.isInteger(count) || count < 0 || count < (threads[index - 1] ?? 0),
-    )
-  ) {
-    return yield* new MetricsError({
-      message: "--threads takes ascending counts such as 0,5,10,20",
-    });
-  }
-  if (flags.runs < 1) return yield* new MetricsError({ message: "--runs must be at least 1" });
-  if (flags.soak < 0)
-    return yield* new MetricsError({ message: "--soak takes minutes, 0 for none" });
+  const selection = parseRunSelection({
+    only: Option.getOrElse(flags.only, () => ""),
+    threads: flags.threads,
+    soak: flags.soak,
+    scenarios: SCENARIOS,
+  });
+  if ("error" in selection) return yield* new MetricsError({ message: selection.error });
+  const { only, threads } = selection;
   const options: RunOptions = {
     checkout: path.resolve(checkout),
     noAgentScope: flags.noAgentScope,
     runs: flags.runs,
     threads,
-    only: flags.soak > 0 && only.length === 0 ? ["none"] : only,
+    only,
     soakMinutes: flags.soak,
     profileDir,
   };
