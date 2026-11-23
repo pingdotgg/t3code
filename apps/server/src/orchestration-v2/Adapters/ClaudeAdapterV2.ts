@@ -11148,7 +11148,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               const since = yield* DateTime.now;
               context.unansweredRequestSince = since;
-              yield* clearUnansweredRequestWatch(context);
+              const previousWatch = context.unansweredRequestWatch;
               // Only the wait is interruptible: a fired failure runs on its own fiber.
               context.unansweredRequestWatch = yield* Effect.sleep(PROVIDER_RETRY_BUDGET_MS).pipe(
                 Effect.andThen(
@@ -11156,6 +11156,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
                 Effect.forkIn(sessionScope),
               );
+              if (previousWatch !== undefined) yield* Fiber.interrupt(previousWatch);
+              // A turn that settled meanwhile already cleared its watch, so drop the new one too.
+              if ((yield* Ref.get(activeTurn)) !== context) {
+                yield* clearUnansweredRequestWatch(context);
+              }
             } else if (
               // Background tasks from earlier turns keep streaming while the root request hangs.
               // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.

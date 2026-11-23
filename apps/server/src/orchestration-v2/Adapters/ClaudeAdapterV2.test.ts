@@ -16825,7 +16825,6 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }),
           );
         }
-        yield* yieldTicks(10);
         assert.strictEqual(pendingWatches, 0, "answered requests left silence watches running");
       }).pipe(Effect.provideService(Clock.Clock, countingClock));
     }).pipe(
