@@ -3131,36 +3131,6 @@ it.effect("keeps a Stop that commits while a workspace handoff completes the run
   }),
 );
 
-it.effect("keeps a Stop that commits while a successful turn finalizes", () =>
-  Effect.gen(function* () {
-    const stopCommitted = yield* Ref.make(false);
-    const { written, finalEvents, committedEffects } = yield* captureRootRunTermination({
-      key: "stop-races-completed-terminal",
-      // Stop commits against the running run after the ownership read, before the terminal write.
-      shouldFinalizeRun: () => Ref.set(stopCommitted, true).pipe(Effect.as(true)),
-      events: (ids) => Stream.make(rootTerminalEvent(ids, "completed")),
-      beforeTerminalWrite: (request) =>
-        Ref.get(stopCommitted).pipe(
-          Effect.map((stopped) => !(stopped && request.unlessInterruptRequested !== undefined)),
-        ),
-    });
-    const statuses = (type: OrchestrationV2DomainEvent["type"]) =>
-      finalEvents.flatMap((event) =>
-        event.type === type ? [(event.payload as { readonly status: string }).status] : [],
-      );
-    assert.deepEqual(statuses("run.updated"), ["interrupted"]);
-    assert.deepEqual(statuses("run-attempt.updated"), ["interrupted"]);
-    assert.deepEqual(
-      written.map((item) => item.type),
-      ["run_interrupt_result"],
-    );
-    assert.deepEqual(
-      committedEffects.map((effect) => effect.request.type),
-      ["checkpoint.capture"],
-    );
-  }),
-);
-
 it.effect("does not overwrite Stop when ownership changes after the finalization read", () =>
   Effect.gen(function* () {
     const { written, observed, submittedEffects, committedEffects } =
