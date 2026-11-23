@@ -962,10 +962,22 @@ const focusedTextField = async (page: Page, timeout: number) => {
   );
 };
 
+// Inputs that read keystrokes segment by segment; only fill sets their value as written.
+const FILL_ONLY_INPUT_TYPES = ["date", "time", "datetime-local", "month", "week"];
+
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const locator = targetLocator(page, input);
-  if (locator !== null && input.clear) await locator.fill("", { timeout });
+  if (locator !== null && input.clear) {
+    const fillOnly = await locator.evaluate(
+      (element: { tagName: string; type?: string }, types) =>
+        element.tagName === "INPUT" && types.includes(element.type ?? ""),
+      FILL_ONLY_INPUT_TYPES,
+      { timeout },
+    );
+    await locator.fill(fillOnly ? input.text : "", { timeout });
+    if (fillOnly) return;
+  }
   const focused =
     locator === null
       ? await focusedTextField(page, timeout)
@@ -980,8 +992,12 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.press("Delete");
   }
-  // Pages that build their value from keydown never see insertText or fill.
-  await page.keyboard.type(input.text);
+  // Pages that build their value from keydown never see insertText, but keyboard.type
+  // would press Enter or Tab for control characters, so those stay literal text.
+  for (const [run] of input.text.matchAll(/[\n\r\t]+|[^\n\r\t]+/g)) {
+    if (/^[\n\r\t]/.test(run)) await page.keyboard.insertText(run);
+    else await page.keyboard.type(run);
+  }
 };
 
 export const hover = async (

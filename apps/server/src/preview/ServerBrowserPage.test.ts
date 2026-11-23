@@ -425,6 +425,15 @@ describe("server browser element refs", () => {
       });
     await ServerBrowserPage.type(page, { locator: "#w", text: "girona42", clear: true });
     expect(await page.locator("#w").getAttribute("data-keys")).toBe("girona42");
+
+    await page.setContent(
+      `<textarea id="t"></textarea><input id="d" type="date"><script>t.onkeydown = (e) => { if (e.key === "Enter" || e.key === "Tab") t.dataset.sent = e.key; };</script>`,
+    );
+    await ServerBrowserPage.type(page, { locator: "#t", text: "one\ntwo\tthree" });
+    expect(await page.locator("#t").inputValue()).toBe("one\ntwo\tthree");
+    expect(await page.locator("#t").getAttribute("data-sent")).toBeNull();
+    await ServerBrowserPage.type(page, { locator: "#d", text: "2024-03-15", clear: true });
+    expect(await page.locator("#d").inputValue()).toBe("2024-03-15");
   });
 
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
