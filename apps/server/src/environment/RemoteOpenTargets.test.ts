@@ -80,17 +80,28 @@ const layerSpawner = (
     }),
   );
 
-const layerNet = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
+const layerNet = (input: {
+  readonly ipv4: boolean;
+  readonly ipv6: boolean;
+  readonly tailnet?: boolean;
+}) =>
   Layer.succeed(NetService.NetService, {
     canListenOnHost: () => Effect.succeed(true),
     isPortAvailableOnLoopback: () => Effect.succeed(true),
-    hasListenerOnHost: (_port, host) => Effect.succeed(host === "::1" ? input.ipv6 : input.ipv4),
+    hasListenerOnHost: (_port, host) =>
+      Effect.succeed(
+        host === "127.0.0.1"
+          ? input.ipv4
+          : host === "::1"
+            ? input.ipv6
+            : (host === "100.64.1.2" || host === "bb-1.tail1234.ts.net") && input.tailnet === true,
+      ),
     reserveLoopbackPort: () => Effect.succeed(40_000),
     findAvailablePort: (preferred) => Effect.succeed(preferred),
   });
 
 const resolveTargets = (input: {
-  readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
+  readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean; readonly tailnet?: boolean };
   readonly tailscale: { readonly status: CommandResult; readonly prefs: CommandResult };
   readonly hostname: string;
   readonly username?: string | null;
@@ -167,6 +178,20 @@ describe("RemoteOpenTargets", () => {
     }),
   );
 
+  it.effect("advertises the tailnet name when sshd listens only on the tailnet address", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: false, ipv6: false, tailnet: true },
+        tailscale: TAILSCALE_UP,
+        hostname: "bb-1",
+        username: "t3-user",
+      });
+      expect(targets).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
+      ]);
+    }),
+  );
+
   it.effect("ignores a stored RunSSH after `tailscale down`", () =>
     Effect.gen(function* () {
       const targets = yield* resolveTargets({
@@ -186,7 +211,11 @@ describe("RemoteOpenTargets", () => {
         service: "0",
       });
       const spawned: Array<unknown> = [];
-      const resolve = (sshd: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
+      const resolve = (sshd: {
+        readonly ipv4: boolean;
+        readonly ipv6: boolean;
+        readonly tailnet?: boolean;
+      }) =>
         resolveTargets({
           sshd,
           tailscale: TAILSCALE_SSH,
@@ -200,13 +229,17 @@ describe("RemoteOpenTargets", () => {
         { kind: "tailscale", host: "renamed.tail1234.ts.net", username: "t3-user" },
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
       ]);
-      // accept-dns=false: no reverse answer, but the tailnet address still reaches this host.
+      // No MagicDNS answer: a CGNAT address alone may belong to another VPN.
       lookupService.mockRejectedValueOnce(
         Object.assign(new Error("ENOTFOUND"), { code: "ENOTFOUND" }),
       );
       expect(yield* resolve({ ipv4: true, ipv6: false })).toEqual([
-        { kind: "tailscale", host: "100.64.1.2", username: "t3-user" },
         { kind: "mdns", host: "bb-1.local", username: "t3-user" },
+      ]);
+      // sshd bound only to the tailnet address (ListenAddress).
+      lookupService.mockResolvedValueOnce({ hostname: "bb-1.tail1234.ts.net.", service: "0" });
+      expect(yield* resolve({ ipv4: false, ipv6: false, tailnet: true })).toEqual([
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
       expect(lookupService).toHaveBeenCalledWith("100.64.1.2", 0);
       expect(spawned).toEqual([]);
@@ -228,6 +261,32 @@ describe("RemoteOpenTargets", () => {
         { kind: "tailscale", host: "bb-1.tail1234.ts.net", username: "t3-user" },
       ]);
       expect(lookupService).not.toHaveBeenCalled();
+    }),
+  );
+
+  it.effect("drops the tailnet name after `tailscale down` while sshd listens", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: false },
+        tailscale: {
+          // After `tailscale down`, status still exits 0 and keeps Self from the last netmap.
+          status: {
+            exitCode: 0,
+            stdout: JSON.stringify({
+              BackendState: "Stopped",
+              Self: {
+                DNSName: "bb-1.tail1234.ts.net.",
+                TailscaleIPs: ["100.64.1.2"],
+                Online: false,
+              },
+            }),
+          },
+          prefs: prefsJson({ RunSSH: false, WantRunning: false }),
+        },
+        hostname: "bb-1",
+        username: "t3-user",
+      });
+      expect(targets).toEqual([{ kind: "mdns", host: "bb-1.local", username: "t3-user" }]);
     }),
   );
 

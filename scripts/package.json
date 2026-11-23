@@ -16,7 +16,7 @@
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
-    "agent-device": "0.21.36",
+    "agent-device": "0.21.41",
     "e2e": "0.23.0",
     "effect": "catalog:",
     "playwright-core": "1.64.1",
@@ -29,6 +29,7 @@
     "@types/plist": "catalog:",
     "@types/pngjs": "6.0.5",
     "esbuild": "0.28.2",
+    "jszip": "3.10.1",
     "postject": "1.0.0-alpha.6",
     "typescript-legacy": "npm:typescript@~6.0.3",
     "vite-plus": "catalog:"

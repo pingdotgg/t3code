@@ -65,16 +65,19 @@ describe("resolveThreadFeedSubmissionAnchor", () => {
     ).toBe("first-message");
   });
 
-  it("does not anchor a follow-up after a user message appears", () => {
+  it("keeps the first message's anchor, not the follow-up's, after a user message appears", () => {
+    const followUp = {
+      submittedMessageId: "second-message",
+      hasStartedTurn: true,
+      hasUserMessage: true,
+      deliveryDeferred: false,
+      queuedMessageCount: 0,
+    };
     expect(
-      resolveThreadFeedSubmissionAnchor({
-        currentAnchorMessageId: "first-message",
-        submittedMessageId: "second-message",
-        hasStartedTurn: false,
-        hasUserMessage: true,
-        deliveryDeferred: false,
-        queuedMessageCount: 0,
-      }),
+      resolveThreadFeedSubmissionAnchor({ ...followUp, currentAnchorMessageId: "first-message" }),
+    ).toBe("first-message");
+    expect(
+      resolveThreadFeedSubmissionAnchor({ ...followUp, currentAnchorMessageId: null }),
     ).toBeNull();
   });
 

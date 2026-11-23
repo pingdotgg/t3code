@@ -21,11 +21,48 @@ it("keeps keyboard focus on a sidebar row on window return, but not a clicked ro
 
   await userEvent.click(clicked);
   expect(document.activeElement).toBe(clicked);
-  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(true);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    true,
+  );
 
   await userEvent.tab();
   expect(document.activeElement).toBe(tabbed);
-  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    false,
+  );
+});
+
+it("leaves a text selection in the timeline alone on window return", async () => {
+  const timeline = document.createElement("div");
+  timeline.tabIndex = -1;
+  const reply = document.createElement("p");
+  reply.textContent = "Steel bridges are also easy to recycle at the end of their life.";
+  timeline.append(reply);
+  document.body.append(timeline);
+  using _timeline = { [Symbol.dispose]: () => timeline.remove() };
+
+  await userEvent.tripleClick(reply);
+  expect(document.activeElement).toBe(timeline);
+  expect(document.getSelection()?.toString()).toContain("Steel bridges");
+  expect(
+    shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection()),
+    "refocusing the composer would clear the selected reply text",
+  ).toBe(false);
+});
+
+it("keeps focus in a region with its own keys on window return", async () => {
+  const region = document.createElement("div");
+  region.tabIndex = -1;
+  region.setAttribute("aria-keyshortcuts", "J K");
+  region.textContent = "Guide prose";
+  document.body.append(region);
+  using _region = { [Symbol.dispose]: () => region.remove() };
+
+  await userEvent.click(region);
+  expect(document.activeElement).toBe(region);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    false,
+  );
 });
 
 it("refocuses the composer on window return from a clicked area after a bare key press", async () => {
@@ -48,7 +85,7 @@ it("refocuses the composer on window return from a clicked area after a bare key
   // A window switch can deliver a lone modifier key without moving focus.
   await userEvent.keyboard("{Shift}");
   expect(
-    shouldRefocusComposerOnWindowFocus(document.activeElement),
+    shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection()),
     "a clicked area counts as reached from the keyboard after a bare key press",
   ).toBe(true);
 
@@ -57,5 +94,7 @@ it("refocuses the composer on window return from a clicked area after a bare key
   await userEvent.keyboard("{F6}");
   controller.move(1);
   expect(document.activeElement).toBe(conversation);
-  expect(shouldRefocusComposerOnWindowFocus(document.activeElement)).toBe(false);
+  expect(shouldRefocusComposerOnWindowFocus(document.activeElement, document.getSelection())).toBe(
+    false,
+  );
 });
