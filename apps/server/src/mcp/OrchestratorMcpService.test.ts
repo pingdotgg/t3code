@@ -106,6 +106,7 @@ describe("OrchestratorMcpService", () => {
             threadId: parentThreadId,
             origin: "app_owned",
             childThreadId,
+            title: "Merge",
             driver: "codex",
             model: "gpt-5.6-terra",
             result: "terminal result",
@@ -252,6 +253,13 @@ describe("OrchestratorMcpService", () => {
         const commandIds = yield* Ref.get(acknowledgementCommandIds);
         assert.equal(commandIds.length, 2);
         assert.notEqual(commandIds[0], commandIds[1]);
+
+        const missing = yield* service
+          .taskStatus(scope, NodeId.make("node:mcp-ack-missing"))
+          .pipe(Effect.flip);
+        assert.equal(missing.code, "task_not_found");
+        assert.include(missing.message, "No delegated task with id node:mcp-ack-missing");
+        assert.include(missing.message, `${taskId} (Merge)`);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
