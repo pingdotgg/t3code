@@ -71,7 +71,11 @@ import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeI
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import {
+  htmlRenderFromToolItem,
+  SEND_TO_USER_TOOL_NAME,
+  sentMessageFromToolItem,
+} from "@t3tools/shared/toolOutput";
 import { compareSemverVersions } from "@t3tools/shared/semver";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -101,8 +105,10 @@ import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/sel
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
 import {
   openCodeCodeModeHtmlRenders,
+  openCodeCodeModeSentMessages,
   openCodeCommandFailed,
   openCodeToolTurnItem,
+  stripOpenCodeReturnedSentMessage,
 } from "../toolItems.ts";
 
 const NativeGoal = Schema.NullOr(
@@ -273,8 +279,9 @@ interface ActiveTurn {
   unsent: boolean;
   readonly steers: Set<string>;
   readonly settledInbox: Set<string>;
-  // Reconnects replay finished tools, so each nested html_render takes a page only once.
+  // Reconnects replay finished tools, so each nested html_render / send_to_user takes its record only once.
   readonly takenPages: Set<string>;
+  readonly takenSentMessages: Map<string, string | null>;
   heldEnd: TurnTerminal | undefined;
   awaitingStart: boolean;
   /** Scope child tool IDs because model-generated IDs can repeat parent IDs. */
@@ -1475,6 +1482,42 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ? "failed"
           : status;
       yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
+      const mcpServerName =
+        status === "running" ? undefined : yield* mcpServerNameFor(turn.input.threadId);
+      const nestedSentMessages: Array<{
+        readonly messageId: string;
+        readonly sentMessage: string;
+      }> = [];
+      const seenSentMessages = new Set<string>();
+      if (mcpServerName !== undefined) {
+        for (const { index, input } of openCodeCodeModeSentMessages(
+          result?.metadata,
+          mcpServerName,
+        )) {
+          const messageId = `${nativeId}:${SEND_TO_USER_TOOL_NAME}:${index}`;
+          const existing = turn.takenSentMessages.get(messageId);
+          if (existing !== undefined) {
+            if (existing !== null) seenSentMessages.add(existing);
+            continue;
+          }
+          const recovered = yield* mcpSessions.takeToolResult(
+            turn.input.threadId,
+            SEND_TO_USER_TOOL_NAME,
+            input,
+          );
+          const sentMessage = sentMessageFromToolItem({
+            toolName: SEND_TO_USER_TOOL_NAME,
+            output: recovered,
+          });
+          turn.takenSentMessages.set(messageId, sentMessage ?? null);
+          if (sentMessage !== undefined) {
+            seenSentMessages.add(sentMessage);
+            nestedSentMessages.push({ messageId, sentMessage });
+          }
+        }
+      }
+      // Strip only a duplicate returned sentMessage so images and other fields stay on the wrapper
+      // while nested send_to_user calls emit in their original call order.
       const turnItem = openCodeToolTurnItem(
         {
           ...itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
@@ -1485,7 +1528,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         {
           name: tool.name,
           input: tool.input,
-          output: result?.output,
+          output: stripOpenCodeReturnedSentMessage(tool.name, result?.output, seenSentMessages),
           files: result?.files,
           completedMetadata:
             status === "completed" || result?.nativeTaskId !== undefined
@@ -1494,14 +1537,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         },
       );
       yield* emit({ type: "turn_item.updated", driver, turnItem });
-      if (status === "running") return;
+      if (status === "running" || mcpServerName === undefined) return;
       // A script that returns the reference already renders through its own item.
       const returnedPage =
         turnItem.type === "dynamic_tool" ? htmlRenderFromToolItem(turnItem) : undefined;
-      const pages = openCodeCodeModeHtmlRenders(
-        result?.metadata,
-        yield* mcpServerNameFor(turn.input.threadId),
-      );
+      const pages = openCodeCodeModeHtmlRenders(result?.metadata, mcpServerName);
       for (const { index, input } of pages) {
         const pageId = `${nativeId}:${HTML_RENDER_TOOL_NAME}:${index}`;
         if (turn.takenPages.has(pageId)) continue;
@@ -1518,6 +1558,20 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             toolName: `t3-code.${HTML_RENDER_TOOL_NAME}`,
             input: { title: page.title, height: page.height },
             output: { htmlRender: page },
+          },
+        });
+      }
+      for (const { messageId, sentMessage } of nestedSentMessages) {
+        yield* emitNode(state, turn, messageId, "tool_call", "completed", startedAt, updatedAt);
+        yield* emit({
+          type: "turn_item.updated",
+          driver,
+          turnItem: {
+            ...itemBase(state, turn, messageId, "completed", startedAt, updatedAt, updatedAt),
+            type: "dynamic_tool",
+            toolName: `t3-code.${SEND_TO_USER_TOOL_NAME}`,
+            input: { message: sentMessage },
+            output: { sentMessage },
           },
         });
       }
@@ -1672,6 +1726,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       steers: new Set(),
       settledInbox: new Set(),
       takenPages: new Set(),
+      takenSentMessages: new Map(),
       heldEnd: undefined,
       awaitingStart: options.awaitingStart,
       scope: options.scope,
@@ -2432,6 +2487,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         }
         return;
       }
+      yield* mcpSessions.clearToolResults(turn.input.threadId);
       state.providerThread = {
         ...state.providerThread,
         status: threadDisposition === "broken" ? "error" : "idle",

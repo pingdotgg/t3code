@@ -17,9 +17,11 @@ import {
   makeAntigravityReadRepair,
 } from "./AntigravityProtocol.ts";
 import {
+  ACP_MCP_INPUT_HASH_META_KEY,
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
 import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
@@ -730,6 +732,48 @@ describe("Antigravity served reads", () => {
       sessionUpdate: "tool_call_update",
       toolCallId: "call_current",
       status: "completed",
+    });
+  });
+
+  it("strips toolSummary on T3 MCP calls and hashes oversized inputs before truncation", () => {
+    const longTask = "review ".repeat(1_500);
+    const normalized = normalizeAntigravitySessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_t3_delegate",
+        title: "Run mcp_t3-code_delegate_task",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { task: longTask, role: "review", toolSummary: "Delegate audit" },
+      },
+    });
+    expect(isSessionNotification(normalized)).toBe(true);
+    const parsed = parseToolUpdate(normalized);
+    const toolCall = normalizeAntigravityToolCall(parsed.toolCall);
+    expect(toolCall.data[ACP_MCP_INPUT_HASH_META_KEY]).toBe(
+      hashToolInput({ task: longTask, role: "review" }),
+    );
+    expect(toolCall.data.rawInput).toMatchObject({ role: "review" });
+    expect(toolCall.data.rawInput).not.toHaveProperty("toolSummary");
+    expect(
+      ((toolCall.data.rawInput as Record<string, unknown>).task as string).length,
+    ).toBeLessThan(longTask.length);
+
+    const foreignEvent = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "call_other",
+        title: "Run mcp_other_send_to_user",
+        kind: "other",
+        status: "in_progress",
+        rawInput: { message: "Hello", toolSummary: "Send greeting" },
+      },
+    });
+    expect(normalizeAntigravityToolCall(foreignEvent.toolCall).data.rawInput).toEqual({
+      message: "Hello",
+      toolSummary: "Send greeting",
     });
   });
 });

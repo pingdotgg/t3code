@@ -4,13 +4,19 @@ import type {
   UserInputQuestion,
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { resolveT3McpToolId } from "@t3tools/shared/t3McpToolPresentation";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as AcpWireSchema from "effect-acp/schema-v1";
 
-import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  ACP_MCP_INPUT_HASH_META_KEY,
+  extractMcpToolCallIdentity,
+  type AcpToolCallState,
+} from "@t3tools/provider-acp/server/runtimeModel";
+import { hashToolInput } from "@t3tools/provider-core/server/McpProviderSessions";
 
 import {
   ANTIGRAVITY_EDIT_DIFF_OMITTED,
@@ -376,6 +382,61 @@ export function makeAntigravityReadRepair() {
   };
 }
 
+function stripAntigravityToolSummary(value: unknown): unknown {
+  if (!Predicate.isObject(value) || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  let next: Record<string, unknown> = record;
+  if ("toolSummary" in next) {
+    const { toolSummary: _toolSummary, ...rest } = next;
+    next = rest;
+  }
+  if (Predicate.isObject(next.Arguments) && "toolSummary" in next.Arguments) {
+    const { toolSummary: _toolSummary, ...args } = next.Arguments;
+    next = { ...next, Arguments: args };
+  }
+  return next;
+}
+
+function antigravityPreTruncationMcpInputHash(
+  update: Extract<
+    EffectAcpSchema.SessionNotification["update"],
+    { readonly sessionUpdate: "tool_call" | "tool_call_update" }
+  >,
+  sanitizedRawInput: unknown,
+): string | undefined {
+  if (
+    Predicate.isObject(update._meta) &&
+    typeof update._meta[ACP_MCP_INPUT_HASH_META_KEY] === "string"
+  ) {
+    return undefined;
+  }
+  if (!Predicate.isObject(update.rawInput) || Array.isArray(update.rawInput)) return undefined;
+  if (Object.keys(update.rawInput).length === 0) return undefined;
+  const rawInputRecord = update.rawInput as Record<string, unknown>;
+  const identity = extractMcpToolCallIdentity({
+    toolCallId: update.toolCallId,
+    ...(typeof update.title === "string" ? { title: update.title } : {}),
+    data: {
+      ...(typeof update.title === "string" ? { title: update.title } : {}),
+      rawInput: rawInputRecord,
+      ...(Predicate.isObject(update._meta) ? { meta: update._meta } : {}),
+    },
+  });
+  const isT3McpCall =
+    identity !== undefined && resolveT3McpToolId(`${identity.server}.${identity.tool}`) !== null;
+  if (!isT3McpCall && (update.title != null || !hasTruncatedText(sanitizedRawInput))) {
+    return undefined;
+  }
+  const candidate =
+    identity?.input ??
+    (Predicate.isObject(rawInputRecord.Arguments)
+      ? rawInputRecord.Arguments
+      : Predicate.isObject(rawInputRecord.arguments)
+        ? rawInputRecord.arguments
+        : rawInputRecord);
+  return hashToolInput(stripAntigravityToolSummary(candidate));
+}
+
 export function normalizeAntigravitySessionUpdate(
   notification: EffectAcpSchema.SessionNotification,
 ): EffectAcpSchema.SessionNotification {
@@ -390,20 +451,32 @@ export function normalizeAntigravitySessionUpdate(
     );
     return decoded === undefined ? [] : [decoded];
   });
+  const sanitizedRawInput =
+    update.rawInput !== undefined ? sanitizeAntigravityToolPayload(update.rawInput) : undefined;
+  const preTruncationInputHash = antigravityPreTruncationMcpInputHash(update, sanitizedRawInput);
   const meta = sanitizeAntigravityToolPayload(update._meta);
+  const nextMeta =
+    preTruncationInputHash === undefined
+      ? update._meta !== undefined
+        ? isJsonRecord(meta)
+          ? meta
+          : null
+        : undefined
+      : {
+          ...(isJsonRecord(meta) ? meta : {}),
+          [ACP_MCP_INPUT_HASH_META_KEY]: preTruncationInputHash,
+        };
   return {
     ...notification,
     update: {
       ...update,
       ...(typeof update.title === "string" ? { title: boundText(update.title) } : {}),
-      ...(update.rawInput !== undefined
-        ? { rawInput: sanitizeAntigravityToolPayload(update.rawInput) }
-        : {}),
+      ...(update.rawInput !== undefined ? { rawInput: sanitizedRawInput } : {}),
       ...(update.rawOutput !== undefined
         ? { rawOutput: sanitizeAntigravityToolPayload(update.rawOutput) }
         : {}),
       ...(update.content !== undefined ? { content: content ?? [] } : {}),
-      ...(update._meta !== undefined ? { _meta: isJsonRecord(meta) ? meta : null } : {}),
+      ...(nextMeta !== undefined ? { _meta: nextMeta } : {}),
     },
   };
 }
@@ -507,6 +580,19 @@ export function normalizeAntigravityToolCall(
   const imagePath = localImagePath(output?.imagePath);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
+  // Antigravity adds `toolSummary` to ACP MCP inputs without forwarding it to T3's MCP server.
+  const mcpIdentity = extractMcpToolCallIdentity(
+    toolCall.title !== undefined && toolCall.data.title === undefined
+      ? { ...toolCall, data: { ...toolCall.data, title: toolCall.title } }
+      : toolCall,
+  );
+  if (
+    mcpIdentity !== undefined &&
+    resolveT3McpToolId(`${mcpIdentity.server}.${mcpIdentity.tool}`) !== null &&
+    Predicate.isObject(data.rawInput)
+  ) {
+    data.rawInput = stripAntigravityToolSummary(data.rawInput);
+  }
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;

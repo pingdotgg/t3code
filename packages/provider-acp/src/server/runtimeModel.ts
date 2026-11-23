@@ -512,6 +512,12 @@ function normalizePlanStepStatus(
   }
 }
 
+/**
+ * Optional `_meta` key drivers can set before truncating oversized MCP inputs so result recovery
+ * can still match the untruncated canonical input hash.
+ */
+export const ACP_MCP_INPUT_HASH_META_KEY = "_t3McpInputHash";
+
 function normalizeToolCallStatus(
   raw: unknown,
   fallback?: "pending" | "inProgress" | "completed" | "failed",
@@ -883,9 +889,25 @@ function makeToolCallState(
   if (input.rawInput !== undefined) {
     data.rawInput = input.rawInput;
   }
-  if (isRecord(input._meta)) {
+  const inputMeta = isRecord(input._meta) ? input._meta : undefined;
+  const preTruncationInputHash =
+    typeof inputMeta?.[ACP_MCP_INPUT_HASH_META_KEY] === "string"
+      ? inputMeta[ACP_MCP_INPUT_HASH_META_KEY]
+      : undefined;
+  if (preTruncationInputHash !== undefined) {
+    data[ACP_MCP_INPUT_HASH_META_KEY] = preTruncationInputHash;
+  }
+  const sanitizedMeta =
+    inputMeta === undefined
+      ? undefined
+      : preTruncationInputHash === undefined
+        ? inputMeta
+        : Object.fromEntries(
+            Object.entries(inputMeta).filter(([key]) => key !== ACP_MCP_INPUT_HASH_META_KEY),
+          );
+  if (sanitizedMeta !== undefined && Object.keys(sanitizedMeta).length > 0) {
     // goose, qwen, and claude-acp may identify MCP calls only in metadata.
-    data.meta = input._meta;
+    data.meta = sanitizedMeta;
   }
   if (input.rawOutput !== undefined) {
     data.rawOutput = boundToolCallRawOutput(input.rawOutput);
@@ -896,9 +918,6 @@ function makeToolCallState(
   const locations = locationsFromToolCallInput(input);
   if (locations !== undefined) {
     data.locations = locations;
-  }
-  if (isRecord(input._meta)) {
-    data.meta = input._meta;
   }
   const fallbackDetail = command ?? normalizedTitle ?? textContent;
   const hasPresentationSeed =
@@ -966,7 +985,16 @@ export function mergeToolCallState(
   const status = next.data.status === null ? next.status : (next.status ?? previous?.status);
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
-  const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
+  const nextReplacesRawInput =
+    next.data.rawInput === null ||
+    (isRecord(next.data.rawInput) && Object.keys(next.data.rawInput).length > 0);
+  const nextData =
+    previous?.data[ACP_MCP_INPUT_HASH_META_KEY] !== undefined &&
+    nextReplacesRawInput &&
+    next.data[ACP_MCP_INPUT_HASH_META_KEY] === undefined
+      ? { ...next.data, [ACP_MCP_INPUT_HASH_META_KEY]: null }
+      : next.data;
+  const data = mergeToolActivityData(previous?.data, nextData) ?? nextData;
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),

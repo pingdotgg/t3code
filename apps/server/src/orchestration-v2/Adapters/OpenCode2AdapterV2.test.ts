@@ -43,7 +43,7 @@ import { TestClock } from "effect/testing";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
+import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -5318,6 +5318,109 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           : [],
       );
       assert.deepEqual(shown, references);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("shows send_to_user messages a Code Mode script sends without returning them", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const messages = ["First mid-turn note", "Second mid-turn note"];
+      yield* Effect.forEach(messages, (message) =>
+        mcpSessions.recordToolResult(
+          threadId,
+          "send_to_user",
+          { message },
+          { sentMessage: message },
+        ),
+      );
+      const tool = {
+        sessionID: SESSION,
+        assistantMessageID: "msg_assistant",
+        id: "call-execute-send",
+      };
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.tool.input.started", { ...tool, name: "execute" }),
+        event("session.tool.called", { ...tool, input: { code: "<script>" }, executed: true }),
+        event(
+          "session.tool.success",
+          {
+            ...tool,
+            // The script sends messages[0], sends messages[1], and returns messages[1] inside an
+            // MCP content text block alongside a sibling field and an image.
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  content: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({ sentMessage: messages[1], note: "keep" }),
+                    },
+                  ],
+                  structuredContent: { sentMessage: messages[1] },
+                }),
+              },
+              { type: "file", uri: "data:image/png;base64,iVBORw0KGgo=", mime: "image/png" },
+            ],
+            metadata: {
+              toolCalls: [
+                {
+                  tool: `${server}.send_to_user`,
+                  status: "completed",
+                  input: { message: messages[0] },
+                },
+                {
+                  tool: `${server}.send_to_user`,
+                  status: "completed",
+                  input: { message: messages[1] },
+                },
+              ],
+              truncated: false,
+            },
+            executed: true,
+          },
+          undefined,
+          2,
+        ),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = Array.from(yield* Fiber.join(events));
+      const shown = collected.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
+          ? [sentMessageFromToolItem(event.turnItem)].filter((msg) => msg !== undefined)
+          : [],
+      );
+      assert.deepEqual(shown, messages);
+      const executeItem = collected.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.toolName === "execute",
+      );
+      assert.deepEqual(
+        executeItem?.type === "turn_item.updated" && executeItem.turnItem.type === "dynamic_tool"
+          ? toolOutputImages(executeItem.turnItem.output)
+          : [],
+        [{ mimeType: "image/png", data: "iVBORw0KGgo=" }],
+      );
+      assert.include(
+        JSON.stringify(
+          executeItem?.type === "turn_item.updated" && executeItem.turnItem.type === "dynamic_tool"
+            ? executeItem.turnItem.output
+            : null,
+        ),
+        "keep",
+      );
     }).pipe(Effect.scoped),
   );
 
