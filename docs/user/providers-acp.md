@@ -131,7 +131,7 @@ Checkpoint rollback restores your files as usual. ACP agents cannot rewind their
 so the next turn after a rollback starts a fresh agent session and T3 Code sends it the kept
 conversation, without the turns you rolled back.
 
-Select an ACP model in **Settings → Threads → Text generation** to use it for generated text,
+Select an ACP model in **Settings → Threads → Text generation model** to use it for generated text,
 such as thread titles, commit messages, branch names, and pull request descriptions. Each request
 opens a disposable session outside the project checkout.
 
