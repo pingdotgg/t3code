@@ -1477,9 +1477,13 @@ it.effect.each(["local", "mixed", "exit"] as const)(
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) => {
             if (!input.args.includes("--walk-reflogs")) return liveProcess.run(input);
-            const scope = input.args.includes("--all") ? "--all" : "HEAD";
+            const scope = input.args.includes("--all")
+              ? "worktree HEADs"
+              : input.args.includes("--stdin")
+                ? "refs"
+                : "HEAD";
             reflogScopes.push(scope);
-            if (scope === "--all" || mode !== "exit") return liveProcess.run(input);
+            if (scope !== "HEAD" || mode !== "exit") return liveProcess.run(input);
             return Effect.fail(
               new VcsProcessExitError({
                 operation: input.operation,
@@ -1500,8 +1504,104 @@ it.effect.each(["local", "mixed", "exit"] as const)(
         }),
         new Set(["local.txt"]),
       );
-      assert.deepEqual(reflogScopes, mode === "local" ? ["HEAD"] : ["HEAD", "--all"]);
+      assert.deepEqual(
+        reflogScopes,
+        // Without an import no remote-tracking ref holds the turn's commits, so none is read.
+        mode === "mixed" ? ["HEAD", "refs", "worktree HEADs"] : ["HEAD"],
+      );
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
+it.effect("checkpoint authorship reads only reflogs of refs holding the turn's commits", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-imports-" });
+    const upstream = path.join(root, "upstream");
+    const primary = path.join(root, "primary");
+    const cwd = path.join(root, "turn");
+    const git = (repo: string, args: ReadonlyArray<string>, stdin?: string) =>
+      driver.execute({
+        operation: "checkpoint-test",
+        cwd: repo,
+        args: ["-c", "user.name=Test", "-c", "user.email=test@test.com", ...args],
+        ...(stdin === undefined ? {} : { stdin }),
+      });
+    const commitFile = (repo: string, file: string) =>
+      Effect.gen(function* () {
+        yield* fs.writeFileString(path.join(repo, file), `${file}\n`);
+        yield* git(repo, ["add", "."]);
+        yield* git(repo, ["commit", "-m", file]);
+      });
+    yield* fs.makeDirectory(upstream);
+    yield* git(upstream, ["init"]);
+    yield* commitFile(upstream, "base.txt");
+    yield* git(root, ["clone", upstream, primary]);
+    yield* git(primary, ["worktree", "add", cwd, "-b", "turn"]);
+    const fromCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/imports/from");
+    const toCheckpointRef = CheckpointRef.make("refs/t3/checkpoints/imports/to");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: fromCheckpointRef });
+
+    // Refs updated during the turn that hold none of its commits.
+    const base = (yield* git(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+    const unrelated = Array.from({ length: 200 }, (_, index) => [
+      `create refs/remotes/origin/unrelated-${index} ${base}`,
+      `create refs/heads/unrelated-${index} ${base}`,
+      `create refs/t3/checkpoints/unrelated-${index} ${base}`,
+    ]).flat();
+    yield* git(
+      cwd,
+      ["update-ref", "--create-reflog", "-m", "fetch origin: storing head", "--stdin"],
+      `${unrelated.join("\n")}\n`,
+    );
+
+    // Fetched and fast-forwarded: imported.
+    yield* git(upstream, ["checkout", "-b", "release"]);
+    yield* commitFile(upstream, "fetched.txt");
+    // Made in another worktree that then moved on, pushed, and fetched back: local.
+    yield* git(primary, ["checkout", "--detach"]);
+    yield* commitFile(primary, "own.txt");
+    yield* git(primary, ["push", "origin", "HEAD:refs/heads/pushed"]);
+    yield* git(primary, ["checkout", "-"]);
+    yield* git(upstream, ["merge", "pushed", "--no-edit"]);
+    yield* git(upstream, ["checkout", "-b", "feature"]);
+    yield* commitFile(upstream, "picked.txt");
+    yield* git(cwd, ["fetch", "origin"]);
+    yield* git(cwd, ["merge", "--ff-only", "origin/release"]);
+    // Cherry-picked from a fetched branch: a new local commit.
+    yield* git(cwd, ["cherry-pick", "origin/feature"]);
+    yield* commitFile(cwd, "local.txt");
+    // Pushing imported commits elsewhere must not make them look local.
+    yield* git(cwd, ["push", "origin", "HEAD:refs/heads/mirror"]);
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: toCheckpointRef,
+      previousCheckpointRef: fromCheckpointRef,
+    });
+
+    const reflogWalks: string[] = [];
+    const queryDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("--walk-reflogs")) {
+            reflogWalks.push([...input.args, input.stdin ?? ""].join(" "));
+          }
+          return liveProcess.run(input);
+        },
+      }),
+    );
+    assert.deepEqual(
+      yield* queryDriver.checkpoints.listAuthoredPaths({ cwd, fromCheckpointRef, toCheckpointRef }),
+      new Set(["own.txt", "picked.txt", "local.txt"]),
+    );
+    assert.isNotEmpty(reflogWalks);
+    for (const walk of reflogWalks) {
+      assert.notInclude(walk, "unrelated");
+      if (walk.includes("--all")) assert.include(walk, "--exclude=refs/*");
+    }
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint authorship works with git that rejects --diff-merges=remerge", () =>

@@ -1,5 +1,6 @@
 import * as NodeBuffer from "node:buffer";
 
+import * as Arr from "effect/Array";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -2368,34 +2369,76 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           outputMode: "error",
         }).pipe(Effect.map((result) => result.stdout.split("\0")));
 
+      // Refs under `namespace` that contain any of `commits`. Only the oldest commits of the set
+      // are passed on, since a ref containing a descendant also contains its ancestors.
+      const listRefsContaining = Effect.fnUntraced(function* (
+        commits: ReadonlySet<string>,
+        namespace: string,
+      ) {
+        const roots = (yield* listLines(
+          ["rev-list", "--no-walk=unsorted", "--parents", "--stdin"],
+          `${[...commits].join("\n")}\n`,
+        )).flatMap((line) => {
+          const [commit = "", ...parents] = line.split(" ");
+          return parents.some((parent) => commits.has(parent)) ? [] : [commit];
+        });
+        const refs = yield* Effect.forEach(Arr.chunksOf(roots, 256), (chunk) =>
+          listLines([
+            "for-each-ref",
+            "--format=%(refname)",
+            ...chunk.flatMap((commit) => ["--contains", commit]),
+            namespace,
+          ]),
+        );
+        return [...new Set(refs.flat())];
+      });
+      // With --walk-reflogs, --max-age compares each entry's own time; --since would guess at a
+      // date and reads a timestamp before 1973 as now. Walking many reflogs at once slows down
+      // quadratically with the refs passed: --all took 40 s in a repository with 29k refs.
+      const walkReflogs = (revisionArgs: ReadonlyArray<string>, refs: ReadonlyArray<string>) =>
+        listLines(
+          [
+            "log",
+            "--walk-reflogs",
+            ...revisionArgs,
+            `--max-age=${capturedAt}`,
+            "--format=%H %gD %gs",
+            "--stdin",
+          ],
+          `${refs.join("\n")}\n`,
+        ).pipe(Effect.map((lines) => lines.map(parseCheckpointReflogEntry)));
+
       // A commit is an import when a fetch delivered it since the previous checkpoint and no
-      // reflog in any worktree shows this repository creating it. --all covers every worktree's
-      // HEAD, and with --walk-reflogs --max-age compares each entry's own time. --since would
-      // guess at a date, and reads a timestamp before 1973 as the current time.
-      const listImportedCommits = Effect.gen(function* () {
-        const entries = (yield* listLines([
-          "log",
-          "--walk-reflogs",
-          "--all",
-          `--max-age=${capturedAt}`,
-          "--format=%H %gD %gs",
-        ])).map(parseCheckpointReflogEntry);
+      // reflog shows this repository creating it. Only refs containing a turn commit are read;
+      // a remote-tracking ref force-moved off one after the fetch is missed, which keeps that
+      // commit attributed to the turn.
+      const listImportedCommits = Effect.fnUntraced(function* (candidates: ReadonlySet<string>) {
+        const remoteRefs = yield* listRefsContaining(candidates, "refs/remotes");
+        if (remoteRefs.length === 0) return new Set<string>();
         // A push records commits this repository already had.
         const fetchedTips = new Set(
-          entries
+          (yield* walkReflogs([], remoteRefs))
             .filter((entry) => entry.fetched && entry.subject !== "update by push")
             .map((entry) => entry.commit),
         );
         if (fetchedTips.size === 0) return fetchedTips;
-        // Fetching another branch can deliver a commit that was made here and pushed.
+        const fetched = new Set(
+          (yield* listLines(
+            ["rev-list", `--max-age=${capturedAt}`, "--stdin"],
+            `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
+          )).filter((commit) => candidates.has(commit)),
+        );
+        if (fetched.size === 0) return fetched;
+        // Fetching another branch can deliver a commit that was made here and pushed. Every
+        // worktree's HEAD reflog is read, since a detached HEAD may have moved off the commit
+        // it made; --all with refs/* excluded yields exactly those HEADs.
+        const localRefs = yield* listRefsContaining(fetched, "refs/heads");
         const createdHere = new Set(
-          entries.filter(isLocalReflogCreation).map((entry) => entry.commit),
+          (yield* walkReflogs(["--exclude=refs/*", "--all"], localRefs))
+            .filter(isLocalReflogCreation)
+            .map((entry) => entry.commit),
         );
-        const fetched = yield* listLines(
-          ["rev-list", `--max-age=${capturedAt}`, "--stdin"],
-          `${[...fetchedTips, `^${startHead}`].join("\n")}\n`,
-        );
-        return new Set(fetched.filter((commit) => !createdHere.has(commit)));
+        return new Set([...fetched].filter((commit) => !createdHere.has(commit)));
       });
 
       // Remerge diffs retain merge conflict fixes while excluding clean upstream changes.
@@ -2483,7 +2526,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       const importedCommits =
         unprovenCommits.size === 0
           ? new Set<string>()
-          : yield* listImportedCommits.pipe(Effect.orElseSucceed(() => new Set<string>()));
+          : yield* listImportedCommits(unprovenCommits).pipe(
+              Effect.orElseSucceed(() => new Set<string>()),
+            );
       const ownCommits = recentCommits.filter((commit) => !importedCommits.has(commit));
       const ownCommitPaths =
         ownCommits.length === 0
