@@ -37,8 +37,10 @@ const MilestoneEnvelope = Schema.Struct({
   threadId: Schema.NullOr(ThreadId),
   parentThreadId: Schema.NullOr(ThreadId),
   actor: MilestoneActor,
-  /** A subagent's thread. Muted unless asked for. */
+  /** A subagent's thread, or a run another run invoked. Muted unless asked for. */
   isSubagentChild: Schema.Boolean,
+  /** The workflow run a workflow milestone is about, or whose agent step the thread is. */
+  workflowRunId: Schema.optional(TrimmedNonEmptyString),
 });
 
 /** `approval` covers command, file and permission prompts; `user_input` covers questions. */
@@ -127,6 +129,11 @@ export const MilestoneEvent = Schema.Union([
   Schema.Struct({
     ...MilestoneEnvelope.fields,
     ...WorkflowRunFields,
+    type: Schema.Literal("workflow.run_resumed"),
+  }),
+  Schema.Struct({
+    ...MilestoneEnvelope.fields,
+    ...WorkflowRunFields,
     type: Schema.Literal("workflow.run_ended"),
     outcome: Schema.Literals(["completed", "stopped", "skipped", "cancelled"]),
     detail: Schema.NullOr(Schema.String),
@@ -145,6 +152,7 @@ export const MilestoneEventType = Schema.Literals([
   "workflow.needs_input",
   "workflow.input_resolved",
   "workflow.run_paused",
+  "workflow.run_resumed",
   "workflow.run_ended",
 ]);
 export type MilestoneEventType = typeof MilestoneEventType.Type;
@@ -155,8 +163,9 @@ export const MilestoneFilter = Schema.Struct({
   threadIds: Schema.optional(Schema.Array(ThreadId)),
   /** Workflow names. Given, it matches only workflow milestones. */
   workflows: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  /** Workflow runs, with the threads that are their agent steps. */
   workflowRunIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
-  /** Absent reads as false: subagent threads churn and are rarely news. */
+  /** Absent reads as false: subagent threads and invoked runs churn and are rarely news. */
   includeSubagentChildren: Schema.optional(Schema.Boolean),
 });
 export type MilestoneFilter = typeof MilestoneFilter.Type;
@@ -172,4 +181,4 @@ export const milestoneMatches = (event: MilestoneEvent, filter: MilestoneFilter 
   (filter.workflows === undefined ||
     ("workflow" in event && filter.workflows.includes(event.workflow))) &&
   (filter.workflowRunIds === undefined ||
-    ("workflowRunId" in event && filter.workflowRunIds.includes(event.workflowRunId)));
+    (event.workflowRunId !== undefined && filter.workflowRunIds.includes(event.workflowRunId)));

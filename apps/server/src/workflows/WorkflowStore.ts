@@ -398,7 +398,7 @@ export const make = Effect.gen(function* () {
       threadId: null,
       parentThreadId: null,
       actor: { type: "system" },
-      isSubagentChild: false,
+      isSubagentChild: run.parent_run_id !== null,
       workflowRunId: runId,
       workflow: run.workflow,
       runTitle: run.title,
@@ -516,7 +516,9 @@ export const make = Effect.gen(function* () {
         RETURNING run_id
       `.pipe(Effect.orDie);
       yield* PubSub.publish(changes, runId);
-      return rows.length > 0;
+      if (rows.length === 0) return false;
+      yield* tell(runId, `${runId}:${at}`, at, { type: "workflow.run_resumed" });
+      return true;
     }),
     runUnheld: Effect.fn("WorkflowStore.runUnheld")(function* (runId) {
       // A pause since then set its own `held`.

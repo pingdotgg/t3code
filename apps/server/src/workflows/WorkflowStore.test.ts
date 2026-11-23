@@ -397,10 +397,23 @@ it.effect("tells the milestone hub of each run and question transition once", ()
       yield* ask("last", { title: "Anything else?" });
       yield* store.runPaused("r1", "agent failed");
       yield* store.runPaused("r1", "agent failed again");
+      yield* store.runUnpaused("r1");
+      yield* store.runUnpaused("r1");
+      // A run another run invoked is muted unless asked for, as a subagent's thread is.
+      yield* store.runStarted({
+        ...start,
+        runId: "r2",
+        idempotencyKey: "child",
+        parent: { runId: "r1", wait: "child" },
+      });
       yield* store.runEnded("r1", "cancelled", "stopped by a person", null);
       yield* store.runEnded("r1", "completed", null, null);
 
-      const { events } = yield* hub.recent();
+      assert.notInclude(
+        (yield* hub.recent()).events.map((event) => event.workflowRunId),
+        "r2",
+      );
+      const { events } = yield* hub.recent({ filter: { includeSubagentChildren: true } });
       assert.deepStrictEqual(
         events.map((event): unknown => {
           const { id: _id, occurredAt: _at, ...rest } = event;
@@ -414,6 +427,14 @@ it.effect("tells the milestone hub of each run and question transition once", ()
           { type: "workflow.input_resolved", step: "later", resolution: "expired" },
           { type: "workflow.needs_input", step: "last", question: "Anything else?" },
           { type: "workflow.run_paused", reason: "agent failed" },
+          { type: "workflow.run_resumed" },
+          {
+            type: "workflow.run_started",
+            isSubagentChild: true,
+            workflowRunId: "r2",
+            runTitle: "review child",
+            parentWorkflowRunId: "r1",
+          },
           { type: "workflow.input_resolved", step: "last", resolution: "cancelled" },
           { type: "workflow.run_ended", outcome: "cancelled", detail: "stopped by a person" },
         ].map((news) => ({

@@ -174,7 +174,7 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     });
 
     const { events } = (yield* call("events/list")).result!;
-    expect(events).toHaveLength(11);
+    expect(events).toHaveLength(12);
     const settledType = events.find(
       (event: { name: string }) => event.name === "thread.run_settled",
     );
@@ -182,6 +182,7 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     expect(Object.keys(settledType.inputSchema.properties)).toEqual([
       "projectIds",
       "threadIds",
+      "workflowRunIds",
       "includeSubagentChildren",
     ]);
     expect(settledType.payloadSchema.properties.outcome).toBeDefined();
@@ -192,6 +193,7 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     expect(Object.keys(workflowType.inputSchema.properties)).toEqual([
       "workflows",
       "workflowRunIds",
+      "includeSubagentChildren",
     ]);
     expect((yield* call("events/list", {}, { token: threadToken })).result!.events).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),

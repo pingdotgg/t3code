@@ -140,8 +140,10 @@ when something happens without reading threads over and over: a turn ended, an
 agent waits on a person, a guest asked something, a watched pull request woke
 its thread. Each of these is an event type it can poll or stream, narrowed to
 projects or threads. [Workflow runs](workflows.md) have their own event types,
-narrowed to workflows or runs: a run started, paused or ended, and a question
-it asks was raised or settled. The environment keeps its latest 1,000 milestones in
+narrowed to workflows or runs: a run started, paused, resumed or ended, and a
+question it asks was raised or settled. Runs that another run started are left
+out unless asked for, as subagent threads are, and narrowing thread events to a
+run also picks out the threads that are its agent steps. The environment keeps its latest 1,000 milestones in
 memory, so a bot that was away longer, or reconnects after a restart, is told
 some may be missing and should reread the threads it cares about.
 

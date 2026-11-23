@@ -17,19 +17,30 @@ import * as MilestoneHub from "./MilestoneHub.ts";
 const MAX_EVENTS = 1_000;
 const DEFAULT_EVENTS = 100;
 
+const includeSubagentChildren = Schema.optional(
+  Schema.Boolean.annotate({
+    description: "Also subagent threads and runs another run invoked.",
+  }),
+);
+const workflowRunIds = Schema.optional(Schema.Array(TrimmedNonEmptyString));
+
 const Parameters = Schema.Struct({
   projectIds: Schema.optional(Schema.Array(ProjectId)),
   threadIds: Schema.optional(Schema.Array(ThreadId)),
-  includeSubagentChildren: Schema.optional(
-    Schema.Boolean.annotate({ description: "Also subagent threads." }),
+  workflowRunIds: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString).annotate({
+      description: "Workflow runs, for the threads that are their agent steps.",
+    }),
   ),
+  includeSubagentChildren,
 });
 
 const WorkflowParameters = Schema.Struct({
   workflows: Schema.optional(
     Schema.Array(TrimmedNonEmptyString).annotate({ description: "Workflow names." }),
   ),
-  workflowRunIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  workflowRunIds,
+  includeSubagentChildren,
 });
 
 const DESCRIPTIONS: Record<MilestoneEventValue["type"], string> = {
@@ -44,6 +55,7 @@ const DESCRIPTIONS: Record<MilestoneEventValue["type"], string> = {
   "workflow.input_resolved":
     "A workflow run's question was answered, timed out, or ended with its run.",
   "workflow.run_paused": "A workflow run paused: a step failed, or someone paused it.",
+  "workflow.run_resumed": "A paused workflow run went on again.",
   "workflow.run_ended": "A workflow run ended: completed, stopped, skipped or cancelled.",
 };
 
