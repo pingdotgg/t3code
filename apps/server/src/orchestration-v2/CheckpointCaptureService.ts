@@ -260,25 +260,19 @@ export const layer: Layer.Layer<
           if (currentRun.status !== "waiting" && !stoppedNow) {
             return;
           }
-          // An unanswered Stop ends the run stopped when it reached no provider turn, or reached the
-          // turn before it ended. One sent after the turn ended only stops its background work.
-          const { turnItems: stopItems, attempts } = stoppedNow
-            ? { turnItems: [], attempts: [] }
-            : yield* projections.getThreadRecords(input.threadId, ["turnItems", "attempts"], {
+          // A Stop recorded on a waiting run reached no provider turn, so only capture can end the
+          // run stopped. One sent to a provider turn's background work leaves the turn's outcome.
+          const { turnItems: stopItems } = stoppedNow
+            ? { turnItems: [] }
+            : yield* projections.getThreadRecords(input.threadId, ["turnItems"], {
                 turnItemTypes: ["run_interrupt_request", "run_interrupt_result"],
                 turnItemRunIds: [run.id],
-                attemptIds: currentRun.activeAttemptId === null ? [] : [currentRun.activeAttemptId],
               });
           const stopRequest = stopItems.some((item) => item.type === "run_interrupt_result")
             ? undefined
             : stopItems.find((item) => item.type === "run_interrupt_request");
-          const attemptEndedAt = attempts[0]?.completedAt ?? null;
           const stopRequested =
-            stopRequest?.type === "run_interrupt_request" &&
-            (stopRequest.providerTurnId === null ||
-              (attemptEndedAt !== null &&
-                stopRequest.startedAt !== null &&
-                DateTime.isLessThan(stopRequest.startedAt, attemptEndedAt)));
+            stopRequest?.type === "run_interrupt_request" && stopRequest.providerTurnId === null;
           const finalStatus = stopRequested ? ("interrupted" as const) : ("completed" as const);
           // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
           const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } =

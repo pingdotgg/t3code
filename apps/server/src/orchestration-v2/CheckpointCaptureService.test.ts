@@ -15,7 +15,6 @@ import {
   ProviderInstanceId,
   ProviderThreadId,
   ProviderTurnId,
-  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -1175,9 +1174,8 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
-  // Stop recorded on a waiting run: `turn` is the provider turn it was sent to, with when its attempt
-  // ended relative to the request; none means it reached no provider turn.
-  const captureWithStopRequest = (name: string, turn?: { readonly endedAfterStop: boolean }) =>
+  // Stop recorded on a waiting run, sent to a provider turn's background work or to no turn at all.
+  const captureWithStopRequest = (name: string, sentToProviderTurn: boolean) =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
@@ -1190,8 +1188,6 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       const sideChatProviderThreadId = ProviderThreadId.make(
         `provider-thread:checkpoint-capture-stop-request-${name}`,
       );
-      const stoppedAt = DateTime.add(now, { seconds: 1 });
-      const attemptId = RunAttemptId.make(`attempt:checkpoint-capture-stop-request-${name}`);
       const providerTurnId = ProviderTurnId.make(
         `provider-turn:checkpoint-capture-stop-request-${name}`,
       );
@@ -1268,7 +1264,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             providerThreadId: sideChatProviderThreadId,
             userMessageId: MessageId.make(`message:checkpoint-capture-stop-request-${name}`),
             rootNodeId: sideChatRootNodeId,
-            activeAttemptId: turn === undefined ? null : attemptId,
+            activeAttemptId: null,
             status: "waiting",
             requestedAt: now,
             startedAt: now,
@@ -1321,31 +1317,6 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             createdAt: now,
           },
         },
-        ...(turn === undefined
-          ? []
-          : [
-              {
-                ...event,
-                id: EventId.make(`event:checkpoint-capture-stop-request-${name}:attempt`),
-                type: "run-attempt.updated" as const,
-                runId: sideChatRunId,
-                nodeId: sideChatRootNodeId,
-                providerInstanceId,
-                payload: {
-                  id: attemptId,
-                  runId: sideChatRunId,
-                  attemptOrdinal: 1,
-                  rootNodeId: sideChatRootNodeId,
-                  providerInstanceId,
-                  providerThreadId: sideChatProviderThreadId,
-                  providerTurnId,
-                  reason: "initial" as const,
-                  status: "completed" as const,
-                  startedAt: now,
-                  completedAt: turn.endedAfterStop ? DateTime.add(stoppedAt, { seconds: 1 }) : now,
-                },
-              },
-            ]),
         // Stop committed its request while the provider's completed terminal was finalizing.
         {
           ...event,
@@ -1363,15 +1334,15 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             runId: sideChatRunId,
             nodeId: sideChatRootNodeId,
             providerThreadId: sideChatProviderThreadId,
-            providerTurnId: turn === undefined ? null : providerTurnId,
+            providerTurnId: sentToProviderTurn ? providerTurnId : null,
             nativeItemRef: null,
             parentItemId: null,
             ordinal: 1,
             status: "completed",
             title: "Interrupt requested",
-            startedAt: stoppedAt,
-            completedAt: stoppedAt,
-            updatedAt: stoppedAt,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
             message: "Stopped by user",
           },
         },
@@ -1431,21 +1402,14 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
 
   it.effect("does not complete a waiting run whose Stop request has no result yet", () =>
     Effect.gen(function* () {
-      const outcome = yield* captureWithStopRequest("unreached");
+      const outcome = yield* captureWithStopRequest("unreached", false);
       assert.deepEqual(outcome, { status: "interrupted", answered: true });
     }),
   );
 
-  it.effect("ends interrupted a run whose turn completed after Stop reached it", () =>
+  it.effect("completes a waiting run whose Stop was sent to its background work", () =>
     Effect.gen(function* () {
-      const outcome = yield* captureWithStopRequest("live", { endedAfterStop: true });
-      assert.deepEqual(outcome, { status: "interrupted", answered: true });
-    }),
-  );
-
-  it.effect("completes a run whose turn ended before Stop was sent to its background work", () =>
-    Effect.gen(function* () {
-      const outcome = yield* captureWithStopRequest("background", { endedAfterStop: false });
+      const outcome = yield* captureWithStopRequest("background", true);
       assert.deepEqual(outcome, { status: "completed", answered: false });
     }),
   );

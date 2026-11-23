@@ -1316,7 +1316,7 @@ export const layer: Layer.Layer<
           const providerThread = yield* Ref.get(latestProviderThread);
           const openSubagents = yield* Ref.get(openRunOwnedSubagents);
           const writeTerminal = Effect.fnUntraced(
-            function* (settledTerminal: ProviderTerminalEvent) {
+            function* (settledTerminal: ProviderTerminalEvent, unlessStopped = false) {
               const restoredHandoffs =
                 settledTerminal.promptDropped === true &&
                 input.loadDroppedInlineHandoffs !== undefined
@@ -1337,7 +1337,7 @@ export const layer: Layer.Layer<
                       writeIfRunCurrent: {
                         activeAttemptId: input.attempt.id,
                         expectedStatus: "running" as const,
-                        unlessInterruptRequested: settledTerminal !== terminal,
+                        unlessInterruptRequested: unlessStopped,
                       },
                     }),
                 ...(input.hasUnpairedRunInterruptRequest === undefined
@@ -1369,7 +1369,22 @@ export const layer: Layer.Layer<
           // as interrupted. The completed write refuses in the same transaction
           // as a stored Stop request, so a racing Stop stays authoritative.
           const handedOff = terminal.status === "interrupted" && (yield* workspaceHandedOff);
-          if (!handedOff || !(yield* writeTerminal({ ...terminal, status: "completed" }))) {
+          if (
+            terminal.status === "completed" &&
+            !rootSnapshotPendingWork &&
+            childSnapshotPendingWork.size === 0
+          ) {
+            // Stop stored before this write ends the turn; with background work left, it ends that.
+            if (
+              !(yield* writeTerminal(terminal, true)) &&
+              (input.shouldFinalizeRun === undefined || (yield* input.shouldFinalizeRun()))
+            ) {
+              yield* writeTerminal({ ...terminal, status: "interrupted" });
+            }
+          } else if (
+            !handedOff ||
+            !(yield* writeTerminal({ ...terminal, status: "completed" }, true))
+          ) {
             yield* writeTerminal(terminal);
           }
           if (isRunOwnedSubagentTerminalStatus(terminal.status) && !childTurnsContinue(terminal)) {
