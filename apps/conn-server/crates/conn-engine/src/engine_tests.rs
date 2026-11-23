@@ -1070,6 +1070,46 @@ async fn an_abandoned_start_never_takes_the_lease_of_a_newer_engine() {
     dispatch(&engine, create("t1", "c1")).await;
 }
 
+/// One engine per store: a second open while the first lives gets "store in use" and changes
+/// nothing; the first goes on as before.
+#[tokio::test(flavor = "current_thread")]
+async fn a_second_engine_on_a_live_store_is_refused() {
+    let db = TempDb::new("store-lock");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let epoch = || -> i64 {
+        rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'engine_epoch'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let before = (epoch(), engine.test_events("t1").await.len());
+    let Err(error) = SqliteEngine::start(EngineConfig::new(db.path())).await else {
+        panic!("a second engine opened the store");
+    };
+    assert_eq!(error, crate::STORE_IN_USE);
+    assert_eq!((epoch(), engine.test_events("t1").await.len()), before);
+    dispatch(&engine, message("t1", "c2", "still here")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:1").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "completed");
+}
+
+/// Once the engine is dropped, its store opens again, and the new engine recovers what the
+/// first left: its cut turn is continued.
+#[tokio::test(flavor = "current_thread")]
+async fn a_store_opens_again_after_its_engine_drops_and_recovers() {
+    let db = TempDb::new("store-lock-reopen");
+    die_during_a_turn(&db, "c2").await;
+    let (engine, _) = open(&db);
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(run_of(&p, "run:t1:1")["status"], "cancelled");
+    assert_eq!(run_of(&p, "run:t1:2")["status"], "completed");
+}
+
 /// A row a previous process left running does not hold its thread after a restart: the start
 /// cancels it, and the next command's effects run.
 #[tokio::test(flavor = "current_thread")]

@@ -154,12 +154,50 @@ impl EngineConfig {
 
 pub struct SqliteEngine {
     inner: Arc<Inner>,
+    /// The store's lock ([`lock_store`]), held while this engine lives: one engine per store.
+    _lock: std::fs::File,
 }
 
+/// What a second open of a store that a live engine holds gets.
+pub const STORE_IN_USE: &str = "store in use: another engine has this database open";
+
+/// Takes the exclusive advisory lock on `<database>.lock`, as the server's state-directory
+/// lock does for its folder. A second engine on the store, in this process or another, gets
+/// [`STORE_IN_USE`] before it reads or writes anything. Dropping the file releases it.
+fn lock_store(database: &std::path::Path) -> Result<std::fs::File, String> {
+    let mut path = database.as_os_str().to_owned();
+    path.push(".lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("cannot open the store lock {}: {e}", path.display()))?;
+    // A child process forked elsewhere in this process holds a copy of the lock's file until
+    // its exec closes it, so a lock released a moment ago can still look held: try for a while.
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => return Err(STORE_IN_USE.to_owned()),
+            Err(std::fs::TryLockError::Error(e)) => {
+                return Err(format!("cannot lock the store {}: {e}", path.display()));
+            }
+        }
+    }
+}
+
+/// How long an open waits for a store lock that looks held.
+const LOCK_WAIT: Duration = Duration::from_secs(2);
+
 impl Drop for SqliteEngine {
-    /// The engine's owner let go: it never writes again. Its worker claims nothing more, and
-    /// an effect already running fails its next write (`Store::take_ownership`), as a process
-    /// that ends loses its in-flight work.
+    /// The engine's owner let go: it never writes again, and the store's lock is free for the
+    /// next engine. In the server that happens only as the process ends. Its worker claims
+    /// nothing more, and an effect still running (only a test outlives its engine) fails its
+    /// next write (`Store::take_ownership`).
     fn drop(&mut self) {
         self.inner
             .engine_dropped
@@ -281,6 +319,8 @@ impl SqliteEngine {
                 .map(PathBuf::from)
                 .unwrap_or_default()
         });
+        // Before anything reads or migrates the store.
+        let lock = lock_store(&config.database)?;
         let mut store = Store::open(&config.database)?;
         // From here every older engine on this database is fenced.
         let engine_dropped = store.take_ownership(abandoned)?;
@@ -355,6 +395,7 @@ impl SqliteEngine {
                 #[cfg(test)]
                 worker_hooks: Mutex::default(),
             }),
+            _lock: lock,
         };
         // Continuations and the reaper start on the caller's runtime; `open` never blocks.
         if tokio::runtime::Handle::try_current().is_ok() {
