@@ -22,7 +22,7 @@ export function FileMarkdownPreview(props: {
   );
   const imageBaseDir =
     lastSeparator >= 0
-      ? resolvePathLinkTarget(props.relativePath.slice(0, lastSeparator), props.cwd)
+      ? resolvePathLinkTarget(props.relativePath.slice(0, lastSeparator + 1), props.cwd)
       : props.cwd;
 
   return (
