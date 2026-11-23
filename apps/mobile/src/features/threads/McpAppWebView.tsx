@@ -49,7 +49,11 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { appendComposerDraftText } from "../../state/use-composer-drafts";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
-import { MCP_APP_INLINE_MAX_HEIGHT, mcpAppInlineHeight } from "./mcpAppSizing";
+import {
+  MCP_APP_INLINE_INITIAL_HEIGHT,
+  MCP_APP_INLINE_MAX_HEIGHT,
+  mcpAppInlineHeight,
+} from "./mcpAppSizing";
 
 const ROW_BOTTOM_MARGIN = 8;
 
@@ -123,7 +127,7 @@ export function ThreadMcpApp(props: {
   readonly height?: number;
 }) {
   const gt = useGT();
-  const [height, setHeight] = useState(MCP_APP_INLINE_MAX_HEIGHT);
+  const [height, setHeight] = useState(MCP_APP_INLINE_INITIAL_HEIGHT);
   const [documentKey, setDocumentKeyState] = useState(0);
   // The view keeps its first URL: a re-minted one would reload the app.
   const [uri, setUri] = useState<string | null>(null);
@@ -135,7 +139,7 @@ export function ThreadMcpApp(props: {
   const [app, setApp] = useState(props.app);
   if (!mcpAppReferencesEqual(app, props.app)) {
     setApp(props.app);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setHeight(MCP_APP_INLINE_INITIAL_HEIGHT);
     setUri(null);
     setLoaded(false);
     setNavigatedAway(false);
@@ -174,7 +178,7 @@ export function ThreadMcpApp(props: {
       return;
     }
     setLoaded(false);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setHeight(MCP_APP_INLINE_INITIAL_HEIGHT);
     // Use the asset query's refreshed token when creating a replacement view.
     if (asset._tag === "Success") setUri(asset.url);
     setGeneration(1);
@@ -182,7 +186,7 @@ export function ThreadMcpApp(props: {
   const [secret] = useState(uuidv4);
   const reopenDocument = () => {
     setLoaded(false);
-    setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+    setHeight(MCP_APP_INLINE_INITIAL_HEIGHT);
     setNavigatedAway(false);
     if (asset._tag === "Success") setUri(asset.url);
     setDocumentKeyState((value) => value + 1);
@@ -281,7 +285,7 @@ export function ThreadMcpApp(props: {
     if (view === null) return;
     const reloadInline = () => {
       setLoaded(false);
-      setHeight(MCP_APP_INLINE_MAX_HEIGHT);
+      setHeight(MCP_APP_INLINE_INITIAL_HEIGHT);
       setNavigatedAway(false);
       const current = latest.current.asset;
       if (current._tag === "Success") setUri(current.url);

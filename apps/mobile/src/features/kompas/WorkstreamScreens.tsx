@@ -3,7 +3,7 @@ import type { Workstream, WorkstreamThreadState } from "@t3tools/contracts";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useGT } from "gt-react-native";
 import { useState } from "react";
-import { Pressable, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
@@ -344,13 +344,17 @@ function WorkstreamBody(props: { readonly kompas: Kompas; readonly workstream: W
   };
   return (
     <>
-      <SegmentedControl
-        role="tab"
-        size="compact"
-        options={TABS.map((value) => ({ value, label: labels[value] }))}
-        selected={tab}
-        onSelect={setTab}
-      />
+      {/* Five words do not fit a phone; at this width none of them breaks. */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="grow-0">
+        <SegmentedControl
+          role="tab"
+          className="w-[500px]"
+          size="compact"
+          options={TABS.map((value) => ({ value, label: labels[value] }))}
+          selected={tab}
+          onSelect={setTab}
+        />
+      </ScrollView>
       {tab === "threads" ? (
         <Threads kompas={kompas} workstream={workstream} />
       ) : tab === "overview" ? (
