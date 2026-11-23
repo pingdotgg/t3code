@@ -4,7 +4,11 @@ import {
   linkBatchFailureLabel,
   linkWithMintedCode,
 } from "@t3tools/client-runtime/link-batch";
-import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
+import {
+  ANOTHER_ADDRESS,
+  linkRequestFailureMessage,
+  linkTargetUrls,
+} from "@t3tools/client-runtime/link-request";
 import {
   AuthAccessWriteScope,
   type AuthMcpClientAccess,
@@ -273,6 +277,7 @@ export function LinkEnvironmentDialog({
         connectOnly: false,
         linkedAccess: null,
         urls: route.urls,
+        linkUrls: [],
       })),
   ];
   // Null until the user picks; with no other machines known, only an address is left.
@@ -315,13 +320,15 @@ export function LinkEnvironmentDialog({
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
   // A picked machine that left the list has no address here either.
-  const needsAddress = selected !== null && (machine === null || machine.urls.length === 0);
+  const needsAddress =
+    selected !== null &&
+    (machine === null || (machine.urls.length === 0 && machine.linkUrls.length === 0));
   // This client mints a code there when it is connected with a session that may
-  // create pairing links, and only for its own addresses: anything can answer
-  // as that machine at one typed in, so that one gets a code the user fetched.
+  // create pairing links, and only for its own addresses: anything can answer as
+  // that machine at one typed in or only a link reached, so those get a code the user fetched.
   const canMint =
     targetId !== null &&
-    !needsAddress &&
+    (machine?.urls.length ?? 0) > 0 &&
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
@@ -395,7 +402,7 @@ export function LinkEnvironmentDialog({
   };
   const submit = async () => {
     const [url, ...alternateUrls] =
-      machine === null || needsAddress ? [address.trim()] : machine.urls;
+      machine === null || needsAddress ? [address.trim()] : linkTargetUrls(machine, canMint);
     if (inFlight.current || !ready || url === undefined) return;
     inFlight.current = true;
     setBusy(true);

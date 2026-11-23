@@ -24,6 +24,7 @@ import {
   linkRequestKeepsLink,
   linkRequestTarget,
   linkRequestTargetName,
+  linkTargetUrls,
   rankMachinesByHint,
 } from "./linkRequest.ts";
 
@@ -236,6 +237,7 @@ describe("linkableMachines", () => {
         connectOnly: false,
         linkedAccess: null,
         urls: ["https://vps.ts.net", "https://vps.example.com"],
+        linkUrls: [],
       },
       {
         environmentId: mini.environmentId,
@@ -245,6 +247,7 @@ describe("linkableMachines", () => {
         connectOnly: false,
         linkedAccess: "read-only",
         urls: [],
+        linkUrls: [],
       },
     ]);
   });
@@ -310,14 +313,15 @@ describe("linkableMachines", () => {
     ]);
   });
 
-  it("offers where the environment linked a machine, and lists one only its link knows", () => {
+  it("keeps where only the environment's link reached a machine apart from its own addresses", () => {
     const here = presentation("environment-here", "Here", { saved: ["http://localhost:3773"] });
     const vps = presentation("environment-vps", "VPS", { reported: ["https://vps.ts.net"] });
     const listed = linkableMachines({
       environments: [here, vps],
       threadEnvironmentId: here.environmentId,
       links: [
-        // The link's addresses come last, once each, and never this client's loopback.
+        // Anything can answer as the VPS where only the link reached it: kept apart, once each,
+        // and never this client's loopback.
         link(vps.environmentId, {
           urls: ["https://vps.ts.net", "https://vps.example.com", "http://127.0.0.1:3773"],
         }),
@@ -340,13 +344,15 @@ describe("linkableMachines", () => {
       expect.objectContaining({
         label: "VPS",
         linkedAccess: "auto",
-        urls: ["https://vps.ts.net", "https://vps.example.com"],
+        urls: ["https://vps.ts.net"],
+        linkUrls: ["https://vps.example.com"],
       }),
       expect.objectContaining({
         label: "Box",
         connectOnly: true,
         linkedAccess: "read-only",
-        urls: ["https://environment-box.t3.example", "https://box.ts.net"],
+        urls: ["https://environment-box.t3.example"],
+        linkUrls: ["https://box.ts.net"],
       }),
       {
         environmentId: EnvironmentId.make("environment-old"),
@@ -355,9 +361,16 @@ describe("linkableMachines", () => {
         connected: false,
         connectOnly: false,
         linkedAccess: null,
-        urls: ["https://old.ts.net"],
+        urls: [],
+        linkUrls: ["https://old.ts.net"],
       },
-      expect.objectContaining({ label: "Local", linkedAccess: "auto", urls: [] }),
+      expect.objectContaining({ label: "Local", linkedAccess: "auto", urls: [], linkUrls: [] }),
+    ]);
+    // A code this client mints goes only to its own addresses; one the user fetched, to both.
+    expect(linkTargetUrls(listed[0]!, true)).toEqual(["https://vps.ts.net"]);
+    expect(linkTargetUrls(listed[0]!, false)).toEqual([
+      "https://vps.ts.net",
+      "https://vps.example.com",
     ]);
   });
 
@@ -389,6 +402,7 @@ describe("linkableMachines", () => {
       connectOnly: true,
       linkedAccess: null,
       urls: ["https://environment-mini.t3.example"],
+      linkUrls: [],
     });
     expect(listed[2]).toMatchObject({ machine: "server", linkedAccess: "auto" });
 
@@ -468,6 +482,7 @@ describe("rankMachinesByHint", () => {
           connectOnly: false,
           linkedAccess: null,
           urls: [],
+          linkUrls: [],
         }) as const,
     );
     expect(linkRequestInitialMachine({ hint: "vps" }, listed)).toBe("environment-vps");
@@ -497,6 +512,7 @@ describe("linkRequestTarget", () => {
     connectOnly: false,
     linkedAccess: null,
     urls: ["http://10.0.0.2:3773", "https://box.t3connect.example/"],
+    linkUrls: ["https://box.peer.example"],
   } as const;
 
   it("takes a machine from an address the agent gave only where this app already reaches it", () => {
@@ -508,6 +524,10 @@ describe("linkRequestTarget", () => {
     };
     expect(linkRequestTarget(unfamiliar, [box], null)).toEqual({ kind: "address" });
     expect(linkRequestTarget(unfamiliar, [box], box.environmentId)).toEqual({ kind: "address" });
+    // Nor is an address only the environment's link reached it at.
+    expect(linkRequestTarget({ url: "https://box.peer.example" }, [box], null)).toEqual({
+      kind: "address",
+    });
     expect(linkRequestTargetName(unfamiliar)).toBe("https://other.example");
     // A username in the address must not pass for the host the code goes to.
     expect(linkRequestTargetName({ url: "https://box.t3connect.example@other.example/x" })).toBe(
@@ -521,6 +541,7 @@ describe("linkRequestTarget", () => {
       environmentId: box.environmentId,
       label: "Box",
       urls: box.urls,
+      linkUrls: box.linkUrls,
       linkedAccess: null,
     });
     expect(linkRequestTarget({ url: "http://box.t3connect.example" }, [box], null)).toEqual({

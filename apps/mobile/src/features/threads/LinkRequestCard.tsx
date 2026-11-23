@@ -11,6 +11,7 @@ import {
   type LinkRequestItem,
   linkRequestKeepsLink,
   linkRequestTarget,
+  linkTargetUrls,
   rankMachinesByHint,
 } from "@t3tools/client-runtime/link-request";
 import {
@@ -234,13 +235,15 @@ function LinkRequestSheet(props: {
   const connected = usePreparedConnection(targetId);
   const mayMint = useEnvironmentScope(targetId, AuthAccessWriteScope);
   const needsAddress =
-    target.kind === "address" || (target.kind === "machine" && target.urls.length === 0);
+    target.kind === "address" ||
+    (target.kind === "machine" && target.urls.length === 0 && target.linkUrls.length === 0);
   // This phone mints a code there when it is connected with a session that may
-  // create pairing links, and only for its own addresses: anything can answer
-  // as that machine at one typed in, so that one gets a code the user fetched.
+  // create pairing links, and only for its own addresses: anything can answer as
+  // that machine at one typed in or only a link reached, so those get a code the user fetched.
   const canMint =
     targetId !== null &&
-    !needsAddress &&
+    target.kind === "machine" &&
+    target.urls.length > 0 &&
     Option.isSome(connected) &&
     mayMint &&
     !mintFailed.has(targetId);
@@ -270,7 +273,10 @@ function LinkRequestSheet(props: {
     }
     return linkRequestAnswerInput(item, {
       type: "link",
-      target: target.kind === "machine" && target.urls.length > 0 ? target : { url: address },
+      target:
+        target.kind === "machine" && !needsAddress
+          ? { ...target, urls: linkTargetUrls(target, canMint) }
+          : { url: address },
       access,
       pairingCode: code,
     });

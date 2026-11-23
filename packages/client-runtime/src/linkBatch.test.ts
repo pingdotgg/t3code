@@ -19,6 +19,7 @@ const machine = (name: string, overrides: Partial<LinkableMachine> = {}): Linkab
   connectOnly: false,
   linkedAccess: null,
   urls: [`https://${name}.example.ts.net`, `http://100.64.0.1:3773`],
+  linkUrls: [],
   ...overrides,
 });
 const id = (name: string) => EnvironmentId.make(`environment-${name}`);

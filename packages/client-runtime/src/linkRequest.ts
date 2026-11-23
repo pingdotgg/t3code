@@ -88,13 +88,24 @@ export interface LinkableMachine {
   /** The access of the thread's environment's link to it, or null when it has none. */
   readonly linkedAccess: AuthMcpClientAccess | null;
   /**
-   * Where it answers, most preferred first: the addresses it reports, then its
-   * saved routes, then its T3 Connect address, then where the thread's environment
-   * linked it. The server keeps only those that answer as this machine. Empty for
-   * a machine reached only over SSH or loopback, which name this client's device.
+   * Where this client knows it answers, most preferred first: the addresses it
+   * reports, then its saved routes, then its T3 Connect address. The server keeps
+   * only those that answer as this machine. Empty for a machine reached only over
+   * SSH or loopback, which name this client's device.
    */
   readonly urls: ReadonlyArray<string>;
+  /**
+   * Where only the thread's environment's link reached it. Anything can answer
+   * there as this machine, so a code this client mints never goes to them.
+   */
+  readonly linkUrls: ReadonlyArray<string>;
 }
+
+/** Where a link sends its pairing code: one this client minted goes only to its own addresses. */
+export const linkTargetUrls = (
+  machine: Pick<LinkableMachine, "urls" | "linkUrls">,
+  minted: boolean,
+): ReadonlyArray<string> => (minted ? machine.urls : [...machine.urls, ...machine.linkUrls]);
 
 /** A loopback address names whichever machine opens it: the linking server, not this one. */
 const isLoopbackUrl = (url: string) => {
@@ -124,9 +135,15 @@ export function linkableMachines(input: {
     const link = links.get(environmentId);
     return link === undefined || link.status === "expired" ? null : link.access;
   };
-  const linkUrls = (environmentId: string) => links.get(environmentId)?.urls ?? [];
   const usable = (urls: ReadonlyArray<string>) =>
     [...new Set(urls)].filter((url) => !isLoopbackUrl(url));
+  const addresses = (environmentId: string, own: ReadonlyArray<string>) => {
+    const urls = usable(own);
+    const linkUrls = usable(links.get(environmentId)?.urls ?? []).filter(
+      (url) => !urls.includes(url),
+    );
+    return { urls, linkUrls };
+  };
   const saved = input.environments
     .filter((environment) => environment.environmentId !== input.threadEnvironmentId)
     .map((environment) => {
@@ -145,11 +162,10 @@ export function linkableMachines(input: {
         connected: environment.connection.phase === "connected",
         connectOnly: false,
         linkedAccess: linkedAccess(environment.environmentId),
-        urls: usable([
+        ...addresses(environment.environmentId, [
           ...reported,
           ...routes,
           ...(connect === undefined ? [] : [connect.httpBaseUrl]),
-          ...linkUrls(environment.environmentId),
         ]),
       };
     });
@@ -168,7 +184,7 @@ export function linkableMachines(input: {
         connected: false,
         connectOnly: true,
         linkedAccess: linkedAccess(environment.environmentId),
-        urls: usable([environment.endpoint.httpBaseUrl, ...linkUrls(environment.environmentId)]),
+        ...addresses(environment.environmentId, [environment.endpoint.httpBaseUrl]),
       };
     });
   for (const machine of connectOnly) known.add(machine.environmentId);
@@ -181,7 +197,7 @@ export function linkableMachines(input: {
       connected: false,
       connectOnly: false,
       linkedAccess: linkedAccess(link.environmentId),
-      urls: usable(link.urls),
+      ...addresses(link.environmentId, []),
     }));
   return [...saved, ...connectOnly, ...linkOnly];
 }
@@ -242,7 +258,7 @@ export const ANOTHER_ADDRESS = "another-address";
 
 /**
  * What a link request links: a machine from the client's catalog, or an address.
- * `urls` is empty when the client knows no direct address for the machine,
+ * With neither `urls` nor `linkUrls`, nothing knows an address for the machine,
  * so the user types one.
  */
 export type LinkRequestTarget =
@@ -252,6 +268,7 @@ export type LinkRequestTarget =
       readonly environmentId: EnvironmentId;
       readonly label: string;
       readonly urls: ReadonlyArray<string>;
+      readonly linkUrls: ReadonlyArray<string>;
       readonly linkedAccess: AuthMcpClientAccess | null;
     }
   | { readonly kind: "address" };
@@ -287,6 +304,7 @@ export function linkRequestTarget(
     environmentId: machine?.environmentId ?? (chosen as EnvironmentId),
     label: machine?.label ?? linkRequestTargetName(item, resolve),
     urls: machine?.urls ?? [],
+    linkUrls: machine?.linkUrls ?? [],
     linkedAccess: machine?.linkedAccess ?? null,
   };
 }
