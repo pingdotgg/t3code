@@ -67,7 +67,11 @@ export const launchOnContinue = new WorkflowAgentError({
 });
 
 /** A project named by its folder instead of its id. */
-export const isProjectPath = (project: string) => project.startsWith("/");
+export const isProjectPath = (project: string) =>
+  project.startsWith("/") ||
+  project === "~" ||
+  project.startsWith("~/") ||
+  project.startsWith("~\\");
 
 /** Where agent steps run. The server implements it with threads; tests stand in for it. */
 export class WorkflowAgents extends Context.Service<

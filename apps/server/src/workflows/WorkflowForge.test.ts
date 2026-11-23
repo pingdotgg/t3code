@@ -15,7 +15,11 @@ const projectId = ProjectId.make("project-1");
 const forge = WorkflowForge.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      Layer.mock(IssueService.IssueService)({ comment: () => Effect.void }),
+      Layer.mock(IssueService.IssueService)({
+        comment: () => Effect.void,
+        list: (input) =>
+          Effect.succeed({ entries: [{ projectId: input.projectId }], errors: [] } as never),
+      }),
       Layer.mock(PullRequestService.PullRequestService)({
         runAction: () => Effect.void as never,
         detail: () =>
@@ -111,3 +115,13 @@ it("a step's pull requests are the ones its thread was linked to while it ran", 
     [['["github.com","me/app",2]', "https://github.com/me/app/pull/2"]],
   );
 });
+
+it.effect("a project folder starting with ~ is resolved to its project id", () =>
+  Effect.gen(function* () {
+    const { issues } = yield* WorkflowForge.WorkflowForge;
+    assert.deepStrictEqual(
+      (yield* issues.list({ project: "~/app" })).map((issue) => issue.projectId),
+      [projectId],
+    );
+  }).pipe(Effect.provide(forge)),
+);

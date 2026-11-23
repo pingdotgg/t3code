@@ -20,7 +20,6 @@ import * as PeerMcpClient from "../peer/PeerMcpClient.ts";
 import {
   type AgentResult,
   type AgentTurn,
-  isProjectPath,
   launchOnContinue,
   WorkflowAgentError,
   type WorkflowAgents,
@@ -184,7 +183,8 @@ export const make = Effect.gen(function* () {
         reason: "An agent step needs a `project` to start in, or a `thread` to continue.",
       });
     }
-    const projectId = isProjectPath(input.project)
+    // `~` belongs to the other machine's home, whose `t3_project_list` returns expanded roots.
+    const projectId = input.project.startsWith("/")
       ? yield* projectAt(environment, input.project)
       : input.project;
     const launched = yield* call(
