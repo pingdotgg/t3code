@@ -335,7 +335,8 @@ fn rollback_phase(store: &Store, command: &str) -> String {
     store
         .raw()
         .query_row(
-            "SELECT phase FROM pending_rollbacks WHERE command_id = ?1",
+            "SELECT COALESCE(json_extract(progress, '$.phase'), 'admitted') FROM effect_outbox
+             WHERE command_id = ?1",
             [command],
             |row| row.get(0),
         )
@@ -348,9 +349,20 @@ fn rollback_phase(store: &Store, command: &str) -> String {
 fn a_replaced_engine_cannot_move_a_rollback_on() {
     let mut t = TempStore::new("rollback-fence");
     t.1.take_ownership(None).unwrap();
-    let tx = t.1.tx().unwrap();
-    tx.put_pending_rollback("rb", "t1", &json!({"providerThreadId": "p"}))
-        .unwrap();
+    let mut tx = t.1.tx().unwrap();
+    tx.enqueue(
+        Some("rb"),
+        &[Effect::Rollback(crate::rollback::RollbackRequest {
+            thread_id: "t1".into(),
+            command_id: "rb".into(),
+            provider_thread_id: "p".into(),
+            checkpoint_id: "k".into(),
+            scope_id: "s".into(),
+            restore_files: Some(false),
+            resume_snapshot: None,
+        })],
+    )
+    .unwrap();
     tx.commit(None).unwrap();
     let mut newer = Store::open(&t.0.join("engine.sqlite")).unwrap();
     newer.take_ownership(None).unwrap();
@@ -387,6 +399,62 @@ fn a_stale_open_cancels_nothing() {
         crate::store::NOT_OWNER
     );
     assert_eq!(newer.effect_status(1).unwrap().as_deref(), Some("pending"));
+}
+
+/// A store from before the outbox kept admitted rollbacks in `pending_rollbacks`: the next
+/// start moves them into the outbox with their phase, and drops that table.
+#[test]
+fn legacy_pending_rollbacks_move_into_the_outbox() {
+    let t = TempStore::new("legacy-rollbacks");
+    t.1.raw()
+        .execute_batch(
+            "CREATE TABLE pending_rollbacks (command_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL,
+               request TEXT NOT NULL, phase TEXT NOT NULL, snapshot TEXT);
+             INSERT INTO pending_rollbacks VALUES ('rb-1', 't1',
+               '{\"providerThreadId\":\"p\",\"checkpointId\":\"k\",\"scopeId\":\"s\",\"restoreFiles\":null}',
+               'admitted', NULL);
+             INSERT INTO pending_rollbacks VALUES ('rb-2', 't2',
+               '{\"providerThreadId\":\"p\",\"checkpointId\":\"k\",\"scopeId\":\"s\",\"restoreFiles\":false}',
+               'provider_done', '{\"id\":\"p\"}');",
+        )
+        .unwrap();
+    assert_eq!(t.1.reconcile_after_process_loss(true).unwrap(), (2, 0));
+    let rollbacks = t.1.unsettled_rollbacks().unwrap();
+    assert_eq!(
+        rollbacks,
+        [
+            UnsettledRollback {
+                command_id: "rb-1".into(),
+                thread_id: "t1".into(),
+                phase: "admitted".into(),
+                snapshot: None,
+            },
+            UnsettledRollback {
+                command_id: "rb-2".into(),
+                thread_id: "t2".into(),
+                phase: "provider_done".into(),
+                snapshot: Some(json!({"id": "p"})),
+            },
+        ]
+    );
+    let mut claimed = t.1.claim_effects(64).unwrap();
+    assert_eq!(claimed.len(), 2);
+    let second = claimed.pop().unwrap();
+    let Effect::Rollback(mut request) = second.effect else {
+        panic!("a rollback");
+    };
+    assert_eq!(request.restore_files, Some(false));
+    crate::rollback::resume_from(&mut request, second.progress.as_ref());
+    assert_eq!(request.resume_snapshot, Some(json!({"id": "p"})));
+    let gone: bool =
+        t.1.raw()
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM sqlite_master WHERE name = 'pending_rollbacks')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+    assert!(gone);
 }
 
 /// `reconcileAfterProcessLoss`: process-bound rows are cancelled whether pending or running;

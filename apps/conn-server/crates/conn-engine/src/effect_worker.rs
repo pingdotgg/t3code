@@ -157,7 +157,14 @@ impl Inner {
 
     /// Runs one claimed row and settles it; its thread's next row may then run.
     async fn run_claimed(self: Arc<Self>, claimed: Claimed) {
-        let Claimed { id, effect } = claimed;
+        let Claimed {
+            id,
+            mut effect,
+            progress,
+        } = claimed;
+        if let crate::commands::Effect::Rollback(request) = &mut effect {
+            crate::rollback::resume_from(request, progress.as_ref());
+        }
         #[cfg(test)]
         let effect_type = effect.effect_type();
         let outcome = self.clone().run_effect(effect).await;

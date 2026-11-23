@@ -1293,7 +1293,11 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         let pending = || -> Vec<(String, String)> {
             let conn = rusqlite::Connection::open(db.path()).unwrap();
             let mut stmt = conn
-                .prepare("SELECT command_id, phase FROM pending_rollbacks")
+                .prepare(
+                    "SELECT command_id, COALESCE(json_extract(progress, '$.phase'), 'admitted')
+                     FROM effect_outbox WHERE effect_type = 'provider-thread.rollback'
+                       AND status IN ('pending', 'running')",
+                )
                 .unwrap();
             stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
                 .unwrap()
@@ -1322,7 +1326,9 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         };
         let conn = rusqlite::Connection::open(db.path()).unwrap();
         conn.execute(
-            "UPDATE pending_rollbacks SET phase = ?1, snapshot = ?2",
+            "UPDATE effect_outbox SET progress = CASE WHEN ?1 = 'admitted' THEN NULL
+               ELSE json_object('phase', ?1, 'snapshot', json(?2)) END
+             WHERE effect_type = 'provider-thread.rollback'",
             rusqlite::params![
                 phase,
                 (phase == "provider_done").then(|| provider_thread.to_string())

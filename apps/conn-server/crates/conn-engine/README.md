@@ -89,9 +89,9 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   repeats the provider rollback on every retry, which cuts a Codex thread again each time
   (`docs/status.md`, "Faults found in the T3 server"). Test:
   `a_failing_restore_rolls_the_provider_back_once`.
-  An admitted rollback stays in `pending_rollbacks` until it commits or fails. A restart runs
-  it again if the provider rollback was not sent, goes on from the file restore if its answer
-  was kept, and records a failure (`ROLLBACK_INTERRUPTED_MESSAGE`) if the server stopped in
+  An admitted rollback's outbox row keeps its phase in `progress` until it commits or fails. A
+  restart runs it again if the provider rollback was not sent, goes on from the file restore if
+  its answer was kept, and records a failure (`ROLLBACK_INTERRUPTED_MESSAGE`) if the server stopped in
   between, where T3 would send the provider rollback again. Test:
   `a_restart_finishes_or_fails_a_rollback_left_pending`.
 - **Fork** (`src/fork.rs`). `thread.fork` makes the fork thread and a pending `fork` transfer
@@ -153,9 +153,8 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   is reconciled at the next start, as T3's `reconcileAfterProcessLoss`: process-bound effects
   (turn start, steer, Stop, answers, model changes) are cancelled and the restart decides again
   from the stored runs; replay-safe ones (capture, session close, cleanups, titles, host
-  notices) run again. A rollback row is cancelled too, and the restart enqueues it again from
-  `pending_rollbacks` by its phase. A `running` run with no provider turn for its attempt
-  never got its prompt, so the restart sends it again (`rewindUnacceptedRuns`).
+  notices, rollback by its phase) run again. A `running` run with no provider turn for its
+  attempt never got its prompt, so the restart sends it again (`rewindUnacceptedRuns`).
   Settled rows are pruned after 7 days. Deviations from T3: one claim loop instead of 4 slots
   (one runtime thread), and no worker retries (a planned follow-up).
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)

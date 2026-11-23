@@ -385,7 +385,7 @@ impl SqliteEngine {
         store.reconcile_after_process_loss(config.recover_runs)?;
         let effects_wake = store.effects_wake.clone();
         let (unfinished, pending_rollbacks) = if config.recover_runs {
-            (store.unfinished_runs()?, store.pending_rollbacks()?)
+            (store.unfinished_runs()?, store.unsettled_rollbacks()?)
         } else {
             Default::default()
         };
@@ -397,15 +397,18 @@ impl SqliteEngine {
                 &project.workspace_root,
             )?;
         }
-        // A rollback a previous process left pending goes first: it was admitted before the
-        // restart, and its lane holds the thread's next turn until it ends.
+        // A rollback a previous process left unsettled keeps its row, ahead of what the
+        // restart writes below, so it still runs before the thread's next turn.
+        for pending in &pending_rollbacks {
+            crate::rollback::recover_pending(
+                &mut tx,
+                &pending.thread_id,
+                &pending.command_id,
+                &pending.phase,
+                pending.snapshot.as_ref(),
+            )?;
+        }
         let mut effects = vec![];
-        if config.recover_runs {
-            tx.settle_finished_rollbacks()?;
-        }
-        for pending in pending_rollbacks {
-            effects.extend(crate::rollback::recover_pending(&mut tx, pending)?);
-        }
         // T3 holds the prompts queued in a thread the previous process left unfinished, also
         // one whose only unfinished run is queued: the user decides when they go. Before any
         // replayed effect runs, so a replayed capture cannot start one. A buffered provider
