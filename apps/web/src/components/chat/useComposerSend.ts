@@ -20,8 +20,10 @@ import {
   makeThreadErrorSetter,
 } from "../ChatView.logic";
 import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
+import { parseUserCommandPrompt, userCommandNeverStarted } from "@t3tools/shared/userCommandPrompt";
 import {
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   DEFAULT_MODEL,
   type EnvironmentId,
   type ModelSelection,
@@ -97,6 +99,8 @@ import {
 } from "../../lib/composerContextRecords";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
+import { projectEnvironment } from "../../state/projects";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -387,6 +391,9 @@ export function useComposerSend(input: ComposerSendInput) {
   const uploadThreadFeedback = useOrchestrationCommand(threadEnvironment.uploadFeedback, {
     reportFailure: false,
   });
+  const runUserCommand = useAtomCommand(projectEnvironment.runUserCommand, {
+    reportFailure: false,
+  });
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const sendToMultipleModels = useMultipleModelSend({
@@ -455,6 +462,54 @@ export function useComposerSend(input: ComposerSendInput) {
       ? detachedOverride.sendContext
       : composerRef.current?.getSendContext();
     const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
+    // A user command never reaches the agent, so it beats a busy turn and an open question.
+    const userCommand =
+      activeThread &&
+      !directAnnotation &&
+      !queuedRunEdit.isEditing &&
+      !draftHasNonPromptContent(composerDraftTarget)
+        ? parseUserCommandPrompt(promptAtSend, sendCtx?.userCommands ?? [])
+        : null;
+    if (userCommand && activeThread) {
+      if (!isServerThread || !readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: m(msg("Command not run")),
+            description: isServerThread
+              ? m(msg("You don't have permission to run commands here."))
+              : m(msg("Send a message first; commands run in an existing thread.")),
+          }),
+        );
+        return;
+      }
+      const restorePrompt = (prompt: string) => {
+        setComposerDraftPrompt(composerDraftTarget, prompt);
+        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+          promptRef.current = prompt;
+          composerRef.current?.resetCursorState({ prompt });
+        }
+      };
+      restorePrompt("");
+      const result = await runUserCommand({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          name: userCommand.command.name,
+          args: userCommand.args,
+        },
+      });
+      if (result._tag !== "Success") {
+        const error = squashAtomCommandFailure(result);
+        if (userCommandNeverStarted(error)) restorePrompt(promptAtSend);
+        setThreadError(
+          activeThread.id,
+          error instanceof Error ? error.message : m(msg("Could not run the command.")),
+        );
+      }
+      return;
+    }
+
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing

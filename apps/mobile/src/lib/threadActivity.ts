@@ -197,6 +197,17 @@ type RawThreadFeedEntry =
       readonly text: string;
     }
   | {
+      readonly type: "user-command";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly command: string;
+      readonly args: string;
+      readonly markdown: string | undefined;
+      readonly render: HtmlRenderReference | undefined;
+      readonly error: string | undefined;
+    }
+  | {
       readonly type: "mcp-app";
       readonly id: string;
       readonly createdAt: string;
@@ -213,7 +224,10 @@ export type ThreadFeedEntry = ThreadFeedEntryContent & {
 };
 
 type ThreadFeedEntryContent =
-  | Extract<RawThreadFeedEntry, { type: "message" | "html-render" | "sent-message" | "mcp-app" }>
+  | Extract<
+      RawThreadFeedEntry,
+      { type: "message" | "html-render" | "sent-message" | "user-command" | "mcp-app" }
+    >
   | {
       readonly type: "activity-group";
       readonly id: string;
@@ -590,6 +604,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "reasoning":
       return "agent";
     case "command_execution":
+    case "user_command":
       return "command";
     case "file_change":
       return "edit";
@@ -735,6 +750,8 @@ function itemSummary(
       return resolve(msg("User message"));
     case "assistant_message":
       return resolve(msg("Assistant message"));
+    case "user_command":
+      return `/${item.command}`;
   }
 }
 
@@ -744,6 +761,8 @@ function itemPreview(item: OrchestrationV2TurnItem, resolve: MessageResolver): s
       return item.text || null;
     case "command_execution":
       return item.input || null;
+    case "user_command":
+      return item.error ?? item.markdown ?? null;
     case "file_change":
       return item.fileName;
     case "file_search":
@@ -1196,6 +1215,7 @@ function feedEntryFoldRunId(entry: ThreadFeedEntry, runlessKey: RunId | null): R
   return entry.type === "activity-group" ||
     entry.type === "html-render" ||
     entry.type === "sent-message" ||
+    entry.type === "user-command" ||
     entry.type === "mcp-app"
     ? (entry.runId ?? runlessKey)
     : null;
@@ -1507,6 +1527,7 @@ function staysOutOfFold(entry: ThreadFeedEntry): boolean {
   return (
     entry.type === "html-render" ||
     entry.type === "sent-message" ||
+    entry.type === "user-command" ||
     entry.type === "mcp-app" ||
     (entry.type === "activity-group" &&
       entry.activities.some(
@@ -2635,6 +2656,23 @@ export function buildThreadFeed(
         createdAt,
         runId: item.runId,
         render,
+      };
+      projectedEntriesCache.set(row, { attemptId, locale, entries: [entry] });
+      entries.push(entry);
+      entryRows.push(index);
+      continue;
+    }
+    if (item.type === "user_command") {
+      const entry: RawThreadFeedEntry = {
+        type: "user-command",
+        id: `user-command:${row.visibility}:${row.sourceThreadId}:${row.sourceItemId}`,
+        createdAt,
+        runId: item.runId,
+        command: item.command,
+        args: item.args,
+        markdown: item.markdown,
+        render: item.htmlRender,
+        error: item.error,
       };
       projectedEntriesCache.set(row, { attemptId, locale, entries: [entry] });
       entries.push(entry);

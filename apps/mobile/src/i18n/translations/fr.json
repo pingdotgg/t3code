@@ -5618,5 +5618,9 @@
   "eb287395a09cd288": "Envoyer les traces de connexion",
   "6787f93bbf6ce0b6": "Aide l’équipe T3 Code à résoudre les problèmes de connexion. Les traces contiennent des durées, des types d’erreur, un identifiant de cette session de l’app et la version de l’app, jamais vos fils, prompts ni votre code. Modifiable dans Réglages > À propos de T3 Code > Diagnostic.",
   "0b1e4aecbd38e0cf": "Quand l’app se connecte à un ordinateur via {product}, elle envoie à l’équipe T3 Code la durée de chaque étape, le type d’erreur, un identifiant de cette session de l’app et la version de l’app. Les traces n’incluent jamais vos fils, prompts ni votre code.",
-  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets."
+  "e0856d6a402ad821": "La politique de {organization} n’autorise pas les commandes de disposition des worktrees des projets.",
+  "78ceb92a5b33a779": "Commande non exécutée",
+  "440210447ea2814b": "Vous n'avez pas l'autorisation d'exécuter des commandes ici.",
+  "50769d067d003ec9": "Impossible d'exécuter la commande.",
+  "bc84f52ae9af5493": "Envoyez d'abord un message ; les commandes s'exécutent dans un fil existant."
 }

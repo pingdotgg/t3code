@@ -165,6 +165,16 @@ export function createProjectEnvironmentAtoms<R, E>(
           (result, isCurrent) => fileMetadata.rememberEntries(input.cwd, result.entries, isCurrent),
         ),
     }),
+    listUserCommands: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:projects:user-commands",
+      tag: WS_METHODS.userCommandsList,
+      staleTimeMs: 5_000,
+      idleTtlMs: 5 * 60_000,
+    }),
+    runUserCommand: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:commands:user-command:run",
+      tag: WS_METHODS.userCommandsRun,
+    }),
     listIgnoredFiles: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:projects:list-ignored-files",
       tag: WS_METHODS.projectsListIgnoredFiles,

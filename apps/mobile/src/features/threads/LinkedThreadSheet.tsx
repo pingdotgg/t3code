@@ -165,6 +165,12 @@ function LinkedThreadEntry(props: {
   if (entry.type === "sent-message") {
     return <SelectableMarkdownText markdown={entry.text} textStyle={styles.nativeTextStyle} />;
   }
+  if (entry.type === "user-command") {
+    const text = entry.markdown ?? entry.error ?? "";
+    return text === "" ? null : (
+      <SelectableMarkdownText markdown={text} textStyle={styles.nativeTextStyle} />
+    );
+  }
   if (entry.type !== "message" || entry.message.text.trim() === "") return null;
   return entry.message.role === "user" ? (
     <View className="max-w-[88%] self-end rounded-2xl bg-user-bubble px-3.5 py-2.5">

@@ -12857,5 +12857,9 @@
   "f6a91589456cca50": "Aprobado",
   "c92657bb7f2293ff": "Necesita aprobación",
   "f1e5c1be1ac92361": "Aprobar",
-  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal."
+  "fcb5f3c4d4753326": "Esta conexión no puede aprobar comandos. Usa un cliente que pueda usar el terminal.",
+  "78ceb92a5b33a779": "Comando no ejecutado",
+  "440210447ea2814b": "No tienes permiso para ejecutar comandos aquí.",
+  "bc84f52ae9af5493": "Envía primero un mensaje; los comandos se ejecutan en un hilo existente.",
+  "50769d067d003ec9": "No se pudo ejecutar el comando."
 }

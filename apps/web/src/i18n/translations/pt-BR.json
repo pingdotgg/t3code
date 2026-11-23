@@ -12862,5 +12862,9 @@
   "f6a91589456cca50": "Aprovado",
   "c92657bb7f2293ff": "Precisa de aprovação",
   "f1e5c1be1ac92361": "Aprovar",
-  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal."
+  "fcb5f3c4d4753326": "Esta conexão não pode aprovar comandos. Use um cliente que possa usar o terminal.",
+  "78ceb92a5b33a779": "Comando não executado",
+  "440210447ea2814b": "Você não tem permissão para executar comandos aqui.",
+  "bc84f52ae9af5493": "Envie uma mensagem primeiro; os comandos são executados em uma conversa existente.",
+  "50769d067d003ec9": "Não foi possível executar o comando."
 }

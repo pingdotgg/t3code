@@ -139,6 +139,9 @@ import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIng
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as T3ProjectFileLoader from "./project/T3ProjectFileLoader.ts";
+import * as HtmlRender from "./htmlRender/HtmlRender.ts";
+import * as UserCommandService from "./userCommands/UserCommandService.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 import * as WorkspaceFolders from "./workspace/WorkspaceFolders.ts";
@@ -946,6 +949,15 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(
     ServerBrowser.layer.pipe(
       Layer.provide(Layer.merge(DesktopBrowserChannel.layer, PreviewAgentActivity.layer)),
+    ),
+  ),
+  // The page a user command's output is published as; PreviewBrowser is provided just below.
+  Layer.provide(
+    UserCommandService.layer.pipe(
+      Layer.provide(HtmlRender.layer),
+      Layer.provide(T3ProjectFileLoader.layer),
+      Layer.provide(RuntimeLayer.layerEventSink),
+      Layer.provide(IdAllocator.layer),
     ),
   ),
   Layer.provide(PreviewBrowser.layer),

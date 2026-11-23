@@ -5618,5 +5618,9 @@
   "eb287395a09cd288": "Enviar trazas de conexión",
   "6787f93bbf6ce0b6": "Ayuda al equipo de T3 Code a solucionar problemas de conexión. Las trazas incluyen tiempos, tipos de error, un ID de esta sesión de la app y la versión de la app, nunca tus hilos, prompts ni código. Puedes cambiarlo en Ajustes > Acerca de T3 Code > Diagnóstico.",
   "0b1e4aecbd38e0cf": "Cuando la app se conecta a un ordenador mediante {product}, envía al equipo de T3 Code cuánto tardó cada paso, el tipo de error, un ID de esta sesión de la app y la versión de la app. Las trazas nunca incluyen tus hilos, prompts ni código.",
-  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos."
+  "e0856d6a402ad821": "La política de {organization} no permite comandos de diseño de worktrees de proyectos.",
+  "78ceb92a5b33a779": "Comando no ejecutado",
+  "440210447ea2814b": "No tienes permiso para ejecutar comandos aquí.",
+  "50769d067d003ec9": "No se pudo ejecutar el comando.",
+  "bc84f52ae9af5493": "Envía primero un mensaje; los comandos se ejecutan en un hilo existente."
 }

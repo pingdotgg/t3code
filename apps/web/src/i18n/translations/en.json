@@ -12871,5 +12871,9 @@
   "f6a91589456cca50": "Approved",
   "c92657bb7f2293ff": "Needs approval",
   "f1e5c1be1ac92361": "Approve",
-  "fcb5f3c4d4753326": "This connection cannot approve commands. Use a client that can use the terminal."
+  "fcb5f3c4d4753326": "This connection cannot approve commands. Use a client that can use the terminal.",
+  "78ceb92a5b33a779": "Command not run",
+  "440210447ea2814b": "You don't have permission to run commands here.",
+  "bc84f52ae9af5493": "Send a message first; commands run in an existing thread.",
+  "50769d067d003ec9": "Could not run the command."
 }

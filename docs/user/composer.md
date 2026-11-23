@@ -321,6 +321,46 @@ earlier messages, and the thread marks where it began with **New session**.
 Earlier messages and diffs stay in the thread. Dismiss the notice above the
 composer to keep the current session instead.
 
+### Your own commands
+
+A command of your own runs a program on the server and shows its output in the thread. No agent
+turn starts, so it costs nothing and works while the agent is busy. The output stays out of the
+agent's context; the agent never sees it.
+
+Define commands in `commands.json` next to `keybindings.json` in the server's `userdata` folder, or in
+the `commands` array of a project's [`t3.json`](./project-settings.md#slash-commands). A project's
+command replaces a user-wide one of the same name. `/model`, `/side`, `/btw` and `/clear` cannot be
+replaced; a command with one of those names is ignored and the server logs a warning. When the
+thread's provider has a slash command of the same name, such as `/review`, the provider's command
+wins and yours is not offered in that thread. The server reads the file each time the menu opens,
+so edits apply without a restart.
+
+```json
+{
+  "commands": [
+    {
+      "name": "todo",
+      "description": "List open TODOs",
+      "argumentHint": "[folder]",
+      "run": ["rg", "--no-heading", "TODO"],
+      "output": "markdown"
+    }
+  ]
+}
+```
+
+`run` is the program followed by its arguments. It runs without a shell, in the thread's
+worktree (or the project folder), and a leading `~` expands to your home folder. Whatever you
+type after the command, such as `/todo src`, is split on spaces (quote to keep spaces) and
+appended. `output` is `markdown`, rendered as the agent's replies are, or `html`, shown as a page in
+the same frame as an agent's HTML renders. A command stops after `timeoutMs` (default 60 seconds);
+a failed or timed-out run shows its error in the thread. Markdown output past 128 KB is cut off and
+an HTML page may be up to 4 MB.
+
+Commands appear in the `/` menu on web, desktop and mobile, including over remote and relay
+connections. They need permission to operate terminals on the environment, and only run in a
+thread that has started.
+
 On web and desktop, turn on **Context window** in **Settings → Appearance →
 Thread details** to see context usage in the thread details card. It appears
 once the provider reports usage.

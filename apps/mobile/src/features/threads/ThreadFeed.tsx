@@ -2133,6 +2133,43 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "user-command") {
+    return (
+      <View className="mb-1 gap-1 px-1">
+        <Text numberOfLines={1} className="font-mono text-xs text-foreground-muted">
+          {entry.args ? `/${entry.command} ${entry.args}` : `/${entry.command}`}
+        </Text>
+        {entry.markdown !== undefined ? (
+          <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+            <AssistantMarkdownContent
+              markdown={entry.markdown}
+              environmentId={props.environmentId}
+              markdownStyles={markdownStyles.assistant}
+              linkHandlers={props.markdownLinkHandlers}
+              onUseArtifactTemplate={props.onUseArtifactTemplate}
+              renderImage={props.renderMarkdownImage}
+              skills={props.skills}
+            />
+          </MarkdownImageAvailableWidthContext>
+        ) : null}
+        {entry.render !== undefined ? (
+          <ThreadHtmlRender
+            environmentId={props.environmentId}
+            threadId={props.threadId}
+            render={entry.render}
+            frameWidth={props.contentWidth}
+            iconColor={iconSubtleColor}
+          />
+        ) : null}
+        {entry.error !== undefined ? (
+          <Text selectable className="text-sm text-danger-foreground">
+            {entry.error}
+          </Text>
+        ) : null}
+      </View>
+    );
+  }
+
   if (entry.type === "viewed-images") {
     const thumbnailWidth = Math.floor((props.contentWidth - VIEWED_IMAGE_GAP) / 2);
     return (

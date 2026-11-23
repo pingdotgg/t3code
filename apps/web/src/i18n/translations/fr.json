@@ -12862,5 +12862,9 @@
   "f6a91589456cca50": "Approuvée",
   "c92657bb7f2293ff": "Approbation requise",
   "f1e5c1be1ac92361": "Approuver",
-  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal."
+  "fcb5f3c4d4753326": "Cette connexion ne peut pas approuver de commandes. Utilisez un client qui peut utiliser le terminal.",
+  "78ceb92a5b33a779": "Commande non exécutée",
+  "440210447ea2814b": "Vous n'avez pas l'autorisation d'exécuter des commandes ici.",
+  "bc84f52ae9af5493": "Envoyez d'abord un message ; les commandes s'exécutent dans un fil existant.",
+  "50769d067d003ec9": "Impossible d'exécuter la commande."
 }

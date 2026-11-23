@@ -12869,5 +12869,9 @@
   "f6a91589456cca50": "Godkänt",
   "c92657bb7f2293ff": "Behöver godkännande",
   "f1e5c1be1ac92361": "Godkänn",
-  "fcb5f3c4d4753326": "Den här anslutningen kan inte godkänna kommandon. Använd en klient som får använda terminalen."
+  "fcb5f3c4d4753326": "Den här anslutningen kan inte godkänna kommandon. Använd en klient som får använda terminalen.",
+  "78ceb92a5b33a779": "Kommandot kördes inte",
+  "440210447ea2814b": "Du har inte behörighet att köra kommandon här.",
+  "bc84f52ae9af5493": "Skicka ett meddelande först; kommandon körs i en befintlig tråd.",
+  "50769d067d003ec9": "Det gick inte att köra kommandot."
 }

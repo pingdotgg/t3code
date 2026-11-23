@@ -40,6 +40,7 @@ import type {
   ScopedThreadRef,
   ServerProvider,
   ThreadId,
+  UserCommandSummary,
 } from "@t3tools/contracts";
 import {
   EnvironmentRequestInvalidError,
@@ -120,6 +121,8 @@ import { ComposerStashBadge } from "./ComposerStashBadge";
 import { ComposerStashMenu } from "./ComposerStashMenu";
 import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
+import { useUserCommands } from "./useUserCommands";
+import { offeredUserCommands } from "@t3tools/shared/userCommandPrompt";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   type QueuedAttachmentContextBinding,
@@ -367,6 +370,8 @@ export interface ChatComposerHandle {
     selectedModel: string;
     selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]>;
     shownPendingApprovalIds: ReadonlyArray<RuntimeRequestId>;
+    /** The user commands this composer offers, so send runs the one the menu showed. */
+    userCommands: ReadonlyArray<UserCommandSummary>;
   };
   validateProviderInput: (providerInput: string) => boolean;
   setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
@@ -1218,6 +1223,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerPreviewAnnotations.length === 0 &&
     composerReviewComments.length === 0;
   const linkedEnvironments = useLinkedEnvironments(environmentId);
+  const userCommands = offeredUserCommands(
+    useUserCommands(environmentId, props.activeProjectId),
+    selectedProviderSlashCommands,
+  );
   const {
     items: composerMenuItems,
     isLoading: isComposerMenuLoading,
@@ -1240,6 +1249,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedProviderSlashCommands,
     showSkillsInSlashMenu: settings.showSkillsInSlashMenu,
     workspaceSkillsScanning,
+    userCommands,
     questionAttachmentTarget,
     modelMentions: { instanceEntries: providerInstanceEntries, modelOptionsByInstance },
   });
@@ -2119,6 +2129,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         if (applied) setComposerHighlightedItemId(null);
         return;
+      }
+      return;
+    }
+    if (item.type === "user-command") {
+      const replacement = `/${item.command.name} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
       }
       return;
     }
@@ -3514,6 +3539,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedProvider,
         selectedModel,
         selectedProviderModels,
+        userCommands,
       }),
       setMultipleModelSelections,
       validateProviderInput: (providerInput: string) => {

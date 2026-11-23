@@ -4,6 +4,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ThreadEnvMode, WorktreeSubmodules } from "./environment.ts";
 import { ProjectScriptIcon } from "./project.ts";
 import type { ProjectScopedServerSettingKey, ServerSettings } from "./settings.ts";
+import { UserCommands } from "./userCommand.ts";
 
 export const T3_PROJECT_FILE_NAME = "t3.json";
 
@@ -148,6 +149,7 @@ export const T3ProjectFile = Schema.Struct({
       })
       .check(Schema.isMaxLength(T3_PROJECT_FILE_MAX_SCRIPTS)),
   ),
+  commands: Schema.optionalKey(UserCommands),
 }).annotate({
   title: "T3 project file",
   description:

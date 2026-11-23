@@ -12862,5 +12862,9 @@
   "f6a91589456cca50": "Genehmigt",
   "c92657bb7f2293ff": "Genehmigung nötig",
   "f1e5c1be1ac92361": "Genehmigen",
-  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf."
+  "fcb5f3c4d4753326": "Über diese Verbindung lassen sich keine Befehle genehmigen. Verwende einen Client, der das Terminal verwenden darf.",
+  "78ceb92a5b33a779": "Befehl nicht ausgeführt",
+  "440210447ea2814b": "Du hast hier keine Berechtigung, Befehle auszuführen.",
+  "bc84f52ae9af5493": "Sende zuerst eine Nachricht; Befehle laufen in einem bestehenden Thread.",
+  "50769d067d003ec9": "Der Befehl konnte nicht ausgeführt werden."
 }

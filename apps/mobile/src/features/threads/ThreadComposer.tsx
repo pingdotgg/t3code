@@ -10,6 +10,7 @@ import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/at
 import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
 import {
   AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ChatAttachment,
@@ -17,6 +18,7 @@ import {
   type MessageId,
   type ModelSelection,
   type ServerConfig as T3ServerConfig,
+  type UserCommandSummary,
   type UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
@@ -55,6 +57,15 @@ import { useProject, useVisibleThreadShells } from "../../state/entities";
 import { useMentionableEnvironments } from "../../state/environments";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentScopeDenied } from "../../state/session";
+import { projectEnvironment } from "../../state/projects";
+import { useEnvironmentQuery } from "../../state/query";
+import { useAtomCommand } from "../../state/use-atom-command";
+import {
+  offeredUserCommands,
+  parseUserCommandPrompt,
+  userCommandNeverStarted,
+} from "@t3tools/shared/userCommandPrompt";
+import { resolveProviderSlashCommandsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -132,6 +143,7 @@ export const COMPOSER_COLLAPSED_CHROME = 60;
 export const THREAD_COMPOSER_BOTTOM_GUTTER = COMPOSER_BOTTOM_GUTTER;
 
 const NO_MACHINES: ReadonlyArray<ComposerEnvironmentCandidate> = [];
+const NO_USER_COMMANDS: ReadonlyArray<UserCommandSummary> = [];
 
 export interface ThreadComposerProps {
   readonly isDraft?: boolean;
@@ -422,7 +434,26 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     undefined,
     props.selectedThread.projectId,
   );
+  const userCommandsQuery = useEnvironmentQuery(
+    !props.serverConfig || !project
+      ? null
+      : projectEnvironment.listUserCommands({
+          environmentId: props.environmentId,
+          input: { projectId: project.id },
+        }),
+  );
+  const userCommands = offeredUserCommands(
+    userCommandsQuery.data?.commands ?? NO_USER_COMMANDS,
+    selectedProviderStatus
+      ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, props.projectCwd)
+      : [],
+  );
+  const runUserCommand = useAtomCommand(projectEnvironment.runUserCommand, {
+    reportFailure: false,
+  });
+  const terminalDenied = useEnvironmentScopeDenied(props.environmentId, AuthTerminalOperateScope);
   const composerMenu = useComposerCommandMenu({
+    userCommands,
     draftMessage: draftMessage,
     ownerKey: composerDraftKey,
     environmentId: props.environmentId,
@@ -557,6 +588,39 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     if (pendingPastedTextAttachmentCountRef.current > 0) return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
+      return;
+    }
+    const userCommand =
+      draftAttachments.length === 0 && draftContext === undefined && queuedEdit === null
+        ? parseUserCommandPrompt(draftMessage, userCommands)
+        : null;
+    if (userCommand) {
+      if (props.isDraft || terminalDenied) {
+        Dialog.alert(
+          gt("Command not run"),
+          props.isDraft
+            ? gt("Send a message first; commands run in an existing thread.")
+            : gt("You don't have permission to run commands here."),
+        );
+        return;
+      }
+      onChangeDraftMessage("");
+      const result = await runUserCommand({
+        environmentId: props.environmentId,
+        input: {
+          threadId: props.selectedThread.id,
+          name: userCommand.command.name,
+          args: userCommand.args,
+        },
+      });
+      if (AsyncResult.isFailure(result)) {
+        const error = squashAtomCommandFailure(result);
+        if (userCommandNeverStarted(error)) onChangeDraftMessage(draftMessage);
+        Dialog.alert(
+          gt("Command not run"),
+          error instanceof Error ? error.message : gt("Could not run the command."),
+        );
+      }
       return;
     }
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);

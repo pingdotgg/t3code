@@ -5626,5 +5626,9 @@
   "eb287395a09cd288": "Send connection traces",
   "6787f93bbf6ce0b6": "Helps the T3 Code team fix connection problems. Traces hold timings, error types, an ID for this app session, and the app version, never your threads, prompts, or code. You can change this in Settings > About T3 Code > Diagnostics.",
   "0b1e4aecbd38e0cf": "When the app connects to a computer through {product}, it sends the T3 Code team how long each step took, any error type, an ID for this app session, and the app version. Traces never include your threads, prompts, or code.",
-  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands."
+  "e0856d6a402ad821": "{organization}'s policy does not allow project worktree layout commands.",
+  "78ceb92a5b33a779": "Command not run",
+  "440210447ea2814b": "You don't have permission to run commands here.",
+  "50769d067d003ec9": "Could not run the command.",
+  "bc84f52ae9af5493": "Send a message first; commands run in an existing thread."
 }

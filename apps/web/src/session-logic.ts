@@ -128,6 +128,18 @@ export type TimelineEntry = (
     }
   | {
       readonly id: string;
+      readonly kind: "user-command";
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly command: string;
+      readonly args: string;
+      readonly status: "completed" | "failed";
+      readonly markdown: string | undefined;
+      readonly htmlRender: HtmlRenderReference | undefined;
+      readonly error: string | undefined;
+    }
+  | {
+      readonly id: string;
       readonly kind: "sent-message";
       readonly createdAt: string;
       readonly runId: RunId | null;
@@ -704,6 +716,23 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
         createdAt,
         runId: item.runId,
         htmlRender,
+        ...attemptMetadata,
+      });
+      continue;
+    }
+
+    if (item.type === "user_command") {
+      entries.push({
+        id: item.id,
+        kind: "user-command",
+        createdAt,
+        runId: item.runId,
+        command: item.command,
+        args: item.args,
+        status: item.status === "failed" ? "failed" : "completed",
+        markdown: item.markdown,
+        htmlRender: item.htmlRender,
+        error: item.error,
         ...attemptMetadata,
       });
       continue;

@@ -180,6 +180,12 @@ returns. Leave it off if you don't want request bodies stored outside your
 machine. To skip requests that waited too long, set **Skip requests older
 than** on the task.
 
+## Slash commands
+
+A project can declare slash commands in the `commands` array of its `t3.json`. They appear in the
+composer's `/` menu for threads in the project and override same-named commands from the user's
+`commands.json`. See [Your own commands](./composer.md#your-own-commands) for the fields and behavior.
+
 ## Defaults and inheritance
 
 Threads contains the model and workspace for new threads. Browser controls agent browser

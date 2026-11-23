@@ -6,6 +6,7 @@ import type {
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
+  UserCommandSummary,
 } from "@t3tools/contracts";
 import {
   type ComposerEnvironmentCandidate,
@@ -115,6 +116,7 @@ export function buildComposerSlashCommandItems(
     /** T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live. */
     readonly offersFreshSession?: boolean;
     readonly offersSideChat?: boolean;
+    readonly userCommands?: ReadonlyArray<UserCommandSummary>;
     readonly selectedProviderStatus: Pick<ServerProvider, "driver" | "slashCommands"> | null;
   },
   resolve: MessageResolver = m,
@@ -157,6 +159,18 @@ export function buildComposerSlashCommandItems(
       command: "clear",
       label: "/clear",
       description: resolve(msg("Start a fresh session")),
+    });
+  }
+  for (const command of input.userCommands ?? []) {
+    if (!command.name.toLowerCase().includes(query)) continue;
+    items.push({
+      id: `ucmd:${command.name}`,
+      type: "user-command",
+      command,
+      label: `/${command.name}`,
+      description: command.argumentHint
+        ? `${command.description} ${command.argumentHint}`
+        : command.description,
     });
   }
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
@@ -240,7 +254,7 @@ export function resolveComposerCommandSelection(input: {
     replacement = `$${item.skill.name} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
-  } else if (item.type === "provider-slash-command") {
+  } else if (item.type === "provider-slash-command" || item.type === "user-command") {
     replacement = `/${item.command.name} `;
   } else if (item.type === "model") {
     replacement = `${formatComposerModelMention(item.option.selection.instanceId, item.option.selection.model)} `;
@@ -272,6 +286,7 @@ export function useComposerCommandMenu({
   modelProviders,
   onFreshSession,
   offersSideChat = false,
+  userCommands,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -299,6 +314,7 @@ export function useComposerCommandMenu({
   /** Arms a fresh session for the next message; absent where `/clear` is unavailable. */
   readonly onFreshSession?: () => void;
   readonly offersSideChat?: boolean;
+  readonly userCommands?: ReadonlyArray<UserCommandSummary>;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -408,6 +424,7 @@ export function useComposerCommandMenu({
           offersUsageLimits,
           offersFreshSession: onFreshSession !== undefined,
           offersSideChat,
+          ...(userCommands === undefined ? {} : { userCommands }),
           selectedProviderStatus: selectedProviderStatus
             ? {
                 ...selectedProviderStatus,

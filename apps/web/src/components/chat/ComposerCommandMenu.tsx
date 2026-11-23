@@ -14,6 +14,7 @@ import {
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
+  type UserCommandSummary,
 } from "@t3tools/contracts";
 import {
   BlocksIcon,
@@ -60,6 +61,13 @@ export type ComposerCommandItem =
       type: "provider-slash-command";
       provider: ProviderDriverKind;
       command: ServerProviderSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "user-command";
+      command: UserCommandSummary;
       label: string;
       description: string;
     }
