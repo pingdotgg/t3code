@@ -41,7 +41,11 @@ function RedactedLogin(props: {
     <button
       type="button"
       className="min-w-0 cursor-pointer rounded-sm text-left outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label={gt("Toggle source control account visibility")}
+      aria-label={
+        props.revealed
+          ? gt("Toggle source control account visibility: {account}", { account: props.account })
+          : gt("Toggle source control account visibility")
+      }
       aria-pressed={props.revealed}
       onClick={props.onToggle}
     >
