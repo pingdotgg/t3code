@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 
 import { expect, it } from "vite-plus/test";
 
-import { loadNativeSpeechModel } from "./native.ts";
+import { listNativeSpeechGpuDevices, loadNativeSpeechModel } from "./native.ts";
 
 const fixture = (transcribe: string, maxAudioMs = 0, supportsVocabulary = false) =>
   `data:text/javascript,${encodeURIComponent(`export const TranscribeModel = { load: async () => ({ capabilities: { supportsStreaming: false, maxAudioMs: ${maxAudioMs}, languages: ["en-US", "de-DE"] }, supports: (feature) => feature === "vocabulary" && ${supportsVocabulary}, transcribe: ${transcribe} }) };`)}`;
@@ -371,5 +371,23 @@ it("preserves withheld audio on VAD failure while keeping ASR failures distinct"
     ).rejects.toThrow("ASR fixture failed");
   } finally {
     await model.dispose();
+  }
+});
+
+it("lists every GPU when the launcher restricts the Vulkan loader to one driver", async () => {
+  const previous = process.env.VK_LOADER_DRIVERS_SELECT;
+  process.env.VK_LOADER_DRIVERS_SELECT = "*intel*";
+  try {
+    const devices = await listNativeSpeechGpuDevices(
+      `data:text/javascript,${encodeURIComponent(`
+        export const getAvailableBackends = () => [
+          { kind: "vulkan", deviceType: "gpu", name: "filter:" + (process.env.VK_LOADER_DRIVERS_SELECT ?? "none") },
+        ];
+      `)}`,
+    );
+    expect(devices.map((device) => device.name)).toEqual(["filter:none"]);
+  } finally {
+    if (previous === undefined) delete process.env.VK_LOADER_DRIVERS_SELECT;
+    else process.env.VK_LOADER_DRIVERS_SELECT = previous;
   }
 });

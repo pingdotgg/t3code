@@ -258,10 +258,20 @@ function speechWorkerArgs(mode: "discover" | "model", moduleUrl?: string) {
   ];
 }
 
+/**
+ * Linux launchers on hybrid-GPU laptops (switcheroo-control) start apps with
+ * VK_LOADER_DRIVERS_SELECT set to the default GPU, which hides every other GPU
+ * from Vulkan. Speech workers choose their device through the Hardware setting.
+ */
+function speechWorkerEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  const { VK_LOADER_DRIVERS_SELECT: _launcherGpu, ...env } = process.env;
+  return { ...env, ELECTRON_RUN_AS_NODE: "1", ...extra };
+}
+
 export async function listNativeSpeechGpuDevices(moduleUrl?: string) {
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("discover", moduleUrl), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    env: speechWorkerEnv(),
   });
   return await new Promise<{ id: string; name: string }[]>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -323,12 +333,8 @@ async function loadNativeSpeechModelOnce(
   const child = NodeChildProcess.spawn(process.execPath, speechWorkerArgs("model"), {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     serialization: "advanced",
-    env: {
-      ...process.env,
-      ELECTRON_RUN_AS_NODE: "1",
-      // Backend registration can initialize drivers even when model placement is CPU.
-      ...(acceleration === "cpu" ? { TRANSCRIBE_BACKENDS: "cpu" } : {}),
-    },
+    // Backend registration can initialize drivers even when model placement is CPU.
+    env: speechWorkerEnv(acceleration === "cpu" ? { TRANSCRIBE_BACKENDS: "cpu" } : {}),
   });
   let stopped = false;
   let pending: ReturnType<typeof Promise.withResolvers<Reply>> | undefined;
