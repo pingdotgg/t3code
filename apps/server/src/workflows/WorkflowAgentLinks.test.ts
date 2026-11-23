@@ -114,25 +114,54 @@ it.effect("starts a thread there by the project's folder, with the step's key as
 
 it.effect("registers a folder that is not a project there yet", () =>
   Effect.gen(function* () {
+    for (const [project, title] of [
+      [input.project, "app"],
+      ["/work/team\\api", "team\\api"],
+      ["C:\\work\\app", "app"],
+    ]) {
+      const there = peer({
+        t3_project_list: [{ projects: [], nextCursor: null }],
+        t3_project_create: [{ id: "p-new", workspaceRoot: project }],
+        t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
+      });
+      yield* Effect.provide(
+        Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+          links.start({ ...input, project }, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+        ),
+        there.layer,
+      );
+      assert.deepStrictEqual(
+        there.calls.map((call) => [call.tool, call.arguments.projectId ?? call.arguments.title]),
+        [
+          ["t3_project_list", undefined],
+          ["t3_project_create", title],
+          ["t3_thread_launch", "p-new"],
+        ],
+      );
+    }
+  }),
+);
+
+it.effect("finds a Windows folder there however its separators are written", () =>
+  Effect.gen(function* () {
     const there = peer({
-      t3_project_list: [{ projects: [], nextCursor: null }],
-      t3_project_create: [{ id: "p-new", workspaceRoot: "/work/app" }],
+      t3_project_list: [
+        { projects: [{ id: "p-app", workspaceRoot: "C:\\work\\app" }], nextCursor: null },
+      ],
       t3_thread_launch: [{ threadId: "thread-1", runId: "turn-1" }],
     });
     yield* Effect.provide(
       Effect.flatMap(WorkflowAgentLinks.make, (links) =>
-        links.start(input, "env-b", "workflow:k", EnvironmentId.make("env-a")),
+        links.start(
+          { ...input, project: "C:/work/app" },
+          "env-b",
+          "workflow:k",
+          EnvironmentId.make("env-a"),
+        ),
       ),
       there.layer,
     );
-    assert.deepStrictEqual(
-      there.calls.map((call) => [call.tool, call.arguments.projectId ?? call.arguments.title]),
-      [
-        ["t3_project_list", undefined],
-        ["t3_project_create", "app"],
-        ["t3_thread_launch", "p-new"],
-      ],
-    );
+    assert.equal(there.calls.at(-1)?.arguments.projectId, "p-app");
   }),
 );
 
