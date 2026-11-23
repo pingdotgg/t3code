@@ -160,7 +160,7 @@ export function resolvePiLaunchArgs(launchArgs: string): PiLaunchArgsResolution 
   return { ok: true, args };
 }
 
-function bearerTokenFromAuthorizationHeader(header: string): string {
+export function bearerTokenFromAuthorizationHeader(header: string): string {
   return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : header;
 }
 

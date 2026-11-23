@@ -5568,15 +5568,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
   it.effect("removes and re-registers T3 MCP when its bearer token rotates between turns", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-rotate-1",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer opencode2-run-1",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+          threadId,
+          providerSessionId: `mcp:opencode2-rotate-${ordinal}`,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:3773/mcp",
+          authorizationHeader: `Bearer opencode2-run-${ordinal}`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
       yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
       const server = "t3-code-thread_opencode2-adapter";
       const addFor = (authorization: string) =>
@@ -5608,27 +5610,17 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("mcp.remove", null),
       ]);
       assert.equal(runtime.mcpCredentialRotation, "live");
-
-      const firstTerminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      const firstStarted = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
-      yield* TestClock.adjust("250 millis");
-      yield* Fiber.join(firstStarted);
-      assert.equal((yield* Fiber.join(firstTerminal))?.status, "completed");
-
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-rotate-2",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer opencode2-run-2",
-        browserToolsAvailable: false,
+      const runTurn = Effect.fnUntraced(function* () {
+        const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        const started = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
+        yield* TestClock.adjust("250 millis");
+        yield* Fiber.join(started);
+        assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       });
-      const secondTerminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      const secondStarted = yield* runtime.startTurn(turnInput(thread)).pipe(Effect.forkScoped);
-      yield* TestClock.adjust("250 millis");
-      yield* Fiber.join(secondStarted);
-      assert.equal((yield* Fiber.join(secondTerminal))?.status, "completed");
+
+      yield* runTurn();
+      yield* setMcp(2);
+      yield* runTurn();
     }),
   );
 

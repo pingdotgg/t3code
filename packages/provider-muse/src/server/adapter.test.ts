@@ -428,15 +428,17 @@ describe("MuseAdapterV2", () => {
   it.effect("re-resumes with rotated MCP credentials on the next turn", () =>
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("test-environment"),
-        threadId: THREAD_ID,
-        providerSessionId: "test-session-1",
-        providerInstanceId: INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43210/mcp",
-        authorizationHeader: "Bearer muse-run-1-token",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: `test-session-${ordinal}`,
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: `Bearer muse-run-${ordinal}-token`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
       const fake = yield* makeFakeMuse();
       fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
       const harness = yield* makeHarness(fake, INSTANCE_ID);
@@ -450,15 +452,7 @@ describe("MuseAdapterV2", () => {
         "Bearer muse-run-1-token",
       );
 
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("test-environment"),
-        threadId: THREAD_ID,
-        providerSessionId: "test-session-2",
-        providerInstanceId: INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43210/mcp",
-        authorizationHeader: "Bearer muse-run-2-token",
-        browserToolsAvailable: false,
-      });
+      yield* setMcp(2);
       yield* harness.runtime.startTurn(yield* turnInput(harness.providerThread, 2));
       const resumed = yield* fake.takeCall("session/resume");
       assert.deepStrictEqual(resumed.params.config, {

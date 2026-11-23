@@ -6936,15 +6936,17 @@ describe("AcpAdapterV2", () => {
       const instanceId = ProviderInstanceId.make("acp-test-mcp-rotate");
       const threadId = ThreadId.make("thread-acp-mcp-rotate");
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
-        threadId,
-        providerSessionId: "mcp-session-acp-rotate-1",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer acp-run-1-token",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
+          threadId,
+          providerSessionId: `mcp-session-acp-rotate-${ordinal}`,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: `Bearer acp-run-${ordinal}-token`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         flavor: {
@@ -6977,15 +6979,7 @@ describe("AcpAdapterV2", () => {
         runtimePolicy,
       });
 
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-acp-mcp-rotate"),
-        threadId,
-        providerSessionId: "mcp-session-acp-rotate-2",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer acp-run-2-token",
-        browserToolsAvailable: false,
-      });
+      yield* setMcp(2);
       yield* runtime.startTurn(
         makeTurnInput({
           threadId,
@@ -7007,17 +7001,12 @@ describe("AcpAdapterV2", () => {
         reloadRequestEvent,
         `expected session/load or session/resume in ${JSON.stringify(loggedEvents.map((e) => `${e.direction}:${rawProtocolMethod(e)}`))}`,
       );
-      const loadRequest = Option.getOrThrow(
-        Option.fromNullishOr(rawProtocolRequest(reloadRequestEvent!)),
-      );
-      const mcpServers = (
-        loadRequest.params as {
-          mcpServers?: ReadonlyArray<{
+      const mcpServers = rawProtocolRequestParam(reloadRequestEvent!, "mcpServers") as
+        | ReadonlyArray<{
             name?: string;
             env?: ReadonlyArray<{ name: string; value: string }>;
-          }>;
-        }
-      ).mcpServers;
+          }>
+        | undefined;
       const t3Server = mcpServers?.find((server) => server.name === "t3-code");
       assert.isDefined(t3Server);
       assert.equal(

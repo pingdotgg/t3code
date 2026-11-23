@@ -2190,15 +2190,17 @@ describe("PiAdapterV2", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-pi-mcp-rotate"),
-        threadId: THREAD_ID,
-        providerSessionId: "mcp-session-pi-1",
-        providerInstanceId: PI_INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-pi-token-1",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-pi-mcp-rotate"),
+          threadId: THREAD_ID,
+          providerSessionId: `mcp-session-pi-${ordinal}`,
+          providerInstanceId: PI_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: `Bearer secret-pi-token-${ordinal}`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
       const fake = yield* makeFakePi;
       const { runtime, takeEvent } = yield* openRuntime(fake);
       const rawTokenFile = fake.lastSpawn().env.T3_MCP_BEARER_TOKEN_FILE;
@@ -2222,15 +2224,7 @@ describe("PiAdapterV2", () => {
         });
 
       yield* runTurn("First turn", 1);
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-pi-mcp-rotate"),
-        threadId: THREAD_ID,
-        providerSessionId: "mcp-session-pi-2",
-        providerInstanceId: PI_INSTANCE_ID,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer secret-pi-token-2",
-        browserToolsAvailable: false,
-      });
+      yield* setMcp(2);
       yield* runTurn("Second turn", 2);
 
       assert.equal(yield* fs.readFileString(tokenFile), "secret-pi-token-2");

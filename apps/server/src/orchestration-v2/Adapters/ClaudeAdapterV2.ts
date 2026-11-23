@@ -3929,23 +3929,19 @@ function claudeEffectiveQueryPolicyKeyWithoutMcpAuth(
   },
   workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
 ): string {
-  const sanitizedServers =
-    mcpOverrides.mcpServers === undefined
-      ? undefined
-      : Object.fromEntries(
-          Object.entries(mcpOverrides.mcpServers).map(([name, server]) => {
-            if (name === "t3-code" && server.type === "http" && server.headers !== undefined) {
-              const { Authorization: _authorization, ...restHeaders } = server.headers;
-              return [name, { ...server, headers: restHeaders }];
-            }
-            return [name, server];
-          }),
-        );
+  const t3Server = mcpOverrides.mcpServers?.["t3-code"];
+  if (t3Server?.type !== "http" || t3Server.headers === undefined) {
+    return claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, workspace);
+  }
+  const { Authorization: _authorization, ...restHeaders } = t3Server.headers;
   return claudeEffectiveQueryPolicyKey(
     queryPolicy,
     {
       ...mcpOverrides,
-      ...(sanitizedServers === undefined ? {} : { mcpServers: sanitizedServers }),
+      mcpServers: {
+        ...mcpOverrides.mcpServers,
+        "t3-code": { ...t3Server, headers: restHeaders },
+      },
     },
     workspace,
   );

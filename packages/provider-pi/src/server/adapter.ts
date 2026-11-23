@@ -75,6 +75,7 @@ import {
   type PiRpcRecord,
 } from "./rpc.ts";
 import {
+  bearerTokenFromAuthorizationHeader,
   buildPiRpcLaunch,
   materializePiT3McpExtension,
   resolvePiLaunchArgs,
@@ -497,7 +498,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
     ) {
       const scope = yield* Effect.scope;
       const cwd = input.runtimePolicy.cwd ?? host.paths.cwd;
-      let appliedMcpAuthorization: string | undefined = undefined;
+      let appliedMcpAuthorization: string | undefined;
       const mcpAuthDir = yield* fileSystem
         .makeTempDirectoryScoped({ prefix: "t3-pi-mcp-auth-" })
         .pipe(
@@ -516,9 +517,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       const writeMcpTokenFile = Effect.fn("PiAdapterV2.writeMcpTokenFile")(function* (
         authorizationHeader: string,
       ) {
-        const bearerToken = authorizationHeader.startsWith("Bearer ")
-          ? authorizationHeader.slice("Bearer ".length)
-          : authorizationHeader;
+        const bearerToken = bearerTokenFromAuthorizationHeader(authorizationHeader);
         const stagingPath = path.join(mcpAuthDir, `token.${++mcpTokenWriteOrdinal}.tmp`);
         yield* fileSystem.writeFileString(stagingPath, bearerToken, { mode: 0o600 });
         yield* fileSystem.rename(stagingPath, mcpTokenFilePath);

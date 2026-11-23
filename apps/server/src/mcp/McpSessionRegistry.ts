@@ -256,13 +256,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     }),
     releaseRunBinding: Effect.fn("McpSessionRegistry.releaseRunBinding")(function* (credentialId) {
       yield* SynchronizedRef.update(state, ({ records }) => {
-        const next = new Map(records);
+        let next: Map<string, CredentialRecord> | undefined;
         for (const [tokenHash, record] of records) {
           if (record.credentialId !== credentialId) continue;
           const { runId: _runId, attemptId: _attemptId, ...thread } = record.scope.thread;
+          next ??= new Map(records);
           next.set(tokenHash, { ...record, scope: { ...record.scope, thread } });
         }
-        return { records: next };
+        return next === undefined ? { records } : { records: next };
       });
     }),
     syncCapabilities: Effect.fn("McpSessionRegistry.syncCapabilities")(

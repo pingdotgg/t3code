@@ -1098,21 +1098,29 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
           hasT3Mcp,
           mcpSession?.capabilities?.has("device") === true,
         );
-        let appliedMcpAuthorization: string | undefined = undefined;
-        if (hasT3Mcp) {
+        let appliedMcpAuthorization: string | undefined;
+        const syncT3Mcp = Effect.fnUntraced(function* (mcp: typeof mcpSession) {
+          if (
+            mcp === undefined ||
+            connection.external ||
+            mcp.authorizationHeader === appliedMcpAuthorization
+          ) {
+            return;
+          }
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",
               config: {
                 type: "remote",
-                url: mcpSession.endpoint,
-                headers: { Authorization: mcpSession.authorizationHeader },
+                url: mcp.endpoint,
+                headers: { Authorization: mcp.authorizationHeader },
                 oauth: false,
               },
             }),
           );
-          appliedMcpAuthorization = mcpSession.authorizationHeader;
-        }
+          appliedMcpAuthorization = mcp.authorizationHeader;
+        });
+        yield* syncT3Mcp(mcpSession);
 
         const now = yield* DateTime.now;
         let sessionEntity: OrchestrationV2ProviderSession = {
@@ -3759,25 +3767,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }
               yield* applyPermissionRules(state, turnInput.runtimePolicy);
-              const currentMcp = yield* mcpSessions.read(turnInput.threadId);
-              if (
-                currentMcp !== undefined &&
-                !connection.external &&
-                currentMcp.authorizationHeader !== appliedMcpAuthorization
-              ) {
-                yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
-                  client.mcp.add({
-                    name: "t3-code",
-                    config: {
-                      type: "remote",
-                      url: currentMcp.endpoint,
-                      headers: { Authorization: currentMcp.authorizationHeader },
-                      oauth: false,
-                    },
-                  }),
-                );
-                appliedMcpAuthorization = currentMcp.authorizationHeader;
-              }
+              yield* syncT3Mcp(yield* mcpSessions.read(turnInput.threadId));
               // A continuation admits a wake OpenCode is already running, so it sends no prompt.
               const isCompaction =
                 !continuation &&

@@ -1725,50 +1725,49 @@ it.effect("t3_submit_output forwards caller run and attempt identity and surface
         );
       });
 
-    // An unbound credential names its run in the call; service rejections surface as invalid_request.
-    rejectNext = { problem: "This output was submitted for a turn that is no longer active." };
-    const unbound = yield* callWith(undefined, undefined, '{"ok":false}', runA).pipe(
-      Effect.provide(serverLayer),
-    );
-    expect(unbound.isError).toBe(true);
-    expect(declaredFailure(unbound)).toEqual({
-      _tag: "OrchestratorMcpFailure",
-      code: "invalid_request",
-      message: "This output was submitted for a turn that is no longer active.",
-    });
-
-    // Preserved dispatch causes stay out of MCP output; only SchemaError validation details append.
-    rejectNext = {
-      problem: "This output was submitted for a turn that is no longer active.",
-      cause: new OrchestratorDispatchError({
-        commandId: CommandId.make("cmd-submit-stale"),
-        commandType: "run.output.submit",
-      }),
+    const expectInvalidRequest = (
+      result: Effect.Success<ReturnType<typeof callWith>>,
+      message: string,
+    ) => {
+      expect(result.isError).toBe(true);
+      expect(declaredFailure(result)).toEqual({
+        _tag: "OrchestratorMcpFailure",
+        code: "invalid_request",
+        message,
+      });
     };
-    const stale = yield* callWith(runA, attemptA, '{"ok":false}').pipe(Effect.provide(serverLayer));
-    expect(stale.isError).toBe(true);
-    expect(declaredFailure(stale)).toEqual({
-      _tag: "OrchestratorMcpFailure",
-      code: "invalid_request",
-      message: "This output was submitted for a turn that is no longer active.",
-    });
 
-    const schemaCause = yield* decodeSubmitOutputFixture({}).pipe(Effect.flip);
-    rejectNext = { problem: "The result does not match the schema.", cause: schemaCause };
-    const invalidSchema = yield* callWith(runB, attemptB, "{}").pipe(Effect.provide(serverLayer));
-    expect(invalidSchema.isError).toBe(true);
-    expect(declaredFailure(invalidSchema)).toEqual({
-      _tag: "OrchestratorMcpFailure",
-      code: "invalid_request",
-      message: `The result does not match the schema.\n${schemaCause.message.slice(0, 2000)}`,
-    });
+    const staleMessage = "This output was submitted for a turn that is no longer active.";
+    yield* Effect.gen(function* () {
+      // An unbound credential names its run in the call; service rejections surface as invalid_request.
+      rejectNext = { problem: staleMessage };
+      expectInvalidRequest(
+        yield* callWith(undefined, undefined, '{"ok":false}', runA),
+        staleMessage,
+      );
 
-    // A bound credential outranks the argument.
-    const active = yield* callWith(runB, attemptB, '{"ok":true}', runA).pipe(
-      Effect.provide(serverLayer),
-    );
-    expect(active.isError).toBe(false);
-    expect(active.structuredContent).toEqual({ runId: runB });
+      // Preserved dispatch causes stay out of MCP output; only SchemaError validation details append.
+      rejectNext = {
+        problem: staleMessage,
+        cause: new OrchestratorDispatchError({
+          commandId: CommandId.make("cmd-submit-stale"),
+          commandType: "run.output.submit",
+        }),
+      };
+      expectInvalidRequest(yield* callWith(runA, attemptA, '{"ok":false}'), staleMessage);
+
+      const schemaCause = yield* decodeSubmitOutputFixture({}).pipe(Effect.flip);
+      rejectNext = { problem: "The result does not match the schema.", cause: schemaCause };
+      expectInvalidRequest(
+        yield* callWith(runB, attemptB, "{}"),
+        `The result does not match the schema.\n${schemaCause.message.slice(0, 2000)}`,
+      );
+
+      // A bound credential outranks the argument.
+      const active = yield* callWith(runB, attemptB, '{"ok":true}', runA);
+      expect(active.isError).toBe(false);
+      expect(active.structuredContent).toEqual({ runId: runB });
+    }).pipe(Effect.provide(serverLayer));
     expect(calls).toEqual([
       {
         threadId,

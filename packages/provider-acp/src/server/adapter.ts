@@ -8127,6 +8127,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           Ref.getUnsafe(installedInitializeResult) ??
           started.initializeResult;
         const installedAgentCapabilities = () => installedInitialize().agentCapabilities;
+        const canLoadOrResume = () => {
+          const agent = installedAgentCapabilities();
+          return agent?.loadSession === true || agent?.sessionCapabilities?.resume != null;
+        };
         const usesMcpOverAcp = () =>
           installedAgentCapabilities()?.mcpCapabilities?.acp === true &&
           runtimeMcpBridge !== undefined;
@@ -10236,15 +10240,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return providerSession;
           },
           get canResumeAfterRestart() {
-            const agent = installedAgentCapabilities();
-            return agent?.loadSession === true || agent?.sessionCapabilities?.resume != null;
+            return canLoadOrResume();
           },
           get mcpCredentialRotation() {
-            const agent = installedAgentCapabilities();
             if (usesMcpOverAcp()) return "live" as const;
-            return agent?.loadSession === true || agent?.sessionCapabilities?.resume != null
-              ? ("reload" as const)
-              : ("none" as const);
+            return canLoadOrResume() ? ("reload" as const) : ("none" as const);
           },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined

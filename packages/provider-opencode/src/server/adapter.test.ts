@@ -360,15 +360,17 @@ describe("OpenCodeAdapterV2", () => {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const threadId = ThreadId.make("thread-opencode-mcp-rotate");
       const instanceId = ProviderInstanceId.make("opencode-mcp-rotate");
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("env-opencode-mcp-rotate"),
-        threadId,
-        providerSessionId: "mcp-session-opencode-1",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer opencode-run-1-token",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("env-opencode-mcp-rotate"),
+          threadId,
+          providerSessionId: `mcp-session-opencode-${ordinal}`,
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: `Bearer opencode-run-${ordinal}-token`,
+          browserToolsAvailable: false,
+        });
+      yield* setMcp(1);
       const harness = yield* makeOpenCodeRuntimeHarness(
         "mcp-rotate",
         "ses_mcp_rotate",
@@ -392,15 +394,7 @@ describe("OpenCodeAdapterV2", () => {
       );
       assert.equal(mcpAdds.length, 1);
 
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("env-opencode-mcp-rotate"),
-        threadId,
-        providerSessionId: "mcp-session-opencode-2",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer opencode-run-2-token",
-        browserToolsAvailable: false,
-      });
+      yield* setMcp(2);
       yield* harness.startTurn("Second turn", harness.providerThread, harness.policy, false, "2");
       assert.deepEqual(
         mcpAdds.map(

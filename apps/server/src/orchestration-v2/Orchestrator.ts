@@ -12375,6 +12375,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} was not asked for a result.`,
       });
     }
+    const rejectOutput = (reason: RunOutputDispatchRejectionError["reason"], detail: string) =>
+      new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: new RunOutputDispatchRejectionError({ reason, detail }),
+      });
     // The service picks the active run, but the run can end before this command is its turn. A
     // turn that completed without its result still owes it, and a later turn may give it.
     const owed = yield* resolveOwedOutputRun(projection.runs, () =>
@@ -12384,14 +12390,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ).pipe(mapDispatchError(command));
     const owes = owed?.id === run.id;
     if (!isActiveRun(run) && !owes) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: new RunOutputDispatchRejectionError({
-          reason: "inactive",
-          detail: `Run ${command.runId} is ${run.status} and takes no result.`,
-        }),
-      });
+      return yield* rejectOutput(
+        "inactive",
+        `Run ${command.runId} is ${run.status} and takes no result.`,
+      );
     }
     if (command.callerRunId !== undefined || command.callerAttemptId !== undefined) {
       let active: OrchestrationV2Run | undefined;
@@ -12411,14 +12413,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const callerAllowed =
         (active !== undefined && matchesRun(active)) || (owes && matchesRun(run));
       if (!callerAllowed) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: new RunOutputDispatchRejectionError({
-            reason: "stale_caller",
-            detail: `Caller run ${command.callerRunId ?? "unknown"} is no longer active on thread ${command.threadId}.`,
-          }),
-        });
+        return yield* rejectOutput(
+          "stale_caller",
+          `Caller run ${command.callerRunId ?? "unknown"} is no longer active on thread ${command.threadId}.`,
+        );
       }
       if (
         active !== undefined &&
@@ -12426,26 +12424,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         matchesRun(active) &&
         (yield* stopReachedRun(command, command.threadId, active.id))
       ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: new RunOutputDispatchRejectionError({
-            reason: "stopped",
-            detail: `Run ${active.id} was stopped and takes no result.`,
-          }),
-        });
+        return yield* rejectOutput("stopped", `Run ${active.id} was stopped and takes no result.`);
       }
     }
     // A stopped run stays active until its provider settles; what it submits then is not kept.
     if (yield* stopReachedRun(command, command.threadId, run.id)) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: new RunOutputDispatchRejectionError({
-          reason: "stopped",
-          detail: `Run ${command.runId} was stopped and takes no result.`,
-        }),
-      });
+      return yield* rejectOutput(
+        "stopped",
+        `Run ${command.runId} was stopped and takes no result.`,
+      );
     }
     const now = yield* DateTime.now;
     yield* emit(
